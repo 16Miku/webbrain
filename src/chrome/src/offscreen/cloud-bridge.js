@@ -1,9 +1,10 @@
 /**
- * Offscreen document — outbound WebSocket bridge for managed cloud sessions.
+ * Offscreen document — outbound WebSocket bridge for MCP and other local
+ * controllers.
  *
- * The droplet sidecar listens on localhost. The extension connects outbound
- * from this offscreen page, receives command messages, forwards them to the
- * background service worker, then returns the response over the socket.
+ * The selected local controller listens on localhost. The extension connects
+ * outbound from this offscreen page, receives command messages, forwards them
+ * to the background service worker, then returns the response over the socket.
  */
 
 (() => {
@@ -34,7 +35,7 @@
     // WHATWG URL keeps the brackets on IPv6 literals: ws://[::1]/… parses to
     // hostname "[::1]", so both spellings must be allowlisted.
     if (url.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) {
-      throw new Error('Cloud bridge URL must use ws:// on localhost.');
+      throw new Error('MCP URL must use ws:// on localhost.');
     }
     return url.href;
   }

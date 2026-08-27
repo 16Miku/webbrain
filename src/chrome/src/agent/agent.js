@@ -194,6 +194,10 @@ const TOKENS_PER_MILLION = 1_000_000;
 const DEFAULT_INPUT_COST_PER_MILLION_USD = 3;
 const DEFAULT_OUTPUT_COST_PER_MILLION_USD = 15;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
+const CONTENT_ACTION_TIMEOUT_MS = 60_000;
+const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
+const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap();
+const EARLY_CDP_ACTION_TOOLS = new Set(['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file']);
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
 const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the run started|executing requested tool calls))?\.?\]?$/;
 const STANDALONE_WIKIPEDIA_MODEL_SEARCH_ALIASES = new Set([
@@ -1042,11 +1046,44 @@ export class Agent extends LoopDetector {
   }
 
   _throwIfAborted(signal) {
-    if (!signal?.aborted) return;
+    const deadline = signal ? CONTENT_ACTION_SIGNAL_DEADLINES.get(signal) : null;
+    const deadlineAt = Number(deadline?.deadlineAt);
+    const deadlineExpired = Number.isFinite(deadlineAt) && deadlineAt > 0 && Date.now() >= deadlineAt;
+    if (!signal?.aborted && !deadlineExpired) return;
     if (signal.reason instanceof Error) throw signal.reason;
+    if (deadline?.error instanceof Error) throw deadline.error;
     const error = new Error('The operation was aborted.');
     error.name = 'AbortError';
     throw error;
+  }
+
+  _linkAbortSignals(...signals) {
+    const controller = new AbortController();
+    const linkedDeadline = signals
+      .map(signal => signal ? CONTENT_ACTION_SIGNAL_DEADLINES.get(signal) : null)
+      .filter(deadline => Number.isFinite(Number(deadline?.deadlineAt)))
+      .sort((a, b) => Number(a.deadlineAt) - Number(b.deadlineAt))[0];
+    if (linkedDeadline) CONTENT_ACTION_SIGNAL_DEADLINES.set(controller.signal, linkedDeadline);
+    const listeners = [];
+    const dispose = () => {
+      for (const [signal, listener] of listeners.splice(0)) {
+        try { signal.removeEventListener('abort', listener); } catch {}
+      }
+    };
+    controller.signal.addEventListener('abort', dispose, { once: true });
+    for (const signal of signals) {
+      if (!signal) continue;
+      if (signal.aborted) {
+        controller.abort(signal.reason);
+        break;
+      }
+      const listener = () => {
+        if (!controller.signal.aborted) controller.abort(signal.reason);
+      };
+      signal.addEventListener('abort', listener, { once: true });
+      listeners.push([signal, listener]);
+    }
+    return { signal: controller.signal, dispose };
   }
 
   async _withVisionDeadline(operation) {
@@ -1069,6 +1106,84 @@ export class Agent extends LoopDetector {
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
+  }
+
+  _contentActionDeadlineMs(toolName, args = {}) {
+    if (toolName !== 'wait_for_element') return CONTENT_ACTION_TIMEOUT_MS;
+    const requestedTimeoutMs = Number(args?.timeout);
+    if (!Number.isFinite(requestedTimeoutMs) || requestedTimeoutMs <= 0) {
+      return CONTENT_ACTION_TIMEOUT_MS;
+    }
+    return Math.max(
+      CONTENT_ACTION_TIMEOUT_MS,
+      requestedTimeoutMs + CONTENT_ACTION_RESPONSE_GRACE_MS,
+    );
+  }
+
+  _needsSharedActionPipelineDeadline(tabId, toolName, formValidationCandidate = false) {
+    return formValidationCandidate === true
+      || ['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)
+      || (
+        this._richTextToolbarGuard.hasPending(tabId)
+        && RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)
+      );
+  }
+
+  async _withContentActionDeadline(
+    operation,
+    toolName = 'content action',
+    deadlineMs = CONTENT_ACTION_TIMEOUT_MS,
+  ) {
+    const timeoutMs = Number.isFinite(deadlineMs) && deadlineMs > 0
+      ? deadlineMs
+      : CONTENT_ACTION_TIMEOUT_MS;
+    let timeoutId = null;
+    const timeoutError = new Error(
+      `${toolName} did not return a page response within ${Math.ceil(timeoutMs / 1000)} seconds.`,
+    );
+    timeoutError.code = 'content_action_timeout';
+    const controller = new AbortController();
+    const deadlineAt = Date.now() + timeoutMs;
+    CONTENT_ACTION_SIGNAL_DEADLINES.set(controller.signal, { deadlineAt, error: timeoutError });
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        try { controller.abort(timeoutError); } catch { try { controller.abort(); } catch {} }
+        reject(timeoutError);
+      }, timeoutMs);
+    });
+    const started = Promise.resolve().then(() => operation(controller.signal));
+    // The page response may settle after the timeout. Observe that settlement
+    // so it cannot become an unhandled rejection after this race has returned.
+    started.catch(() => {});
+    try {
+      return await Promise.race([started, timeout]);
+    } finally {
+      if (timeoutId != null) clearTimeout(timeoutId);
+    }
+  }
+
+  _contentActionTimeoutResult(toolName, error) {
+    const outcomeUnknown = BROWSER_MUTATION_TOOLS.has(toolName);
+    return {
+      success: false,
+      ...(outcomeUnknown ? { dispatched: true } : {}),
+      outcomeUnknown,
+      retryable: !outcomeUnknown,
+      error: outcomeUnknown
+        ? `${error?.message || `${toolName} timed out`} The action may have reached the page; inspect the current state before deciding whether to retry.`
+        : `${error?.message || `${toolName} timed out`} No page result was returned; retry this read-only observation once after the page settles.`,
+    };
+  }
+
+  _contentActionPreparationTimeoutResult(toolName, error, stage = 'page preparation') {
+    return {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      outcomeUnknown: false,
+      retryable: true,
+      error: `${error?.message || `${toolName} timed out`} No ${toolName} action was sent because ${stage} did not finish. Re-observe the page before retrying.`,
+    };
   }
 
   _recordVisionRouteTrace(tabId, route, capture, context, fallbackReason = null) {
@@ -3008,8 +3123,8 @@ export class Agent extends LoopDetector {
     return this._richTextToolbarGuard.restore(tabId, raw);
   }
 
-  async _legacyIframeTypeAllFrames(tabId, args) {
-    return this._richTextToolbarProbe.legacyIframeTypeAllFrames(tabId, args);
+  async _legacyIframeTypeAllFrames(tabId, args, actionContext = {}) {
+    return this._richTextToolbarProbe.legacyIframeTypeAllFrames(tabId, args, actionContext);
   }
 
   async _probeRichTextToolbarIframeTarget(tabId, args = {}, options = {}) {
@@ -6192,7 +6307,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _captchaMutationPreflight(tabId, toolName, toolArgs = {}) {
+  async _captchaMutationPreflight(tabId, toolName, toolArgs = {}, abortSignal = null) {
+    this._throwIfAborted(abortSignal);
     const gatedCompletion = toolName === 'done' || toolName === 'done_json';
     const gatedAction = this._isBrowserMutationTool(toolName)
       || gatedCompletion
@@ -6205,6 +6321,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && !this._shouldRetryCaptchaManualGate(activeGate)
     ) return null;
     const detectedChallenge = await this._detectChallengeDialogBeforeMutation(tabId);
+    this._throwIfAborted(abortSignal);
     const challenge = detectedChallenge?.label
       ? detectedChallenge
       : activeGate?.status === 'cleared'
@@ -6213,6 +6330,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!challenge?.label) return null;
     let pageUrl = '';
     try { pageUrl = await this._currentUrl(tabId); } catch {}
+    this._throwIfAborted(abortSignal);
     const observation = await this._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -6227,6 +6345,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       },
       {},
     );
+    this._throwIfAborted(abortSignal);
     return observation.gate;
   }
 
@@ -6809,12 +6928,91 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // exactly like other tool results.
       const protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);
 
+      const recordPagePreparationTimeout = async (error, stage) => {
+        const timeoutResult = this._contentActionPreparationTimeoutResult(fnName, error, stage);
+        let loopCheck = { kind: 'none' };
+        const loopKey = this._loopCallKey(fnName, fnArgs, timeoutResult);
+        const failedApiMutation = this._isFailedApiMutationForLoop(fnName, fnArgs, timeoutResult);
+        if (!failedApiMutation || !failedApiMutationLoopKeysThisBatch.has(loopKey)) {
+          if (failedApiMutation) failedApiMutationLoopKeysThisBatch.add(loopKey);
+          loopCheck = this._checkLoop(tabId, fnName, fnArgs, timeoutResult);
+        }
+        onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
+        onUpdate('tool_result', { name: fnName, result: timeoutResult });
+        messages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: JSON.stringify(timeoutResult)
+            + (loopCheck.kind === 'nudge' ? `\n${loopCheck.warning}` : ''),
+        });
+        const runId = this.currentRunId.get(tabId);
+        if (runId) {
+          try {
+            await trace.recordToolCall(runId, step, {
+              name: fnName,
+              args: fnArgs,
+              result: timeoutResult,
+              latencyMs: 0,
+            });
+          } catch {}
+        }
+        onUpdate('warning', { message: 'Page action preparation timed out before dispatch.' });
+        if (loopCheck.kind === 'nudge') {
+          onUpdate('warning', { message: 'Loop detected — nudging the agent.' });
+        }
+        if (loopCheck.kind !== 'stop') return null;
+        this._appendSyntheticToolResults(
+          tabId,
+          toolCalls,
+          toolIndex + 1,
+          messages,
+          onUpdate,
+          step,
+          () => ({ success: false, skipped: true, error: 'skipped: run stopped by loop detector' }),
+        );
+        if (runId) trace.recordError(runId, step, 'loop', loopCheck.message);
+        this._clearLoopState(tabId);
+        this._persist(tabId);
+        return { action: 'recover', value: loopCheck.message, status: 'loop_stopped' };
+      };
+      const detectSubmitWithDeadline = () => this._withContentActionDeadline(
+        async abortSignal => {
+          const detected = await this._detectLikelySubmitAction(tabId, fnName, fnArgs);
+          this._throwIfAborted(abortSignal);
+          return detected;
+        },
+        fnName,
+        this._contentActionDeadlineMs(fnName, fnArgs),
+      );
+      const captureFormValidationWithDeadline = allFrames => this._withContentActionDeadline(
+        async abortSignal => {
+          const state = await this._captureFormValidationState(tabId, { allFrames });
+          this._throwIfAborted(abortSignal);
+          return state;
+        },
+        fnName,
+        this._contentActionDeadlineMs(fnName, fnArgs),
+      );
+
       // A verification challenge is a runtime state boundary, not a prompt
       // suggestion. Once observed, no model-authored click/close/submit or
       // other page mutation may run until one supported solve completes.
-      const captchaPreflight = protectedPageFailure
-        ? null
-        : await this._captchaMutationPreflight(tabId, fnName, fnArgs);
+      let captchaPreflight = null;
+      if (!protectedPageFailure) {
+        try {
+          captchaPreflight = await this._withContentActionDeadline(
+            abortSignal => this._captchaMutationPreflight(tabId, fnName, fnArgs, abortSignal),
+            fnName,
+            this._contentActionDeadlineMs(fnName, fnArgs),
+          );
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          const loopStop = await recordPagePreparationTimeout(error, 'CAPTCHA safety preflight');
+          if (loopStop) return loopStop;
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
+      }
       if (captchaPreflight) onUpdate('captcha_gate', captchaPreflight);
       const captchaGateBlock = protectedPageFailure
         ? null
@@ -7009,34 +7207,67 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const formValidationCandidate = !protectedPageFailure
         && this._isFormValidationCandidate(fnName, fnArgs);
-      let formValidationCoordinateFrames = null;
-      if (
-        formValidationCandidate
-        && fnName === 'click'
-        && fnArgs?.x != null
-        && fnArgs?.y != null
-      ) {
-        formValidationCoordinateFrames = await this._iframeRectsForCoordinate(
-          tabId,
-          fnArgs.x,
-          fnArgs.y,
-        );
+      let formValidationAllFrames = false;
+      let detectedSubmitAction = null;
+      let formValidationBefore = [];
+      let validationBlock = null;
+      if (formValidationCandidate) {
+        try {
+          const preparation = await this._withContentActionDeadline(async abortSignal => {
+            let coordinateFrames = null;
+            if (
+              fnName === 'click'
+              && fnArgs?.x != null
+              && fnArgs?.y != null
+            ) {
+              coordinateFrames = await this._iframeRectsForCoordinate(
+                tabId,
+                fnArgs.x,
+                fnArgs.y,
+              );
+              this._throwIfAborted(abortSignal);
+            }
+            // CDP selector resolution pierces same-process iframe documents,
+            // so a plain click({selector}) can still dispatch inside a child
+            // frame.
+            const allFrames = fnName === 'iframe_click'
+              || fnName === 'press_keys'
+              || (fnName === 'click' && !!fnArgs?.selector)
+              || (Array.isArray(coordinateFrames) && coordinateFrames.length > 0);
+            const shouldDetectSubmit = ['click', 'click_ax', 'iframe_click', 'press_keys', 'execute_js'].includes(fnName);
+            const detected = shouldDetectSubmit
+              ? await this._detectLikelySubmitAction(tabId, fnName, fnArgs, {
+                  ...(Array.isArray(coordinateFrames)
+                    ? { coordinateFrames }
+                    : {}),
+                })
+              : null;
+            this._throwIfAborted(abortSignal);
+            const currentValidationBlock = this._formValidationBlocks.get(tabId) || null;
+            const obviousSubmit = this._formValidationActionLooksSubmit(fnName, fnArgs, null, detected);
+            const before = (currentValidationBlock || obviousSubmit)
+              ? await this._captureFormValidationState(tabId, { allFrames })
+              : [];
+            this._throwIfAborted(abortSignal);
+            return {
+              allFrames,
+              detected,
+              validationBlock: currentValidationBlock,
+              before,
+            };
+          }, fnName, this._contentActionDeadlineMs(fnName, fnArgs));
+          formValidationAllFrames = preparation.allFrames;
+          detectedSubmitAction = preparation.detected;
+          validationBlock = preparation.validationBlock;
+          formValidationBefore = preparation.before;
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          const loopStop = await recordPagePreparationTimeout(error, 'submit/form-validation preflight');
+          if (loopStop) return loopStop;
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
       }
-      // CDP selector resolution pierces same-process iframe documents, so a
-      // plain click({selector}) can still dispatch inside a child frame.
-      const formValidationAllFrames = fnName === 'iframe_click'
-        || fnName === 'press_keys'
-        || (fnName === 'click' && !!fnArgs?.selector)
-        || (Array.isArray(formValidationCoordinateFrames) && formValidationCoordinateFrames.length > 0);
-      const preflightSubmitDetection = formValidationCandidate
-        && ['click', 'click_ax', 'iframe_click', 'press_keys', 'execute_js'].includes(fnName);
-      let detectedSubmitAction = preflightSubmitDetection
-        ? await this._detectLikelySubmitAction(tabId, fnName, fnArgs, {
-            ...(Array.isArray(formValidationCoordinateFrames)
-              ? { coordinateFrames: formValidationCoordinateFrames }
-              : {}),
-          })
-        : null;
       if (fnName === 'chrome_web_store_publish') {
         detectedSubmitAction = {
           isSubmit: true,
@@ -7044,14 +7275,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           reason: 'submit the configured Chrome Web Store release for review',
         };
       }
-      const validationBlock = formValidationCandidate ? this._formValidationBlocks.get(tabId) : null;
       let priorValidationFailure = !!validationBlock;
       let correctedPriorValidationFailure = false;
-      const obviousSubmitAction = formValidationCandidate
-        && this._formValidationActionLooksSubmit(fnName, fnArgs, null, detectedSubmitAction);
-      let formValidationBefore = (validationBlock || obviousSubmitAction)
-        ? await this._captureFormValidationState(tabId, { allFrames: formValidationAllFrames })
-        : [];
       if (validationBlock) {
         const currentValidationStateKey = this._formValidationStateKey(formValidationBefore);
         if (currentValidationStateKey !== validationBlock.stateKey) {
@@ -7085,7 +7310,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const bypassesConsequentialGates = !requiresMandatoryWebMCPGates
         && (this._skipPermissionGate || scheduledBypassesGate);
       if (!protectedPageFailure && !bypassesConsequentialGates) {
-        const submitConfirmation = detectedSubmitAction || await this._detectLikelySubmitAction(tabId, fnName, fnArgs);
+        let submitConfirmation = detectedSubmitAction;
+        if (!submitConfirmation) {
+          try {
+            submitConfirmation = await detectSubmitWithDeadline();
+          } catch (error) {
+            if (error?.code !== 'content_action_timeout') throw error;
+            const loopStop = await recordPagePreparationTimeout(error, 'submit-action detection');
+            if (loopStop) return loopStop;
+            if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+            continue;
+          }
+        }
         detectedSubmitAction = submitConfirmation;
         if (submitConfirmation?.isSubmit) {
           const choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
@@ -7134,9 +7370,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           || scheduledBypassesGate
         )
       ) {
-        formValidationBefore = await this._captureFormValidationState(tabId, {
-          allFrames: formValidationAllFrames,
-        });
+        try {
+          formValidationBefore = await captureFormValidationWithDeadline(formValidationAllFrames);
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          const loopStop = await recordPagePreparationTimeout(error, 'form-validation snapshot');
+          if (loopStop) return loopStop;
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
       }
       if (capabilities.length && !bypassesConsequentialGates) {
         await this.permissions.hydrate();
@@ -7366,11 +7608,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // close to dispatch as possible: permission and confirmation can happen
       // first, but a mismatched conversation never reaches executeTool().
       const messageRecipientExecutionContext = {};
-      const messageRecipientBlock = protectedPageFailure
-        ? null
-        : await this._messageRecipientGuardBlock(
-            tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
+      let messageRecipientBlock = null;
+      if (!protectedPageFailure) {
+        try {
+          messageRecipientBlock = await this._withContentActionDeadline(
+            async abortSignal => {
+              const block = await this._messageRecipientGuardBlock(
+                tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
+              );
+              this._throwIfAborted(abortSignal);
+              return block;
+            },
+            fnName,
+            this._contentActionDeadlineMs(fnName, fnArgs),
           );
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          const loopStop = await recordPagePreparationTimeout(error, 'message-recipient safety preflight');
+          if (loopStop) return loopStop;
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
+      }
       if (messageRecipientBlock) {
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
         onUpdate('tool_result', { name: fnName, result: messageRecipientBlock });
@@ -7399,64 +7658,149 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } catch {}
       }
       const _toolStart = Date.now();
-      const toolbarPreflight = protectedPageFailure
-        ? { block: null }
-        : await this._preflightRichTextToolbarTarget(tabId, fnName, fnArgs, provider, { onUpdate });
-      const rawToolResult = protectedPageFailure
-        || toolbarPreflight.block
-        || await this.executeTool(
+      let toolbarPreflight = { block: null };
+      let rawToolResult = protectedPageFailure;
+      let toolResult;
+      if (protectedPageFailure) {
+        toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
+        toolResult = await this._maybePromoteChromeProtectedGalleryResult(
           tabId,
-          fnName,
-          fnArgs,
-          onUpdate,
-          {
-            completionBatchStartState,
-            promptTier,
-            dispatchBinding: toolbarPreflight.probe?.dispatchBinding || null,
-            ...messageRecipientExecutionContext,
-            iframeTargetUnresolved: toolbarPreflight.iframeTargetUnresolved === true,
-          },
-        );
-      let toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
-      toolResult = await this._maybePromoteChromeProtectedGalleryResult(
-        tabId,
-        fnName,
-        fnArgs,
-        toolResult,
-      );
-      const inspectFormValidationAfter = formValidationCandidate
-        && this._formValidationActionLooksSubmit(
           fnName,
           fnArgs,
           toolResult,
-          detectedSubmitAction,
         );
-      if (
-        inspectFormValidationAfter
-        && toolResult
-        && typeof toolResult === 'object'
-        && !toolResult.done
-        && toolResult.dispatched !== false
-      ) {
-        const formValidationFailure = await this._waitForFormValidationFailure(
+        await this._auditRichTextToolbarTarget(tabId, fnName, fnArgs, toolResult, null);
+      } else {
+        const actionDispatchState = { started: false };
+        const runActionPipeline = async abortSignal => {
+            const pipelineToolbarPreflight = await this._preflightRichTextToolbarTarget(
+              tabId,
+              fnName,
+              fnArgs,
+              provider,
+              { onUpdate },
+            );
+            this._throwIfAborted(abortSignal);
+            const pipelineRawToolResult = pipelineToolbarPreflight.block || await this.executeTool(
+              tabId,
+              fnName,
+              fnArgs,
+              onUpdate,
+              {
+                completionBatchStartState,
+                promptTier,
+                dispatchBinding: pipelineToolbarPreflight.probe?.dispatchBinding || null,
+                ...messageRecipientExecutionContext,
+                iframeTargetUnresolved: pipelineToolbarPreflight.iframeTargetUnresolved === true,
+                _contentActionAbortSignal: abortSignal,
+                _contentActionDispatchState: actionDispatchState,
+              },
+            );
+            if (pipelineRawToolResult?.dispatched === false || pipelineRawToolResult?.noDispatch === true) {
+              actionDispatchState.started = false;
+            } else if (
+              Agent.STATE_CHANGE_TOOLS.has(fnName)
+              && (pipelineRawToolResult?.dispatched === true || pipelineRawToolResult?.success === true)
+            ) {
+              actionDispatchState.started = true;
+            }
+            this._throwIfAborted(abortSignal);
+            let pipelineToolResult = this._normalizeToolResult(
+              fnName,
+              pipelineRawToolResult,
+              missingResponseOutcomeUnknown,
+            );
+            pipelineToolResult = await this._maybePromoteChromeProtectedGalleryResult(
+              tabId,
+              fnName,
+              fnArgs,
+              pipelineToolResult,
+            );
+            this._throwIfAborted(abortSignal);
+            const inspectFormValidationAfter = formValidationCandidate
+              && this._formValidationActionLooksSubmit(
+                fnName,
+                fnArgs,
+                pipelineToolResult,
+                detectedSubmitAction,
+              );
+            if (
+              inspectFormValidationAfter
+              && pipelineToolResult
+              && typeof pipelineToolResult === 'object'
+              && !pipelineToolResult.done
+              && pipelineToolResult.dispatched !== false
+            ) {
+              actionDispatchState.started = true;
+              const formValidationFailure = await this._waitForFormValidationFailure(
+                tabId,
+                formValidationBefore,
+                {
+                  toolName: fnName,
+                  args: fnArgs,
+                  result: pipelineToolResult,
+                  detectedSubmit: detectedSubmitAction,
+                  priorValidationFailure,
+                  correctedPriorValidationFailure,
+                },
+                { allFrames: formValidationAllFrames, abortSignal },
+              );
+              this._throwIfAborted(abortSignal);
+              if (formValidationFailure) {
+                this._applyFormValidationFailure(tabId, pipelineToolResult, formValidationFailure);
+                onUpdate('warning', { message: 'Form validation failed; the page error was returned to the agent.' });
+              }
+            }
+            await this._auditRichTextToolbarTarget(
+              tabId,
+              fnName,
+              fnArgs,
+              pipelineToolResult,
+              pipelineToolbarPreflight.probe,
+            );
+            this._throwIfAborted(abortSignal);
+            return {
+              toolbarPreflight: pipelineToolbarPreflight,
+              rawToolResult: pipelineRawToolResult,
+              toolResult: pipelineToolResult,
+            };
+        };
+        const needsSharedActionPipelineDeadline = this._needsSharedActionPipelineDeadline(
           tabId,
-          formValidationBefore,
-          {
-            toolName: fnName,
-            args: fnArgs,
-            result: toolResult,
-            detectedSubmit: detectedSubmitAction,
-            priorValidationFailure,
-            correctedPriorValidationFailure,
-          },
-          { allFrames: formValidationAllFrames },
+          fnName,
+          formValidationCandidate,
         );
-        if (formValidationFailure) {
-          this._applyFormValidationFailure(tabId, toolResult, formValidationFailure);
-          onUpdate('warning', { message: 'Form validation failed; the page error was returned to the agent.' });
+        if (needsSharedActionPipelineDeadline) {
+          try {
+            const pipelineResult = await this._withContentActionDeadline(
+              runActionPipeline,
+              fnName,
+              this._contentActionDeadlineMs(fnName, fnArgs),
+            );
+            toolbarPreflight = pipelineResult.toolbarPreflight;
+            rawToolResult = pipelineResult.rawToolResult;
+            toolResult = pipelineResult.toolResult;
+          } catch (error) {
+            if (error?.code !== 'content_action_timeout') throw error;
+            rawToolResult = actionDispatchState.started
+              ? this._contentActionTimeoutResult(fnName, error)
+              : {
+                  success: false,
+                  dispatched: false,
+                  noDispatch: true,
+                  outcomeUnknown: false,
+                  retryable: true,
+                  error: `${error.message} No ${fnName} action was sent because target preparation did not finish. Re-observe the page before retrying.`,
+                };
+            toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
+          }
+        } else {
+          const pipelineResult = await runActionPipeline(null);
+          toolbarPreflight = pipelineResult.toolbarPreflight;
+          rawToolResult = pipelineResult.rawToolResult;
+          toolResult = pipelineResult.toolResult;
         }
       }
-      await this._auditRichTextToolbarTarget(tabId, fnName, fnArgs, toolResult, toolbarPreflight.probe);
       if (fnName !== 'done') {
         this._markPlanExecutionToolCall(tabId, fnName, toolResult, {
           consequential: executionMutationEvidence,
@@ -8421,7 +8765,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * When `optionText` matches the ALREADY-SELECTED option, returns a
    * result telling the agent it's already set (no action needed).
    */
-  async _autoSelectOption(tabId, cdpClient, optionText) {
+  async _autoSelectOption(tabId, cdpClient, optionText, abortSignal = null, beforeDispatch = null) {
+    const throwIfAborted = () => this._throwIfAborted(abortSignal);
+    const markDispatch = () => {
+      throwIfAborted();
+      if (typeof beforeDispatch === 'function') beforeDispatch();
+    };
+    throwIfAborted();
     const needle = (optionText || '').trim();
     if (!needle) return null;
     // Keep an exact reference to the scoped select across the separate CDP
@@ -8429,8 +8779,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // target a different (for example, background) select with the same
     // options.
     const targetSlot = `__webbrainAutoSelectTarget_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+    const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.deadlineAt) || 0;
+    const cleanupTarget = async () => {
+      try {
+        await cdpClient.evaluate(tabId, `delete globalThis[${JSON.stringify(targetSlot)}]`);
+      } catch {}
+    };
+    const focusExactTarget = async () => {
+      throwIfAborted();
+      const focusResult = await cdpClient.evaluate(tabId, `
+        (() => {
+          const actionDeadlineAt = ${actionDeadlineAt};
+          const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+          if (deadlineExpired()) return { focused: false, deadlineExpired: true };
+          const target = globalThis[${JSON.stringify(targetSlot)}];
+          if (!target || target.tagName !== 'SELECT' || !target.isConnected) return { focused: false };
+          if (deadlineExpired()) return { focused: false, deadlineExpired: true };
+          if (document.activeElement !== target) target.focus();
+          return { focused: document.activeElement === target };
+        })()
+      `);
+      throwIfAborted();
+      return focusResult?.result?.value?.focused === true;
+    };
     const scanResult = await cdpClient.evaluate(tabId, `
       (() => {
+        const actionDeadlineAt = ${actionDeadlineAt};
+        const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+        if (deadlineExpired()) return { found: false, deadlineExpired: true };
         const needle = ${JSON.stringify(needle)};
         const lc = needle.toLowerCase();
         const targetSlot = ${JSON.stringify(targetSlot)};
@@ -8509,9 +8885,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // normal text resolver return an ambiguity instead.
         if (matchingSelects.length !== 1) return { found: false, matchingSelectCount: matchingSelects.length };
         const { sel, match, opts } = matchingSelects[0];
-        sel.focus();
         const cur = sel.selectedIndex;
-        if (cur !== match.index) globalThis[targetSlot] = sel;
+        if (cur !== match.index) {
+          if (deadlineExpired()) return { found: false, deadlineExpired: true };
+          globalThis[targetSlot] = sel;
+        }
         return {
           found: true,
           alreadySelected: cur === match.index,
@@ -8524,6 +8902,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       })()
     `);
+    try {
+      throwIfAborted();
+    } catch (error) {
+      await cleanupTarget();
+      throw error;
+    }
     const scan = scanResult?.result?.value;
     if (!scan?.found) return null;
 
@@ -8537,44 +8921,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
 
-    const cleanupTarget = async () => {
-      try {
-        await cdpClient.evaluate(tabId, `delete globalThis[${JSON.stringify(targetSlot)}]`);
-      } catch {}
-    };
-
     try {
-      // Close any open native dropdown.
+      // Escape must belong to the exact select found by the modal-scoped,
+      // ambiguity-checked scan. Sending it to the previously focused control
+      // can close a dialog or cancel unrelated UI before this select is used.
+      markDispatch();
+      if (!await focusExactTarget()) return null;
       await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
         type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
       });
       await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
         type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
       });
-      // Escape may blur the control. Re-focus only the exact select chosen by
-      // the modal-scoped, ambiguity-checked scan; never perform a global
-      // option-text lookup here.
-      const focusResult = await cdpClient.evaluate(tabId, `
-        (() => {
-          const target = globalThis[${JSON.stringify(targetSlot)}];
-          if (!target || target.tagName !== 'SELECT' || !target.isConnected) return { focused: false };
-          if (document.activeElement !== target) target.focus();
-          return { focused: document.activeElement === target };
-        })()
-      `);
-      if (!focusResult?.result?.value?.focused) return null;
+      throwIfAborted();
+      // Escape may blur the control, so repeat the same exact-reference focus
+      // before navigating its options.
+      if (!await focusExactTarget()) return null;
 
       // Navigate with ArrowDown/ArrowUp.
       const delta = scan.targetIndex - scan.currentIndex;
       const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
       const arrowVK = delta > 0 ? 40 : 38;
       for (let i = 0; i < Math.abs(delta); i++) {
+        markDispatch();
         await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
         });
         await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
         });
+        throwIfAborted();
       }
 
       // Verify the exact target rather than whichever select happens to be
@@ -8590,6 +8966,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         })()
       `);
+      throwIfAborted();
       const v = verify?.result?.value;
       if (!v?.verified) {
         return {
@@ -10072,9 +10449,55 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}) {
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, upstreamAbortSignal = null, upstreamDispatchState = null) {
+    const dispatchState = upstreamDispatchState || { started: false };
+    try {
+      return await this._withContentActionDeadline(
+        deadlineAbortSignal => this._dispatchClickAxImpl(
+          tabId,
+          args,
+          axScope,
+          dispatchBinding,
+          messageRecipientContext,
+          deadlineAbortSignal,
+          upstreamAbortSignal,
+          dispatchState,
+        ),
+        'click_ax',
+      );
+    } catch (error) {
+      if (error?.code !== 'content_action_timeout') throw error;
+      if (dispatchState.started) return this._contentActionTimeoutResult('click_ax', error);
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+        error: `${error.message} No click was sent because the pre-dispatch page observation did not finish. Re-observe the page before retrying.`,
+      };
+    }
+  }
+
+  async _dispatchClickAxImpl(
+    tabId,
+    args,
+    axScope = null,
+    dispatchBinding = null,
+    messageRecipientContext = {},
+    deadlineAbortSignal = null,
+    upstreamAbortSignal = null,
+    dispatchState = { started: false },
+  ) {
+    const throwIfAborted = () => {
+      this._throwIfAborted(upstreamAbortSignal);
+      this._throwIfAborted(deadlineAbortSignal);
+    };
+    throwIfAborted();
     const interactionUrl = await this._currentUrl(tabId);
+    throwIfAborted();
     const clickProgressBefore = await this._clickProgressSnapshot(tabId);
+    throwIfAborted();
     const sideEffectWatch = this._beginClickAxSideEffectWatch(tabId);
     let baseline = null;
     const captureBaseline = async () => {
@@ -10105,27 +10528,70 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
-    const send = () => chrome.tabs.sendMessage(tabId, {
-      target: 'content',
-      action: 'click_ax',
-      params: contentArgs,
-    }, messageOptions);
+    const actionDeadlineAt = [upstreamAbortSignal, deadlineAbortSignal]
+      .map(signal => Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(signal)?.deadlineAt))
+      .filter(deadlineAt => Number.isFinite(deadlineAt) && deadlineAt > 0)
+      .sort((a, b) => a - b)[0] || 0;
+    const send = () => {
+      throwIfAborted();
+      dispatchState.started = true;
+      return chrome.tabs.sendMessage(tabId, {
+        target: 'content',
+        action: 'click_ax',
+        params: contentArgs,
+        ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
+      }, messageOptions);
+    };
+    const dispatch = () => this._withContentActionDeadline(send, 'click_ax');
+    const provenNoDispatchDeadline = response => {
+      if (response?.deadlineExpired !== true || response?.dispatched === true) return null;
+      dispatchState.started = false;
+      return {
+        ...response,
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+      };
+    };
 
     try {
       let response;
       try {
+        throwIfAborted();
         await captureBaseline();
-        response = await send();
-      } catch {
+        throwIfAborted();
+        response = await dispatch();
+        const deadlineResult = provenNoDispatchDeadline(response);
+        if (deadlineResult) return deadlineResult;
+        throwIfAborted();
+      } catch (error) {
+        if (error?.code === 'content_action_timeout') {
+          return this._contentActionTimeoutResult('click_ax', error);
+        }
+        // A rejected first message is the no-receiver path that triggers
+        // injection; no page click was delivered unless the retry starts.
+        dispatchState.started = false;
         try {
+          throwIfAborted();
           await this._injectCoreContentScripts(tabId);
+          throwIfAborted();
           await captureBaseline();
-          response = await send();
-        } catch (error) {
-          return { error: `Failed to communicate with page: ${error.message}` };
+          throwIfAborted();
+          response = await dispatch();
+          const deadlineResult = provenNoDispatchDeadline(response);
+          if (deadlineResult) return deadlineResult;
+          throwIfAborted();
+        } catch (retryError) {
+          if (retryError?.code === 'content_action_timeout') {
+            return this._contentActionTimeoutResult('click_ax', retryError);
+          }
+          return { error: `Failed to communicate with page: ${retryError.message}` };
         }
       }
       response = await this._settleContentFilePickerGuard(tabId, response);
+      throwIfAborted();
       if (response?.documentToken && (
         response.documentChanged === true
         || response.routeChanged === true
@@ -10137,7 +10603,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // content path consumes that binding immediately before el.click(); a
       // no-progress CDP fallback would be a second, unbound send attempt.
       if (messageRecipientContext.messageRecipientGuardRequired !== true) {
-        response = await this._maybeFallbackClickAxWithCdp(tabId, args, response, baseline);
+        throwIfAborted();
+        response = await this._maybeFallbackClickAxWithCdp(
+          tabId,
+          args,
+          response,
+          baseline,
+          deadlineAbortSignal,
+        );
+        throwIfAborted();
       }
       const observedAfterSnapshot = response?._clickAxAfterSnapshot || '';
       if (response) delete response._clickAxAfterSnapshot;
@@ -10147,8 +10621,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         args,
         response,
         clickProgressBefore,
-        { afterSnapshot: observedAfterSnapshot },
+        { afterSnapshot: observedAfterSnapshot, abortCheck: throwIfAborted },
       );
+      throwIfAborted();
       this._recordInteractionRect(tabId, 'click_ax', response, interactionUrl);
       this._annotateCredentialField('click_ax', response);
       this._clearUploadSelectorRecoveryAfterInspection(tabId, 'click_ax', response);
@@ -10158,8 +10633,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}) {
+  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}, abortSignal = null, dispatchState = { started: false }) {
+    this._throwIfAborted(abortSignal);
     const resolution = await this._resolveCoordinateVisualTarget(tabId, point);
+    this._throwIfAborted(abortSignal);
     const target = resolution?.semanticTarget;
     const normalized = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const expectedName = normalized(messageRecipientContext.expectedName);
@@ -10189,12 +10666,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && typeof target?.ref_id === 'string'
       && /^ref_\d+$/.test(target.ref_id);
     if (semanticEligible) {
+      this._throwIfAborted(abortSignal);
       const result = await this._dispatchClickAx(
         tabId,
         { ref_id: target.ref_id },
         { documentToken: resolution.documentToken, pageUrl: resolution.refScopeUrl },
         null,
         messageRecipientContext,
+        abortSignal,
+        dispatchState,
       );
       return {
         result: {
@@ -10223,6 +10703,48 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         fallbackReason,
       ),
     };
+  }
+
+  async _reconcileCoordinateClickWithDeadline(
+    tabId,
+    point,
+    messageRecipientContext = {},
+    upstreamAbortSignal = null,
+  ) {
+    const dispatchState = { started: false };
+    try {
+      return await this._withContentActionDeadline(
+        deadlineAbortSignal => {
+          const linked = this._linkAbortSignals(deadlineAbortSignal, upstreamAbortSignal);
+          return Promise.resolve(this._reconcileCoordinateClick(
+            tabId,
+            point,
+            messageRecipientContext,
+            linked.signal,
+            dispatchState,
+          )).finally(linked.dispose);
+        },
+        'click',
+        this._contentActionDeadlineMs('click'),
+      );
+    } catch (error) {
+      if (error?.code === 'content_action_timeout') {
+        return {
+          result: dispatchState.started
+            ? this._contentActionTimeoutResult('click', error)
+            : {
+                success: false,
+                dispatched: false,
+                noDispatch: true,
+                outcomeUnknown: false,
+                retryable: true,
+                error: `${error.message} No click was sent because coordinate target resolution did not finish. Re-observe the page before retrying.`,
+              },
+          diagnostic: null,
+        };
+      }
+      throw error;
+    }
   }
 
   /**
@@ -13645,16 +14167,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     tabId,
     beforeStates,
     context,
-    { allFrames = false, checkpointsMs = [0, 120, 350, 800, 1200] } = {},
+    { allFrames = false, checkpointsMs = [0, 120, 350, 800, 1200], abortSignal = null } = {},
   ) {
+    this._throwIfAborted(abortSignal);
     const before = Array.isArray(beforeStates) ? beforeStates : [];
     const startedAt = Date.now();
     for (let checkpointIndex = 0; checkpointIndex < checkpointsMs.length; checkpointIndex += 1) {
+      this._throwIfAborted(abortSignal);
       const checkpoint = checkpointsMs[checkpointIndex];
       const targetDelay = Math.max(0, Number(checkpoint) || 0);
       const remaining = targetDelay - (Date.now() - startedAt);
       if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+      this._throwIfAborted(abortSignal);
       const after = await this._captureFormValidationState(tabId, { allFrames });
+      this._throwIfAborted(abortSignal);
       const failure = this._detectFormValidationFailure(before, after, {
         ...context,
         includeCorrectedPersistentValidation:
@@ -14316,7 +14842,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       if (!selector || !globalThis.chrome?.debugger || typeof cdpClient?.resolveSelector !== 'function') return null;
       await cdpClient.attach(tabId);
-      const info = await cdpClient.resolveSelector(tabId, String(selector), { retries: 0, delayMs: 0 });
+      const info = await cdpClient.resolveSelector(tabId, String(selector), { retries: 0, delayMs: 0, scroll: false });
       if (!info?.found || !info.nodeId) return null;
       const described = await cdpClient.describeNode(tabId, info.nodeId);
       const node = described?.node || {};
@@ -14765,7 +15291,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _promptWorkflowTargetHealing(tabId, workflow, step, stepIndex, candidates, onUpdate) {
     const choices = Array.isArray(candidates) ? candidates.slice(0, 5) : [];
     if (!choices.length) return null;
-    const clarifyId = `workflow_heal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const clarifyId = `workflow_heal_${secureRandomBase36Token(12)}`;
     const tabPending = this._pendingClarifications.get(tabId) || new Map();
     this._pendingClarifications.set(tabId, tabPending);
     const responsePromise = new Promise((resolve) => {
@@ -19888,21 +20414,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!guardId) return response;
     const originalResponse = { ...response };
     delete originalResponse._filePickerGuardId;
-
-    await new Promise(resolve => setTimeout(resolve, 525));
-    try {
-      let settled = await chrome.tabs.sendMessage(tabId, {
+    const consumeGuard = () => this._withContentActionDeadline(
+      () => chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'consume_file_picker_guard',
         params: { guardId },
-      });
+      }),
+      'consume_file_picker_guard',
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 525));
+    try {
+      let settled = await consumeGuard();
       if (settled?.settled === false) {
         await new Promise(resolve => setTimeout(resolve, 50));
-        settled = await chrome.tabs.sendMessage(tabId, {
-          target: 'content',
-          action: 'consume_file_picker_guard',
-          params: { guardId },
-        });
+        settled = await consumeGuard();
       }
       if (settled?.filePickerBlocked) {
         const blockedResponse = { ...settled };
@@ -19921,14 +20447,91 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return originalResponse;
   }
 
-  async _completeSetCheckedWithCdp(tabId, args, response, contentArgs) {
+  async _completeSetCheckedWithCdp(
+    tabId,
+    args,
+    response,
+    contentArgs,
+    upstreamAbortSignal = null,
+    upstreamDispatchState = null,
+  ) {
     if (!response || response.success !== true || response.needsTrustedClick !== true) {
       return response;
     }
+    const recoveryState = { clickStarted: false, clickResult: null, trustedClickSucceeded: false };
+    if (upstreamAbortSignal) {
+      return this._completeSetCheckedWithCdpImpl(
+        tabId,
+        args,
+        response,
+        contentArgs,
+        upstreamAbortSignal,
+        recoveryState,
+        upstreamDispatchState,
+      );
+    }
+    try {
+      return await this._withContentActionDeadline(
+        abortSignal => this._completeSetCheckedWithCdpImpl(
+          tabId,
+          args,
+          response,
+          contentArgs,
+          abortSignal,
+          recoveryState,
+          upstreamDispatchState,
+        ),
+        'set_checked',
+      );
+    } catch (error) {
+      if (error?.code !== 'content_action_timeout') throw error;
+      const clickDispatched = recoveryState.clickStarted;
+      const timedOut = {
+        ...response,
+        ...(clickDispatched
+          ? this._contentActionTimeoutResult('set_checked', error)
+          : {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+              error: `${error.message} No checkbox click was sent because trusted recovery did not finish preparing. Re-read the page before retrying.`,
+            }),
+        trusted: recoveryState.trustedClickSucceeded,
+        verified: false,
+        needsTrustedClick: false,
+        checkedBefore: response.checkedBefore,
+        checkedAfter: undefined,
+        desiredChecked: args.checked,
+        changed: undefined,
+        checkboxIdentity: String(response.checkboxIdentity || ''),
+        checkboxState: undefined,
+        selector: response.selector || response.trustedSelector,
+        rect: recoveryState.clickResult?.rect || response.rect,
+        marker: undefined,
+        trustedSelector: undefined,
+      };
+      delete timedOut._confirmationSurfaces;
+      return timedOut;
+    }
+  }
+
+  async _completeSetCheckedWithCdpImpl(
+    tabId,
+    args,
+    response,
+    contentArgs,
+    abortSignal = null,
+    recoveryState = { clickStarted: false, clickResult: null, trustedClickSucceeded: false },
+    upstreamDispatchState = null,
+  ) {
+    this._throwIfAborted(abortSignal);
     const confirmationSurfacesBefore = Array.isArray(response._confirmationSurfaces)
       ? response._confirmationSurfaces
       : [];
     const beforeDocument = await this._getDevDocumentIdentity(tabId);
+    this._throwIfAborted(abortSignal);
     const trustedSelector = String(response.trustedSelector || '');
     const marker = String(response.marker || '');
     let clickResult = null;
@@ -19938,22 +20541,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       if (!trustedSelector) throw new Error('Checkbox preflight did not return a trusted selector');
       await cdpClient.attach(tabId);
+      this._throwIfAborted(abortSignal);
       clickResult = await cdpClient.clickElement(tabId, trustedSelector, {
         trustedOnly: true,
         requireUnique: true,
+        abortSignal,
+        deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.deadlineAt) || 0,
+        deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.error || null,
+        beforeDispatch: () => {
+          recoveryState.clickStarted = true;
+          if (upstreamDispatchState) upstreamDispatchState.started = true;
+          return { success: true };
+        },
       });
+      recoveryState.clickResult = clickResult;
+      this._throwIfAborted(abortSignal);
       trustedClickSucceeded = clickResult?.success === true
         && (clickResult.method === 'cdp-mouse' || clickResult.method === 'cdp-mouse-closed-shadow');
+      recoveryState.trustedClickSucceeded = trustedClickSucceeded;
       if (!trustedClickSucceeded) {
         throw new Error(clickResult?.error || 'Trusted selector click did not use CDP mouse input');
       }
     } catch (error) {
       clickError = error;
     }
+    this._throwIfAborted(abortSignal);
 
     const clickDispatched = clickResult?.dispatched === true || clickResult?.success === true;
     if (clickDispatched) {
       await new Promise(resolve => setTimeout(resolve, SET_CHECKED_VERIFY_DELAY_MS));
+      this._throwIfAborted(abortSignal);
     }
 
     let verified = null;
@@ -19963,25 +20580,54 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // document token and one-shot marker still identify the exact control,
       // while the pre-click URL would incorrectly reject the post-click probe.
       delete verificationArgs.expectedPageUrl;
-      verified = await chrome.tabs.sendMessage(tabId, {
-        target: 'content',
-        action: 'set_checked',
-        params: {
-          ...verificationArgs,
-          probeOnly: true,
-          markForTrustedClick: false,
-          cleanupMarker: marker || undefined,
-        },
-      });
+      verified = await this._withContentActionDeadline(
+        () => chrome.tabs.sendMessage(tabId, {
+          target: 'content',
+          action: 'set_checked',
+          params: {
+            ...verificationArgs,
+            probeOnly: true,
+            markForTrustedClick: false,
+            cleanupMarker: marker || undefined,
+          },
+        }),
+        'set_checked',
+      );
+      this._throwIfAborted(abortSignal);
     } catch (error) {
       verificationError = error;
       if (!clickError) clickError = error;
+    }
+
+    if (verificationError?.code === 'content_action_timeout' && clickDispatched) {
+      const timedOut = {
+        ...response,
+        ...this._contentActionTimeoutResult('set_checked', verificationError),
+        dispatched: true,
+        noDispatch: undefined,
+        trusted: trustedClickSucceeded,
+        verified: false,
+        needsTrustedClick: false,
+        checkedBefore: response.checkedBefore,
+        checkedAfter: undefined,
+        desiredChecked: args.checked,
+        changed: undefined,
+        checkboxIdentity: String(response.checkboxIdentity || ''),
+        checkboxState: undefined,
+        selector: response.selector || trustedSelector,
+        rect: clickResult?.rect || response.rect,
+        marker: undefined,
+        trustedSelector: undefined,
+      };
+      delete timedOut._confirmationSurfaces;
+      return timedOut;
     }
 
     const verificationObservedState = typeof verified?.checkedAfter === 'boolean';
     let afterDocument = null;
     if (trustedClickSucceeded && !verificationObservedState) {
       afterDocument = await this._getDevDocumentIdentity(tabId);
+      this._throwIfAborted(abortSignal);
     }
     const documentChanged = !!(
       beforeDocument?.documentId
@@ -20494,9 +21140,103 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
+    const context = executionContext && typeof executionContext === 'object'
+      ? executionContext
+      : {};
+    const needsEntryActionDeadline = EARLY_CDP_ACTION_TOOLS.has(name)
+      && !(name === 'click' && context.dispatchBinding?.token);
+    if (needsEntryActionDeadline && !context._contentActionAbortSignal) {
+      const dispatchState = { started: false };
+      try {
+        return await this._withContentActionDeadline(
+          abortSignal => this._executeToolImpl(tabId, name, args, onUpdate, {
+            ...context,
+            _contentActionAbortSignal: abortSignal,
+            _contentActionDispatchState: dispatchState,
+          }),
+          name,
+          this._contentActionDeadlineMs(name, args),
+        );
+      } catch (error) {
+        if (error?.code === 'content_action_timeout') {
+          if (dispatchState.started) return this._contentActionTimeoutResult(name, error);
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            outcomeUnknown: false,
+            retryable: true,
+            error: `${error.message} No ${name} input was sent because action preparation did not finish. Re-observe the page before retrying.`,
+          };
+        }
+        throw error;
+      }
+    }
+    return this._executeToolImpl(tabId, name, args, onUpdate, context);
+  }
+
+  async _executeToolImpl(tabId, name, args, onUpdate = null, executionContext = null) {
     const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
+    const earlyCdpAbortSignal = dispatchContext._contentActionAbortSignal || null;
+    const earlyCdpDispatchState = dispatchContext._contentActionDispatchState || { started: false };
+    const throwIfEarlyCdpAborted = () => this._throwIfAborted(earlyCdpAbortSignal);
+    const markEarlyCdpDispatched = () => { earlyCdpDispatchState.started = true; };
+    const cancelEarlyCdpPressedPointer = async () => {
+      try {
+        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved', x: -1, y: -1, button: 'left', buttons: 1, clickCount: 0,
+        });
+      } catch {}
+      try {
+        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased', x: -1, y: -1, button: 'left', buttons: 0, clickCount: 0,
+        });
+      } catch {}
+    };
+    const dispatchEarlyCdpKeyPress = async ({ key, code, windowsVirtualKeyCode, modifiers = 0 }) => {
+      const keyParams = { key, code, windowsVirtualKeyCode, ...(modifiers ? { modifiers } : {}) };
+      const releaseKey = async () => {
+        try {
+          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            ...keyParams,
+          });
+        } catch {}
+      };
+      throwIfEarlyCdpAborted();
+      markEarlyCdpDispatched();
+      try {
+        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyDown',
+          ...keyParams,
+        });
+      } catch (error) {
+        if (earlyCdpAbortSignal?.aborted) {
+          await releaseKey();
+          throwIfEarlyCdpAborted();
+        }
+        throw error;
+      }
+      if (earlyCdpAbortSignal?.aborted) {
+        await releaseKey();
+        throwIfEarlyCdpAborted();
+      }
+      try {
+        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          ...keyParams,
+        });
+      } catch (error) {
+        if (earlyCdpAbortSignal?.aborted) {
+          await releaseKey();
+          throwIfEarlyCdpAborted();
+        }
+        throw error;
+      }
+      throwIfEarlyCdpAborted();
+    };
     args = this._normalizeContinuationToolArgs(name, args);
     let coordinatePoint = null;
     let coordinateDiagnostic = null;
@@ -20559,6 +21299,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       args,
       dispatchContext,
     );
+    throwIfEarlyCdpAborted();
     if (richTextToolbarBlock) return richTextToolbarBlock;
     const dispatchBinding = dispatchContext.dispatchBinding || null;
     const messageRecipientGuardRequired = dispatchContext.messageRecipientGuardRequired === true;
@@ -20613,6 +21354,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
     const protectedFailure = await this._chromeProtectedPageFailure(tabId, name);
+    throwIfEarlyCdpAborted();
     if (protectedFailure) {
       if (dispatchBinding) {
         await this._releaseRichTextToolbarProbeTarget(tabId, dispatchBinding);
@@ -23194,6 +23936,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'iframe_click') {
       let dispatched = false;
       try {
+        throwIfEarlyCdpAborted();
         const urlFilter = String(args.urlFilter || '').trim();
         const selector = args.selector;
         if (!selector) {
@@ -23225,6 +23968,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let binding = dispatchBinding;
         if (!binding?.token || !Number.isInteger(binding.frameId)) {
           const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          throwIfEarlyCdpAborted();
           if (targetProbe?.ambiguous) {
             return {
               success: false,
@@ -23239,7 +23983,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           binding = targetProbe?.dispatchBinding || null;
         }
         if (binding?.token && Number.isInteger(binding.frameId)) {
+          throwIfEarlyCdpAborted();
           dispatched = true;
+          markEarlyCdpDispatched();
           const response = await chrome.tabs.sendMessage(tabId, {
             target: 'content',
             action: 'click',
@@ -23276,6 +24022,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           },
           args: [selector, urlFilter, requestedMatchIndex],
         });
+        throwIfEarlyCdpAborted();
         const invalidSelector = census.map(item => item?.result).find(result => result?.invalidSelector);
         if (invalidSelector) {
           return { success: false, dispatched: false, noDispatch: true, error: `Invalid selector: ${invalidSelector.error}` };
@@ -23300,7 +24047,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         }
         const selected = candidates[0];
+        throwIfEarlyCdpAborted();
         dispatched = true;
+        markEarlyCdpDispatched();
         const clicked = await chrome.scripting.executeScript({
           target: { tabId, frameIds: [selected.frameId] },
           func: (sel, matchIndex) => {
@@ -23344,6 +24093,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'iframe_type') {
       let dispatched = false;
       try {
+        throwIfEarlyCdpAborted();
         const selector = args.selector;
         const urlFilter = String(args.urlFilter || '').trim();
         const text = args.text || '';
@@ -23374,6 +24124,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && dispatchContext.iframeTargetUnresolved !== true
         ) {
           const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          throwIfEarlyCdpAborted();
           if (targetProbe?.ambiguous) {
             return {
               success: false,
@@ -23390,16 +24141,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           targetFrameId = binding?.frameId;
         }
         if (!Number.isInteger(targetFrameId) || !binding?.token) {
-          dispatched = true;
-          return this._legacyIframeTypeAllFrames(tabId, {
+          throwIfEarlyCdpAborted();
+          const legacyResult = await this._legacyIframeTypeAllFrames(tabId, {
             selector,
             text,
             clear,
             urlFilter,
             matchIndex: args.matchIndex,
+          }, {
+            abortSignal: earlyCdpAbortSignal,
+            deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0,
+            deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.error || null,
+            beforeDispatch: () => {
+              dispatched = true;
+              markEarlyCdpDispatched();
+            },
           });
+          if (legacyResult?.dispatched !== true && legacyResult?.noDispatch === true) {
+            dispatched = false;
+            earlyCdpDispatchState.started = false;
+          }
+          return legacyResult;
         }
+        throwIfEarlyCdpAborted();
         dispatched = true;
+        markEarlyCdpDispatched();
         try {
           const response = await chrome.tabs.sendMessage(tabId, {
             target: 'content',
@@ -23711,6 +24477,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return await this._discoverCompactUploadTargets(tabId);
         }
         const resolvedTarget = await this._resolveCompactUploadTarget(tabId, args.targetId);
+        throwIfEarlyCdpAborted();
         if (!resolvedTarget.ok) return resolvedTarget.result;
         args = {
           attachmentId: String(args.attachmentId),
@@ -23756,6 +24523,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               else resolve(res);
             });
           });
+          throwIfEarlyCdpAborted();
           const it = items && items[0];
           if (!it) {
             if (!suppliedFilePath) return { success: false, error: `No download found for downloadId ${args.downloadId}. Use list_downloads to see valid ids.` };
@@ -23777,7 +24545,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let uploadQuery = null;
       try {
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
         uploadQuery = await cdpClient.querySelectorPierce(tabId, args.selector);
+        throwIfEarlyCdpAborted();
         const objectIds = uploadQuery?.objectIds || [];
         if (objectIds.length === 0) {
           if (compactUpload) {
@@ -23808,8 +24578,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         if (attachmentPayload) {
-          uploadDispatched = true;
-          const injected = await cdpClient.setFileInputData(tabId, objectIds[0], attachmentPayload);
+          throwIfEarlyCdpAborted();
+          const uploadDeadlineAt = Number(
+            CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt,
+          ) || 0;
+          const injected = await cdpClient.setFileInputData(
+            tabId,
+            objectIds[0],
+            attachmentPayload,
+            {
+              abortSignal: earlyCdpAbortSignal,
+              deadlineAt: uploadDeadlineAt,
+              beforeDispatch: () => {
+                uploadDispatched = true;
+                markEarlyCdpDispatched();
+              },
+            },
+          );
+          if (injected?.deadlineExpired && injected?.dispatched !== true) {
+            uploadDispatched = false;
+            earlyCdpDispatchState.started = false;
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+              deadlineExpired: true,
+              error: injected.error || 'Upload action deadline expired before dispatch',
+            };
+          }
+          throwIfEarlyCdpAborted();
           if (!injected?.success) {
             return {
               success: false,
@@ -23819,7 +24618,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
 
           let files = null;
-          try { files = await cdpClient.getFileInputFiles(tabId, objectIds[0]); } catch {}
+          try {
+            files = await cdpClient.getFileInputFiles(tabId, objectIds[0]);
+            throwIfEarlyCdpAborted();
+          } catch (error) {
+            if (earlyCdpAbortSignal?.aborted) throwIfEarlyCdpAborted();
+          }
           if (Array.isArray(files) && files.length) {
             const attached = files.find(file => file.name === attachmentPayload.filename) || files[files.length - 1];
             return {
@@ -23855,6 +24659,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         //   {exists:false, readable:null}  → nothing attached: probe inconclusive
         //   null                           → probe couldn't run: inconclusive
         const probe = await cdpClient.probeLocalFile(tabId, args.filePath);
+        throwIfEarlyCdpAborted();
         if (probe && probe.exists && probe.readable === false) {
           return { success: false, error: `"${args.filePath}" could not be read — it almost certainly does not exist at that path. Confirm the absolute path (use list_downloads to see where files were actually saved) and retry.` };
         }
@@ -23867,8 +24672,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // pre-validation exists to prevent).
         const pathConfirmed = !!(probe && probe.exists && probe.readable === true);
 
+        throwIfEarlyCdpAborted();
         uploadDispatched = true;
+        markEarlyCdpDispatched();
         await cdpClient.setFileInputFiles(tabId, objectIds[0], [args.filePath]);
+        throwIfEarlyCdpAborted();
 
         // Verify the file actually attached. CDP's DOM.setFileInputFiles does
         // NOT throw on a non-existent path — it silently attaches a 0-byte
@@ -23881,8 +24689,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let readOk = false;
         try {
           files = await cdpClient.getFileInputFiles(tabId, objectIds[0]);
+          throwIfEarlyCdpAborted();
           readOk = Array.isArray(files);
-        } catch { readOk = false; }
+        } catch (error) {
+          if (earlyCdpAbortSignal?.aborted) throwIfEarlyCdpAborted();
+          readOk = false;
+        }
 
         if (readOk) {
           if (files.length === 0) {
@@ -23951,6 +24763,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           note: 'The local file was readable and the page handled the attachment event, but upload_file could not read the resulting FileList. This does not prove a remote upload or form submission; verify the page state and submit/commit when required.',
         };
       } catch (e) {
+        if (e?.code === 'content_action_timeout') throw e;
         return { success: false, dispatched: uploadDispatched, error: `Upload failed: ${e.message}` };
       } finally {
         await cdpClient.releaseObjectGroup(tabId, uploadQuery?.objectGroup);
@@ -23980,6 +24793,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (name === 'click' && !dispatchBinding?.token) {
       try {
+        throwIfEarlyCdpAborted();
         const duplicateSubmit = await guardRecentSubmitClick(
           this._recentSubmitClicks,
           tabId,
@@ -23989,20 +24803,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             return tab?.url || '';
           },
         );
+        throwIfEarlyCdpAborted();
         if (duplicateSubmit) return duplicateSubmit;
 
         if (coordinatePoint) {
-          const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint, {
+          const reconciled = await this._reconcileCoordinateClickWithDeadline(tabId, coordinatePoint, {
             messageRecipientGuardRequired,
             messageRecipientDispatchBinding,
             expectedName: args.expected_name,
             expectedRole: args.expected_role,
-          });
+          }, earlyCdpAbortSignal);
+          throwIfEarlyCdpAborted();
           if (reconciled.result) return reconciled.result;
           coordinateDiagnostic = reconciled.diagnostic;
         }
 
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
 
         // ── Global SELECT guard ─────────────────────────────────────────
         // Inject a capture-phase mousedown+click listener that prevents
@@ -24055,6 +24872,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             });
           }
         `);
+        throwIfEarlyCdpAborted();
 
         // Detect common LLM mistakes: jQuery / Playwright pseudo-classes
         // that look like CSS but aren't.
@@ -24071,7 +24889,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // is trying to click an option inside a native/custom dropdown.
           // Instead of clicking (which fails for native selects), we select
           // the option directly via keyboard arrows.
-          const autoSelResult = await this._autoSelectOption(tabId, cdpClient, args.text);
+          const autoSelResult = await this._autoSelectOption(
+            tabId,
+            cdpClient,
+            args.text,
+            earlyCdpAbortSignal,
+            markEarlyCdpDispatched,
+          );
           if (autoSelResult) return autoSelResult;
 
           // Text-based click with auto-fallback matching.
@@ -24179,7 +25003,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   const ok = (needle === ltxt) || ltxt.startsWith(needle) || ltxt.includes(needle);
                   if (ok) {
                     inp.scrollIntoView({ block: 'center', inline: 'center' });
-                    inp.focus();
                     let r = inp.getBoundingClientRect();
                     // Fallback for zero-dimension inputs (styled wrappers)
                     if (r.width === 0 || r.height === 0) {
@@ -24283,7 +25106,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   else target = ns.querySelector('input,textarea,select');
                 }
                 if (target) {
-                  target.focus();
                   el = target;
                 }
               }
@@ -24405,7 +25227,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       const ok = (needle === ltxt) || ltxt.startsWith(needle) || ltxt.includes(needle);
                       if (ok) {
                         inp.scrollIntoView({ block: 'center', inline: 'center' });
-                        inp.focus();
                         let r = inp.getBoundingClientRect();
                         if (r.width === 0 || r.height === 0) {
                           let p = inp.parentElement;
@@ -24464,7 +25285,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       if (/^(INPUT|TEXTAREA|SELECT)$/i.test(ns.tagName)) target = ns;
                       else target = ns.querySelector('input,textarea,select');
                     }
-                    if (target) { target.focus(); el = target; }
+                    if (target) el = target;
                   }
 
                   // Passive tag → interactive ancestor
@@ -24702,10 +25523,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               };
             }
           }
-          // <select> intercept: don't dispatch mouse events — the native
-          // dropdown popup can't be controlled via CDP. Focus the element
-          // via JS so the follow-up type_text() finds it as activeElement,
-          // then return guidance.
+          // <select> intercept: don't dispatch mouse events or mutate focus.
+          // The model can target the select explicitly with type_text.
           if (info.tag === 'SELECT') {
             const optionsInfo = await cdpClient.evaluate(tabId, `
               (() => {
@@ -24714,7 +25533,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 for (const sel of all) {
                   const t = (sel.innerText || sel.value || '').trim().toLowerCase();
                   if (t.includes(${JSON.stringify((args.text || '').toLowerCase())})) {
-                    sel.focus();
                     return {
                       current: sel.options[sel.selectedIndex]?.text?.trim() || '',
                       options: Array.from(sel.options).map(o => o.text.trim()),
@@ -24730,7 +25548,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               dispatched: false,
               tag: 'SELECT',
               text: opts?.current || info.text,
-              error: 'CANNOT CLICK a <select> dropdown — clicking opens a native OS popup that cannot be controlled. The dropdown is now focused. Use type_text({text: "option name"}) to change the value.' + (opts?.options ? ' Available options: ' + opts.options.join(', ') : ''),
+              error: 'CANNOT CLICK a <select> dropdown — clicking opens a native OS popup that cannot be controlled. Read the current accessibility tree and use type_ax on the select, or use type_text with its exact selector.' + (opts?.options ? ' Available options: ' + opts.options.join(', ') : ''),
             };
           }
 
@@ -24766,7 +25584,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               }
               const sel = findSelect(el);
               if (!sel) return null;
-              sel.focus();
               return { isSelect: true, current: sel.options[sel.selectedIndex]?.text?.trim() || '', options: Array.from(sel.options).map(o => o.text.trim()) };
             })()
           `);
@@ -24774,13 +25591,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // Instead of returning a hint, try auto-selecting if the
             // clicked text matches an option (already handled above).
             // If we got here, the text matched the current value or a
-            // non-option label. Return guidance but also focus the select.
+            // non-option label. Return guidance without changing focus.
             const cs = coordSelCheck.result.value;
             return {
-              success: true,
+              success: false,
+              dispatched: false,
+              noDispatch: true,
               tag: 'SELECT',
               text: cs.current,
-              hint: `This is a <select> dropdown (current: "${cs.current}"). Use type_text({text: "option name"}) to change it. Available options: ${cs.options.join(', ')}`,
+              error: `This is a <select> dropdown (current: "${cs.current}"). Read the current accessibility tree and use type_ax on the select, or use type_text with its exact selector. Available options: ${cs.options.join(', ')}`,
             };
           }
 
@@ -24792,6 +25611,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const progressBeforeText = await this._clickProgressSnapshot(tabId);
           const beforeTabIdsText = new Set((await chrome.tabs.query({})).map(t => t.id));
           await new Promise(r => setTimeout(r, 100));
+          throwIfEarlyCdpAborted();
           this._showAgentTarget(tabId, {
             x: Math.round(info.x - (Number(info.width) || 1) / 2),
             y: Math.round(info.y - (Number(info.height) || 1) / 2),
@@ -24799,7 +25619,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             h: Math.round(Number(info.height) || 1),
           }, 'click_text');
           await cdpClient.armFileInputClickGuard(tabId);
+          throwIfEarlyCdpAborted();
           await cdpClient.dispatchMouseEvent(tabId, 'mouseMoved', info.x, info.y);
+          throwIfEarlyCdpAborted();
           if (messageRecipientGuardRequired) {
             const recipientValidation = await this._consumeMessageRecipientDispatchBinding(
               tabId,
@@ -24808,8 +25630,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             );
             if (recipientValidation?.success !== true) return recipientValidation;
           }
-          await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', info.x, info.y);
-          await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', info.x, info.y);
+          throwIfEarlyCdpAborted();
+          markEarlyCdpDispatched();
+          let textPointerPressed = false;
+          try {
+            await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', info.x, info.y);
+            textPointerPressed = true;
+            throwIfEarlyCdpAborted();
+            await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', info.x, info.y);
+            textPointerPressed = false;
+            throwIfEarlyCdpAborted();
+          } catch (error) {
+            if (earlyCdpAbortSignal?.aborted && textPointerPressed) {
+              await cancelEarlyCdpPressedPointer();
+            }
+            throw error;
+          }
           const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
           if (blockedFileInput?.blocked) {
             return cdpClient.fileInputClickBlockedResult(
@@ -24903,41 +25739,40 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return await this._annotateClickProgress(tabId, 'click', args, clickResponse, progressBeforeText, { editable: isEditableTarget });
         }
         if (args.selector) {
-          // Check if the selector targets a <select> element before clicking.
-          // If it is, focus the element (so type_text finds it) and return guidance.
-          const selTagCheck = await cdpClient.evaluate(tabId, `
-            (() => {
-              const el = document.querySelector(${JSON.stringify(args.selector)});
-              if (!el) return null;
-              if (el.tagName === 'SELECT') {
-                el.focus();
-                const opts = Array.from(el.options).map(o => o.text.trim());
-                return { isSelect: true, current: el.options[el.selectedIndex]?.text?.trim() || '', options: opts };
-              }
-              return { isSelect: false };
-            })()
-          `);
-          const selTag = selTagCheck?.result?.value;
-          if (selTag?.isSelect) {
-            return {
-              success: true,
-              tag: 'SELECT',
-              text: selTag.current,
-              hint: `This is a <select> dropdown (current: "${selTag.current}"). Do NOT click it — use type_text({text: "option name"}) to select an option. Available options: ${selTag.options.join(', ')}`,
-            };
-          }
           const progressBeforeSel = await this._clickProgressSnapshot(tabId);
           const beforeTabIdsSel = new Set((await chrome.tabs.query({})).map(t => t.id));
-          const selResult = await cdpClient.clickElement(tabId, args.selector, messageRecipientGuardRequired
-            ? {
-                trustedOnly: true,
-                beforeDispatch: ({ x, y }) => this._consumeMessageRecipientDispatchBinding(
+          throwIfEarlyCdpAborted();
+          const selResult = await cdpClient.clickElement(tabId, args.selector, {
+            abortSignal: earlyCdpAbortSignal,
+            deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0,
+            deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.error || null,
+            ...(messageRecipientGuardRequired ? { trustedOnly: true } : {}),
+            beforeDispatch: async ({ x, y }) => {
+              if (messageRecipientGuardRequired) {
+                const validation = await this._consumeMessageRecipientDispatchBinding(
                   tabId,
                   messageRecipientDispatchBinding,
                   { dispatchPoint: { x, y } },
-                ),
+                );
+                if (validation?.success !== true) return validation;
               }
-            : {});
+              throwIfEarlyCdpAborted();
+              markEarlyCdpDispatched();
+              return { success: true };
+            },
+          });
+          if (selResult?.deadlineExpired === true && selResult?.dispatched !== true) {
+            earlyCdpDispatchState.started = false;
+            return {
+              ...selResult,
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+            };
+          }
+          throwIfEarlyCdpAborted();
           if (selResult?.success) this._showAgentTarget(tabId, selResult.rect || selResult, 'click_selector');
           const redirectedSel = await this._redirectTargetBlankClick(tabId, beforeTabIdsSel);
           if (redirectedSel?.redirected) {
@@ -24961,7 +25796,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               let target = el;
               for (let i = 0; i < 5 && target; i++) {
                 if (target.tagName === 'SELECT') {
-                  target.focus();
                   const opts = Array.from(target.options).map(o => o.text.trim());
                   return { isSelect: true, current: target.options[target.selectedIndex]?.text?.trim() || '', options: opts };
                 }
@@ -24972,7 +25806,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               if (p) {
                 for (const sib of p.children) {
                   if (sib.tagName === 'SELECT') {
-                    sib.focus();
                     const opts = Array.from(sib.options).map(o => o.text.trim());
                     return { isSelect: true, current: sib.options[sib.selectedIndex]?.text?.trim() || '', options: opts };
                   }
@@ -24988,7 +25821,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               dispatched: false,
               tag: 'SELECT',
               text: coordTag.current,
-              error: `CANNOT CLICK a <select> dropdown at (${args.x}, ${args.y}) — clicking opens a native OS popup that cannot be controlled. The dropdown is now focused (current: "${coordTag.current}"). Use type_text({text: "option name"}) to change the value. Available options: ${coordTag.options.join(', ')}`,
+              error: `CANNOT CLICK a <select> dropdown at (${args.x}, ${args.y}) — clicking opens a native OS popup that cannot be controlled. Read the current accessibility tree and use type_ax on the select, or use type_text with its exact selector. Current: "${coordTag.current}". Available options: ${coordTag.options.join(', ')}`,
             };
           }
           // Smart coordinate redirect: if (x,y) lands on a label, wrapper,
@@ -24997,17 +25830,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // not on the label above it.
           const coordRedirect = await cdpClient.evaluate(tabId, `
             (() => {
+              const actionDeadlineAt = ${Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0};
+              const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+              if (deadlineExpired()) return { deadlineExpired: true };
               const el = document.elementFromPoint(${args.x}, ${args.y});
               if (!el) return null;
 
-              // Already on an input — just focus it, click as-is
+              // Preserve the legacy nearby-input focus heuristic, but only
+              // while the owning action deadline is still live.
               if (/^(INPUT|TEXTAREA)$/i.test(el.tagName)) {
+                if (deadlineExpired()) return { deadlineExpired: true };
                 el.focus();
                 return null; // no redirect needed
               }
-              // SELECT: focus but flag it so we can intercept before mouse events
+              // SELECT: flag it so we can intercept before mouse events.
               if (el.tagName === 'SELECT') {
-                el.focus();
                 const opts = Array.from(el.options).map(o => o.text.trim());
                 return { isSelect: true, current: el.options[el.selectedIndex]?.text?.trim() || '', options: opts };
               }
@@ -25045,8 +25882,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
               if (!target) return null;
 
-              // Focus the input and return its center coordinates
+              // Focus the redirected input only while the owning action is
+              // live, then return its center for the trusted mouse dispatch.
               if (target.tagName !== 'SELECT') target.scrollIntoView({ block: 'center', inline: 'center' });
+              if (deadlineExpired()) return { deadlineExpired: true };
               target.focus();
               let r = target.getBoundingClientRect();
 
@@ -25066,6 +25905,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               };
             })()
           `);
+          throwIfEarlyCdpAborted();
           const redir = coordRedirect?.result?.value;
 
           // If coordinate redirect detected a SELECT, don't dispatch mouse
@@ -25076,7 +25916,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               dispatched: false,
               tag: 'SELECT',
               text: redir.current,
-              error: `CANNOT CLICK a <select> dropdown at (${args.x}, ${args.y}) — clicking opens a native OS popup that cannot be controlled. The dropdown is now focused (current: "${redir.current}"). Use type_text({text: "option name"}) to change the value. Available options: ${redir.options.join(', ')}`,
+              error: `CANNOT CLICK a <select> dropdown at (${args.x}, ${args.y}) — clicking opens a native OS popup that cannot be controlled. Read the current accessibility tree and use type_ax on the select, or use type_text with its exact selector. Current: "${redir.current}". Available options: ${redir.options.join(', ')}`,
             };
           }
 
@@ -25088,7 +25928,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const beforeTabIdsCoord = new Set((await chrome.tabs.query({})).map(t => t.id));
           this._showAgentTarget(tabId, { x: Math.round(clickX), y: Math.round(clickY), w: 1, h: 1 }, 'click_coordinates');
           await cdpClient.armFileInputClickGuard(tabId);
+          throwIfEarlyCdpAborted();
           await cdpClient.dispatchMouseEvent(tabId, 'mouseMoved', clickX, clickY);
+          throwIfEarlyCdpAborted();
           if (messageRecipientGuardRequired) {
             const recipientValidation = await this._consumeMessageRecipientDispatchBinding(
               tabId,
@@ -25097,8 +25939,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             );
             if (recipientValidation?.success !== true) return recipientValidation;
           }
-          await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', clickX, clickY);
-          await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', clickX, clickY);
+          throwIfEarlyCdpAborted();
+          markEarlyCdpDispatched();
+          let coordinatePointerPressed = false;
+          try {
+            await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', clickX, clickY);
+            coordinatePointerPressed = true;
+            throwIfEarlyCdpAborted();
+            await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', clickX, clickY);
+            coordinatePointerPressed = false;
+            throwIfEarlyCdpAborted();
+          } catch (error) {
+            if (earlyCdpAbortSignal?.aborted && coordinatePointerPressed) {
+              await cancelEarlyCdpPressedPointer();
+            }
+            throw error;
+          }
           const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
           if (blockedFileInput?.blocked) {
             return cdpClient.fileInputClickBlockedResult(
@@ -25167,6 +26023,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let dispatched = false;
       try {
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
         if (args.index != null) {
           return {
             success: false,
@@ -25192,6 +26049,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const prepared = await sendFocusedTarget('prepare_focused_type_dispatch', {
               text: args.text || '',
             });
+            throwIfEarlyCdpAborted();
             if (!prepared?.success) {
               tokenConsumed = !!prepared;
               return prepared || {
@@ -25214,27 +26072,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 };
               }
               dispatched = true;
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
-              });
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
+              await dispatchEarlyCdpKeyPress({
+                key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
               });
               const delta = selectInfo.targetIndex - selectInfo.currentIndex;
               const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
               const arrowVK = delta > 0 ? 40 : 38;
               for (let i = 0; i < Math.abs(delta); i += 1) {
-                await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                  type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
-                });
-                await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                  type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
+                await dispatchEarlyCdpKeyPress({
+                  key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
                 });
               }
               const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
                 targetText: selectInfo.targetText,
                 targetValue: selectInfo.targetValue,
               });
+              throwIfEarlyCdpAborted();
               if (!verification || verification.success !== true) {
                 throw new Error('Focused select verification returned no response.');
               }
@@ -25253,26 +26106,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const typeFieldEpoch = this._captureLastTypeFieldEpoch(tabId);
             if (args.clear) {
               dispatched = true;
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
+              await dispatchEarlyCdpKeyPress({
+                key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
               });
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
-              });
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-              });
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+              await dispatchEarlyCdpKeyPress({
+                key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
               });
             }
             dispatched = true;
+            markEarlyCdpDispatched();
             await cdpClient.sendCommand(tabId, 'Input.insertText', { text: args.text || '' });
+            throwIfEarlyCdpAborted();
             const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
               text: args.text || '',
               clear: !!args.clear,
               beforeSignature: prepared.beforeSignature || '',
             });
+            throwIfEarlyCdpAborted();
             if (!verification || verification.success !== true) {
               throw new Error('Focused typing verification returned no response.');
             }
@@ -25316,7 +26166,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           let expectedBackendNodeId = Number(dispatchBinding?.backendNodeId) || null;
           if (!expectedBackendNodeId) {
             try {
-              const probe = await cdpClient.probeRichTextToolbarSelector(tabId, args.selector);
+              const probe = await cdpClient.probeRichTextToolbarSelector(tabId, args.selector, {
+                abortSignal: earlyCdpAbortSignal,
+                deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0,
+                deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.error || null,
+              });
+              throwIfEarlyCdpAborted();
               expectedBackendNodeId = Number(probe?.selectorBackendNodeId) || null;
             } catch {
               return {
@@ -25345,12 +26200,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               args.text || '',
               !!args.clear,
               expectedBackendNodeId,
+              {
+                abortSignal: earlyCdpAbortSignal,
+                deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0,
+                deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.error || null,
+                beforeDispatch: markEarlyCdpDispatched,
+              },
             );
+            throwIfEarlyCdpAborted();
           } catch (error) {
+            const typeDispatched = earlyCdpDispatchState.started === true;
             return {
               success: false,
-              dispatched: true,
-              error: `Type failed after selector dispatch became uncertain: ${error?.message || String(error)}`,
+              ...(typeDispatched
+                ? { dispatched: true }
+                : { dispatched: false, noDispatch: true, retryable: true }),
+              error: typeDispatched
+                ? `Type failed after selector dispatch became uncertain: ${error?.message || String(error)}`
+                : `Type failed before selector dispatch: ${error?.message || String(error)}`,
             };
           }
           if (result.success) this._showAgentTarget(tabId, result.rect || result, 'type_text_selector');
@@ -25391,6 +26258,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               };
             })()
           `);
+          throwIfEarlyCdpAborted();
           const focus = focusCheck?.result?.value;
 
           if (!focus?.focused || !focus?.editable) {
@@ -25433,6 +26301,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 };
               })()
             `);
+            throwIfEarlyCdpAborted();
             const sInfo = selectInfo?.result?.value;
             if (!sInfo?.success) {
               return {
@@ -25444,11 +26313,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
             // Close any open native dropdown first
             dispatched = true;
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
-            });
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
+            await dispatchEarlyCdpKeyPress({
+              key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
             });
             // Re-focus the select (Escape may have blurred it)
             await cdpClient.evaluate(tabId, `
@@ -25460,6 +26326,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 }
               })()
             `);
+            throwIfEarlyCdpAborted();
 
             // Navigate with ArrowDown/ArrowUp — each key press changes the
             // selected option and fires native change events.
@@ -25468,11 +26335,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const arrowCode = delta > 0 ? 'ArrowDown' : 'ArrowUp';
             const arrowVK = delta > 0 ? 40 : 38;
             for (let i = 0; i < Math.abs(delta); i++) {
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyDown', key: arrowKey, code: arrowCode, windowsVirtualKeyCode: arrowVK,
-              });
-              await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-                type: 'keyUp', key: arrowKey, code: arrowCode, windowsVirtualKeyCode: arrowVK,
+              await dispatchEarlyCdpKeyPress({
+                key: arrowKey, code: arrowCode, windowsVirtualKeyCode: arrowVK,
               });
             }
 
@@ -25484,6 +26348,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 return { verified: true, selectedText: el.options[el.selectedIndex]?.text?.trim(), selectedValue: el.value };
               })()
             `);
+            throwIfEarlyCdpAborted();
             const v = verify?.result?.value;
             const verified = v?.verified === true && (
               v.selectedValue === sInfo.targetValue
@@ -25503,29 +26368,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
           const typeFieldEpoch = this._captureLastTypeFieldEpoch(tabId);
           const beforeSignature = await cdpClient.textEntrySignature(tabId, { focused: true });
+          throwIfEarlyCdpAborted();
           if (args.clear) {
             dispatched = true;
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
+            await dispatchEarlyCdpKeyPress({
+              key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
             });
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65,
-            });
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-            });
-            await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-              type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+            await dispatchEarlyCdpKeyPress({
+              key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
             });
           }
           dispatched = true;
+          markEarlyCdpDispatched();
           await cdpClient.sendCommand(tabId, 'Input.insertText', { text: args.text || '' });
+          throwIfEarlyCdpAborted();
           const verified = await cdpClient.verifyTextEntry(tabId, {
             focused: true,
             text: args.text || '',
             clear: !!args.clear,
             beforeSignature,
           });
+          throwIfEarlyCdpAborted();
 
           // Track field for duplicate-typing detection
           const fieldIdent = `focused:${focus.tag}|${focus.name}`;
@@ -25583,14 +26446,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       const keyProgressBefore = String(key).startsWith('Arrow')
-        ? await this._keyProgressSnapshot(tabId)
+        ? await this._keyProgressSnapshot(tabId, earlyCdpAbortSignal)
         : '';
+      throwIfEarlyCdpAborted();
 
       let guardedTargetConsumed = false;
       let messageRecipientConsumed = false;
       let keyDispatchAttempted = false;
       try {
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
         if (dispatchBinding?.token) {
           const validation = await chrome.tabs.sendMessage(tabId, {
             target: 'content',
@@ -25599,6 +26464,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }, Number.isInteger(dispatchBinding.frameId)
             ? { frameId: dispatchBinding.frameId }
             : undefined);
+          throwIfEarlyCdpAborted();
           if (validation?.success !== true) {
             return validation || {
               success: false,
@@ -25615,6 +26481,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             tabId,
             messageRecipientDispatchBinding,
           );
+          throwIfEarlyCdpAborted();
           if (recipientValidation?.success !== true) return recipientValidation;
           messageRecipientConsumed = true;
         }
@@ -25635,6 +26502,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         for (let i = 0; i < repeat; i++) {
           keyDispatchAttempted = true;
+          markEarlyCdpDispatched();
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyDown',
             key,
@@ -25647,6 +26515,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             code: keyMeta.code,
             windowsVirtualKeyCode: keyMeta.windowsVirtualKeyCode,
           });
+          throwIfEarlyCdpAborted();
         }
 
         return await this._verifyProvisionalKeyProgress(
@@ -25654,6 +26523,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           key,
           { success: true, dispatched: true, method: 'cdp-key', key, repeat },
           keyProgressBefore,
+          earlyCdpAbortSignal,
         );
       } catch (e) {
         if (guardedTargetConsumed || messageRecipientConsumed) {
@@ -25686,6 +26556,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const rectResp = await chrome.tabs.sendMessage(tabId, {
           target: 'content', action: 'ax_resolve_rect', params: { ref_id: refId },
         });
+        throwIfEarlyCdpAborted();
         if (!rectResp || !rectResp.success) {
           return rectResp || { success: false, error: 'hover: failed to resolve ref_id' };
         }
@@ -25696,21 +26567,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const r2 = await chrome.tabs.sendMessage(tabId, {
             target: 'content', action: 'ax_resolve_rect', params: { ref_id: refId },
           });
+          throwIfEarlyCdpAborted();
           if (r2 && r2.success) Object.assign(rectResp, r2);
         }
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
         const x = rectResp.x;
         const y = rectResp.y;
         // mouseMoved with button=none is enough for reveal-on-hover handlers
         // listening to mouseenter/mouseover/pointerover. We move twice (once
         // ~10px outside, once at center) so sites that only fire on the
         // first crossing of the element boundary still see a transition.
+        markEarlyCdpDispatched();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: Math.max(0, x - 10), y, button: 'none', buttons: 0,
         });
+        throwIfEarlyCdpAborted();
+        markEarlyCdpDispatched();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x, y, button: 'none', buttons: 0,
         });
+        throwIfEarlyCdpAborted();
         return {
           success: true,
           method: 'cdp-hover',
@@ -25733,6 +26610,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const stepsRaw = Number(args.steps ?? 10);
       const steps = Math.max(2, Math.min(40, Number.isFinite(stepsRaw) ? Math.floor(stepsRaw) : 10));
+      let dragPressed = false;
       try {
         // Single round-trip: content.js scrolls source-then-dest and
         // measures BOTH rects in the same viewport snapshot. The previous
@@ -25744,6 +26622,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           action: 'ax_resolve_two_rects',
           params: { fromRefId: fromRef, toRefId: toRef },
         });
+        throwIfEarlyCdpAborted();
         if (!rectsResp || !rectsResp.success) {
           return { success: false, error: `drag_drop: ${rectsResp?.error || 'resolve failed'}` };
         }
@@ -25765,6 +26644,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         await cdpClient.attach(tabId);
+        throwIfEarlyCdpAborted();
         const x1 = from.x, y1 = from.y, x2 = toResp.x, y2 = toResp.y;
 
         // mouseMoved (no button) → mousePressed at source → N waypoints
@@ -25772,12 +26652,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // mid-drag waypoints are what HTML5 dnd dragenter/dragover handlers
         // listen to; Trello/Linear/Notion need at least a handful so the
         // drop indicator can settle before the release.
+        markEarlyCdpDispatched();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: x1, y: y1, button: 'none', buttons: 0,
         });
+        throwIfEarlyCdpAborted();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x: x1, y: y1, button: 'left', buttons: 1, clickCount: 1,
         });
+        dragPressed = true;
+        throwIfEarlyCdpAborted();
         for (let i = 1; i <= steps; i++) {
           const t = i / steps;
           const ix = Math.round(x1 + (x2 - x1) * t);
@@ -25785,13 +26669,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
             type: 'mouseMoved', x: ix, y: iy, button: 'left', buttons: 1,
           });
+          throwIfEarlyCdpAborted();
           // Tiny pause so framework dnd state machines (drag-over throttling)
           // get a chance to tick between waypoints. Total ~steps*15ms = ~150ms.
           await new Promise(r => setTimeout(r, 15));
+          throwIfEarlyCdpAborted();
         }
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x: x2, y: y2, button: 'left', buttons: 0, clickCount: 1,
         });
+        dragPressed = false;
+        throwIfEarlyCdpAborted();
         return {
           success: true,
           method: 'cdp-drag',
@@ -25801,6 +26689,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           hint: 'Re-read the accessibility tree to confirm the order/position changed. If nothing moved, the site may use HTML5 drag-and-drop with custom DataTransfer payloads that CDP cannot fully emulate — try the drag again with higher `steps` (15–20) or fall back to keyboard-based reorder controls if the site exposes them.',
         };
       } catch (e) {
+        if (dragPressed) await this._cancelTrustedClickPress(tabId);
         return { success: false, error: `drag_drop failed: ${e.message || e}` };
       }
     }
@@ -25890,6 +26779,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._lastAxScopes.get(tabId),
         dispatchBinding,
         { messageRecipientGuardRequired, messageRecipientDispatchBinding },
+        earlyCdpAbortSignal,
+        earlyCdpDispatchState,
       );
     }
 
@@ -25897,13 +26788,42 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       name === 'click' || name === 'set_checked' ||
       name === 'type_ax' || name === 'set_field'
     ) ? await this._currentUrl(tabId) : '';
+    if (name === 'click') throwIfEarlyCdpAborted();
 
     if (name === 'scroll') {
       args = await this._augmentScrollArgsWithLastInteraction(tabId, args);
     }
-    const clickProgressBefore = name === 'click'
-      ? await this._clickProgressSnapshot(tabId)
-      : '';
+    const contentActionDeadlineMs = this._contentActionDeadlineMs(name, args);
+    const contentActionStartedAt = Date.now();
+    const remainingContentActionDeadlineMs = () => Math.max(
+      1,
+      contentActionDeadlineMs - (Date.now() - contentActionStartedAt),
+    );
+    const runContentActionStage = operation => this._withContentActionDeadline(
+      operation,
+      name,
+      remainingContentActionDeadlineMs(),
+    );
+    let clickProgressBefore = '';
+    if (name === 'click') {
+      try {
+        clickProgressBefore = await runContentActionStage(
+          () => this._clickProgressSnapshot(tabId),
+        );
+      } catch (error) {
+        if (error?.code === 'content_action_timeout') {
+          return this._withCoordinateReconciliation({
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            outcomeUnknown: false,
+            retryable: true,
+            error: `${error.message} No click was sent because the pre-dispatch page snapshot did not finish. Re-observe the page before retrying.`,
+          }, coordinateDiagnostic);
+        }
+        throw error;
+      }
+    }
 
     const axScope = this._lastAxScopes.get(tabId);
     let contentArgs = name === 'set_checked' && axScope?.documentToken
@@ -25936,25 +26856,82 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
-    const sendContentAction = () => chrome.tabs.sendMessage(tabId, {
-      target: 'content',
-      action,
-      params: contentArgs,
-    }, messageOptions);
-    const dispatchContentAction = sendContentAction;
+    const sendContentAction = stageAbortSignal => {
+      if (earlyCdpAbortSignal) {
+        throwIfEarlyCdpAborted();
+        if (Agent.STATE_CHANGE_TOOLS.has(name) && name !== 'set_checked') {
+          markEarlyCdpDispatched();
+        }
+      } else {
+        this._throwIfAborted(stageAbortSignal);
+      }
+      const actionSignal = earlyCdpAbortSignal || stageAbortSignal;
+      const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(actionSignal)?.deadlineAt) || 0;
+      return chrome.tabs.sendMessage(tabId, {
+        target: 'content',
+        action,
+        params: contentArgs,
+        ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
+      }, messageOptions);
+    };
+    const dispatchContentAction = () => runContentActionStage(sendContentAction);
+    const provenNoDispatchDeadline = response => {
+      if (response?.deadlineExpired !== true || response?.dispatched === true) return null;
+      earlyCdpDispatchState.started = false;
+      return {
+        ...response,
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+      };
+    };
 
     let response;
     try {
         response = await dispatchContentAction();
+        const deadlineResult = provenNoDispatchDeadline(response);
+        if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
       } catch (e) {
+        if (e?.code === 'content_action_timeout') {
+          return this._withCoordinateReconciliation(
+            this._contentActionTimeoutResult(name, e),
+            coordinateDiagnostic,
+          );
+        }
         // Content script might not be injected — try injecting it.
         // accessibility-tree.js must load first so content.js's
         // get_accessibility_tree / click_ax / type_ax handlers can reach
         // window.__generateAccessibilityTree and window.__wb_ax_lookup.
+        if (earlyCdpAbortSignal && Agent.STATE_CHANGE_TOOLS.has(name)) {
+          // A rejected no-receiver message did not reach the page; injection
+          // remains preparation until the retry send actually starts.
+          earlyCdpDispatchState.started = false;
+        }
+        let retryDispatchStarted = false;
         try {
-          await this._injectCoreContentScripts(tabId);
+          await runContentActionStage(() => this._injectCoreContentScripts(tabId));
+          retryDispatchStarted = true;
           response = await dispatchContentAction();
+          const deadlineResult = provenNoDispatchDeadline(response);
+          if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
         } catch (e2) {
+          if (e2?.code === 'content_action_timeout') {
+            return this._withCoordinateReconciliation(
+              retryDispatchStarted
+                ? this._contentActionTimeoutResult(name, e2)
+                : {
+                    success: false,
+                    dispatched: false,
+                    noDispatch: true,
+                    outcomeUnknown: false,
+                    retryable: true,
+                    error: `${e2.message} No ${name} action was sent because content-script injection did not finish. Re-observe the page before retrying.`,
+                  },
+              coordinateDiagnostic,
+            );
+          }
           return this._withCoordinateReconciliation(
             { error: `Failed to communicate with page: ${e2.message}` },
             coordinateDiagnostic,
@@ -25977,7 +26954,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
       if (name === 'set_checked') {
-        response = await this._completeSetCheckedWithCdp(tabId, args, response, contentArgs);
+        response = await this._completeSetCheckedWithCdp(
+          tabId,
+          args,
+          response,
+          contentArgs,
+          earlyCdpAbortSignal,
+          earlyCdpDispatchState,
+        );
       }
       if (name === 'type_ax' || name === 'set_field') {
         response = await this._maybeFallbackFieldWithCdp(
@@ -25986,15 +26970,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           args,
           response,
           { messageRecipientGuardRequired, messageRecipientDispatchBinding },
+          earlyCdpAbortSignal,
         );
       }
-      await this._annotateClickProgress(
-        tabId,
-        name,
-        args,
-        response,
-        clickProgressBefore,
-      );
+      try {
+        await runContentActionStage(abortSignal => this._annotateClickProgress(
+          tabId,
+          name,
+          args,
+          response,
+          clickProgressBefore,
+          { abortSignal },
+        ));
+      } catch (error) {
+        if (error?.code === 'content_action_timeout') {
+          return this._withCoordinateReconciliation(
+            this._contentActionTimeoutResult(name, error),
+            coordinateDiagnostic,
+          );
+        }
+        throw error;
+      }
       this._recordInteractionRect(tabId, name, response, interactionUrl);
       this._annotateCredentialField(name, response);
       if (name === 'read_page') {
@@ -26373,7 +27369,53 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { done: false };
   }
 
-  async _maybeFallbackFieldWithCdp(tabId, toolName, args, response, messageRecipientContext = {}) {
+  async _maybeFallbackFieldWithCdp(
+    tabId,
+    toolName,
+    args,
+    response,
+    messageRecipientContext = {},
+    upstreamAbortSignal = null,
+  ) {
+    if (upstreamAbortSignal) {
+      return this._maybeFallbackFieldWithCdpImpl(
+        tabId,
+        toolName,
+        args,
+        response,
+        messageRecipientContext,
+        upstreamAbortSignal,
+      );
+    }
+    try {
+      return await this._withContentActionDeadline(
+        abortSignal => this._maybeFallbackFieldWithCdpImpl(
+          tabId,
+          toolName,
+          args,
+          response,
+          messageRecipientContext,
+          abortSignal,
+        ),
+        toolName,
+        this._contentActionDeadlineMs(toolName, args),
+      );
+    } catch (error) {
+      if (error?.code === 'content_action_timeout') {
+        return this._contentActionTimeoutResult(toolName, error);
+      }
+      throw error;
+    }
+  }
+
+  async _maybeFallbackFieldWithCdpImpl(
+    tabId,
+    toolName,
+    args,
+    response,
+    messageRecipientContext = {},
+    abortSignal = null,
+  ) {
     if (!response || (toolName !== 'type_ax' && toolName !== 'set_field')) return response;
     const expected = typeof response._expectedValue === 'string' ? response._expectedValue : null;
     const clearsExisting = toolName === 'set_field'
@@ -26393,11 +27435,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     let trustedDispatched = false;
     try {
+      this._throwIfAborted(abortSignal);
       let prepared = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'ax_prepare_field_for_trusted_type',
         params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode },
       });
+      this._throwIfAborted(abortSignal);
       if (!prepared?.success) {
         return {
           ...failed,
@@ -26406,12 +27450,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       await cdpClient.attach(tabId);
+      this._throwIfAborted(abortSignal);
       if (prepared.contentEditable && prepared.rect?.w > 0 && prepared.rect?.h > 0) {
         const x = prepared.rect.x + prepared.rect.w / 2;
         const y = prepared.rect.y + prepared.rect.h / 2;
+        this._throwIfAborted(abortSignal);
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x, y, button: 'none', buttons: 0,
         });
+        this._throwIfAborted(abortSignal);
         trustedDispatched = true;
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
@@ -26419,6 +27466,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
         });
+        this._throwIfAborted(abortSignal);
         // The trusted click collapses the preflight selection. Re-resolve the
         // same ref and restore the requested selection immediately before
         // dispatch: replacement selects all; append collapses at the end so
@@ -26428,6 +27476,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           action: 'ax_prepare_field_for_trusted_type',
           params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode },
         });
+        this._throwIfAborted(abortSignal);
         if (!reselected?.success) {
           return {
             ...failed,
@@ -26443,6 +27492,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const trustedText = appendingContentEditable
         ? (typeof args?.text === 'string' ? args.text : '')
         : expected;
+      this._throwIfAborted(abortSignal);
       if (trustedText || appendingContentEditable) {
         await cdpClient.sendCommand(tabId, 'Input.insertText', { text: trustedText });
       } else {
@@ -26453,7 +27503,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
         });
       }
+      this._throwIfAborted(abortSignal);
       await new Promise(resolve => setTimeout(resolve, 120));
+      this._throwIfAborted(abortSignal);
       const verification = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'ax_verify_field_value',
@@ -26463,6 +27515,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(appendingContentEditable ? { appendText: trustedText } : {}),
         },
       });
+      this._throwIfAborted(abortSignal);
       if (!verification?.success || verification.verified !== true) {
         return {
           ...failed,
@@ -26498,14 +27551,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // set_field({submit:true}) must never submit until the trusted retry has
       // itself settled and verified. Use trusted CDP keys for the submission.
       if (toolName === 'set_field' && args?.submit === true) {
+        this._throwIfAborted(abortSignal);
         if (prepared.isCombobox) {
           await new Promise(resolve => setTimeout(resolve, 80));
+          this._throwIfAborted(abortSignal);
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40,
           });
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40,
           });
+          this._throwIfAborted(abortSignal);
         }
         if (messageRecipientContext.messageRecipientGuardRequired === true) {
           const recipientValidation = await chrome.tabs.sendMessage(tabId, {
@@ -26516,6 +27572,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               messageRecipientDispatchBinding: messageRecipientContext.messageRecipientDispatchBinding || null,
             },
           });
+          this._throwIfAborted(abortSignal);
           if (recipientValidation?.success !== true) {
             return {
               ...recovered,
@@ -26529,6 +27586,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             };
           }
         }
+        this._throwIfAborted(abortSignal);
         await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
         });
@@ -26539,6 +27597,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return recovered;
     } catch (error) {
+      if (error?.code === 'content_action_timeout') throw error;
       return {
         ...failed,
         ...(trustedDispatched ? { dispatched: true, noDispatch: false } : {}),
@@ -26547,28 +27606,81 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _resolveClickAxFallbackTarget(tabId, refId) {
+  async _resolveClickAxFallbackTarget(tabId, refId, abortSignal = null) {
     try {
+      this._throwIfAborted(abortSignal);
       let response = await chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'ax_resolve_rect',
         params: { ref_id: refId, forClickFallback: true },
       });
+      this._throwIfAborted(abortSignal);
       if (response?.success && !response.inViewport) {
         await new Promise(resolve => setTimeout(resolve, 80));
+        this._throwIfAborted(abortSignal);
         response = await chrome.tabs.sendMessage(tabId, {
           target: 'content',
           action: 'ax_resolve_rect',
           params: { ref_id: refId, forClickFallback: true },
         });
+        this._throwIfAborted(abortSignal);
       }
       return response;
     } catch (error) {
+      if (error?.code === 'content_action_timeout') throw error;
       return { success: false, error: error?.message || String(error) };
     }
   }
 
-  async _maybeFallbackClickAxWithCdp(tabId, args, response, baseline) {
+  async _cancelTrustedClickPress(tabId) {
+    // A delayed mousePressed may arrive after the action deadline. Releasing
+    // at the original target would complete the trusted click after the
+    // caller has already moved on. Move the held pointer outside the viewport
+    // and release with clickCount:0 so Chromium clears button state without
+    // synthesizing the target's click event.
+    try {
+      await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        type: 'mouseMoved', x: -1, y: -1, button: 'left', buttons: 1, clickCount: 0,
+      });
+    } catch { /* best-effort pointer cleanup */ }
+    try {
+      await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        type: 'mouseReleased', x: -1, y: -1, button: 'left', buttons: 0, clickCount: 0,
+      });
+    } catch { /* best-effort pointer cleanup */ }
+  }
+
+  async _maybeFallbackClickAxWithCdp(tabId, args, response, baseline, upstreamAbortSignal = null) {
+    if (upstreamAbortSignal) {
+      return this._maybeFallbackClickAxWithCdpImpl(
+        tabId,
+        args,
+        response,
+        baseline,
+        upstreamAbortSignal,
+      );
+    }
+    try {
+      return await this._withContentActionDeadline(
+        abortSignal => this._maybeFallbackClickAxWithCdpImpl(
+          tabId,
+          args,
+          response,
+          baseline,
+          abortSignal,
+        ),
+        'click_ax',
+        this._contentActionDeadlineMs('click_ax', args),
+      );
+    } catch (error) {
+      if (error?.code === 'content_action_timeout') {
+        return this._contentActionTimeoutResult('click_ax', error);
+      }
+      throw error;
+    }
+  }
+
+  async _maybeFallbackClickAxWithCdpImpl(tabId, args, response, baseline, abortSignal = null) {
     if (!response || response.success !== true || !baseline) return response;
 
     const withSnapshot = (value, observation) => {
@@ -26639,6 +27751,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? { allowDelayed: false, firstDelayMs: 250 }
         : { allowDelayed: true, firstDelayMs: 250, pollMs: 150, maxMs: 1250 },
     );
+    this._throwIfAborted(abortSignal);
     {
       const assessed = this._assessClickAxObservationRound(
         response,
@@ -26648,7 +27761,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (assessed.done) return withSnapshot(assessed.value, syntheticObservation);
     }
 
-    let target = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id);
+    let target = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal);
+    this._throwIfAborted(abortSignal);
     let targetStrongState = strongStateOf(target);
     let targetWeakState = weakStateOf(target);
     addWeakTargetHint(targetWeakStateBefore, targetWeakState);
@@ -26678,6 +27792,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       baseline,
       { allowDelayed: true, firstDelayMs: Math.min(200, settleBudget), pollMs: 150, maxMs: settleBudget },
     );
+    this._throwIfAborted(abortSignal);
     {
       const assessed = this._assessClickAxObservationRound(
         response,
@@ -26687,7 +27802,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (assessed.done) return withSnapshot(assessed.value, settledObservation);
     }
 
-    const settledTarget = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id);
+    const settledTarget = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal);
+    this._throwIfAborted(abortSignal);
     const settledTargetStrongState = strongStateOf(settledTarget);
     const settledTargetWeakState = weakStateOf(settledTarget);
     addWeakTargetHint(targetWeakStateBefore, settledTargetWeakState);
@@ -26752,6 +27868,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       Date.now(),
       baseline.preparedActive || preCdpActive,
     );
+    this._throwIfAborted(abortSignal);
     // Prefer the live pre-CDP active as the "preparatory" identity for the
     // trusted round: blur-only transitions from that identity are not proof.
     fallbackBaseline.preparedActive = preCdpActive || baseline.preparedActive || '';
@@ -26760,12 +27877,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let dispatchedEvents = 0;
     let pressedDelivered = false;
     try {
+      this._throwIfAborted(abortSignal);
       await cdpClient.attach(tabId);
+      this._throwIfAborted(abortSignal);
       dispatchStage = 'filePickerGuardArm';
       await cdpClient.armFileInputClickGuard(tabId);
+      this._throwIfAborted(abortSignal);
       dispatchStage = 'mouseMoved';
       await cdpClient.dispatchMouseEvent(tabId, 'mouseMoved', target.x, target.y);
       dispatchedEvents++;
+      this._throwIfAborted(abortSignal);
       dispatchStage = 'mousePressed';
       // Snapshot/tab baselines must exist before pointer input, but the
       // mutation window starts at the first click-producing event rather than
@@ -26778,9 +27899,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // retry could double-activate or leave mismatched pointer state.
       attempted.add(fallbackKey);
       this._clickAxCdpFallbacks.set(tabId, attempted);
+      try {
+        this._throwIfAborted(abortSignal);
+      } catch (error) {
+        await this._cancelTrustedClickPress(tabId);
+        throw error;
+      }
       dispatchStage = 'mouseReleased';
       await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', target.x, target.y);
       dispatchedEvents++;
+      this._throwIfAborted(abortSignal);
       dispatchStage = 'filePickerGuardConsume';
       const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
       if (blockedFileInput?.blocked) {
@@ -26799,6 +27927,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       dispatchStage = 'complete';
     } catch (error) {
+      if (error?.code === 'content_action_timeout') throw error;
       const fallbackAttempted = dispatchedEvents > 0;
       return withSnapshot({
         ...response,
@@ -26820,11 +27949,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       fallbackBaseline,
       { allowDelayed: true, firstDelayMs: 250, pollMs: 150, maxMs: 1000 },
     );
+    this._throwIfAborted(abortSignal);
     this._clickAxAddObservedHints(response, trustedObservation);
     let trustedTargetStateChanged = false;
     let trustedTargetWeakStateChanged = false;
     if (!trustedObservation.proved) {
-      const trustedTarget = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id);
+      const trustedTarget = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal);
+      this._throwIfAborted(abortSignal);
       const trustedTargetStrongState = strongStateOf(trustedTarget);
       const trustedTargetWeakState = weakStateOf(trustedTarget);
       addWeakTargetHint(targetWeakState, trustedTargetWeakState);
@@ -26988,8 +28119,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _keyProgressSnapshot(tabId) {
+  async _keyProgressSnapshot(tabId, abortSignal = null) {
+    this._throwIfAborted(abortSignal);
     const page = await this._clickProgressSnapshot(tabId);
+    this._throwIfAborted(abortSignal);
     try {
       await cdpClient.attach(tabId);
       const res = await cdpClient.evaluate(tabId, `(() => {
@@ -27028,17 +28161,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : '';
         return { editable, caret, selection, scroll, mediaTime };
       })()`);
+      this._throwIfAborted(abortSignal);
       const extra = res?.result?.value && typeof res.result.value === 'object' ? res.result.value : {};
       return JSON.stringify({ page, ...extra });
     } catch {
+      this._throwIfAborted(abortSignal);
       return JSON.stringify({ page });
     }
   }
 
-  async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot) {
+  async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot, abortSignal = null) {
     if (!String(key).startsWith('Arrow') || response?.success !== true) return response;
+    this._throwIfAborted(abortSignal);
     await new Promise(resolve => setTimeout(resolve, 200));
-    const afterSnapshot = await this._keyProgressSnapshot(tabId);
+    this._throwIfAborted(abortSignal);
+    const afterSnapshot = await this._keyProgressSnapshot(tabId, abortSignal);
+    this._throwIfAborted(abortSignal);
     const before = this._parseKeyProgressSnapshot(beforeSnapshot);
     const after = this._parseKeyProgressSnapshot(afterSnapshot);
     // Caret, selection, and custom-editor arrows are real progress that the
@@ -27095,15 +28233,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (toolName !== 'click' && toolName !== 'click_ax') return response;
     if (opts.editable) return response;
 
+    const abortCheck = typeof opts.abortCheck === 'function'
+      ? opts.abortCheck
+      : () => this._throwIfAborted(opts.abortSignal);
+    abortCheck();
+
     const ident = this._clickProgressIdent(toolName, args, response);
     if (!ident) return response;
 
     let afterSnapshot = opts.afterSnapshot || '';
     if (!afterSnapshot) {
       await new Promise(r => setTimeout(r, 250));
+      abortCheck();
       afterSnapshot = await this._clickProgressSnapshot(tabId);
+      abortCheck();
     }
     const previous = this._lastClickProgress.get(tabId);
+    abortCheck();
     this._lastClickProgress.set(tabId, { ident, snapshot: afterSnapshot || beforeSnapshot || '' });
 
     if (

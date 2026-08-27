@@ -132,6 +132,9 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
+const CONTENT_ACTION_TIMEOUT_MS = 60_000;
+const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
+const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap();
 const SAVED_WORKFLOW_MESSAGE_DISPATCH_TOOLS = new Set([
   'click', 'click_ax', 'iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file',
 ]);
@@ -760,11 +763,44 @@ export class Agent extends LoopDetector {
   }
 
   _throwIfAborted(signal) {
-    if (!signal?.aborted) return;
+    const deadline = signal ? CONTENT_ACTION_SIGNAL_DEADLINES.get(signal) : null;
+    const deadlineAt = Number(deadline?.deadlineAt);
+    const deadlineExpired = Number.isFinite(deadlineAt) && deadlineAt > 0 && Date.now() >= deadlineAt;
+    if (!signal?.aborted && !deadlineExpired) return;
     if (signal.reason instanceof Error) throw signal.reason;
+    if (deadline?.error instanceof Error) throw deadline.error;
     const error = new Error('The operation was aborted.');
     error.name = 'AbortError';
     throw error;
+  }
+
+  _linkAbortSignals(...signals) {
+    const controller = new AbortController();
+    const linkedDeadline = signals
+      .map(signal => signal ? CONTENT_ACTION_SIGNAL_DEADLINES.get(signal) : null)
+      .filter(deadline => Number.isFinite(Number(deadline?.deadlineAt)))
+      .sort((a, b) => Number(a.deadlineAt) - Number(b.deadlineAt))[0];
+    if (linkedDeadline) CONTENT_ACTION_SIGNAL_DEADLINES.set(controller.signal, linkedDeadline);
+    const listeners = [];
+    const dispose = () => {
+      for (const [signal, listener] of listeners.splice(0)) {
+        try { signal.removeEventListener('abort', listener); } catch {}
+      }
+    };
+    controller.signal.addEventListener('abort', dispose, { once: true });
+    for (const signal of signals) {
+      if (!signal) continue;
+      if (signal.aborted) {
+        controller.abort(signal.reason);
+        break;
+      }
+      const listener = () => {
+        if (!controller.signal.aborted) controller.abort(signal.reason);
+      };
+      signal.addEventListener('abort', listener, { once: true });
+      listeners.push([signal, listener]);
+    }
+    return { signal: controller.signal, dispose };
   }
 
   async _withVisionDeadline(operation) {
@@ -787,6 +823,84 @@ export class Agent extends LoopDetector {
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
+  }
+
+  _contentActionDeadlineMs(toolName, args = {}) {
+    if (toolName !== 'wait_for_element') return CONTENT_ACTION_TIMEOUT_MS;
+    const requestedTimeoutMs = Number(args?.timeout);
+    if (!Number.isFinite(requestedTimeoutMs) || requestedTimeoutMs <= 0) {
+      return CONTENT_ACTION_TIMEOUT_MS;
+    }
+    return Math.max(
+      CONTENT_ACTION_TIMEOUT_MS,
+      requestedTimeoutMs + CONTENT_ACTION_RESPONSE_GRACE_MS,
+    );
+  }
+
+  _needsSharedActionPipelineDeadline(tabId, toolName, formValidationCandidate = false) {
+    return formValidationCandidate === true
+      || ['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)
+      || (
+        this._richTextToolbarGuard.hasPending(tabId)
+        && RICH_TEXT_TOOLBAR_GUARDED_TOOLS.has(toolName)
+      );
+  }
+
+  async _withContentActionDeadline(
+    operation,
+    toolName = 'content action',
+    deadlineMs = CONTENT_ACTION_TIMEOUT_MS,
+  ) {
+    const timeoutMs = Number.isFinite(deadlineMs) && deadlineMs > 0
+      ? deadlineMs
+      : CONTENT_ACTION_TIMEOUT_MS;
+    let timeoutId = null;
+    const timeoutError = new Error(
+      `${toolName} did not return a page response within ${Math.ceil(timeoutMs / 1000)} seconds.`,
+    );
+    timeoutError.code = 'content_action_timeout';
+    const controller = new AbortController();
+    const deadlineAt = Date.now() + timeoutMs;
+    CONTENT_ACTION_SIGNAL_DEADLINES.set(controller.signal, { deadlineAt, error: timeoutError });
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        try { controller.abort(timeoutError); } catch { try { controller.abort(); } catch {} }
+        reject(timeoutError);
+      }, timeoutMs);
+    });
+    const started = Promise.resolve().then(() => operation(controller.signal));
+    // The page response may settle after the timeout. Observe that settlement
+    // so it cannot become an unhandled rejection after this race has returned.
+    started.catch(() => {});
+    try {
+      return await Promise.race([started, timeout]);
+    } finally {
+      if (timeoutId != null) clearTimeout(timeoutId);
+    }
+  }
+
+  _contentActionTimeoutResult(toolName, error) {
+    const outcomeUnknown = BROWSER_MUTATION_TOOLS.has(toolName);
+    return {
+      success: false,
+      ...(outcomeUnknown ? { dispatched: true } : {}),
+      outcomeUnknown,
+      retryable: !outcomeUnknown,
+      error: outcomeUnknown
+        ? `${error?.message || `${toolName} timed out`} The action may have reached the page; inspect the current state before deciding whether to retry.`
+        : `${error?.message || `${toolName} timed out`} No page result was returned; retry this read-only observation once after the page settles.`,
+    };
+  }
+
+  _contentActionPreparationTimeoutResult(toolName, error, stage = 'page preparation') {
+    return {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      outcomeUnknown: false,
+      retryable: true,
+      error: `${error?.message || `${toolName} timed out`} No ${toolName} action was sent because ${stage} did not finish. Re-observe the page before retrying.`,
+    };
   }
 
   _recordVisionRouteTrace(tabId, route, capture, context, fallbackReason = null) {
@@ -2741,8 +2855,8 @@ export class Agent extends LoopDetector {
     return this._richTextToolbarGuard.restore(tabId, raw);
   }
 
-  async _legacyIframeTypeAllFrames(tabId, args) {
-    return this._richTextToolbarProbe.legacyIframeTypeAllFrames(tabId, args);
+  async _legacyIframeTypeAllFrames(tabId, args, actionContext = {}) {
+    return this._richTextToolbarProbe.legacyIframeTypeAllFrames(tabId, args, actionContext);
   }
 
   async _probeRichTextToolbarIframeTarget(tabId, args = {}, options = {}) {
@@ -3951,8 +4065,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _keyProgressSnapshot(tabId) {
+  async _keyProgressSnapshot(tabId, abortSignal = null) {
+    this._throwIfAborted(abortSignal);
     const page = await this._clickProgressSnapshot(tabId);
+    this._throwIfAborted(abortSignal);
     try {
       const values = await browser.tabs.executeScript(tabId, { code: `(() => {
         const el = document.activeElement;
@@ -3990,17 +4106,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : '';
         return { editable, caret, selection, scroll, mediaTime };
       })()` });
+      this._throwIfAborted(abortSignal);
       const extra = values?.[0] && typeof values[0] === 'object' ? values[0] : {};
       return JSON.stringify({ page, ...extra });
     } catch {
+      this._throwIfAborted(abortSignal);
       return JSON.stringify({ page });
     }
   }
 
-  async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot) {
+  async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot, abortSignal = null) {
     if (!String(key).startsWith('Arrow') || response?.success !== true) return response;
+    this._throwIfAborted(abortSignal);
     await new Promise(resolve => setTimeout(resolve, 200));
-    const afterSnapshot = await this._keyProgressSnapshot(tabId);
+    this._throwIfAborted(abortSignal);
+    const afterSnapshot = await this._keyProgressSnapshot(tabId, abortSignal);
+    this._throwIfAborted(abortSignal);
     const before = this._parseKeyProgressSnapshot(beforeSnapshot);
     const after = this._parseKeyProgressSnapshot(afterSnapshot);
     if (before?.editable === true || after?.editable === true) return response;
@@ -4791,7 +4912,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  async _captchaMutationPreflight(tabId, toolName, toolArgs = {}) {
+  async _captchaMutationPreflight(tabId, toolName, toolArgs = {}, abortSignal = null) {
+    this._throwIfAborted(abortSignal);
     const gatedCompletion = toolName === 'done' || toolName === 'done_json';
     const gatedAction = this._isBrowserMutationTool(toolName)
       || gatedCompletion
@@ -4804,6 +4926,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && !this._shouldRetryCaptchaManualGate(activeGate)
     ) return null;
     const detectedChallenge = await this._detectChallengeDialogBeforeMutation(tabId);
+    this._throwIfAborted(abortSignal);
     const challenge = detectedChallenge?.label
       ? detectedChallenge
       : activeGate?.status === 'cleared'
@@ -4812,6 +4935,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!challenge?.label) return null;
     let pageUrl = '';
     try { pageUrl = await this._currentUrl(tabId); } catch {}
+    this._throwIfAborted(abortSignal);
     const observation = await this._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -4826,6 +4950,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       },
       {},
     );
+    this._throwIfAborted(abortSignal);
     return observation.gate;
   }
 
@@ -5395,10 +5520,89 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (argumentValidation.args) fnArgs = argumentValidation.args;
 
+      const recordPagePreparationTimeout = async (error, stage) => {
+        const timeoutResult = this._contentActionPreparationTimeoutResult(fnName, error, stage);
+        let loopCheck = { kind: 'none' };
+        const loopKey = this._loopCallKey(fnName, fnArgs, timeoutResult);
+        const failedApiMutation = this._isFailedApiMutationForLoop(fnName, fnArgs, timeoutResult);
+        if (!failedApiMutation || !failedApiMutationLoopKeysThisBatch.has(loopKey)) {
+          if (failedApiMutation) failedApiMutationLoopKeysThisBatch.add(loopKey);
+          loopCheck = this._checkLoop(tabId, fnName, fnArgs, timeoutResult);
+        }
+        onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
+        onUpdate('tool_result', { name: fnName, result: timeoutResult });
+        messages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: JSON.stringify(timeoutResult)
+            + (loopCheck.kind === 'nudge' ? `\n${loopCheck.warning}` : ''),
+        });
+        const runId = this.currentRunId.get(tabId);
+        if (runId) {
+          try {
+            await trace.recordToolCall(runId, step, {
+              name: fnName,
+              args: fnArgs,
+              result: timeoutResult,
+              latencyMs: 0,
+            });
+          } catch {}
+        }
+        onUpdate('warning', { message: 'Page action preparation timed out before dispatch.' });
+        if (loopCheck.kind === 'nudge') {
+          onUpdate('warning', { message: 'Loop detected — nudging the agent.' });
+        }
+        if (loopCheck.kind !== 'stop') return null;
+        this._appendSyntheticToolResults(
+          tabId,
+          toolCalls,
+          toolIndex + 1,
+          messages,
+          onUpdate,
+          step,
+          () => ({ success: false, skipped: true, error: 'skipped: run stopped by loop detector' }),
+        );
+        if (runId) trace.recordError(runId, step, 'loop', loopCheck.message);
+        this._clearLoopState(tabId);
+        this._persist(tabId);
+        return { action: 'recover', value: loopCheck.message, status: 'loop_stopped' };
+      };
+      const detectSubmitWithDeadline = () => this._withContentActionDeadline(
+        async abortSignal => {
+          const detected = await this._detectLikelySubmitAction(tabId, fnName, fnArgs);
+          this._throwIfAborted(abortSignal);
+          return detected;
+        },
+        fnName,
+        this._contentActionDeadlineMs(fnName, fnArgs),
+      );
+      const captureFormValidationWithDeadline = allFrames => this._withContentActionDeadline(
+        async abortSignal => {
+          const state = await this._captureFormValidationState(tabId, { allFrames });
+          this._throwIfAborted(abortSignal);
+          return state;
+        },
+        fnName,
+        this._contentActionDeadlineMs(fnName, fnArgs),
+      );
+
       // A verification challenge is a runtime state boundary, not a prompt
       // suggestion. Once observed, no model-authored click/close/submit or
       // other page mutation may run until one supported solve completes.
-      const captchaPreflight = await this._captchaMutationPreflight(tabId, fnName, fnArgs);
+      let captchaPreflight = null;
+      try {
+        captchaPreflight = await this._withContentActionDeadline(
+          abortSignal => this._captchaMutationPreflight(tabId, fnName, fnArgs, abortSignal),
+          fnName,
+          this._contentActionDeadlineMs(fnName, fnArgs),
+        );
+      } catch (error) {
+        if (error?.code !== 'content_action_timeout') throw error;
+        const loopStop = await recordPagePreparationTimeout(error, 'CAPTCHA safety preflight');
+        if (loopStop) return loopStop;
+        if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+        continue;
+      }
       if (captchaPreflight) onUpdate('captcha_gate', captchaPreflight);
       const captchaGateBlock = this._captchaGateBlockResult(tabId, fnName, fnArgs);
       if (captchaGateBlock) {
@@ -5564,12 +5768,44 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         continue;
       }
       const formValidationCandidate = this._isFormValidationCandidate(fnName, fnArgs);
-      const formValidationAllFrames = fnName === 'iframe_click' || fnName === 'press_keys';
-      const preflightSubmitDetection = formValidationCandidate
-        && ['click', 'click_ax', 'iframe_click', 'press_keys', 'execute_js'].includes(fnName);
-      let detectedSubmitAction = preflightSubmitDetection
-        ? await this._detectLikelySubmitAction(tabId, fnName, fnArgs)
-        : null;
+      let formValidationAllFrames = false;
+      let detectedSubmitAction = null;
+      let formValidationBefore = [];
+      let validationBlock = null;
+      if (formValidationCandidate) {
+        try {
+          const preparation = await this._withContentActionDeadline(async abortSignal => {
+            const allFrames = fnName === 'iframe_click' || fnName === 'press_keys';
+            const shouldDetectSubmit = ['click', 'click_ax', 'iframe_click', 'press_keys', 'execute_js'].includes(fnName);
+            const detected = shouldDetectSubmit
+              ? await this._detectLikelySubmitAction(tabId, fnName, fnArgs)
+              : null;
+            this._throwIfAborted(abortSignal);
+            const currentValidationBlock = this._formValidationBlocks.get(tabId) || null;
+            const obviousSubmit = this._formValidationActionLooksSubmit(fnName, fnArgs, null, detected);
+            const before = (currentValidationBlock || obviousSubmit)
+              ? await this._captureFormValidationState(tabId, { allFrames })
+              : [];
+            this._throwIfAborted(abortSignal);
+            return {
+              allFrames,
+              detected,
+              validationBlock: currentValidationBlock,
+              before,
+            };
+          }, fnName, this._contentActionDeadlineMs(fnName, fnArgs));
+          formValidationAllFrames = preparation.allFrames;
+          detectedSubmitAction = preparation.detected;
+          validationBlock = preparation.validationBlock;
+          formValidationBefore = preparation.before;
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          const loopStop = await recordPagePreparationTimeout(error, 'submit/form-validation preflight');
+          if (loopStop) return loopStop;
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
+      }
       if (fnName === 'chrome_web_store_publish') {
         detectedSubmitAction = {
           isSubmit: true,
@@ -5577,14 +5813,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           reason: 'submit the configured Chrome Web Store release for review',
         };
       }
-      const validationBlock = formValidationCandidate ? this._formValidationBlocks.get(tabId) : null;
       let priorValidationFailure = !!validationBlock;
       let correctedPriorValidationFailure = false;
-      const obviousSubmitAction = formValidationCandidate
-        && this._formValidationActionLooksSubmit(fnName, fnArgs, null, detectedSubmitAction);
-      let formValidationBefore = (validationBlock || obviousSubmitAction)
-        ? await this._captureFormValidationState(tabId, { allFrames: formValidationAllFrames })
-        : [];
       if (validationBlock) {
         const currentValidationStateKey = this._formValidationStateKey(formValidationBefore);
         if (currentValidationStateKey !== validationBlock.stateKey) {
@@ -5611,7 +5841,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const scheduledPolicy = this.scheduledRunPolicies.get(tabId);
       const scheduledBypassesGate = scheduledPolicy?.requireConsequentialConfirmation === false;
       if (!this._skipPermissionGate && !scheduledBypassesGate) {
-        const submitConfirmation = detectedSubmitAction || await this._detectLikelySubmitAction(tabId, fnName, fnArgs);
+        let submitConfirmation = detectedSubmitAction;
+        if (!submitConfirmation) {
+          try {
+            submitConfirmation = await detectSubmitWithDeadline();
+          } catch (error) {
+            if (error?.code !== 'content_action_timeout') throw error;
+            const loopStop = await recordPagePreparationTimeout(error, 'submit-action detection');
+            if (loopStop) return loopStop;
+            if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+            continue;
+          }
+        }
         detectedSubmitAction = submitConfirmation;
         if (submitConfirmation?.isSubmit) {
           const choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
@@ -5660,9 +5901,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           || scheduledBypassesGate
         )
       ) {
-        formValidationBefore = await this._captureFormValidationState(tabId, {
-          allFrames: formValidationAllFrames,
-        });
+        try {
+          formValidationBefore = await captureFormValidationWithDeadline(formValidationAllFrames);
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          const loopStop = await recordPagePreparationTimeout(error, 'form-validation snapshot');
+          if (loopStop) return loopStop;
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
       }
       if (capabilities.length && !this._skipPermissionGate && !scheduledBypassesGate) {
         await this.permissions.hydrate();
@@ -5891,9 +6138,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // close to dispatch as possible: permission and confirmation can happen
       // first, but a mismatched conversation never reaches executeTool().
       const messageRecipientExecutionContext = {};
-      const messageRecipientBlock = await this._messageRecipientGuardBlock(
-        tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
-      );
+      let messageRecipientBlock = null;
+      try {
+        messageRecipientBlock = await this._withContentActionDeadline(
+          async abortSignal => {
+            const block = await this._messageRecipientGuardBlock(
+              tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
+            );
+            this._throwIfAborted(abortSignal);
+            return block;
+          },
+          fnName,
+          this._contentActionDeadlineMs(fnName, fnArgs),
+        );
+      } catch (error) {
+        if (error?.code !== 'content_action_timeout') throw error;
+        const loopStop = await recordPagePreparationTimeout(error, 'message-recipient safety preflight');
+        if (loopStop) return loopStop;
+        if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+        continue;
+      }
       if (messageRecipientBlock) {
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
         onUpdate('tool_result', { name: fnName, result: messageRecipientBlock });
@@ -5922,60 +6186,131 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } catch {}
       }
       const _toolStart = Date.now();
-      const toolbarPreflight = await this._preflightRichTextToolbarTarget(
+      let toolbarPreflight = { block: null };
+      let rawToolResult;
+      let toolResult;
+      const actionDispatchState = { started: false };
+      const runActionPipeline = async abortSignal => {
+          const pipelineToolbarPreflight = await this._preflightRichTextToolbarTarget(
+            tabId,
+            fnName,
+            fnArgs,
+            provider,
+            { onUpdate },
+          );
+          this._throwIfAborted(abortSignal);
+          const pipelineRawToolResult = pipelineToolbarPreflight.block || await this.executeTool(
+            tabId,
+            fnName,
+            fnArgs,
+            onUpdate,
+            {
+              completionBatchStartState,
+              promptTier,
+              dispatchBinding: pipelineToolbarPreflight.probe?.dispatchBinding || null,
+              ...messageRecipientExecutionContext,
+              iframeTargetUnresolved: pipelineToolbarPreflight.iframeTargetUnresolved === true,
+              _contentActionAbortSignal: abortSignal,
+              _contentActionDispatchState: actionDispatchState,
+            },
+          );
+          if (pipelineRawToolResult?.dispatched === false || pipelineRawToolResult?.noDispatch === true) {
+            actionDispatchState.started = false;
+          } else if (
+            Agent.STATE_CHANGE_TOOLS.has(fnName)
+            && (pipelineRawToolResult?.dispatched === true || pipelineRawToolResult?.success === true)
+          ) {
+            actionDispatchState.started = true;
+          }
+          this._throwIfAborted(abortSignal);
+          const pipelineToolResult = this._normalizeToolResult(
+            fnName,
+            pipelineRawToolResult,
+            missingResponseOutcomeUnknown,
+          );
+          const inspectFormValidationAfter = formValidationCandidate
+            && this._formValidationActionLooksSubmit(
+              fnName,
+              fnArgs,
+              pipelineToolResult,
+              detectedSubmitAction,
+            );
+          if (
+            inspectFormValidationAfter
+            && pipelineToolResult
+            && typeof pipelineToolResult === 'object'
+            && !pipelineToolResult.done
+            && pipelineToolResult.dispatched !== false
+          ) {
+            actionDispatchState.started = true;
+            const formValidationFailure = await this._waitForFormValidationFailure(
+              tabId,
+              formValidationBefore,
+              {
+                toolName: fnName,
+                args: fnArgs,
+                result: pipelineToolResult,
+                detectedSubmit: detectedSubmitAction,
+                priorValidationFailure,
+                correctedPriorValidationFailure,
+              },
+              { allFrames: formValidationAllFrames, abortSignal },
+            );
+            this._throwIfAborted(abortSignal);
+            if (formValidationFailure) {
+              this._applyFormValidationFailure(tabId, pipelineToolResult, formValidationFailure);
+              onUpdate('warning', { message: 'Form validation failed; the page error was returned to the agent.' });
+            }
+          }
+          await this._auditRichTextToolbarTarget(
+            tabId,
+            fnName,
+            fnArgs,
+            pipelineToolResult,
+            pipelineToolbarPreflight.probe,
+          );
+          this._throwIfAborted(abortSignal);
+          return {
+            toolbarPreflight: pipelineToolbarPreflight,
+            rawToolResult: pipelineRawToolResult,
+            toolResult: pipelineToolResult,
+          };
+      };
+      const needsSharedActionPipelineDeadline = this._needsSharedActionPipelineDeadline(
         tabId,
         fnName,
-        fnArgs,
-        provider,
-        { onUpdate },
+        formValidationCandidate,
       );
-      const rawToolResult = toolbarPreflight.block || await this.executeTool(
-        tabId,
-        fnName,
-        fnArgs,
-        onUpdate,
-        {
-          completionBatchStartState,
-          promptTier,
-          dispatchBinding: toolbarPreflight.probe?.dispatchBinding || null,
-          ...messageRecipientExecutionContext,
-          iframeTargetUnresolved: toolbarPreflight.iframeTargetUnresolved === true,
-        },
-      );
-      const toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
-      const inspectFormValidationAfter = formValidationCandidate
-        && this._formValidationActionLooksSubmit(
-          fnName,
-          fnArgs,
-          toolResult,
-          detectedSubmitAction,
-        );
-      if (
-        inspectFormValidationAfter
-        && toolResult
-        && typeof toolResult === 'object'
-        && !toolResult.done
-        && toolResult.dispatched !== false
-      ) {
-        const formValidationFailure = await this._waitForFormValidationFailure(
-          tabId,
-          formValidationBefore,
-          {
-            toolName: fnName,
-            args: fnArgs,
-            result: toolResult,
-            detectedSubmit: detectedSubmitAction,
-            priorValidationFailure,
-            correctedPriorValidationFailure,
-          },
-          { allFrames: formValidationAllFrames },
-        );
-        if (formValidationFailure) {
-          this._applyFormValidationFailure(tabId, toolResult, formValidationFailure);
-          onUpdate('warning', { message: 'Form validation failed; the page error was returned to the agent.' });
+      if (needsSharedActionPipelineDeadline) {
+        try {
+          const pipelineResult = await this._withContentActionDeadline(
+            runActionPipeline,
+            fnName,
+            this._contentActionDeadlineMs(fnName, fnArgs),
+          );
+          toolbarPreflight = pipelineResult.toolbarPreflight;
+          rawToolResult = pipelineResult.rawToolResult;
+          toolResult = pipelineResult.toolResult;
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          rawToolResult = actionDispatchState.started
+            ? this._contentActionTimeoutResult(fnName, error)
+            : {
+                success: false,
+                dispatched: false,
+                noDispatch: true,
+                outcomeUnknown: false,
+                retryable: true,
+                error: `${error.message} No ${fnName} action was sent because target preparation did not finish. Re-observe the page before retrying.`,
+              };
+          toolResult = this._normalizeToolResult(fnName, rawToolResult, missingResponseOutcomeUnknown);
         }
+      } else {
+        const pipelineResult = await runActionPipeline(null);
+        toolbarPreflight = pipelineResult.toolbarPreflight;
+        rawToolResult = pipelineResult.rawToolResult;
+        toolResult = pipelineResult.toolResult;
       }
-      await this._auditRichTextToolbarTarget(tabId, fnName, fnArgs, toolResult, toolbarPreflight.probe);
       if (fnName !== 'done') {
         this._markPlanExecutionToolCall(tabId, fnName, toolResult, {
           consequential: executionMutationEvidence,
@@ -6992,7 +7327,50 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}) {
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, upstreamAbortSignal = null, dispatchState = { started: false }) {
+    try {
+      return await this._withContentActionDeadline(
+        deadlineAbortSignal => this._dispatchClickAxImpl(
+          tabId,
+          args,
+          axScope,
+          dispatchBinding,
+          messageRecipientContext,
+          deadlineAbortSignal,
+          upstreamAbortSignal,
+          dispatchState,
+        ),
+        'click_ax',
+      );
+    } catch (error) {
+      if (error?.code !== 'content_action_timeout') throw error;
+      if (dispatchState.started) return this._contentActionTimeoutResult('click_ax', error);
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+        error: `${error.message} No click was sent because click preparation did not finish. Re-observe the page before retrying.`,
+      };
+    }
+  }
+
+  async _dispatchClickAxImpl(
+    tabId,
+    args,
+    axScope = null,
+    dispatchBinding = null,
+    messageRecipientContext = {},
+    deadlineAbortSignal = null,
+    upstreamAbortSignal = null,
+    dispatchState = { started: false },
+  ) {
+    const throwIfAborted = () => {
+      this._throwIfAborted(upstreamAbortSignal);
+      this._throwIfAborted(deadlineAbortSignal);
+    };
+    throwIfAborted();
     let contentArgs = axScope?.documentToken
       ? {
           ...args,
@@ -7013,13 +7391,39 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
-    const send = () => browser.tabs.sendMessage(tabId, {
-      target: 'content',
-      action: 'click_ax',
-      params: contentArgs,
-    }, messageOptions);
+    const actionDeadlineAt = [upstreamAbortSignal, deadlineAbortSignal]
+      .map(signal => Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(signal)?.deadlineAt))
+      .filter(deadlineAt => Number.isFinite(deadlineAt) && deadlineAt > 0)
+      .sort((a, b) => a - b)[0] || 0;
+    const send = () => {
+      throwIfAborted();
+      dispatchState.started = true;
+      return browser.tabs.sendMessage(tabId, {
+        target: 'content',
+        action: 'click_ax',
+        params: contentArgs,
+        ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
+      }, messageOptions);
+    };
+    const dispatch = () => this._withContentActionDeadline(send, 'click_ax');
+    const provenNoDispatchDeadline = response => {
+      if (response?.deadlineExpired !== true || response?.dispatched === true) return null;
+      dispatchState.started = false;
+      return {
+        ...response,
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+      };
+    };
     const finish = async (response) => {
+      const deadlineResult = provenNoDispatchDeadline(response);
+      if (deadlineResult) return deadlineResult;
+      throwIfAborted();
       response = await this._settleContentFilePickerGuard(tabId, response);
+      throwIfAborted();
       if (response?.documentToken && (
         response.documentChanged === true
         || response.routeChanged === true
@@ -7033,23 +7437,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
 
     try {
-      return await finish(await send());
-    } catch {
+      throwIfAborted();
+      return await finish(await dispatch());
+    } catch (error) {
+      if (error?.code === 'content_action_timeout') {
+        return this._contentActionTimeoutResult('click_ax', error);
+      }
+      // A rejected first message is the no-receiver path that triggers
+      // injection; no page click was delivered unless the retry starts.
+      dispatchState.started = false;
       try {
+        throwIfAborted();
         await this._injectCoreContentScripts(tabId);
-        return await finish(await send());
-      } catch (error) {
+        throwIfAborted();
+        return await finish(await dispatch());
+      } catch (retryError) {
+        if (retryError?.code === 'content_action_timeout') {
+          return this._contentActionTimeoutResult('click_ax', retryError);
+        }
         let pageUrl = '';
         try { pageUrl = (await browser.tabs.get(tabId))?.url || ''; } catch {}
-        const accessFailure = firefoxHostPermissionFailure(pageUrl, error.message);
+        const accessFailure = firefoxHostPermissionFailure(pageUrl, retryError.message);
         if (accessFailure) return accessFailure;
-        return { error: `Failed to communicate with page: ${error.message}` };
+        return { error: `Failed to communicate with page: ${retryError.message}` };
       }
     }
   }
 
-  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}) {
+  async _reconcileCoordinateClick(tabId, point, messageRecipientContext = {}, abortSignal = null, dispatchState = { started: false }) {
+    this._throwIfAborted(abortSignal);
     const resolution = await this._resolveCoordinateVisualTarget(tabId, point);
+    this._throwIfAborted(abortSignal);
     const target = resolution?.semanticTarget;
     const normalized = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const expectedName = normalized(messageRecipientContext.expectedName);
@@ -7079,12 +7497,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && typeof target?.ref_id === 'string'
       && /^ref_\d+$/.test(target.ref_id);
     if (semanticEligible) {
+      this._throwIfAborted(abortSignal);
       const result = await this._dispatchClickAx(
         tabId,
         { ref_id: target.ref_id },
         { documentToken: resolution.documentToken, pageUrl: resolution.refScopeUrl },
         null,
         messageRecipientContext,
+        abortSignal,
+        dispatchState,
       );
       return {
         result: {
@@ -7113,6 +7534,48 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         fallbackReason,
       ),
     };
+  }
+
+  async _reconcileCoordinateClickWithDeadline(
+    tabId,
+    point,
+    messageRecipientContext = {},
+    upstreamAbortSignal = null,
+  ) {
+    const dispatchState = { started: false };
+    try {
+      return await this._withContentActionDeadline(
+        deadlineAbortSignal => {
+          const linked = this._linkAbortSignals(deadlineAbortSignal, upstreamAbortSignal);
+          return Promise.resolve(this._reconcileCoordinateClick(
+            tabId,
+            point,
+            messageRecipientContext,
+            linked.signal,
+            dispatchState,
+          )).finally(linked.dispose);
+        },
+        'click',
+        this._contentActionDeadlineMs('click'),
+      );
+    } catch (error) {
+      if (error?.code === 'content_action_timeout') {
+        return {
+          result: dispatchState.started
+            ? this._contentActionTimeoutResult('click', error)
+            : {
+                success: false,
+                dispatched: false,
+                noDispatch: true,
+                outcomeUnknown: false,
+                retryable: true,
+                error: `${error.message} No click was sent because coordinate target resolution did not finish. Re-observe the page before retrying.`,
+              },
+          diagnostic: null,
+        };
+      }
+      throw error;
+    }
   }
 
   /**
@@ -11449,16 +11912,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     tabId,
     beforeStates,
     context,
-    { allFrames = false, checkpointsMs = [0, 120, 350, 800, 1200] } = {},
+    { allFrames = false, checkpointsMs = [0, 120, 350, 800, 1200], abortSignal = null } = {},
   ) {
+    this._throwIfAborted(abortSignal);
     const before = Array.isArray(beforeStates) ? beforeStates : [];
     const startedAt = Date.now();
     for (let checkpointIndex = 0; checkpointIndex < checkpointsMs.length; checkpointIndex += 1) {
+      this._throwIfAborted(abortSignal);
       const checkpoint = checkpointsMs[checkpointIndex];
       const targetDelay = Math.max(0, Number(checkpoint) || 0);
       const remaining = targetDelay - (Date.now() - startedAt);
       if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+      this._throwIfAborted(abortSignal);
       const after = await this._captureFormValidationState(tabId, { allFrames });
+      this._throwIfAborted(abortSignal);
       const failure = this._detectFormValidationFailure(before, after, {
         ...context,
         includeCorrectedPersistentValidation:
@@ -12449,7 +12916,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _promptWorkflowTargetHealing(tabId, workflow, step, stepIndex, candidates, onUpdate) {
     const choices = Array.isArray(candidates) ? candidates.slice(0, 5) : [];
     if (!choices.length) return null;
-    const clarifyId = `workflow_heal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const clarifyId = `workflow_heal_${secureRandomBase36Token(12)}`;
     const tabPending = this._pendingClarifications.get(tabId) || new Map();
     this._pendingClarifications.set(tabId, tabPending);
     const responsePromise = new Promise((resolve) => {
@@ -17242,21 +17709,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!guardId) return response;
     const originalResponse = { ...response };
     delete originalResponse._filePickerGuardId;
-
-    await new Promise(resolve => setTimeout(resolve, 525));
-    try {
-      let settled = await browser.tabs.sendMessage(tabId, {
+    const consumeGuard = () => this._withContentActionDeadline(
+      () => browser.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'consume_file_picker_guard',
         params: { guardId },
-      });
+      }),
+      'consume_file_picker_guard',
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 525));
+    try {
+      let settled = await consumeGuard();
       if (settled?.settled === false) {
         await new Promise(resolve => setTimeout(resolve, 50));
-        settled = await browser.tabs.sendMessage(tabId, {
-          target: 'content',
-          action: 'consume_file_picker_guard',
-          params: { guardId },
-        });
+        settled = await consumeGuard();
       }
       if (settled?.filePickerBlocked) {
         const blockedResponse = { ...settled };
@@ -17643,6 +18110,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
+    const contentPipelineAbortSignal = dispatchContext._contentActionAbortSignal || null;
+    const contentPipelineDispatchState = dispatchContext._contentActionDispatchState || { started: false };
+    const throwIfContentPipelineAborted = () => this._throwIfAborted(contentPipelineAbortSignal);
+    const markContentPipelineDispatched = () => { contentPipelineDispatchState.started = true; };
     args = this._normalizeContinuationToolArgs(name, args);
     let coordinatePoint = null;
     let coordinateDiagnostic = null;
@@ -17705,6 +18176,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       args,
       dispatchContext,
     );
+    throwIfContentPipelineAborted();
     if (richTextToolbarBlock) return richTextToolbarBlock;
     let dispatchBinding = dispatchContext.dispatchBinding || null;
     const messageRecipientGuardRequired = dispatchContext.messageRecipientGuardRequired === true;
@@ -19282,8 +19754,52 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { success: false, error: 'No file data available to attach' };
         }
 
-        const injectCode = `
+        const targetProbeCode = `
           (function() {
+            // WebBrain file attachment target probe.
+            const selector = ${JSON.stringify(args.selector)};
+            const matches = [];
+            const collectDeepMatches = (root) => {
+              matches.push(...root.querySelectorAll(selector));
+              for (const element of root.querySelectorAll('*')) {
+                if (element.shadowRoot) collectDeepMatches(element.shadowRoot);
+              }
+            };
+            try {
+              collectDeepMatches(document);
+            } catch (e) {
+              return {
+                success: false,
+                dispatched: false,
+                error: 'Invalid file input selector: ' + selector + ' (' + (e.message || String(e)) + ')',
+              };
+            }
+            if (matches.length === 0) {
+              return { success: false, dispatched: false, error: 'Element not found matching selector: ' + selector };
+            }
+            if (matches.length > 1) {
+              return {
+                success: false,
+                dispatched: false,
+                ambiguous: true,
+                matchCount: matches.length,
+                error: 'Selector matched ' + matches.length + ' elements across the document and open shadow roots. Use an exact, unique selector for the intended <input type="file">.',
+              };
+            }
+            const el = matches[0];
+            if (!(el instanceof HTMLInputElement) || el.type !== 'file') {
+              return { success: false, dispatched: false, error: 'Selector does not match an <input type="file"> element: ' + selector };
+            }
+            return { success: true, dispatched: false };
+          })();
+        `;
+        const buildInjectCode = actionDeadlineAt => `
+          (function() {
+            const actionDeadlineAt = ${Number(actionDeadlineAt) || 0};
+            const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+            if (deadlineExpired()) {
+              return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
+            }
             const selector = ${JSON.stringify(args.selector)};
             const matches = [];
             const collectDeepMatches = (root) => {
@@ -19327,6 +19843,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               const file = new File([bytes], ${JSON.stringify(filename)}, { type: ${JSON.stringify(mimeType)} });
               const dt = new DataTransfer();
               dt.items.add(file);
+              if (deadlineExpired()) {
+                return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
+              }
               el.files = dt.files;
               dispatched = true;
               el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -19340,92 +19859,197 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             }
           })();
         `;
-        let results;
-        try {
-          results = await browser.tabs.executeScript(tabId, { code: injectCode });
-        } catch (e) {
-          return {
-            success: false,
-            outcomeUnknown: true,
-            error: `Failed to inject file into page (file may be too large for script injection): ${e.message || String(e)}`,
-          };
-        }
-        const res = results && results[0];
-        if (!res || !res.success) {
-          if (compactUpload && res?.dispatched !== true) {
-            return await this._discoverCompactUploadTargets(
-              tabId,
-              'The selected file input changed before attachment. ',
-            );
-          }
-          if (res?.ambiguous) this._uploadSelectorRecoveryRequired.set(tabId, Number(res.matchCount) || 0);
-          return {
-            success: false,
-            dispatched: res?.dispatched === true,
-            ...(res?.ambiguous ? {
-              ambiguous: true,
-              matchCount: Number(res.matchCount) || 0,
-              noDispatch: true,
-              recoveryRequired: 'get_interactive_elements',
-            } : {}),
-            error: res?.ambiguous
-              ? `${res.error} Call get_interactive_elements and use the exact, unique selector returned on the intended file-input record; do not guess another selector variant.`
-              : (res ? res.error : 'Failed to attach file to input element'),
-          };
-        }
-        let attachmentState = res.attachmentState === 'page_consumed'
-          ? 'page_consumed'
-          : 'input_attached';
-        if (attachmentState === 'input_attached') {
-          // Let change handlers queued through a microtask/timer consume or
-          // replace the input before we classify its stable local state.
-          await new Promise(resolve => setTimeout(resolve, 25));
-          const settleProbeCode = `
-            (function() {
-              // WebBrain file attachment settle probe.
-              const selector = ${JSON.stringify(args.selector)};
-              const matches = [];
-              const collectDeepMatches = (root) => {
-                matches.push(...root.querySelectorAll(selector));
-                for (const element of root.querySelectorAll('*')) {
-                  if (element.shadowRoot) collectDeepMatches(element.shadowRoot);
-                }
-              };
-              try {
-                collectDeepMatches(document);
-              } catch {
-                return null;
-              }
-              if (matches.length !== 1) return { attachmentState: 'page_consumed' };
-              const input = matches[0];
-              if (!(input instanceof HTMLInputElement) || input.type !== 'file') {
-                return { attachmentState: 'page_consumed' };
-              }
-              const expectedName = ${JSON.stringify(filename)};
-              const expectedSize = ${Number(res.size) || 0};
-              const attached = Array.from(input.files || []).some(file => (
-                file.name === expectedName && file.size === expectedSize
-              ));
-              return { attachmentState: attached ? 'input_attached' : 'page_consumed' };
-            })();
-          `;
+        const runUploadPagePhase = async abortSignal => {
+          this._throwIfAborted(abortSignal);
+          const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.deadlineAt) || 0;
+          let targetProbeResults;
           try {
-            const settledResults = await browser.tabs.executeScript(tabId, { code: settleProbeCode });
-            const settledState = settledResults?.[0]?.attachmentState;
-            if (settledState === 'input_attached' || settledState === 'page_consumed') {
-              attachmentState = settledState;
+            targetProbeResults = await browser.tabs.executeScript(tabId, { code: targetProbeCode });
+            this._throwIfAborted(abortSignal);
+          } catch (e) {
+            this._throwIfAborted(abortSignal);
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+              error: `Failed to inspect the file input before attachment: ${e.message || String(e)}`,
+            };
+          }
+          const targetProbe = targetProbeResults && targetProbeResults[0];
+          if (!targetProbe || !targetProbe.success) {
+            if (compactUpload) {
+              return await this._discoverCompactUploadTargets(
+                tabId,
+                'The selected file input changed before attachment. ',
+              );
             }
-          } catch { /* Navigation/detachment leaves the initial state unverified. */ }
-        }
-        return {
-          success: true,
-          attached: { name: filename, size: res.size },
-          file: filename,
-          verified: false,
-          attachmentState,
-          remoteStateVerified: false,
-          ...(args.attachmentId != null ? { attachmentId: String(args.attachmentId) } : {}),
+            if (targetProbe?.ambiguous) {
+              this._uploadSelectorRecoveryRequired.set(tabId, Number(targetProbe.matchCount) || 0);
+            }
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              ...(targetProbe?.ambiguous ? {
+                ambiguous: true,
+                matchCount: Number(targetProbe.matchCount) || 0,
+                recoveryRequired: 'get_interactive_elements',
+              } : {}),
+              error: targetProbe?.ambiguous
+                ? `${targetProbe.error} Call get_interactive_elements and use the exact, unique selector returned on the intended file-input record; do not guess another selector variant.`
+                : (targetProbe ? targetProbe.error : 'Failed to inspect the file input before attachment'),
+            };
+          }
+
+          // The target-only probe above cannot mutate the page. From this point
+          // onward the injected script may assign FileList and dispatch input /
+          // change events, so a lost response must be treated as an unknown
+          // upload outcome rather than retried blindly.
+          this._throwIfAborted(abortSignal);
+          markContentPipelineDispatched();
+          let results;
+          try {
+            results = await browser.tabs.executeScript(tabId, { code: buildInjectCode(actionDeadlineAt) });
+          } catch (e) {
+            this._throwIfAborted(abortSignal);
+            return {
+              success: false,
+              dispatched: true,
+              outcomeUnknown: true,
+              retryable: false,
+              error: `Failed to inject file into page (file may be too large for script injection): ${e.message || String(e)} The file-input mutation may have reached the page; inspect the current state before deciding whether to retry.`,
+            };
+          }
+          const res = results && results[0];
+          if (res?.deadlineExpired) {
+            // The page-side absolute guard proves FileList assignment never
+            // happened. Clear the optimistic dispatch marker before the
+            // deadline error is classified so a safe retry remains possible.
+            contentPipelineDispatchState.started = false;
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+              deadlineExpired: true,
+              error: res.error || 'Upload action deadline expired before dispatch',
+            };
+          }
+          this._throwIfAborted(abortSignal);
+          if (!res) {
+            return {
+              success: false,
+              dispatched: true,
+              outcomeUnknown: true,
+              retryable: false,
+              error: 'The file-input script returned no result. The FileList mutation may have reached the page; inspect the current state before deciding whether to retry.',
+            };
+          }
+          if (!res.success) {
+            // A completed response can prove that the page script never reached
+            // FileList assignment even though the mutation-capable script was sent.
+            contentPipelineDispatchState.started = res.dispatched === true;
+            if (compactUpload && res.dispatched !== true) {
+              return await this._discoverCompactUploadTargets(
+                tabId,
+                'The selected file input changed before attachment. ',
+              );
+            }
+            if (res.ambiguous) this._uploadSelectorRecoveryRequired.set(tabId, Number(res.matchCount) || 0);
+            return {
+              success: false,
+              dispatched: res.dispatched === true,
+              outcomeUnknown: res.dispatched === true,
+              retryable: res.dispatched !== true,
+              ...(res.ambiguous ? {
+                ambiguous: true,
+                matchCount: Number(res.matchCount) || 0,
+                noDispatch: true,
+                recoveryRequired: 'get_interactive_elements',
+              } : {}),
+              error: res.ambiguous
+                ? `${res.error} Call get_interactive_elements and use the exact, unique selector returned on the intended file-input record; do not guess another selector variant.`
+                : res.error,
+            };
+          }
+          let attachmentState = res.attachmentState === 'page_consumed'
+            ? 'page_consumed'
+            : 'input_attached';
+          if (attachmentState === 'input_attached') {
+            // Let change handlers queued through a microtask/timer consume or
+            // replace the input before we classify its stable local state.
+            await new Promise(resolve => setTimeout(resolve, 25));
+            this._throwIfAborted(abortSignal);
+            const settleProbeCode = `
+              (function() {
+                // WebBrain file attachment settle probe.
+                const selector = ${JSON.stringify(args.selector)};
+                const matches = [];
+                const collectDeepMatches = (root) => {
+                  matches.push(...root.querySelectorAll(selector));
+                  for (const element of root.querySelectorAll('*')) {
+                    if (element.shadowRoot) collectDeepMatches(element.shadowRoot);
+                  }
+                };
+                try {
+                  collectDeepMatches(document);
+                } catch {
+                  return null;
+                }
+                if (matches.length !== 1) return { attachmentState: 'page_consumed' };
+                const input = matches[0];
+                if (!(input instanceof HTMLInputElement) || input.type !== 'file') {
+                  return { attachmentState: 'page_consumed' };
+                }
+                const expectedName = ${JSON.stringify(filename)};
+                const expectedSize = ${Number(res.size) || 0};
+                const attached = Array.from(input.files || []).some(file => (
+                  file.name === expectedName && file.size === expectedSize
+                ));
+                return { attachmentState: attached ? 'input_attached' : 'page_consumed' };
+              })();
+            `;
+            try {
+              const settledResults = await browser.tabs.executeScript(tabId, { code: settleProbeCode });
+              this._throwIfAborted(abortSignal);
+              const settledState = settledResults?.[0]?.attachmentState;
+              if (settledState === 'input_attached' || settledState === 'page_consumed') {
+                attachmentState = settledState;
+              }
+            } catch (e) {
+              this._throwIfAborted(abortSignal);
+              // Navigation/detachment leaves the initial state unverified.
+            }
+          }
+          return {
+            success: true,
+            attached: { name: filename, size: res.size },
+            file: filename,
+            verified: false,
+            attachmentState,
+            remoteStateVerified: false,
+            ...(args.attachmentId != null ? { attachmentId: String(args.attachmentId) } : {}),
+          };
         };
+        try {
+          return await this._withContentActionDeadline(
+            runUploadPagePhase,
+            'upload_file',
+            this._contentActionDeadlineMs('upload_file', args),
+          );
+        } catch (e) {
+          if (e?.code !== 'content_action_timeout') throw e;
+          return contentPipelineDispatchState.started
+            ? this._contentActionTimeoutResult('upload_file', e)
+            : this._contentActionPreparationTimeoutResult(
+                'upload_file',
+                e,
+                'file-input inspection',
+              );
+        }
       } catch (e) {
         return { success: false, error: e.message || String(e) };
       }
@@ -20334,6 +20958,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'iframe_click') {
       let dispatched = false;
       try {
+        throwIfContentPipelineAborted();
         const urlFilter = String(args.urlFilter || '').trim();
         const selector = args.selector;
         if (!selector) {
@@ -20365,6 +20990,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let binding = dispatchBinding;
         if (!binding?.token || !Number.isInteger(binding.frameId)) {
           const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          throwIfContentPipelineAborted();
           if (targetProbe?.ambiguous) {
             return {
               success: false,
@@ -20379,7 +21005,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           binding = targetProbe?.dispatchBinding || null;
         }
         if (binding?.token && Number.isInteger(binding.frameId)) {
+          throwIfContentPipelineAborted();
           dispatched = true;
+          markContentPipelineDispatched();
           const response = await browser.tabs.sendMessage(tabId, {
             target: 'content',
             action: 'click',
@@ -20392,6 +21020,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
 
         const frames = await browser.webNavigation.getAllFrames({ tabId }) || [];
+        throwIfContentPipelineAborted();
         const candidates = [];
         let invalidSelector = '';
         for (const frame of frames) {
@@ -20408,6 +21037,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             })()
           `;
           const results = await browser.tabs.executeScript(tabId, { code: censusCode, frameId: frame.frameId });
+          throwIfContentPipelineAborted();
           const result = results?.[0];
           if (result?.invalidSelector) {
             invalidSelector = result.error || 'invalid selector';
@@ -20454,7 +21084,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             } catch (e) { return { ok: false, url: location.href, dispatched: targetDispatched, error: e.message }; }
           })()
         `;
+        throwIfContentPipelineAborted();
         dispatched = true;
+        markContentPipelineDispatched();
         const clicked = await browser.tabs.executeScript(tabId, { code: clickCode, frameId: selected.frameId });
         const result = clicked?.[0];
         return result?.ok
@@ -20474,6 +21106,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'iframe_type') {
       let dispatched = false;
       try {
+        throwIfContentPipelineAborted();
         const selector = args.selector;
         const urlFilter = String(args.urlFilter || '').trim();
         const text = args.text || '';
@@ -20504,6 +21137,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && dispatchContext.iframeTargetUnresolved !== true
         ) {
           const targetProbe = await this._probeRichTextToolbarIframeTarget(tabId, args, { mapAnnotation: false });
+          throwIfContentPipelineAborted();
           if (targetProbe?.ambiguous) {
             return {
               success: false,
@@ -20520,16 +21154,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           targetFrameId = binding?.frameId;
         }
         if (!Number.isInteger(targetFrameId) || !binding?.token) {
-          dispatched = true;
-          return this._legacyIframeTypeAllFrames(tabId, {
+          throwIfContentPipelineAborted();
+          const legacyResult = await this._legacyIframeTypeAllFrames(tabId, {
             selector,
             text,
             clear,
             urlFilter,
             matchIndex: args.matchIndex,
+          }, {
+            abortSignal: contentPipelineAbortSignal,
+            deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(contentPipelineAbortSignal)?.deadlineAt) || 0,
+            deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(contentPipelineAbortSignal)?.error || null,
+            beforeDispatch: () => {
+              dispatched = true;
+              markContentPipelineDispatched();
+            },
           });
+          if (legacyResult?.dispatched !== true && legacyResult?.noDispatch === true) {
+            dispatched = false;
+            contentPipelineDispatchState.started = false;
+          }
+          return legacyResult;
         }
+        throwIfContentPipelineAborted();
         dispatched = true;
+        markContentPipelineDispatched();
         try {
           const response = await browser.tabs.sendMessage(tabId, {
             target: 'content',
@@ -20660,6 +21309,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._lastAxScopes.get(tabId),
         dispatchBinding,
         { messageRecipientGuardRequired, messageRecipientDispatchBinding },
+        contentPipelineAbortSignal,
+        contentPipelineDispatchState,
       );
     }
 
@@ -20675,12 +21326,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
       if (duplicateSubmit) return duplicateSubmit;
       if (coordinatePoint && !dispatchBinding?.token) {
-        const reconciled = await this._reconcileCoordinateClick(tabId, coordinatePoint, {
+        const reconciled = await this._reconcileCoordinateClickWithDeadline(tabId, coordinatePoint, {
           messageRecipientGuardRequired,
           messageRecipientDispatchBinding,
           expectedName: args.expected_name,
           expectedRole: args.expected_role,
-        });
+        }, contentPipelineAbortSignal);
         if (reconciled.result) return reconciled.result;
         coordinateDiagnostic = reconciled.diagnostic;
       }
@@ -20727,17 +21378,67 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
-    const keyProgressBefore = name === 'press_keys' && String(args?.key || '').startsWith('Arrow')
-      ? await this._keyProgressSnapshot(tabId)
-      : '';
-    const sendContentAction = () => browser.tabs.sendMessage(tabId, {
-      target: 'content',
-      action,
-      params: contentArgs,
-    }, messageOptions);
-    const dispatchContentAction = sendContentAction;
+    const contentActionDeadlineMs = this._contentActionDeadlineMs(name, contentArgs);
+    const contentActionStartedAt = Date.now();
+    const remainingContentActionDeadlineMs = () => Math.max(
+      1,
+      contentActionDeadlineMs - (Date.now() - contentActionStartedAt),
+    );
+    const runContentActionStage = operation => this._withContentActionDeadline(
+      operation,
+      name,
+      remainingContentActionDeadlineMs(),
+    );
+    let keyProgressBefore = '';
+    if (name === 'press_keys' && String(args?.key || '').startsWith('Arrow')) {
+      try {
+        keyProgressBefore = await runContentActionStage(
+          abortSignal => this._keyProgressSnapshot(tabId, abortSignal),
+        );
+      } catch (error) {
+        if (error?.code === 'content_action_timeout') {
+          return this._withCoordinateReconciliation({
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            outcomeUnknown: false,
+            retryable: true,
+            error: `${error.message} No key was sent because the pre-dispatch page snapshot did not finish. Re-observe the page before retrying.`,
+          }, coordinateDiagnostic);
+        }
+        throw error;
+      }
+    }
+    const sendContentAction = stageAbortSignal => {
+      throwIfContentPipelineAborted();
+      this._throwIfAborted(stageAbortSignal);
+      if (Agent.STATE_CHANGE_TOOLS.has(name)) markContentPipelineDispatched();
+      const actionSignal = contentPipelineAbortSignal || stageAbortSignal;
+      const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(actionSignal)?.deadlineAt) || 0;
+      return browser.tabs.sendMessage(tabId, {
+        target: 'content',
+        action,
+        params: contentArgs,
+        ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
+      }, messageOptions);
+    };
+    const dispatchContentAction = () => runContentActionStage(sendContentAction);
+    const provenNoDispatchDeadline = response => {
+      if (response?.deadlineExpired !== true || response?.dispatched === true) return null;
+      contentPipelineDispatchState.started = false;
+      return {
+        ...response,
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+      };
+    };
     try {
       let response = await dispatchContentAction();
+      const deadlineResult = provenNoDispatchDeadline(response);
+      if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
       if (name === 'click') {
         response = await this._settleContentFilePickerGuard(tabId, response);
       }
@@ -20758,15 +21459,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         response = applyReadPageWindow(response, args);
       }
       if (name === 'press_keys') {
-        response = await this._verifyProvisionalKeyProgress(tabId, args?.key, response, keyProgressBefore);
+        response = await runContentActionStage(abortSignal => this._verifyProvisionalKeyProgress(
+          tabId,
+          args?.key,
+          response,
+          keyProgressBefore,
+          abortSignal,
+        ));
       }
       this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
       return this._withCoordinateReconciliation(response, coordinateDiagnostic);
     } catch (e) {
+      if (e?.code === 'content_action_timeout') {
+        return this._withCoordinateReconciliation(
+          this._contentActionTimeoutResult(name, e),
+          coordinateDiagnostic,
+        );
+      }
       // Content script might not be injected — try injecting it
+      if (Agent.STATE_CHANGE_TOOLS.has(name)) {
+        // A rejected no-receiver message did not reach the page; injection
+        // remains preparation until the retry send actually starts.
+        contentPipelineDispatchState.started = false;
+      }
+      let retryDispatchStarted = false;
       try {
-        await this._injectCoreContentScripts(tabId);
+        await runContentActionStage(() => this._injectCoreContentScripts(tabId));
+        retryDispatchStarted = true;
         let response = await dispatchContentAction();
+        const deadlineResult = provenNoDispatchDeadline(response);
+        if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
         if (name === 'click') {
           response = await this._settleContentFilePickerGuard(tabId, response);
         }
@@ -20787,11 +21509,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           response = applyReadPageWindow(response, args);
         }
         if (name === 'press_keys') {
-          response = await this._verifyProvisionalKeyProgress(tabId, args?.key, response, keyProgressBefore);
+          response = await runContentActionStage(abortSignal => this._verifyProvisionalKeyProgress(
+            tabId,
+            args?.key,
+            response,
+            keyProgressBefore,
+            abortSignal,
+          ));
         }
         this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
         return this._withCoordinateReconciliation(response, coordinateDiagnostic);
       } catch (e2) {
+        if (e2?.code === 'content_action_timeout') {
+          return this._withCoordinateReconciliation(
+            retryDispatchStarted
+              ? this._contentActionTimeoutResult(name, e2)
+              : {
+                  success: false,
+                  dispatched: false,
+                  noDispatch: true,
+                  outcomeUnknown: false,
+                  retryable: true,
+                  error: `${e2.message} No ${name} action was sent because content-script injection did not finish. Re-observe the page before retrying.`,
+                },
+            coordinateDiagnostic,
+          );
+        }
         let pageUrl = '';
         try { pageUrl = (await browser.tabs.get(tabId))?.url || ''; } catch {}
         const accessFailure = firefoxHostPermissionFailure(pageUrl, e2.message);

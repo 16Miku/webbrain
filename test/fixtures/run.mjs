@@ -393,6 +393,493 @@ async function selectFixtureText(page, selector = '#copy') {
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
+
+test('expired content messages are rejected before page mutation in both builds', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <button id="late-action" onclick="window.__lateActionClicks = (window.__lateActionClicks || 0) + 1">Late action</button>
+    `, browserKind);
+    const response = await page.evaluate(() => new Promise((resolve) => {
+      window.__wb_handler({
+        target: 'content',
+        action: 'click',
+        params: { selector: '#late-action' },
+        actionDeadlineAt: Date.now() - 1,
+      }, {}, resolve);
+    }));
+    const clicks = await page.evaluate(() => window.__lateActionClicks || 0);
+    if (
+      response?.success !== false
+      || response.dispatched !== false
+      || response.noDispatch !== true
+      || response.deadlineExpired !== true
+      || clicks !== 0
+    ) {
+      throw new Error(`${browserKind} expired content message mutated the page: ${JSON.stringify({ response, clicks })}`);
+    }
+  }
+});
+
+test('set_field cannot submit after its page-action deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <form id="deadline-form">
+        <input id="deadline-field" aria-label="Deadline field">
+      </form>
+      <script>
+        window.__deadlineSubmits = 0;
+        document.getElementById('deadline-form').addEventListener('submit', event => {
+          event.preventDefault();
+          window.__deadlineSubmits += 1;
+        });
+      </script>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const refId = window.__wb_ax_ref(document.getElementById('deadline-field'));
+      window.__wb_handler({
+        target: 'content',
+        action: 'set_field',
+        params: { ref_id: refId, text: 'typed before expiry', submit: true },
+        actionDeadlineAt: Date.now() + 20,
+      }, {}, response => resolve({
+        response,
+        value: document.getElementById('deadline-field').value,
+        submits: window.__deadlineSubmits,
+      }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.submitted !== false
+      || result.response.dispatched !== true
+      || result.value !== 'typed before expiry'
+      || result.submits !== 0
+    ) {
+      throw new Error(`${browserKind} set_field submitted after expiry: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('set_field stops before mutation when focus handlers cross the deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <input id="late-set-field" aria-label="Late set field">
+      <script>
+        document.getElementById('late-set-field').addEventListener('focus', () => {
+          const stopAt = Date.now() + 30;
+          while (Date.now() < stopAt) {}
+        });
+      </script>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const field = document.getElementById('late-set-field');
+      const refId = window.__wb_ax_ref(field);
+      window.__wb_handler({
+        target: 'content',
+        action: 'set_field',
+        params: { ref_id: refId, text: 'must not appear' },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({ response, value: field.value }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.value !== ''
+    ) {
+      throw new Error(`${browserKind} set_field crossed its mutation deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('set_field releases Enter when a keydown listener crosses the deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <input id="deadline-key-field" aria-label="Deadline key field">
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const field = document.getElementById('deadline-key-field');
+      window.__deadlineKeydowns = 0;
+      window.__deadlineKeyups = 0;
+      window.__deadlineKeyTimes = {};
+      field.addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        window.__deadlineKeydowns += 1;
+        window.__deadlineKeyTimes.keydownStart = Date.now();
+        const stopAt = performance.now() + 650;
+        while (performance.now() < stopAt) {}
+        window.__deadlineKeyTimes.keydownEnd = Date.now();
+      });
+      field.addEventListener('keyup', event => {
+        if (event.key === 'Enter') window.__deadlineKeyups += 1;
+      });
+      const refId = window.__wb_ax_ref(field);
+      const startedAt = Date.now();
+      const deadlineAt = startedAt + 500;
+      window.__wb_handler({
+        target: 'content',
+        action: 'set_field',
+        params: { ref_id: refId, text: 'typed before key dispatch', submit: true },
+        actionDeadlineAt: deadlineAt,
+      }, {}, response => {
+        resolve({
+          response,
+          startedAt,
+          deadlineAt,
+          completedAt: Date.now(),
+          keyTimes: window.__deadlineKeyTimes,
+          keydowns: window.__deadlineKeydowns,
+          keyups: window.__deadlineKeyups,
+        });
+      });
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== true
+      || result.response.outcomeUnknown !== true
+      || result.response.retryable !== false
+      || result.keydowns !== 1
+      || result.keyups !== 1
+    ) {
+      throw new Error(`${browserKind} set_field left Enter pressed after expiry: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('Firefox synthetic hover reports a deadline crossed by its last listener', async (page) => {
+  await setupContentHtml(page, `
+    <button id="deadline-hover">Hover target</button>
+    <script>
+      window.__deadlineMousemoves = 0;
+      document.getElementById('deadline-hover').addEventListener('mousemove', () => {
+        window.__deadlineMousemoves += 1;
+        const stopAt = Date.now() + 150;
+        while (Date.now() < stopAt) {}
+      });
+    </script>
+  `, 'firefox');
+  const result = await page.evaluate(() => new Promise((resolve) => {
+    const target = document.getElementById('deadline-hover');
+    window.__wb_handler({
+      target: 'content',
+      action: 'hover',
+      params: { ref_id: window.__wb_ax_ref(target) },
+      actionDeadlineAt: Date.now() + 100,
+    }, {}, response => resolve({ response, moves: window.__deadlineMousemoves }));
+  }));
+  if (
+    result.response?.success !== false
+    || result.response.deadlineExpired !== true
+    || result.response.dispatched !== true
+    || result.response.outcomeUnknown !== true
+    || result.moves !== 1
+  ) {
+    throw new Error(`firefox hover hid its last-listener deadline: ${JSON.stringify(result)}`);
+  }
+});
+
+test('Firefox synthetic drag releases a held pointer after expiry', async (page) => {
+  await setupContentHtml(page, `
+    <button id="deadline-drag-from">Drag source</button>
+    <button id="deadline-drag-to">Drag target</button>
+    <script>
+      window.__deadlinePointerdowns = 0;
+      window.__deadlinePointerups = 0;
+      document.getElementById('deadline-drag-from').addEventListener('pointerdown', () => {
+        window.__deadlinePointerdowns += 1;
+        const stopAt = Date.now() + 450;
+        while (Date.now() < stopAt) {}
+      });
+      document.getElementById('deadline-drag-to').addEventListener('pointerup', () => {
+        window.__deadlinePointerups += 1;
+      });
+    </script>
+  `, 'firefox');
+  const result = await page.evaluate(() => new Promise((resolve) => {
+    const from = document.getElementById('deadline-drag-from');
+    const to = document.getElementById('deadline-drag-to');
+    window.__wb_handler({
+      target: 'content',
+      action: 'drag_drop',
+      params: {
+        fromRefId: window.__wb_ax_ref(from),
+        toRefId: window.__wb_ax_ref(to),
+        steps: 2,
+      },
+      actionDeadlineAt: Date.now() + 300,
+    }, {}, response => resolve({
+      response,
+      pointerdowns: window.__deadlinePointerdowns,
+      pointerups: window.__deadlinePointerups,
+    }));
+  }));
+  if (
+    result.response?.success !== false
+    || result.response.deadlineExpired !== true
+    || result.response.dispatched !== true
+    || result.response.outcomeUnknown !== true
+    || result.pointerdowns !== 1
+    || result.pointerups !== 1
+  ) {
+    throw new Error(`firefox drag left the pointer held after expiry: ${JSON.stringify(result)}`);
+  }
+});
+
+test('click_ax rechecks its page-action deadline at the click boundary', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <div id="slow-context"><button id="late-click">Late click</button></div>
+      <script>
+        window.__lateAxClicks = 0;
+        document.getElementById('late-click').addEventListener('click', () => { window.__lateAxClicks += 1; });
+        Object.defineProperty(document.getElementById('slow-context'), 'innerText', {
+          configurable: true,
+          get() {
+            const stopAt = Date.now() + 30;
+            while (Date.now() < stopAt) {}
+            return 'Slow click context';
+          },
+        });
+      </script>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const refId = window.__wb_ax_ref(document.getElementById('late-click'));
+      window.__wb_handler({
+        target: 'content',
+        action: 'click_ax',
+        params: { ref_id: refId },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({ response, clicks: window.__lateAxClicks }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.clicks !== 0
+    ) {
+      throw new Error(`${browserKind} click_ax crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('press_keys rechecks its deadline after recipient validation', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <style>
+        #recipient { position: fixed; top: 20px; left: 320px; width: 240px; height: 32px; }
+        #composer { position: fixed; bottom: 20px; left: 280px; width: 360px; height: 80px; }
+      </style>
+      <h1 id="recipient">Alice</h1>
+      <textarea id="composer" aria-label="Message composer"></textarea>
+    `, browserKind);
+    const binding = await page.evaluate(() => new Promise((resolve) => {
+      const composer = document.getElementById('composer');
+      composer.focus();
+      window.__wb_handler({
+        target: 'content',
+        action: 'probe_message_recipient_guard',
+        params: {
+          tool: 'press_keys',
+          args: { key: 'Enter' },
+          bindDispatch: true,
+        },
+      }, {}, response => resolve(response?.messageRecipientDispatchBinding || null));
+    }));
+    if (!binding?.token) {
+      throw new Error(`${browserKind} could not prepare the recipient-bound key fixture`);
+    }
+    const result = await page.evaluate((messageRecipientDispatchBinding) => new Promise((resolve) => {
+      const composer = document.getElementById('composer');
+      const recipient = document.getElementById('recipient');
+      window.__recipientBoundKeyEvents = 0;
+      composer.addEventListener('keydown', () => { window.__recipientBoundKeyEvents += 1; });
+      composer.addEventListener('keyup', () => { window.__recipientBoundKeyEvents += 1; });
+      Object.defineProperty(recipient, 'innerText', {
+        configurable: true,
+        get() {
+          const stopAt = Date.now() + 30;
+          while (Date.now() < stopAt) {}
+          return 'Alice';
+        },
+      });
+      window.__wb_handler({
+        target: 'content',
+        action: 'press_keys',
+        params: {
+          key: 'Enter',
+          messageRecipientGuardRequired: true,
+          messageRecipientDispatchBinding,
+        },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({
+        response,
+        keyEvents: window.__recipientBoundKeyEvents,
+      }));
+    }), binding);
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.keyEvents !== 0
+    ) {
+      throw new Error(`${browserKind} recipient-bound key crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('click rechecks its deadline after recipient validation', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <style>
+        #recipient { position: fixed; top: 20px; left: 320px; width: 240px; height: 32px; }
+        #message-form { position: fixed; bottom: 20px; left: 280px; width: 460px; height: 90px; }
+        #composer { width: 360px; height: 80px; }
+        #send { width: 70px; height: 40px; }
+      </style>
+      <h1 id="recipient">Alice</h1>
+      <form id="message-form">
+        <textarea id="composer" aria-label="Message composer"></textarea>
+        <button id="send" type="button">Send</button>
+      </form>
+      <script>
+        window.__recipientBoundClicks = 0;
+        document.getElementById('send').addEventListener('click', () => { window.__recipientBoundClicks += 1; });
+      </script>
+    `, browserKind);
+    const binding = await page.evaluate(() => new Promise((resolve) => {
+      document.getElementById('composer').focus();
+      window.__wb_handler({
+        target: 'content',
+        action: 'probe_message_recipient_guard',
+        params: {
+          tool: 'click',
+          args: { selector: '#send' },
+          bindDispatch: true,
+        },
+      }, {}, response => resolve(response?.messageRecipientDispatchBinding || null));
+    }));
+    if (!binding?.token) {
+      throw new Error(`${browserKind} could not prepare the recipient-bound click fixture`);
+    }
+    const result = await page.evaluate((messageRecipientDispatchBinding) => new Promise((resolve) => {
+      const recipient = document.getElementById('recipient');
+      Object.defineProperty(recipient, 'innerText', {
+        configurable: true,
+        get() {
+          const stopAt = Date.now() + 30;
+          while (Date.now() < stopAt) {}
+          return 'Alice';
+        },
+      });
+      window.__wb_handler({
+        target: 'content',
+        action: 'click',
+        params: {
+          selector: '#send',
+          messageRecipientGuardRequired: true,
+          messageRecipientDispatchBinding,
+        },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({
+        response,
+        clicks: window.__recipientBoundClicks,
+      }));
+    }), binding);
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.clicks !== 0
+    ) {
+      throw new Error(`${browserKind} recipient-bound click crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('fallback typing stops when focus handlers cross the deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <input id="late-type" aria-label="Late type field">
+      <script>
+        document.getElementById('late-type').addEventListener('focus', () => {
+          const stopAt = Date.now() + 30;
+          while (Date.now() < stopAt) {}
+        });
+      </script>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      window.__wb_handler({
+        target: 'content',
+        action: 'type',
+        params: { selector: '#late-type', text: 'must not appear' },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({
+        response,
+        value: document.getElementById('late-type').value,
+      }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.value !== ''
+    ) {
+      throw new Error(`${browserKind} fallback typing crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('fallback scrolling stops when target scans cross the deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <style>
+        html, body { margin: 0; height: 100%; overflow: hidden; }
+        #scroller { width: 300px; height: 120px; overflow-y: auto; }
+        #scroll-content { height: 1000px; }
+      </style>
+      <div id="scroller"><div id="scroll-content">Scrollable content</div></div>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const scroller = document.getElementById('scroller');
+      const refId = window.__wb_ax_ref(document.getElementById('scroll-content'));
+      const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+      window.getComputedStyle = (element, ...args) => {
+        if (element === scroller) {
+          const stopAt = Date.now() + 30;
+          while (Date.now() < stopAt) {}
+        }
+        return nativeGetComputedStyle(element, ...args);
+      };
+      window.__wb_handler({
+        target: 'content',
+        action: 'scroll',
+        params: { ref_id: refId, direction: 'down', amount: 100 },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({ response, scrollTop: scroller.scrollTop }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.scrollTop !== 0
+    ) {
+      throw new Error(`${browserKind} fallback scroll crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
 const firefoxTests = [];
 function firefoxTest(name, fn) { firefoxTests.push({ name, fn }); }
 
@@ -1639,6 +2126,7 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
     </div>
     <script>
       document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') window.__escapeActiveId = document.activeElement?.id || '';
         if (event.key === 'Escape' && document.activeElement?.id === 'dialog-select') {
           document.activeElement.blur();
         }
@@ -1673,6 +2161,7 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
     background: document.getElementById('background-select').value,
     dialog: document.getElementById('dialog-select').value,
     backgroundButtonClicked: window.__backgroundYearlyClicked === true,
+    escapeActiveId: window.__escapeActiveId || '',
     leakedTargetSlots: Object.keys(globalThis).filter((key) => key.startsWith('__webbrainAutoSelectTarget_')),
   }));
 
@@ -1681,6 +2170,9 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
   }
   if (values.background !== 'monthly' || values.dialog !== 'yearly' || values.backgroundButtonClicked) {
     throw new Error(`auto-select changed the wrong dropdown after refocus: ${JSON.stringify(values)}`);
+  }
+  if (values.escapeActiveId !== 'dialog-select') {
+    throw new Error(`auto-select sent Escape to the wrong control: ${JSON.stringify(values)}`);
   }
   if (values.leakedTargetSlots.length) {
     throw new Error(`auto-select target reference was not cleaned up: ${JSON.stringify(values.leakedTargetSlots)}`);

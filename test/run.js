@@ -2116,6 +2116,93 @@ test('rich-text frame geometry uses wildcard delivery only for known opaque sand
   }
 });
 
+test('legacy iframe typing marks background dispatch only for its mutation phase', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const build of ['chrome', 'firefox']) {
+      let executePhase = 0;
+      let dispatchMarks = 0;
+      let expireDuringPreparation = false;
+      const execute = async () => {
+        executePhase += 1;
+        if (executePhase === 1) {
+          return build === 'chrome'
+            ? [{ frameId: 9, result: { ok: true, url: 'https://frame.test/editor', isTop: false, matchCount: 1 } }]
+            : [{ ok: true, url: 'https://frame.test/editor', matchCount: 1 }];
+        }
+        if (executePhase === 2) {
+          assert.equal(dispatchMarks, 0, `${build}: focus preparation marked dispatch before field mutation`);
+          const preparationResult = expireDuringPreparation
+            ? { ok: false, deadlineExpired: true, dispatched: false }
+            : { ok: true, prepared: true, dispatched: false };
+          return build === 'chrome'
+            ? [{ frameId: 9, result: preparationResult }]
+            : [preparationResult];
+        }
+        if (executePhase === 3) {
+          assert.equal(dispatchMarks, 1, `${build}: mutation injection started without a dispatch marker`);
+          return build === 'chrome'
+            ? [{ frameId: 9, result: { ok: true, dispatched: true, method: 'native-setter', value: 'typed' } }]
+            : [{ ok: true, dispatched: true, method: 'native-setter', value: 'typed' }];
+        }
+        return new Promise(() => {});
+      };
+      globalThis.chrome = build === 'chrome'
+        ? { scripting: { executeScript: execute } }
+        : originalChrome;
+      globalThis.browser = build === 'firefox'
+        ? {
+            webNavigation: { getAllFrames: async () => [{ frameId: 9, parentFrameId: 0, url: 'https://frame.test/editor' }] },
+            tabs: { executeScript: execute },
+          }
+        : originalBrowser;
+      const moduleUrl = pathToFileURL(path.join(ROOT, `src/${build}/src/agent/rich-text-toolbar-probe.js`)).href;
+      const { RichTextToolbarProbe } = await import(`${moduleUrl}?legacy-mutation-boundary=${build}`);
+      let cleanupWatchdog;
+      const result = await Promise.race([
+        new RichTextToolbarProbe({}).legacyIframeTypeAllFrames(77, {
+          selector: '#editor',
+          text: 'typed',
+          clear: true,
+          urlFilter: 'frame.test',
+        }, {
+          beforeDispatch: () => { dispatchMarks += 1; },
+        }),
+        new Promise((_, reject) => {
+          cleanupWatchdog = setTimeout(() => reject(new Error(`${build}: redundant cleanup blocked a completed mutation`)), 500);
+        }),
+      ]).finally(() => clearTimeout(cleanupWatchdog));
+      assert.equal(result.success, true, `${build}: split legacy iframe mutation did not complete`);
+      assert.equal(dispatchMarks, 1, `${build}: legacy iframe mutation marked dispatch more than once`);
+      assert.equal(executePhase, 4, `${build}: prepared iframe marker was not cleaned up`);
+
+      executePhase = 0;
+      dispatchMarks = 0;
+      expireDuringPreparation = true;
+      const expired = await new RichTextToolbarProbe({}).legacyIframeTypeAllFrames(77, {
+        selector: '#editor',
+        text: 'typed',
+        clear: true,
+        urlFilter: 'frame.test',
+      }, {
+        beforeDispatch: () => { dispatchMarks += 1; },
+      });
+      assert.equal(expired.success, false, `${build}: expired preparation unexpectedly succeeded`);
+      assert.equal(expired.deadlineExpired, true, `${build}: preparation expiry was not preserved`);
+      assert.equal(expired.noDispatch, true, `${build}: preparation expiry should be proven no-dispatch`);
+      assert.equal(expired.retryable, true, `${build}: preparation expiry should remain retryable`);
+      assert.equal(dispatchMarks, 0, `${build}: preparation expiry marked background dispatch`);
+      assert.equal(executePhase, 2, `${build}: preparation expiry should not start a mutation injection`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('redaction collectors expose a per-frame overflow sentinel', () => {
   const visibleRect = { left: 10, top: 10, right: 110, bottom: 30, width: 100, height: 20 };
   for (const browserName of ['chrome', 'firefox']) {
@@ -2902,7 +2989,10 @@ test('Chrome set_checked completes one selector-backed trusted click and verifie
     cdpClientCh.attach = async () => ({ attached: true });
     cdpClientCh.clickElement = async (_tabId, selector, options) => {
       clickedSelector = selector;
-      assert.deepEqual(options, { trustedOnly: true, requireUnique: true });
+      assert.equal(options.trustedOnly, true);
+      assert.equal(options.requireUnique, true);
+      assert.ok(options.abortSignal instanceof AbortSignal);
+      assert.equal(typeof options.beforeDispatch, 'function');
       trustedClickCompletedAt = Date.now();
       return { success: true, method: 'cdp-mouse', rect: { x: 1, y: 2, w: 20, h: 20 } };
     };
@@ -2913,6 +3003,8 @@ test('Chrome set_checked completes one selector-backed trusted click and verifie
       { ref_id: 'ref_7', checked: true },
       {
         success: true,
+        dispatched: false,
+        noDispatch: true,
         needsTrustedClick: true,
         marker: 'marker-7',
         trustedSelector: '[data-webbrain-set-checked-target="marker-7"]',
@@ -2943,6 +3035,91 @@ test('Chrome set_checked completes one selector-backed trusted click and verifie
     assert.equal(response.checkboxState.actualChecked, true);
     assert.equal(response.marker, undefined);
     assert.equal(response.trustedSelector, undefined);
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.clickElement = originalClickElement;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome set_checked bounds post-click verification and preserves unknown outcome', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalClickElement = cdpClientCh.clickElement;
+  try {
+    globalThis.chrome = {
+      runtime: {},
+      tabs: {
+        async sendMessage() {
+          throw new Error('set_checked verification bypassed the content-action deadline');
+        },
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.clickElement = async () => ({
+      success: true,
+      method: 'cdp-mouse',
+      dispatched: true,
+      rect: { x: 1, y: 2, w: 20, h: 20 },
+    });
+
+    const deadlineTools = [];
+    const agent = new AgentCh({});
+    agent._getDevDocumentIdentity = async () => ({
+      documentId: 'doc-timeout',
+      pageUrl: 'https://example.test/checkboxes',
+    });
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineTools.push(toolName);
+      if (deadlineTools.length === 1) {
+        return operation(new AbortController().signal);
+      }
+      const error = new Error('set_checked did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      throw error;
+    };
+
+    const response = await agent._completeSetCheckedWithCdp(
+      42,
+      { ref_id: 'ref_timeout', checked: true },
+      {
+        success: true,
+        dispatched: false,
+        noDispatch: true,
+        needsTrustedClick: true,
+        marker: 'marker-timeout',
+        trustedSelector: '[data-webbrain-set-checked-target="marker-timeout"]',
+        selector: '#timeout-checkbox',
+        checkedBefore: false,
+        checkedAfter: false,
+        checkboxIdentity: 'id:timeout-checkbox',
+        _confirmationSurfaces: [],
+      },
+      {
+        ref_id: 'ref_timeout',
+        checked: true,
+        expectedDocumentToken: 'doc-timeout',
+        probeOnly: true,
+        markForTrustedClick: true,
+      },
+    );
+
+    assert.deepEqual(deadlineTools, ['set_checked', 'set_checked']);
+    assert.equal(response.success, false);
+    assert.equal(response.dispatched, true);
+    assert.equal(response.noDispatch, undefined);
+    assert.equal(response.trusted, true);
+    assert.equal(response.verified, false);
+    assert.equal(response.outcomeUnknown, true);
+    assert.equal(response.retryable, false);
+    assert.equal(response.needsTrustedClick, false);
+    assert.equal(response.checkedBefore, false);
+    assert.equal(response.checkedAfter, undefined);
+    assert.equal(response.marker, undefined);
+    assert.equal(response.trustedSelector, undefined);
+    assert.equal(response._confirmationSurfaces, undefined);
+    assert.match(response.error, /may have reached the page.*inspect the current state/i);
   } finally {
     cdpClientCh.attach = originalAttach;
     cdpClientCh.clickElement = originalClickElement;
@@ -3055,7 +3232,10 @@ test('Chrome set_checked fails closed when marker verification resolves another 
     };
     cdpClientCh.attach = async () => ({ attached: true });
     cdpClientCh.clickElement = async (_tabId, _selector, options) => {
-      assert.deepEqual(options, { trustedOnly: true, requireUnique: true });
+      assert.equal(options.trustedOnly, true);
+      assert.equal(options.requireUnique, true);
+      assert.ok(options.abortSignal instanceof AbortSignal);
+      assert.equal(typeof options.beforeDispatch, 'function');
       return { success: true, method: 'cdp-mouse' };
     };
 
@@ -4765,27 +4945,48 @@ test('message recipient dispatch binding detects composer and active-thread race
     const branchEnd = source.indexOf(label === 'chrome' ? "'ax_prepare_field_for_trusted_type':" : "'hover':", branchStart);
     const branch = source.slice(branchStart, branchEnd);
     const recipientCheck = branch.indexOf('_consumeMessageRecipientDispatchBinding(msg.params, el)');
-    const enterDispatch = branch.indexOf("dispatchKey('keydown', 'Enter', 13)");
+    const enterDispatch = branch.indexOf("const enterResult = dispatchKeySequence('Enter', 13, true)");
     assert.ok(recipientCheck >= 0 && enterDispatch > recipientCheck, `${label}: recipient must be revalidated immediately before Enter`);
 
-    const pressStart = source.indexOf('function pressKeys(params)');
+    const pressStart = source.indexOf('function pressKeys(params, actionDeadlineExpired = () => false)');
     const pressEnd = source.indexOf('\n\n  /**', pressStart + 20);
     const pressBranch = source.slice(pressStart, pressEnd);
     const pressRecipientCheck = pressBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, focusedTarget)');
+    const pressDeadlineAfterRecipient = pressBranch.indexOf('if (actionDeadlineExpired()) return deadlineFailure();', pressRecipientCheck);
     const pressDispatch = pressBranch.indexOf('for (let i = 0; i < repeat; i++)');
     assert.ok(
-      pressRecipientCheck >= 0 && pressDispatch > pressRecipientCheck,
-      `${label}: press_keys recipient binding must be consumed before key dispatch`,
+      pressRecipientCheck >= 0
+        && pressDeadlineAfterRecipient > pressRecipientCheck
+        && pressDispatch > pressDeadlineAfterRecipient,
+      `${label}: press_keys must recheck its deadline after recipient validation`,
+    );
+    assert.match(
+      pressBranch,
+      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*dispatched = true;\s*target\.dispatchEvent\(down\);[\s\S]*const expiredAfterKeydown = actionDeadlineExpired\(\);\s*target\.dispatchEvent\(up\);\s*if \(expiredAfterKeydown\) return deadlineFailure\(\);/,
+      `${label}: press_keys must guard keydown and classify deadline-only keyup cleanup as a partial dispatch`,
+    );
+    assert.match(
+      source,
+      /'press_keys': \(\) => pressKeys\(msg\.params \|\| \{\}, actionDeadlineExpired\)/,
+      `${label}: press_keys handler does not receive the owning action deadline`,
     );
 
-    const clickStart = source.indexOf('function clickElement(params)');
+    const clickStart = source.indexOf('function clickElement(params, actionDeadlineExpired = () => false)');
     const clickEnd = source.indexOf('\n\n  function typeText', clickStart);
     const clickBranch = source.slice(clickStart, clickEnd);
     const clickRecipientCheck = clickBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, el)');
+    const clickDeadlineAfterRecipient = clickBranch.indexOf('if (actionDeadlineExpired()) return deadlineFailure();', clickRecipientCheck);
     const clickDispatch = clickBranch.indexOf('clickWithoutNativeFilePicker(() => el.click())');
     assert.ok(
-      clickRecipientCheck >= 0 && clickDispatch > clickRecipientCheck,
-      `${label}: click recipient binding must be consumed before click dispatch`,
+      clickRecipientCheck >= 0
+        && clickDeadlineAfterRecipient > clickRecipientCheck
+        && clickDispatch > clickDeadlineAfterRecipient,
+      `${label}: click must recheck its deadline after recipient validation`,
+    );
+    assert.match(
+      source,
+      /'click': \(\) => clickElement\(msg\.params \|\| \{\}, actionDeadlineExpired\)/,
+      `${label}: click handler does not receive the owning action deadline`,
     );
 
     const clickAxStart = source.indexOf("'click_ax': () => {");
@@ -15983,7 +16184,8 @@ test('public click_ax preserves the complete pre-extraction dispatch and post-pr
           assert.deepEqual(clickArgs, { ref_id: 'ref_907' });
           assert.equal(value, response);
           assert.equal(before, 'before');
-          assert.deepEqual(options, { afterSnapshot: 'after' });
+          assert.equal(options.afterSnapshot, 'after');
+          assert.equal(typeof options.abortCheck, 'function');
         };
         agent._recordInteractionRect = (_tabId, toolName, value, url) => {
           events.push('interaction-rect');
@@ -16127,6 +16329,7 @@ test('coordinate semantic reconciliation: Chrome canvas fallback preserves the l
   const dispatched = [];
   let inputFocusCalls = 0;
   let evaluateCall = 0;
+  let coordinateRedirectSource = '';
   const input = {
     tagName: 'INPUT',
     focus: () => { inputFocusCalls += 1; },
@@ -16178,6 +16381,7 @@ test('coordinate semantic reconciliation: Chrome canvas fallback preserves the l
     if (evaluateCall === 1) return { result: { value: undefined } }; // select guard injection
     if (evaluateCall === 2) return { result: { value: { isSelect: false } } }; // coordinate select probe
     if (evaluateCall === 3) {
+      coordinateRedirectSource = expression;
       const value = Function('document', `return (${expression});`)(document);
       return { result: { value } };
     }
@@ -16212,6 +16416,15 @@ test('coordinate semantic reconciliation: Chrome canvas fallback preserves the l
     });
 
     assert.equal(inputFocusCalls, 1, 'canvas fallback must preserve the old nearby-input focus heuristic');
+    const originalDateNow = Date.now;
+    try {
+      Date.now = () => Number.MAX_SAFE_INTEGER;
+      const expiredRedirect = Function('document', `return (${coordinateRedirectSource});`)(document);
+      assert.equal(expiredRedirect?.deadlineExpired, true, 'expired coordinate redirect must stop inside the page evaluation');
+      assert.equal(inputFocusCalls, 1, 'expired coordinate redirect must not focus the nearby input');
+    } finally {
+      Date.now = originalDateNow;
+    }
     assert.deepEqual(dispatched, [
       { type: 'mouseMoved', x: 1390, y: 748 },
       { type: 'mousePressed', x: 1390, y: 748 },
@@ -49332,6 +49545,92 @@ test('CDP querySelectorPierce keeps open-shadow Runtime object handles alive unt
   assert.deepEqual(commands.at(-1).params, { objectGroup: query.objectGroup });
 });
 
+test('CDP selector resolution rejects queued open- and closed-shadow scrolls after the absolute deadline', async () => {
+  const deadlineAt = Date.now() + 60_000;
+  const deadlineError = new Error('selector deadline expired');
+  deadlineError.code = 'content_action_timeout';
+
+  const openClient = new CDPClient();
+  let openScrolls = 0;
+  openClient.sendCommand = async (_tabId, method) => {
+    assert.equal(method, 'Runtime.enable');
+    return {};
+  };
+  openClient.evaluate = async (_tabId, expression) => {
+    const element = {
+      tagName: 'BUTTON',
+      getAttribute: () => '',
+      scrollIntoView: () => { openScrolls += 1; },
+    };
+    const document = {
+      querySelectorAll: () => [element],
+      elementFromPoint: () => element,
+      createTreeWalker: () => ({ currentNode: null, nextNode: () => null }),
+    };
+    const value = vm.runInNewContext(expression, {
+      document,
+      window: { innerWidth: 1280, innerHeight: 800 },
+      NodeFilter: { SHOW_ELEMENT: 1 },
+      Date: { now: () => deadlineAt + 1 },
+    });
+    return { result: { value } };
+  };
+  await assert.rejects(
+    openClient.resolveSelector(42, '#late-open-shadow', {
+      retries: 0,
+      deadlineAt,
+      deadlineError,
+    }),
+    candidate => candidate === deadlineError,
+  );
+  assert.equal(openScrolls, 0, 'an expired open-shadow resolver scrolled the page');
+
+  const closedClient = new CDPClient();
+  const commands = [];
+  closedClient.evaluate = async () => ({ result: { value: { found: false } } });
+  closedClient.sendCommand = async (_tabId, method, params = {}) => {
+    commands.push({ method, params });
+    if (method === 'DOM.getDocument') {
+      return {
+        root: {
+          nodeId: 1,
+          nodeName: '#document',
+          nodeType: 9,
+          children: [{ nodeId: 10, shadowRoots: [{ nodeId: 2 }] }],
+        },
+      };
+    }
+    if (method === 'DOM.querySelector') {
+      return { nodeId: params.nodeId === 2 ? 77 : 0 };
+    }
+    if (method === 'DOM.resolveNode') return { object: { objectId: 'late-closed-shadow-target' } };
+    if (method === 'Runtime.callFunctionOn') {
+      assert.match(params.functionDeclaration, /deadlineExpired[\s\S]*scrollIntoView/);
+      assert.deepEqual(params.arguments, [{ value: deadlineAt }]);
+      return { result: { value: { scrolled: false, deadlineExpired: true } } };
+    }
+    return {};
+  };
+  await assert.rejects(
+    closedClient.resolveSelector(42, '#late-closed-shadow', {
+      retries: 0,
+      deadlineAt,
+      deadlineError,
+    }),
+    candidate => candidate === deadlineError,
+  );
+  assert.equal(
+    commands.some(command => command.method === 'DOM.scrollIntoViewIfNeeded'),
+    false,
+    'deadline-bound closed-shadow resolution used an unguarded protocol scroll',
+  );
+  assert.equal(
+    commands.some(command => command.method === 'Runtime.releaseObject'),
+    true,
+    'closed-shadow deadline guard leaked its resolved Runtime object',
+  );
+});
+
 test('Chrome toolbar preflight probes closed-shadow type_text selectors through the dispatch resolver', async () => {
   const client = new CDPClient();
   const commands = [];
@@ -50681,6 +50980,51 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
     y: 20,
     width: 30,
     height: 40,
+    tag: 'SELECT',
+    text: 'Current option',
+  });
+  let releaseSelectInspection;
+  let markSelectInspectionStarted;
+  const selectInspectionStarted = new Promise(resolve => { markSelectInspectionStarted = resolve; });
+  const delayedSelectInspection = new Promise(resolve => { releaseSelectInspection = resolve; });
+  let selectInspectionSource = '';
+  client.evaluate = async (_tabId, expression) => {
+    selectInspectionSource = expression;
+    markSelectInspectionStarted();
+    await delayedSelectInspection;
+    return {
+      result: {
+        value: {
+          current: 'Current option',
+          options: ['Current option', 'Other option'],
+        },
+      },
+    };
+  };
+  const selectController = new AbortController();
+  const selectTimeout = new Error('click did not return a page response within 60 seconds.');
+  selectTimeout.code = 'content_action_timeout';
+  const pendingSelectInspection = client.clickElement(42, '#account-type', {
+    abortSignal: selectController.signal,
+  });
+  await selectInspectionStarted;
+  selectController.abort(selectTimeout);
+  releaseSelectInspection();
+  await assert.rejects(pendingSelectInspection, candidate => candidate === selectTimeout);
+  assert.doesNotMatch(
+    selectInspectionSource,
+    /\.focus\s*\(/,
+    'a delayed pre-dispatch select inspection must remain observation-only',
+  );
+  client.evaluate = CDPClient.prototype.evaluate.bind(client);
+
+  client.resolveSelector = async () => ({
+    inViewport: true,
+    hitOk: true,
+    x: 10,
+    y: 20,
+    width: 30,
+    height: 40,
     tag: 'BUTTON',
     type: 'button',
     isSubmitControl: false,
@@ -50719,12 +51063,22 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
     return {};
   };
   client.evaluate = async () => ({
-    result: { value: { success: false, error: 'fallback target disappeared' } },
+    result: {
+      value: {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        deadlineExpired: true,
+        error: 'fallback deadline expired before its click',
+      },
+    },
   });
 
   const uncertain = await client.clickElement(42, '#submit');
   assert.equal(uncertain.success, false);
   assert.equal(uncertain.dispatched, true, 'a mousePressed attempt must fail closed when later fallback also fails');
+  assert.equal(uncertain.outcomeUnknown, true, 'a fallback no-click proof erased an earlier mousePressed uncertainty');
+  assert.equal(uncertain.retryable, false, 'an earlier mousePressed uncertainty invited a blind retry');
 
   client.resolveSelector = async () => ({
     inViewport: false,
@@ -50749,11 +51103,148 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
   assert.equal(trustedOnly.trusted, false);
   assert.equal(trustedOnlyFallbackCalls, 0, 'trusted-only clicks must not invoke DOM/JS fallbacks');
 
+  let fallbackDispatchBoundaries = 0;
+  client.armFileInputClickGuard = async () => ({ armed: true });
+  client.consumeFileInputClickGuard = async () => null;
+  client.sendCommand = async (_tabId, method) => method === 'DOM.resolveNode'
+    ? { object: { objectId: 'fallback-node' } }
+    : {};
+  const guardedFallback = await client.clickElement(42, '#fallback-checkbox', {
+    beforeDispatch: async () => {
+      fallbackDispatchBoundaries += 1;
+      return { success: true };
+    },
+  });
+  assert.equal(guardedFallback.success, true);
+  assert.equal(guardedFallback.method, 'cdp-node-click');
+  assert.equal(fallbackDispatchBoundaries, 1, 'selector fallback bypassed the dispatch boundary');
+
+  const pageDeadlineError = new Error('click did not return a page response within 60 seconds.');
+  pageDeadlineError.code = 'content_action_timeout';
+  for (const fallbackKind of ['open-shadow', 'closed-shadow']) {
+    const pageDeadlineController = new AbortController();
+    let pageDeadlineDispatchBoundaries = 0;
+    client.resolveSelector = async () => ({
+      inViewport: false,
+      hitOk: false,
+      nodeId: fallbackKind === 'closed-shadow' ? 99 : null,
+      x: 10,
+      y: 20,
+      width: 30,
+      height: 40,
+      tag: 'BUTTON',
+      type: 'button',
+    });
+    client.evaluate = async () => {
+      pageDeadlineController.abort(pageDeadlineError);
+      return {
+        result: {
+          value: {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            deadlineExpired: true,
+            error: 'Click action deadline expired',
+          },
+        },
+      };
+    };
+    client.sendCommand = async (_tabId, method) => {
+      if (method === 'DOM.resolveNode') return { object: { objectId: 'expired-fallback-node' } };
+      if (method === 'Runtime.callFunctionOn') {
+        pageDeadlineController.abort(pageDeadlineError);
+        return { result: { value: false } };
+      }
+      if (method === 'Runtime.releaseObject') return new Promise(() => {});
+      return {};
+    };
+    const pageDeadlineResult = await client.clickElement(42, '#expired-fallback', {
+      abortSignal: pageDeadlineController.signal,
+      beforeDispatch: async () => {
+        pageDeadlineDispatchBoundaries += 1;
+        return { success: true };
+      },
+    });
+    assert.equal(pageDeadlineDispatchBoundaries, 1, `${fallbackKind}: fallback did not cross its dispatch boundary`);
+    assert.equal(pageDeadlineResult.success, false, `${fallbackKind}: page-expired fallback reported success`);
+    assert.equal(pageDeadlineResult.dispatched, false, `${fallbackKind}: page-expired fallback claimed a click`);
+    assert.equal(pageDeadlineResult.noDispatch, true, `${fallbackKind}: page-expired fallback lost no-click proof`);
+    assert.equal(pageDeadlineResult.outcomeUnknown, false, `${fallbackKind}: page-expired fallback became unknown`);
+    assert.equal(pageDeadlineResult.retryable, true, `${fallbackKind}: page-expired fallback blocked safe retry`);
+    assert.equal(pageDeadlineResult.deadlineExpired, true, `${fallbackKind}: page-expired fallback lost its deadline marker`);
+  }
+
+  client.resolveSelector = async () => ({
+    inViewport: true,
+    hitOk: true,
+    x: 30,
+    y: 40,
+    width: 20,
+    height: 10,
+    tag: 'INPUT',
+    type: 'checkbox',
+  });
+  client.armFileInputClickGuard = async () => ({ armed: true });
+  let releasePress;
+  let markPressStarted;
+  const pressStarted = new Promise(resolve => { markPressStarted = resolve; });
+  const delayedPress = new Promise(resolve => { releasePress = resolve; });
+  const cancelledEvents = [];
+  client.sendCommand = async (_tabId, method, params) => {
+    if (method !== 'Input.dispatchMouseEvent') return {};
+    cancelledEvents.push(params);
+    if (params.type === 'mousePressed') {
+      markPressStarted();
+      return delayedPress;
+    }
+    return {};
+  };
+  const controller = new AbortController();
+  const timeoutError = new Error('set_checked did not return a page response within 60 seconds.');
+  timeoutError.code = 'content_action_timeout';
+  const pendingCancelledClick = client.clickElement(42, '#trusted-checkbox', {
+    trustedOnly: true,
+    abortSignal: controller.signal,
+  });
+  await pressStarted;
+  controller.abort(timeoutError);
+  releasePress({});
+  await assert.rejects(pendingCancelledClick, candidate => candidate === timeoutError);
+  assert.deepEqual(
+    cancelledEvents.map(event => ({
+      type: event.type,
+      x: event.x,
+      y: event.y,
+      clickCount: event.clickCount,
+    })),
+    [
+      { type: 'mouseMoved', x: 30, y: 40, clickCount: undefined },
+      { type: 'mousePressed', x: 30, y: 40, clickCount: 1 },
+      { type: 'mouseMoved', x: -1, y: -1, clickCount: 0 },
+      { type: 'mouseReleased', x: -1, y: -1, clickCount: 0 },
+    ],
+    'expired trusted selector press must unwind off-target without a normal release',
+  );
+
   const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cdp/cdp-client.js'), 'utf8');
   assert.match(
     source,
     /const isSubmitControl = tag === 'INPUT'[\s\S]*tag === 'BUTTON'[\s\S]*isSubmitControl,/,
     'selector resolution should derive submit metadata from the target element',
+  );
+  const clickElementStart = source.indexOf('async clickElement(');
+  const clickElementEnd = source.indexOf('\n  async ', clickElementStart + 10);
+  const clickElementSource = source.slice(clickElementStart, clickElementEnd);
+  assert.doesNotMatch(clickElementSource, /'DOM\.focus'/, 'selector clicks must not queue an unguarded pre-dispatch DOM.focus command');
+  assert.match(
+    clickElementSource,
+    /function\(actionDeadlineAt\)[\s\S]*Date\.now\(\) >= actionDeadlineAt[\s\S]*this\.focus\(\)[\s\S]*Date\.now\(\) >= actionDeadlineAt[\s\S]*this\.click\(\)/,
+    'closed-shadow selector click fallback must preserve focus and enforce the page-side deadline before clicking',
+  );
+  assert.match(
+    clickElementSource,
+    /const deadlineExpired = \(\) => actionDeadlineAt > 0 && Date\.now\(\) >= actionDeadlineAt;[\s\S]*el\.click\(\)/,
+    'open-shadow selector click fallback must enforce the page-side deadline',
   );
 });
 
@@ -50769,6 +51260,73 @@ test('Chrome selector type distinguishes pre-dispatch failure from uncertain dis
       error: 'Element not found',
     },
   );
+
+  client.resolveSelector = async () => ({
+    inViewport: false,
+    hitOk: false,
+    nodeId: null,
+    tag: 'SELECT',
+    x: 10,
+    y: 20,
+    width: 30,
+    height: 40,
+  });
+  let releaseSelectTypeInspection;
+  let markSelectTypeInspectionStarted;
+  const selectTypeInspectionStarted = new Promise(resolve => { markSelectTypeInspectionStarted = resolve; });
+  const delayedSelectTypeInspection = new Promise(resolve => { releaseSelectTypeInspection = resolve; });
+  let selectFocusCalls = 0;
+  const selectDocument = { activeElement: null };
+  const selectElement = {
+    tagName: 'SELECT',
+    isConnected: true,
+    selectedIndex: 0,
+    value: 'current',
+    options: [
+      { index: 0, value: 'current', text: 'Current option' },
+      { index: 1, value: 'other', text: 'Other option' },
+    ],
+    focus() {
+      selectFocusCalls += 1;
+      selectDocument.activeElement = this;
+    },
+  };
+  selectDocument.querySelector = () => selectElement;
+  const originalDateNow = Date.now;
+  const selectTypeDeadline = originalDateNow() + 10_000;
+  const selectTypeTimeout = new Error('type_text did not return a page response within 60 seconds.');
+  selectTypeTimeout.code = 'content_action_timeout';
+  client.evaluate = async (_tabId, expression) => {
+    markSelectTypeInspectionStarted();
+    await delayedSelectTypeInspection;
+    const value = Function('document', `return (${expression});`)(selectDocument);
+    return { result: { value } };
+  };
+  const pendingExpiredSelectType = client.typeText(
+    42,
+    '#account-type',
+    'Other option',
+    false,
+    null,
+    { deadlineAt: selectTypeDeadline, deadlineError: selectTypeTimeout },
+  );
+  await selectTypeInspectionStarted;
+  try {
+    Date.now = () => Number.MAX_SAFE_INTEGER;
+    releaseSelectTypeInspection();
+    await assert.rejects(pendingExpiredSelectType, candidate => candidate === selectTypeTimeout);
+  } finally {
+    Date.now = originalDateNow;
+  }
+  assert.equal(selectFocusCalls, 0, 'an expired queued select type must not focus the stale dropdown');
+  client.evaluate = CDPClient.prototype.evaluate.bind(client);
+
+  const cdpSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cdp/cdp-client.js'), 'utf8');
+  const typeTextStart = cdpSource.indexOf('async typeText(');
+  const typeTextEnd = cdpSource.indexOf('\n  async ', typeTextStart + 10);
+  const typeTextSource = cdpSource.slice(typeTextStart, typeTextEnd);
+  assert.doesNotMatch(typeTextSource, /'DOM\.focus'/, 'selector typing must not queue an unguarded DOM.focus command');
+  assert.match(typeTextSource, /actionDeadlineAt[\s\S]*Date\.now\(\) >= actionDeadlineAt[\s\S]*\.focus\(\)/, 'selector typing focus paths must check the page-side deadline');
 
   client.resolveSelector = async () => ({
     inViewport: false,
@@ -51070,6 +51628,65 @@ test('Chrome select typing reports verification as a positive proof only', async
   verificationValue = { verified: true };
   const proven = await client.typeText(42, '#size', 'Large', false);
   assert.equal(proven.verified, true, 'a proven select change must be verified');
+});
+
+test('Chrome select typing releases a delayed keyDown before propagating deadline expiry', async () => {
+  for (const stalledKey of ['Escape', 'ArrowDown']) {
+    const client = new CDPClient();
+    client.resolveSelector = async () => ({
+      inViewport: false, hitOk: false, nodeId: null, tag: 'SELECT', x: 1, y: 2, width: 3, height: 4,
+    });
+    client.evaluate = async () => ({
+      result: {
+        value: {
+          success: true, currentIndex: 0, targetIndex: 1, targetText: 'Large', targetValue: 'lg',
+        },
+      },
+    });
+    let releaseKeyDown;
+    let markKeyDownStarted;
+    const keyDownStarted = new Promise(resolve => { markKeyDownStarted = resolve; });
+    const delayedKeyDown = new Promise(resolve => { releaseKeyDown = resolve; });
+    const keyEvents = [];
+    client.sendCommand = async (_tabId, command, params = {}) => {
+      assert.equal(command, 'Input.dispatchKeyEvent');
+      keyEvents.push({ type: params.type, key: params.key });
+      if (params.type === 'keyDown' && params.key === stalledKey) {
+        markKeyDownStarted();
+        await delayedKeyDown;
+      }
+      return {};
+    };
+
+    const controller = new AbortController();
+    const timeoutError = new Error('type_text did not return a page response within 60 seconds.');
+    timeoutError.code = 'content_action_timeout';
+    const started = client.typeText(42, '#size', 'Large', false, null, {
+      abortSignal: controller.signal,
+    });
+    await keyDownStarted;
+    controller.abort(timeoutError);
+    releaseKeyDown();
+    await assert.rejects(started, candidate => candidate === timeoutError);
+
+    const stalledIndex = keyEvents.findIndex(event => (
+      event.type === 'keyDown' && event.key === stalledKey
+    ));
+    assert.ok(stalledIndex >= 0, `${stalledKey}: stalled keyDown was not sent`);
+    assert.deepEqual(
+      keyEvents.slice(stalledIndex, stalledIndex + 2),
+      [
+        { type: 'keyDown', key: stalledKey },
+        { type: 'keyUp', key: stalledKey },
+      ],
+      `${stalledKey}: cancellation did not release the delayed keyDown`,
+    );
+    assert.equal(
+      keyEvents.some((event, index) => index > stalledIndex + 1 && event.type === 'keyDown'),
+      false,
+      `${stalledKey}: select navigation continued after deadline expiry`,
+    );
+  }
 });
 
 test('Chrome append verification proves the requested insertion delta', async () => {
@@ -53832,11 +54449,11 @@ test('MCP bridge settings are Chromium-only, live under Advanced, and keep setup
   const bridgeStart = generalPanel.indexOf('id="cloud-bridge-setting"');
   assert.notEqual(generalStart, -1, 'Chrome General settings panel missing');
   assert.notEqual(advancedStart, -1, 'Chrome General settings should include Advanced');
-  assert.ok(bridgeStart > advancedStart, 'Cloud bridge should live inside General > Advanced');
+  assert.ok(bridgeStart > advancedStart, 'MCP should live inside General > Advanced');
   assert.match(generalPanel, /id="toggle-cloud-bridge"/, 'Chrome Advanced should expose the bridge toggle');
   assert.match(generalPanel, /id="input-cloud-bridge-url"/, 'Chrome Advanced should expose the bridge URL');
   assert.match(generalPanel, /id="cloud-bridge-status"[^>]*role="status"[^>]*aria-live="polite"/, 'bridge status should be announced accessibly');
-  assert.doesNotMatch(generalPanel, /id="toggle-cloud-bridge"\s+checked/, 'Cloud bridge must default off');
+  assert.doesNotMatch(generalPanel, /id="toggle-cloud-bridge"\s+checked/, 'MCP must default off');
   assert.match(chromeHtml, /prefers-reduced-motion: reduce[\s\S]*cloud-bridge-status/, 'waiting animation should respect reduced-motion preferences');
   assert.match(chromeHtml, /href="https:\/\/www\.webbrain\.one\/docs\/mcp\/"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/, 'MCP setting should link to the setup guide safely');
 
@@ -53883,6 +54500,21 @@ test('MCP bridge settings are Chromium-only, live under Advanced, and keep setup
   const lmBridge = fs.readFileSync(path.join(ROOT, 'lmstudio-plugin/src/util/bridgeClient.ts'), 'utf8');
   for (const [label, source] of [['MCP error', mcpBridge], ['MCP connection', mcpIndex], ['LM Studio connection', lmBridge]]) {
     assert.match(source, /Settings → General → Advanced → MCP/, `${label}: runtime setup guidance should match the UI`);
+  }
+  const offscreenBridge = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/cloud-bridge.js'), 'utf8');
+  assert.match(offscreenBridge, /MCP URL must use ws:\/\/ on localhost\./, 'visible URL validation should use the MCP setting name');
+  assert.doesNotMatch(offscreenBridge, /Cloud bridge URL/, 'visible URL validation should not use the retired setting name');
+
+  const namingSurfaces = [
+    ['MCP docs', 'web/docs/mcp/index.html'],
+    ['LM Studio docs', 'web/docs/lm-studio/index.html'],
+    ['MCP blog source', 'web/blog/posts/mcp-server-introduction.md'],
+    ['MCP blog output', 'web/blog/mcp-server-introduction/index.html'],
+  ];
+  for (const [label, rel] of namingSurfaces) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    assert.match(source, /General → Advanced → MCP/, `${label}: setup path should match the Chromium UI`);
+    assert.doesNotMatch(source, /General → Advanced → Cloud bridge/, `${label}: retired setting name should not remain`);
   }
 });
 
@@ -67388,6 +68020,120 @@ test('form validation polling catches delayed errors', async () => {
   }
 });
 
+test('form validation polling stops when the shared action deadline expires', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const controller = new AbortController();
+    const timeoutError = new Error('submit action deadline expired');
+    timeoutError.code = 'content_action_timeout';
+    let releaseCapture;
+    let markCaptureStarted;
+    const captureStarted = new Promise(resolve => { markCaptureStarted = resolve; });
+    const delayedCapture = new Promise(resolve => { releaseCapture = resolve; });
+    let captures = 0;
+    agent._captureFormValidationState = async () => {
+      captures += 1;
+      markCaptureStarted();
+      return delayedCapture;
+    };
+
+    const polling = agent._waitForFormValidationFailure(
+      5117,
+      [],
+      { toolName: 'click', args: {}, result: { success: true, dispatched: true } },
+      { checkpointsMs: [0, 0], abortSignal: controller.signal },
+    );
+    await captureStarted;
+    controller.abort(timeoutError);
+    releaseCapture([]);
+    await assert.rejects(polling, candidate => candidate === timeoutError);
+    assert.equal(captures, 1, `${AgentClass.name}: validation polling continued after action cancellation`);
+  }
+});
+
+test('submit detection times out before dispatch in both builds', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = 5119;
+    let executeCalls = 0;
+    let releaseDetection = null;
+    let markDetectionStarted = null;
+
+    agent._ensureGateSetting = async () => {};
+    agent._captchaMutationPreflight = async () => null;
+    agent._recordProgressObservation = async () => null;
+    agent._autoRecordProgressAction = () => null;
+    agent._progressWarningForAction = () => '';
+    agent._persist = () => {};
+    agent._detectLikelySubmitAction = () => new Promise(resolve => {
+      releaseDetection = resolve;
+      markDetectionStarted?.();
+    });
+    agent.executeTool = async () => {
+      executeCalls += 1;
+      return { success: true, dispatched: true };
+    };
+    let deadlineCalls = 0;
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'click_ax', `${AgentClass.name}: submit preflight uses the wrong deadline class`);
+      if (deadlineCalls % 2 === 1) return operation(new AbortController().signal);
+      const error = new Error('click_ax did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const detectionStarted = new Promise(resolve => { markDetectionStarted = resolve; });
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await detectionStarted;
+      controller.abort(error);
+      releaseDetection(null);
+      await assert.rejects(started, candidate => candidate === error);
+      markDetectionStarted = null;
+      releaseDetection = null;
+      throw error;
+    };
+
+    const messages = [];
+    const updates = [];
+    const batchResults = [];
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      batchResults.push(await agent._executeToolBatch(
+        tabId,
+        [{
+          id: `submit_preflight_timeout_${AgentClass.name}_${attempt}`,
+          function: { name: 'click_ax', arguments: '{"ref_id":"ref_submit"}' },
+        }],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision: false },
+        '',
+        new Set(['click_ax']),
+        attempt,
+      ));
+    }
+
+    assert.equal(executeCalls, 0, `${AgentClass.name}: timed-out submit detection dispatched the action`);
+    assert.equal(deadlineCalls, 6, `${AgentClass.name}: submit detection did not start after each bounded CAPTCHA preflight`);
+    assert.equal(messages.length, 3, `${AgentClass.name}: repeated submit preflight timeouts did not produce tool results`);
+    const result = JSON.parse(messages[0].content.split('\n', 1)[0]);
+    assert.equal(result.success, false, `${AgentClass.name}: submit preflight timeout reported success`);
+    assert.equal(result.dispatched, false, `${AgentClass.name}: pre-dispatch timeout claimed an action was sent`);
+    assert.equal(result.noDispatch, true, `${AgentClass.name}: pre-dispatch timeout lost its no-dispatch marker`);
+    assert.equal(result.outcomeUnknown, false, `${AgentClass.name}: pre-dispatch timeout reported an unknown outcome`);
+    assert.equal(result.retryable, true, `${AgentClass.name}: safe pre-dispatch timeout blocked recovery`);
+    assert.match(result.error, /submit\/form-validation preflight did not finish/i);
+    assert.ok(
+      updates.some(update => update.type === 'warning' && /timed out before dispatch/i.test(update.data?.message || '')),
+      `${AgentClass.name}: pre-dispatch timeout warning missing`,
+    );
+    assert.match(messages[1].content, /FAILED ACTION LOOP/i,
+      `${AgentClass.name}: repeated pre-dispatch timeout did not reach loop nudging`);
+    assert.equal(batchResults[2]?.action, 'recover',
+      `${AgentClass.name}: third identical pre-dispatch timeout did not stop the loop`);
+    assert.equal(batchResults[2]?.status, 'loop_stopped',
+      `${AgentClass.name}: repeated pre-dispatch timeout used the wrong terminal status`);
+  }
+});
+
 test('coordinate iframe submits capture validation state in all frames', async () => {
   const agent = new AgentCh({ getVisionProvider: async () => null });
   const tabId = 5118;
@@ -69569,9 +70315,15 @@ test('native select rescue yields only to exact clickables and refuses ambiguous
   assert.match(autoSelectBody, /if \(txt && txt === lc\) return \{ found: false, suppressedByClickable: true \};/, 'chrome: only exact clickable text should suppress select rescue');
   assert.doesNotMatch(autoSelectBody, /txt\.includes\(lc\)[^\n]*suppressedByClickable/, 'chrome: substring clickables must not suppress select rescue');
   assert.match(autoSelectBody, /if \(matchingSelects\.length !== 1\)/, 'chrome: auto-select must not pick the first of several matching dropdowns');
+  const scanStart = autoSelectBody.indexOf('const scanResult = await cdpClient.evaluate');
+  const scanEnd = autoSelectBody.indexOf('const scan = scanResult?.result?.value;', scanStart);
+  const scanBody = autoSelectBody.slice(scanStart, scanEnd);
+  assert.doesNotMatch(scanBody, /sel\.focus\s*\(/, 'chrome: auto-select scan must remain observation-only before dispatch');
+  assert.match(scanBody, /deadlineExpired\(\)/, 'chrome: auto-select scan must reject page work after the action deadline');
+  assert.match(autoSelectBody, /const focusResult = await cdpClient\.evaluate[\s\S]*deadlineExpired\(\)[\s\S]*target\.focus\(\)/, 'chrome: auto-select refocus must enforce the page-side deadline');
 
   const firefoxContent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
-  const clickStart = firefoxContent.indexOf('function clickElement(params) {');
+  const clickStart = firefoxContent.indexOf('function clickElement(params, actionDeadlineExpired = () => false) {');
   const clickEnd = firefoxContent.indexOf('\n  function ', clickStart + 10);
   const clickBody = firefoxContent.slice(clickStart, clickEnd);
   assert.ok(clickStart >= 0 && clickEnd > clickStart, 'firefox: click helper should be independently inspectable');
@@ -69678,6 +70430,28 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     assert.ok(settleIndex >= 0 && readbackIndex > settleIndex, `${label}: verification must happen after controlled-input reconciliation`);
     assert.match(branch, /(?:const|let) actual = el\.isContentEditable \? _editableTextValue\(el\)/, `${label}: rich-editor verification must use rendered text`);
     assert.match(branch, /_setFieldValueMatches\(actual, prevValue, text, clear, el\.isContentEditable\)/, `${label}: newline normalization must remain contenteditable-only`);
+    assert.match(branch, /await new Promise\(resolve => setTimeout\(resolve, SET_FIELD_VERIFY_DELAY_MS\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can continue after its verification wait expires`);
+    assert.match(branch, /if \(usesNativeSubmit\)[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*submissionDispatched = true;\s*try \{\s*form\.requestSubmit\(\)/, `${label}: native set_field submission is not guarded at the mutation boundary`);
+    assert.match(branch, /await new Promise\(r => setTimeout\(r, 80\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*await new Promise\(r => setTimeout\(r, 30\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*const enterResult = dispatchKeySequence\('Enter', 13, true\);\s*submissionDispatched = enterResult\.dispatched;\s*if \(!enterResult\.completedWithinDeadline\)/, `${label}: page-owned set_field submission can resume after its deadline`);
+    assert.match(
+      branch,
+      /const dispatchKeySequence = \(key, keyCode, includeKeypress = false\) => \{[\s\S]*result\.dispatched = true;\s*el\.dispatchEvent\(new KeyboardEvent\('keydown'[\s\S]*const expiredAfterKeydown = actionDeadlineExpired\(\);[\s\S]*const expiredBeforeKeyup = expiredAfterKeydown \|\| actionDeadlineExpired\(\);[\s\S]*el\.dispatchEvent\(new KeyboardEvent\('keyup'[\s\S]*result\.completedWithinDeadline = !expiredBeforeKeyup && !actionDeadlineExpired\(\);/,
+      `${label}: set_field can leave a synthetic key pressed when a listener crosses the deadline`,
+    );
+    assert.match(branch, /el\.focus\(\{ preventScroll: true \}\);\s*\} catch \{\}\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can mutate after focus handlers cross the deadline`);
+    assert.match(branch, /if \(setter\) setter\.call\(el, newVal\); else el\.value = newVal;\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*el\.dispatchEvent\(new Event\('input'/, `${label}: set_field does not recheck its deadline before page events`);
+    if (label === 'firefox') {
+      assert.match(branch, /await _retryFieldWithExecCommand\([\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, 'firefox: set_field fallback can continue after its reconciliation wait expires');
+      const hoverStart = source.indexOf("'hover': () => {");
+      const hoverEnd = source.indexOf("'drag_drop': () => {", hoverStart);
+      const hoverBranch = source.slice(hoverStart, hoverEnd);
+      assert.match(hoverBranch, /el\.dispatchEvent\(new EventType\(type, eventInit\)\);\s*return !actionDeadlineExpired\(\);/, 'firefox: synthetic hover can report success after its last listener crosses the deadline');
+      const dragStart = hoverEnd;
+      const dragEnd = source.indexOf("'wait_for_stable':", dragStart);
+      const dragBranch = source.slice(dragStart, dragEnd);
+      assert.match(dragBranch, /const deadlineWithCleanup = \(\) => \{[\s\S]*dispatchCleanup\('dragend'[\s\S]*dispatchCleanup\('pointerup'[\s\S]*dispatchCleanup\('mouseup'/, 'firefox: expired synthetic drag can leave pointer or mouse state held');
+      assert.match(dragBranch, /if \(!dispatch\('pointerdown'[\s\S]*pointerDown = true;[\s\S]*if \(!dispatch\('mousedown'[\s\S]*mouseDown = true;[\s\S]*if \(!dispatch\('dragstart'[\s\S]*dragStarted = true;/, 'firefox: synthetic drag cleanup does not track dispatched gesture state');
+    }
     assert.match(branch, /!el\.isConnected \|\| !rect \|\| rect\.w < 1 \|\| rect\.h < 1/, `${label}: stale or zero-sized targets must fail before typing`);
      assert.match(branch, /if \(submit && verified\)/, `${label}: mismatched field values must not be submitted`);
      assert.match(branch, /addEventListener\('submit'/, `${label}: submit handling must observe actual submit events`);
@@ -69708,17 +70482,26 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
     assert.equal(usesNativeSubmit(false, false, {}), false, `${label}: form without requestSubmit does not use native submit`);
 
     // Behavioral slice of the submit block, run against stubs.
-    const blockStart = source.indexOf("const form = el.form || (el.closest && el.closest('form'));");
+    const blockStart = source.indexOf('const dispatchKeySequence = (key, keyCode, includeKeypress = false) => {');
     const blockEnd = source.indexOf('\n            } catch {\n              submissionOutcomeUnknown = true;', blockStart);
     assert.ok(blockStart >= 0 && blockEnd > blockStart, `${label}: submit block not found`);
     const block = source.slice(blockStart, blockEnd);
     const runner = vm.runInNewContext(`async (stubs) => {
-      const { dispatchKey, el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, ref_id, rect } = stubs;
+      const { el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, actionDeadlineExpired, deadlineFailure, ref_id, rect } = stubs;
       let nativeSubmitAttempted = false;
       let submissionOutcomeUnknown = true;
+      let submissionDispatched = false;
       ${block}
       return { nativeSubmitAttempted, submissionOutcomeUnknown };
-    }`, { setTimeout: callback => callback() });
+    }`, {
+      setTimeout: callback => callback(),
+      KeyboardEvent: class KeyboardEvent {
+        constructor(type, init = {}) {
+          this.type = type;
+          Object.assign(this, init);
+        }
+      },
+    });
 
     const exercise = async ({
       keydownCancelled = false,
@@ -69751,26 +70534,27 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
         },
       };
       const el = {
-        dispatchEvent: event => !(keydownCancelled && event.type === 'keydown' && event.key === 'Enter'),
+        dispatchEvent: event => {
+          calls.push(`${event.type}:${event.key}`);
+          if (event.type === 'keydown' && event.key === 'Enter' && pageSubmitsOnKeydown) emitSubmit();
+          if (event.type === 'keydown' && event.key === 'Enter' && pageUsesDirectSubmitOnKeydown) calls.push('form.submit');
+          return !(keydownCancelled && event.type === 'keydown' && event.key === 'Enter');
+        },
         form: hasForm ? form : null,
         closest: () => null,
         isContentEditable,
       };
-      const dispatchKey = (type, key) => {
-        calls.push(`${type}:${key}`);
-        if (type === 'keydown' && key === 'Enter' && pageSubmitsOnKeydown) emitSubmit();
-        if (type === 'keydown' && key === 'Enter' && pageUsesDirectSubmitOnKeydown) calls.push('form.submit');
-        return el.dispatchEvent({ type, key });
-      };
       let failureResult = null;
       const failure = (msg, data) => { failureResult = data; return { success: false, ...data }; };
       const result = await runner({
-        dispatchKey, el,
+        el,
         msg: { params: {} },
         failure,
         isCombobox,
         _setFieldUsesNativeSubmit: usesNativeSubmit,
         _consumeMessageRecipientDispatchBinding: () => ({ success: true }),
+        actionDeadlineExpired: () => false,
+        deadlineFailure: () => { throw new Error('unexpected deadline failure'); },
         ref_id: 'ref_1',
         rect: { x: 0, y: 0, w: 1, h: 1 },
       });
@@ -69857,6 +70641,16 @@ test('type_ax shares settled exact verification and explicit recovery contract',
 test('Chrome controlled-field fallback is ref-bound, trusted, verified, and submit-gated', () => {
   const agent = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
   const content = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/content.js'), 'utf8');
+  const fallbackDeadlineStart = agent.indexOf('async _maybeFallbackFieldWithCdp(');
+  const fallbackImplStart = agent.indexOf('async _maybeFallbackFieldWithCdpImpl(', fallbackDeadlineStart);
+  assert.ok(fallbackDeadlineStart >= 0 && fallbackImplStart > fallbackDeadlineStart, 'chrome: trusted field retry deadline wrapper missing');
+  const fallbackDeadlineSource = agent.slice(fallbackDeadlineStart, fallbackImplStart);
+  assert.match(fallbackDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._maybeFallbackFieldWithCdpImpl\([\s\S]*toolName/, 'chrome: trusted field retry pipeline bypasses the deadline');
+  assert.match(fallbackDeadlineSource, /abortSignal =>[\s\S]*messageRecipientContext,[\s\S]*abortSignal/, 'chrome: trusted field retry deadline does not propagate cancellation');
+  assert.match(fallbackDeadlineSource, /content_action_timeout[\s\S]*this\._contentActionTimeoutResult\(toolName, error\)/, 'chrome: trusted field retry timeout loses its unknown outcome');
+  const fallbackImplEnd = agent.indexOf('async _resolveClickAxFallbackTarget(', fallbackImplStart);
+  const fallbackImplSource = agent.slice(fallbackImplStart, fallbackImplEnd);
+  assert.match(fallbackImplSource, /this\._throwIfAborted\(abortSignal\)[\s\S]*Input\.insertText[\s\S]*this\._throwIfAborted\(abortSignal\)[\s\S]*Input\.dispatchKeyEvent/, 'chrome: trusted field retry can continue mutating after cancellation');
   assert.match(agent, /_maybeFallbackFieldWithCdp[\s\S]*ax_prepare_field_for_trusted_type[\s\S]*Input\.insertText[\s\S]*ax_verify_field_value/, 'chrome: trusted field retry pipeline missing');
   assert.match(agent, /verification\.verified !== true[\s\S]*if \(toolName === 'set_field' && args\?\.submit === true\)/, 'chrome: submit must remain after trusted verification');
   assert.match(content, /'ax_prepare_field_for_trusted_type'[\s\S]*window\.__wb_ax_lookup\(ref_id\)[\s\S]*el\.select\(\)/, 'chrome: trusted retry must focus and select the ref-bound field');
@@ -69871,6 +70665,80 @@ test('Chrome controlled-field fallback is ref-bound, trusted, verified, and subm
     const branch = content.slice(branchStart, branchEnd);
     assert.match(branch, /el\.isContentEditable[\s\S]*trustedTypeRequired: true[\s\S]*_expectedValue/, `chrome: ${toolName} contenteditables must route through trusted typing`);
     assert.doesNotMatch(branch, /document\.execCommand\('insertText'/, `chrome: ${toolName} must not accept synthetic contenteditable DOM text as verified input`);
+  }
+});
+
+test('Chrome controlled-field fallback timeout preserves an unknown mutation outcome', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  try {
+    let releasePreparation;
+    let markPreparationStarted;
+    const preparationStarted = new Promise(resolve => { markPreparationStarted = resolve; });
+    const delayedPreparation = new Promise(resolve => { releasePreparation = resolve; });
+    globalThis.chrome = {
+      tabs: {
+        async sendMessage(_tabId, message) {
+          assert.equal(message.action, 'ax_prepare_field_for_trusted_type');
+          markPreparationStarted();
+          return delayedPreparation;
+        },
+      },
+    };
+    let cdpMutations = 0;
+    cdpClientCh.attach = async () => {
+      cdpMutations += 1;
+      return { attached: true };
+    };
+    cdpClientCh.sendCommand = async () => {
+      cdpMutations += 1;
+      return {};
+    };
+
+    const agent = new AgentCh({});
+    let deadlineTool = '';
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineTool = toolName;
+      const error = new Error(`${toolName} did not return a page response within 60 seconds.`);
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await preparationStarted;
+      controller.abort(error);
+      releasePreparation({
+        success: true,
+        fieldMeta: { type: 'text', contentEditable: false },
+        contentEditable: false,
+      });
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+
+    const result = await agent._maybeFallbackFieldWithCdp(
+      42,
+      'set_field',
+      { ref_id: 'ref_timeout', text: 'updated value' },
+      {
+        success: false,
+        verified: false,
+        _expectedValue: 'updated value',
+        recoveryRequired: 'fresh_tree',
+      },
+    );
+
+    assert.equal(deadlineTool, 'set_field');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, true);
+    assert.equal(result.outcomeUnknown, true);
+    assert.equal(result.retryable, false);
+    assert.equal(cdpMutations, 0, 'late field preparation reached trusted CDP mutation after timeout');
+    assert.match(result.error, /may have reached the page.*inspect the current state/i);
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
   }
 });
 
@@ -70256,6 +71124,72 @@ test('chrome CDP auto-select scopes to blocking dialogs and refuses ambiguous dr
   assert.match(body, /matchingSelects\.length !== 1/, 'chrome: auto-select should yield instead of choosing among multiple matching selects');
   assert.match(body, /globalThis\[targetSlot\] = sel/, 'chrome: auto-select should preserve the exact scoped select for refocus');
   assert.match(body, /const target = globalThis\[/, 'chrome: auto-select should refocus and verify the preserved select');
+  const dispatchStart = body.indexOf('// Escape must belong to the exact select');
+  const initialFocus = body.indexOf('if (!await focusExactTarget()) return null;', dispatchStart);
+  const escapeDispatch = body.indexOf("type: 'keyDown', key: 'Escape'", dispatchStart);
+  assert.ok(dispatchStart >= 0 && initialFocus > dispatchStart && escapeDispatch > initialFocus, 'chrome: auto-select must focus the matched select before sending Escape');
+  assert.doesNotMatch(
+    body.slice(body.indexOf('const scanResult = await cdpClient.evaluate'), body.indexOf('const scan = scanResult?.result?.value;')),
+    /sel\.focus\s*\(/,
+    'chrome: modal auto-select scan should not mutate focus before dispatch',
+  );
+});
+
+test('chrome CDP auto-select queued scan cannot focus after its action deadline', async () => {
+  const agent = new AgentCh({ getVisionProvider: async () => null });
+  let releaseScan;
+  let markScanStarted;
+  const scanStarted = new Promise(resolve => { markScanStarted = resolve; });
+  const delayedScan = new Promise(resolve => { releaseScan = resolve; });
+  let focusCalls = 0;
+  const selectElement = {
+    tagName: 'SELECT',
+    isConnected: true,
+    selectedIndex: 0,
+    options: [
+      { index: 0, value: 'current', text: 'Current option' },
+      { index: 1, value: 'other', text: 'Other option' },
+    ],
+    focus() { focusCalls += 1; },
+  };
+  const selectDocument = {
+    querySelectorAll(selector) {
+      return selector === 'select' ? [selectElement] : [];
+    },
+  };
+  let scanEvaluationSeen = false;
+  const fakeCdpClient = {
+    async evaluate(_tabId, expression) {
+      if (expression.startsWith('delete globalThis[')) {
+        return { result: { value: Function(`return (${expression});`)() } };
+      }
+      assert.equal(scanEvaluationSeen, false, 'deadline expiry must stop before auto-select refocus');
+      scanEvaluationSeen = true;
+      markScanStarted();
+      await delayedScan;
+      const value = Function('document', `return (${expression});`)(selectDocument);
+      return { result: { value } };
+    },
+    async sendCommand() {
+      throw new Error('expired auto-select scan must not dispatch keyboard input');
+    },
+  };
+
+  const originalDateNow = Date.now;
+  const pending = agent._withContentActionDeadline(
+    signal => agent._autoSelectOption(42, fakeCdpClient, 'Other option', signal),
+    'click',
+    10_000,
+  );
+  await scanStarted;
+  try {
+    Date.now = () => Number.MAX_SAFE_INTEGER;
+    releaseScan();
+    await assert.rejects(pending, error => error?.code === 'content_action_timeout');
+  } finally {
+    Date.now = originalDateNow;
+  }
+  assert.equal(focusCalls, 0, 'a queued scan that resumes after timeout must not focus its stale select');
 });
 
 test('chrome full interactive indexes stay scoped to the topmost modal', () => {
@@ -70283,7 +71217,7 @@ test('content auto-select refuses ambiguous option matches in both browser build
     ['firefox', 'src/firefox/src/content/content.js'],
   ]) {
     const content = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const start = content.indexOf('function clickElement(params) {');
+    const start = content.indexOf('function clickElement(params, actionDeadlineExpired = () => false) {');
     const end = content.indexOf('\n  function ', start + 10);
     const body = content.slice(start, end);
     assert.match(body, /const matchingSelects = \[\];/, `${label}: native select rescue should collect every option match`);
@@ -70304,7 +71238,13 @@ test('synthetic key events cross shadow boundaries without double dispatch', () 
     const keyBody = content.slice(start, end);
     assert.ok(start >= 0 && end > start, `${label}: synthetic key dispatch should be independently inspectable`);
     assert.match(keyBody, /new KeyboardEvent\('keydown',[\s\S]*?composed: true,[\s\S]*?new KeyboardEvent\('keyup',[\s\S]*?composed: true,/, `${label}: keydown and keyup should escape open shadow roots`);
-    assert.match(keyBody, /target\.dispatchEvent\(down\);\s*target\.dispatchEvent\(up\);/, `${label}: key events should still dispatch exactly once on the focused target`);
+    assert.match(
+      keyBody,
+      /target\.dispatchEvent\(down\);[\s\S]*target\.dispatchEvent\(up\);/,
+      `${label}: key events should still dispatch exactly once on the focused target`,
+    );
+    assert.equal((keyBody.match(/target\.dispatchEvent\(down\)/g) || []).length, 1, `${label}: keydown must dispatch exactly once`);
+    assert.equal((keyBody.match(/target\.dispatchEvent\(up\)/g) || []).length, 1, `${label}: keyup must dispatch exactly once`);
     assert.doesNotMatch(keyBody, /document\.dispatchEvent\((?:down|up)\)/, `${label}: shadow-safe key events must not restore duplicate document dispatch`);
   }
 });
@@ -81198,6 +82138,50 @@ test('Chrome upload_file injects the exact user attachment bytes without a path 
   }
 });
 
+test('Chrome upload_file preserves a page-proven expired injection as no dispatch', async () => {
+  const originalCdp = {
+    attach: cdpClientCh.attach,
+    querySelectorPierce: cdpClientCh.querySelectorPierce,
+    releaseObjectGroup: cdpClientCh.releaseObjectGroup,
+    setFileInputData: cdpClientCh.setFileInputData,
+  };
+  let receivedDeadlineAt = 0;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.querySelectorPierce = async () => ({ objectIds: ['input-handle'], objectGroup: 'attachment-query' });
+    cdpClientCh.setFileInputData = async (_tabId, _objectId, _payload, options) => {
+      receivedDeadlineAt = Number(options?.deadlineAt) || 0;
+      options.beforeDispatch();
+      return {
+        success: false,
+        dispatched: false,
+        deadlineExpired: true,
+        error: 'Upload action deadline expired before dispatch',
+      };
+    };
+    cdpClientCh.releaseObjectGroup = async () => {};
+
+    const agent = new AgentCh({});
+    const registered = agent._registerUserAttachments(42, [
+      { kind: 'image', name: 'demo.gif', dataUrl: 'data:image/gif;base64,R0lGODlh' },
+    ]);
+    const result = await agent.executeTool(42, 'upload_file', {
+      selector: 'input[type=file]',
+      attachmentId: registered[0].attachmentId,
+    });
+
+    assert.ok(receivedDeadlineAt > Date.now(), 'Chrome upload did not pass its owning absolute deadline to the page function');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.outcomeUnknown, false);
+    assert.equal(result.retryable, true);
+    assert.equal(result.deadlineExpired, true);
+  } finally {
+    Object.assign(cdpClientCh, originalCdp);
+  }
+});
+
 test('CDP in-memory upload builds a File and dispatches input/change', async () => {
   const client = new CDPClient();
   let command = null;
@@ -81206,19 +82190,53 @@ test('CDP in-memory upload builds a File and dispatches input/change', async () 
     command = { method, params };
     return { result: { value: { success: true, dispatched: true, name: 'demo.gif', size: 6 } } };
   };
+  const deadlineAt = Date.now() + 60_000;
   const result = await client.setFileInputData(42, 'input-object', {
     base64: 'R0lGODlh',
     filename: 'demo.gif',
     mimeType: 'image/gif',
-  });
+  }, { deadlineAt });
   assert.equal(result.success, true);
   assert.equal(command.method, 'Runtime.callFunctionOn');
   assert.equal(command.params.objectId, 'input-object');
   assert.match(command.params.functionDeclaration, /new File\(\[bytes\], filename/);
   assert.match(command.params.functionDeclaration, /new DataTransfer\(\)/);
+  assert.match(command.params.functionDeclaration, /deadlineExpired\(\)[\s\S]*this\.files = transfer\.files/);
   assert.match(command.params.functionDeclaration, /dispatchEvent\(new Event\('input'/);
   assert.match(command.params.functionDeclaration, /dispatchEvent\(new Event\('change'/);
-  assert.deepEqual(command.params.arguments.map(arg => arg.value), ['R0lGODlh', 'demo.gif', 'image/gif']);
+  assert.deepEqual(command.params.arguments.map(arg => arg.value), ['R0lGODlh', 'demo.gif', 'image/gif', deadlineAt]);
+});
+
+test('CDP in-memory upload preserves a page-proven no-dispatch deadline result', async () => {
+  const client = new CDPClient();
+  const controller = new AbortController();
+  const timeoutError = new Error('upload_file did not return a page response within 60 seconds.');
+  timeoutError.code = 'content_action_timeout';
+  client.sendCommand = async (_tabId, method) => {
+    if (method === 'Runtime.enable') return {};
+    controller.abort(timeoutError);
+    return {
+      result: {
+        value: {
+          success: false,
+          dispatched: false,
+          deadlineExpired: true,
+          error: 'Upload action deadline expired before dispatch',
+        },
+      },
+    };
+  };
+  const result = await client.setFileInputData(42, 'input-object', {
+    base64: 'R0lGODlh',
+    filename: 'demo.gif',
+    mimeType: 'image/gif',
+  }, {
+    abortSignal: controller.signal,
+    deadlineAt: Date.now() + 1,
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.dispatched, false);
+  assert.equal(result.deadlineExpired, true);
 });
 
 test('Chrome click paths suppress native file choosers and redirect to upload_file', async () => {
@@ -81492,6 +82510,11 @@ test('Chrome click paths suppress native file choosers and redirect to upload_fi
     };
     try {
       const agent = Object.create(AgentClass.prototype);
+      const deadlineTools = [];
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        deadlineTools.push(toolName);
+        return operation();
+      };
       const delivered = {
         success: true,
         dispatched: true,
@@ -81505,6 +82528,7 @@ test('Chrome click paths suppress native file choosers and redirect to upload_fi
         rect: { x: 1, y: 2, w: 3, h: 4 },
       }, `${label}: navigation must preserve the delivered click result`);
       assert.equal(probeCalls, 1, `${label}: a lost old document must not trigger a replay`);
+      assert.deepEqual(deadlineTools, ['consume_file_picker_guard'], `${label}: deferred guard probe bypassed the content-action deadline`);
     } finally {
       if (previousApi === undefined) delete globalThis[apiName];
       else globalThis[apiName] = previousApi;
@@ -81802,6 +82826,9 @@ test('Compact Firefox upload_file discovers before opening its picker and attach
       tabs: {
         async executeScript(_tabId, details) {
           scripts.push(details.code);
+          if (details.code.includes('WebBrain file attachment target probe')) {
+            return [{ success: true, dispatched: false }];
+          }
           if (details.code.includes('WebBrain file attachment settle probe')) {
             return [{ attachmentState: 'input_attached' }];
           }
@@ -81865,8 +82892,10 @@ test('Compact Firefox upload_file discovers before opening its picker and attach
     assert.equal(result.success, true);
     assert.equal(result.file, 'resume.pdf');
     assert.equal(result.attachmentState, 'input_attached');
-    assert.equal(scripts.length, 2);
-    assert.match(scripts[0], /const selector = "#resume-upload"/);
+    assert.equal(scripts.length, 3);
+    assert.match(scripts[0], /WebBrain file attachment target probe/);
+    assert.match(scripts[1], /const selector = "#resume-upload"/);
+    assert.match(scripts[2], /WebBrain file attachment settle probe/);
     assert.equal(agent._compactUploadTargets.has(42), false, 'targetId must be one-use');
   } finally {
     if (originalBrowser === undefined) delete globalThis.browser;
@@ -81943,16 +82972,111 @@ test('Firefox upload_file injects the exact user attachment bytes without re-fet
     assert.equal(result.attachmentState, 'input_attached');
     assert.equal(result.verified, false);
     assert.equal(result.remoteStateVerified, false);
-    assert.equal(scripts.length, 2);
-    assert.match(scripts[0], /const b64 = "R0lGODlh"/);
-    assert.match(scripts[0], /new File\(\[bytes\], "demo\.gif", \{ type: "image\/gif" \}\)/);
-    assert.match(scripts[1], /WebBrain file attachment settle probe/);
+    assert.equal(scripts.length, 3);
+    assert.match(scripts[0], /WebBrain file attachment target probe/);
+    assert.match(scripts[1], /const b64 = "R0lGODlh"/);
+    assert.match(scripts[1], /new File\(\[bytes\], "demo\.gif", \{ type: "image\/gif" \}\)/);
+    assert.match(scripts[2], /WebBrain file attachment settle probe/);
     assert.equal(agent._pendingUploadPickers.size, 0, 'attachmentId must not open the WebBrain picker');
   } finally {
     if (originalBrowser === undefined) delete globalThis.browser;
     else globalThis.browser = originalBrowser;
     if (originalFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = originalFetch;
+  }
+});
+
+test('Firefox upload_file deadline distinguishes target preparation from FileList dispatch', async () => {
+  const originalBrowser = globalThis.browser;
+  try {
+    const runTimedUpload = async stallStage => {
+      let releaseStage;
+      let markStageStarted;
+      const stageStarted = new Promise(resolve => { markStageStarted = resolve; });
+      const stalledStage = new Promise(resolve => { releaseStage = resolve; });
+      let fileInputDispatches = 0;
+      globalThis.browser = {
+        tabs: {
+          async executeScript(_tabId, details) {
+            if (details.code.includes('WebBrain file attachment target probe')) {
+              if (stallStage === 'target-probe') {
+                markStageStarted();
+                await stalledStage;
+              }
+              return [{ success: true, dispatched: false }];
+            }
+            if (details.code.includes('WebBrain file attachment settle probe')) {
+              if (stallStage === 'settle-probe') {
+                markStageStarted();
+                await stalledStage;
+              }
+              return [{ attachmentState: 'input_attached' }];
+            }
+            fileInputDispatches += 1;
+            if (stallStage === 'filelist-dispatch') {
+              markStageStarted();
+              await stalledStage;
+            }
+            return [{
+              success: true,
+              dispatched: true,
+              file: 'report.txt',
+              size: 6,
+              attachmentState: 'input_attached',
+            }];
+          },
+        },
+      };
+
+      const agent = new AgentFx({});
+      const [attachment] = agent._registerUserAttachments(42, [{
+        kind: 'document',
+        name: 'report.txt',
+        mimeType: 'text/plain',
+        dataUrl: 'data:text/plain;base64,cmVwb3J0',
+      }]);
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'upload_file');
+        const error = new Error('upload_file did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await stageStarted;
+        controller.abort(error);
+        releaseStage();
+        await assert.rejects(started, candidate => candidate === error);
+        throw error;
+      };
+
+      const result = await agent.executeTool(42, 'upload_file', {
+        selector: 'input[type=file]',
+        attachmentId: attachment.attachmentId,
+      }, null, { promptTier: 'mid' });
+      return { result, fileInputDispatches };
+    };
+
+    const preparationTimeout = await runTimedUpload('target-probe');
+    assert.equal(preparationTimeout.fileInputDispatches, 0, 'target-probe timeout dispatched a late upload');
+    assert.equal(preparationTimeout.result.dispatched, false);
+    assert.equal(preparationTimeout.result.noDispatch, true);
+    assert.equal(preparationTimeout.result.outcomeUnknown, false);
+    assert.equal(preparationTimeout.result.retryable, true);
+
+    const dispatchTimeout = await runTimedUpload('filelist-dispatch');
+    assert.equal(dispatchTimeout.fileInputDispatches, 1, 'FileList mutation was not attempted');
+    assert.equal(dispatchTimeout.result.dispatched, true);
+    assert.equal(dispatchTimeout.result.outcomeUnknown, true);
+    assert.equal(dispatchTimeout.result.retryable, false);
+    assert.match(dispatchTimeout.result.error, /may have reached the page.*inspect the current state/i);
+
+    const settleTimeout = await runTimedUpload('settle-probe');
+    assert.equal(settleTimeout.fileInputDispatches, 1, 'settle timeout lost the preceding FileList mutation');
+    assert.equal(settleTimeout.result.dispatched, true);
+    assert.equal(settleTimeout.result.outcomeUnknown, true);
+    assert.equal(settleTimeout.result.retryable, false);
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
   }
 });
 
@@ -82025,6 +83149,9 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
         },
         async executeScript(tabId, details) {
           executedScripts.push(details.code);
+          if (details.code.includes('WebBrain file attachment target probe')) {
+            return [{ success: true, dispatched: false }];
+          }
           if (details.code.includes('WebBrain file attachment settle probe')) {
             return [{ attachmentState: injectedAttachmentState }];
           }
@@ -82087,15 +83214,16 @@ test('upload_file (firefox) re-fetches downloadId with manual redirect handling 
     assert.equal(fetchCalls[1].opts.redirect, 'manual');
     assert.equal(fetchCalls[1].opts.credentials, 'omit');
 
-    assert.equal(executedScripts.length, 2);
-    assert.ok(executedScripts[0].includes('new DataTransfer()'), 'Script should use DataTransfer');
-    assert.ok(executedScripts[0].includes('dt.items.add(file)'), 'Script should add file to DataTransfer');
-    assert.ok(executedScripts[0].includes('el.files = dt.files'), 'Script should assign DataTransfer files to input');
-    assert.ok(executedScripts[0].includes('el.type !== \'file\''), 'Script should require input[type=file]');
-    assert.ok(executedScripts[0].includes('collectDeepMatches(element.shadowRoot)'), 'Script should search open shadow roots');
-    assert.ok(executedScripts[0].includes('matches.length > 1'), 'Script should reject ambiguous selectors');
-    assert.ok(executedScripts[0].includes('exact, unique selector'), 'Script should return actionable ambiguity guidance');
-    assert.ok(executedScripts[1].includes('WebBrain file attachment settle probe'), 'Script should re-check after queued change handlers');
+    assert.equal(executedScripts.length, 3);
+    assert.ok(executedScripts[0].includes('WebBrain file attachment target probe'), 'Script should probe before dispatch');
+    assert.ok(executedScripts[1].includes('new DataTransfer()'), 'Script should use DataTransfer');
+    assert.ok(executedScripts[1].includes('dt.items.add(file)'), 'Script should add file to DataTransfer');
+    assert.ok(executedScripts[1].includes('el.files = dt.files'), 'Script should assign DataTransfer files to input');
+    assert.ok(executedScripts[1].includes('el.type !== \'file\''), 'Script should require input[type=file]');
+    assert.ok(executedScripts[1].includes('collectDeepMatches(element.shadowRoot)'), 'Script should search open shadow roots');
+    assert.ok(executedScripts[1].includes('matches.length > 1'), 'Script should reject ambiguous selectors');
+    assert.ok(executedScripts[1].includes('exact, unique selector'), 'Script should return actionable ambiguity guidance');
+    assert.ok(executedScripts[2].includes('WebBrain file attachment settle probe'), 'Script should re-check after queued change handlers');
 
     injectedAttachmentState = 'page_consumed';
     const consumed = await agent.executeTool(42, 'upload_file', args);
@@ -86190,8 +87318,8 @@ test('Chrome Web Store release uses an always-on protected-page guard and opt-in
   const chromeAgentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
   const guardIndex = chromeAgentSource.indexOf('const protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);');
   const webMcpPreparationIndex = chromeAgentSource.indexOf('const webMcpPreparation = protectedPageFailure', guardIndex);
-  const toolbarPreflightIndex = chromeAgentSource.indexOf('const toolbarPreflight = protectedPageFailure', webMcpPreparationIndex);
-  const toolDispatchIndex = chromeAgentSource.indexOf('|| await this.executeTool(', toolbarPreflightIndex);
+  const toolbarPreflightIndex = chromeAgentSource.indexOf('const pipelineToolbarPreflight = await this._preflightRichTextToolbarTarget(', webMcpPreparationIndex);
+  const toolDispatchIndex = chromeAgentSource.indexOf('const pipelineRawToolResult = pipelineToolbarPreflight.block || await this.executeTool(', toolbarPreflightIndex);
   assert.ok(
     guardIndex >= 0
       && webMcpPreparationIndex > guardIndex
@@ -87040,6 +88168,1613 @@ test('background reasserts active viewport glow after tab reload', () => {
     assert.match(source, /activeIndicatorTabs\.delete\(tabId\);/, `${label}: hide/remove should clear active tab`);
     assert.match(source, /onUpdated\.addListener\(\(tabId, changeInfo\) => \{[\s\S]*changeInfo\?\.status === 'complete'[\s\S]*reassertIndicatorIfActive\(tabId\);/, `${label}: completed reload should reassert active indicator`);
     assert.match(source, /setTimeout\(\(\) => \{[\s\S]*activeIndicatorTabs\.has\(tabId\)[\s\S]*WB_SHOW_AGENT_INDICATORS[\s\S]*\}, 500\);/, `${label}: delayed reassert retry missing`);
+  }
+});
+
+test('agent viewport indicator heartbeat auto-cleans stale page UI', () => {
+  for (const [label, prefix, runtimeApi] of [
+    ['chrome', 'src/chrome', 'chrome'],
+    ['firefox', 'src/firefox', 'browser'],
+  ]) {
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const indicator = fs.readFileSync(path.join(ROOT, prefix, 'src/content/agent-visual-indicator.js'), 'utf8');
+
+    assert.match(background, /const INDICATOR_HEARTBEAT_INTERVAL_MS = 20_000;/, `${label}: background heartbeat cadence missing`);
+    assert.match(background, /const indicatorHeartbeatTimers = new Map\(\);/, `${label}: background heartbeat registry missing`);
+    assert.match(background, new RegExp(`${runtimeApi}\\.tabs\\.sendMessage\\(tabId, \\{ type: 'WB_AGENT_INDICATOR_HEARTBEAT' \\}`), `${label}: heartbeat is not sent to the active page`);
+    assert.match(background, /response\?\.active === false && activeIndicatorTabs\.has\(tabId\)[\s\S]*sendIndicatorMessage\(tabId, 'WB_SHOW_AGENT_INDICATORS'\)/, `${label}: an active run does not restore an expired page lease`);
+    assert.match(background, /type === 'WB_SHOW_AGENT_INDICATORS'[\s\S]*startIndicatorHeartbeat\(tabId\)/, `${label}: showing indicators does not start heartbeat`);
+    assert.match(background, /type === 'WB_HIDE_AGENT_INDICATORS'[\s\S]*stopIndicatorHeartbeat\(tabId\)/, `${label}: hiding indicators does not stop heartbeat`);
+    assert.match(background, /onRemoved\.addListener\(\(tabId\)[\s\S]*stopIndicatorHeartbeat\(tabId\)/, `${label}: tab removal leaks heartbeat`);
+
+    assert.match(indicator, /const INDICATOR_HEARTBEAT_TIMEOUT_MS = 65_000;/, `${label}: page lease timeout missing`);
+    assert.match(indicator, /function show\(\)[\s\S]*armIndicatorHeartbeat\(\)/, `${label}: show does not arm page lease`);
+    assert.match(indicator, /function hide\(\)[\s\S]*clearIndicatorHeartbeat\(\)/, `${label}: hide does not clear page lease`);
+    assert.match(indicator, /case 'WB_AGENT_INDICATOR_HEARTBEAT':[\s\S]*if \(indicatorsActive\) armIndicatorHeartbeat\(\)/, `${label}: page heartbeat does not refresh active lease`);
+    assert.match(indicator, /setTimeout\(\(\) => \{[\s\S]*if \(indicatorsActive\) hide\(\);[\s\S]*INDICATOR_HEARTBEAT_TIMEOUT_MS/, `${label}: expired page lease does not hide stale indicator`);
+  }
+});
+
+test('content-script actions have a bounded unknown-outcome timeout', async () => {
+  for (const [label, prefix, AgentClass] of [
+    ['chrome', 'src/chrome', AgentCh],
+    ['firefox', 'src/firefox', AgentFx],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/agent.js'), 'utf8');
+    assert.match(source, /const CONTENT_ACTION_TIMEOUT_MS = 60_000;/, `${label}: content action deadline missing`);
+    assert.match(source, /const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;/, `${label}: requested wait grace missing`);
+    assert.match(source, /const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap\(\);/, `${label}: absolute page-action deadlines are not tracked by signal`);
+    assert.match(source, /const controller = new AbortController\(\);[\s\S]*controller\.abort\(timeoutError\)[\s\S]*operation\(controller\.signal\)/, `${label}: content action deadline does not cancel late pipeline work`);
+    assert.match(source, /Promise\.race\(\[started, timeout\]\)/, `${label}: content action does not race its deadline`);
+    assert.match(
+      source,
+      label === 'chrome'
+        ? /const contentActionDeadlineMs = this\._contentActionDeadlineMs\(name, args\);/
+        : /const contentActionDeadlineMs = this\._contentActionDeadlineMs\(name, contentArgs\);/,
+      `${label}: page dispatch does not calculate its deadline`,
+    );
+    assert.match(source, /runContentActionStage = operation => this\._withContentActionDeadline\([\s\S]*remainingContentActionDeadlineMs\(\)/, `${label}: page pipeline does not share one bounded deadline`);
+    assert.match(source, /dispatchContentAction = \(\) => runContentActionStage\(sendContentAction\);/, `${label}: page dispatch bypasses the pipeline deadline`);
+    assert.match(
+      source,
+      /const actionDeadlineAt = Number\(CONTENT_ACTION_SIGNAL_DEADLINES\.get\(actionSignal\)\?\.deadlineAt\) \|\| 0;[\s\S]*?target: 'content',[\s\S]*?\.\.\.\(actionDeadlineAt > 0 \? \{ actionDeadlineAt \} : \{\}\)/,
+      `${label}: the absolute deadline is not delivered to the content-script mutation boundary`,
+    );
+    const contentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
+    const messageHandlerStart = contentSource.indexOf(`${label === 'chrome' ? 'chrome' : 'browser'}.runtime.onMessage.addListener((msg, sender, sendResponse) => {`);
+    const handlersStart = contentSource.indexOf('const handlers = {', messageHandlerStart);
+    assert.ok(messageHandlerStart >= 0 && handlersStart > messageHandlerStart, `${label}: content message handler boundary missing`);
+    const messageDeadlineGuard = contentSource.slice(messageHandlerStart, handlersStart);
+    assert.match(messageDeadlineGuard, /Date\.now\(\) >= actionDeadlineAt/, `${label}: expired messages can reach a page handler`);
+    assert.match(messageDeadlineGuard, /dispatched: false,[\s\S]*noDispatch: true,[\s\S]*deadlineExpired: true/, `${label}: expired page messages do not fail as proven no-dispatch`);
+    const pressKeysStart = contentSource.indexOf('function pressKeys(', 0);
+    const pressKeysEnd = contentSource.indexOf('\n  /**', pressKeysStart);
+    assert.ok(pressKeysStart >= 0 && pressKeysEnd > pressKeysStart, `${label}: pressKeys boundary missing`);
+    const pressKeysSource = contentSource.slice(pressKeysStart, pressKeysEnd);
+    assert.match(
+      pressKeysSource,
+      /_consumeFocusedDispatchBinding\([\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*_consumeMessageRecipientDispatchBinding\([\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/,
+      `${label}: press_keys can cross its deadline during dispatch or recipient validation`,
+    );
+    assert.match(
+      pressKeysSource,
+      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*dispatched = true;\s*target\.dispatchEvent\(down\);[\s\S]*const expiredAfterKeydown = actionDeadlineExpired\(\);\s*target\.dispatchEvent\(up\);\s*if \(expiredAfterKeydown\) return deadlineFailure\(\);/,
+      `${label}: press_keys does not guard dispatch while guaranteeing keyup cleanup`,
+    );
+    const contentClickStart = contentSource.indexOf('function clickElement(params,');
+    const contentClickEnd = contentSource.indexOf('\n  function typeText', contentClickStart);
+    assert.ok(contentClickStart >= 0 && contentClickEnd > contentClickStart, `${label}: click content helper boundary missing`);
+    const contentClick = contentSource.slice(contentClickStart, contentClickEnd);
+    assert.match(
+      contentClick,
+      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*_consumeMessageRecipientDispatchBinding\([\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*rememberInteractionPoint\(el, 'click'\);[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*clickWithoutNativeFilePicker\(\(\) => el\.click\(\)\)/,
+      `${label}: click can cross its deadline during recipient validation or at the click boundary`,
+    );
+    assert.match(
+      contentSource.slice(handlersStart),
+      /'click': \(\) => clickElement\(msg\.params \|\| \{\}, actionDeadlineExpired\)/,
+      `${label}: click handler does not pass the page deadline into the mutation boundary`,
+    );
+    const contentClickAxStart = contentSource.indexOf("'click_ax': () => {", handlersStart);
+    const contentClickAxEnd = contentSource.indexOf("'type_ax':", contentClickAxStart);
+    assert.ok(contentClickAxStart >= 0 && contentClickAxEnd > contentClickAxStart, `${label}: click_ax content handler boundary missing`);
+    const contentClickAx = contentSource.slice(contentClickAxStart, contentClickAxEnd);
+    assert.match(
+      contentClickAx,
+      /_consumeMessageRecipientDispatchBinding\([\s\S]*if \(actionDeadlineExpired\(\)\)[\s\S]*rememberInteractionPoint\(el, 'click_ax'\);[\s\S]*if \(actionDeadlineExpired\(\)\)[\s\S]*dispatched = true;[\s\S]*clickWithoutNativeFilePicker\(\(\) => el\.click\(\)\)/,
+      `${label}: click_ax can cross its deadline during recipient validation or at the click boundary`,
+    );
+    const toolPipelineStart = source.indexOf('const _toolStart = Date.now();');
+    const toolPipelineEnd = source.indexOf("if (fnName !== 'done')", toolPipelineStart);
+    assert.ok(toolPipelineStart >= 0 && toolPipelineEnd > toolPipelineStart, `${label}: shared tool pipeline boundary missing`);
+    const toolPipelineSource = source.slice(toolPipelineStart, toolPipelineEnd);
+    assert.match(
+      toolPipelineSource,
+      /const runActionPipeline = async abortSignal => \{[\s\S]*this\._preflightRichTextToolbarTarget\([\s\S]*this\.executeTool\([\s\S]*_contentActionAbortSignal: abortSignal[\s\S]*this\._waitForFormValidationFailure\([\s\S]*abortSignal[\s\S]*this\._withContentActionDeadline\(\s*runActionPipeline/,
+      `${label}: toolbar preflight, dispatch, and form validation do not share one action deadline`,
+    );
+    assert.match(
+      source,
+      /const provenNoDispatchDeadline = response =>[\s\S]*response\?\.deadlineExpired[\s\S]*(?:earlyCdpDispatchState|contentPipelineDispatchState)\.started = false;[\s\S]*dispatchContentAction\(\)[\s\S]*provenNoDispatchDeadline\(response\)/,
+      `${label}: generic content actions lose a page-proven no-dispatch deadline response`,
+    );
+    const timeoutCatch = source.indexOf("if (e?.code === 'content_action_timeout')", source.indexOf('const dispatchContentAction'));
+    const reinject = source.indexOf('this._injectCoreContentScripts(tabId)', timeoutCatch);
+    assert.notEqual(timeoutCatch, -1, `${label}: first timeout is not handled`);
+    assert.notEqual(reinject, -1, `${label}: content-script reinjection fallback missing`);
+    assert.equal(timeoutCatch < reinject, true, `${label}: timed-out action may be blindly dispatched a second time`);
+
+    const clickAxStart = source.indexOf('async _dispatchClickAx(');
+    const clickAxEnd = source.indexOf('async _reconcileCoordinateClick(', clickAxStart);
+    assert.notEqual(clickAxStart, -1, `${label}: click_ax dispatcher missing`);
+    assert.notEqual(clickAxEnd, -1, `${label}: click_ax dispatcher boundary missing`);
+    const clickAxSource = source.slice(clickAxStart, clickAxEnd);
+    assert.match(clickAxSource, /const dispatch = \(\) => this\._withContentActionDeadline\(send, 'click_ax'\);/, `${label}: click_ax bypasses the deadline`);
+    assert.match(
+      clickAxSource,
+      /const actionDeadlineAt = \[upstreamAbortSignal, deadlineAbortSignal\][\s\S]*CONTENT_ACTION_SIGNAL_DEADLINES\.get\(signal\)\?\.deadlineAt[\s\S]*action: 'click_ax',[\s\S]*\.\.\.\(actionDeadlineAt > 0 \? \{ actionDeadlineAt \} : \{\}\)/,
+      `${label}: dedicated click_ax messages lose the owning absolute page deadline`,
+    );
+    assert.match(
+      clickAxSource,
+      /const provenNoDispatchDeadline = response =>[\s\S]*response\?\.deadlineExpired[\s\S]*dispatchState\.started = false;[\s\S]*noDispatch: true,[\s\S]*retryable: true/,
+      `${label}: click_ax loses a page-proven no-dispatch deadline response`,
+    );
+    const clickAxTimeoutCatch = clickAxSource.indexOf("if (error?.code === 'content_action_timeout')");
+    const clickAxReinject = clickAxSource.indexOf('await this._injectCoreContentScripts(tabId);');
+    assert.notEqual(clickAxTimeoutCatch, -1, `${label}: click_ax timeout is not handled`);
+    assert.notEqual(clickAxReinject, -1, `${label}: click_ax reinjection fallback missing`);
+    assert.equal(clickAxTimeoutCatch < clickAxReinject, true, `${label}: timed-out click_ax may be blindly dispatched a second time`);
+
+    const coordinateDeadlineStart = source.indexOf('async _reconcileCoordinateClickWithDeadline(');
+    const coordinateDeadlineEnd = source.indexOf('/**', coordinateDeadlineStart);
+    assert.notEqual(coordinateDeadlineStart, -1, `${label}: coordinate reconciliation deadline wrapper missing`);
+    assert.notEqual(coordinateDeadlineEnd, -1, `${label}: coordinate reconciliation deadline wrapper boundary missing`);
+    const coordinateDeadlineSource = source.slice(coordinateDeadlineStart, coordinateDeadlineEnd);
+    assert.match(coordinateDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._reconcileCoordinateClick\([\s\S]*'click'/, `${label}: coordinate reconciliation bypasses the deadline`);
+    assert.match(
+      coordinateDeadlineSource,
+      /deadlineAbortSignal =>[\s\S]*this\._linkAbortSignals\(deadlineAbortSignal, upstreamAbortSignal\)[\s\S]*messageRecipientContext,[\s\S]*linked\.signal/,
+      `${label}: coordinate reconciliation does not combine its local deadline with the outer action deadline`,
+    );
+    assert.match(
+      source,
+      label === 'chrome'
+        ? /const reconciled = await this\._reconcileCoordinateClickWithDeadline\([\s\S]*\}, earlyCdpAbortSignal\);/
+        : /const reconciled = await this\._reconcileCoordinateClickWithDeadline\([\s\S]*\}, contentPipelineAbortSignal\);/,
+      `${label}: screenshot coordinate clicks do not propagate the outer action deadline`,
+    );
+
+    if (label === 'chrome') {
+      assert.match(source, /const EARLY_CDP_ACTION_TOOLS = new Set\(\['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file'\]\);/, 'chrome: early CDP action list is incomplete');
+      const executeToolStart = source.indexOf('async executeTool(');
+      const executeToolImplStart = source.indexOf('async _executeToolImpl(', executeToolStart);
+      const executeToolWrapper = source.slice(executeToolStart, executeToolImplStart);
+      assert.match(executeToolWrapper, /EARLY_CDP_ACTION_TOOLS\.has\(name\)[\s\S]*this\._withContentActionDeadline\([\s\S]*this\._executeToolImpl\([\s\S]*_contentActionAbortSignal/, 'chrome: early CDP actions bypass the entry deadline');
+      const setCheckedStart = source.indexOf('async _completeSetCheckedWithCdp(');
+      const setCheckedImplStart = source.indexOf('async _completeSetCheckedWithCdpImpl(', setCheckedStart);
+      assert.ok(setCheckedStart >= 0 && setCheckedImplStart > setCheckedStart, 'chrome: set_checked recovery deadline wrapper missing');
+      assert.match(source.slice(setCheckedStart, setCheckedImplStart), /this\._withContentActionDeadline\([\s\S]*this\._completeSetCheckedWithCdpImpl\([\s\S]*'set_checked'/, 'chrome: trusted checkbox recovery bypasses the pipeline deadline');
+      const setCheckedImplEnd = source.indexOf('\n  async ', setCheckedImplStart + 10);
+      const setCheckedImpl = source.slice(setCheckedImplStart, setCheckedImplEnd);
+      assert.match(setCheckedImpl, /cdpClient\.clickElement\([\s\S]*deadlineAt: Number\(CONTENT_ACTION_SIGNAL_DEADLINES\.get\(abortSignal\)\?\.deadlineAt\)[\s\S]*deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES\.get\(abortSignal\)\?\.error/, 'chrome: trusted checkbox click loses the absolute deadline inside selector resolution');
+      assert.match(clickAxSource, /return await this\._withContentActionDeadline\([\s\S]*this\._dispatchClickAxImpl\([\s\S]*'click_ax'/, 'chrome: click_ax baseline and annotation bypass the pipeline deadline');
+      const fallbackDeadlineStart = source.indexOf('async _maybeFallbackClickAxWithCdp(');
+      const fallbackImplStart = source.indexOf('async _maybeFallbackClickAxWithCdpImpl(', fallbackDeadlineStart);
+      assert.ok(fallbackDeadlineStart >= 0 && fallbackImplStart > fallbackDeadlineStart, 'chrome: click_ax fallback deadline wrapper missing');
+      const fallbackDeadlineSource = source.slice(fallbackDeadlineStart, fallbackImplStart);
+      assert.match(fallbackDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._maybeFallbackClickAxWithCdpImpl\([\s\S]*'click_ax'/, 'chrome: click_ax fallback pipeline bypasses the deadline');
+      assert.match(fallbackDeadlineSource, /abortSignal =>[\s\S]*baseline,[\s\S]*abortSignal/, 'chrome: click_ax fallback deadline does not propagate cancellation');
+    } else {
+      assert.match(source, /runContentActionStage\([\s\S]*this\._keyProgressSnapshot\(tabId, abortSignal\)/, 'firefox: pre-dispatch Arrow snapshot bypasses the pipeline deadline');
+      assert.match(source, /runContentActionStage\([\s\S]*this\._verifyProvisionalKeyProgress\([\s\S]*abortSignal/, 'firefox: post-dispatch Arrow verification bypasses the pipeline deadline');
+      const uploadStart = source.indexOf('const buildInjectCode = actionDeadlineAt =>');
+      const uploadEnd = source.indexOf('const runUploadPagePhase = async abortSignal =>', uploadStart);
+      assert.ok(uploadStart >= 0 && uploadEnd > uploadStart, 'firefox: upload page-injection deadline guard missing');
+      const uploadInjection = source.slice(uploadStart, uploadEnd);
+      assert.match(uploadInjection, /if \(deadlineExpired\(\)\)[\s\S]*el\.files = dt\.files/, 'firefox: late upload injection can assign FileList after its deadline');
+      const uploadPhaseEnd = source.indexOf('// ─── CAPTCHA solver', uploadEnd);
+      const uploadPhase = source.slice(uploadEnd, uploadPhaseEnd);
+      assert.match(
+        uploadPhase,
+        /if \(res\?\.deadlineExpired\) \{[\s\S]*contentPipelineDispatchState\.started = false;[\s\S]*dispatched: false,[\s\S]*noDispatch: true,[\s\S]*retryable: true,[\s\S]*deadlineExpired: true,[\s\S]*\}\s*this\._throwIfAborted\(abortSignal\);/,
+        'firefox: upload loses the page script\'s proven no-dispatch deadline result',
+      );
+    }
+
+    const toolbarProbe = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/rich-text-toolbar-probe.js'), 'utf8');
+    const legacyTypeStart = toolbarProbe.indexOf('async legacyIframeTypeAllFrames(');
+    const legacyTypeEnd = toolbarProbe.indexOf('\n  async ', legacyTypeStart + 10);
+    assert.ok(legacyTypeStart >= 0 && legacyTypeEnd > legacyTypeStart, `${label}: legacy iframe typing boundary missing`);
+    const legacyType = toolbarProbe.slice(legacyTypeStart, legacyTypeEnd);
+    assert.match(legacyType, /actionDeadlineAt[\s\S]*deadlineExpired[\s\S]*el\.focus\(\)/, `${label}: legacy iframe typing does not reject expired page injection before focus`);
+    assert.match(legacyType, /const deadlineFailure = \(\) => \(\{ ok: false, deadlineExpired: true, dispatched: targetDispatched \}\)/, `${label}: legacy iframe typing does not preserve exact page-mutation evidence`);
+    const iframeFocus = legacyType.indexOf('el.focus();');
+    const postFocusDeadline = legacyType.indexOf('if (deadlineExpired()) return deadlineFailure();', iframeFocus);
+    const firstIframeMutation = legacyType.indexOf('targetDispatched = true;', iframeFocus);
+    assert.ok(
+      iframeFocus >= 0 && postFocusDeadline > iframeFocus && firstIframeMutation > postFocusDeadline,
+      `${label}: focus-only iframe expiry is misclassified as a text dispatch`,
+    );
+    const preparationResult = legacyType.indexOf(label === 'chrome' ? 'const prepared = preparedResults?.[0]?.result;' : 'const prepared = (await browser.tabs.executeScript');
+    const backgroundDispatchMarker = legacyType.indexOf("if (typeof beforeDispatch === 'function') beforeDispatch();", preparationResult);
+    const mutationDispatch = legacyType.indexOf(label === 'chrome' ? 'const results = await chrome.scripting.executeScript' : 'code: mutationCode', backgroundDispatchMarker);
+    assert.ok(
+      preparationResult >= 0 && backgroundDispatchMarker > preparationResult && mutationDispatch > backgroundDispatchMarker,
+      `${label}: legacy iframe typing marks background dispatch before focus/preparation completes`,
+    );
+    assert.match(legacyType, /el\.setAttribute\(markerAttribute, markerValue\)[\s\S]*querySelectorAll\([^\n]*markerAttribute/, `${label}: legacy iframe mutation is not bound to the prepared exact element`);
+    assert.doesNotMatch(
+      legacyType,
+      label === 'chrome'
+        ? /await chrome\.scripting\.executeScript\(\{\s*target: \{ tabId, frameIds: \[selected\.frameId\] \},\s*func: \(markerAttribute, markerValue\) => \{\s*for \(const candidate/
+        : /await browser\.tabs\.executeScript\(tabId, \{ frameId: selected\.frameId, code: cleanupCode \}\)/,
+      `${label}: redundant marker cleanup can block a completed iframe mutation`,
+    );
+    assert.match(legacyType, /if \(deadlineExpired\(\)\)[\s\S]*el\.textContent|if \(deadlineExpired\(\)\)[\s\S]*setter\.call/, `${label}: legacy iframe typing does not guard field mutation after focus`);
+    assert.match(
+      legacyType,
+      /if \(result\?\.deadlineExpired\) return deadlineResult\(result\);\s*throwIfAborted\(\);/,
+      `${label}: legacy iframe typing discards the page's proven no-dispatch deadline result`,
+    );
+    assert.match(
+      source,
+      label === 'chrome'
+        ? /const legacyResult = await this\._legacyIframeTypeAllFrames[\s\S]*beforeDispatch: \(\) => \{\s*dispatched = true;\s*markEarlyCdpDispatched\(\);[\s\S]*legacyResult\?\.dispatched !== true && legacyResult\?\.noDispatch === true[\s\S]*earlyCdpDispatchState\.started = false;/
+        : /const legacyResult = await this\._legacyIframeTypeAllFrames[\s\S]*beforeDispatch: \(\) => \{\s*dispatched = true;\s*markContentPipelineDispatched\(\);[\s\S]*legacyResult\?\.dispatched !== true && legacyResult\?\.noDispatch === true[\s\S]*contentPipelineDispatchState\.started = false;/,
+      `${label}: legacy iframe typing keeps an optimistic dispatch marker after page-proven expiry`,
+    );
+
+    const fallbackTypeStart = contentSource.indexOf('async function _typeTextInner(params, actionDeadlineExpired = () => false)');
+    const fallbackTypeEnd = contentSource.indexOf('\n\n  /**', fallbackTypeStart + 20);
+    const fallbackType = contentSource.slice(fallbackTypeStart, fallbackTypeEnd);
+    assert.ok(fallbackTypeStart >= 0 && fallbackTypeEnd > fallbackTypeStart, `${label}: fallback typing deadline boundary missing`);
+    assert.match(
+      fallbackType,
+      /el\.focus\(\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/,
+      `${label}: fallback typing can mutate a field after late focus handlers cross the deadline`,
+    );
+    assert.match(
+      fallbackType,
+      /dispatched = true;[\s\S]*if \(nativeInputValueSetter\)[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*el\.dispatchEvent\(new Event\('input'/,
+      `${label}: fallback typing does not guard page events at their dispatch boundary`,
+    );
+    assert.match(
+      contentSource,
+      /'type': \(\) => typeText\(msg\.params \|\| \{\}, actionDeadlineExpired\)/,
+      `${label}: fallback typing handler does not receive the owning action deadline`,
+    );
+    const fallbackScrollStart = contentSource.indexOf('function smartScrollPage(params, actionDeadlineExpired = () => false)');
+    const fallbackScrollEnd = contentSource.indexOf('\n\n  function scrollPage(', fallbackScrollStart);
+    const fallbackScroll = contentSource.slice(fallbackScrollStart, fallbackScrollEnd);
+    assert.ok(fallbackScrollStart >= 0 && fallbackScrollEnd > fallbackScrollStart, `${label}: fallback scroll deadline boundary missing`);
+    assert.match(
+      fallbackScroll,
+      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*dispatched = true;\s*scrollElementInstant/,
+      `${label}: fallback container scrolling can start after its deadline`,
+    );
+    assert.match(
+      contentSource,
+      /'scroll': \(\) => scrollPage\(msg\.params \|\| \{\}, actionDeadlineExpired\)/,
+      `${label}: fallback scroll handler does not receive the owning action deadline`,
+    );
+
+    const agent = new AgentClass({});
+    assert.equal(
+      agent._contentActionDeadlineMs('wait_for_element', { timeout: 120_000 }),
+      125_000,
+      `${label}: requested wait_for_element timeout is truncated`,
+    );
+    assert.equal(
+      agent._contentActionDeadlineMs('wait_for_element', {}),
+      60_000,
+      `${label}: default wait_for_element deadline changed`,
+    );
+    assert.equal(
+      agent._contentActionDeadlineMs('click', { timeout: 120_000 }),
+      60_000,
+      `${label}: unrelated action adopted an untrusted timeout`,
+    );
+    agent._richTextToolbarGuard.hasPending = () => true;
+    assert.equal(
+      agent._needsSharedActionPipelineDeadline(41, 'click', false),
+      true,
+      `${label}: pending-toolbar click probe escaped the shared action deadline`,
+    );
+    assert.equal(
+      agent._needsSharedActionPipelineDeadline(41, 'set_checked', false),
+      true,
+      `${label}: pending-toolbar checkbox probe escaped the shared action deadline`,
+    );
+    assert.equal(
+      agent._needsSharedActionPipelineDeadline(41, 'navigate', false),
+      false,
+      `${label}: unrelated network action adopted the content pipeline deadline`,
+    );
+
+    const result = agent._contentActionTimeoutResult('click', {
+      message: 'click did not return a page response within 60 seconds.',
+    });
+    assert.equal(result.success, false, `${label}: timed-out action reported success`);
+    assert.equal(result.dispatched, true, `${label}: timed-out action lost dispatch uncertainty`);
+    assert.equal(result.outcomeUnknown, true, `${label}: timed-out action did not preserve unknown outcome`);
+    assert.equal(result.retryable, false, `${label}: timed-out action invited a blind retry`);
+    assert.match(result.error, /may have reached the page.*inspect the current state/i, `${label}: timeout recovery instruction is unsafe`);
+
+    const coordinateAgent = new AgentClass({});
+    let releaseResolution;
+    let markResolutionStarted;
+    const resolutionStarted = new Promise(resolve => { markResolutionStarted = resolve; });
+    const delayedResolution = new Promise(resolve => { releaseResolution = resolve; });
+    let semanticDispatches = 0;
+    coordinateAgent._resolveCoordinateVisualTarget = async () => {
+      markResolutionStarted();
+      return delayedResolution;
+    };
+    coordinateAgent._dispatchClickAx = async () => {
+      semanticDispatches += 1;
+      return { success: true };
+    };
+    coordinateAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'click', `${label}: coordinate reconciliation uses the wrong deadline class`);
+      const error = new Error('click did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await resolutionStarted;
+      controller.abort(error);
+      releaseResolution({
+        success: true,
+        semanticTarget: {
+          ref_id: 'ref_late',
+          role: 'button',
+          name: 'Late action',
+          eligibility: 'semantic-button',
+        },
+        documentToken: 'late-document',
+      });
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+    const coordinateResult = await coordinateAgent._reconcileCoordinateClickWithDeadline(
+      7,
+      { x: 10, y: 20 },
+    );
+    assert.equal(coordinateResult.result.success, false, `${label}: timed-out coordinate reconciliation reported success`);
+    assert.equal(coordinateResult.result.dispatched, false, `${label}: pre-dispatch coordinate timeout claimed a click`);
+    assert.equal(coordinateResult.result.noDispatch, true, `${label}: pre-dispatch coordinate timeout lost its no-dispatch marker`);
+    assert.equal(coordinateResult.result.outcomeUnknown, false, `${label}: pre-dispatch coordinate timeout reported an unknown outcome`);
+    assert.equal(coordinateResult.result.retryable, true, `${label}: pre-dispatch coordinate timeout blocked safe recovery`);
+    assert.equal(coordinateResult.diagnostic, null, `${label}: timed-out coordinate reconciliation fabricated a diagnostic`);
+    assert.equal(semanticDispatches, 0, `${label}: timed-out coordinate reconciliation dispatched a late semantic click`);
+
+    const upstreamCoordinateAgent = new AgentClass({});
+    const upstreamController = new AbortController();
+    let releaseUpstreamResolution;
+    let markUpstreamResolutionStarted;
+    const upstreamResolutionStarted = new Promise(resolve => { markUpstreamResolutionStarted = resolve; });
+    const delayedUpstreamResolution = new Promise(resolve => { releaseUpstreamResolution = resolve; });
+    let upstreamSemanticDispatches = 0;
+    upstreamCoordinateAgent._resolveCoordinateVisualTarget = async () => {
+      markUpstreamResolutionStarted();
+      return delayedUpstreamResolution;
+    };
+    upstreamCoordinateAgent._dispatchClickAx = async () => {
+      upstreamSemanticDispatches += 1;
+      return { success: true };
+    };
+    upstreamCoordinateAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'click', `${label}: upstream cancellation uses the wrong deadline class`);
+      const upstreamError = new Error('The outer click pipeline timed out.');
+      upstreamError.code = 'content_action_timeout';
+      const independentInnerController = new AbortController();
+      const started = Promise.resolve().then(() => operation(independentInnerController.signal));
+      await upstreamResolutionStarted;
+      upstreamController.abort(upstreamError);
+      releaseUpstreamResolution({
+        success: true,
+        semanticTarget: {
+          ref_id: 'ref_outer_late',
+          role: 'button',
+          name: 'Outer late action',
+          eligibility: 'semantic-button',
+        },
+        documentToken: 'outer-late-document',
+      });
+      await assert.rejects(started, candidate => candidate === upstreamError);
+      throw upstreamError;
+    };
+    const upstreamCoordinateResult = await upstreamCoordinateAgent._reconcileCoordinateClickWithDeadline(
+      8,
+      { x: 30, y: 40 },
+      {},
+      upstreamController.signal,
+    );
+    assert.equal(upstreamCoordinateResult.result.success, false, `${label}: outer timeout reported coordinate success`);
+    assert.equal(upstreamCoordinateResult.result.dispatched, false, `${label}: outer timeout claimed a coordinate click`);
+    assert.equal(upstreamCoordinateResult.result.noDispatch, true, `${label}: outer timeout lost its no-dispatch marker`);
+    assert.equal(upstreamCoordinateResult.result.retryable, true, `${label}: outer pre-dispatch timeout blocked safe recovery`);
+    assert.equal(upstreamSemanticDispatches, 0, `${label}: outer timeout allowed a late semantic click`);
+
+    const readResult = agent._contentActionTimeoutResult('read_page', {
+      message: 'read_page did not return a page response within 60 seconds.',
+    });
+    assert.equal(readResult.outcomeUnknown, false, `${label}: read-only timeout was treated as an uncertain mutation`);
+    assert.equal(readResult.retryable, true, `${label}: read-only timeout was made terminal`);
+    assert.equal(Object.hasOwn(readResult, 'dispatched'), false, `${label}: read-only timeout claimed a state-changing dispatch`);
+    assert.match(readResult.error, /retry this read-only observation once/i, `${label}: read-only timeout lacks bounded recovery`);
+
+    const uploadResult = agent._contentActionTimeoutResult('upload_file', {
+      message: 'upload_file did not return a page response within 60 seconds.',
+    });
+    assert.equal(uploadResult.outcomeUnknown, true, `${label}: timed-out upload lost mutation uncertainty`);
+    assert.equal(uploadResult.dispatched, true, `${label}: timed-out upload lost its dispatch marker`);
+    assert.equal(uploadResult.retryable, false, `${label}: timed-out upload invited a blind retry`);
+  }
+});
+
+test('click_ax preserves a page-proven expired response after the outer deadline aborts', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const sendMessage = async () => ({
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        deadlineExpired: true,
+        error: 'The page action deadline expired before click dispatch.',
+      });
+      if (label === 'chrome') {
+        globalThis.chrome = {
+          ...(originalChrome || {}),
+          runtime: originalChrome?.runtime || {},
+          tabs: { ...(originalChrome?.tabs || {}), sendMessage },
+        };
+      } else {
+        globalThis.browser = { tabs: { sendMessage } };
+      }
+
+      const agent = new AgentClass({});
+      if (label === 'chrome') {
+        agent._currentUrl = async () => 'https://example.test/';
+        agent._clickProgressSnapshot = async () => '{}';
+        agent._beginClickAxSideEffectWatch = () => ({ stop() {} });
+        agent._captureClickAxObservation = async () => ({ startedAt: Date.now(), snapshot: '{}' });
+      }
+      let outerController = null;
+      let deadlineCalls = 0;
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'click_ax');
+        deadlineCalls += 1;
+        if (deadlineCalls === 1) {
+          outerController = new AbortController();
+          return operation(outerController.signal);
+        }
+        const response = await operation(new AbortController().signal);
+        const timeoutError = new Error('click_ax did not return a page response within 60 seconds.');
+        timeoutError.code = 'content_action_timeout';
+        outerController.abort(timeoutError);
+        return response;
+      };
+
+      const result = await agent._dispatchClickAx(51, { ref_id: 'ref_expired' });
+      assert.equal(result.success, false, `${label}: expired response reported success`);
+      assert.equal(result.dispatched, false, `${label}: expired response claimed a click`);
+      assert.equal(result.noDispatch, true, `${label}: expired response lost no-dispatch proof`);
+      assert.equal(result.outcomeUnknown, false, `${label}: expired response became unknown`);
+      assert.equal(result.retryable, true, `${label}: expired response blocked a safe retry`);
+      assert.equal(result.deadlineExpired, true, `${label}: expired response lost its deadline marker`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('Chrome upload_file deadline distinguishes preparation from file-input dispatch', async () => {
+  const cdpSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cdp/cdp-client.js'), 'utf8');
+  const dataUploadStart = cdpSource.indexOf('async setFileInputData(');
+  const dataUploadEnd = cdpSource.indexOf('async _disarmProtocolFileChooserGuard(', dataUploadStart);
+  assert.ok(dataUploadStart >= 0 && dataUploadEnd > dataUploadStart, 'in-memory upload helper boundary missing');
+  assert.match(
+    cdpSource.slice(dataUploadStart, dataUploadEnd),
+    /Runtime\.enable[\s\S]*throwIfAborted\(\)[\s\S]*beforeDispatch[\s\S]*Runtime\.callFunctionOn/,
+    'in-memory upload marks dispatch before preparation has completed',
+  );
+  assert.match(
+    cdpSource.slice(dataUploadStart, dataUploadEnd),
+    /function \(base64, filename, mimeType, actionDeadlineAt\)[\s\S]*deadlineExpired\(\)[\s\S]*transfer\.items\.add\(file\);\s*if \(deadlineExpired\(\)\)[\s\S]*this\.files = transfer\.files/,
+    'in-memory upload can mutate FileList after its absolute page deadline',
+  );
+  const originalCdp = {
+    attach: cdpClientCh.attach,
+    querySelectorPierce: cdpClientCh.querySelectorPierce,
+    probeLocalFile: cdpClientCh.probeLocalFile,
+    setFileInputData: cdpClientCh.setFileInputData,
+    setFileInputFiles: cdpClientCh.setFileInputFiles,
+    getFileInputFiles: cdpClientCh.getFileInputFiles,
+    releaseObjectGroup: cdpClientCh.releaseObjectGroup,
+  };
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.probeLocalFile = async () => ({ exists: true, readable: true, size: 12 });
+    cdpClientCh.getFileInputFiles = async () => [{ name: 'report.txt', size: 12, readable: true }];
+    cdpClientCh.releaseObjectGroup = async () => {};
+
+    const runTimedUpload = async (stallStage) => {
+      const agent = new AgentCh({});
+      agent._chromeProtectedPageFailure = async () => null;
+      agent._resolveUserAttachment = (_tabId, attachmentId) => ({
+        ok: true,
+        attachmentId,
+        filename: 'report.txt',
+        mimeType: 'text/plain',
+        base64: 'cmVwb3J0',
+      });
+      let releaseStage;
+      let markStageStarted;
+      const stageStarted = new Promise(resolve => { markStageStarted = resolve; });
+      const stalledStage = new Promise(resolve => { releaseStage = resolve; });
+      let fileInputDispatches = 0;
+
+      cdpClientCh.querySelectorPierce = async () => {
+        if (stallStage === 'query') {
+          markStageStarted();
+          await stalledStage;
+        }
+        return { objectIds: ['input-1'], objectGroup: 'upload-deadline' };
+      };
+      cdpClientCh.setFileInputFiles = async () => {
+        fileInputDispatches += 1;
+        if (stallStage === 'dispatch') {
+          markStageStarted();
+          await stalledStage;
+        }
+      };
+      cdpClientCh.setFileInputData = async (_tabId, _objectId, _payload, options) => {
+        options.beforeDispatch();
+        fileInputDispatches += 1;
+        if (stallStage === 'attachment-dispatch') {
+          markStageStarted();
+          await stalledStage;
+        }
+        return { success: true, dispatched: true };
+      };
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'upload_file');
+        const error = new Error('upload_file did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await stageStarted;
+        controller.abort(error);
+        releaseStage();
+        await assert.rejects(started, candidate => candidate === error);
+        throw error;
+      };
+
+      const result = await agent.executeTool(42, 'upload_file', {
+        selector: 'input[type=file]',
+        ...(stallStage === 'attachment-dispatch'
+          ? { attachmentId: 'att_1' }
+          : { filePath: '/tmp/report.txt' }),
+      }, null, { promptTier: 'mid' });
+      return { result, fileInputDispatches };
+    };
+
+    const preparationTimeout = await runTimedUpload('query');
+    assert.equal(preparationTimeout.fileInputDispatches, 0, 'preparation timeout dispatched a late upload');
+    assert.equal(preparationTimeout.result.dispatched, false);
+    assert.equal(preparationTimeout.result.noDispatch, true);
+    assert.equal(preparationTimeout.result.outcomeUnknown, false);
+    assert.equal(preparationTimeout.result.retryable, true);
+
+    const dispatchTimeout = await runTimedUpload('dispatch');
+    assert.equal(dispatchTimeout.fileInputDispatches, 1, 'file-input mutation was not attempted');
+    assert.equal(dispatchTimeout.result.dispatched, true);
+    assert.equal(dispatchTimeout.result.outcomeUnknown, true);
+    assert.equal(dispatchTimeout.result.retryable, false);
+    assert.match(dispatchTimeout.result.error, /may have reached the page.*inspect the current state/i);
+
+    const attachmentDispatchTimeout = await runTimedUpload('attachment-dispatch');
+    assert.equal(attachmentDispatchTimeout.fileInputDispatches, 1, 'attachment mutation was not attempted');
+    assert.equal(attachmentDispatchTimeout.result.dispatched, true);
+    assert.equal(attachmentDispatchTimeout.result.outcomeUnknown, true);
+    assert.equal(attachmentDispatchTimeout.result.retryable, false);
+  } finally {
+    Object.assign(cdpClientCh, originalCdp);
+  }
+});
+
+test('Chrome early CDP actions start their deadline before debugger attachment', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  let releaseAttach;
+  let markAttachStarted;
+  const attachStarted = new Promise(resolve => { markAttachStarted = resolve; });
+  const delayedAttach = new Promise(resolve => { releaseAttach = resolve; });
+  let inputDispatches = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async () => ({ id: 47, url: 'https://example.test/' }),
+      },
+    };
+    cdpClientCh.attach = async () => {
+      markAttachStarted();
+      return delayedAttach;
+    };
+    cdpClientCh.sendCommand = async () => {
+      inputDispatches += 1;
+      return {};
+    };
+    const agent = new AgentCh({});
+    agent._richTextToolbarToolBlock = async () => null;
+    agent._chromeProtectedPageFailure = async () => null;
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'type_text');
+      const error = new Error('type_text did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await attachStarted;
+      controller.abort(error);
+      releaseAttach({ attached: true });
+      await started;
+      throw error;
+    };
+
+    const result = await agent.executeTool(47, 'type_text', { text: 'late text' });
+    assert.equal(inputDispatches, 0, 'a late debugger attachment reached text dispatch');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.outcomeUnknown, false);
+    assert.equal(result.retryable, true);
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome primary selector clicks classify deadline expiry at mouse dispatch', async () => {
+  const originalChrome = globalThis.chrome;
+  const originals = {
+    attach: cdpClientCh.attach,
+    evaluate: cdpClientCh.evaluate,
+    clickElement: cdpClientCh.clickElement,
+  };
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async () => ({ id: 51, url: 'https://example.test/' }),
+        query: async () => [],
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.evaluate = async () => ({ result: { value: { isSelect: false } } });
+
+    for (const dispatchStarted of [false, true]) {
+      let releaseClick;
+      let markClickStarted;
+      const clickStarted = new Promise(resolve => { markClickStarted = resolve; });
+      const delayedClick = new Promise(resolve => { releaseClick = resolve; });
+      cdpClientCh.clickElement = async (_tabId, _selector, options) => {
+        assert.ok(options.abortSignal instanceof AbortSignal);
+        if (dispatchStarted) await options.beforeDispatch({ x: 10, y: 20 });
+        markClickStarted();
+        await delayedClick;
+        return { success: false, dispatched: dispatchStarted, noDispatch: !dispatchStarted };
+      };
+
+      const agent = new AgentCh({});
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._chromeProtectedPageFailure = async () => null;
+      agent._clickProgressSnapshot = async () => '{"page":"before"}';
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'click');
+        const error = new Error('click did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await clickStarted;
+        controller.abort(error);
+        releaseClick();
+        await started;
+        throw error;
+      };
+
+      const result = await agent.executeTool(51, 'click', { selector: '#late-button' });
+      assert.equal(result.success, false);
+      assert.equal(result.dispatched, dispatchStarted);
+      assert.equal(result.outcomeUnknown, dispatchStarted);
+      assert.equal(result.retryable, !dispatchStarted);
+      assert.equal(result.noDispatch, dispatchStarted ? undefined : true);
+    }
+
+    let releasePageProof;
+    let markPageProofReady;
+    const pageProofReady = new Promise(resolve => { markPageProofReady = resolve; });
+    const delayedPageProof = new Promise(resolve => { releasePageProof = resolve; });
+    cdpClientCh.clickElement = async (_tabId, _selector, options) => {
+      await options.beforeDispatch({ x: 10, y: 20 });
+      markPageProofReady();
+      await delayedPageProof;
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+        deadlineExpired: true,
+        error: 'Click action deadline expired before click dispatch',
+      };
+    };
+    const pageProofAgent = new AgentCh({});
+    pageProofAgent._isPdfTab = async () => false;
+    pageProofAgent._richTextToolbarToolBlock = async () => null;
+    pageProofAgent._chromeProtectedPageFailure = async () => null;
+    pageProofAgent._clickProgressSnapshot = async () => '{"page":"before"}';
+    pageProofAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'click');
+      const error = new Error('click did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await pageProofReady;
+      controller.abort(error);
+      releasePageProof();
+      return started;
+    };
+
+    const pageProofResult = await pageProofAgent.executeTool(51, 'click', { selector: '#late-button' });
+    assert.equal(pageProofResult.success, false, 'page-proven selector expiry reported success');
+    assert.equal(pageProofResult.dispatched, false, 'page-proven selector expiry kept the optimistic dispatch marker');
+    assert.equal(pageProofResult.noDispatch, true, 'page-proven selector expiry lost no-click proof');
+    assert.equal(pageProofResult.outcomeUnknown, false, 'page-proven selector expiry became unknown');
+    assert.equal(pageProofResult.retryable, true, 'page-proven selector expiry blocked safe retry');
+    assert.equal(pageProofResult.deadlineExpired, true, 'page-proven selector expiry lost its deadline marker');
+  } finally {
+    cdpClientCh.attach = originals.attach;
+    cdpClientCh.evaluate = originals.evaluate;
+    cdpClientCh.clickElement = originals.clickElement;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome selector typing classifies deadline expiry at the first mutating CDP command', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalAttach = cdpClientCh.attach;
+  const originalTypeText = cdpClientCh.typeText;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async () => ({ id: 50, url: 'https://example.test/' }),
+      },
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+
+    for (const dispatchStarted of [false, true]) {
+      let releaseType;
+      let markTypeStarted;
+      const typeStarted = new Promise(resolve => { markTypeStarted = resolve; });
+      const delayedType = new Promise(resolve => { releaseType = resolve; });
+      cdpClientCh.typeText = async (_tabId, _selector, _text, _clear, _backendNodeId, options) => {
+        assert.ok(options.abortSignal instanceof AbortSignal);
+        if (dispatchStarted) options.beforeDispatch();
+        markTypeStarted();
+        await delayedType;
+        return { success: false, dispatched: dispatchStarted };
+      };
+
+      const agent = new AgentCh({});
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._chromeProtectedPageFailure = async () => null;
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'type_text');
+        const error = new Error('type_text did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await typeStarted;
+        controller.abort(error);
+        releaseType();
+        await started;
+        throw error;
+      };
+
+      const result = await agent.executeTool(
+        50,
+        'type_text',
+        { selector: '#title', text: 'late text' },
+        null,
+        { dispatchBinding: { token: 'selector-binding', frameId: 0, backendNodeId: 321 } },
+      );
+      assert.equal(result.success, false);
+      assert.equal(result.dispatched, dispatchStarted);
+      assert.equal(result.outcomeUnknown, dispatchStarted);
+      assert.equal(result.retryable, !dispatchStarted);
+      assert.equal(result.noDispatch, dispatchStarted ? undefined : true);
+    }
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.typeText = originalTypeText;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome clear typing checks cancellation before Delete in focused paths', async () => {
+  const originalChrome = globalThis.chrome;
+  const originals = {
+    attach: cdpClientCh.attach,
+    evaluate: cdpClientCh.evaluate,
+    sendCommand: cdpClientCh.sendCommand,
+    textEntrySignature: cdpClientCh.textEntrySignature,
+  };
+  try {
+    for (const bound of [false, true]) {
+      let releaseFirstKey;
+      let markFirstKeyStarted;
+      const firstKeyStarted = new Promise(resolve => { markFirstKeyStarted = resolve; });
+      const delayedFirstKey = new Promise(resolve => { releaseFirstKey = resolve; });
+      const keyEvents = [];
+      globalThis.chrome = {
+        ...(originalChrome || {}),
+        runtime: originalChrome?.runtime || {},
+        tabs: {
+          ...(originalChrome?.tabs || {}),
+          get: async () => ({ id: 49, url: 'https://example.test/' }),
+          sendMessage: async (_tabId, message) => {
+            if (message.action === 'prepare_focused_type_dispatch') {
+              return {
+                success: true,
+                tag: 'INPUT',
+                type: 'text',
+                name: 'title',
+                beforeSignature: 'before',
+                rect: { x: 1, y: 2, w: 3, h: 4 },
+              };
+            }
+            if (message.action === 'release_dispatch_binding') return { success: true };
+            throw new Error(`unexpected focused action ${message.action}`);
+          },
+        },
+      };
+      cdpClientCh.attach = async () => ({ attached: true });
+      cdpClientCh.evaluate = async () => ({
+        result: {
+          value: {
+            focused: true,
+            editable: true,
+            contentEditable: false,
+            tag: 'INPUT',
+            type: 'text',
+            name: 'title',
+            rect: { x: 1, y: 2, w: 3, h: 4 },
+          },
+        },
+      });
+      cdpClientCh.textEntrySignature = async () => 'before';
+      cdpClientCh.sendCommand = async (_tabId, _method, params) => {
+        keyEvents.push({ type: params.type, key: params.key });
+        if (params.type === 'keyDown' && params.key === 'a') {
+          markFirstKeyStarted();
+          return delayedFirstKey;
+        }
+        return {};
+      };
+
+      const agent = new AgentCh({});
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._chromeProtectedPageFailure = async () => null;
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'type_text');
+        const error = new Error('type_text did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await firstKeyStarted;
+        controller.abort(error);
+        releaseFirstKey({});
+        await started;
+        throw error;
+      };
+
+      const result = await agent.executeTool(
+        49,
+        'type_text',
+        { text: 'replacement', clear: true },
+        null,
+        bound ? { dispatchBinding: { token: 'focused-binding', frameId: 0 } } : null,
+      );
+      assert.deepEqual(
+        keyEvents,
+        [
+          { type: 'keyDown', key: 'a' },
+          { type: 'keyUp', key: 'a' },
+        ],
+        `${bound ? 'bound' : 'unbound'} clear path did not release the delayed key or stop before Delete`,
+      );
+      assert.equal(result.outcomeUnknown, true);
+      assert.equal(result.retryable, false);
+    }
+  } finally {
+    cdpClientCh.attach = originals.attach;
+    cdpClientCh.evaluate = originals.evaluate;
+    cdpClientCh.sendCommand = originals.sendCommand;
+    cdpClientCh.textEntrySignature = originals.textEntrySignature;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome bounds trusted checkbox recovery before and during the CDP click', async () => {
+  const originals = {
+    attach: cdpClientCh.attach,
+    clickElement: cdpClientCh.clickElement,
+  };
+  const response = {
+    success: true,
+    needsTrustedClick: true,
+    trustedSelector: '[data-webbrain-set-checked-target="marker-timeout"]',
+    marker: 'marker-timeout',
+    checkedBefore: false,
+    checkboxIdentity: 'id:timeout-checkbox',
+    selector: '#timeout-checkbox',
+  };
+  const timeoutError = () => {
+    const error = new Error('set_checked did not return a page response within 60 seconds.');
+    error.code = 'content_action_timeout';
+    return error;
+  };
+  try {
+    let releaseIdentity;
+    let markIdentityStarted;
+    const identityStarted = new Promise(resolve => { markIdentityStarted = resolve; });
+    const delayedIdentity = new Promise(resolve => { releaseIdentity = resolve; });
+    let clickCalls = 0;
+    const beforeAgent = new AgentCh({});
+    beforeAgent._getDevDocumentIdentity = async () => {
+      markIdentityStarted();
+      return delayedIdentity;
+    };
+    beforeAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'set_checked');
+      const error = timeoutError();
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await identityStarted;
+      controller.abort(error);
+      releaseIdentity({ documentId: 'late-doc', pageUrl: 'https://example.test/' });
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+    cdpClientCh.clickElement = async () => {
+      clickCalls += 1;
+      return { success: true, dispatched: true, method: 'cdp-mouse' };
+    };
+    const beforeResult = await beforeAgent._completeSetCheckedWithCdp(
+      48,
+      { ref_id: 'ref_checkbox', checked: true },
+      { ...response },
+      { ref_id: 'ref_checkbox', checked: true },
+    );
+    assert.equal(clickCalls, 0, 'late checkbox identity lookup reached trusted click');
+    assert.equal(beforeResult.dispatched, false);
+    assert.equal(beforeResult.noDispatch, true);
+    assert.equal(beforeResult.outcomeUnknown, false);
+    assert.equal(beforeResult.retryable, true);
+
+    let releasePreparation;
+    let markPreparationStarted;
+    const preparationStarted = new Promise(resolve => { markPreparationStarted = resolve; });
+    const delayedPreparation = new Promise(resolve => { releasePreparation = resolve; });
+    const preparationAgent = new AgentCh({});
+    preparationAgent._getDevDocumentIdentity = async () => ({
+      documentId: 'checkbox-doc',
+      pageUrl: 'https://example.test/',
+    });
+    preparationAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'set_checked');
+      const error = timeoutError();
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await preparationStarted;
+      controller.abort(error);
+      releasePreparation({ success: false, dispatched: false, noDispatch: true });
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.clickElement = async () => {
+      markPreparationStarted();
+      return delayedPreparation;
+    };
+    const preparationResult = await preparationAgent._completeSetCheckedWithCdp(
+      48,
+      { ref_id: 'ref_checkbox', checked: true },
+      { ...response },
+      { ref_id: 'ref_checkbox', checked: true },
+    );
+    assert.equal(preparationResult.dispatched, false);
+    assert.equal(preparationResult.noDispatch, true);
+    assert.equal(preparationResult.outcomeUnknown, false);
+    assert.equal(preparationResult.retryable, true);
+
+    let releaseClick;
+    let markClickStarted;
+    const clickStarted = new Promise(resolve => { markClickStarted = resolve; });
+    const delayedClick = new Promise(resolve => { releaseClick = resolve; });
+    const duringAgent = new AgentCh({});
+    duringAgent._getDevDocumentIdentity = async () => ({
+      documentId: 'checkbox-doc',
+      pageUrl: 'https://example.test/',
+    });
+    duringAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'set_checked');
+      const error = timeoutError();
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await clickStarted;
+      controller.abort(error);
+      releaseClick({ success: true, dispatched: true, method: 'cdp-mouse', rect: { x: 1, y: 2, w: 3, h: 4 } });
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.clickElement = async (_tabId, _selector, options) => {
+      options.beforeDispatch();
+      markClickStarted();
+      return delayedClick;
+    };
+    const duringResult = await duringAgent._completeSetCheckedWithCdp(
+      48,
+      { ref_id: 'ref_checkbox', checked: true },
+      { ...response },
+      { ref_id: 'ref_checkbox', checked: true },
+    );
+    assert.equal(duringResult.dispatched, true);
+    assert.equal(duringResult.outcomeUnknown, true);
+    assert.equal(duringResult.retryable, false);
+    assert.equal(duringResult.verified, false);
+    assert.equal(duringResult.needsTrustedClick, false);
+  } finally {
+    cdpClientCh.attach = originals.attach;
+    cdpClientCh.clickElement = originals.clickElement;
+  }
+});
+
+test('Chrome click_ax fallback deadline cancels late target resolution before CDP', async () => {
+  const originalAttach = cdpClientCh.attach;
+  try {
+    const agent = new AgentCh({});
+    agent._observeClickAxSideEffect = async () => ({
+      observable: true,
+      proved: false,
+      safetyVeto: false,
+      safetyReasons: [],
+      weakReasons: [],
+      snapshot: '{}',
+    });
+    agent._assessClickAxObservationRound = () => ({ done: false });
+
+    let releaseTarget;
+    let markTargetStarted;
+    const targetStarted = new Promise(resolve => { markTargetStarted = resolve; });
+    const delayedTarget = new Promise(resolve => { releaseTarget = resolve; });
+    agent._resolveClickAxFallbackTarget = async () => {
+      markTargetStarted();
+      return delayedTarget;
+    };
+    let cdpAttachCalls = 0;
+    cdpClientCh.attach = async () => {
+      cdpAttachCalls += 1;
+      return { attached: true };
+    };
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'click_ax');
+      const error = new Error('click_ax did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await targetStarted;
+      controller.abort(error);
+      releaseTarget({
+        success: true,
+        fallbackEligible: true,
+        inViewport: true,
+        documentToken: 'late-click-document',
+        x: 40,
+        y: 50,
+      });
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+
+    const result = await agent._maybeFallbackClickAxWithCdp(
+      9,
+      { ref_id: 'ref_late_click' },
+      { success: true },
+      { startedAt: Date.now(), preparedActive: '', sideEffectWatch: null },
+    );
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, true);
+    assert.equal(result.outcomeUnknown, true);
+    assert.equal(result.retryable, false);
+    assert.equal(cdpAttachCalls, 0, 'late target resolution reached trusted CDP dispatch after timeout');
+  } finally {
+    cdpClientCh.attach = originalAttach;
+  }
+});
+
+test('Chrome bounds the pre-dispatch click snapshot and does not claim a click on timeout', async () => {
+  const originalChrome = globalThis.chrome;
+  let contentDispatches = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async () => ({ id: 43, url: 'https://example.test/' }),
+        sendMessage: async () => {
+          contentDispatches += 1;
+          return { success: true };
+        },
+      },
+    };
+
+    const agent = new AgentCh({});
+    agent._isPdfTab = async () => false;
+    agent._richTextToolbarToolBlock = async () => null;
+    agent._chromeProtectedPageFailure = async () => null;
+    agent._currentUrl = async () => 'https://example.test/';
+    let snapshotCalls = 0;
+    agent._clickProgressSnapshot = async () => {
+      snapshotCalls += 1;
+      return '{"text":"before"}';
+    };
+    let deadlineCalls = 0;
+    agent._withContentActionDeadline = async (operation, toolName, deadlineMs) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'click');
+      assert.ok(deadlineMs > 0 && deadlineMs <= 60_000);
+      assert.equal(await operation(), '{"text":"before"}');
+      const error = new Error('click did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      throw error;
+    };
+
+    const result = await agent.executeTool(
+      43,
+      'click',
+      { index: 1 },
+      null,
+      { dispatchBinding: { token: 'bound-click', frameId: 0 } },
+    );
+
+    assert.equal(snapshotCalls, 1, 'pre-dispatch snapshot did not run inside the deadline');
+    assert.equal(deadlineCalls, 1, 'timed-out snapshot continued into the content dispatch');
+    assert.equal(contentDispatches, 0, 'snapshot timeout still dispatched the click');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.outcomeUnknown, false);
+    assert.equal(result.retryable, true);
+    assert.match(result.error, /No click was sent.*Re-observe the page/i);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome click_ax deadline starts before baseline capture and prevents a late dispatch', async () => {
+  const originalChrome = globalThis.chrome;
+  let releaseSnapshot;
+  let markSnapshotStarted;
+  const snapshotStarted = new Promise(resolve => { markSnapshotStarted = resolve; });
+  const delayedSnapshot = new Promise(resolve => { releaseSnapshot = resolve; });
+  let contentDispatches = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        sendMessage: async () => {
+          contentDispatches += 1;
+          return { success: true };
+        },
+      },
+    };
+    const agent = new AgentCh({});
+    agent._currentUrl = async () => 'https://example.test/';
+    agent._clickProgressSnapshot = async () => {
+      markSnapshotStarted();
+      return delayedSnapshot;
+    };
+    let deadlineCalls = 0;
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'click_ax');
+      const error = new Error('click_ax did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await snapshotStarted;
+      controller.abort(error);
+      releaseSnapshot('{"text":"late"}');
+      await assert.rejects(started, candidate => candidate === error);
+      throw error;
+    };
+
+    const result = await agent._dispatchClickAx(44, { ref_id: 'ref_late_baseline' });
+    assert.equal(deadlineCalls, 1);
+    assert.equal(contentDispatches, 0, 'late baseline capture reached click_ax dispatch');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.outcomeUnknown, false);
+    assert.equal(result.retryable, true);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Chrome keeps the normal click deadline through progress annotation', async () => {
+  const originalChrome = globalThis.chrome;
+  let contentDispatches = 0;
+  try {
+    globalThis.chrome = {
+      ...(originalChrome || {}),
+      runtime: originalChrome?.runtime || {},
+      tabs: {
+        ...(originalChrome?.tabs || {}),
+        get: async () => ({ id: 45, url: 'https://example.test/' }),
+        sendMessage: async () => {
+          contentDispatches += 1;
+          return { success: true, dispatched: true, method: 'content-click' };
+        },
+      },
+    };
+    const agent = new AgentCh({});
+    agent._isPdfTab = async () => false;
+    agent._richTextToolbarToolBlock = async () => null;
+    agent._chromeProtectedPageFailure = async () => null;
+    agent._currentUrl = async () => 'https://example.test/';
+    agent._clickProgressSnapshot = async () => '{"text":"before"}';
+    agent._settleContentFilePickerGuard = async (_tabId, response) => response;
+    let deadlineCalls = 0;
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'click');
+      if (deadlineCalls < 3) return operation(new AbortController().signal);
+      const error = new Error('click did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      controller.abort(error);
+      await assert.rejects(operation(controller.signal), candidate => candidate === error);
+      throw error;
+    };
+
+    const result = await agent.executeTool(
+      45,
+      'click',
+      { index: 1 },
+      null,
+      { dispatchBinding: { token: 'bound-click', frameId: 0 } },
+    );
+    assert.equal(deadlineCalls, 3, 'click annotation did not share the action deadline');
+    assert.equal(contentDispatches, 1, 'post-dispatch timeout retried the click');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, true);
+    assert.equal(result.outcomeUnknown, true);
+    assert.equal(result.retryable, false);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Firefox bounds Arrow-key snapshots before and after dispatch', async () => {
+  const originalBrowser = globalThis.browser;
+  let contentDispatches = 0;
+  try {
+    globalThis.browser = {
+      ...(originalBrowser || {}),
+      tabs: {
+        ...(originalBrowser?.tabs || {}),
+        get: async () => ({ id: 46, url: 'https://example.test/' }),
+        sendMessage: async () => {
+          contentDispatches += 1;
+          return { success: true, dispatched: true, method: 'content-key' };
+        },
+      },
+    };
+
+    const configure = () => {
+      const agent = new AgentFx({});
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._keyProgressSnapshot = async () => '{"page":"before"}';
+      return agent;
+    };
+    const timeoutError = () => {
+      const error = new Error('press_keys did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      return error;
+    };
+
+    const beforeAgent = configure();
+    beforeAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'press_keys');
+      assert.equal(await operation(new AbortController().signal), '{"page":"before"}');
+      throw timeoutError();
+    };
+    const beforeResult = await beforeAgent.executeTool(
+      46,
+      'press_keys',
+      { key: 'ArrowDown' },
+      null,
+      { dispatchBinding: { token: 'bound-key', frameId: 0 } },
+    );
+    assert.equal(contentDispatches, 0, 'pre-dispatch Arrow timeout still sent a key');
+    assert.equal(beforeResult.dispatched, false);
+    assert.equal(beforeResult.noDispatch, true);
+    assert.equal(beforeResult.outcomeUnknown, false);
+    assert.equal(beforeResult.retryable, true);
+
+    const afterAgent = configure();
+    let deadlineCalls = 0;
+    afterAgent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'press_keys');
+      if (deadlineCalls < 3) return operation(new AbortController().signal);
+      const error = timeoutError();
+      const controller = new AbortController();
+      controller.abort(error);
+      await assert.rejects(operation(controller.signal), candidate => candidate === error);
+      throw error;
+    };
+    const afterResult = await afterAgent.executeTool(
+      46,
+      'press_keys',
+      { key: 'ArrowDown' },
+      null,
+      { dispatchBinding: { token: 'bound-key', frameId: 0 } },
+    );
+    assert.equal(deadlineCalls, 3, 'post-dispatch Arrow verification escaped the action deadline');
+    assert.equal(contentDispatches, 1, 'post-dispatch Arrow timeout retried the key');
+    assert.equal(afterResult.dispatched, true);
+    assert.equal(afterResult.outcomeUnknown, true);
+    assert.equal(afterResult.retryable, false);
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('content-script injection timeouts remain pre-dispatch in Chrome and Firefox', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const [label, AgentClass, runtimeName] of [
+      ['chrome', AgentCh, 'chrome'],
+      ['firefox', AgentFx, 'browser'],
+    ]) {
+      let sendAttempts = 0;
+      const runtime = {
+        tabs: {
+          get: async () => ({ id: 47, url: 'https://example.test/' }),
+          sendMessage: async () => {
+            sendAttempts += 1;
+            throw new Error('Receiving end does not exist');
+          },
+        },
+      };
+      globalThis[runtimeName] = runtime;
+
+      let releaseInjection;
+      let markInjectionStarted;
+      const injectionStarted = new Promise(resolve => { markInjectionStarted = resolve; });
+      const delayedInjection = new Promise(resolve => { releaseInjection = resolve; });
+      const agent = new AgentClass({});
+      agent._isPdfTab = async () => false;
+      agent._richTextToolbarToolBlock = async () => null;
+      agent._injectCoreContentScripts = async () => {
+        markInjectionStarted();
+        return delayedInjection;
+      };
+      if (label === 'chrome') {
+        agent._chromeProtectedPageFailure = async () => null;
+        agent._currentUrl = async () => 'https://example.test/';
+        agent._clickProgressSnapshot = async () => '{"text":"before"}';
+      }
+
+      let deadlineCalls = 0;
+      const injectionDeadlineCall = label === 'chrome' ? 3 : 2;
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        deadlineCalls += 1;
+        assert.equal(toolName, 'click');
+        if (deadlineCalls !== injectionDeadlineCall) {
+          return operation(new AbortController().signal);
+        }
+        const error = new Error('click did not return a page response within 60 seconds.');
+        error.code = 'content_action_timeout';
+        const controller = new AbortController();
+        const started = Promise.resolve().then(() => operation(controller.signal));
+        await injectionStarted;
+        controller.abort(error);
+        releaseInjection();
+        await started;
+        throw error;
+      };
+
+      const result = await agent.executeTool(
+        47,
+        'click',
+        { index: 1 },
+        null,
+        { dispatchBinding: { token: `${label}-bound-click`, frameId: 0 } },
+      );
+      assert.equal(sendAttempts, 1, `${label}: injection timeout retried the click`);
+      assert.equal(result.success, false, `${label}: injection timeout reported success`);
+      assert.equal(result.dispatched, false, `${label}: injection timeout claimed a click`);
+      assert.equal(result.noDispatch, true, `${label}: injection timeout lost its no-dispatch marker`);
+      assert.equal(result.outcomeUnknown, false, `${label}: injection timeout reported an unknown outcome`);
+      assert.equal(result.retryable, true, `${label}: injection timeout blocked safe recovery`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('Firefox click_ax bounds content-script injection before retry dispatch', async () => {
+  const originalBrowser = globalThis.browser;
+  let sendAttempts = 0;
+  let releaseInjection;
+  let markInjectionStarted;
+  const injectionStarted = new Promise(resolve => { markInjectionStarted = resolve; });
+  const delayedInjection = new Promise(resolve => { releaseInjection = resolve; });
+  try {
+    globalThis.browser = {
+      tabs: {
+        sendMessage: async () => {
+          sendAttempts += 1;
+          throw new Error('Receiving end does not exist');
+        },
+      },
+    };
+    const agent = new AgentFx({});
+    agent._injectCoreContentScripts = async () => {
+      markInjectionStarted();
+      return delayedInjection;
+    };
+    let deadlineCalls = 0;
+    agent._withContentActionDeadline = async (operation, toolName) => {
+      deadlineCalls += 1;
+      assert.equal(toolName, 'click_ax');
+      if (deadlineCalls === 2) return operation(new AbortController().signal);
+      const error = new Error('click_ax did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await injectionStarted;
+      controller.abort(error);
+      releaseInjection();
+      await started;
+      throw error;
+    };
+
+    const result = await agent._dispatchClickAx(48, { ref_id: 'ref_injection_timeout' });
+    assert.equal(deadlineCalls, 2, 'click_ax injection escaped the outer action deadline');
+    assert.equal(sendAttempts, 1, 'click_ax injection timeout retried the click');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.outcomeUnknown, false);
+    assert.equal(result.retryable, true);
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('Chrome click_ax timeout after mouse press unwinds without completing the click', async () => {
+  const originals = {
+    attach: cdpClientCh.attach,
+    armFileInputClickGuard: cdpClientCh.armFileInputClickGuard,
+    dispatchMouseEvent: cdpClientCh.dispatchMouseEvent,
+    consumeFileInputClickGuard: cdpClientCh.consumeFileInputClickGuard,
+    sendCommand: cdpClientCh.sendCommand,
+  };
+  try {
+    const agent = new AgentCh({});
+    agent._clickAxFinalSettleMs = () => 0;
+    agent._observeClickAxSideEffect = async () => ({
+      observable: true,
+      proved: false,
+      safetyVeto: false,
+      safetyReasons: [],
+      weakReasons: [],
+      snapshot: '{}',
+    });
+    agent._assessClickAxObservationRound = () => ({ done: false });
+    agent._resolveClickAxFallbackTarget = async () => ({
+      success: true,
+      fallbackEligible: true,
+      inViewport: true,
+      documentToken: 'press-timeout-document',
+      x: 120,
+      y: 80,
+    });
+    agent._captureClickAxObservation = async () => ({
+      startedAt: Date.now(),
+      snapshot: '{}',
+      sideEffectWatch: null,
+      preparedActive: '',
+    });
+
+    const controller = new AbortController();
+    const timeoutError = new Error('click_ax did not return a page response within 60 seconds.');
+    timeoutError.code = 'content_action_timeout';
+    const primaryEvents = [];
+    const unwindEvents = [];
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.armFileInputClickGuard = async () => ({ armed: true });
+    cdpClientCh.dispatchMouseEvent = async (_tabId, type, x, y) => {
+      primaryEvents.push({ type, x, y });
+      if (type === 'mousePressed') controller.abort(timeoutError);
+      return {};
+    };
+    cdpClientCh.consumeFileInputClickGuard = async () => {
+      throw new Error('an aborted press must not reach normal guard consumption');
+    };
+    cdpClientCh.sendCommand = async (_tabId, method, params) => {
+      assert.equal(method, 'Input.dispatchMouseEvent');
+      unwindEvents.push(params);
+      return {};
+    };
+
+    await assert.rejects(
+      agent._maybeFallbackClickAxWithCdpImpl(
+        42,
+        { ref_id: 'ref_press_timeout' },
+        { success: true },
+        { startedAt: Date.now(), preparedActive: '', sideEffectWatch: null },
+        controller.signal,
+      ),
+      candidate => candidate === timeoutError,
+    );
+
+    assert.deepEqual(
+      primaryEvents.map(event => event.type),
+      ['mouseMoved', 'mousePressed'],
+      'deadline expiry must prevent the target mouseReleased that synthesizes click',
+    );
+    assert.deepEqual(
+      unwindEvents.map(event => ({
+        type: event.type,
+        x: event.x,
+        y: event.y,
+        buttons: event.buttons,
+        clickCount: event.clickCount,
+      })),
+      [
+        { type: 'mouseMoved', x: -1, y: -1, buttons: 1, clickCount: 0 },
+        { type: 'mouseReleased', x: -1, y: -1, buttons: 0, clickCount: 0 },
+      ],
+      'expired press must be released outside the target without a click count',
+    );
+  } finally {
+    cdpClientCh.attach = originals.attach;
+    cdpClientCh.armFileInputClickGuard = originals.armFileInputClickGuard;
+    cdpClientCh.dispatchMouseEvent = originals.dispatchMouseEvent;
+    cdpClientCh.consumeFileInputClickGuard = originals.consumeFileInputClickGuard;
+    cdpClientCh.sendCommand = originals.sendCommand;
   }
 });
 
@@ -95286,6 +98021,8 @@ test('workflow healing approval and persistence wiring is mirrored across browse
     const background = fs.readFileSync(path.join(ROOT, `src/${build}/src/background.js`), 'utf8');
     const panel = fs.readFileSync(path.join(ROOT, `src/${build}/src/ui/sidepanel.js`), 'utf8');
     assert.match(agent, /workflowHealing:[\s\S]*?previousTarget:[\s\S]*?candidates:/);
+    assert.match(agent, /const clarifyId = `workflow_heal_\$\{secureRandomBase36Token\(12\)\}`/,
+      `${build}: workflow-healing authorization IDs must use cryptographic randomness`);
     assert.match(agent, /\['timeout', 'auto'\]\.includes\(response\?\.source\)/,
       `${build}: unattended clarification could authorize workflow healing`);
     assert.match(agent, /rawResult\?\.success === true[\s\S]*?rawResult\?\.inconclusive !== true/,

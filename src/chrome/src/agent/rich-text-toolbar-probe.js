@@ -173,7 +173,23 @@ export class RichTextToolbarProbe {
     return geometry?.annotationRect || null;
   }
 
-  async legacyIframeTypeAllFrames(tabId, { selector, text, clear, urlFilter, matchIndex: requestedMatchIndex }) {
+  async legacyIframeTypeAllFrames(
+    tabId,
+    { selector, text, clear, urlFilter, matchIndex: requestedMatchIndex },
+    { abortSignal = null, deadlineAt = 0, deadlineError = null, beforeDispatch = null } = {},
+  ) {
+    const actionDeadlineAt = Number(deadlineAt) || 0;
+    const actionExpired = () => abortSignal?.aborted
+      || (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt);
+    const throwIfAborted = () => {
+      if (!actionExpired()) return;
+      throw abortSignal?.reason instanceof Error
+        ? abortSignal.reason
+        : deadlineError instanceof Error
+          ? deadlineError
+        : new Error('Iframe typing was cancelled.');
+    };
+    throwIfAborted();
     const matchIndex = Number.isInteger(requestedMatchIndex) && requestedMatchIndex >= 0
       ? requestedMatchIndex
       : null;
@@ -189,6 +205,7 @@ export class RichTextToolbarProbe {
       },
       args: [selector],
     });
+    throwIfAborted();
     const frames = counted
       .map(entry => ({ frameId: entry.frameId, ...(entry.result || {}) }))
       .filter(entry => !entry.isTop && (!urlFilter || (frameHostMatches(entry.url, urlFilter) && entry.url.includes(urlFilter))));
@@ -217,44 +234,144 @@ export class RichTextToolbarProbe {
     }
     const selected = candidates[0];
     const selectedIndex = matchIndex == null ? 0 : matchIndex;
-    const results = await chrome.scripting.executeScript({
-      target: { tabId, frameIds: [selected.frameId] },
-      func: (sel, index, txt, clr) => {
+    const markerToken = `wbit_${Date.now().toString(36)}_${secureRandomBase36Token(12)}`;
+    const markerAttribute = `data-webbrain-legacy-iframe-type-${markerToken}`;
+    const markerValue = markerToken;
+    const deadlineResult = result => {
+      const dispatched = result?.dispatched === true;
+      return {
+        success: false,
+        dispatched,
+        ...(dispatched
+          ? { outcomeUnknown: true, retryable: false }
+          : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+        deadlineExpired: true,
+        error: dispatched
+          ? 'The iframe action deadline expired during field mutation; text entry may be incomplete.'
+          : 'The iframe action deadline expired before field mutation.',
+      };
+    };
+    let markerPrepared = false;
+    try {
+      throwIfAborted();
+      const preparedResults = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [selected.frameId] },
+        func: (sel, index, markerAttribute, markerValue, actionDeadlineAt) => {
+          const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+          const deadlineFailure = () => ({ ok: false, deadlineExpired: true, dispatched: false });
+          try {
+            if (deadlineExpired()) return deadlineFailure();
+            const el = document.querySelectorAll(sel)[index];
+            if (!el) return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
+            if (deadlineExpired()) return deadlineFailure();
+            el.focus();
+            if (deadlineExpired()) return deadlineFailure();
+            el.setAttribute(markerAttribute, markerValue);
+            if (deadlineExpired()) {
+              el.removeAttribute(markerAttribute);
+              return deadlineFailure();
+            }
+            return { ok: true, prepared: true, url: location.href, dispatched: false };
+          } catch (error) {
+            return { ok: false, url: location.href, dispatched: false, error: error.message };
+          }
+        },
+        args: [selector, selectedIndex, markerAttribute, markerValue, actionDeadlineAt],
+      });
+      const prepared = preparedResults?.[0]?.result;
+      if (prepared?.deadlineExpired) return deadlineResult(prepared);
+      if (!prepared?.ok || prepared.prepared !== true) {
+        return {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          retryable: true,
+          error: prepared?.error || 'The iframe target changed before typing. Re-read the iframe and retry.',
+        };
+      }
+      markerPrepared = true;
+      throwIfAborted();
+      if (typeof beforeDispatch === 'function') beforeDispatch();
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [selected.frameId] },
+        func: (markerAttribute, markerValue, txt, clr, actionDeadlineAt) => {
         let targetDispatched = false;
+        let el = null;
+        const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+        const deadlineFailure = () => ({ ok: false, deadlineExpired: true, dispatched: targetDispatched });
         try {
-          const el = document.querySelectorAll(sel)[index];
-          if (!el) return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
-          targetDispatched = true;
-          el.focus();
+          if (deadlineExpired()) return deadlineFailure();
+          const marked = Array.from(document.querySelectorAll(`[${markerAttribute}]`))
+            .filter(candidate => candidate.getAttribute(markerAttribute) === markerValue);
+          if (marked.length !== 1) {
+            return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
+          }
+          [el] = marked;
+          if (deadlineExpired()) return deadlineFailure();
           if (el.isContentEditable) {
-            if (clr) el.textContent = '';
+            if (clr) {
+              if (deadlineExpired()) return deadlineFailure();
+              targetDispatched = true;
+              el.textContent = '';
+              if (deadlineExpired()) return deadlineFailure();
+            }
+            if (deadlineExpired()) return deadlineFailure();
+            targetDispatched = true;
             el.textContent += txt;
+            if (deadlineExpired()) return deadlineFailure();
             el.dispatchEvent(new InputEvent('input', { bubbles: true, data: txt }));
+            if (deadlineExpired()) return deadlineFailure();
             return { ok: true, url: location.href, method: 'contenteditable', value: el.textContent.slice(0, 100), dispatched: true };
           }
           const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
           const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
           const newValue = (clr ? '' : (el.value || '')) + txt;
+          if (deadlineExpired()) return deadlineFailure();
+          targetDispatched = true;
           if (setter) setter.call(el, newValue); else el.value = newValue;
+          if (deadlineExpired()) return deadlineFailure();
           el.dispatchEvent(new Event('input', { bubbles: true }));
+          if (deadlineExpired()) return deadlineFailure();
           el.dispatchEvent(new Event('change', { bubbles: true }));
+          if (deadlineExpired()) return deadlineFailure();
           return { ok: true, url: location.href, method: 'native-setter', value: (el.value || '').slice(0, 100), dispatched: true };
         } catch (error) {
           return { ok: false, url: location.href, dispatched: targetDispatched, error: error.message };
+        } finally {
+          try {
+            if (el?.getAttribute(markerAttribute) === markerValue) el.removeAttribute(markerAttribute);
+          } catch {}
         }
       },
-      args: [selector, selectedIndex, text, clear],
-    });
-    const result = results?.[0]?.result;
-    if (result?.ok) {
-      return { success: true, dispatched: true, frameId: selected.frameId, matchIndex: selectedIndex, frame: result, resolution: 'unique-target' };
+        args: [markerAttribute, markerValue, text, clear, actionDeadlineAt],
+      });
+      const result = results?.[0]?.result;
+      if (result?.deadlineExpired) return deadlineResult(result);
+      throwIfAborted();
+      if (result?.ok) {
+        return { success: true, dispatched: true, frameId: selected.frameId, matchIndex: selectedIndex, frame: result, resolution: 'unique-target' };
+      }
+      return {
+        success: false,
+        ...(result?.dispatched ? { dispatched: true } : { dispatched: false, noDispatch: true }),
+        retryable: true,
+        error: result?.error || 'The iframe target changed before typing. Re-read the iframe and retry.',
+      };
+    } finally {
+      if (markerPrepared) {
+        try {
+          void chrome.scripting.executeScript({
+            target: { tabId, frameIds: [selected.frameId] },
+            func: (markerAttribute, markerValue) => {
+              for (const candidate of document.querySelectorAll(`[${markerAttribute}]`)) {
+                if (candidate.getAttribute(markerAttribute) === markerValue) candidate.removeAttribute(markerAttribute);
+              }
+            },
+            args: [markerAttribute, markerValue],
+          }).catch(() => {});
+        } catch {}
+      }
     }
-    return {
-      success: false,
-      ...(result?.dispatched ? { dispatched: true } : { dispatched: false, noDispatch: true }),
-      retryable: true,
-      error: result?.error || 'The iframe target changed before typing. Re-read the iframe and retry.',
-    };
   }
 
   async _requestFrameProbe(tabId, frame, params) {

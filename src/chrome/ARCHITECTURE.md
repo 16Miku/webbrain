@@ -1,6 +1,6 @@
 # WebBrain Chrome/Edge Extension — Architecture
 
-> Version 33.3.0 · Manifest V3 · Service Worker background
+> Version 33.3.2 · Manifest V3 · Service Worker background
 
 ## High-Level Overview
 
@@ -572,8 +572,8 @@ OpenAI format → Anthropic blocks: system → separate `system` field; `assista
 `providers/fetch-with-fallback.js` tries a direct `fetch` first. On failure
 (typically a `TypeError: Failed to fetch` against localhost), it lazily creates
 an offscreen document and proxies through it. The shared offscreen host also
-supports recording, validated download staging, audio, the cloud bridge, and
-the optional local WebGPU model worker.
+supports recording, validated download staging, audio, the local controller
+bridge, and the optional local WebGPU model worker.
 
 ---
 
