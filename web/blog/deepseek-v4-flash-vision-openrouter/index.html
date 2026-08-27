@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepSeek V4 Flash Vision Exp benchmark on OpenRouter - WebBrain Blog</title>
+  <meta name="description" content="We tested DeepSeek V4 Flash Vision Exp on 200 WebBrain browser-agent cases. Its text planning beats Qwen3.8 Flash and GLM-5.3 Flash, but its experimental vision route trails both.">
+  <meta name="keywords" content="DeepSeek V4 Flash Vision Exp, DeepSeek V4 Flash 0731, OpenRouter, multimodal model benchmark, browser agent, mixture of experts, vision language model, tool calling, AI API pricing, WebBrain">
+  <meta property="og:title" content="DeepSeek V4 Flash Vision Exp: 200 browser-agent tests">
+  <meta property="og:description" content="A 284B-total, 13B-active MoE wins our text-planning comparison but trails Qwen and GLM on browser vision. Architecture, dynamic pricing, latency, cost, and raw results.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/deepseek-v4-flash-vision-openrouter">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="DeepSeek V4 Flash Vision Exp: fast planner, experimental eyes">
+  <meta name="twitter:description" content="45 canonical-or-terminal planner outcomes, 16 exact routes, and a 2.60s median. Vision is quick at 5.13s median but reaches only 68/100 strict passes.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/deepseek-v4-flash-vision-openrouter">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "DeepSeek V4 Flash Vision Exp tested: a great planner with experimental eyes",
+  "description": "We tested DeepSeek V4 Flash Vision Exp on 200 WebBrain browser-agent cases. Its text planning beats Qwen3.8 Flash and GLM-5.3 Flash, but its experimental vision route trails both.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-08-27",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/deepseek-v4-flash-vision-openrouter"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">August 27, 2026 &middot; 9 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>DeepSeek V4 Flash Vision Exp tested: a great planner with experimental eyes</h1>
+    <p class="lede"><strong>DeepSeek&#39;s experimental multimodal route is a better browser planner than its name suggests—and a weaker vision model than the name might imply.</strong> We sent <code>deepseek/deepseek-v4-flash-vision-exp</code> through WebBrain&#39;s 100-case Chrome planning corpus and 100 production-prompt screenshots on OpenRouter. All 200 requests completed. DeepSeek produced more canonical first actions than Qwen3.8 Flash or GLM-5.3 Flash, matched Qwen&#39;s excellent planner latency, and delivered the best p95. On screenshots it was the fastest of the three, yet strict quality fell to <strong>68/100</strong>, eleven passes behind Qwen. This is a strong agentic text model with useful experimental eyes—not yet the best all-purpose multimodal default.</p>
+<h2 id="the-short-verdict">The short verdict</h2>
+<p>DeepSeek V4 Flash Vision Exp splits cleanly into two personalities:</p>
+<div class="table-wrap"><table><thead><tr><th>Role</th><th>DeepSeek result</th><th>Position among the three Flash models</th></tr></thead><tbody><tr><td>Text planning</td><td><strong>45</strong> ideal-name-or-terminal outcomes; <strong>16</strong> exact ideals</td><td><strong>Best routing conformity</strong></td></tr><tr><td>Planner latency</td><td>2.60s median; <strong>8.55s p95</strong></td><td>Essentially tied with Qwen at the median; best tail latency</td></tr><tr><td>Browser vision</td><td>68 strict passes; 89.5% mean rubric</td><td>Third, behind Qwen&#39;s 79 and GLM&#39;s 76</td></tr><tr><td>Vision latency</td><td><strong>5.13s median; 7.60s p95</strong></td><td><strong>Fastest</strong></td></tr><tr><td>Observed cost</td><td>$0.0942 for all 200 calls</td><td>Slightly below Qwen in our run; above promotional GLM</td></tr></tbody></table></div>
+<p>The route makes sense when text, coding, reasoning, or tool use dominates and screenshots are occasional. If browser vision is a first-class workload, Qwen3.8 Flash remains the stronger single-model default. If roles can be split, DeepSeek is an appealing planner paired with a better vision specialist.</p>
+<h2 id="what-is-actually-behind-the-vision-route">What is actually behind the vision route?</h2>
+<p><a href="https://openrouter.ai/deepseek/deepseek-v4-flash-vision-exp" target="_blank" rel="noopener">OpenRouter describes DeepSeek V4 Flash Vision Exp</a> as an experimental image-enabled version of <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731" target="_blank" rel="noopener">DeepSeek V4 Flash 0731</a>. It accepts text and images, returns text, exposes a 1,048,576-token context window, and supports tool calling plus <code>low</code>, <code>high</code>, and <code>max</code> reasoning effort.</p>
+<p>The well-documented part is the text backbone. The exact vision attachment is not yet documented publicly. OpenRouter says the route adds image understanding while retaining the base model&#39;s text capabilities, but neither its listing nor DeepSeek&#39;s public 0731 model card specifies the visual encoder, projector, image-token budget, or multimodal training recipe. Those details should not be reverse-engineered from marketing copy, so this article treats the vision stack as a measured black box.</p>
+<h3 id="a-284b-model-with-a-13b-hot-path">A 284B model with a 13B hot path</h3>
+<p>The underlying <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash" target="_blank" rel="noopener">DeepSeek V4 architecture</a> is a sparse mixture of experts with <strong>284 billion core parameters and 13 billion activated per token</strong>. It is enormous in stored capacity but Flash-sized in live computation. The instruct checkpoint stores MoE expert weights in FP4 while most attention, normalization, and router parameters remain FP8.</p>
+<p>DeepSeek combines two long-context mechanisms:</p>
+<ul><li><strong>Compressed Sparse Attention (CSA)</strong> retrieves a small set of relevant positions instead of attending densely over the whole sequence.</li><li><strong>Heavily Compressed Attention (HCA)</strong> maintains a much smaller representation of broader history.</li></ul>
+<p>The official report says the V4 family reaches one-million-token context while its Pro model uses 27% of DeepSeek V3.2&#39;s single-token inference FLOPs and 10% of its KV cache at that length. Manifold-Constrained Hyper-Connections strengthen signal flow across layers, and the training stack moves to the Muon optimizer. DeepSeek pre-trained V4 on more than 32 trillion tokens, cultivated domain-specific experts with supervised fine-tuning and GRPO, then consolidated them through on-policy distillation.</p>
+<p>The 0731 revision adds <strong>DSpark speculative decoding</strong> to the checkpoint. DeepSeek&#39;s model card says the target and draft components ship together and can propose seven speculative tokens per step in vLLM. This also explains an otherwise confusing pair of figures: OpenRouter describes the core as 284B/13B, while Hugging Face metadata for the 0731 repository reports roughly 304B stored parameters after the attached speculative module. That explanation is an inference from the published checkpoint structure, not a separate parameter claim from DeepSeek.</p>
+<p>This is the important architectural point: DeepSeek V4 Flash is not a small model. It is a very large sparse model designed to keep only a small portion of its capacity hot, compress long-context memory aggressively, and speculate ahead during decoding.</p>
+<h2 id="openrouter-pricing-has-a-clock-attached">OpenRouter pricing has a clock attached</h2>
+<p>On August 27, 2026, OpenRouter&#39;s models API listed these standard rates:</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Input / 1M</th><th>Output / 1M</th><th>Cache read / 1M</th><th>Context</th></tr></thead><tbody><tr><td><code>deepseek/deepseek-v4-flash-vision-exp</code></td><td>$0.22</td><td>$0.66</td><td><strong>$0.007</strong></td><td>1,048,576</td></tr><tr><td><code>qwen/qwen3.8-flash</code></td><td>$0.15</td><td>$0.47</td><td>$0.016</td><td>1,000,000</td></tr><tr><td><code>z-ai/glm-5.3-flash</code></td><td><strong>$0.075 promo</strong></td><td><strong>$0.25 promo</strong></td><td>$0.015</td><td>1,310,720</td></tr></tbody></table></div>
+<p>DeepSeek is not the cheapest route in this group. At standard rates its uncached input costs 47% more than Qwen and its output costs 40% more. GLM&#39;s temporary launch promotion makes the gap much larger.</p>
+<p>There is also an unusual time-of-day override. The live OpenRouter model record doubles DeepSeek Vision Exp to <strong>$0.44 input, $1.32 output, and $0.014 cache read per million tokens</strong> on weekdays from <strong>01:00–04:00 UTC</strong> and <strong>06:00–10:00 UTC</strong>. Weekends and the remaining weekday hours use the standard rate. A production cost model should therefore include UTC scheduling, not just the headline price.</p>
+<p>Our tests ran outside those peak windows. OpenRouter reported:</p>
+<div class="table-wrap"><table><thead><tr><th>Workload</th><th>Prompt tokens</th><th>Completion tokens</th><th>Observed cost</th></tr></thead><tbody><tr><td>100 text-planner calls</td><td>2.587M</td><td>25.2K</td><td>$0.0495</td></tr><tr><td>100 production vision calls</td><td>75.1K</td><td>50.7K</td><td>$0.0447</td></tr><tr><td><strong>Total</strong></td><td><strong>2.662M</strong></td><td><strong>76.0K</strong></td><td><strong>$0.0942</strong></td></tr></tbody></table></div>
+<p>That total was about four percent lower than our Qwen run despite DeepSeek&#39;s higher list rates, largely because providers tokenize and meter images differently. It was 43% above GLM&#39;s promotional bill. Treat those observed totals as route-and-workload measurements, not a replacement for token pricing.</p>
+<h2 id="what-we-ran">What we ran</h2>
+<p>The <strong>regular LLM benchmark</strong> used WebBrain&#39;s 100-case Chrome first-action corpus at Full tier. Each case carries the current system prompt, page context, and production OpenAI-compatible tool schemas. The runner captures one response and does not execute the action. We used the same temperature and no reasoning-effort override as the Qwen3.8 Flash and GLM-5.3 Flash comparison.</p>
+<p>The canonical <code>idealFirstToolCall</code> is intentionally a routing hint, not a complete task grade. A cautious model may inspect the accessibility tree where the fixture expects an immediate click and still behave well in a live loop. Exact matches are useful for regression testing, but they are not equivalent to end-to-end browser success.</p>
+<p>The <strong>vision benchmark</strong> sent 100 browser screenshots through WebBrain&#39;s exact production vision contract: fixed six-section system prompt, temperature 0, an 800-token maximum, weighted fact checks, and critical-fact gating. A strict pass requires both the score threshold and every critical fact.</p>
+<p>DeepSeek recommends temperature 1.0 and larger reasoning budgets for its hardest agent tasks. We intentionally did not adopt those settings: this run measures the model under WebBrain&#39;s normal fast planner and screenshot paths, apples-to-apples with the other two models—not DeepSeek&#39;s maximum-reasoning ceiling.</p>
+<p>All 200 requests returned successfully. No API key or authorization header is present in the saved results.</p>
+<h2 id="text-planning-deepseek-takes-the-lead">Text planning: DeepSeek takes the lead</h2>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Tool calls</th><th>Ideal name or terminal answer</th><th>Exact ideal</th><th>Tree first</th><th>Median</th><th>p95</th><th>Observed cost</th></tr></thead><tbody><tr><td><strong>DeepSeek V4 Flash Vision Exp</strong></td><td>93 + 7 prose responses</td><td><strong>45</strong></td><td><strong>16</strong></td><td><strong>43</strong></td><td>2.60s</td><td><strong>8.55s</strong></td><td>$0.0495</td></tr><tr><td>GLM-5.3 Flash</td><td><strong>100</strong></td><td>41</td><td>13</td><td>48</td><td>7.24s</td><td>16.49s</td><td><strong>$0.0446 promo</strong></td></tr><tr><td>Qwen3.8 Flash</td><td>97 + 3 prose responses</td><td>36</td><td>12</td><td>54</td><td><strong>2.55s</strong></td><td>11.54s</td><td>$0.0572</td></tr></tbody></table></div>
+<p>DeepSeek wins both conformity columns. It selected the expected tool name on 39 cases and gave a correct terminal prose answer on six <code>done</code> cases, producing 45 ideal-name-or-terminal outcomes. Sixteen calls also matched the canonical arguments exactly. The lower structured-call total is less worrying than it first appears: six of the seven prose responses were the correct terminal answer, while the seventh asked the expected clarification in ordinary text instead of invoking the <code>clarify</code> tool.</p>
+<p>It also reads the accessibility tree less reflexively. DeepSeek chose <code>get_accessibility_tree</code> first 43 times, versus 48 for GLM and 54 for Qwen. That helps canonical conformity when a direct navigation or specialized tool is already justified, although reading first can still be prudent in a real browser session.</p>
+<p>Latency is the more decisive win. Qwen remains 43 milliseconds faster at the median—functionally a tie—but DeepSeek cuts Qwen&#39;s p95 by three seconds and GLM&#39;s by almost eight. Across the full set, DeepSeek averaged 3.46 seconds per response.</p>
+<p>The result fits the 0731 release&#39;s positioning. DeepSeek specifically re-post-trained Flash for agentic work and ships native tool schemas plus a speculative decoding module. In our harness, those improvements show up as both better first-route discipline and a tighter latency tail.</p>
+<h2 id="vision-fastest-but-eleven-passes-behind-qwen">Vision: fastest, but eleven passes behind Qwen</h2>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Strict passes</th><th>Mean rubric</th><th>Median</th><th>p95</th><th>Output tokens</th><th>Observed cost</th></tr></thead><tbody><tr><td><strong>DeepSeek V4 Flash Vision Exp</strong></td><td>68 / 100</td><td>89.5%</td><td><strong>5.13s</strong></td><td><strong>7.60s</strong></td><td>50.7K</td><td>$0.0447</td></tr><tr><td>GLM-5.3 Flash</td><td>76 / 100</td><td>93.8%</td><td>5.49s</td><td>8.92s</td><td>45.1K</td><td><strong>$0.0211 promo</strong> / ~$0.042 list</td></tr><tr><td>Qwen3.8 Flash</td><td><strong>79 / 100</strong></td><td><strong>94.8%</strong></td><td>8.42s</td><td>13.43s</td><td>45.3K</td><td>$0.0411</td></tr></tbody></table></div>
+<p>DeepSeek is unquestionably fast. It edges GLM at both the median and p95 and is dramatically quicker than Qwen. But the quality gap is too large to wave away as threshold noise: DeepSeek loses eight strict passes to GLM and eleven to Qwen, while its mean rubric falls more than four points below Qwen.</p>
+<p>The difficulty curve makes the pattern visible:</p>
+<div class="table-wrap"><table><thead><tr><th>Difficulty</th><th>DeepSeek</th><th>GLM</th><th>Qwen</th></tr></thead><tbody><tr><td>Easy</td><td>70%</td><td><strong>80%</strong></td><td>70%</td></tr><tr><td>Basic</td><td>75%</td><td>70%</td><td><strong>85%</strong></td></tr><tr><td>Intermediate</td><td>75%</td><td><strong>85%</strong></td><td><strong>85%</strong></td></tr><tr><td>Advanced</td><td>65%</td><td><strong>80%</strong></td><td><strong>80%</strong></td></tr><tr><td>Challenging</td><td>55%</td><td>65%</td><td><strong>75%</strong></td></tr></tbody></table></div>
+<p>The experimental route holds up through ordinary forms, tables, and dashboards, then degrades faster as screenshots become dense, multilingual, occluded, or calibration-heavy. It passed all five cases in toast notifications, consent banners, chart reading, data tables, and kanban boards. It managed only 2/5 for authentication, calendar, and multilingual OCR, 1/5 for form validation, and 0/5 for modal overlays.</p>
+<p>Some of those failures are shared. Qwen and GLM also scored 0/5 on modal overlays and 1/5 on form validation in the same run. The vision route is not uniquely broken there. The sharper concern is the challenging band, where Qwen retains 15 passes, GLM 13, and DeepSeek 11.</p>
+<p>At 68 strict passes, DeepSeek lands exactly alongside the older Qwen3-VL-30B-A3B result and one behind Qwen3-VL-32B from our <a href="/blog/qwen-budget-vision-openrouter">budget vision comparison</a>. That is respectable for a newly attached experimental capability, but it does not reset the budget vision tier the way Qwen3.8 Flash and GLM-5.3 Flash did.</p>
+<h2 id="the-right-way-to-deploy-it">The right way to deploy it</h2>
+<ul><li><strong>Best reason to choose DeepSeek:</strong> text-heavy browser agents. It leads canonical routing, nearly matches Qwen&#39;s median, and has the best p95.</li><li><strong>Best single multimodal default:</strong> Qwen3.8 Flash. Its planner is just as responsive at the median and its vision quality is materially stronger.</li><li><strong>Best current value for frequent screenshots:</strong> GLM-5.3 Flash while the launch discount lasts. It keeps most of Qwen&#39;s quality, approaches DeepSeek&#39;s vision speed, and costs much less today.</li><li><strong>Best split configuration:</strong> DeepSeek as the main planner, with Qwen or GLM handling screenshot description. WebBrain can configure the two roles separately.</li></ul>
+<p>DeepSeek V4 Flash Vision Exp is still useful as a one-model endpoint when images are occasional and switching providers is undesirable. It accepts the image, produces a structured description quickly, and keeps the excellent V4 Flash agent backbone available for the rest of the loop. The model ID&#39;s <code>exp</code> suffix should simply be taken seriously: the vision stack is measurable and functional, but not yet as mature as the text side.</p>
+<h2 id="raw-results">Raw results</h2>
+<pre><code class="language-text">test/llm/results/2026-08-27-openrouter-full_chrome_deepseek_deepseek-v4-flash-vision-exp
+test/vision/results/2026-08-27-openrouter-full_deepseek_deepseek-v4-flash-vision-exp_production</code></pre>
+<p>The benchmark harness, screenshots, rubrics, and complete result files live in <a href="https://github.com/esokullu/webbrain/tree/main/test/llm" target="_blank" rel="noopener"><code>test/llm</code></a> and <a href="https://github.com/esokullu/webbrain/tree/main/test/vision" target="_blank" rel="noopener"><code>test/vision</code></a>. The directly comparable Qwen3.8 Flash and GLM-5.3 Flash analysis is in <a href="/blog/qwen38-flash-vs-glm53-flash">our previous post</a>.</p>
+<p>Tags: #DeepSeekV4 #DeepSeekFlash #OpenRouter #MultimodalAI #MixtureOfExperts #VisionLanguageModel #ToolCalling #BrowserAgent #WebBrain</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain 33.0.0 and later is GPL-3.0-or-later and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>
