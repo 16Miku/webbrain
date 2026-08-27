@@ -1423,9 +1423,11 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.match(source, /const text = selectionTextFromRange\(range\) \|\| String\(range\.toString\?\.\(\) \|\| ''\)\.trim\(\);/);
     assert.match(source, /function applySelectionAskActionLabel\(\)/);
     assert.match(source, /if \(selectionAskActionLocale === locale && selectionAskActionLabel[\s\S]*?selectionAskActionEl\.textContent === selectionAskActionLabel\)/);
+    assert.match(source, /selectionAskActionLabel = getSelectionShortcutLocalization\(locale\)\.strings\.addSelectionToChat;/);
     assert.match(source, /selectionAskActionEl\.addEventListener\('click'/);
     assert.match(source, /const rect = range \? selectionRangeRect\(range\) : null;/);
     assert.match(source, /const usable = rect && selectionRangeIsVisible\(rect, \{ width: vw, height: vh \}\);/);
+    assert.match(source, /const aboveTop = usable \? rect\.top - actionHeight - gap : maxTop;[\s\S]*?const preferredTop = usable && aboveTop >= 8 \? aboveTop : belowTop;/);
     assert.match(source, /cloneRange/);
     assert.match(source, /ensureSelectionAskActionEl\(\);/);
     assert.match(source, /if \(!range\.startContainer\.isConnected \|\| !range\.endContainer\.isConnected\) return null;/);
@@ -1438,7 +1440,7 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.match(sidepanelHtmlSources[index], /id="selection-ask-action"/);
     assert.doesNotMatch(sidepanelHtmlSources[index], /id="selection-ask-action"[^>]*aria-live/);
     assert.doesNotMatch(sidepanelHtmlSources[index], /<div id="app"[\s\S]*id="selection-ask-action"[\s\S]*<\/div>\s*<script/);
-    assert.match(sidepanelStyleSources[index], /\.selection-ask-action \{[\s\S]*?z-index:\s*10000;[\s\S]*?opacity:\s*0\.8;[\s\S]*?user-select:\s*none;/);
+    assert.match(sidepanelStyleSources[index], /\.selection-ask-action \{[\s\S]*?z-index:\s*10000;[\s\S]*?opacity:\s*1;[\s\S]*?background:\s*var\(--bg-secondary\);[\s\S]*?color:\s*var\(--text-primary\);[\s\S]*?user-select:\s*none;/);
   }
 });
 
@@ -43683,7 +43685,7 @@ test('selection shortcut localizations cover every interface locale with browser
     'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh',
   ];
   const expectedKeys = [
-    'askAbout', 'askQuestion', 'askSelection', 'explain', 'hideShortcut',
+    'addSelectionToChat', 'askAbout', 'askHighlightedText', 'askQuestion', 'askSelection', 'explain', 'hideShortcut',
     'humanize', 'includePageContext', 'openChat', 'proofread', 'quiz', 'sendFailed', 'sendQuestion',
     'sentManual', 'summarize', 'translate', 'translateTo',
   ];
@@ -43706,7 +43708,9 @@ test('selection shortcut localizations cover every interface locale with browser
     assert.equal(chinese.strings.quiz, '测验我', `${label}: the Chinese shortcut should localize Quiz me`);
     assert.equal(chinese.strings.includePageContext, '包含页面和对话上下文', `${label}: the Chinese shortcut should localize the full-context choice`);
     assert.equal(chinese.strings.hideShortcut, '隐藏此项', `${label}: the Chinese shortcut should use the compact Hide this label`);
-    assert.equal(getLocalization('en').strings.askSelection, 'Add to chat', `${label}: the English shortcut should use the concise chat action label`);
+    assert.equal(getLocalization('en').strings.askSelection, 'Add to chat', `${label}: the native selection action should retain its concise label`);
+    assert.equal(getLocalization('en').strings.askHighlightedText, 'Ask WebBrain about this', `${label}: the webpage shortcut should retain its original prompt`);
+    assert.equal(getLocalization('en').strings.addSelectionToChat, 'Add this to chat', `${label}: the selected-answer action should use the explicit chat label`);
     assert.equal(getLocalization('en').strings.hideShortcut, 'Hide this', `${label}: the English shortcut should use the compact footer label`);
     assert.equal(chinese.dir, 'ltr', `${label}: Chinese should retain left-to-right layout`);
     assert.equal(getLocalization('ar').dir, 'rtl', `${label}: Arabic should use right-to-left layout`);
@@ -45113,9 +45117,10 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /language: action === 'custom' \? undefined : \(language \|\| interfaceLanguage\)/, `${label}: fixed actions should carry the interface language while custom questions stay untouched`);
     assert.match(content, /\.\.\.\(action === 'custom' \? \{ includePageContext: includePageContext\?\.checked === true \} : \{\}\)/, `${label}: only custom questions should submit the full-context choice`);
     assert.match(content, /function applyLocalization\(\)[\s\S]*?host\.dir = localization\.dir;[\s\S]*?\.action-label`\);[\s\S]*?label\.textContent = strings\[action\];/, `${label}: localization should update action labels without replacing their icons`);
+    assert.match(content, /shortcut\.setAttribute\('aria-label', strings\.askHighlightedText\);[\s\S]*?popup\.setAttribute\('aria-label', strings\.askHighlightedText\);/, `${label}: webpage shortcut localization should retain the selected-text prompt`);
     assert.match(content, /class="shortcut-icon" aria-hidden="true">\?<\/span>/, `${label}: shortcut should use the compact question-mark icon`);
-    assert.match(content, /<button class="shortcut" type="button" aria-label="Add to chat" title="Add to chat" hidden>/, `${label}: shortcut fallback copy should use Add to chat before localization loads`);
-    assert.match(content, /\.shortcut \{[\s\S]*?border:1px solid rgba\(23,23,34,\.14\);[\s\S]*?background:#fff; color:#171722;[\s\S]*?box-shadow:0 9px 20px rgba\(23,23,34,\.16\)/, `${label}: shortcut should use a solid white neutral treatment with a lower shadow`);
+    assert.match(content, /<button class="shortcut" type="button" aria-label="Ask WebBrain about this" title="Ask WebBrain about this" hidden>/, `${label}: shortcut fallback copy should retain its original selected-text prompt`);
+    assert.match(content, /\.shortcut \{[\s\S]*?border:1px solid rgba\(108,99,255,\.34\);[\s\S]*?background:var\(--bg\); color:var\(--accent\);[\s\S]*?box-shadow:0 10px 26px rgba\(35,30,95,\.22\)/, `${label}: shortcut should retain its purple treatment`);
     assert.match(content, /\.popup \{[\s\S]*?max-height:calc\(100vh - 16px\); overflow-y:auto; overscroll-behavior:contain;/, `${label}: expanded popup should remain scrollable inside short viewports`);
     assert.doesNotMatch(content, /M6\.8 8\.5 9\.2 14l2\.8-3\.4 2\.8 3\.4 2\.4-5\.5/, `${label}: discarded WebBrain W outline should be removed`);
     assert.doesNotMatch(content, /M12 2\.8c\.65 3\.78/, `${label}: Claude-like sparkle icon should be removed`);

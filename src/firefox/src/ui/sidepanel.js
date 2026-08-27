@@ -10999,11 +10999,11 @@ function positionSelectionAskAction(range) {
     Math.max(8, usable ? rect.left : (vw - actionWidth) / 2),
     Math.max(8, vw - actionWidth - 8),
   );
-  const belowTop = usable ? rect.bottom + gap : floor - actionHeight;
-  const preferredTop = usable && belowTop + actionHeight <= floor
-    ? belowTop
-    : Math.max(8, usable ? rect.top - actionHeight - gap : floor - actionHeight);
-  const top = Math.min(Math.max(8, floor - actionHeight), preferredTop);
+  const maxTop = Math.max(8, floor - actionHeight);
+  const aboveTop = usable ? rect.top - actionHeight - gap : maxTop;
+  const belowTop = usable ? rect.bottom + gap : maxTop;
+  const preferredTop = usable && aboveTop >= 8 ? aboveTop : belowTop;
+  const top = Math.min(maxTop, Math.max(8, preferredTop));
   selectionAskActionEl.style.left = `${left}px`;
   selectionAskActionEl.style.top = `${top}px`;
 }
@@ -11016,7 +11016,7 @@ function applySelectionAskActionLabel() {
     return;
   }
   selectionAskActionLocale = locale;
-  selectionAskActionLabel = getSelectionShortcutLocalization(locale).strings.askQuestion;
+  selectionAskActionLabel = getSelectionShortcutLocalization(locale).strings.addSelectionToChat;
   selectionAskActionEl.textContent = selectionAskActionLabel;
   selectionAskActionEl.title = selectionAskActionLabel;
   selectionAskActionEl.setAttribute('aria-label', selectionAskActionLabel);
