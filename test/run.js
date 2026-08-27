@@ -75129,8 +75129,34 @@ test('max-step exits clear open completion debt', async () => {
   }
 });
 
-test('non-stream and stream runs recover plain finals through forced verification and done turns', async () => {
-  const buildResponses = () => [
+test('non-stream and stream runs keep forced done active across empty and rejected terminal calls', async () => {
+  const terminalMisses = [
+    {
+      label: 'empty response',
+      response: { content: null, toolCalls: [] },
+    },
+    {
+      label: 'malformed arguments',
+      response: {
+        content: null,
+        toolCalls: [{
+          id: 'invariant_done_malformed',
+          function: { name: 'done', arguments: '{' },
+        }],
+      },
+    },
+    {
+      label: 'missing outcome',
+      response: {
+        content: null,
+        toolCalls: [{
+          id: 'invariant_done_missing_outcome',
+          function: { name: 'done', arguments: JSON.stringify({ summary: 'Missing terminal outcome.' }) },
+        }],
+      },
+    },
+  ];
+  const buildResponses = terminalMiss => [
     {
       content: null,
       toolCalls: [{
@@ -75146,7 +75172,7 @@ test('non-stream and stream runs recover plain finals through forced verificatio
         function: { name: 'read_page', arguments: '{}' },
       }],
     },
-    { content: null, toolCalls: [] },
+    terminalMiss.response,
     {
       content: null,
       toolCalls: [{
@@ -75156,9 +75182,13 @@ test('non-stream and stream runs recover plain finals through forced verificatio
     },
   ];
 
-  for (const streaming of [false, true]) {
-    for (const AgentClass of [AgentCh, AgentFx]) {
-      const responses = buildResponses();
+  const cases = [false, true].flatMap(streaming => (
+    [AgentCh, AgentFx].flatMap(AgentClass => (
+      terminalMisses.map(terminalMiss => ({ streaming, AgentClass, terminalMiss }))
+    ))
+  ));
+  for (const { streaming, AgentClass, terminalMiss } of cases) {
+      const responses = buildResponses(terminalMiss);
       const provider = {
         supportsTools: true,
         supportsVision: false,
@@ -75259,12 +75289,12 @@ test('non-stream and stream runs recover plain finals through forced verificatio
       assert.deepEqual(
         provider.requests[4]?.toolChoice,
         { type: 'function', function: { name: 'done' } },
-        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: empty terminal response lost the forced done choice`,
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}/${terminalMiss.label}: rejected terminal response lost the forced done choice`,
       );
       assert.deepEqual(
         provider.requests[4]?.tools?.map(tool => tool?.function?.name),
         ['done'],
-        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: empty terminal response reopened action tools`,
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}/${terminalMiss.label}: rejected terminal response reopened action tools`,
       );
       assert.ok(
         updates.some(update => update.type === 'warning' && /completion invariant/i.test(update.data?.message || '')),
@@ -75280,13 +75310,7 @@ test('non-stream and stream runs recover plain finals through forced verificatio
           `${AgentClass.name}: rejected streamed completion text was not cleared`,
         );
       }
-      assert.equal(
-        agent.conversations.get(tabId).some(message => message.role === 'tool' && /"completionInvariant":true/.test(message.content || '')),
-        false,
-        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: deterministic recovery still attempted an unverified done`,
-      );
       assert.equal(agent.completionInvariants.has(tabId), false, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: completed run leaked invariant state`);
-    }
   }
 });
 

@@ -29545,12 +29545,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       if (result.toolCalls && result.toolCalls.length > 0) {
-        const forcedTerminalName = completionRecoveryPolicy?.kind === 'done'
-          ? completionRecoveryPolicy.tools?.[0]?.function?.name
-          : '';
-        if (forcedTerminalName && result.toolCalls.some(call => call?.function?.name === forcedTerminalName)) {
-          forceCompletionDoneTurn = false;
-        }
         const suppressPlannerContent = this._isPlannerShapedJson(result.content);
         const assistantToolContent = suppressPlannerContent ? null : (result.content || null);
         if (suppressPlannerContent) {
@@ -30500,12 +30494,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             return finish(costStopMessage, 'cost_limit');
           }
           const toolCalls = Object.values(toolCallsAccumulator);
-          const forcedTerminalName = completionRecoveryPolicy?.kind === 'done'
-            ? completionRecoveryPolicy.tools?.[0]?.function?.name
-            : '';
-          if (forcedTerminalName && toolCalls.some(call => call?.function?.name === forcedTerminalName)) {
-            forceCompletionDoneTurn = false;
-          }
           const suppressPlannerContent = this._isPlannerShapedJson(fullText);
           if (suppressPlannerContent) {
             this._logDebug({ type: 'planner_shaped_content_suppressed', step: steps, toolCallCount: toolCalls.length });
