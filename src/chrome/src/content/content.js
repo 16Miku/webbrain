@@ -4943,10 +4943,17 @@
             actionTarget: dispatchTarget,
           })
         : '';
+      const composerText = (() => {
+        try {
+          if ('value' in composer) return String(composer.value || '');
+          return String(composer.innerText || composer.textContent || '');
+        } catch { return ''; }
+      })();
       return {
         success: true,
         messageSend: observationOnly ? false : messageSend === true,
         conclusive: true,
+        composerEmpty: composerText.replace(/[\u200b-\u200d\ufeff]/g, '').trim() === '',
         // Only recipient-specific header evidence is authoritative. Ordinary
         // message text, test-id containers, and other leaf content are never
         // returned as dispatch identities.

@@ -6,9 +6,15 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [33.5.0] - 2026-08-27
 
+### Added
+- Added versioned site-workflow contracts for high-evidence GitHub, Product Hunt, Microsoft Forms, Gmail, LinkedIn, YouTube, 12306, Douyin, NaukriGulf, Greenhouse, and Workday tasks (Chrome + Firefox)
+- Added semantic planner routing through app-owned `site_job` IDs and content-free adapter/job/revision trace metadata
+- Added content-free `adapter_match` trace metadata for notes-only and structured adapters, plus live-UI-verified AdSense and SofaScore guidance without promoting either to a workflow contract
+
 ### Changed
 - Redesigned the sidebar loading and thinking UI with clearer live activity updates and a toggleable compact activity history (Chrome + Firefox)
 - Localized the new activity statuses and improved screen-reader announcements across all supported languages
+- Tightened selected site-workflow completion: live-URL binding survives trusted continuation only on the same adapter/job, the executor receives the app-owned stages/evidence contract, submission success needs job-bound terminal evidence (including paid/ticket-issued transaction state and recipient-bound message state), and repeated workflows need exact reconciliation against an app-owned inventory rather than model-created rows
 
 ## [33.4.1] - 2026-08-27
 

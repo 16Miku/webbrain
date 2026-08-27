@@ -1096,6 +1096,17 @@ export const AGENT_TOOLS = [
           },
           sessionId: { type: 'string', description: 'Optional advanced override. Usually omit this; the app assigns rows to the active progress session.' },
           reopen: { type: 'boolean', description: 'Rows already processed/skipped/failed are locked; status changes back to pending/acted are ignored with a warning. Pass true only when the user explicitly asked to redo those rows.' },
+          workflowReconciliation: {
+            type: 'object',
+            description: 'For an app-selected site workflow that requires full reconciliation, declare complete inventory coverage only after every app-owned workflowInventory item id (or app-seeded expected/classifier item) has an exact stable terminal ledger row. Model-created rows alone cannot prove complete coverage.',
+            properties: {
+              job: { type: 'string', description: 'Exact app-selected workflow job id shown in the execution contract.' },
+              coverageComplete: { type: 'boolean', description: 'Must be true only after inventory/pagination is complete and every item has a row.' },
+              itemCount: { type: 'number', description: 'Exact total shared by the app-owned inventory and current-task ledger after this update.' },
+              basis: { type: 'string', description: 'Short evidence basis for complete coverage, such as terminal pagination, all visible form questions inventoried, or verified no-results.' },
+            },
+            required: ['job', 'coverageComplete', 'itemCount', 'basis'],
+          },
         },
         required: ['items'],
       },

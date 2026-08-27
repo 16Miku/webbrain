@@ -32,7 +32,8 @@ import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard 
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, recordCompletionToolResult } from './completion-invariant.js';
 import { cdpClient } from '../cdp/cdp-client.js';
-import { findLastGmailResultPage, getActiveAdapter, getCarouselNavigationPolicy, getCarouselNavigationTarget, getFullPageCapturePolicy, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, parseCarouselSlideCount, parseGmailPaginationRange, UNIVERSAL_PREAMBLE } from './adapters.js';
+import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getFullPageCapturePolicy, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
+import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
 import { messageTargetMatchesObservedIdentities, normalizeMessageTarget, normalizeRecipientIdentity } from './message-recipient-guard.js';
 import {
   fetchUrl,
@@ -765,6 +766,8 @@ export class Agent extends LoopDetector {
     this.deliveryActionableDiscoveryResets = new Set(); // tabIds that used their one discovery reset since meaningful progress
     this.lastAutoScreenshotTs = new Map(); // tabId -> ms — defensive debounce
     this.lastSeenAdapter = new Map(); // tabId -> adapter name from last enrichment
+    this.pendingAdapterMatchTraces = new Map(); // tabId -> Map(adapter@revision -> content-free match metadata)
+    this.adapterMatchTraceKeys = new Map(); // runId -> Map(adapter@revision -> OR-merged match metadata)
     // Per-tab opt-in: when true, the agent is allowed to use API mutations
     // (POST/PUT/PATCH/DELETE via fetch_url or research_url)
     // for steps where it judges API to be more reliable than UI. Set via
@@ -1311,7 +1314,7 @@ export class Agent extends LoopDetector {
   _completionTextSignalsSuccess(value, { allowBare = false } = {}) {
     const text = String(value || '').slice(0, 4000);
     if (!text) return false;
-    const positive = /\b(?:success(?:ful|fully)?|saved|submitted|created|sent|published|completed|updated|added|approved|received|confirmed|thank you)\b/i;
+    const positive = /\b(?:success(?:ful|fully)?|saved|submitted|created|sent|published|completed|updated|added|approved|resolved|received|confirmed|thank you)\b/i;
     const barePositive = /\b(?:complete|done)\b/i;
     const negative = /\b(?:not|never|failed|failure|error|unable|cannot|can't|could not|couldn't|did not|didn't|was not|wasn't|were not|weren't|invalid|denied|rejected|unsuccessful)\b/i;
     return (positive.test(text) || (allowBare && barePositive.test(text))) && !negative.test(text);
@@ -1323,6 +1326,8 @@ export class Agent extends LoopDetector {
     const completionArgs = this._activeSkillToolForName(tabId, name)?.requiresDownloadPermission
       ? { ...(args || {}), __completionDownloadAction: true }
       : args;
+    const workflowInventory = this._rememberWorkflowInventoryObservation(tabId, name, result);
+    if (workflowInventory && result && typeof result === 'object') result.workflowInventory = workflowInventory;
     const next = recordCompletionToolResult(state, name, completionArgs, result);
     this.completionInvariants.set(tabId, next);
     const submitState = this._completionSubmitStates.get(tabId);
@@ -1378,7 +1383,7 @@ export class Agent extends LoopDetector {
     return next;
   }
 
-  _recordCompletionSubmitAttempt(tabId, detectedSubmit, name, args, beforeUrl, afterUrl, result, beforeDocument = '', afterDocument = '') {
+  _recordCompletionSubmitAttempt(tabId, detectedSubmit, name, args, beforeUrl, afterUrl, result, beforeDocument = '', afterDocument = '', executionContext = {}) {
     // API-backed Chrome Web Store submission is verified by the subsequent
     // chrome_web_store_status observation. Do not create DOM-form transition
     // state for a dashboard Chrome intentionally prevents us from inspecting.
@@ -1422,6 +1427,7 @@ export class Agent extends LoopDetector {
       formValidationFailed: !!result?.formValidationFailed,
       completionSignalObserved: false,
       observedAfterSubmit: false,
+      workflowBinding: this._workflowSubmitBindingForAttempt(tabId, beforeUrl, executionContext),
     };
     this._completionSubmitStates.set(tabId, state);
     return state;
@@ -1455,22 +1461,13 @@ export class Agent extends LoopDetector {
     return null;
   }
 
-  _completionPageWarning(tabId, summary, outcome, pageState, pageUrl = '') {
-    if (normalizeDoneOutcome(outcome) !== 'success' || !pageState) return null;
-    const dialogs = Number(pageState.openDialogCount || 0);
+  _completionSubmissionEvidence(tabId, pageState, pageUrl = '') {
+    if (!pageState) return { verifiedFinalSubmit: false, liveSignals: [], relevantForms: 0 };
     const relevantForms = Number(pageState.relevantFormCount || 0);
     const liveSignals = Array.isArray(pageState.successMessages)
       ? pageState.successMessages.filter(text => this._completionTextSignalsSuccess(text, { allowBare: true }))
       : [];
     const submit = this._completionSubmitStates.get(tabId);
-    const executionGuard = this._planExecutionGuards.get(tabId);
-    const explicitlyReadOnly = executionGuard?.requiresSubmission === false
-      && executionGuard?.requiresStateChange === false;
-    const pendingSubmitVerification = explicitlyReadOnly
-      ? submit?.dispatched === true
-      : !!submit
-        || executionGuard?.requiresSubmission === true
-        || (executionGuard?.requiresSubmission == null && executionGuard?.requiresStateChange === true);
     const currentDocumentMatchesSubmit = !!(
       submit?.currentUrl
       && this._normalizeUrl(pageUrl || pageState.url || '') === this._normalizeUrl(submit.currentUrl)
@@ -1483,7 +1480,157 @@ export class Agent extends LoopDetector {
       && currentDocumentMatchesSubmit
       && (submit.documentChanged || observedSuccessSignal)
     );
-    const verifiedFinalSubmit = verifiedSubmit && (relevantForms === 0 || observedSuccessSignal);
+    return {
+      submit,
+      liveSignals,
+      relevantForms,
+      observedSuccessSignal,
+      verifiedFinalSubmit: verifiedSubmit && (relevantForms === 0 || observedSuccessSignal),
+    };
+  }
+
+  _workflowSubmitBindingForAttempt(tabId, pageUrl = '', executionContext = {}) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const siteWorkflow = guard?.siteWorkflow;
+    if (!guard?.enabled || siteWorkflow?.job?.requiresSubmission !== true || !pageUrl) return null;
+    const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
+    if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
+    return {
+      bindingKey: this._adapterWorkflowBindingKey(siteWorkflow),
+      adapterName: siteWorkflow.adapterName,
+      revision: siteWorkflow.revision,
+      job: siteWorkflow.job.id,
+      verificationKind: this._workflowVerificationKind(siteWorkflow),
+      recipientBound: executionContext?.messageRecipientGuardRequired === true
+        && !!executionContext?.messageRecipientDispatchBinding?.token,
+    };
+  }
+
+  _workflowTerminalText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 20000);
+  }
+
+  _workflowTerminalEvidenceMatchesState(state, record) {
+    return !!state?.siteWorkflow?.job?.id
+      && record?.bindingKey === this._adapterWorkflowBindingKey(state.siteWorkflow)
+      && record.job === state.siteWorkflow.job.id
+      && record.verificationKind === this._workflowVerificationKind(state.siteWorkflow);
+  }
+
+  _workflowFormConfirmationSignal(text) {
+    return /\b(?:successfully\s+(?:submitted|sent|received)|response\s+(?:was\s+)?submitted|application\s+(?:was\s+)?(?:submitted|received)|submission\s+(?:complete|confirmed)|thank\s+you\s+for\s+(?:submitting|applying))\b|(?:提交成功|已成功提交|申请已提交|申请成功|发送成功|ご応募ありがとうございます|送信しました|제출되었습니다|başvurunuz alındı|başarıyla gönderildi|demande envoyée|candidature reçue|solicitud enviada|candidatura enviada)/i.test(text);
+  }
+
+  _workflowSavedStateSignal(text) {
+    return /\b(?:changes?\s+saved|saved\s+successfully|successfully\s+(?:saved|updated)|update\s+complete)\b|(?:保存成功|已保存|更新成功|başarıyla kaydedildi|modifications enregistrées|cambios guardados|変更を保存しました|저장되었습니다)/i.test(text);
+  }
+
+  _workflowResolvedStateSignal(text) {
+    return /\b(?:conversation|thread|review)\s+(?:was\s+)?resolved\b|\bresolved\s+successfully\b|(?:已解决|已處理|çözüldü|résolu|resuelto|解決済み|해결됨)/i.test(text);
+  }
+
+  _workflowTransactionFulfilledSignal(text) {
+    const value = String(text || '');
+    const orderPattern = /\b(?:order|booking|ticket)\s*(?:number|no\.?|id|reference)\s*[:#-]?\s*[A-Z0-9][A-Z0-9-]{3,}|(?:订单号|訂單號|订单编号|车票订单|取票号)\s*[:：]?\s*[A-Z0-9][A-Z0-9-]{3,}/ig;
+    const fulfilledPattern = /\b(?:payment\s+(?:successful|complete|confirmed)|paid|ticket(?:s)?\s+issued|booking\s+confirmed)\b|(?:支付成功|已支付|出票成功|已出票|购票成功|订单已完成)/ig;
+    const orders = [...value.matchAll(orderPattern)].map(match => match.index || 0);
+    const fulfilled = [...value.matchAll(fulfilledPattern)].map(match => match.index || 0);
+    return orders.some(orderIndex => fulfilled.some(statusIndex => Math.abs(orderIndex - statusIndex) <= 320));
+  }
+
+  _workflowMessageSentSignal(siteWorkflow, text) {
+    if (siteWorkflow?.adapterName !== 'gmail') return false;
+    return /\bmessage\s+sent\b|(?:邮件已发送|郵件已傳送|メッセージを送信しました|메시지를 보냈습니다|ileti gönderildi|message envoyé|mensaje enviado|mensagem enviada)/i.test(text);
+  }
+
+  _workflowPublishedResourceSignal(siteWorkflow, pageUrl, text) {
+    if (siteWorkflow?.adapterName === 'github') {
+      return /\/releases\/tag\/[^/?#]+/i.test(String(pageUrl || ''));
+    }
+    if (siteWorkflow?.adapterName === 'linkedin') {
+      return /\/(?:posts\/|feed\/update\/)/i.test(String(pageUrl || ''))
+        || /\bpost\s+published\b|\bpublished\s+successfully\b/i.test(text);
+    }
+    if (siteWorkflow?.adapterName === 'douyin') {
+      return /\/video\/\d+/i.test(String(pageUrl || '')) || /(?:发布成功|作品已发布|作品发布成功)/.test(text);
+    }
+    return /\b(?:published\s+successfully|publication\s+complete)\b/i.test(text);
+  }
+
+  _workflowTerminalEvidenceFromDone(tabId, pageState, pageUrl, submissionEvidence, messageProbe = null) {
+    const state = this._planExecutionGuards.get(tabId);
+    const siteWorkflow = state?.siteWorkflow;
+    if (!state?.enabled || siteWorkflow?.job?.requiresSubmission !== true) return null;
+    const submit = submissionEvidence?.submit;
+    const binding = submit?.workflowBinding;
+    if (!binding || binding.bindingKey !== this._adapterWorkflowBindingKey(siteWorkflow)) return null;
+    const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
+    if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
+    const verificationKind = this._workflowVerificationKind(siteWorkflow);
+    const text = this._workflowTerminalText(pageState?.workflowPageText || '');
+    let verified = false;
+    let source = '';
+    if (verificationKind === 'message_sent') {
+      const recipientObserved = messageProbe?.success === true
+        && messageProbe?.conclusive === true
+        && messageProbe?.composerEmpty === true
+        && messageTargetMatchesObservedIdentities(state.messaging, messageProbe.strongIdentityCandidates);
+      const sentStatusObserved = submissionEvidence?.verifiedFinalSubmit === true
+        && this._workflowMessageSentSignal(siteWorkflow, text);
+      verified = submit?.dispatched === true
+        && submit?.observedAfterSubmit === true
+        && submit?.formValidationFailed !== true
+        && (binding.recipientBound === true ? recipientObserved : (recipientObserved || sentStatusObserved));
+      source = binding.recipientBound === true
+        ? 'recipient_bound_dispatch_and_empty_composer'
+        : (recipientObserved ? 'observed_recipient_and_empty_composer' : 'provider_sent_confirmation');
+    } else if (verificationKind === 'transaction_fulfilled') {
+      verified = submit?.dispatched === true
+        && submit?.observedAfterSubmit === true
+        && submit?.formValidationFailed !== true
+        && this._workflowTransactionFulfilledSignal(text);
+      source = 'paid_or_ticket_issued_state';
+    } else if (verificationKind === 'form_confirmation') {
+      verified = submissionEvidence?.verifiedFinalSubmit === true
+        && Number(submissionEvidence?.relevantForms || 0) === 0
+        && this._workflowFormConfirmationSignal(text);
+      source = 'form_confirmation_state';
+    } else if (verificationKind === 'saved_state') {
+      verified = submissionEvidence?.verifiedFinalSubmit === true && this._workflowSavedStateSignal(text);
+      source = 'saved_state';
+    } else if (verificationKind === 'resolved_state') {
+      verified = submissionEvidence?.verifiedFinalSubmit === true && this._workflowResolvedStateSignal(text);
+      source = 'resolved_state';
+    } else if (verificationKind === 'published_resource') {
+      verified = submissionEvidence?.verifiedFinalSubmit === true
+        && this._workflowPublishedResourceSignal(siteWorkflow, pageUrl, text);
+      source = 'published_resource';
+    } else {
+      verified = submissionEvidence?.verifiedFinalSubmit === true;
+      source = 'verified_submit_transition';
+    }
+    if (!verified) return null;
+    return {
+      bindingKey: binding.bindingKey,
+      job: siteWorkflow.job.id,
+      verificationKind,
+      source,
+    };
+  }
+
+  _completionPageWarning(tabId, summary, outcome, pageState, pageUrl = '') {
+    if (normalizeDoneOutcome(outcome) !== 'success' || !pageState) return null;
+    const dialogs = Number(pageState.openDialogCount || 0);
+    const submissionEvidence = this._completionSubmissionEvidence(tabId, pageState, pageUrl);
+    const { submit, liveSignals, relevantForms, observedSuccessSignal, verifiedFinalSubmit } = submissionEvidence;
+    const executionGuard = this._planExecutionGuards.get(tabId);
+    const explicitlyReadOnly = executionGuard?.requiresSubmission === false
+      && executionGuard?.requiresStateChange === false;
+    const pendingSubmitVerification = explicitlyReadOnly
+      ? submit?.dispatched === true
+      : !!submit
+        || executionGuard?.requiresSubmission === true
+        || (executionGuard?.requiresSubmission == null && executionGuard?.requiresStateChange === true);
     const documentKey = this._normalizeUrl(pageUrl || pageState.url || '') || 'unknown-document';
     if (dialogs > 0 && (pendingSubmitVerification || !executionGuard)) {
       const titles = Array.isArray(pageState.dialogTitles) && pageState.dialogTitles.length
@@ -4573,6 +4720,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : `[Site guidance for ${adapter.name}]`;
         contextLine += `${heading}\n${adapter.notes.trim()}\n\n`;
       }
+      if (adapter) this._queueAdapterMatchTrace(tabId, adapter, !!shouldInjectAdapter);
     }
 
     // Selected-text shortcuts have an explicit source boundary. Do not attach
@@ -5237,6 +5385,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       role: 'user',
       content: `${heading}\n${adapter.notes.trim()}`,
     });
+    this._queueAdapterMatchTrace(tabId, adapter, true);
     return true;
   }
 
@@ -7901,6 +8050,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._recordCompletionSubmitAttempt(
         tabId, detectedSubmitAction, fnName, fnArgs, beforeUrl, afterUrl, toolResult,
         beforeDocument, String(this._lastAxScopes.get(tabId)?.documentToken || ''),
+        messageRecipientExecutionContext,
       );
       if (toolResult && typeof toolResult === 'object' && !toolResult.done) {
         bulkApiShortcut = this._detectBulkApiMutationShortcut(tabId, fnName, fnArgs, toolResult, {
@@ -11563,6 +11713,260 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  _adapterWorkflowRoutingForUrl(url) {
+    if (!this.useSiteAdapters || !url) return null;
+    return getAdapterWorkflowRouting(url);
+  }
+
+  _resolvePlannerSiteWorkflow(url, plan) {
+    if (!this.useSiteAdapters || plan?.request_kind !== 'execute' || !plan?.site_job) return null;
+    return resolveAdapterWorkflowJob(url, plan.site_job);
+  }
+
+  _sameAdapterWorkflowBinding(left, right) {
+    return !!left?.job && !!right?.job
+      && left.adapterName === right.adapterName
+      && left.revision === right.revision
+      && left.schema === right.schema
+      && left.job.id === right.job.id;
+  }
+
+  _adapterWorkflowBindingKey(siteWorkflow) {
+    return siteWorkflow?.job?.id
+      ? `${siteWorkflow.adapterName}@${siteWorkflow.revision}:${siteWorkflow.schema}:${siteWorkflow.job.id}`
+      : '';
+  }
+
+  _workflowVerificationKind(siteWorkflow) {
+    const job = siteWorkflow?.job;
+    if (!job?.id) return 'none';
+    if (job.stages?.includes('payment') || job.stages?.includes('fulfillment')) return 'transaction_fulfilled';
+    if (job.template === 'message') return job.requiresSubmission ? 'message_sent' : 'message_draft';
+    if (job.id === 'update-metadata') return 'saved_state';
+    if (job.id === 'resolve-review-threads') return 'resolved_state';
+    if (job.template === 'publish') return 'published_resource';
+    if (job.template === 'form') return job.requiresSubmission ? 'form_confirmation' : 'form_inventory';
+    return job.requiresLedger ? 'coverage' : 'generic';
+  }
+
+  _workflowInventoryFingerprint(value) {
+    const text = String(value || '');
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash.toString(16).padStart(8, '0');
+  }
+
+  _workflowFormInventoryItems(result = {}, bindingKey = '') {
+    const text = [result?.pageContent, result?.text]
+      .find(value => typeof value === 'string' && value.trim()) || '';
+    if (!text || !bindingKey) return [];
+    const scope = String(
+      result?.documentToken
+      || result?.tree_revision
+      || result?.treeRevision
+      || result?.refScopeUrl
+      || result?.pageUrl
+      || result?.currentUrl
+      || result?.url
+      || 'document',
+    ).slice(0, 500);
+    const items = [];
+    const seen = new Set();
+    const rolePattern = /^\s*(textbox|combobox|checkbox|radio|switch|slider|spinbutton|listbox)\b/i;
+    for (const line of text.split(/\r?\n/)) {
+      const roleMatch = rolePattern.exec(line);
+      const refMatch = /\[(ref_[A-Za-z0-9_.:-]+)\]/.exec(line);
+      if (!roleMatch || !refMatch) continue;
+      const role = roleMatch[1].toLowerCase();
+      const refId = refMatch[1];
+      const label = (/^\s*[a-z]+\s+"([^"]+)"/i.exec(line)?.[1] || `${role} ${refId}`)
+        .replace(/\s+/g, ' ').trim().slice(0, 160);
+      const identity = `${bindingKey}|${scope}|${role}|${refId}`;
+      const id = `workflow:${this._workflowInventoryFingerprint(identity)}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      items.push({ id, label, role, ref_id: refId });
+      if (items.length >= 200) break;
+    }
+    return items;
+  }
+
+  _rememberWorkflowInventoryObservation(tabId, name, result) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const siteWorkflow = guard?.siteWorkflow;
+    if (!guard?.enabled || siteWorkflow?.job?.requiresLedger !== true
+        || siteWorkflow.job.template !== 'form'
+        || name !== 'get_accessibility_tree'
+        || !this._isSuccessfulExecutionEvidence(result)) return null;
+    const pageUrl = [
+      result?.refScopeUrl,
+      result?.pageUrl,
+      result?.currentUrl,
+      result?.url,
+      this._lastAxScopes.get(tabId)?.pageUrl,
+    ].find(value => typeof value === 'string' && value.trim()) || '';
+    if (!pageUrl) return null;
+    const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
+    if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
+    const bindingKey = this._adapterWorkflowBindingKey(siteWorkflow);
+    const observed = this._workflowFormInventoryItems(result, bindingKey);
+    if (!observed.length) return null;
+    const documentKey = String(
+      result?.documentToken
+      || result?.tree_revision
+      || result?.treeRevision
+      || pageUrl
+      || 'document',
+    ).slice(0, 500);
+    const taskKey = this._progressTaskKeyHash(tabId);
+    const prior = guard.workflowInventoryEvidence;
+    const compatible = prior?.bindingKey === bindingKey && prior?.taskKey === taskKey;
+    const items = new Map((compatible ? prior.items : []).map(item => [item.id, item]));
+    for (const item of observed) items.set(item.id, item);
+    const documents = { ...(compatible ? prior.documents : {}) };
+    documents[documentKey] = {
+      complete: result?.hasMore === false
+        && result?.truncated !== true
+        && result?.textTruncated !== true,
+    };
+    const evidence = {
+      bindingKey,
+      taskKey,
+      source: 'accessibility_tree',
+      items: [...items.values()],
+      documents,
+      complete: Object.keys(documents).length > 0
+        && Object.values(documents).every(document => document.complete === true),
+    };
+    guard.workflowInventoryEvidence = evidence;
+    return {
+      job: siteWorkflow.job.id,
+      source: evidence.source,
+      complete: evidence.complete,
+      itemCount: evidence.items.length,
+      items: evidence.items,
+    };
+  }
+
+  _trustedWorkflowInventory(tabId, rows, guard = this._planExecutionGuards.get(tabId)) {
+    const siteWorkflow = guard?.siteWorkflow;
+    if (!siteWorkflow?.job?.requiresLedger) return null;
+    const taskKey = this._progressTaskKeyHash(tabId);
+    const expected = this.progressExpectedItems.get(tabId);
+    if (expected) {
+      const expectedRows = rows.filter(row => Number.isInteger(Number(row?.fields?.expectedOrdinal)));
+      const ordinals = expectedRows.map(row => Number(row.fields.expectedOrdinal)).sort((a, b) => a - b);
+      if (expectedRows.length === expected.count
+          && ordinals.every((ordinal, index) => ordinal === index + 1)) {
+        return { source: 'expected_items', itemIds: expectedRows.map(row => String(row.id)), itemCount: expected.count };
+      }
+    }
+    const classifierRows = rows.filter(row => row?.fields?.classifierTarget === true
+      && ['classifier', 'auto'].includes(String(row?.source || '').toLowerCase()));
+    if (classifierRows.length > 0) {
+      return { source: 'classifier_targets', itemIds: classifierRows.map(row => String(row.id)), itemCount: classifierRows.length };
+    }
+    const evidence = guard?.workflowInventoryEvidence;
+    if (evidence?.complete === true
+        && evidence.bindingKey === this._adapterWorkflowBindingKey(siteWorkflow)
+        && evidence.taskKey === taskKey
+        && Array.isArray(evidence.items)
+        && evidence.items.length > 0) {
+      return { source: evidence.source, itemIds: evidence.items.map(item => String(item.id)), itemCount: evidence.items.length };
+    }
+    return null;
+  }
+
+  async _resolvePlannerSiteWorkflowForLiveTab(tabId, plannedUrl, plan) {
+    const planned = this._resolvePlannerSiteWorkflow(plannedUrl, plan);
+    if (!planned) return null;
+    const liveUrl = await this._currentUrl(tabId);
+    if (!liveUrl) return null;
+    const live = this._resolvePlannerSiteWorkflow(liveUrl, plan);
+    return this._sameAdapterWorkflowBinding(planned, live) ? live : null;
+  }
+
+  async _revalidateCarriedSiteWorkflow(tabId, siteWorkflow) {
+    if (!siteWorkflow?.job?.id) return null;
+    const liveUrl = await this._currentUrl(tabId);
+    if (!liveUrl) return null;
+    const live = resolveAdapterWorkflowJob(liveUrl, siteWorkflow.job.id);
+    return this._sameAdapterWorkflowBinding(siteWorkflow, live) ? live : null;
+  }
+
+  _recordAdapterWorkflowTrace(runId, siteWorkflow) {
+    if (!runId || !siteWorkflow?.job) return;
+    try {
+      trace.recordNote(runId, 0, 'adapter_context', {
+        adapter: siteWorkflow.adapterName,
+        revision: siteWorkflow.revision,
+        workflowSchema: siteWorkflow.schema,
+        job: siteWorkflow.job.id,
+        template: siteWorkflow.job.template,
+      });
+    } catch {}
+  }
+
+  _adapterMatchTracePayload(adapter, notesInjected) {
+    if (!adapter?.name) return null;
+    const revision = Number(adapter.revision);
+    return {
+      adapter: String(adapter.name).slice(0, 80),
+      revision: Number.isInteger(revision) && revision > 0 ? revision : 1,
+      notesInjected: notesInjected === true,
+    };
+  }
+
+  _recordAdapterMatchTrace(runId, payload) {
+    if (!runId || !payload?.adapter) return false;
+    const key = `${payload.adapter}@${payload.revision}`;
+    let entries = this.adapterMatchTraceKeys.get(runId);
+    if (!entries) {
+      entries = new Map();
+      this.adapterMatchTraceKeys.set(runId, entries);
+    }
+    const existing = entries.get(key);
+    const merged = existing?.notesInjected === true
+      ? existing
+      : { ...payload, notesInjected: payload.notesInjected === true };
+    entries.set(key, merged);
+    return !existing || (existing.notesInjected !== true && merged.notesInjected === true);
+  }
+
+  async _flushAdapterMatchTraceRun(runId) {
+    const entries = this.adapterMatchTraceKeys.get(runId);
+    if (!runId || !entries) return;
+    for (const payload of entries.values()) {
+      try { await trace.recordNote(runId, 0, 'adapter_match', payload); } catch {}
+    }
+  }
+
+  _queueAdapterMatchTrace(tabId, adapter, notesInjected) {
+    const payload = this._adapterMatchTracePayload(adapter, notesInjected);
+    if (!payload) return false;
+    const runId = this.currentRunId.get(tabId);
+    if (runId) return this._recordAdapterMatchTrace(runId, payload);
+    let pending = this.pendingAdapterMatchTraces.get(tabId);
+    if (!pending) {
+      pending = new Map();
+      this.pendingAdapterMatchTraces.set(tabId, pending);
+    }
+    const key = `${payload.adapter}@${payload.revision}`;
+    const existing = pending.get(key);
+    pending.set(key, existing?.notesInjected ? { ...payload, notesInjected: true } : payload);
+    return true;
+  }
+
+  _flushAdapterMatchTraces(tabId, runId) {
+    const pending = this.pendingAdapterMatchTraces.get(tabId);
+    this.pendingAdapterMatchTraces.delete(tabId);
+    if (!runId || !pending) return;
+    for (const payload of pending.values()) this._recordAdapterMatchTrace(runId, payload);
+  }
+
   async _startTraceRun(tabId, userMessage, mode, provider, tabInfo = null, runOptions = {}) {
     const { tabUrl, tabTitle } = this._isStandaloneChatRun(runOptions)
       ? { tabUrl: '', tabTitle: '' }
@@ -11591,6 +11995,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         force: runOptions?.cloudRun === true,
       });
     } catch {
+      this.pendingAdapterMatchTraces.delete(tabId);
       this.pendingVisionRouteTraces.delete(tabId);
       this.pendingVisionStatusTraces.delete(tabId);
       this.pendingVisionSubCallTraces.delete(tabId);
@@ -11599,6 +12004,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runId) {
       trace.recordTurnStart(runId, 0, { mode });
       this.currentRunId.set(tabId, runId);
+      this._flushAdapterMatchTraces(tabId, runId);
       const pendingVisionRoutes = this.pendingVisionRouteTraces.get(tabId) || [];
       this.pendingVisionRouteTraces.delete(tabId);
       for (const payload of pendingVisionRoutes) trace.recordVisionRoute(runId, payload);
@@ -11612,6 +12018,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         try { runOptions.onTraceStarted(runId); } catch {}
       }
     } else {
+      this.pendingAdapterMatchTraces.delete(tabId);
       this.pendingVisionRouteTraces.delete(tabId);
       this.pendingVisionStatusTraces.delete(tabId);
       this.pendingVisionSubCallTraces.delete(tabId);
@@ -11649,6 +12056,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } catch {}
     }
     if (runId) {
+      await this._flushAdapterMatchTraceRun(runId);
       try {
         const workflowCapture = await trace.endRun(runId, { status, finalContent });
         if (this._rememberWorkflowDraftFromCapture(tabId, workflowCapture)) {
@@ -11656,6 +12064,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       } catch {}
       this.currentRunId.delete(tabId);
+      this.adapterMatchTraceKeys.delete(runId);
     }
   }
 
@@ -12121,30 +12530,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         progressAction: null,
       };
     }
-    if (this._shouldSkipPlannerForShortFollowUp(tabId, priorMessages, enriched, plannerMode)) {
-      this.plannerFollowUpSkipTabs.delete(tabId);
-      const historyDigest = this._buildPlannerHistoryDigest(priorMessages);
-      const followUpContext = this._buildPlannerFollowUpContext(priorMessages);
-      const gate = await this._runPlannerIntentGate(
-        tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
-      );
-      if (!gate.proceed) {
-        messages.push(this._plannerTerminalAssistantMessage(gate, tabInfo));
-        this._persist(tabId);
-      }
-      return gate;
-    }
-    this.plannerFollowUpSkipTabs.delete(tabId);
-
     const historyDigest = this._buildPlannerHistoryDigest(priorMessages);
     const followUpContext = this._buildPlannerFollowUpContext(priorMessages);
-    const gate = runPlanner
-      ? await this._runPlannerGate(
-        tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, plannerMode, mode, runOptions, followUpContext,
-      )
-      : await this._runPlannerIntentGate(
+    let gate;
+    if (this._shouldSkipPlannerForShortFollowUp(tabId, priorMessages, enriched, plannerMode)) {
+      this.plannerFollowUpSkipTabs.delete(tabId);
+      gate = await this._runPlannerIntentGate(
         tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
       );
+    } else {
+      this.plannerFollowUpSkipTabs.delete(tabId);
+      gate = runPlanner
+        ? await this._runPlannerGate(
+          tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, plannerMode, mode, runOptions, followUpContext,
+        )
+        : await this._runPlannerIntentGate(
+          tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
+        );
+    }
+    if (runOptions?.trustedContinuation === true
+        && gate?.proceed
+        && (gate.requestKind === 'execute' || gate.plannerFailedContinueAct === true)
+        && !gate.siteWorkflow) {
+      const carriedWorkflow = this._continuationExecutionEvidence.get(tabId)?.siteWorkflow;
+      const revalidatedWorkflow = await this._revalidateCarriedSiteWorkflow(tabId, carriedWorkflow);
+      if (revalidatedWorkflow) gate.siteWorkflow = revalidatedWorkflow;
+    }
     if (
       gate?.plannerFailedContinueAct === true
       && !sourceBoundRun
@@ -12198,6 +12609,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._persist(tabId);
     }
+    const siteWorkflow = gate.siteWorkflow || null;
+    this._recordAdapterWorkflowTrace(runId, siteWorkflow);
+    const workflowRequiresLedger = siteWorkflow?.job?.requiresLedger === true;
     return {
       proceed: true,
       requestKind: gate.requestKind || 'execute',
@@ -12215,8 +12629,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       allowsPlannerShapedResult: gate.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence: gate.allowsAppStateToolEvidence === true,
       requiredSchedulingTool: gate.requiredSchedulingTool || null,
-      progressLedgerPolicy: gate.progressLedgerPolicy || 'auto',
-      progressAction: normalizeProgressAction(gate.progressAction) || null,
+      siteWorkflow,
+      progressLedgerPolicy: workflowRequiresLedger ? 'enabled' : (gate.progressLedgerPolicy || 'auto'),
+      progressAction: workflowRequiresLedger
+        ? (normalizeProgressAction(gate.progressAction) || 'process_item')
+        : (normalizeProgressAction(gate.progressAction) || null),
       expectedItems: gate.expectedItems || null,
     };
   }
@@ -12883,6 +13300,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       scratchpadFacts: followUpContext.scratchpadFacts,
       plannerClarification: followUpContext.plannerClarification,
       researchEscalationEnabled: this.researchEscalationEnabled,
+      siteWorkflow: this._adapterWorkflowRoutingForUrl(tabUrl),
     });
     const plannerStep = 0;
     onUpdate('thinking', { step: plannerStep, note: 'Understanding request…' });
@@ -13022,6 +13440,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       plan.messaging = messagingPin.target;
+      const siteWorkflow = await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, plan);
       if (!recheckOnly) this._armReadCompletenessFromPlan(tabId, plan);
       return {
         proceed: true,
@@ -13033,6 +13452,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: plan.scheduling?.tool || null,
+        siteWorkflow,
         ...this._plannerCompletionGateFields(plan),
         ...this._plannerProgressLedgerGateFields(plan),
       };
@@ -13089,6 +13509,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       scratchpadFacts: followUpContext.scratchpadFacts,
       plannerClarification: followUpContext.plannerClarification,
       researchEscalationEnabled: this.researchEscalationEnabled,
+      siteWorkflow: this._adapterWorkflowRoutingForUrl(tabUrl),
     });
     const plannerStep = 0;
 
@@ -13267,7 +13688,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       plan.messaging = messagingPin.target;
-
       const eligibleSkillIds = new Set(skillCatalog.map((skill) => skill.id));
       plan.skill_ids = (plan.skill_ids || []).filter((skillId) => eligibleSkillIds.has(skillId));
 
@@ -13298,6 +13718,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
           allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
           requiredSchedulingTool: plan.scheduling?.tool || null,
+          siteWorkflow: await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, plan),
           ...this._plannerCompletionGateFields(plan),
           ...this._plannerProgressLedgerGateFields(plan),
         };
@@ -13389,6 +13810,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: approvedSchedulingTool,
+        siteWorkflow: approvedPlanEdited
+          ? null
+          : await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, plan),
         requiresDownload: approvedRequiresDownload,
         expectedItems: approvedExpectedItems,
         ...approvedProgressLedger,
@@ -13987,10 +14411,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const label = String(args?.text || result?.name || result?.matched || result?.text || '').trim();
     const selector = String(args?.selector || '').toLowerCase();
     if (detectedSubmit?.isSubmit === true) {
-      return /^(?:continue|save|submit|post|publish|send|confirm|sign up|sign in|log in|register|place order|pay|checkout|finish)\b/i.test(label)
+      return /^(?:continue|save|submit|post|publish|send|confirm|resolve|sign up|sign in|log in|register|place order|pay|checkout|finish)\b/i.test(label)
         || /(?:type\s*=\s*["']?(?:submit|image)|\bsubmit\b|\bcontinue\b|\bconfirm\b|\bcheckout\b|\bfinish\b)/.test(selector);
     }
-    if (/^(?:continue|next|create|save|submit|add|post|publish|send|confirm|sign up|sign in|log in|register|place order|pay|checkout|update|apply|finish|done)\b/i.test(label)) {
+    if (/^(?:continue|next|create|save|submit|add|post|publish|send|confirm|resolve|sign up|sign in|log in|register|place order|pay|checkout|update|apply|finish|done)\b/i.test(label)) {
       return true;
     }
     return /(?:type\s*=\s*["']?(?:submit|image)|\bsubmit\b|\bcontinue\b|\bconfirm\b|\bcheckout\b|\bfinish\b)/.test(selector);
@@ -15457,6 +15881,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       prompt += `\n\n${UNIVERSAL_PREAMBLE.trim()}`;
     }
 
+    if (this._isActionMode(mode) && tabId != null) {
+      const workflowPolicy = formatAdapterWorkflowExecutionPolicy(
+        this._planExecutionGuards.get(tabId)?.siteWorkflow,
+      );
+      if (workflowPolicy) prompt += `\n\n${workflowPolicy}`;
+    }
+
     if (this.researchEscalationEnabled) {
       prompt += `\n\n${RESEARCH_ESCALATION_SYSTEM_NOTE}`;
     }
@@ -15917,6 +16348,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     void this._clearBackgroundFocusEmulation(tabId);
     this._foregroundCaptureTabs.delete(tabId);
     this.lastSeenAdapter.delete(tabId);
+    this.pendingAdapterMatchTraces.delete(tabId);
     this.activeSkillIds.delete(tabId);
     this._runModeOverrides.delete(tabId);
     this._nytimesPageGateNotified.delete(tabId);
@@ -16644,6 +17076,81 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return mastodonProgressGuard(items, this.mastodonStates.get(tabId));
   }
 
+  _validateWorkflowReconciliation(tabId, value, rows, sessionId) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { ok: false, error: 'progress_update: workflowReconciliation must be an object.' };
+    }
+    const allowed = new Set(['job', 'coverageComplete', 'itemCount', 'basis']);
+    const unknown = Object.keys(value).find(key => !allowed.has(key));
+    if (unknown) return { ok: false, error: `progress_update: workflowReconciliation has unknown field ${unknown}.` };
+    const guard = this._planExecutionGuards.get(tabId);
+    const requiredJob = guard?.siteWorkflow?.job;
+    if (!guard?.enabled || requiredJob?.requiresLedger !== true) {
+      return { ok: false, error: 'progress_update: no active app-selected workflow requires reconciliation.' };
+    }
+    const job = String(value.job || '').trim();
+    const basis = String(value.basis || '').replace(/[\r\n]+/g, ' ').trim();
+    const itemCount = Number(value.itemCount);
+    if (job !== requiredJob.id) {
+      return { ok: false, error: `progress_update: workflowReconciliation.job must be ${requiredJob.id}.` };
+    }
+    if (value.coverageComplete !== true) {
+      return { ok: false, error: 'progress_update: coverageComplete must be true only after the full inventory is represented.' };
+    }
+    const inventory = this._trustedWorkflowInventory(tabId, rows, guard);
+    if (!inventory) {
+      return { ok: false, error: 'progress_update: complete workflow reconciliation requires an app-owned inventory. Use the exact workflowInventory item ids returned by a complete accessibility-tree read, or the app-seeded expected/classifier rows; model-created rows alone cannot prove full coverage.' };
+    }
+    if (!Number.isInteger(itemCount) || itemCount < 1
+        || itemCount !== rows.length || itemCount !== inventory.itemCount) {
+      return { ok: false, error: `progress_update: itemCount must exactly equal both the app-owned inventory (${inventory.itemCount}) and current-task ledger size (${rows.length}).` };
+    }
+    const inventoryIds = [...new Set(inventory.itemIds.map(id => String(id)))].sort();
+    const rowIds = [...new Set(rows.map(row => String(row?.id || '')))].sort();
+    if (inventoryIds.length !== rowIds.length
+        || inventoryIds.some((id, index) => id !== rowIds[index])) {
+      return { ok: false, error: 'progress_update: ledger ids must exactly match the app-owned workflow inventory; missing, invented, or extra rows cannot be reconciled as complete.' };
+    }
+    if (!basis || basis.length > 240) {
+      return { ok: false, error: 'progress_update: basis must be a short non-empty evidence statement (maximum 240 characters).' };
+    }
+    if (rows.some(row => !isTerminalLedgerStatus(row?.status))) {
+      return { ok: false, error: 'progress_update: every current-task row must be processed, skipped, or failed before reconciliation can be complete.' };
+    }
+    return {
+      ok: true,
+      record: {
+        job,
+        sessionId: String(sessionId || ''),
+        itemCount,
+        basis,
+        inventorySource: inventory.source,
+        inventoryFingerprint: this._workflowInventoryFingerprint(inventoryIds.join('\n')),
+        taskKey: this._progressTaskKeyHash(tabId),
+      },
+    };
+  }
+
+  _workflowLedgerReconciliationSatisfied(tabId, state) {
+    if (state?.siteWorkflow?.job?.requiresLedger !== true) return true;
+    const record = state.workflowLedgerReconciliation;
+    if (!record || record.job !== state.siteWorkflow.job.id
+        || record.taskKey !== this._progressTaskKeyHash(tabId)) return false;
+    const rows = record.sessionId
+      ? this._rowsForProgressSession(tabId, record.sessionId)
+      : (this.progressLedgers.get(tabId) || []).filter(
+        row => String(row?.taskKey || '') === String(record.taskKey || ''),
+      );
+    const inventory = this._trustedWorkflowInventory(tabId, rows, state);
+    const inventoryIds = inventory?.itemIds?.map(id => String(id)).sort() || [];
+    return !!inventory
+      && record.inventorySource === inventory.source
+      && record.inventoryFingerprint === this._workflowInventoryFingerprint(inventoryIds.join('\n'))
+      && rows.length > 0
+      && rows.length === record.itemCount
+      && rows.every(row => isTerminalLedgerStatus(row?.status));
+  }
+
   _progressUpdate(tabId, args = {}, opts = {}) {
     const items = Array.isArray(args.items)
       ? args.items
@@ -16801,6 +17308,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!result.changed) {
       return { success: false, error: 'progress_update: no valid items were provided. Each item needs a stable id.' };
     }
+    const workflowReconciliation = args.workflowReconciliation || args.workflow_reconciliation || null;
+    const prospectiveRows = sessionId
+      ? this._rowsForProgressSession(tabId, sessionId, result.rows)
+      : result.rows;
+    const workflowReconciliationValidation = workflowReconciliation
+      ? this._validateWorkflowReconciliation(tabId, workflowReconciliation, prospectiveRows, sessionId)
+      : null;
+    if (workflowReconciliationValidation && !workflowReconciliationValidation.ok) {
+      return { success: false, error: workflowReconciliationValidation.error };
+    }
     if (evidenceRequirementIds.length) {
       if (hasCurrentRunEvidence) this._consumeCompletionObservation(tabId);
       else this._consumeCompletionObservationResult(tabId);
@@ -16813,6 +17330,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (typeof this._persist === 'function') this._persist(tabId);
     const ledgerRows = this.progressLedgers.get(tabId) || [];
     const visibleRows = sessionId ? this._rowsForProgressSession(tabId, sessionId, ledgerRows) : ledgerRows;
+    const executionGuard = this._planExecutionGuards.get(tabId);
+    if (executionGuard?.enabled && executionGuard.siteWorkflow?.job?.requiresLedger === true) {
+      executionGuard.workflowLedgerReconciliation = null;
+      const record = workflowReconciliationValidation?.record;
+      if (record && visibleRows.length === record.itemCount
+          && visibleRows.every(row => isTerminalLedgerStatus(row?.status))) {
+        executionGuard.workflowLedgerReconciliation = record;
+      }
+    }
     const blockedDowngrades = [...(result.blockedDowngrades || []), ...adoption.blockedDowngrades];
     // Adoption may have reverted a status after the upsert; report each
     // updated row as it actually ended up in the ledger, not as requested.
@@ -16830,6 +17356,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       counts: progressCounts(visibleRows),
       unresolved: unresolvedLedgerRows(visibleRows, { limit: 20 }),
       ...(sessionId ? { sessionId } : {}),
+      ...(executionGuard?.workflowLedgerReconciliation ? { workflowReconciled: true } : {}),
       ...(reconciliation.reconciled.length ? { reconciled: reconciliation.reconciled } : {}),
       ...(blockedDowngrades.length ? {
         warnings: blockedDowngrades.map(b => `row ${b.id} is already ${b.keptStatus}; status change to ${b.requestedStatus} ignored. Pass reopen:true only if the user explicitly asked to redo it.`),
@@ -17637,13 +18164,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const enabled = this._isActionMode(mode)
       && runOptions?.cloudRun !== true
       && requestKind === 'execute';
+    const siteWorkflow = gateOutcome?.siteWorkflow?.job ? gateOutcome.siteWorkflow : null;
     const requiresDownload = gateOutcome?.requiresDownload === true;
-    const requiresStateChange = requiresDownload
+    const requiresStateChange = requiresDownload || siteWorkflow?.job?.stateChange === true
       ? true
       : typeof gateOutcome?.requiresStateChange === 'boolean'
       ? gateOutcome.requiresStateChange
       : null;
-    const requiresSubmission = typeof gateOutcome?.requiresSubmission === 'boolean'
+    const requiresSubmission = siteWorkflow?.job?.requiresSubmission === true
+      ? true
+      : typeof gateOutcome?.requiresSubmission === 'boolean'
       ? gateOutcome.requiresSubmission
       : null;
     const messaging = normalizeMessageTarget(gateOutcome?.messaging);
@@ -17664,6 +18194,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && carried.requiresDownload === requiresDownload
       && carried.allowsAppStateToolEvidence === allowsAppStateToolEvidence
       && carried.requiredSchedulingTool === requiredSchedulingTool
+      && JSON.stringify(carried.siteWorkflow || null) === JSON.stringify(siteWorkflow || null)
       && carried.conversationId === (this.conversationIds.get(tabId) || null);
     const state = {
       enabled,
@@ -17675,6 +18206,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       allowsPlannerShapedResult: gateOutcome?.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence,
       requiredSchedulingTool,
+      siteWorkflow,
       approvedPlan: this._hasApprovedExecutionPlan(this.conversations.get(tabId) || []),
       // Only the app-owned Continue action can carry verified evidence from
       // the immediately preceding run; ordinary user turns always start at 0.
@@ -17687,11 +18219,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       successfulRequiredSchedulingToolCalls: carryMatches
         ? (carried.successfulRequiredSchedulingToolCalls || 0)
         : 0,
+      verifiedSubmissionEvidence: carryMatches && carried.verifiedSubmissionEvidence === true,
+      workflowTerminalEvidence: carryMatches && carried.workflowTerminalEvidence
+        ? { ...carried.workflowTerminalEvidence }
+        : null,
+      workflowLedgerReconciliation: carryMatches && carried.workflowLedgerReconciliation
+        ? { ...carried.workflowLedgerReconciliation }
+        : null,
+      workflowInventoryEvidence: carryMatches && carried.workflowInventoryEvidence
+        ? {
+            ...carried.workflowInventoryEvidence,
+            items: [...(carried.workflowInventoryEvidence.items || [])].map(item => ({ ...item })),
+            documents: { ...(carried.workflowInventoryEvidence.documents || {}) },
+          }
+        : null,
       recoveryAttempted: false,
       runtimeModeCorrectionAttempted: false,
       staleCancellationRecoveryAttempted: false,
     };
     this._planExecutionGuards.set(tabId, state);
+    const messages = this.conversations.get(tabId);
+    if (messages?.[0]?.role === 'system') {
+      messages[0].content = this._buildSystemPrompt(mode, tabId);
+    }
     if (carryMatches && carried.completionSubmitState) {
       this._completionSubmitStates.set(tabId, {
         ...carried.completionSubmitState,
@@ -17862,7 +18412,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || state.successfulRequiredSchedulingToolCalls > 0;
     const downloadEvidenceSatisfied = !state.requiresDownload
       || state.successfulDownloadToolCalls > 0;
-    return taskEvidenceSatisfied && schedulingEvidenceSatisfied && downloadEvidenceSatisfied;
+    const submissionEvidenceSatisfied = state.requiresSubmission !== true
+      || (state.siteWorkflow?.job?.requiresSubmission === true
+        ? this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence)
+        : state.verifiedSubmissionEvidence === true);
+    return taskEvidenceSatisfied
+      && schedulingEvidenceSatisfied
+      && downloadEvidenceSatisfied
+      && submissionEvidenceSatisfied;
   }
 
   _storeContinuationExecutionEvidence(tabId) {
@@ -17871,6 +18428,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       guard.successfulTaskToolCalls > 0
       || guard.successfulConsequentialToolCalls > 0
       || guard.pendingDownloadIds.length > 0
+      || guard.verifiedSubmissionEvidence === true
+      || !!guard.workflowTerminalEvidence
+      || !!guard.workflowLedgerReconciliation
+      || !!guard.workflowInventoryEvidence
     )) {
       const submit = this._completionSubmitStates.get(tabId);
       this._continuationExecutionEvidence.set(tabId, {
@@ -17881,11 +18442,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresDownload: guard.requiresDownload,
         allowsAppStateToolEvidence: guard.allowsAppStateToolEvidence,
         requiredSchedulingTool: guard.requiredSchedulingTool,
+        siteWorkflow: guard.siteWorkflow,
         successfulTaskToolCalls: guard.successfulTaskToolCalls,
         successfulConsequentialToolCalls: guard.successfulConsequentialToolCalls,
         successfulDownloadToolCalls: guard.successfulDownloadToolCalls,
         pendingDownloadIds: [...guard.pendingDownloadIds],
         successfulRequiredSchedulingToolCalls: guard.successfulRequiredSchedulingToolCalls,
+        verifiedSubmissionEvidence: guard.verifiedSubmissionEvidence === true,
+        workflowTerminalEvidence: guard.workflowTerminalEvidence
+          ? { ...guard.workflowTerminalEvidence }
+          : null,
+        workflowLedgerReconciliation: guard.workflowLedgerReconciliation
+          ? { ...guard.workflowLedgerReconciliation }
+          : null,
+        workflowInventoryEvidence: guard.workflowInventoryEvidence
+          ? {
+              ...guard.workflowInventoryEvidence,
+              items: [...(guard.workflowInventoryEvidence.items || [])].map(item => ({ ...item })),
+              documents: { ...(guard.workflowInventoryEvidence.documents || {}) },
+            }
+          : null,
         completionSubmitState: submit ? {
           originatingUrl: submit.originatingUrl || '',
           currentUrl: submit.currentUrl || '',
@@ -17897,6 +18473,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           formValidationFailed: submit.formValidationFailed === true,
           completionSignalObserved: submit.completionSignalObserved === true,
           observedAfterSubmit: submit.observedAfterSubmit === true,
+          workflowBinding: submit.workflowBinding ? { ...submit.workflowBinding } : null,
         } : null,
         conversationId: this.conversationIds.get(tabId) || null,
       });
@@ -18064,13 +18641,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const missingRequiredDownload = !terminalFailure
       && state.requiresDownload === true
       && state.successfulDownloadToolCalls === 0;
+    const missingRequiredSubmission = !terminalFailure
+      && state.requiresSubmission === true
+      && (state.siteWorkflow?.job?.requiresSubmission === true
+        ? !this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence)
+        : state.verifiedSubmissionEvidence !== true);
+    const missingRequiredLedger = !terminalFailure
+      && state.siteWorkflow?.job?.requiresLedger === true
+      && !this._workflowLedgerReconciliationSatisfied(tabId, state);
     const missingEvidence = !terminalFailure && !this._executionEvidenceSatisfied(state);
     const unknownMutationIntent = state.requiresStateChange == null;
     // Every plain Act/Dev terminal gets one protocol recovery regardless of
     // its language. Successful completion and real blockers must both use
     // done; this avoids guessing intent from localized prose.
     const invalidPlainFinal = !viaDone;
-    const invalidDone = viaDone && (looksPlanOnly || missingEvidence);
+    const invalidDone = viaDone && (looksPlanOnly || missingEvidence || missingRequiredLedger);
     if (!invalidPlainFinal && !invalidDone) return null;
     if (runtimeModeContradiction
         && !missingRequiredSchedulingTool
@@ -18097,6 +18682,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? `[PLAN EXECUTION BLOCK: The approved plan requires a successful ${state.requiredSchedulingTool} call before this task can finish successfully. A one-time read, scroll, send, or other action does not create the scheduled work. Call ${state.requiredSchedulingTool} with the user's requested timing and verify success:true plus scheduled:true. If the schedule is unsupported or still lacks required timing, call done with outcome partial or failed and explain the exact limitation; do not claim it was scheduled.]`
           : missingRequiredDownload
           ? '[PLAN EXECUTION BLOCK: This task requires a file to be downloaded before it can finish successfully. Finding a URL, link, button, or media source is only read evidence. Use an authorized tool call with the DOWNLOAD capability and verify that it returned successful download evidence. If permission is denied or no file can be saved, call done with outcome partial or failed and explain the limitation; do not claim the file was downloaded.]'
+          : missingRequiredSubmission
+          ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job requires terminal evidence for its own submit/send/publish/commit contract. Filling fields, another site's submit, or an unrelated success signal is not completion. Dispatch the intended action and observe the job-specific terminal state (for example recipient-bound sent state, saved/published resource, form confirmation, or paid/ticket-issued transaction) before calling done again. If that cannot be verified, use outcome partial or failed and report the exact blocker.]`
+          : missingRequiredLedger
+          ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow.job.id} site workflow requires complete item-level reconciliation before success. Obtain a complete app-owned workflow inventory, use its exact item ids for one terminal ledger row per item, then call progress_update with workflowReconciliation {job:"${state.siteWorkflow.job.id}", coverageComplete:true, itemCount:N, basis:"..."}. N and the row ids must exactly match that inventory; model-created rows alone are not coverage evidence. If complete coverage cannot be verified, call done with outcome partial or failed and report completed versus unresolved work.]`
           : unknownMutationIntent
           ? '[PLAN EXECUTION BLOCK: Planning failed, so the runtime could not determine whether this task requires a state change. Continue with normally permitted tools. A success outcome now requires a verified consequential tool call; if the useful result is read-only or no safe consequential action is needed, deliver that result with done outcome partial instead of claiming success. Do not invent or perform a mutation merely to satisfy this guard.]'
           : '[PLAN EXECUTION BLOCK: This is an execute task, so plain text cannot end it. If work remains, use permitted task tools. If complete, call done with outcome success. If blocked, unsafe, cancelled, or user input is required, call done with outcome failed or partial; do not take unsafe action. Read-only work needs a successful task tool and state-changing work needs a successful consequential tool. Do not return another plan, promise, or plain terminal.]',
@@ -18112,6 +18701,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return {
         failure: '[Agent stopped because the approved task required a downloaded file, but no successful DOWNLOAD-capability tool result was verified after one recovery nudge. A URL, link, media-resolution result, or unrelated page action does not prove that a file was saved.]',
         status: 'required_tool_missing',
+      };
+    }
+    if (missingRequiredSubmission) {
+      return {
+        failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job required job-bound terminal evidence after its commit/submit dispatch, but that evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]`,
+        status: 'required_evidence_missing',
+      };
+    }
+    if (missingRequiredLedger) {
+      return {
+        failure: `The selected ${state.siteWorkflow.job.id} site workflow ended without exact reconciliation against a complete app-owned inventory after one recovery nudge, so full item-level completion was not verified.`,
+        status: 'required_evidence_missing',
       };
     }
     const hasSuccessfulToolEvidence = state.successfulTaskToolCalls > 0;
@@ -22923,7 +23524,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   .map(e => (e.innerText || '').trim().slice(0, 120))
                   .filter(Boolean);
                 const successMessages = toasts.filter(text =>
-                  /success|saved|submitted|created|sent|published|complete|done|updated|added|approved/i.test(text)
+                  /success|saved|submitted|created|sent|published|complete|done|updated|added|approved|resolved/i.test(text)
                   && !/\\b(?:not|never|failed|failure|error|unable|cannot|can't|could not|couldn't|did not|didn't|was not|wasn't|were not|weren't|invalid|denied|rejected|unsuccessful)\\b/i.test(text)
                 ).slice(0, 5);
                 return {
@@ -22937,11 +23538,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   formDescriptors: formDescriptors.slice(0, 12),
                   liveRegionMessages: toasts.slice(0, 6),
                   successMessages,
+                  workflowPageText: String(document.body?.innerText || '')
+                    .replace(/\s+/g, ' ').trim().slice(0, 20000),
                 };
               })()
             `);
             pageState = stateProbe?.result?.value || null;
           } catch (e) {}
+
+          const submissionEvidence = this._completionSubmissionEvidence(
+            tabId, pageState, probe?.url || '',
+          );
+          const executionGuard = this._planExecutionGuards.get(tabId);
+          let workflowMessageProbe = null;
+          if (executionGuard?.enabled
+              && this._workflowVerificationKind(executionGuard.siteWorkflow) === 'message_sent') {
+            workflowMessageProbe = await this._messageRecipientContentProbe(tabId, {
+              tool: 'observe_active_conversation',
+              args: {},
+              adapterName: executionGuard.siteWorkflow.adapterName,
+            });
+          }
 
           // Synthesize a warning when summary claims completion but page
           // state contradicts it.
@@ -22949,6 +23566,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             tabId, args.summary, outcome, pageState, probe?.url || '',
           );
           const completionWarning = completionPageBlock?.warning || null;
+          const workflowTerminalEvidence = !completionWarning
+            ? this._workflowTerminalEvidenceFromDone(
+                tabId, pageState, probe?.url || '', submissionEvidence, workflowMessageProbe,
+              )
+            : null;
+          if (pageState && typeof pageState === 'object') delete pageState.workflowPageText;
+          if (executionGuard?.enabled && !completionWarning) {
+            if (executionGuard.siteWorkflow?.job?.requiresSubmission === true) {
+              if (workflowTerminalEvidence) {
+                executionGuard.workflowTerminalEvidence = workflowTerminalEvidence;
+                executionGuard.verifiedSubmissionEvidence = true;
+              }
+            } else if (submissionEvidence.verifiedFinalSubmit) {
+              executionGuard.verifiedSubmissionEvidence = true;
+            }
+          }
           const verification = this._doneVerificationPayload({
             pageUrl: probe?.url || '',
             pageTitle: probe?.title || '',
@@ -28685,6 +29318,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _processMessageInner(tabId, userMessage, onUpdate, mode, attachments = [], runOptions = {}) {
     await this._hydrate(tabId);
+    this.pendingAdapterMatchTraces.delete(tabId);
     this.pendingVisionRouteTraces.delete(tabId);
     this.pendingVisionStatusTraces.delete(tabId);
     this.pendingVisionSubCallTraces.delete(tabId);
@@ -29881,6 +30515,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions = {}) {
     await this._hydrate(tabId);
+    this.pendingAdapterMatchTraces.delete(tabId);
     this.pendingVisionRouteTraces.delete(tabId);
     this.pendingVisionStatusTraces.delete(tabId);
     this.pendingVisionSubCallTraces.delete(tabId);
