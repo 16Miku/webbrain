@@ -5160,10 +5160,23 @@
                   }
                 } catch {}
               }
-              const dispatchKey = (type, key, keyCode) => {
-                if (actionDeadlineExpired()) return false;
-                el.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode, bubbles: true, cancelable: true }));
-                return true;
+              const dispatchKeySequence = (key, keyCode, includeKeypress = false) => {
+                const result = { dispatched: false, completedWithinDeadline: false };
+                if (actionDeadlineExpired()) return result;
+                const eventInit = { key, code: key, keyCode, bubbles: true, cancelable: true };
+                result.dispatched = true;
+                el.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+                const expiredAfterKeydown = actionDeadlineExpired();
+                if (!expiredAfterKeydown && includeKeypress) {
+                  el.dispatchEvent(new KeyboardEvent('keypress', eventInit));
+                }
+                const expiredBeforeKeyup = expiredAfterKeydown || actionDeadlineExpired();
+                // keyup is cleanup: always release a key whose keydown was
+                // dispatched, even when a synchronous listener crossed the
+                // action deadline.
+                el.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+                result.completedWithinDeadline = !expiredBeforeKeyup && !actionDeadlineExpired();
+                return result;
               };
               const form = el.form || (el.closest && el.closest('form'));
               const usesNativeSubmit = _setFieldUsesNativeSubmit(isCombobox, el.isContentEditable, form);
@@ -5224,16 +5237,15 @@
                   if (isCombobox) {
                     await new Promise(r => setTimeout(r, 80));
                     if (actionDeadlineExpired()) return deadlineFailure();
-                    if (!dispatchKey('keydown', 'ArrowDown', 40)) return deadlineFailure();
-                    if (!dispatchKey('keyup', 'ArrowDown', 40)) return deadlineFailure();
+                    const arrowResult = dispatchKeySequence('ArrowDown', 40);
+                    if (!arrowResult.completedWithinDeadline) return deadlineFailure();
                     await new Promise(r => setTimeout(r, 30));
                     if (actionDeadlineExpired()) return deadlineFailure();
                   }
                   if (actionDeadlineExpired()) return deadlineFailure();
-                  submissionDispatched = true;
-                  if (!dispatchKey('keydown', 'Enter', 13)) return deadlineFailure();
-                  if (!dispatchKey('keypress', 'Enter', 13)) return deadlineFailure();
-                  if (!dispatchKey('keyup', 'Enter', 13)) return deadlineFailure();
+                  const enterResult = dispatchKeySequence('Enter', 13, true);
+                  submissionDispatched = enterResult.dispatched;
+                  if (!enterResult.completedWithinDeadline) return deadlineFailure();
                   if (actionDeadlineExpired()) return deadlineFailure();
                 }
                 submissionCancelled = submitEvent?.defaultPrevented === true;
@@ -5322,7 +5334,7 @@
             if (actionDeadlineExpired()) return false;
             dispatched = true;
             el.dispatchEvent(new EventType(type, eventInit));
-            return true;
+            return !actionDeadlineExpired();
           };
           try {
             // Order matches the browser's real sequence so listeners that
@@ -5362,6 +5374,9 @@
       // should switch to Chrome (where CDP delivers trusted events).
       'drag_drop': () => {
         let dispatched = false;
+        let pointerDown = false;
+        let mouseDown = false;
+        let dragStarted = false;
         const deadlineFailure = () => ({
           success: false,
           dispatched,
@@ -5423,10 +5438,37 @@
             }
             return true;
           };
+          const dispatchCleanup = (type, x, y, target) => {
+            const ev = mk(type, x, y, target);
+            if (!ev) return;
+            dispatched = true;
+            try { target.dispatchEvent(ev); } catch {}
+          };
+          const deadlineWithCleanup = () => {
+            // Release any synthetic gesture that already started. Cleanup
+            // events intentionally bypass the expired deadline so the page is
+            // not left with a held pointer, mouse button, or active drag.
+            if (dragStarted) {
+              dragStarted = false;
+              dispatchCleanup('dragend', x2, y2, from);
+            }
+            if (pointerDown) {
+              pointerDown = false;
+              dispatchCleanup('pointerup', x2, y2, to);
+            }
+            if (mouseDown) {
+              mouseDown = false;
+              dispatchCleanup('mouseup', x2, y2, to);
+            }
+            return deadlineFailure();
+          };
           // Pointer + mouse + drag sequence on source.
-          if (!dispatch('pointerdown', sx1, sy1, from)) return deadlineFailure();
-          if (!dispatch('mousedown', sx1, sy1, from)) return deadlineFailure();
-          if (!dispatch('dragstart', sx1, sy1, from)) return deadlineFailure();
+          if (!dispatch('pointerdown', sx1, sy1, from)) return deadlineWithCleanup();
+          pointerDown = true;
+          if (!dispatch('mousedown', sx1, sy1, from)) return deadlineWithCleanup();
+          mouseDown = true;
+          if (!dispatch('dragstart', sx1, sy1, from)) return deadlineWithCleanup();
+          dragStarted = true;
           // Intermediate waypoints — fire pointermove/mousemove/dragover at
           // both source and destination so library code that listens at
           // either end sees movement.
@@ -5435,17 +5477,21 @@
             const ix = Math.round(sx1 + (x2 - sx1) * t);
             const iy = Math.round(sy1 + (y2 - sy1) * t);
             const overTarget = document.elementFromPoint(ix, iy) || to;
-            if (!dispatch('drag', ix, iy, from)) return deadlineFailure();
-            if (!dispatch('pointermove', ix, iy, overTarget)) return deadlineFailure();
-            if (!dispatch('mousemove', ix, iy, overTarget)) return deadlineFailure();
-            if (!dispatch('dragenter', ix, iy, overTarget)) return deadlineFailure();
-            if (!dispatch('dragover', ix, iy, overTarget)) return deadlineFailure();
+            if (!dispatch('drag', ix, iy, from)) return deadlineWithCleanup();
+            if (!dispatch('pointermove', ix, iy, overTarget)) return deadlineWithCleanup();
+            if (!dispatch('mousemove', ix, iy, overTarget)) return deadlineWithCleanup();
+            if (!dispatch('dragenter', ix, iy, overTarget)) return deadlineWithCleanup();
+            if (!dispatch('dragover', ix, iy, overTarget)) return deadlineWithCleanup();
           }
           // Drop sequence on destination.
-          if (!dispatch('drop', x2, y2, to)) return deadlineFailure();
-          if (!dispatch('dragend', x2, y2, from)) return deadlineFailure();
-          if (!dispatch('pointerup', x2, y2, to)) return deadlineFailure();
-          if (!dispatch('mouseup', x2, y2, to)) return deadlineFailure();
+          if (!dispatch('drop', x2, y2, to)) return deadlineWithCleanup();
+          if (!dispatch('dragend', x2, y2, from)) return deadlineWithCleanup();
+          dragStarted = false;
+          if (!dispatch('pointerup', x2, y2, to)) return deadlineWithCleanup();
+          pointerDown = false;
+          if (!dispatch('mouseup', x2, y2, to)) return deadlineWithCleanup();
+          mouseDown = false;
+          if (actionDeadlineExpired()) return deadlineFailure();
           return {
             success: true,
             method: 'synthetic-drag',

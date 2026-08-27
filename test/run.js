@@ -4858,7 +4858,7 @@ test('message recipient dispatch binding detects composer and active-thread race
     const branchEnd = source.indexOf(label === 'chrome' ? "'ax_prepare_field_for_trusted_type':" : "'hover':", branchStart);
     const branch = source.slice(branchStart, branchEnd);
     const recipientCheck = branch.indexOf('_consumeMessageRecipientDispatchBinding(msg.params, el)');
-    const enterDispatch = branch.indexOf("dispatchKey('keydown', 'Enter', 13)");
+    const enterDispatch = branch.indexOf("const enterResult = dispatchKeySequence('Enter', 13, true)");
     assert.ok(recipientCheck >= 0 && enterDispatch > recipientCheck, `${label}: recipient must be revalidated immediately before Enter`);
 
     const pressStart = source.indexOf('function pressKeys(params, actionDeadlineExpired = () => false)');
@@ -70265,11 +70265,25 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     assert.match(branch, /_setFieldValueMatches\(actual, prevValue, text, clear, el\.isContentEditable\)/, `${label}: newline normalization must remain contenteditable-only`);
     assert.match(branch, /await new Promise\(resolve => setTimeout\(resolve, SET_FIELD_VERIFY_DELAY_MS\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can continue after its verification wait expires`);
     assert.match(branch, /if \(usesNativeSubmit\)[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*submissionDispatched = true;\s*try \{\s*form\.requestSubmit\(\)/, `${label}: native set_field submission is not guarded at the mutation boundary`);
-    assert.match(branch, /await new Promise\(r => setTimeout\(r, 80\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*await new Promise\(r => setTimeout\(r, 30\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*submissionDispatched = true;\s*if \(!dispatchKey\('keydown', 'Enter'/, `${label}: page-owned set_field submission can resume after its deadline`);
+    assert.match(branch, /await new Promise\(r => setTimeout\(r, 80\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*await new Promise\(r => setTimeout\(r, 30\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*const enterResult = dispatchKeySequence\('Enter', 13, true\);\s*submissionDispatched = enterResult\.dispatched;\s*if \(!enterResult\.completedWithinDeadline\)/, `${label}: page-owned set_field submission can resume after its deadline`);
+    assert.match(
+      branch,
+      /const dispatchKeySequence = \(key, keyCode, includeKeypress = false\) => \{[\s\S]*result\.dispatched = true;\s*el\.dispatchEvent\(new KeyboardEvent\('keydown'[\s\S]*const expiredAfterKeydown = actionDeadlineExpired\(\);[\s\S]*const expiredBeforeKeyup = expiredAfterKeydown \|\| actionDeadlineExpired\(\);[\s\S]*el\.dispatchEvent\(new KeyboardEvent\('keyup'[\s\S]*result\.completedWithinDeadline = !expiredBeforeKeyup && !actionDeadlineExpired\(\);/,
+      `${label}: set_field can leave a synthetic key pressed when a listener crosses the deadline`,
+    );
     assert.match(branch, /el\.focus\(\{ preventScroll: true \}\);\s*\} catch \{\}\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can mutate after focus handlers cross the deadline`);
     assert.match(branch, /if \(setter\) setter\.call\(el, newVal\); else el\.value = newVal;\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*el\.dispatchEvent\(new Event\('input'/, `${label}: set_field does not recheck its deadline before page events`);
     if (label === 'firefox') {
       assert.match(branch, /await _retryFieldWithExecCommand\([\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, 'firefox: set_field fallback can continue after its reconciliation wait expires');
+      const hoverStart = source.indexOf("'hover': () => {");
+      const hoverEnd = source.indexOf("'drag_drop': () => {", hoverStart);
+      const hoverBranch = source.slice(hoverStart, hoverEnd);
+      assert.match(hoverBranch, /el\.dispatchEvent\(new EventType\(type, eventInit\)\);\s*return !actionDeadlineExpired\(\);/, 'firefox: synthetic hover can report success after its last listener crosses the deadline');
+      const dragStart = hoverEnd;
+      const dragEnd = source.indexOf("'wait_for_stable':", dragStart);
+      const dragBranch = source.slice(dragStart, dragEnd);
+      assert.match(dragBranch, /const deadlineWithCleanup = \(\) => \{[\s\S]*dispatchCleanup\('dragend'[\s\S]*dispatchCleanup\('pointerup'[\s\S]*dispatchCleanup\('mouseup'/, 'firefox: expired synthetic drag can leave pointer or mouse state held');
+      assert.match(dragBranch, /if \(!dispatch\('pointerdown'[\s\S]*pointerDown = true;[\s\S]*if \(!dispatch\('mousedown'[\s\S]*mouseDown = true;[\s\S]*if \(!dispatch\('dragstart'[\s\S]*dragStarted = true;/, 'firefox: synthetic drag cleanup does not track dispatched gesture state');
     }
     assert.match(branch, /!el\.isConnected \|\| !rect \|\| rect\.w < 1 \|\| rect\.h < 1/, `${label}: stale or zero-sized targets must fail before typing`);
      assert.match(branch, /if \(submit && verified\)/, `${label}: mismatched field values must not be submitted`);
@@ -70301,18 +70315,26 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
     assert.equal(usesNativeSubmit(false, false, {}), false, `${label}: form without requestSubmit does not use native submit`);
 
     // Behavioral slice of the submit block, run against stubs.
-    const blockStart = source.indexOf("const form = el.form || (el.closest && el.closest('form'));");
+    const blockStart = source.indexOf('const dispatchKeySequence = (key, keyCode, includeKeypress = false) => {');
     const blockEnd = source.indexOf('\n            } catch {\n              submissionOutcomeUnknown = true;', blockStart);
     assert.ok(blockStart >= 0 && blockEnd > blockStart, `${label}: submit block not found`);
     const block = source.slice(blockStart, blockEnd);
     const runner = vm.runInNewContext(`async (stubs) => {
-      const { dispatchKey, el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, actionDeadlineExpired, deadlineFailure, ref_id, rect } = stubs;
+      const { el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, actionDeadlineExpired, deadlineFailure, ref_id, rect } = stubs;
       let nativeSubmitAttempted = false;
       let submissionOutcomeUnknown = true;
       let submissionDispatched = false;
       ${block}
       return { nativeSubmitAttempted, submissionOutcomeUnknown };
-    }`, { setTimeout: callback => callback() });
+    }`, {
+      setTimeout: callback => callback(),
+      KeyboardEvent: class KeyboardEvent {
+        constructor(type, init = {}) {
+          this.type = type;
+          Object.assign(this, init);
+        }
+      },
+    });
 
     const exercise = async ({
       keydownCancelled = false,
@@ -70345,22 +70367,20 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
         },
       };
       const el = {
-        dispatchEvent: event => !(keydownCancelled && event.type === 'keydown' && event.key === 'Enter'),
+        dispatchEvent: event => {
+          calls.push(`${event.type}:${event.key}`);
+          if (event.type === 'keydown' && event.key === 'Enter' && pageSubmitsOnKeydown) emitSubmit();
+          if (event.type === 'keydown' && event.key === 'Enter' && pageUsesDirectSubmitOnKeydown) calls.push('form.submit');
+          return !(keydownCancelled && event.type === 'keydown' && event.key === 'Enter');
+        },
         form: hasForm ? form : null,
         closest: () => null,
         isContentEditable,
       };
-      const dispatchKey = (type, key) => {
-        calls.push(`${type}:${key}`);
-        if (type === 'keydown' && key === 'Enter' && pageSubmitsOnKeydown) emitSubmit();
-        if (type === 'keydown' && key === 'Enter' && pageUsesDirectSubmitOnKeydown) calls.push('form.submit');
-        el.dispatchEvent({ type, key });
-        return true;
-      };
       let failureResult = null;
       const failure = (msg, data) => { failureResult = data; return { success: false, ...data }; };
       const result = await runner({
-        dispatchKey, el,
+        el,
         msg: { params: {} },
         failure,
         isCombobox,

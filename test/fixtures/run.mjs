@@ -494,6 +494,140 @@ test('set_field stops before mutation when focus handlers cross the deadline', a
   }
 });
 
+test('set_field releases Enter when a keydown listener crosses the deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <input id="deadline-key-field" aria-label="Deadline key field">
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const field = document.getElementById('deadline-key-field');
+      window.__deadlineKeydowns = 0;
+      window.__deadlineKeyups = 0;
+      window.__deadlineKeyTimes = {};
+      field.addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        window.__deadlineKeydowns += 1;
+        window.__deadlineKeyTimes.keydownStart = Date.now();
+        const stopAt = performance.now() + 650;
+        while (performance.now() < stopAt) {}
+        window.__deadlineKeyTimes.keydownEnd = Date.now();
+      });
+      field.addEventListener('keyup', event => {
+        if (event.key === 'Enter') window.__deadlineKeyups += 1;
+      });
+      const refId = window.__wb_ax_ref(field);
+      const startedAt = Date.now();
+      const deadlineAt = startedAt + 500;
+      window.__wb_handler({
+        target: 'content',
+        action: 'set_field',
+        params: { ref_id: refId, text: 'typed before key dispatch', submit: true },
+        actionDeadlineAt: deadlineAt,
+      }, {}, response => {
+        resolve({
+          response,
+          startedAt,
+          deadlineAt,
+          completedAt: Date.now(),
+          keyTimes: window.__deadlineKeyTimes,
+          keydowns: window.__deadlineKeydowns,
+          keyups: window.__deadlineKeyups,
+        });
+      });
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== true
+      || result.response.outcomeUnknown !== true
+      || result.response.retryable !== false
+      || result.keydowns !== 1
+      || result.keyups !== 1
+    ) {
+      throw new Error(`${browserKind} set_field left Enter pressed after expiry: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('Firefox synthetic hover reports a deadline crossed by its last listener', async (page) => {
+  await setupContentHtml(page, `
+    <button id="deadline-hover">Hover target</button>
+    <script>
+      window.__deadlineMousemoves = 0;
+      document.getElementById('deadline-hover').addEventListener('mousemove', () => {
+        window.__deadlineMousemoves += 1;
+        const stopAt = Date.now() + 150;
+        while (Date.now() < stopAt) {}
+      });
+    </script>
+  `, 'firefox');
+  const result = await page.evaluate(() => new Promise((resolve) => {
+    const target = document.getElementById('deadline-hover');
+    window.__wb_handler({
+      target: 'content',
+      action: 'hover',
+      params: { ref_id: window.__wb_ax_ref(target) },
+      actionDeadlineAt: Date.now() + 100,
+    }, {}, response => resolve({ response, moves: window.__deadlineMousemoves }));
+  }));
+  if (
+    result.response?.success !== false
+    || result.response.deadlineExpired !== true
+    || result.response.dispatched !== true
+    || result.response.outcomeUnknown !== true
+    || result.moves !== 1
+  ) {
+    throw new Error(`firefox hover hid its last-listener deadline: ${JSON.stringify(result)}`);
+  }
+});
+
+test('Firefox synthetic drag releases a held pointer after expiry', async (page) => {
+  await setupContentHtml(page, `
+    <button id="deadline-drag-from">Drag source</button>
+    <button id="deadline-drag-to">Drag target</button>
+    <script>
+      window.__deadlinePointerdowns = 0;
+      window.__deadlinePointerups = 0;
+      document.getElementById('deadline-drag-from').addEventListener('pointerdown', () => {
+        window.__deadlinePointerdowns += 1;
+        const stopAt = Date.now() + 450;
+        while (Date.now() < stopAt) {}
+      });
+      document.getElementById('deadline-drag-to').addEventListener('pointerup', () => {
+        window.__deadlinePointerups += 1;
+      });
+    </script>
+  `, 'firefox');
+  const result = await page.evaluate(() => new Promise((resolve) => {
+    const from = document.getElementById('deadline-drag-from');
+    const to = document.getElementById('deadline-drag-to');
+    window.__wb_handler({
+      target: 'content',
+      action: 'drag_drop',
+      params: {
+        fromRefId: window.__wb_ax_ref(from),
+        toRefId: window.__wb_ax_ref(to),
+        steps: 2,
+      },
+      actionDeadlineAt: Date.now() + 300,
+    }, {}, response => resolve({
+      response,
+      pointerdowns: window.__deadlinePointerdowns,
+      pointerups: window.__deadlinePointerups,
+    }));
+  }));
+  if (
+    result.response?.success !== false
+    || result.response.deadlineExpired !== true
+    || result.response.dispatched !== true
+    || result.response.outcomeUnknown !== true
+    || result.pointerdowns !== 1
+    || result.pointerups !== 1
+  ) {
+    throw new Error(`firefox drag left the pointer held after expiry: ${JSON.stringify(result)}`);
+  }
+});
+
 test('click_ax rechecks its page-action deadline at the click boundary', async (page) => {
   for (const browserKind of ['chrome', 'firefox']) {
     await setupContentHtml(page, `

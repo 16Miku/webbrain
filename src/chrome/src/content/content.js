@@ -5997,10 +5997,23 @@
                   }
                 } catch {}
               }
-              const dispatchKey = (type, key, keyCode) => {
-                if (actionDeadlineExpired()) return false;
-                el.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode, bubbles: true, cancelable: true }));
-                return true;
+              const dispatchKeySequence = (key, keyCode, includeKeypress = false) => {
+                const result = { dispatched: false, completedWithinDeadline: false };
+                if (actionDeadlineExpired()) return result;
+                const eventInit = { key, code: key, keyCode, bubbles: true, cancelable: true };
+                result.dispatched = true;
+                el.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+                const expiredAfterKeydown = actionDeadlineExpired();
+                if (!expiredAfterKeydown && includeKeypress) {
+                  el.dispatchEvent(new KeyboardEvent('keypress', eventInit));
+                }
+                const expiredBeforeKeyup = expiredAfterKeydown || actionDeadlineExpired();
+                // keyup is cleanup: always release a key whose keydown was
+                // dispatched, even when a synchronous listener crossed the
+                // action deadline.
+                el.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+                result.completedWithinDeadline = !expiredBeforeKeyup && !actionDeadlineExpired();
+                return result;
               };
               const form = el.form || (el.closest && el.closest('form'));
               const usesNativeSubmit = _setFieldUsesNativeSubmit(isCombobox, el.isContentEditable, form);
@@ -6061,16 +6074,15 @@
                   if (isCombobox) {
                     await new Promise(r => setTimeout(r, 80));
                     if (actionDeadlineExpired()) return deadlineFailure();
-                    if (!dispatchKey('keydown', 'ArrowDown', 40)) return deadlineFailure();
-                    if (!dispatchKey('keyup', 'ArrowDown', 40)) return deadlineFailure();
+                    const arrowResult = dispatchKeySequence('ArrowDown', 40);
+                    if (!arrowResult.completedWithinDeadline) return deadlineFailure();
                     await new Promise(r => setTimeout(r, 30));
                     if (actionDeadlineExpired()) return deadlineFailure();
                   }
                   if (actionDeadlineExpired()) return deadlineFailure();
-                  submissionDispatched = true;
-                  if (!dispatchKey('keydown', 'Enter', 13)) return deadlineFailure();
-                  if (!dispatchKey('keypress', 'Enter', 13)) return deadlineFailure();
-                  if (!dispatchKey('keyup', 'Enter', 13)) return deadlineFailure();
+                  const enterResult = dispatchKeySequence('Enter', 13, true);
+                  submissionDispatched = enterResult.dispatched;
+                  if (!enterResult.completedWithinDeadline) return deadlineFailure();
                   if (actionDeadlineExpired()) return deadlineFailure();
                 }
                 submissionCancelled = submitEvent?.defaultPrevented === true;
