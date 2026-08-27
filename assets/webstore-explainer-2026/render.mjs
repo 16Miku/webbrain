@@ -44,6 +44,12 @@ function fontUri(name) {
   return `data:font/woff2;base64,${bytes.toString('base64')}`;
 }
 
+function avatarUri(name) {
+  const bytes = readFileSync(path.join(DIR, 'contributor-avatars', name));
+  const mime = path.extname(name).toLowerCase() === '.jpg' ? 'image/jpeg' : 'image/png';
+  return `data:${mime};base64,${bytes.toString('base64')}`;
+}
+
 const W = 1280;
 const H = 800;
 
@@ -398,17 +404,24 @@ function proofScene() {
     `<svg width="46" height="46" viewBox="0 0 24 24" fill="${color}" aria-hidden="true">${paths}</svg>`;
   const stats = [
     [icon('<path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.57L12 17.27l-5.9 3.1 1.13-6.57L2.45 9.14l6.6-.96z"/>', 'var(--accent2)'),
-      '800+', 'GitHub stars'],
+      '~1000', 'GitHub stars'],
     [icon('<path d="M9 11.5a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Zm7.2.3a3.1 3.1 0 1 0 0-6.2 3.1 3.1 0 0 0 0 6.2ZM9 13.2c-3.4 0-6.6 1.75-6.6 3.9V20h13.2v-2.9c0-2.15-3.2-3.9-6.6-3.9Zm7.2.2c-.62 0-1.2.05-1.74.14 1.2.94 1.94 2.11 1.94 3.56V20h5.2v-2.5c0-1.9-2.5-3.1-5.4-3.1Z"/>', 'var(--accent)'),
-      '45+', 'contributors'],
+      '~50', 'contributors'],
     [icon('<path d="M12 2.4c.6 0 1.1.5 1.1 1.1v.9l6.4 1.2a1 1 0 0 1-.18 1.98l-.5-.02 2.6 5.9c0 1.9-1.75 3.15-3.6 3.15s-3.6-1.25-3.6-3.15l2.55-5.8-3.67-.68V18.6h3.3a1.1 1.1 0 1 1 0 2.2H7.6a1.1 1.1 0 1 1 0-2.2h3.3V6.81l-3.67.68 2.55 5.8c0 1.9-1.75 3.15-3.6 3.15s-3.6-1.25-3.6-3.15l2.6-5.9-.5.02a1 1 0 0 1-.18-1.98l6.4-1.2v-.9c0-.6.5-1.1 1.1-1.1Zm5.82 7.7-1.5 3.42h3l-1.5-3.42Zm-11.64 0-1.5 3.42h3l-1.5-3.42Z"/>', 'var(--accent)'),
-      'GPL-3.0+', 'open-source forever'],
+      'GPL', 'open-source forever'],
   ];
-  // Decorative contributor avatars: initials over a fixed palette.
+  // Human contributors from GitHub, ordered with the project creator first.
+  // Bot, automation, AI-agent, and project-brand accounts are intentionally excluded.
   const avatars = [
-    ['ES', '#6e56cf'], ['MK', '#e0644f'], ['AY', '#2b9f6b'], ['JR', '#2f6fe0'],
-    ['LP', '#c8478f'], ['DT', '#e08b2b'], ['SN', '#4a5568'], ['KV', '#0f9aa8'],
-    ['BW', '#8b5cf6'], ['RO', '#d14f6d'],
+    ['esokullu', 'esokullu.jpg'],
+    ['alectimison-maker', 'alectimison-maker.jpg'],
+    ['fly1d', 'fly1d.png'],
+    ['Ayush7614', 'Ayush7614.png'],
+    ['Elijah-hash7', 'Elijah-hash7.png'],
+    ['Ohualtex', 'Ohualtex.jpg'],
+    ['EvanLind', 'EvanLind.png'],
+    ['azghr', 'azghr.jpg'],
+    ['feiniao87968492', 'feiniao87968492.png'],
   ];
   return {
     scale: 1.12,
@@ -445,13 +458,14 @@ function proofScene() {
         </div>
         <div style="display:flex; align-items:center; gap:18px;">
           <div style="display:flex; align-items:center;">
-            ${avatars.map(([initials, bg], i) => `
-              <span style="width:44px; height:44px; border-radius:999px; background:${bg}; color:#fff;
-                display:grid; place-items:center; font-size:15px; font-weight:800; letter-spacing:0.01em;
-                border:2px solid #171827; margin-left:${i === 0 ? 0 : -12}px;">${initials}</span>`).join('')}
+            ${avatars.map(([handle, src], i) => `
+              <span title="@${handle}" style="width:44px; height:44px; border-radius:999px; overflow:hidden;
+                display:block; flex:0 0 auto; border:2px solid #171827; margin-left:${i === 0 ? 0 : -12}px;">
+                <img src="${avatarUri(src)}" alt="@${handle}" style="width:100%; height:100%; object-fit:cover; display:block;">
+              </span>`).join('')}
             <span style="height:44px; padding:0 14px; border-radius:999px; background:rgba(255,255,255,0.14);
               color:#e7eaf3; display:grid; place-items:center; font-size:15px; font-weight:800;
-              border:2px solid #171827; margin-left:-12px;">+10</span>
+              border:2px solid #171827; margin-left:-12px;">+1000</span>
           </div>
           <span style="display:inline-flex; align-items:center; gap:9px; height:46px; padding:0 20px; border-radius:12px;
             background:var(--accent2); color:#2b1c00; font-family:var(--mono); font-size:15px; font-weight:600;
