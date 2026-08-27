@@ -1316,11 +1316,42 @@ export class Agent extends LoopDetector {
     if (!this._isActionMode(this._effectiveRunMode(tabId))) return null;
     const state = this.completionInvariants.get(tabId);
     const available = Array.isArray(tools) ? tools : [];
-    const unavailableVerification = () => ({
-      kind: 'verification_unavailable',
-      tools: [],
-      toolChoice: null,
-    });
+    const unavailableVerification = () => {
+      const terminalTool = available.find(tool => tool?.function?.name === 'done');
+      if (!terminalTool) {
+        return {
+          kind: 'verification_unavailable',
+          tools: [],
+          toolChoice: null,
+        };
+      }
+      const parameters = terminalTool.function.parameters || {};
+      const properties = parameters.properties || {};
+      const failureTool = {
+        ...terminalTool,
+        function: {
+          ...terminalTool.function,
+          description: `${terminalTool.function.description || ''} Verification is unavailable in this recovery turn, so outcome must be partial or failed; success is not allowed.`,
+          parameters: {
+            ...parameters,
+            properties: {
+              ...properties,
+              outcome: {
+                ...(properties.outcome || {}),
+                type: 'string',
+                enum: ['partial', 'failed'],
+                description: 'Use partial or failed because the required completion verification tool is unavailable.',
+              },
+            },
+          },
+        },
+      };
+      return {
+        kind: 'verification_unavailable',
+        tools: [failureTool],
+        toolChoice: { type: 'function', function: { name: 'done' } },
+      };
+    };
     const readOnlyRecoveryTool = (tool) => {
       if (tool?.function?.name !== 'fetch_url') return tool;
       const parameters = tool.function.parameters || {};

@@ -22664,12 +22664,75 @@ test('completion recovery keeps scoped observations read-only and target-specifi
       { success: true, completedCount: 1 },
     );
     agent.completionInvariants.set(tabId, state);
-    const compactPolicy = agent._completionRecoveryPolicy(tabId, [
-      { function: { name: 'read_page' } },
-    ], { verification: true });
+    const compactPolicy = agent._completionRecoveryPolicy(
+      tabId,
+      getTools('act', { compact: true }),
+      { verification: true },
+    );
     assert.equal(compactPolicy?.kind, 'verification_unavailable', `${label}: unavailable download verification did not fail closed`);
-    assert.deepEqual(compactPolicy?.tools, [], `${label}: unavailable download verification exposed unrelated tools`);
-    assert.equal(compactPolicy?.toolChoice, null, `${label}: unavailable download verification forced a nonexistent tool`);
+    assert.deepEqual(compactPolicy?.tools?.map(tool => tool.function.name), ['done'], `${label}: unavailable download verification exposed unrelated tools`);
+    assert.deepEqual(
+      compactPolicy?.toolChoice,
+      { type: 'function', function: { name: 'done' } },
+      `${label}: unavailable download verification did not force its honest terminal escape`,
+    );
+    assert.deepEqual(
+      compactPolicy?.tools?.[0]?.function?.parameters?.properties?.outcome?.enum,
+      ['partial', 'failed'],
+      `${label}: unavailable download verification still allowed a success outcome`,
+    );
+    let executedUnavailableDone = [];
+    const unavailableToolSchemas = new Map(compactPolicy.tools.map(tool => [tool.function.name, tool.function.parameters]));
+    const unavailableAllowedTools = new Set(compactPolicy.tools.map(tool => tool.function.name));
+    const unavailableUpdates = [];
+    agent._persist = () => {};
+    agent.executeTool = async (_toolTabId, name, args) => {
+      assert.equal(name, 'done');
+      executedUnavailableDone.push(args.outcome);
+      return { done: true, summary: args.summary, outcome: args.outcome };
+    };
+    const blockedUnavailableSuccess = await agent._executeToolBatch(
+      tabId,
+      [{
+        id: `${label}_unavailable_success`,
+        function: { name: 'done', arguments: JSON.stringify({ summary: 'Unverified success.', outcome: 'success' }) },
+      }],
+      [],
+      (type, data) => unavailableUpdates.push({ type, data }),
+      { supportsVision: false },
+      null,
+      unavailableAllowedTools,
+      1,
+      {},
+      unavailableToolSchemas,
+    );
+    assert.deepEqual(blockedUnavailableSuccess, { action: 'continue' }, `${label}: unavailable verification accepted success`);
+    assert.deepEqual(executedUnavailableDone, [], `${label}: unavailable verification executed a success completion`);
+    assert.ok(
+      unavailableUpdates.some(update => update.type === 'tool_result' && update.data?.result?.invalidToolArguments === true),
+      `${label}: unavailable verification did not reject success at schema validation`,
+    );
+    const honestUnavailablePartial = await agent._executeToolBatch(
+      tabId,
+      [{
+        id: `${label}_unavailable_partial`,
+        function: { name: 'done', arguments: JSON.stringify({ summary: 'Download verification is unavailable.', outcome: 'partial' }) },
+      }],
+      [],
+      () => {},
+      { supportsVision: false },
+      null,
+      unavailableAllowedTools,
+      2,
+      {},
+      unavailableToolSchemas,
+    );
+    assert.deepEqual(
+      honestUnavailablePartial,
+      { action: 'return', value: 'Download verification is unavailable.' },
+      `${label}: unavailable verification could not return an honest partial`,
+    );
+    assert.deepEqual(executedUnavailableDone, ['partial'], `${label}: unavailable verification executed the wrong terminal outcome`);
     const policy = agent._completionRecoveryPolicy(tabId, [
       { function: { name: 'read_page' } },
       { function: { name: 'list_downloads' } },
