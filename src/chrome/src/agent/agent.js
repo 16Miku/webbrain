@@ -1601,22 +1601,30 @@ export class Agent extends LoopDetector {
     if (!this._isActionMode(this._effectiveRunMode(tabId))) return null;
     const state = this.completionInvariants.get(tabId);
     const available = Array.isArray(tools) ? tools : [];
+    const unavailableVerification = () => ({
+      kind: 'verification_unavailable',
+      tools: [],
+      toolChoice: null,
+    });
     if (verification && (state?.verificationDebt || state?.iframeFormVerificationDebt)) {
       let candidates = state.iframeFormVerificationDebt
         ? available.filter(tool => tool?.function?.name === 'verify_form')
         : [];
+      if (state.iframeFormVerificationDebt && !candidates.length) {
+        return unavailableVerification();
+      }
       if (!candidates.length && state?.lastAction?.name === 'new_tab') {
         candidates = available.filter(tool => ['fetch_url', 'research_url'].includes(tool?.function?.name));
-        if (!candidates.length) return null;
+        if (!candidates.length) return unavailableVerification();
       }
       if (!candidates.length && state?.lastAction?.downloadAction === true) {
         candidates = available.filter(tool => ['list_downloads', 'read_downloaded_file'].includes(tool?.function?.name));
-        if (!candidates.length) return null;
+        if (!candidates.length) return unavailableVerification();
       }
       if (!candidates.length) {
         candidates = available.filter(tool => COMPLETION_DOCUMENT_OBSERVATION_TOOLS.has(tool?.function?.name));
       }
-      if (!candidates.length) return null;
+      if (!candidates.length) return unavailableVerification();
       return {
         kind: 'verification',
         tools: candidates,
@@ -7532,7 +7540,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             action: 'continue',
             completionRecovery: ['verification_required', 'iframe_form_verification_required'].includes(invariantBlock.reason)
               ? 'verification'
-              : (invariantBlock.reason === 'prior_turn_verification_required' ? 'done' : null),
+              : (invariantBlock.reason === 'prior_turn_verification_required'
+                ? 'done'
+                : (invariantBlock.reason === 'rich_text_toolbar_target_unresolved' ? 'release' : null)),
           };
         }
 
@@ -7595,7 +7605,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             () => ({ success: false, skipped: true, error: 'skipped: complete the whole-thread read before answering' })
           );
           this._persist(tabId);
-          return { action: 'continue' };
+          return { action: 'continue', completionRecovery: 'release' };
         }
 
         const doneOutcome = fnName === 'done_json'
@@ -7632,7 +7642,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             () => ({ success: false, skipped: true, error: 'skipped: progress ledger must be resolved before completion verification' })
           );
           this._persist(tabId);
-          return { action: 'continue' };
+          return { action: 'continue', completionRecovery: 'release' };
         }
       }
 
@@ -29596,6 +29606,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           forceCompletionDoneAfterVerification = true;
         } else if (batchResult.completionRecovery === 'done') {
           forceCompletionDoneTurn = true;
+        } else if (batchResult.completionRecovery === 'release') {
+          forceCompletionDoneTurn = false;
         }
         // 'continue' → fall through to next loop iteration
         continue;
@@ -30539,6 +30551,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             forceCompletionDoneAfterVerification = true;
           } else if (batchResult.completionRecovery === 'done') {
             forceCompletionDoneTurn = true;
+          } else if (batchResult.completionRecovery === 'release') {
+            forceCompletionDoneTurn = false;
           }
           closeTraceStep({ ok: true });
           continue;

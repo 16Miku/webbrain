@@ -8434,7 +8434,11 @@ test('whole-thread guard blocks done before an incomplete read can become a fina
       1,
     );
 
-    assert.deepEqual(result, { action: 'continue' }, `${label}: premature done did not request another read turn`);
+    assert.deepEqual(
+      result,
+      { action: 'continue', completionRecovery: 'release' },
+      `${label}: premature done did not release terminal-only recovery for another read turn`,
+    );
     assert.deepEqual(executed, [], `${label}: done executed before complete thread coverage`);
     const blocked = JSON.parse(messages.find(message => message.tool_call_id === 'premature_done').content);
     assert.equal(blocked.readCompleteness, true, `${label}: block lacks structured read-completeness evidence`);
@@ -22622,7 +22626,9 @@ test('completion recovery keeps skill downloads on download-specific observation
     const compactPolicy = agent._completionRecoveryPolicy(tabId, [
       { function: { name: 'read_page' } },
     ], { verification: true });
-    assert.equal(compactPolicy, null, `${label}: download recovery fell back to a source-page observation`);
+    assert.equal(compactPolicy?.kind, 'verification_unavailable', `${label}: unavailable download verification did not fail closed`);
+    assert.deepEqual(compactPolicy?.tools, [], `${label}: unavailable download verification exposed unrelated tools`);
+    assert.equal(compactPolicy?.toolChoice, null, `${label}: unavailable download verification forced a nonexistent tool`);
     const policy = agent._completionRecoveryPolicy(tabId, [
       { function: { name: 'read_page' } },
       { function: { name: 'list_downloads' } },
@@ -75311,6 +75317,144 @@ test('non-stream and stream runs keep forced done active across empty and reject
         );
       }
       assert.equal(agent.completionInvariants.has(tabId), false, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: completed run leaked invariant state`);
+  }
+});
+
+test('non-stream and stream runs release forced done when progress work remains', async () => {
+  const buildResponses = () => [
+    {
+      content: null,
+      toolCalls: [{
+        id: 'progress_click',
+        function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: 'ref_6' }) },
+      }],
+    },
+    {
+      content: null,
+      toolCalls: [{
+        id: 'progress_done_unverified',
+        function: { name: 'done', arguments: JSON.stringify({ summary: 'Premature completion.', outcome: 'success' }) },
+      }],
+    },
+    {
+      content: null,
+      toolCalls: [{
+        id: 'progress_observe',
+        function: { name: 'read_page', arguments: '{}' },
+      }],
+    },
+    {
+      content: null,
+      toolCalls: [{
+        id: 'progress_done_blocked',
+        function: { name: 'done', arguments: JSON.stringify({ summary: 'Still premature.', outcome: 'success' }) },
+      }],
+    },
+    { content: null, toolCalls: [] },
+  ];
+
+  for (const streaming of [false, true]) {
+    for (const AgentClass of [AgentCh, AgentFx]) {
+      const responses = buildResponses();
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        calls: 0,
+        requests: [],
+      };
+      if (streaming) {
+        provider.chatStream = async function* (_messages, options) {
+          this.calls++;
+          this.requests.push(options);
+          const next = responses.shift();
+          assert.ok(next, `${AgentClass.name}: streamed model was called too many times`);
+          if (next.toolCalls?.length) {
+            yield {
+              type: 'tool_call',
+              content: next.toolCalls.map((call, index) => ({ index, id: call.id, function: call.function })),
+            };
+          }
+          yield { type: 'done' };
+        };
+      } else {
+        provider.chat = async (_messages, options) => {
+          provider.calls++;
+          provider.requests.push(options);
+          const next = responses.shift();
+          assert.ok(next, `${AgentClass.name}: model was called too many times`);
+          return next;
+        };
+      }
+
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = streaming ? 24814 : 24813;
+      agent.planBeforeAct = false;
+      agent._maybeRunPlannerGate = async () => ({
+        proceed: true,
+        requestKind: 'execute',
+        requiresStateChange: true,
+      });
+      agent.maxSteps = 5;
+      agent.autoScreenshot = 'off';
+      agent._skipPermissionGate = true;
+      agent._manageContext = async () => {};
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
+      agent._maybeReinjectAdapter = async () => {};
+      agent._ensureProgressSessionForCurrentTask = async () => ({ mode: 'inactive' });
+      agent._persist = () => {};
+      agent._currentTaskLedgerRows = () => [{
+        id: 'pending-row',
+        label: 'Pending row',
+        action: 'process_item',
+        status: 'pending',
+      }];
+      let executedDone = 0;
+      agent.executeTool = async (_toolTabId, name, args) => {
+        if (name === 'click_ax') return { success: true, verified: true, method: 'click_ax' };
+        if (name === 'read_page') return { success: true, content: 'The action result is visible.' };
+        if (name === 'done') {
+          executedDone++;
+          return { done: true, summary: args.summary, outcome: args.outcome };
+        }
+        throw new Error(`unexpected tool ${name}`);
+      };
+
+      const updates = [];
+      const run = streaming ? agent.processMessageStream.bind(agent) : agent.processMessage.bind(agent);
+      await run(tabId, 'process every row', (type, data) => updates.push({ type, data }), 'act');
+
+      assert.equal(provider.calls, 5, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: recovery used the wrong number of turns`);
+      assert.equal(executedDone, 0, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: a blocked completion executed`);
+      assert.deepEqual(
+        provider.requests[3]?.tools?.map(tool => tool?.function?.name),
+        ['done'],
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: verified completion was not forced through done`,
+      );
+      assert.ok(
+        provider.requests[4]?.tools?.some(tool => tool?.function?.name === 'progress_update'),
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: progress block did not restore progress_update`,
+      );
+      assert.ok(
+        provider.requests[4]?.tools?.some(tool => tool?.function?.name === 'click_ax'),
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: progress block did not restore action tools`,
+      );
+      assert.notDeepEqual(
+        provider.requests[4]?.toolChoice,
+        { type: 'function', function: { name: 'done' } },
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: progress block retained the forced done choice`,
+      );
+      assert.ok(
+        updates.some(update => update.type === 'tool_result' && update.data?.result?.progressLedgerBlock === true),
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: progress gate did not reject the forced completion`,
+      );
+    }
   }
 });
 
