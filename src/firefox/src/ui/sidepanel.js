@@ -8934,7 +8934,7 @@ function handleAgentUpdateMessage(msg) {
           || retryPayloadForRunAssistant(targetAssistantEl);
         renderPlannerRequestFailure(targetAssistantEl, data, retryPayload);
       } else if (data?.code === 'planner_failed_continue_act') {
-        showComposerToast(data?.message || t('sp.plan.intent_unavailable'), { duration: 10000 });
+        addPlannerFallbackNote(data?.message || t('sp.plan.intent_unavailable'));
       } else if (data?.code === 'ask_stream_fallback') {
         showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
       } else if (data?.code === 'persistence_degraded') {
@@ -11130,6 +11130,34 @@ function addPlanAutoApprovedNote(data) {
   } else {
     messagesEl.appendChild(note);
   }
+  scrollToBottom();
+}
+
+function addPlannerFallbackNote(message) {
+  if (!currentAssistantEl || !message) return;
+
+  let note = currentAssistantEl.querySelector('.planner-fallback-note');
+  if (!note) {
+    const stepsContainer = getOrCreateStepsContainer();
+    if (!stepsContainer) return;
+
+    note = document.createElement('div');
+    note.className = 'planner-fallback-note';
+    note.setAttribute('role', 'status');
+    note.setAttribute('aria-live', 'polite');
+
+    const icon = document.createElement('span');
+    icon.className = 'planner-fallback-note-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '!';
+
+    const text = document.createElement('span');
+    text.className = 'planner-fallback-note-text';
+    note.append(icon, text);
+    stepsContainer.appendChild(note);
+  }
+
+  note.querySelector('.planner-fallback-note-text').textContent = message;
   scrollToBottom();
 }
 

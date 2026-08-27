@@ -90097,8 +90097,23 @@ test('planner request failures expose provider settings and retry actions in bot
     );
     assert.match(
       panel,
-      /data\?\.code === 'planner_failed_continue_act'[\s\S]*?showComposerToast\(data\?\.message \|\| t\('sp\.plan\.intent_unavailable'\), \{ duration: 10000 \}\);/,
-      `${label}: planner-failed Act continuation does not show the requested toast`,
+      /data\?\.code === 'planner_failed_continue_act'[\s\S]*?addPlannerFallbackNote\(data\?\.message \|\| t\('sp\.plan\.intent_unavailable'\)\);/,
+      `${label}: planner-failed Act continuation does not render in the active turn`,
+    );
+    assert.match(
+      panel,
+      /function addPlannerFallbackNote\(message\) \{[\s\S]*?currentAssistantEl\.querySelector\('\.planner-fallback-note'\)[\s\S]*?getOrCreateStepsContainer\(\)[\s\S]*?role', 'status'[\s\S]*?aria-live', 'polite'[\s\S]*?textContent = message;/,
+      `${label}: planner fallback note is not scoped, idempotent, or accessible`,
+    );
+    assert.doesNotMatch(
+      panel,
+      /showComposerToast\(data\?\.message \|\| t\('sp\.plan\.intent_unavailable'\)/,
+      `${label}: planner fallback still displaces the composer as a toast`,
+    );
+    assert.match(
+      css,
+      /\.planner-fallback-note \{[\s\S]*?border-inline-start: 2px solid var\(--warning\);[\s\S]*?\.planner-fallback-note-icon \{[\s\S]*?\.planner-fallback-note-text \{/,
+      `${label}: planner fallback note styling is missing`,
     );
     assert.equal(
       (panel.match(/plannerRequestFailureUpdate\(res\?\.updates\)/g) || []).length >= 2,
