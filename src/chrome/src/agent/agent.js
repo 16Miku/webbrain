@@ -24141,7 +24141,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           targetFrameId = binding?.frameId;
         }
         if (!Number.isInteger(targetFrameId) || !binding?.token) {
-          dispatched = true;
           throwIfEarlyCdpAborted();
           const legacyResult = await this._legacyIframeTypeAllFrames(tabId, {
             selector,
@@ -24153,9 +24152,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             abortSignal: earlyCdpAbortSignal,
             deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt) || 0,
             deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.error || null,
-            beforeDispatch: markEarlyCdpDispatched,
+            beforeDispatch: () => {
+              dispatched = true;
+              markEarlyCdpDispatched();
+            },
           });
-          if (legacyResult?.deadlineExpired && legacyResult.dispatched !== true) {
+          if (legacyResult?.dispatched !== true && legacyResult?.noDispatch === true) {
+            dispatched = false;
             earlyCdpDispatchState.started = false;
           }
           return legacyResult;

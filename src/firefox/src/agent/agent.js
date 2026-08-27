@@ -21154,7 +21154,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           targetFrameId = binding?.frameId;
         }
         if (!Number.isInteger(targetFrameId) || !binding?.token) {
-          dispatched = true;
           throwIfContentPipelineAborted();
           const legacyResult = await this._legacyIframeTypeAllFrames(tabId, {
             selector,
@@ -21166,9 +21165,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             abortSignal: contentPipelineAbortSignal,
             deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(contentPipelineAbortSignal)?.deadlineAt) || 0,
             deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(contentPipelineAbortSignal)?.error || null,
-            beforeDispatch: markContentPipelineDispatched,
+            beforeDispatch: () => {
+              dispatched = true;
+              markContentPipelineDispatched();
+            },
           });
-          if (legacyResult?.deadlineExpired && legacyResult.dispatched !== true) {
+          if (legacyResult?.dispatched !== true && legacyResult?.noDispatch === true) {
+            dispatched = false;
             contentPipelineDispatchState.started = false;
           }
           return legacyResult;
