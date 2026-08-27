@@ -41868,7 +41868,7 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     );
     assert.match(
       scheduler,
-      /type === 'clarify' \|\| type === 'clarify_timeout_extended' \|\| type === 'clarify_auto'/,
+      /const jobScopedUpdate = type === 'clarify'\s*\|\| type === 'clarify_timeout_extended'\s*\|\| type === 'clarify_auto'/,
       `${label}: scheduled clarify deadline updates should carry scheduledJobId`,
     );
     assert.match(scheduler, /type === 'clarify_timeout_extended'[\s\S]*?pendingClarify:[\s\S]*?deadlineTs:/, `${label}: scheduled clarifies should persist renewed deadlines`);
@@ -46178,8 +46178,8 @@ test('sidepanel long replies use reading-first turn navigation', () => {
       `${label}: auto-selected clarification answers should establish a timeline boundary`,
     );
     const compactStepsSource = panel.slice(
-      panel.indexOf('function getOrCreateStepsContainer()'),
-      panel.indexOf('function appendCompactStep(', panel.indexOf('function getOrCreateStepsContainer()')),
+      panel.indexOf('function getOrCreateStepsContainer('),
+      panel.indexOf('function appendCompactStep(', panel.indexOf('function getOrCreateStepsContainer(')),
     );
     assert.match(
       compactStepsSource,
@@ -48137,6 +48137,39 @@ test('ScheduledJobManager keeps live scheduled clarifications resumable', async 
     assert.equal(job.status, 'completed', `${label}: original run should complete after answer`);
     assert.equal(job.lastResult, 'continued after answer');
     assert.equal(job.runCount, 1);
+  }
+});
+
+test('ScheduledJobManager scopes planner fallback warnings to the scheduled job', async () => {
+  const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+  for (const [label, SchedulerMod] of [['chrome', SchedulerCh], ['firefox', SchedulerFx]]) {
+    const h = makeSchedulerHarness(SchedulerMod, {
+      now,
+      processMessage: async (_tabId, _message, onUpdate) => {
+        onUpdate('warning', {
+          code: 'planner_failed_continue_act',
+          message: 'Planning failed. Continuing in Act mode.',
+        });
+        return 'continued in Act mode';
+      },
+    });
+    const created = await h.manager.createResumeJob({
+      tabId: 77,
+      conversationId: 'conv-1',
+      args: { after_seconds: 60, reason: 'wait', resume_instruction: 'retry' },
+    });
+
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+
+    const warning = h.updates.find((update) => (
+      update.type === 'warning'
+      && update.data?.code === 'planner_failed_continue_act'
+    ));
+    assert.equal(
+      warning?.data?.scheduledJobId,
+      created.jobId,
+      `${label}: planner fallback warning should carry the scheduled job id`,
+    );
   }
 });
 
@@ -90059,6 +90092,10 @@ test('planner request failures expose provider settings and retry actions in bot
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     const background = fs.readFileSync(path.join(ROOT, backgroundRel), 'utf8');
     const css = fs.readFileSync(path.join(ROOT, cssRel), 'utf8');
+    const scheduler = fs.readFileSync(
+      path.join(ROOT, panelRel.replace('src/ui/sidepanel.js', 'src/agent/scheduler.js')),
+      'utf8',
+    );
 
     assert.match(
       background,
@@ -90097,8 +90134,43 @@ test('planner request failures expose provider settings and retry actions in bot
     );
     assert.match(
       panel,
-      /data\?\.code === 'planner_failed_continue_act'[\s\S]*?showComposerToast\(data\?\.message \|\| t\('sp\.plan\.intent_unavailable'\), \{ duration: 10000 \}\);/,
-      `${label}: planner-failed Act continuation does not show the requested toast`,
+      /data\?\.code === 'planner_failed_continue_act'[\s\S]*?const scheduledJobId = String\(data\?\.scheduledJobId \|\| ''\);[\s\S]*?const scheduledAssistantPending = scheduledAssistantPreparationJobIds\.has\(scheduledJobId\);[\s\S]*?scheduledJobId && !scheduledAssistantPending[\s\S]*?findScheduledAssistantMessageForJob\(scheduledJobId\)[\s\S]*?scheduledJobId && \(scheduledAssistantPending \|\| !scheduledAssistantEl\)[\s\S]*?queueScheduledPlannerFallbackMessage\(scheduledJobId, message\)[\s\S]*?addPlannerFallbackNote\(message, scheduledAssistantEl \|\| eventAssistantEl \|\| currentAssistantEl\);/,
+      `${label}: planner-failed Act continuation is not bound or queued for the correct turn`,
+    );
+    assert.match(
+      panel,
+      /function findScheduledAssistantMessageForJob\(jobId\) \{[\s\S]*?const messages = Array\.from[\s\S]*?for \(let i = messages\.length - 1; i >= 0; i -= 1\)[\s\S]*?return messages\[i\];/,
+      `${label}: recurring scheduled runs should resolve their newest assistant turn`,
+    );
+    assert.match(
+      panel,
+      /const preparingScheduledAssistant = event === 'running' && !!jobId;[\s\S]*?scheduledAssistantPreparationJobIds\.add\(jobId\);[\s\S]*?await refreshConversationScopeState\(runTabId\);[\s\S]*?flushScheduledPlannerFallbackMessage\(jobId, currentAssistantEl\);[\s\S]*?scheduledAssistantPreparationJobIds\.delete\(jobId\);/,
+      `${label}: fast recurring warnings can escape the new-turn preparation guard`,
+    );
+    assert.match(
+      panel,
+      /function addPlannerFallbackNote\(message, assistantEl = currentAssistantEl\) \{[\s\S]*?assistantEl\.querySelector\('\.planner-fallback-note'\)[\s\S]*?getOrCreateStepsContainer\(assistantEl\)[\s\S]*?role', 'status'[\s\S]*?aria-live', 'polite'[\s\S]*?textContent = message;/,
+      `${label}: planner fallback note is not scoped, idempotent, or accessible`,
+    );
+    assert.match(
+      panel,
+      /function flushScheduledPlannerFallbackMessage\(jobId, assistantEl = null\) \{[\s\S]*?pendingScheduledPlannerFallbackMessages\.has\(id\)[\s\S]*?findScheduledAssistantMessageForJob\(id\)[\s\S]*?addPlannerFallbackNote\(message, assistantEl\);[\s\S]*?event === 'running'[\s\S]*?currentAssistantEl\.dataset\.scheduledJobId = jobId;[\s\S]*?flushScheduledPlannerFallbackMessage\(jobId, currentAssistantEl\);/,
+      `${label}: a planner fallback that arrives before the scheduled assistant turn is not flushed into that turn`,
+    );
+    assert.match(
+      scheduler,
+      /type === 'warning' && data\?\.code === 'planner_failed_continue_act'[\s\S]*?\{ \.\.\.data, scheduledJobId: job\.id \}/,
+      `${label}: scheduled planner fallback warnings are missing their job identity`,
+    );
+    assert.doesNotMatch(
+      panel,
+      /showComposerToast\(data\?\.message \|\| t\('sp\.plan\.intent_unavailable'\)/,
+      `${label}: planner fallback still displaces the composer as a toast`,
+    );
+    assert.match(
+      css,
+      /\.planner-fallback-note \{[\s\S]*?border-inline-start: 2px solid var\(--warning\);[\s\S]*?\.planner-fallback-note-icon \{[\s\S]*?\.planner-fallback-note-text \{/,
+      `${label}: planner fallback note styling is missing`,
     );
     assert.equal(
       (panel.match(/plannerRequestFailureUpdate\(res\?\.updates\)/g) || []).length >= 2,
