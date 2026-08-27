@@ -7406,7 +7406,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }, messageOptions);
     };
     const dispatch = () => this._withContentActionDeadline(send, 'click_ax');
+    const provenNoDispatchDeadline = response => {
+      if (response?.deadlineExpired !== true || response?.dispatched === true) return null;
+      dispatchState.started = false;
+      return {
+        ...response,
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+      };
+    };
     const finish = async (response) => {
+      const deadlineResult = provenNoDispatchDeadline(response);
+      if (deadlineResult) return deadlineResult;
       throwIfAborted();
       response = await this._settleContentFilePickerGuard(tabId, response);
       throwIfAborted();

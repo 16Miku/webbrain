@@ -5165,6 +5165,12 @@
               }
             } catch {}
           }
+          if (actionDeadlineExpired()) {
+            return failure(
+              'The page action deadline expired before click dispatch.',
+              { deadlineExpired: true, retryable: true },
+            );
+          }
           if (msg.params?.messageRecipientGuardRequired === true) {
             const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
             if (recipientValidation.success !== true) {

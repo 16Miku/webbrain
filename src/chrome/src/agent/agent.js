@@ -10543,6 +10543,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }, messageOptions);
     };
     const dispatch = () => this._withContentActionDeadline(send, 'click_ax');
+    const provenNoDispatchDeadline = response => {
+      if (response?.deadlineExpired !== true || response?.dispatched === true) return null;
+      dispatchState.started = false;
+      return {
+        ...response,
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+      };
+    };
 
     try {
       let response;
@@ -10551,6 +10563,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await captureBaseline();
         throwIfAborted();
         response = await dispatch();
+        const deadlineResult = provenNoDispatchDeadline(response);
+        if (deadlineResult) return deadlineResult;
         throwIfAborted();
       } catch (error) {
         if (error?.code === 'content_action_timeout') {
@@ -10566,6 +10580,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await captureBaseline();
           throwIfAborted();
           response = await dispatch();
+          const deadlineResult = provenNoDispatchDeadline(response);
+          if (deadlineResult) return deadlineResult;
           throwIfAborted();
         } catch (retryError) {
           if (retryError?.code === 'content_action_timeout') {

@@ -88035,6 +88035,11 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
       /const actionDeadlineAt = \[upstreamAbortSignal, deadlineAbortSignal\][\s\S]*CONTENT_ACTION_SIGNAL_DEADLINES\.get\(signal\)\?\.deadlineAt[\s\S]*action: 'click_ax',[\s\S]*\.\.\.\(actionDeadlineAt > 0 \? \{ actionDeadlineAt \} : \{\}\)/,
       `${label}: dedicated click_ax messages lose the owning absolute page deadline`,
     );
+    assert.match(
+      clickAxSource,
+      /const provenNoDispatchDeadline = response =>[\s\S]*response\?\.deadlineExpired[\s\S]*dispatchState\.started = false;[\s\S]*noDispatch: true,[\s\S]*retryable: true/,
+      `${label}: click_ax loses a page-proven no-dispatch deadline response`,
+    );
     const clickAxTimeoutCatch = clickAxSource.indexOf("if (error?.code === 'content_action_timeout')");
     const clickAxReinject = clickAxSource.indexOf('await this._injectCoreContentScripts(tabId);');
     assert.notEqual(clickAxTimeoutCatch, -1, `${label}: click_ax timeout is not handled`);
@@ -88256,6 +88261,68 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.equal(uploadResult.outcomeUnknown, true, `${label}: timed-out upload lost mutation uncertainty`);
     assert.equal(uploadResult.dispatched, true, `${label}: timed-out upload lost its dispatch marker`);
     assert.equal(uploadResult.retryable, false, `${label}: timed-out upload invited a blind retry`);
+  }
+});
+
+test('click_ax preserves a page-proven expired response after the outer deadline aborts', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const sendMessage = async () => ({
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        deadlineExpired: true,
+        error: 'The page action deadline expired before click dispatch.',
+      });
+      if (label === 'chrome') {
+        globalThis.chrome = {
+          ...(originalChrome || {}),
+          runtime: originalChrome?.runtime || {},
+          tabs: { ...(originalChrome?.tabs || {}), sendMessage },
+        };
+      } else {
+        globalThis.browser = { tabs: { sendMessage } };
+      }
+
+      const agent = new AgentClass({});
+      if (label === 'chrome') {
+        agent._currentUrl = async () => 'https://example.test/';
+        agent._clickProgressSnapshot = async () => '{}';
+        agent._beginClickAxSideEffectWatch = () => ({ stop() {} });
+        agent._captureClickAxObservation = async () => ({ startedAt: Date.now(), snapshot: '{}' });
+      }
+      let outerController = null;
+      let deadlineCalls = 0;
+      agent._withContentActionDeadline = async (operation, toolName) => {
+        assert.equal(toolName, 'click_ax');
+        deadlineCalls += 1;
+        if (deadlineCalls === 1) {
+          outerController = new AbortController();
+          return operation(outerController.signal);
+        }
+        const response = await operation(new AbortController().signal);
+        const timeoutError = new Error('click_ax did not return a page response within 60 seconds.');
+        timeoutError.code = 'content_action_timeout';
+        outerController.abort(timeoutError);
+        return response;
+      };
+
+      const result = await agent._dispatchClickAx(51, { ref_id: 'ref_expired' });
+      assert.equal(result.success, false, `${label}: expired response reported success`);
+      assert.equal(result.dispatched, false, `${label}: expired response claimed a click`);
+      assert.equal(result.noDispatch, true, `${label}: expired response lost no-dispatch proof`);
+      assert.equal(result.outcomeUnknown, false, `${label}: expired response became unknown`);
+      assert.equal(result.retryable, true, `${label}: expired response blocked a safe retry`);
+      assert.equal(result.deadlineExpired, true, `${label}: expired response lost its deadline marker`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
   }
 });
 

@@ -459,6 +459,45 @@ test('set_field cannot submit after its page-action deadline', async (page) => {
     }
   }
 });
+
+test('click_ax rechecks its page-action deadline at the click boundary', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <div id="slow-context"><button id="late-click">Late click</button></div>
+      <script>
+        window.__lateAxClicks = 0;
+        document.getElementById('late-click').addEventListener('click', () => { window.__lateAxClicks += 1; });
+        Object.defineProperty(document.getElementById('slow-context'), 'innerText', {
+          configurable: true,
+          get() {
+            const stopAt = Date.now() + 30;
+            while (Date.now() < stopAt) {}
+            return 'Slow click context';
+          },
+        });
+      </script>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const refId = window.__wb_ax_ref(document.getElementById('late-click'));
+      window.__wb_handler({
+        target: 'content',
+        action: 'click_ax',
+        params: { ref_id: refId },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({ response, clicks: window.__lateAxClicks }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.clicks !== 0
+    ) {
+      throw new Error(`${browserKind} click_ax crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
 const firefoxTests = [];
 function firefoxTest(name, fn) { firefoxTests.push({ name, fn }); }
 
