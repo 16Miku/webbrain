@@ -1042,7 +1042,13 @@ export function registerRichTextToolbarFixtures({
   }
 
   test('Agent rich-text toolbar audit accepts visual family classification, rejects ordinary fields, and blocks the full toolbar scope', async () => {
-    const shadowQuerySource = Agent.prototype.executeTool.toString();
+    // executeTool is a thin deadline wrapper around _executeToolImpl, so the
+    // shadow_dom_query body lives in the impl. Read both or this guard silently
+    // stops inspecting the selector it exists to protect.
+    const shadowQuerySource = [
+      Agent.prototype.executeTool,
+      Agent.prototype._executeToolImpl,
+    ].filter(Boolean).map(fn => fn.toString()).join('\n');
     if (
       !shadowQuerySource.includes("const selectorLiteral = JSON.stringify(String(args.selector || ''))")
       || shadowQuerySource.includes("args.selector.replace(/'/g")
