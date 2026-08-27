@@ -2146,7 +2146,7 @@ test('legacy iframe typing marks background dispatch only for its mutation phase
             ? [{ frameId: 9, result: { ok: true, dispatched: true, method: 'native-setter', value: 'typed' } }]
             : [{ ok: true, dispatched: true, method: 'native-setter', value: 'typed' }];
         }
-        return [];
+        return new Promise(() => {});
       };
       globalThis.chrome = build === 'chrome'
         ? { scripting: { executeScript: execute } }
@@ -2159,14 +2159,20 @@ test('legacy iframe typing marks background dispatch only for its mutation phase
         : originalBrowser;
       const moduleUrl = pathToFileURL(path.join(ROOT, `src/${build}/src/agent/rich-text-toolbar-probe.js`)).href;
       const { RichTextToolbarProbe } = await import(`${moduleUrl}?legacy-mutation-boundary=${build}`);
-      const result = await new RichTextToolbarProbe({}).legacyIframeTypeAllFrames(77, {
-        selector: '#editor',
-        text: 'typed',
-        clear: true,
-        urlFilter: 'frame.test',
-      }, {
-        beforeDispatch: () => { dispatchMarks += 1; },
-      });
+      let cleanupWatchdog;
+      const result = await Promise.race([
+        new RichTextToolbarProbe({}).legacyIframeTypeAllFrames(77, {
+          selector: '#editor',
+          text: 'typed',
+          clear: true,
+          urlFilter: 'frame.test',
+        }, {
+          beforeDispatch: () => { dispatchMarks += 1; },
+        }),
+        new Promise((_, reject) => {
+          cleanupWatchdog = setTimeout(() => reject(new Error(`${build}: redundant cleanup blocked a completed mutation`)), 500);
+        }),
+      ]).finally(() => clearTimeout(cleanupWatchdog));
       assert.equal(result.success, true, `${build}: split legacy iframe mutation did not complete`);
       assert.equal(dispatchMarks, 1, `${build}: legacy iframe mutation marked dispatch more than once`);
       assert.equal(executePhase, 4, `${build}: prepared iframe marker was not cleaned up`);
@@ -88298,6 +88304,13 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
       `${label}: legacy iframe typing marks background dispatch before focus/preparation completes`,
     );
     assert.match(legacyType, /el\.setAttribute\(markerAttribute, markerValue\)[\s\S]*querySelectorAll\([^\n]*markerAttribute/, `${label}: legacy iframe mutation is not bound to the prepared exact element`);
+    assert.doesNotMatch(
+      legacyType,
+      label === 'chrome'
+        ? /await chrome\.scripting\.executeScript\(\{\s*target: \{ tabId, frameIds: \[selected\.frameId\] \},\s*func: \(markerAttribute, markerValue\) => \{\s*for \(const candidate/
+        : /await browser\.tabs\.executeScript\(tabId, \{ frameId: selected\.frameId, code: cleanupCode \}\)/,
+      `${label}: redundant marker cleanup can block a completed iframe mutation`,
+    );
     assert.match(legacyType, /if \(deadlineExpired\(\)\)[\s\S]*el\.textContent|if \(deadlineExpired\(\)\)[\s\S]*setter\.call/, `${label}: legacy iframe typing does not guard field mutation after focus`);
     assert.match(
       legacyType,

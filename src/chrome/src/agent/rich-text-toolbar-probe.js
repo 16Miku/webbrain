@@ -360,7 +360,7 @@ export class RichTextToolbarProbe {
     } finally {
       if (markerPrepared) {
         try {
-          await chrome.scripting.executeScript({
+          void chrome.scripting.executeScript({
             target: { tabId, frameIds: [selected.frameId] },
             func: (markerAttribute, markerValue) => {
               for (const candidate of document.querySelectorAll(`[${markerAttribute}]`)) {
@@ -368,7 +368,7 @@ export class RichTextToolbarProbe {
               }
             },
             args: [markerAttribute, markerValue],
-          });
+          }).catch(() => {});
         } catch {}
       }
     }

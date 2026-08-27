@@ -384,7 +384,7 @@ export class RichTextToolbarProbe {
           })()
         `;
         try {
-          await browser.tabs.executeScript(tabId, { frameId: selected.frameId, code: cleanupCode });
+          void browser.tabs.executeScript(tabId, { frameId: selected.frameId, code: cleanupCode }).catch(() => {});
         } catch {}
       }
     }
