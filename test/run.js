@@ -46563,6 +46563,17 @@ test('status-strip clicks preview compact history while verbose restores full to
 });
 
 test('all locales expose the activity-history controls and mode copy', () => {
+  const englishActivityValues = {
+    'sp.activity.communicating': 'Communicating...',
+    'sp.activity.thinking_more': 'Putting some more thought into it...',
+    'sp.activity.working_next': 'Working through the next step...',
+    'sp.activity.coordinating_next': 'Coordinating the next step...',
+    'sp.activity.checking_next': 'Checking what comes next...',
+    'sp.activity.preparing_next': 'Preparing the next action...',
+    'sp.activity.connecting_pieces': 'Connecting the pieces...',
+    'sp.activity.reviewing_progress': 'Reviewing progress...',
+    'sp.activity.toggle_history': 'Toggle activity history',
+  };
   const keys = [
     'sp.btn.verbose',
     'sp.slash.verbose',
@@ -46588,7 +46599,11 @@ test('all locales expose the activity-history controls and mode copy', () => {
       const locale = fs.readFileSync(path.join(localeDir, filename), 'utf8');
       for (const key of keys) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        assert.match(locale, new RegExp(`['"]${escapedKey}['"]:\\s*['"][^'"]+['"]`), `${label}/${filename}: missing ${key}`);
+        const valueMatch = locale.match(new RegExp(`['"]${escapedKey}['"]:\\s*(['"])(.*?)\\1`));
+        assert.ok(valueMatch, `${label}/${filename}: missing ${key}`);
+        if (filename !== 'en.js' && englishActivityValues[key]) {
+          assert.notEqual(valueMatch[2], englishActivityValues[key], `${label}/${filename}: ${key} must be localized`);
+        }
       }
     }
   }
