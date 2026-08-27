@@ -172,6 +172,15 @@ export default {
 
   'sp.activity.thinking': '考え中...',
   'sp.activity.thinking_step': '考え中（ステップ {step}）...',
+  'sp.activity.communicating': '通信中...',
+  'sp.activity.thinking_more': 'もう少し考えています...',
+  'sp.activity.working_next': '次のステップを進めています...',
+  'sp.activity.coordinating_next': '次のステップを調整しています...',
+  'sp.activity.checking_next': '次に行うことを確認しています...',
+  'sp.activity.preparing_next': '次の操作を準備しています...',
+  'sp.activity.connecting_pieces': '要素をつなぎ合わせています...',
+  'sp.activity.reviewing_progress': '進捗を確認しています...',
+  'sp.activity.toggle_history': 'アクティビティ履歴を表示または非表示',
   'sp.activity.continuing': '続行中...',
   'sp.activity.stopping': '停止中...',
 

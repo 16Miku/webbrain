@@ -172,6 +172,15 @@ export default {
 
   'sp.activity.thinking': 'أفكّر...',
   'sp.activity.thinking_step': 'أفكّر (الخطوة {step})...',
+  'sp.activity.communicating': 'جارٍ التواصل...',
+  'sp.activity.thinking_more': 'أفكّر في الأمر أكثر...',
+  'sp.activity.working_next': 'أعمل على الخطوة التالية...',
+  'sp.activity.coordinating_next': 'أنسّق الخطوة التالية...',
+  'sp.activity.checking_next': 'أتحقق مما سيأتي بعد ذلك...',
+  'sp.activity.preparing_next': 'أُحضّر الإجراء التالي...',
+  'sp.activity.connecting_pieces': 'أربط العناصر ببعضها...',
+  'sp.activity.reviewing_progress': 'أراجع التقدم...',
+  'sp.activity.toggle_history': 'إظهار سجل النشاط أو إخفاؤه',
   'sp.activity.continuing': 'أتابع...',
   'sp.activity.stopping': 'أُوقِف...',
 

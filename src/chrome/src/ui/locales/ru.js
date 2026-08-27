@@ -172,6 +172,15 @@ export default {
 
   'sp.activity.thinking': 'Думаю...',
   'sp.activity.thinking_step': 'Думаю (шаг {step})...',
+  'sp.activity.communicating': 'Общаюсь...',
+  'sp.activity.thinking_more': 'Обдумываю подробнее...',
+  'sp.activity.working_next': 'Работаю над следующим шагом...',
+  'sp.activity.coordinating_next': 'Координирую следующий шаг...',
+  'sp.activity.checking_next': 'Проверяю, что делать дальше...',
+  'sp.activity.preparing_next': 'Готовлю следующее действие...',
+  'sp.activity.connecting_pieces': 'Соединяю части...',
+  'sp.activity.reviewing_progress': 'Проверяю ход работы...',
+  'sp.activity.toggle_history': 'Показать или скрыть историю действий',
   'sp.activity.continuing': 'Продолжаю...',
   'sp.activity.stopping': 'Останавливаю...',
 

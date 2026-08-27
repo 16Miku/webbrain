@@ -1,6 +1,7 @@
 /**
  * WebBrain Side Panel — Chat UI logic.
- * Default: human-friendly compact output. Verbose mode: full tool debug.
+ * Default: one live label with click-to-preview compact history.
+ * Verbose mode: always-open tool calls with arguments and results.
  */
 
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations } from './i18n.js';
@@ -611,7 +612,9 @@ const providerPickerLabelById = new Map();
 let languagePickerTypeahead = '';
 let languagePickerTypeaheadTimer = null;
 const agentActivity = document.getElementById('agent-activity');
+const activityProgressToggle = document.getElementById('activity-progress-toggle');
 const activityText = document.getElementById('activity-text');
+const activityLiveStatus = document.getElementById('activity-live-status');
 const modeAskBtn = document.getElementById('btn-mode-ask');
 const modeActBtn = document.getElementById('btn-mode-act');
 const modeDevBtn = document.getElementById('btn-mode-dev');
@@ -1075,6 +1078,7 @@ const attachmentGenerationByTab = new Map();
 let isProcessing = false;
 let currentAssistantEl = null;
 let verboseMode = false;
+let compactProgressPreviewVisible = false;
 let agentMode = 'ask'; // 'ask' | 'act' | 'dev'
 let abortRequested = false;
 const awaitingPlanReviewTabs = new Set();
@@ -2403,6 +2407,7 @@ async function renderClearedConversationForTab(tabId, { allowCacheClearFailure =
   resetChatNavigation();
   renderedTabId = tabId;
   messagesEl.innerHTML = '';
+  syncProgressDisplayMode();
   currentAssistantEl = null;
   hideActivity();
   inputEl.value = '';
@@ -2463,30 +2468,74 @@ function schedulePersist() {
   if (tabId != null) scheduleHistoryPersist(tabId);
 }
 
+const ASSISTANT_RENDERABLE_ELEMENT_SELECTOR =
+  'img, svg, canvas, video, audio, iframe, input, textarea, select, button, hr, progress';
+const PROGRESS_CONTENT_SELECTOR = '.steps-container, .tool-call';
+
+function progressContentNodeIsVisible(node) {
+  if (!node.matches?.(PROGRESS_CONTENT_SELECTOR)) return true;
+  if (node.matches('.tool-call')) return verboseMode;
+  return verboseMode || compactProgressPreviewVisible;
+}
+
+function nodeHasAssistantRenderableContent(node) {
+  if (!node) return false;
+  if (node.nodeType === 3) return !!node.textContent?.trim();
+  if (node.nodeType !== 1) return false;
+  if (!progressContentNodeIsVisible(node)) return false;
+  if (node.matches?.(ASSISTANT_RENDERABLE_ELEMENT_SELECTOR)) return true;
+  for (const child of node.childNodes || []) {
+    if (nodeHasAssistantRenderableContent(child)) return true;
+  }
+  return false;
+}
+
 function assistantMessageHasRenderableContent(msgEl) {
   const contentEl = msgEl?.querySelector?.('.message-content');
   if (!contentEl) return false;
-  if (contentEl.textContent.trim()) return true;
-  return !!contentEl.querySelector(
-    'img, svg, canvas, video, audio, iframe, input, textarea, select, button, hr, progress',
+  for (const child of contentEl.childNodes || []) {
+    if (nodeHasAssistantRenderableContent(child)) return true;
+  }
+  return false;
+}
+
+function syncAssistantMessageElementVisibility(msgEl) {
+  msgEl?.classList?.toggle(
+    'assistant-awaiting-content',
+    !assistantMessageHasRenderableContent(msgEl),
   );
 }
 
 function syncAssistantMessageVisibility() {
   for (const msgEl of messagesEl.querySelectorAll('.message.assistant')) {
-    msgEl.classList.toggle(
-      'assistant-awaiting-content',
-      !assistantMessageHasRenderableContent(msgEl),
-    );
+    syncAssistantMessageElementVisibility(msgEl);
   }
+}
+
+function assistantMessageForMutationNode(node) {
+  const element = node?.nodeType === 1 ? node : node?.parentElement;
+  return element?.closest?.('.message.assistant') || null;
+}
+
+function syncAssistantMessageVisibilityForMutations(mutations) {
+  const affectedMessages = new Set();
+  for (const mutation of mutations || []) {
+    const targetMessage = assistantMessageForMutationNode(mutation.target);
+    if (targetMessage) affectedMessages.add(targetMessage);
+    for (const addedNode of mutation.addedNodes || []) {
+      const addedMessage = assistantMessageForMutationNode(addedNode);
+      if (addedMessage) affectedMessages.add(addedMessage);
+    }
+  }
+  affectedMessages.forEach(syncAssistantMessageElementVisibility);
 }
 
 // Observe the messages container so any DOM mutation (new message, streamed
 // delta, tool step update) both reveals populated assistant output and
 // eventually gets persisted. Attribute changes are not observed, so toggling
 // the visibility class here cannot recurse.
-const persistObserver = new MutationObserver(() => {
-  syncAssistantMessageVisibility();
+const persistObserver = new MutationObserver((mutations) => {
+  syncAssistantMessageVisibilityForMutations(mutations);
   schedulePersist();
 });
 
@@ -4360,6 +4409,7 @@ async function init() {
   // Load settings that affect the composer state.
   const stored = await chrome.storage.local.get(['verboseMode', 'alwaysAllowApiMutations']);
   verboseMode = stored.verboseMode || false;
+  syncProgressDisplayMode();
   alwaysAllowApiMutations = stored.alwaysAllowApiMutations === true;
   syncApiMutationsAllowedForCurrentTab();
 
@@ -4420,6 +4470,7 @@ async function init() {
       verboseMode = changes.verboseMode.newValue;
       if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
       refreshOpenMessageInfoRows();
+      syncProgressDisplayMode();
     }
     if (changes.alwaysAllowApiMutations) {
       alwaysAllowApiMutations = changes.alwaysAllowApiMutations.newValue === true;
@@ -4476,9 +4527,12 @@ if (verboseBtn) {
     verboseMode = !verboseMode;
     verboseBtn.classList.toggle('active', verboseMode);
     refreshOpenMessageInfoRows();
+    syncProgressDisplayMode();
     await chrome.storage.local.set({ verboseMode }).catch(() => {});
   });
 }
+
+activityProgressToggle?.addEventListener('click', toggleCompactProgressPreview);
 
 async function switchToTab(newTabId) {
   if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
@@ -4543,6 +4597,7 @@ async function switchToTab(newTabId) {
       rebindRestoredMessageControls();
     } else {
       messagesEl.innerHTML = '';
+      syncProgressDisplayMode();
       addMessage('system', t('sp.help_message'));
     }
     restoreInputDraftForTab(newTabId);
@@ -4586,6 +4641,7 @@ async function refreshVisibleSidePanelState() {
     rebindRestoredMessageControls();
   } else if (!html) {
     messagesEl.innerHTML = '';
+    syncProgressDisplayMode();
     addMessage('system', t('sp.help_message'));
   }
   await restoreActiveRunState(tabId);
@@ -5023,7 +5079,7 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
     setTabProcessing(numericTabId, true);
     setTabAbortRequested(numericTabId, false);
     hideRecommendedActions();
-    showActivity(t('sp.activity.thinking'));
+    startThinkingActivity();
     syncSendButtonState();
   } else {
     setPlanReviewAwaiting(numericTabId, false);
@@ -5253,6 +5309,31 @@ function rebindCopyButtons() {
   });
 }
 
+function progressLogIsVisible() {
+  return verboseMode || compactProgressPreviewVisible;
+}
+
+function syncProgressDisplayMode() {
+  if (verboseMode) compactProgressPreviewVisible = false;
+  messagesEl?.classList.toggle('progress-verbose', verboseMode);
+  messagesEl?.classList.toggle('progress-preview', !verboseMode && compactProgressPreviewVisible);
+  messagesEl?.classList.remove('progress-expanded');
+  activityProgressToggle?.setAttribute('aria-expanded', String(!verboseMode && compactProgressPreviewVisible));
+  activityProgressToggle?.setAttribute('aria-disabled', String(verboseMode));
+  agentActivity?.classList.toggle('progress-toggle-enabled', !verboseMode);
+  syncAssistantMessageVisibility();
+}
+
+function setCompactProgressPreviewVisible(visible) {
+  compactProgressPreviewVisible = !verboseMode && visible === true;
+  syncProgressDisplayMode();
+}
+
+function toggleCompactProgressPreview() {
+  if (verboseMode) return;
+  setCompactProgressPreviewVisible(!compactProgressPreviewVisible);
+}
+
 function bindCompactStepDetailsToggle(toggle) {
   if (!toggle || toggle.dataset.bound) return;
   toggle.dataset.bound = 'true';
@@ -5273,6 +5354,8 @@ function bindCompactStepDetailsToggle(toggle) {
 
 function rebindCompactStepDetailsToggles() {
   messagesEl.querySelectorAll('.step-details-toggle').forEach(bindCompactStepDetailsToggle);
+  messagesEl.querySelectorAll('.step-expand-all').forEach(button => button.remove());
+  messagesEl.querySelectorAll('.progress-expanded-marker').forEach(marker => marker.remove());
 }
 
 function rebindContinueButtons() {
@@ -6254,7 +6337,7 @@ function reattachPlanReviewActiveRun(card) {
   setTabAbortRequested(tabId, false);
   sendBtn.disabled = true;
   hideRecommendedActions();
-  showActivity(t('sp.activity.thinking'));
+  startThinkingActivity();
   return assistantEl;
 }
 
@@ -6613,6 +6696,7 @@ function rebindRestoredMessageControls() {
   document.querySelectorAll('form.workflow-parameter-form').forEach(bindSavedWorkflowParameterForm);
   rebindSubscribeButtons();
   rebindCostAllowanceButtons();
+  syncProgressDisplayMode();
 }
 
 function getProviderPickerOptions() {
@@ -7951,6 +8035,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     verboseMode = !verboseMode;
     if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
     refreshOpenMessageInfoRows();
+    syncProgressDisplayMode();
     await chrome.storage.local.set({ verboseMode }).catch(() => {});
     if (currentTabId !== tabId) return '';
     showComposerToast(systemHtml(verboseMode
@@ -8646,7 +8731,7 @@ async function sendMessage(extraChatParams = {}) {
       attachmentState: attachmentsForSend.length ? 'sending' : '',
       ...(sourceGrounding ? { sourceGrounding } : {}),
     });
-    showActivity(t('sp.activity.thinking'));
+    startThinkingActivity();
     assistantEl = addMessage('assistant', '');
     assistantEl.dataset.runRequestId = requestId;
     assistantEl.dataset.runMode = modeForSend;
@@ -9364,17 +9449,11 @@ function handleAgentUpdateMessage(msg) {
   switch (type) {
     case 'thinking':
       if (data?.note) {
-        // Keep the step indicator alongside the note when there's real
-        // progress (step > 0) so a slow call still shows movement; the planner
-        // emits step 0, so it shows just "Planning…". (#4)
-        const note = String(data.note);
-        showActivity(
-          data.step
-            ? `${note} · ${t('sp.activity.thinking_step', { step: data.step })}`
-            : note,
-        );
+        // Planner notes carry more information than a generic wait state, so
+        // keep them intact instead of immediately replacing them with a step.
+        showActivity(String(data.note));
       } else {
-        showActivity(t('sp.activity.thinking_step', { step: data.step }));
+        startThinkingActivity();
       }
       break;
 
@@ -9382,12 +9461,14 @@ function handleAgentUpdateMessage(msg) {
       // Empty content usually means "nothing new" — keep prior prose. Exception:
       // replace:true with empty content clears a rejected streamed terminal
       // (e.g. plan-only recovery) so the bubble is free for the real summary.
+      if (data?.content) showActivity(t('tool.done'));
       if (currentAssistantEl && (data.content || data.replace === true)) {
         renderAssistantTextUpdate(currentAssistantEl, data.content || '', { replace: data.replace === true });
       }
       break;
 
     case 'text_delta':
+      if (data?.content) showActivity(t('tool.done'));
       if (currentAssistantEl) {
         const textEl = currentAssistantEl.querySelector('.message-text');
         if (textEl && textEl.dataset.suppressToolCallStream !== 'true') {
@@ -9420,11 +9501,8 @@ function handleAgentUpdateMessage(msg) {
       showInspectionBanner(data.name);
       if (currentAssistantEl) {
         clearTransientAssistantTextForToolCall();
-        if (verboseMode) {
-          appendVerboseToolCall(data.name, data.args);
-        } else {
-          appendCompactStep(data.name, data.args);
-        }
+        if (verboseMode) appendVerboseToolCall(data.name, data.args);
+        else appendCompactStep(data.name, data.args);
       }
       scrollToBottom();
       break;
@@ -9439,11 +9517,8 @@ function handleAgentUpdateMessage(msg) {
 
     case 'tool_result':
       if (currentAssistantEl) {
-        if (verboseMode) {
-          appendVerboseToolResult(data.name, data.result);
-        } else {
-          markLastStepDone(data.name, data.result);
-        }
+        if (verboseMode) appendVerboseToolResult(data.name, data.result);
+        else markLastStepDone(data.name, data.result);
       }
       scrollToBottom();
       break;
@@ -9532,6 +9607,7 @@ function handleAgentUpdateMessage(msg) {
       break;
 
     case 'run_complete':
+      showActivity(t('tool.done'));
       setMessageCreatedAt(eventAssistantEl || currentAssistantEl, data?.endedAt, { replace: true });
       if (currentAssistantEl) finalizeSteps(currentAssistantEl);
       reconcileRunMessageAttachmentState(
@@ -10350,7 +10426,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
     hideRecommendedActions();
-    showActivity(t('sp.activity.thinking'));
+    startThinkingActivity();
   }
   const clarifyPayload = { tabId, clarifyId, answer, source };
   // Timeout / Instant auto-selects are not user-authored answers — skip user-memory.
@@ -10378,7 +10454,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
 
 
 // ==========================================================================
-// COMPACT MODE (default) — shows tool steps as a tidy activity log
+// ACTIVITY HISTORY — retained in every mode, revealed by verbose mode
 // ==========================================================================
 
 function placeAnsweredClarifyCardInTimeline(card) {
@@ -10457,6 +10533,32 @@ function appendCompactStep(toolName, args) {
     if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
   }
 
+  if (toolName === 'done') {
+    const rejectedSteps = currentAssistantEl?.querySelectorAll?.(
+      '.step-item[data-tool="done"][data-rejected-completion="true"]',
+    ) || [];
+    const priorRejected = rejectedSteps[rejectedSteps.length - 1];
+    if (priorRejected) {
+      priorRejected.classList.remove('done');
+      priorRejected.classList.add('active');
+      priorRejected.dataset.rejectedCompletion = 'pending';
+      const priorIcon = priorRejected.querySelector('.step-icon');
+      if (priorIcon) {
+        priorIcon.className = 'step-icon spinning';
+        priorIcon.textContent = '';
+      }
+      const priorLabel = priorRejected.querySelector('.step-label');
+      if (priorLabel) priorLabel.textContent = friendlyToolLabel(toolName, args);
+      const priorDetails = priorRejected.nextElementSibling;
+      if (priorDetails?.classList?.contains('step-details')) {
+        const priorArgs = priorDetails.querySelector('.detail-args');
+        if (priorArgs) priorArgs.textContent = JSON.stringify(args, null, 2);
+        priorDetails.querySelectorAll('.detail-result').forEach((resultEl) => resultEl.remove());
+      }
+      return;
+    }
+  }
+
   const step = document.createElement('div');
   step.className = 'step-item active';
   step.dataset.tool = toolName;
@@ -10511,11 +10613,27 @@ function markLastStepDone(toolName, result) {
   if (active) {
     active.classList.remove('active');
     active.classList.add('done');
+    const rejectedCompletion = toolName === 'done' && result?.blockedDone === true;
+    if (toolName === 'done') {
+      active.dataset.rejectedCompletion = rejectedCompletion ? 'true' : 'false';
+    }
+    const failed = rejectedCompletion
+      || !!result?.error
+      || result?.success === false
+      || result?.outcome === 'failed';
     const icon = active.querySelector('.step-icon');
     if (icon) {
-      const success = !result?.error;
-      icon.className = success ? 'step-icon check' : 'step-icon fail';
-      icon.textContent = success ? '\u2713' : '\u2717';
+      icon.className = failed ? 'step-icon fail' : 'step-icon check';
+      icon.textContent = failed ? '\u2717' : '\u2713';
+    }
+    if (toolName === 'done') {
+      const label = active.querySelector('.step-label');
+      if (label) {
+        const key = rejectedCompletion
+          ? 'sp.tool.done.rejected'
+          : (failed ? 'sp.tool.done.failed' : 'sp.tool.done.completed');
+        label.textContent = String(t(key)).trim();
+      }
     }
 
     // Append result to the details panel
@@ -10524,7 +10642,9 @@ function markLastStepDone(toolName, result) {
       const resultDiv = document.createElement('div');
       resultDiv.className = 'detail-result';
       resultDiv.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.result_label'))}</div>${escapeHtml(truncate(JSON.stringify(result), 300))}`;
-      details.appendChild(resultDiv);
+      const expandAll = details.querySelector?.('.step-expand-all') || null;
+      if (expandAll && typeof details.insertBefore === 'function') details.insertBefore(resultDiv, expandAll);
+      else details.appendChild(resultDiv);
     }
   }
 }
@@ -10548,6 +10668,83 @@ function finalizeSteps(assistantEl = currentAssistantEl) {
     const icon = step.querySelector('.step-icon');
     if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
   });
+}
+
+function appendVerboseToolCall(name, args) {
+  if (!currentAssistantEl) return;
+  const content = currentAssistantEl.querySelector('.message-content');
+  if (!content) return;
+  content.querySelectorAll('.tool-call[data-awaiting-result="true"]').forEach(tool => {
+    tool.dataset.awaitingResult = 'false';
+  });
+
+  if (name === 'done') {
+    const rejectedTools = content.querySelectorAll(
+      '.tool-call[data-tool-name="done"][data-rejected-completion="true"]',
+    );
+    const priorRejected = rejectedTools[rejectedTools.length - 1];
+    if (priorRejected) {
+      priorRejected.querySelector('.tool-call-body').textContent = JSON.stringify(args, null, 2);
+      priorRejected.querySelector('.tool-result')?.remove();
+      const priorLabel = priorRejected.querySelector('.tool-call-name');
+      if (priorLabel) priorLabel.textContent = ` ${name}`;
+      priorRejected.dataset.rejectedCompletion = 'pending';
+      priorRejected.dataset.awaitingResult = 'true';
+      return;
+    }
+  }
+
+  const el = document.createElement('div');
+  el.className = 'tool-call';
+  el.dataset.toolName = name || '';
+  el.dataset.awaitingResult = 'true';
+
+  const header = document.createElement('div');
+  header.className = 'tool-call-header';
+  const icon = document.createElement('span');
+  icon.className = 'icon';
+  icon.textContent = '\u26A1';
+  const nameLabel = document.createElement('span');
+  nameLabel.className = 'tool-call-name';
+  nameLabel.textContent = ` ${name || ''}`;
+  header.append(icon, nameLabel);
+
+  const body = document.createElement('div');
+  body.className = 'tool-call-body';
+  body.textContent = JSON.stringify(args, null, 2);
+
+  el.append(header, body);
+  const textEl = content.querySelector('.message-text');
+  content.insertBefore(el, textEl);
+}
+
+function appendVerboseToolResult(name, result) {
+  if (!currentAssistantEl) return;
+  const content = currentAssistantEl.querySelector('.message-content');
+  const awaitingTools = content?.querySelectorAll('.tool-call[data-awaiting-result="true"]') || [];
+  const lastTool = Array.from(awaitingTools)
+    .reverse()
+    .find(tool => !name || tool.dataset.toolName === name);
+  if (!lastTool) return;
+
+  const resultEl = document.createElement('div');
+  resultEl.className = 'tool-result';
+  resultEl.textContent = truncate(JSON.stringify(result), 200);
+  lastTool.appendChild(resultEl);
+
+  if (name === 'done') {
+    const rejected = result?.blockedDone === true;
+    const failed = rejected
+      || !!result?.error
+      || result?.success === false
+      || result?.outcome === 'failed';
+    lastTool.dataset.rejectedCompletion = rejected ? 'true' : 'false';
+    const nameLabel = lastTool.querySelector('.tool-call-name');
+    if (nameLabel) nameLabel.textContent = rejected
+      ? t('sp.tool.done.rejected')
+      : (failed ? t('sp.tool.done.failed') : t('sp.tool.done.completed'));
+  }
+  lastTool.dataset.awaitingResult = 'false';
 }
 
 function looksLikeRawToolCallText(text) {
@@ -10702,80 +10899,6 @@ function clearTransientAssistantTextForToolCall() {
   textEl.textContent = '';
   clearStreamedAssistantText(textEl);
   delete textEl.dataset.suppressToolCallStream;
-}
-
-
-// ==========================================================================
-// VERBOSE MODE (opt-in) — full tool call + result blocks
-// ==========================================================================
-
-function appendVerboseToolCall(name, args) {
-  if (!currentAssistantEl) return;
-  const content = currentAssistantEl.querySelector('.message-content');
-  content.querySelectorAll('.tool-call[data-awaiting-result="true"]').forEach(tool => {
-    tool.dataset.awaitingResult = 'false';
-  });
-
-  if (name === 'done') {
-    const priorRejected = content.querySelector('.tool-call[data-tool-name="done"][data-rejected-completion="true"]');
-    if (priorRejected) {
-      priorRejected.querySelector('.tool-call-body').textContent = JSON.stringify(args, null, 2);
-      priorRejected.querySelector('.tool-result')?.remove();
-      const priorLabel = priorRejected.querySelector('.tool-call-name');
-      if (priorLabel) priorLabel.textContent = t('sp.tool.done.completed');
-      priorRejected.dataset.rejectedCompletion = 'pending';
-      priorRejected.dataset.awaitingResult = 'true';
-      return;
-    }
-  }
-
-  const el = document.createElement('div');
-  el.className = 'tool-call';
-  el.dataset.toolName = name || '';
-  el.dataset.awaitingResult = 'true';
-
-  const header = document.createElement('div');
-  header.className = 'tool-call-header';
-  const icon = document.createElement('span');
-  icon.className = 'icon';
-  icon.textContent = '\u26A1';
-  const nameLabel = document.createElement('span');
-  nameLabel.className = 'tool-call-name';
-  nameLabel.textContent = ` ${name || ''}`;
-  header.append(icon, nameLabel);
-
-  const body = document.createElement('div');
-  body.className = 'tool-call-body';
-  body.textContent = JSON.stringify(args, null, 2);
-
-  el.appendChild(header);
-  el.appendChild(body);
-
-  const textEl = content.querySelector('.message-text');
-  content.insertBefore(el, textEl);
-}
-
-function appendVerboseToolResult(name, result) {
-  if (!currentAssistantEl) return;
-  const content = currentAssistantEl.querySelector('.message-content');
-  const lastTool = content.querySelector('.tool-call[data-awaiting-result="true"]');
-  if (lastTool) {
-    const resultEl = document.createElement('div');
-    resultEl.className = 'tool-result';
-    resultEl.textContent = truncate(JSON.stringify(result), 200);
-    lastTool.appendChild(resultEl);
-    if (name === 'done') {
-      const rejected = result?.blockedDone === true;
-      const failed = result?.outcome === 'failed'
-        || (result?.success === false && (result?.done === true || result?.planOnlyTerminal === true));
-      lastTool.dataset.rejectedCompletion = rejected ? 'true' : 'false';
-      const nameLabel = lastTool.querySelector('.tool-call-name');
-      if (nameLabel) nameLabel.textContent = rejected
-        ? t('sp.tool.done.rejected')
-        : (failed ? t('sp.tool.done.failed') : t('sp.tool.done.completed'));
-    }
-    lastTool.dataset.awaitingResult = 'false';
-  }
 }
 
 
@@ -11813,12 +11936,69 @@ function hideInspectionBanner() {
   chrome.action?.setBadgeText?.({ text: '' }).catch(() => {});
 }
 
-function showActivity(text) {
+const THINKING_ACTIVITY_KEYS = [
+  'sp.activity.communicating',
+  'sp.activity.thinking_more',
+  'sp.activity.working_next',
+  'sp.activity.coordinating_next',
+  'sp.activity.checking_next',
+  'sp.activity.preparing_next',
+  'sp.activity.connecting_pieces',
+  'sp.activity.reviewing_progress',
+];
+const THINKING_ACTIVITY_ROTATION_MS = 3600;
+let thinkingActivityTimer = null;
+let thinkingActivityIndex = 0;
+let activityDisplayMode = 'idle';
+
+function clearThinkingActivityTimers() {
+  if (thinkingActivityTimer) clearTimeout(thinkingActivityTimer);
+  thinkingActivityTimer = null;
+}
+
+function setActivityText(text, { announce = false } = {}) {
+  const nextText = String(text || '');
+  if (activityText.textContent !== nextText) activityText.textContent = nextText;
+  if (announce && activityLiveStatus?.textContent !== nextText) {
+    activityLiveStatus.textContent = nextText;
+  }
+}
+
+function rotateThinkingActivity() {
+  if (activityDisplayMode !== 'thinking') return;
+  setActivityText(t(THINKING_ACTIVITY_KEYS[thinkingActivityIndex % THINKING_ACTIVITY_KEYS.length]), {
+    announce: thinkingActivityIndex === 0,
+  });
+  thinkingActivityIndex += 1;
+  thinkingActivityTimer = setTimeout(rotateThinkingActivity, THINKING_ACTIVITY_ROTATION_MS);
+}
+
+function beginThinkingActivity() {
+  activityDisplayMode = 'thinking';
+  thinkingActivityIndex = 0;
   agentActivity.classList.remove('hidden');
-  activityText.textContent = text;
+  rotateThinkingActivity();
+}
+
+function startThinkingActivity() {
+  // Generic thinking copy is only an initial placeholder. Once a concrete
+  // status arrives, later generic updates must not replace it.
+  if (activityDisplayMode !== 'idle') return;
+  beginThinkingActivity();
+}
+
+function showActivity(text) {
+  clearThinkingActivityTimers();
+  activityDisplayMode = 'concrete';
+  agentActivity.classList.remove('hidden');
+  setActivityText(text, { announce: true });
 }
 
 function hideActivity() {
+  clearThinkingActivityTimers();
+  activityDisplayMode = 'idle';
+  if (activityLiveStatus) activityLiveStatus.textContent = '';
+  if (compactProgressPreviewVisible) setCompactProgressPreviewVisible(false);
   agentActivity.classList.add('hidden');
   hideInspectionBanner();
 }

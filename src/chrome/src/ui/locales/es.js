@@ -172,6 +172,15 @@ export default {
 
   'sp.activity.thinking': 'Pensando...',
   'sp.activity.thinking_step': 'Pensando (paso {step})...',
+  'sp.activity.communicating': 'Comunicando...',
+  'sp.activity.thinking_more': 'Pensando un poco más...',
+  'sp.activity.working_next': 'Trabajando en el siguiente paso...',
+  'sp.activity.coordinating_next': 'Coordinando el siguiente paso...',
+  'sp.activity.checking_next': 'Comprobando qué sigue...',
+  'sp.activity.preparing_next': 'Preparando la siguiente acción...',
+  'sp.activity.connecting_pieces': 'Uniendo las piezas...',
+  'sp.activity.reviewing_progress': 'Revisando el progreso...',
+  'sp.activity.toggle_history': 'Mostrar u ocultar el historial de actividad',
   'sp.activity.continuing': 'Continuando...',
   'sp.activity.stopping': 'Deteniendo...',
 

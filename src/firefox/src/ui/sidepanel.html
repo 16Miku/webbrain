@@ -293,8 +293,11 @@
 
     <!-- Agent Activity Indicator -->
     <div id="agent-activity" class="hidden">
-      <div class="activity-spinner"></div>
-      <span id="activity-text" data-i18n="sp.activity.thinking"></span>
+      <button id="activity-progress-toggle" type="button" aria-controls="messages" aria-expanded="false" aria-label="Toggle activity history" data-i18n-aria-label="sp.activity.toggle_history">
+        <span class="activity-spinner" aria-hidden="true"></span>
+        <span id="activity-text" aria-hidden="true" data-i18n="sp.activity.thinking"></span>
+      </button>
+      <span id="activity-live-status" role="status" aria-live="polite" aria-atomic="true"></span>
       <button id="btn-stop" data-i18n-title="sp.btn.stop.title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
           <rect x="4" y="4" width="16" height="16" rx="2"/>

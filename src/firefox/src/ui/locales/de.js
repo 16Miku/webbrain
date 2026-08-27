@@ -1,4 +1,4 @@
-﻿// German (de).
+// German (de).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
@@ -221,6 +221,15 @@ export default {
   'sp.review.close': 'Schließen',
   'sp.activity.thinking': 'Denke nach...',
   'sp.activity.thinking_step': 'Denke nach (Schritt {step})...',
+  'sp.activity.communicating': 'Kommuniziere...',
+  'sp.activity.thinking_more': 'Denke noch etwas darüber nach...',
+  'sp.activity.working_next': 'Bearbeite den nächsten Schritt...',
+  'sp.activity.coordinating_next': 'Koordiniere den nächsten Schritt...',
+  'sp.activity.checking_next': 'Prüfe, was als Nächstes kommt...',
+  'sp.activity.preparing_next': 'Bereite die nächste Aktion vor...',
+  'sp.activity.connecting_pieces': 'Führe die Teile zusammen...',
+  'sp.activity.reviewing_progress': 'Überprüfe den Fortschritt...',
+  'sp.activity.toggle_history': 'Aktivitätsverlauf ein- oder ausblenden',
   'sp.activity.continuing': 'Fortsetzen...',
   'sp.activity.stopping': 'Stoppe...',
   'sp.context_compacted': 'Kontext automatisch kompaktiert',

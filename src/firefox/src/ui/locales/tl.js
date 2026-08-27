@@ -172,6 +172,15 @@ export default {
 
   'sp.activity.thinking': 'Iniisip...',
   'sp.activity.thinking_step': 'Iniisip (hakbang {step})...',
+  'sp.activity.communicating': 'Nakikipag-ugnayan...',
+  'sp.activity.thinking_more': 'Pinag-iisipan pa nang kaunti...',
+  'sp.activity.working_next': 'Ginagawa ang susunod na hakbang...',
+  'sp.activity.coordinating_next': 'Inaayos ang susunod na hakbang...',
+  'sp.activity.checking_next': 'Tinitingnan kung ano ang susunod...',
+  'sp.activity.preparing_next': 'Inihahanda ang susunod na aksyon...',
+  'sp.activity.connecting_pieces': 'Pinagdurugtong ang mga detalye...',
+  'sp.activity.reviewing_progress': 'Sinusuri ang progreso...',
+  'sp.activity.toggle_history': 'Ipakita o itago ang kasaysayan ng aktibidad',
   'sp.activity.continuing': 'Ipinagpapatuloy...',
   'sp.activity.stopping': 'Tumitigil...',
 

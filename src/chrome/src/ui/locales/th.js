@@ -172,6 +172,15 @@ export default {
 
   'sp.activity.thinking': 'กำลังคิด...',
   'sp.activity.thinking_step': 'กำลังคิด (ขั้นที่ {step})...',
+  'sp.activity.communicating': 'กำลังสื่อสาร...',
+  'sp.activity.thinking_more': 'กำลังคิดเพิ่มเติม...',
+  'sp.activity.working_next': 'กำลังดำเนินการขั้นตอนถัดไป...',
+  'sp.activity.coordinating_next': 'กำลังประสานงานขั้นตอนถัดไป...',
+  'sp.activity.checking_next': 'กำลังตรวจสอบสิ่งที่จะทำต่อไป...',
+  'sp.activity.preparing_next': 'กำลังเตรียมการดำเนินการถัดไป...',
+  'sp.activity.connecting_pieces': 'กำลังเชื่อมโยงข้อมูล...',
+  'sp.activity.reviewing_progress': 'กำลังตรวจสอบความคืบหน้า...',
+  'sp.activity.toggle_history': 'แสดงหรือซ่อนประวัติกิจกรรม',
   'sp.activity.continuing': 'กำลังดำเนินต่อ...',
   'sp.activity.stopping': 'กำลังหยุด...',
 

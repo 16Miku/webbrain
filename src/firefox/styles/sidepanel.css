@@ -1898,8 +1898,16 @@ body {
 
 
 /* ==========================================================================
-   COMPACT TOOL STEPS (default mode) — human-friendly activity trail
+   COMPACT ACTIVITY HISTORY — painted when the normal-mode status is clicked
    ========================================================================== */
+
+#messages:not(.progress-verbose):not(.progress-preview) .steps-container {
+  display: none;
+}
+
+#messages:not(.progress-verbose) .tool-call {
+  display: none;
+}
 
 .steps-container {
   display: flex;
@@ -1969,17 +1977,24 @@ body {
   font-size: 9px;
   padding: 2px 4px;
   border-radius: 3px;
-  opacity: 0;
+  opacity: 0.72;
   transition: opacity 0.2s;
 }
 
-.step-item:hover .step-details-toggle {
+.step-item:hover .step-details-toggle,
+.step-details-toggle:focus-visible {
   opacity: 1;
 }
 
-.step-details-toggle:hover {
+.step-details-toggle:hover,
+.step-details-toggle:focus-visible {
   background: var(--accent-dim);
   color: var(--text-secondary);
+}
+
+.step-details-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .step-details {
@@ -2016,7 +2031,6 @@ body {
   padding-top: 4px;
   border-top: 1px solid var(--border);
 }
-
 
 /* ==========================================================================
    VERBOSE TOOL CALLS (opt-in via settings) — full debug output
@@ -2080,13 +2094,38 @@ body {
   padding: 8px 14px;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
-  font-size: 11px;
   color: var(--text-secondary);
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 #agent-activity.hidden {
   display: none;
+}
+
+#activity-progress-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+#agent-activity.progress-toggle-enabled #activity-progress-toggle {
+  cursor: pointer;
+}
+
+#activity-progress-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
 }
 
 #btn-stop {
@@ -2114,6 +2153,50 @@ body {
   flex-shrink: 0;
 }
 
+#activity-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#activity-live-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  #activity-text {
+    background: linear-gradient(
+      102deg,
+      var(--text-secondary) 0%,
+      var(--text-secondary) 37%,
+      var(--text-primary) 45%,
+      var(--accent) 50%,
+      var(--text-primary) 55%,
+      var(--text-secondary) 63%,
+      var(--text-secondary) 100%
+    );
+    background-size: 260% 100%;
+    background-position: 100% 0;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: activity-text-sweep 1.9s ease-in-out infinite;
+  }
+}
+
 .activity-spinner {
   width: 14px;
   height: 14px;
@@ -2125,6 +2208,19 @@ body {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes activity-text-sweep {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #activity-text {
+    animation: none;
+    background: none;
+    color: var(--text-primary);
+  }
 }
 
 /* ==========================================================================
