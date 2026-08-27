@@ -444,6 +444,12 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
   }
 
   if (isCompletionObservationTool(name, args, result)) {
+    if (
+      current.lastAction?.downloadAction === true
+      && !['list_downloads', 'read_downloaded_file'].includes(name)
+    ) {
+      return next;
+    }
     if (current.lastAction?.name === 'new_tab') {
       const scopedBackgroundRead = ['fetch_url', 'research_url'].includes(name)
         && !!current.lastAction.backgroundTargetFingerprint

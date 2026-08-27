@@ -22433,6 +22433,13 @@ test('completion invariant state machine enforces post-action observation with C
     assert.equal(downloadState.verificationDebt, true, `${label}: current-tab auto-screenshot verified a download action`);
     downloadState = invariant.recordCompletionToolResult(
       downloadState,
+      'read_page',
+      {},
+      { success: true, content: 'The source page is still visible.' },
+    );
+    assert.equal(downloadState.verificationDebt, true, `${label}: ordinary page read verified a download action`);
+    downloadState = invariant.recordCompletionToolResult(
+      downloadState,
       'list_downloads',
       {},
       { success: true, downloads: [{ id: 1, state: 'complete' }] },
@@ -22453,6 +22460,13 @@ test('completion invariant state machine enforces post-action observation with C
       { success: true, method: 'vision_describe', description: 'The original page is still visible.' },
     );
     assert.equal(skillDownloadState.verificationDebt, true, `${label}: current-tab auto-screenshot verified a skill download`);
+    skillDownloadState = invariant.recordCompletionToolResult(
+      skillDownloadState,
+      'read_page',
+      {},
+      { success: true, content: 'The source page is still visible.' },
+    );
+    assert.equal(skillDownloadState.verificationDebt, true, `${label}: ordinary page read verified a skill download`);
 
     let iframeFormState = invariant.recordCompletionToolResult(
       invariant.createCompletionInvariantState(`${label}-iframe-form`),
@@ -22605,6 +22619,10 @@ test('completion recovery keeps skill downloads on download-specific observation
       { success: true, completedCount: 1 },
     );
     agent.completionInvariants.set(tabId, state);
+    const compactPolicy = agent._completionRecoveryPolicy(tabId, [
+      { function: { name: 'read_page' } },
+    ], { verification: true });
+    assert.equal(compactPolicy, null, `${label}: download recovery fell back to a source-page observation`);
     const policy = agent._completionRecoveryPolicy(tabId, [
       { function: { name: 'read_page' } },
       { function: { name: 'list_downloads' } },
@@ -75128,6 +75146,7 @@ test('non-stream and stream runs recover plain finals through forced verificatio
         function: { name: 'read_page', arguments: '{}' },
       }],
     },
+    { content: null, toolCalls: [] },
     {
       content: null,
       toolCalls: [{
@@ -75214,7 +75233,7 @@ test('non-stream and stream runs recover plain finals through forced verificatio
       const final = await run(tabId, 'perform the action', (type, data) => updates.push({ type, data }), 'act');
 
       assert.equal(final, 'Verified completion.', `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: verified done did not finish`);
-      assert.equal(provider.calls, 4, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: deterministic completion recovery used extra turns`);
+      assert.equal(provider.calls, 5, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: deterministic completion recovery used the wrong number of turns`);
       assert.equal(executedDone, 1, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: forced done did not execute exactly once`);
       assert.equal(provider.requests[2]?.toolChoice, 'required', `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: verification turn did not require a tool`);
       assert.equal(
@@ -75235,7 +75254,17 @@ test('non-stream and stream runs recover plain finals through forced verificatio
       assert.deepEqual(
         provider.requests[3]?.tools?.map(tool => tool?.function?.name),
         ['done'],
-        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: terminal turn exposed non-done tools`,
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: first terminal turn exposed non-done tools`,
+      );
+      assert.deepEqual(
+        provider.requests[4]?.toolChoice,
+        { type: 'function', function: { name: 'done' } },
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: empty terminal response lost the forced done choice`,
+      );
+      assert.deepEqual(
+        provider.requests[4]?.tools?.map(tool => tool?.function?.name),
+        ['done'],
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: empty terminal response reopened action tools`,
       );
       assert.ok(
         updates.some(update => update.type === 'warning' && /completion invariant/i.test(update.data?.message || '')),
