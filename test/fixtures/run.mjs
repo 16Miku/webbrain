@@ -1196,11 +1196,11 @@ for (const [label, sourcePath, manualOpen] of [
     if (!state.selectionRect || rect.bottom > state.selectionRect.top) {
       throw new Error(`shortcut should prefer the top of the selected text: ${JSON.stringify(state)}`);
     }
-    if (state.shortcutLabel !== 'Add to chat'
+    if (state.shortcutLabel !== 'Ask WebBrain about this'
         || state.shortcutBackground !== 'rgb(255, 255, 255)'
-        || state.shortcutColor !== 'rgb(23, 23, 34)'
+        || state.shortcutColor !== 'rgb(108, 99, 255)'
         || state.shortcutBoxShadow === 'none') {
-      throw new Error(`shortcut should use the neutral Add to chat treatment: ${JSON.stringify(state)}`);
+      throw new Error(`shortcut should retain its purple selected-text treatment: ${JSON.stringify(state)}`);
     }
     await page.mouse.click(rect.left + rect.width / 2, rect.top + rect.height / 2);
     let popupState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());

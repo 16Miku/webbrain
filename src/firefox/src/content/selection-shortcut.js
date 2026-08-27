@@ -25,7 +25,7 @@
     'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de',
   ]);
   const LOCALIZATION_KEYS = Object.freeze([
-    'askSelection', 'openChat', 'summarize', 'explain', 'quiz',
+    'askSelection', 'askHighlightedText', 'openChat', 'summarize', 'explain', 'quiz',
     'proofread', 'humanize', 'translate', 'translateTo', 'askAbout',
     'askQuestion', 'sendQuestion', 'includePageContext', 'hideShortcut', 'sentManual', 'sendFailed',
   ]);
@@ -114,9 +114,9 @@
     const strings = localization.strings;
 host.lang = localization.locale;
     host.dir = localization.dir;
-    shortcut.setAttribute('aria-label', strings.askSelection);
-    shortcut.title = strings.askSelection;
-    popup.setAttribute('aria-label', strings.askSelection);
+    shortcut.setAttribute('aria-label', strings.askHighlightedText);
+    shortcut.title = strings.askHighlightedText;
+    popup.setAttribute('aria-label', strings.askHighlightedText);
     for (const action of ['summarize', 'explain', 'quiz', 'proofread', 'humanize', 'translate']) {
       const label = shadow.querySelector(`[data-action="${action}"] .action-label`);
       if (label) label.textContent = strings[action];
@@ -194,12 +194,12 @@ host.lang = localization.locale;
         }
         .shortcut {
           position:fixed; width:${BUTTON_SIZE}px; height:${BUTTON_SIZE}px; display:grid;
-          place-items:center; padding:0; border:1px solid rgba(23,23,34,.14);
-          border-radius:14px; background:#fff; color:#171722;
-          box-shadow:0 9px 20px rgba(23,23,34,.16),0 2px 5px rgba(23,23,34,.1);
+          place-items:center; padding:0; border:1px solid rgba(108,99,255,.34);
+          border-radius:14px; background:var(--bg); color:var(--accent);
+          box-shadow:0 10px 26px rgba(35,30,95,.22),0 2px 7px rgba(35,30,95,.12);
           cursor:pointer; pointer-events:auto; transition:transform 130ms ease,box-shadow 130ms ease;
         }
-        .shortcut:hover { transform:translateY(-1px) scale(1.03); box-shadow:0 12px 25px rgba(23,23,34,.2),0 3px 7px rgba(23,23,34,.12); }
+        .shortcut:hover { transform:translateY(-1px) scale(1.03); box-shadow:0 13px 30px rgba(35,30,95,.27),0 3px 8px rgba(35,30,95,.14); }
         .shortcut-icon {
           display:block; font:700 25px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
           transform:translateY(-1px);
@@ -256,8 +256,7 @@ host.lang = localization.locale;
           width:auto; margin-left:auto; padding:5px 8px;
           color:var(--muted); font-size:12px; line-height:1.25;
         }
-        .shortcut:focus-visible { outline:3px solid rgba(23,23,34,.24); outline-offset:2px; }
-        .action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible,.context-option input:focus-visible {
+        .shortcut:focus-visible,.action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible,.context-option input:focus-visible {
           outline:3px solid rgba(108,99,255,.34); outline-offset:2px;
         }
         .toast {
@@ -276,10 +275,10 @@ host.lang = localization.locale;
         @media (prefers-reduced-motion:reduce) { .shortcut { transition:none; } }
       </style>
       <div class="selection-highlights" aria-hidden="true"></div>
-      <button class="shortcut" type="button" aria-label="Add to chat" title="Add to chat" hidden>
+      <button class="shortcut" type="button" aria-label="Ask WebBrain about this" title="Ask WebBrain about this" hidden>
         <span class="shortcut-icon" aria-hidden="true">?</span>
       </button>
-      <div class="popup" role="dialog" aria-label="Add to chat" hidden>
+      <div class="popup" role="dialog" aria-label="Ask WebBrain about this" hidden>
         <div class="main-view">
           <div class="actions">
             <button class="action" type="button" data-action="summarize">
