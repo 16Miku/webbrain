@@ -26857,10 +26857,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }, messageOptions);
     };
     const dispatchContentAction = () => runContentActionStage(sendContentAction);
+    const provenNoDispatchDeadline = response => {
+      if (response?.deadlineExpired !== true || response?.dispatched === true) return null;
+      earlyCdpDispatchState.started = false;
+      return {
+        ...response,
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+      };
+    };
 
     let response;
     try {
         response = await dispatchContentAction();
+        const deadlineResult = provenNoDispatchDeadline(response);
+        if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
       } catch (e) {
         if (e?.code === 'content_action_timeout') {
           return this._withCoordinateReconciliation(
@@ -26882,6 +26896,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await runContentActionStage(() => this._injectCoreContentScripts(tabId));
           retryDispatchStarted = true;
           response = await dispatchContentAction();
+          const deadlineResult = provenNoDispatchDeadline(response);
+          if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
         } catch (e2) {
           if (e2?.code === 'content_action_timeout') {
             return this._withCoordinateReconciliation(

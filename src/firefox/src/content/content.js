@@ -1536,7 +1536,16 @@
   /**
    * Click an element by selector or coordinates.
    */
-  function clickElement(params) {
+  function clickElement(params, actionDeadlineExpired = () => false) {
+    const deadlineFailure = () => ({
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      outcomeUnknown: false,
+      retryable: true,
+      deadlineExpired: true,
+      error: 'The page action deadline expired before click dispatch.',
+    });
     let el;
     // Tracks whether text matching below resolved el via an EXACT-tier
     // match. The auto-select rescue yields only to exact clickables — a
@@ -1995,11 +2004,14 @@
       if (_isFocusableElement(el)) _focusElement(el);
     }
 
+    if (actionDeadlineExpired()) return deadlineFailure();
     if (params?.messageRecipientGuardRequired === true) {
       const recipientValidation = _consumeMessageRecipientDispatchBinding(params, el);
       if (recipientValidation.success !== true) return recipientValidation;
+      if (actionDeadlineExpired()) return deadlineFailure();
     }
     const clickedRect = rememberInteractionPoint(el, 'click');
+    if (actionDeadlineExpired()) return deadlineFailure();
     const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
     if (filePickerGuard.blocked) {
       return {
@@ -2344,7 +2356,18 @@
   /**
    * Press supported keyboard keys.
    */
-  function pressKeys(params) {
+  function pressKeys(params, actionDeadlineExpired = () => false) {
+    let dispatched = false;
+    const deadlineFailure = () => ({
+      success: false,
+      deadlineExpired: true,
+      ...(dispatched
+        ? { dispatched: true, outcomeUnknown: true, retryable: false }
+        : { dispatched: false, noDispatch: true, outcomeUnknown: false, retryable: true }),
+      error: dispatched
+        ? 'The page action deadline expired during key dispatch.'
+        : 'The page action deadline expired before key dispatch.',
+    });
     const key = params?.key;
     const repeatRaw = Number(params?.repeat ?? 1);
     const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
@@ -2383,10 +2406,12 @@
       const validation = _consumeFocusedDispatchBinding(params);
       if (validation.success !== true) return validation;
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
     if (params?.messageRecipientGuardRequired === true) {
       const recipientValidation = _consumeMessageRecipientDispatchBinding(params, focusedTarget);
       if (recipientValidation.success !== true) return recipientValidation;
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
     const target = (focusedTarget && focusedTarget !== document.body && focusedTarget !== document.documentElement)
       ? focusedTarget
       : document;
@@ -2402,7 +2427,9 @@
       const active = document.activeElement;
       const currentIndex = focusables.indexOf(active);
       const nextIndex = (currentIndex + 1 + focusables.length) % focusables.length;
+      if (actionDeadlineExpired()) return false;
       try { focusables[nextIndex].focus(); } catch (e) {}
+      return true;
     };
 
     for (let i = 0; i < repeat; i++) {
@@ -2428,9 +2455,15 @@
       // attached at document/window level already receive them — dispatching
       // the same event object on document again would fire those listeners
       // twice per key (double-advancing ARIA listboxes, menus, etc.).
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       target.dispatchEvent(down);
+      if (actionDeadlineExpired()) return deadlineFailure();
       target.dispatchEvent(up);
-      if (key === 'Tab') moveTabFocus();
+      if (key === 'Tab') {
+        moveTabFocus();
+        if (actionDeadlineExpired()) return deadlineFailure();
+      }
     }
 
     return { success: true, dispatched: true, key, repeat, method: 'keyboardevent', focusedTag: document.activeElement?.tagName || null };
@@ -4042,7 +4075,7 @@
       'get_interactive_elements': () => getInteractiveElements(),
       'get_interactive_elements_cdp': () => getInteractiveElementsFull(),
       'get_file_input_targets': () => getFileInputTargets(),
-      'click': () => clickElement(msg.params || {}),
+      'click': () => clickElement(msg.params || {}, actionDeadlineExpired),
       'consume_file_picker_guard': () => consumeFilePickerGuard(msg.params?.guardId),
       'type': () => typeText(msg.params || {}),
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
@@ -4053,7 +4086,7 @@
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
       'probe_message_recipient_guard': () => _probeMessageRecipientGuard(msg.params || {}),
-      'press_keys': () => pressKeys(msg.params || {}),
+      'press_keys': () => pressKeys(msg.params || {}, actionDeadlineExpired),
       'scroll': () => scrollPage(msg.params || {}),
       'extract_data': () => extractData(msg.params || {}),
       'inspect_element_styles': () => inspectElementStyles(msg.params || {}),

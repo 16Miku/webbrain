@@ -4861,7 +4861,7 @@ test('message recipient dispatch binding detects composer and active-thread race
     const enterDispatch = branch.indexOf("dispatchKey('keydown', 'Enter', 13)");
     assert.ok(recipientCheck >= 0 && enterDispatch > recipientCheck, `${label}: recipient must be revalidated immediately before Enter`);
 
-    const pressStart = source.indexOf('function pressKeys(params)');
+    const pressStart = source.indexOf('function pressKeys(params,');
     const pressEnd = source.indexOf('\n\n  /**', pressStart + 20);
     const pressBranch = source.slice(pressStart, pressEnd);
     const pressRecipientCheck = pressBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, focusedTarget)');
@@ -4871,7 +4871,7 @@ test('message recipient dispatch binding detects composer and active-thread race
       `${label}: press_keys recipient binding must be consumed before key dispatch`,
     );
 
-    const clickStart = source.indexOf('function clickElement(params)');
+    const clickStart = source.indexOf('function clickElement(params,');
     const clickEnd = source.indexOf('\n\n  function typeText', clickStart);
     const clickBranch = source.slice(clickStart, clickEnd);
     const clickRecipientCheck = clickBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, el)');
@@ -70135,7 +70135,7 @@ test('native select rescue yields only to exact clickables and refuses ambiguous
   assert.match(autoSelectBody, /const focusResult = await cdpClient\.evaluate[\s\S]*deadlineExpired\(\)[\s\S]*target\.focus\(\)/, 'chrome: auto-select refocus must enforce the page-side deadline');
 
   const firefoxContent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
-  const clickStart = firefoxContent.indexOf('function clickElement(params) {');
+  const clickStart = firefoxContent.indexOf('function clickElement(params,');
   const clickEnd = firefoxContent.indexOf('\n  function ', clickStart + 10);
   const clickBody = firefoxContent.slice(clickStart, clickEnd);
   assert.ok(clickStart >= 0 && clickEnd > clickStart, 'firefox: click helper should be independently inspectable');
@@ -71005,7 +71005,7 @@ test('content auto-select refuses ambiguous option matches in both browser build
     ['firefox', 'src/firefox/src/content/content.js'],
   ]) {
     const content = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const start = content.indexOf('function clickElement(params) {');
+    const start = content.indexOf('function clickElement(params,');
     const end = content.indexOf('\n  function ', start + 10);
     const body = content.slice(start, end);
     assert.match(body, /const matchingSelects = \[\];/, `${label}: native select rescue should collect every option match`);
@@ -71026,7 +71026,13 @@ test('synthetic key events cross shadow boundaries without double dispatch', () 
     const keyBody = content.slice(start, end);
     assert.ok(start >= 0 && end > start, `${label}: synthetic key dispatch should be independently inspectable`);
     assert.match(keyBody, /new KeyboardEvent\('keydown',[\s\S]*?composed: true,[\s\S]*?new KeyboardEvent\('keyup',[\s\S]*?composed: true,/, `${label}: keydown and keyup should escape open shadow roots`);
-    assert.match(keyBody, /target\.dispatchEvent\(down\);\s*target\.dispatchEvent\(up\);/, `${label}: key events should still dispatch exactly once on the focused target`);
+    assert.match(
+      keyBody,
+      /target\.dispatchEvent\(down\);[\s\S]*target\.dispatchEvent\(up\);/,
+      `${label}: key events should still dispatch exactly once on the focused target`,
+    );
+    assert.equal((keyBody.match(/target\.dispatchEvent\(down\)/g) || []).length, 1, `${label}: keydown must dispatch exactly once`);
+    assert.equal((keyBody.match(/target\.dispatchEvent\(up\)/g) || []).length, 1, `${label}: keyup must dispatch exactly once`);
     assert.doesNotMatch(keyBody, /document\.dispatchEvent\((?:down|up)\)/, `${label}: shadow-safe key events must not restore duplicate document dispatch`);
   }
 });
@@ -88009,6 +88015,34 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     const messageDeadlineGuard = contentSource.slice(messageHandlerStart, handlersStart);
     assert.match(messageDeadlineGuard, /Date\.now\(\) >= actionDeadlineAt/, `${label}: expired messages can reach a page handler`);
     assert.match(messageDeadlineGuard, /dispatched: false,[\s\S]*noDispatch: true,[\s\S]*deadlineExpired: true/, `${label}: expired page messages do not fail as proven no-dispatch`);
+    const pressKeysStart = contentSource.indexOf('function pressKeys(', 0);
+    const pressKeysEnd = contentSource.indexOf('\n  /**', pressKeysStart);
+    assert.ok(pressKeysStart >= 0 && pressKeysEnd > pressKeysStart, `${label}: pressKeys boundary missing`);
+    const pressKeysSource = contentSource.slice(pressKeysStart, pressKeysEnd);
+    assert.match(
+      pressKeysSource,
+      /_consumeFocusedDispatchBinding\([\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*_consumeMessageRecipientDispatchBinding\([\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/,
+      `${label}: press_keys can cross its deadline during dispatch or recipient validation`,
+    );
+    assert.match(
+      pressKeysSource,
+      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*dispatched = true;\s*target\.dispatchEvent\(down\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*target\.dispatchEvent\(up\);/,
+      `${label}: press_keys does not guard each key-event dispatch boundary`,
+    );
+    const contentClickStart = contentSource.indexOf('function clickElement(params,');
+    const contentClickEnd = contentSource.indexOf('\n  function typeText', contentClickStart);
+    assert.ok(contentClickStart >= 0 && contentClickEnd > contentClickStart, `${label}: click content helper boundary missing`);
+    const contentClick = contentSource.slice(contentClickStart, contentClickEnd);
+    assert.match(
+      contentClick,
+      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*_consumeMessageRecipientDispatchBinding\([\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*rememberInteractionPoint\(el, 'click'\);[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*clickWithoutNativeFilePicker\(\(\) => el\.click\(\)\)/,
+      `${label}: click can cross its deadline during recipient validation or at the click boundary`,
+    );
+    assert.match(
+      contentSource.slice(handlersStart),
+      /'click': \(\) => clickElement\(msg\.params \|\| \{\}, actionDeadlineExpired\)/,
+      `${label}: click handler does not pass the page deadline into the mutation boundary`,
+    );
     const contentClickAxStart = contentSource.indexOf("'click_ax': () => {", handlersStart);
     const contentClickAxEnd = contentSource.indexOf("'type_ax':", contentClickAxStart);
     assert.ok(contentClickAxStart >= 0 && contentClickAxEnd > contentClickAxStart, `${label}: click_ax content handler boundary missing`);
@@ -88026,6 +88060,11 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
       toolPipelineSource,
       /const runActionPipeline = async abortSignal => \{[\s\S]*this\._preflightRichTextToolbarTarget\([\s\S]*this\.executeTool\([\s\S]*_contentActionAbortSignal: abortSignal[\s\S]*this\._waitForFormValidationFailure\([\s\S]*abortSignal[\s\S]*this\._withContentActionDeadline\(\s*runActionPipeline/,
       `${label}: toolbar preflight, dispatch, and form validation do not share one action deadline`,
+    );
+    assert.match(
+      source,
+      /const provenNoDispatchDeadline = response =>[\s\S]*response\?\.deadlineExpired[\s\S]*(?:earlyCdpDispatchState|contentPipelineDispatchState)\.started = false;[\s\S]*dispatchContentAction\(\)[\s\S]*provenNoDispatchDeadline\(response\)/,
+      `${label}: generic content actions lose a page-proven no-dispatch deadline response`,
     );
     const timeoutCatch = source.indexOf("if (e?.code === 'content_action_timeout')", source.indexOf('const dispatchContentAction'));
     const reinject = source.indexOf('this._injectCoreContentScripts(tabId)', timeoutCatch);

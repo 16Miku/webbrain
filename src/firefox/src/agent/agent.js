@@ -21416,8 +21416,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }, messageOptions);
     };
     const dispatchContentAction = () => runContentActionStage(sendContentAction);
+    const provenNoDispatchDeadline = response => {
+      if (response?.deadlineExpired !== true || response?.dispatched === true) return null;
+      contentPipelineDispatchState.started = false;
+      return {
+        ...response,
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+      };
+    };
     try {
       let response = await dispatchContentAction();
+      const deadlineResult = provenNoDispatchDeadline(response);
+      if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
       if (name === 'click') {
         response = await this._settleContentFilePickerGuard(tabId, response);
       }
@@ -21466,6 +21480,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await runContentActionStage(() => this._injectCoreContentScripts(tabId));
         retryDispatchStarted = true;
         let response = await dispatchContentAction();
+        const deadlineResult = provenNoDispatchDeadline(response);
+        if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
         if (name === 'click') {
           response = await this._settleContentFilePickerGuard(tabId, response);
         }
