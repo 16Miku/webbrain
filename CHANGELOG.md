@@ -4,6 +4,34 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.4.0] - 2026-08-27
+
+### Added
+- Added Qwen3.8 and GLM-5.3 Flash benchmarks (OpenRouter) to the benchmark suite
+
+### Changed
+- Kept MCP naming consistent across docs (Chrome + Firefox)
+
+### Fixed
+- Fixed scheduled planner fallback notice timing issues (race + placement), improving reliability of fallback guidance
+- Bound recurring planner notices to the latest run to prevent stale notices from showing
+- Hardened planner fallback and action pipelines against late mutations:
+  - Prevented actions after page deadlines
+  - Released fallback keys after deadline
+  - Stopped late fallback page mutations and expired fallback gestures
+  - Guarded fallback input dispatch deadlines and rechecked deadlines after click validation
+- Improved iframe marker cleanup and dispatch timing to avoid blocking and late dispatch behavior
+- Fixed focus/selector handling by preventing queued selector focus and late selector focus
+- Bounded Firefox and Chrome file upload injection actions to avoid runaway retries
+- Fixed CDP key press release after timeout
+- Preserved selector “no-click proof” behavior and ensured selector guard logic stays on the real code
+- Fixed top-edge selection shortcut fallback behavior
+- Fixed planner fallback gestures and accessibility click expiry handling
+- Kept MCP naming consistent across docs (Chrome + Firefox)
+
+### Tests
+- Added/updated benchmark fixtures and result snapshots for Qwen3.8 Flash and GLM-5.3 Flash (OpenRouter)
+
 ## [33.3.0] - 2026-08-26
 
 ### Added
