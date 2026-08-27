@@ -22354,9 +22354,42 @@ test('completion invariant state machine enforces post-action observation with C
       { success: true, method: 'image_attach', description: 'Captured.', _attachImage: 'data:image/png;base64,AA==' },
     );
     assert.equal(screenshotState.verificationDebt, false, `${label}: attached screenshot did not clear debt`);
+    screenshotState = invariant.recordCompletionToolResult(
+      screenshotState,
+      'navigate',
+      { url: 'https://example.com/next' },
+      { success: true, dispatched: true, verified: true },
+    );
+    screenshotState = invariant.recordCompletionToolResult(
+      screenshotState,
+      'auto_screenshot',
+      {},
+      { success: true, method: 'image_attach', _attachImage: true },
+    );
+    assert.equal(screenshotState.verificationDebt, false, `${label}: model-facing post-action auto-screenshot did not clear debt`);
+    screenshotState = invariant.recordCompletionToolResult(
+      screenshotState,
+      'navigate',
+      { url: 'https://example.com/final' },
+      { success: true, dispatched: true, verified: true },
+    );
+    screenshotState = invariant.recordCompletionToolResult(
+      screenshotState,
+      'auto_screenshot',
+      {},
+      { success: false, method: 'image_attach', error: 'capture failed' },
+    );
+    assert.equal(screenshotState.verificationDebt, true, `${label}: failed auto-screenshot cleared debt`);
 
     state = invariant.recordCompletionToolResult(state, 'new_tab', { url: 'https://example.com' }, { success: true });
     assert.equal(state.verificationDebt, true, `${label}: new-tab navigation did not open debt`);
+    state = invariant.recordCompletionToolResult(
+      state,
+      'auto_screenshot',
+      {},
+      { success: true, method: 'image_attach', _attachImage: true },
+    );
+    assert.equal(state.verificationDebt, true, `${label}: current-tab auto-screenshot verified a background new-tab action`);
     state = invariant.recordCompletionToolResult(state, 'fetch_url', { url: 'https://example.com', method: 'GET' }, { success: true });
     assert.equal(state.verificationDebt, false, `${label}: safe GET did not clear debt`);
     state = invariant.recordCompletionToolResult(state, 'fetch_url', { url: 'https://example.com', method: 'POST' }, { success: false, status: 500 });
@@ -22370,6 +22403,14 @@ test('completion invariant state machine enforces post-action observation with C
       null,
     );
     assert.equal(downloadState.verificationDebt, true, `${label}: ambiguous download result did not open debt`);
+    assert.equal(downloadState.lastAction?.downloadAction, true, `${label}: built-in download action lost its semantic scope`);
+    downloadState = invariant.recordCompletionToolResult(
+      downloadState,
+      'auto_screenshot',
+      {},
+      { success: true, method: 'image_attach', _attachImage: true },
+    );
+    assert.equal(downloadState.verificationDebt, true, `${label}: current-tab auto-screenshot verified a download action`);
     downloadState = invariant.recordCompletionToolResult(
       downloadState,
       'list_downloads',
@@ -22377,6 +22418,21 @@ test('completion invariant state machine enforces post-action observation with C
       { success: true, downloads: [{ id: 1, state: 'complete' }] },
     );
     assert.equal(downloadState.verificationDebt, false, `${label}: list_downloads did not verify download state`);
+
+    let skillDownloadState = invariant.recordCompletionToolResult(
+      invariant.createCompletionInvariantState(`${label}-skill-download`),
+      'download_public_media',
+      { __completionDownloadAction: true },
+      { success: true, completedCount: 1 },
+    );
+    assert.equal(skillDownloadState.lastAction?.downloadAction, true, `${label}: skill download action lost its semantic scope`);
+    skillDownloadState = invariant.recordCompletionToolResult(
+      skillDownloadState,
+      'auto_screenshot',
+      {},
+      { success: true, method: 'vision_describe', description: 'The original page is still visible.' },
+    );
+    assert.equal(skillDownloadState.verificationDebt, true, `${label}: current-tab auto-screenshot verified a skill download`);
 
     let iframeFormState = invariant.recordCompletionToolResult(
       invariant.createCompletionInvariantState(`${label}-iframe-form`),
@@ -22511,6 +22567,37 @@ test('completion invariant state machine enforces post-action observation with C
       assert.equal(clickState.verificationDebt, true, `${label}: ${caseName} click result did not open debt`);
       assert.equal(clickState.lastAction?.uncertain, true, `${label}: ${caseName} click result lost uncertainty`);
     }
+  }
+});
+
+test('completion recovery keeps skill downloads on download-specific observations', () => {
+  for (const [label, AgentClass, invariant] of [
+    ['chrome', AgentCh, CompletionInvariantCh],
+    ['firefox', AgentFx, CompletionInvariantFx],
+  ]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 24852 : 24853;
+    agent.conversationModes.set(tabId, 'act');
+    const state = invariant.recordCompletionToolResult(
+      invariant.createCompletionInvariantState(`${label}-skill-download-recovery`),
+      'download_public_media',
+      { __completionDownloadAction: true },
+      { success: true, completedCount: 1 },
+    );
+    agent.completionInvariants.set(tabId, state);
+    const policy = agent._completionRecoveryPolicy(tabId, [
+      { function: { name: 'read_page' } },
+      { function: { name: 'list_downloads' } },
+      { function: { name: 'read_downloaded_file' } },
+    ], { verification: true });
+
+    assert.equal(policy?.kind, 'verification', `${label}: skill download did not enter verification recovery`);
+    assert.equal(policy?.toolChoice, 'required', `${label}: skill download verification did not require a tool`);
+    assert.deepEqual(
+      policy?.tools?.map(tool => tool.function.name),
+      ['list_downloads', 'read_downloaded_file'],
+      `${label}: skill download recovery exposed unrelated page observations`,
+    );
   }
 });
 
@@ -74638,6 +74725,8 @@ test('fresh-turn batch interruptions preserve configured auto-screenshots', asyn
       const updates = [];
       const executed = [];
       let captures = 0;
+      agent.conversationModes.set(tabId, 'act');
+      const completionToken = agent._beginCompletionInvariant(tabId);
       agent.autoScreenshot = autoScreenshot;
       agent._ensureGateSetting = async () => {};
       agent._skipPermissionGate = true;
@@ -74686,6 +74775,12 @@ test('fresh-turn batch interruptions preserve configured auto-screenshots', asyn
         true,
         `${label}/${autoScreenshot}: screenshot result update missing`,
       );
+      assert.equal(
+        agent.completionInvariants.get(tabId)?.verificationDebt,
+        false,
+        `${label}/${autoScreenshot}: model-facing action screenshot did not satisfy completion verification`,
+      );
+      agent._clearCompletionInvariant(tabId, completionToken);
     }
   }
 });
@@ -74978,7 +75073,7 @@ test('max-step exits clear open completion debt', async () => {
   }
 });
 
-test('non-stream and stream runs block plain finals and unverified success until an explicit observation', async () => {
+test('non-stream and stream runs recover plain finals through forced verification and done turns', async () => {
   const buildResponses = () => [
     {
       content: null,
@@ -74988,13 +75083,6 @@ test('non-stream and stream runs block plain finals and unverified success until
       }],
     },
     { content: 'Done without an explicit completion call.', toolCalls: [] },
-    {
-      content: null,
-      toolCalls: [{
-        id: 'invariant_done_early',
-        function: { name: 'done', arguments: JSON.stringify({ summary: 'Too early.', outcome: 'success' }) },
-      }],
-    },
     {
       content: null,
       toolCalls: [{
@@ -75022,10 +75110,12 @@ test('non-stream and stream runs block plain finals and unverified success until
         model: 'test-model',
         name: 'test-provider',
         calls: 0,
+        requests: [],
       };
       if (streaming) {
-        provider.chatStream = async function* () {
+        provider.chatStream = async function* (_messages, options) {
           this.calls++;
+          this.requests.push(options);
           const next = responses.shift();
           assert.ok(next, `${AgentClass.name}: streamed model was called too many times`);
           if (next.content) yield { type: 'text', content: next.content };
@@ -75042,8 +75132,9 @@ test('non-stream and stream runs block plain finals and unverified success until
           yield { type: 'done' };
         };
       } else {
-        provider.chat = async () => {
+        provider.chat = async (_messages, options) => {
           provider.calls++;
+          provider.requests.push(options);
           const next = responses.shift();
           assert.ok(next, `${AgentClass.name}: model was called too many times`);
           return next;
@@ -75085,11 +75176,32 @@ test('non-stream and stream runs block plain finals and unverified success until
       const final = await run(tabId, 'perform the action', (type, data) => updates.push({ type, data }), 'act');
 
       assert.equal(final, 'Verified completion.', `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: verified done did not finish`);
-      assert.equal(provider.calls, 5, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: completion checks did not consume the expected turns`);
-      assert.equal(executedDone, 1, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: blocked success reached the done implementation`);
+      assert.equal(provider.calls, 4, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: deterministic completion recovery used extra turns`);
+      assert.equal(executedDone, 1, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: forced done did not execute exactly once`);
+      assert.equal(provider.requests[2]?.toolChoice, 'required', `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: verification turn did not require a tool`);
+      assert.equal(
+        provider.requests[2]?.tools?.some(tool => tool?.function?.name === 'done'),
+        false,
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: verification turn exposed done prematurely`,
+      );
+      assert.equal(
+        provider.requests[2]?.tools?.some(tool => tool?.function?.name === 'read_page'),
+        true,
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: verification turn omitted page observations`,
+      );
+      assert.deepEqual(
+        provider.requests[3]?.toolChoice,
+        { type: 'function', function: { name: 'done' } },
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: terminal turn did not force done`,
+      );
+      assert.deepEqual(
+        provider.requests[3]?.tools?.map(tool => tool?.function?.name),
+        ['done'],
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: terminal turn exposed non-done tools`,
+      );
       assert.ok(
-        updates.filter(update => update.type === 'warning' && /completion invariant/i.test(update.data?.message || '')).length >= 2,
-        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: plain-final and debt blocks were not both surfaced`,
+        updates.some(update => update.type === 'warning' && /completion invariant/i.test(update.data?.message || '')),
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: rejected plain final was not surfaced`,
       );
       if (streaming) {
         assert.ok(
@@ -75101,12 +75213,142 @@ test('non-stream and stream runs block plain finals and unverified success until
           `${AgentClass.name}: rejected streamed completion text was not cleared`,
         );
       }
-      assert.ok(
+      assert.equal(
         agent.conversations.get(tabId).some(message => message.role === 'tool' && /"completionInvariant":true/.test(message.content || '')),
-        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: unverified done block was not persisted`,
+        false,
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: deterministic recovery still attempted an unverified done`,
       );
       assert.equal(agent.completionInvariants.has(tabId), false, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: completed run leaked invariant state`);
     }
+  }
+});
+
+test('navigation auto-screenshot verification turns terminal prose into a forced done without an extra read', async () => {
+  for (const [browserIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const requests = [];
+    const responses = [
+      {
+        content: 'Navigating to Google.',
+        toolCalls: [{
+          id: 'navigate_google',
+          function: { name: 'navigate', arguments: JSON.stringify({ url: 'https://www.google.com' }) },
+        }],
+      },
+      { content: 'Done — Google is loaded.', toolCalls: [] },
+      {
+        content: null,
+        toolCalls: [{
+          id: 'done_google',
+          function: {
+            name: 'done',
+            arguments: JSON.stringify({ summary: 'Navigated to google.com successfully.', outcome: 'success' }),
+          },
+        }],
+      },
+    ];
+    const provider = {
+      supportsTools: true,
+      supportsVision: true,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      async chat(_messages, options) {
+        requests.push(options);
+        const next = responses.shift();
+        assert.ok(next, `${AgentClass.name}: navigation recovery made an extra model request`);
+        return next;
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    const tabId = 24830 + browserIndex;
+    agent.planBeforeAct = false;
+    agent._maybeRunPlannerGate = async () => ({
+      proceed: true,
+      requestKind: 'execute',
+      requiresStateChange: false,
+    });
+    agent.maxSteps = 5;
+    agent.autoScreenshot = 'state_change';
+    agent._skipPermissionGate = true;
+    agent._manageContext = async () => {};
+    agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
+    agent._maybeReinjectAdapter = async () => {};
+    agent._ensureProgressSessionForCurrentTask = async () => ({ mode: 'inactive' });
+    agent._persist = () => {};
+    agent._startTraceRun = async () => null;
+    agent._currentUrl = async () => 'https://www.google.com/';
+    agent._captureBudgetedAutoScreenshot = async () => ({
+      dataUrl: 'data:image/png;base64,AA==',
+      captureId: 'capture_google',
+      width: 1119,
+      height: 799,
+      cssWidth: 1119,
+      cssHeight: 799,
+    });
+    agent._getVisibleInteractiveElements = async () => [{
+      tag: 'textarea',
+      role: 'searchbox',
+      text: 'Search',
+      rect: { x: 400, y: 250, w: 300, h: 40 },
+    }];
+    let reads = 0;
+    let doneCalls = 0;
+    agent.executeTool = async (_toolTabId, name, args) => {
+      if (name === 'navigate') {
+        return {
+          success: true,
+          dispatched: true,
+          verified: true,
+          requestedUrl: args.url,
+          previousUrl: 'chrome://extensions/',
+          currentUrl: 'https://www.google.com/',
+          pageUrlChanged: true,
+        };
+      }
+      if (['read_page', 'get_accessibility_tree', 'inspect_viewport'].includes(name)) {
+        reads++;
+        return { success: true, content: 'Google' };
+      }
+      if (name === 'done') {
+        doneCalls++;
+        return { done: true, summary: args.summary, outcome: args.outcome };
+      }
+      throw new Error(`unexpected tool ${name}`);
+    };
+
+    const updates = [];
+    const final = await agent.processMessage(
+      tabId,
+      'try again',
+      (type, data) => updates.push({ type, data }),
+      'act',
+    );
+
+    assert.equal(final, 'Navigated to google.com successfully.', `${AgentClass.name}: verified navigation did not finish`);
+    assert.equal(responses.length, 0, `${AgentClass.name}: navigation recovery did not consume the expected responses`);
+    assert.equal(requests.length, 3, `${AgentClass.name}: navigation recovery used an extra round trip`);
+    assert.equal(reads, 0, `${AgentClass.name}: model-facing auto-screenshot still required a redundant page read`);
+    assert.equal(doneCalls, 1, `${AgentClass.name}: forced terminal completion did not execute exactly once`);
+    assert.deepEqual(requests[2]?.tools?.map(tool => tool?.function?.name), ['done'], `${AgentClass.name}: terminal recovery exposed extra tools`);
+    assert.deepEqual(
+      requests[2]?.toolChoice,
+      { type: 'function', function: { name: 'done' } },
+      `${AgentClass.name}: terminal recovery did not force done`,
+    );
+    assert.equal(
+      updates.some(update => update.type === 'tool_result' && update.data?.name === 'auto_screenshot' && update.data?.result?.success === true),
+      true,
+      `${AgentClass.name}: successful model-facing auto-screenshot was not surfaced`,
+    );
+    assert.equal(
+      agent.conversations.get(tabId).some(message => message.role === 'tool' && /"reason":"verification_required"/.test(message.content || '')),
+      false,
+      `${AgentClass.name}: verified navigation still attempted an unverified done`,
+    );
   }
 });
 
