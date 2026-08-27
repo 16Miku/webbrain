@@ -2315,14 +2315,14 @@ body {
   position: fixed;
   z-index: 10000;
   display: block;
-  opacity: 0.8;
+  opacity: 1;
   max-width: calc(100vw - 16px);
   padding: 6px 10px;
-  border: 1px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--bg-secondary);
   box-shadow: 0 5px 16px color-mix(in srgb, var(--text-primary) 18%, transparent);
-  color: #fff;
+  color: var(--text-primary);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -2338,9 +2338,8 @@ body {
 }
 
 .selection-ask-action:hover {
-  border-color: var(--accent-hover);
-  background: var(--accent-hover);
-  opacity: 1;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
 }
 
 .selection-ask-action:focus-visible {

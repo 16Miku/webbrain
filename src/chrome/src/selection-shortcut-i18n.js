@@ -1,11 +1,13 @@
 /**
- * Localized copy for selected-text surfaces that run outside extension pages.
+ * Localized copy shared by webpage selection shortcuts and the sidepanel selected-answer action.
  * Keep the Chrome and Firefox copies byte-identical.
  */
 
 const STRINGS = Object.freeze({
   en: {
     askSelection: 'Add to chat',
+    askHighlightedText: 'Ask WebBrain about this',
+    addSelectionToChat: 'Add this to chat',
     openChat: 'Open WebBrain to chat',
     summarize: 'Summarize',
     explain: 'Explain',
@@ -24,6 +26,8 @@ const STRINGS = Object.freeze({
   },
   zh: {
     askSelection: '添加到聊天',
+    askHighlightedText: '向 WebBrain 询问此内容',
+    addSelectionToChat: '将此内容添加到聊天',
     openChat: '打开 WebBrain 进行对话',
     summarize: '总结',
     explain: '解释',
@@ -42,6 +46,8 @@ const STRINGS = Object.freeze({
   },
   ar: {
     askSelection: 'إضافة إلى الدردشة',
+    askHighlightedText: 'اسأل WebBrain عن هذا',
+    addSelectionToChat: 'إضافة هذا إلى الدردشة',
     openChat: 'افتح WebBrain للدردشة',
     summarize: 'تلخيص',
     explain: 'شرح',
@@ -60,6 +66,8 @@ const STRINGS = Object.freeze({
   },
   bn: {
     askSelection: 'চ্যাটে যোগ করুন',
+    askHighlightedText: 'এটি সম্পর্কে WebBrain-কে জিজ্ঞাসা করুন',
+    addSelectionToChat: 'এটি চ্যাটে যোগ করুন',
     openChat: 'চ্যাট করতে WebBrain খুলুন',
     summarize: 'সারসংক্ষেপ করুন',
     explain: 'ব্যাখ্যা করুন',
@@ -78,6 +86,8 @@ const STRINGS = Object.freeze({
   },
   de: {
     askSelection: 'Zum Chat hinzufügen',
+    askHighlightedText: 'WebBrain hierzu fragen',
+    addSelectionToChat: 'Dies zum Chat hinzufügen',
     openChat: 'WebBrain zum Chatten öffnen',
     summarize: 'Zusammenfassen',
     explain: 'Erklären',
@@ -96,6 +106,8 @@ const STRINGS = Object.freeze({
   },
   es: {
     askSelection: 'Añadir al chat',
+    askHighlightedText: 'Preguntar a WebBrain sobre esto',
+    addSelectionToChat: 'Añadir esto al chat',
     openChat: 'Abrir WebBrain para chatear',
     summarize: 'Resumir',
     explain: 'Explicar',
@@ -114,6 +126,8 @@ const STRINGS = Object.freeze({
   },
   fa: {
     askSelection: 'افزودن به چت',
+    askHighlightedText: 'درباره این از WebBrain بپرسید',
+    addSelectionToChat: 'افزودن این به گفتگو',
     openChat: 'WebBrain را برای گفتگو باز کنید',
     summarize: 'خلاصه‌سازی',
     explain: 'توضیح',
@@ -132,6 +146,8 @@ const STRINGS = Object.freeze({
   },
   fr: {
     askSelection: 'Ajouter au chat',
+    askHighlightedText: 'Interroger WebBrain à ce sujet',
+    addSelectionToChat: 'Ajouter ceci au chat',
     openChat: 'Ouvrir WebBrain pour discuter',
     summarize: 'Résumer',
     explain: 'Expliquer',
@@ -150,6 +166,8 @@ const STRINGS = Object.freeze({
   },
   he: {
     askSelection: 'הוספה לצ׳אט',
+    askHighlightedText: 'לשאול את WebBrain על זה',
+    addSelectionToChat: 'הוספת זה לצ׳אט',
     openChat: 'פתיחת WebBrain לצ׳אט',
     summarize: 'סיכום',
     explain: 'הסבר',
@@ -168,6 +186,8 @@ const STRINGS = Object.freeze({
   },
   hi: {
     askSelection: 'चैट में जोड़ें',
+    askHighlightedText: 'इसके बारे में WebBrain से पूछें',
+    addSelectionToChat: 'इसे चैट में जोड़ें',
     openChat: 'चैट के लिए WebBrain खोलें',
     summarize: 'सारांश बनाएँ',
     explain: 'समझाएँ',
@@ -186,6 +206,8 @@ const STRINGS = Object.freeze({
   },
   id: {
     askSelection: 'Tambahkan ke chat',
+    askHighlightedText: 'Tanyakan ini kepada WebBrain',
+    addSelectionToChat: 'Tambahkan ini ke chat',
     openChat: 'Buka WebBrain untuk mengobrol',
     summarize: 'Ringkas',
     explain: 'Jelaskan',
@@ -204,6 +226,8 @@ const STRINGS = Object.freeze({
   },
   ja: {
     askSelection: 'チャットに追加',
+    askHighlightedText: 'この内容について WebBrain に質問',
+    addSelectionToChat: 'これをチャットに追加',
     openChat: 'WebBrain を開いてチャット',
     summarize: '要約',
     explain: '説明',
@@ -222,6 +246,8 @@ const STRINGS = Object.freeze({
   },
   ko: {
     askSelection: '채팅에 추가',
+    askHighlightedText: '이 내용에 대해 WebBrain에 질문',
+    addSelectionToChat: '이 내용을 채팅에 추가',
     openChat: 'WebBrain을 열어 채팅',
     summarize: '요약',
     explain: '설명',
@@ -240,6 +266,8 @@ const STRINGS = Object.freeze({
   },
   ms: {
     askSelection: 'Tambahkan pada sembang',
+    askHighlightedText: 'Tanya WebBrain tentang ini',
+    addSelectionToChat: 'Tambahkan ini pada sembang',
     openChat: 'Buka WebBrain untuk berbual',
     summarize: 'Ringkaskan',
     explain: 'Terangkan',
@@ -258,6 +286,8 @@ const STRINGS = Object.freeze({
   },
   nl: {
     askSelection: 'Toevoegen aan chat',
+    askHighlightedText: 'WebBrain hierover vragen',
+    addSelectionToChat: 'Dit toevoegen aan de chat',
     openChat: 'WebBrain openen om te chatten',
     summarize: 'Samenvatten',
     explain: 'Uitleggen',
@@ -276,6 +306,8 @@ const STRINGS = Object.freeze({
   },
   pl: {
     askSelection: 'Dodaj do czatu',
+    askHighlightedText: 'Zapytaj WebBrain o to',
+    addSelectionToChat: 'Dodaj to do czatu',
     openChat: 'Otwórz WebBrain, aby porozmawiać',
     summarize: 'Podsumuj',
     explain: 'Wyjaśnij',
@@ -294,6 +326,8 @@ const STRINGS = Object.freeze({
   },
   pt: {
     askSelection: 'Adicionar ao chat',
+    askHighlightedText: 'Perguntar ao WebBrain sobre isto',
+    addSelectionToChat: 'Adicionar isto ao chat',
     openChat: 'Abrir o WebBrain para conversar',
     summarize: 'Resumir',
     explain: 'Explicar',
@@ -312,6 +346,8 @@ const STRINGS = Object.freeze({
   },
   ru: {
     askSelection: 'Добавить в чат',
+    askHighlightedText: 'Спросить WebBrain об этом',
+    addSelectionToChat: 'Добавить это в чат',
     openChat: 'Открыть WebBrain для чата',
     summarize: 'Кратко изложить',
     explain: 'Объяснить',
@@ -330,6 +366,8 @@ const STRINGS = Object.freeze({
   },
   th: {
     askSelection: 'เพิ่มไปยังแชท',
+    askHighlightedText: 'ถาม WebBrain เกี่ยวกับสิ่งนี้',
+    addSelectionToChat: 'เพิ่มสิ่งนี้ไปยังแชท',
     openChat: 'เปิด WebBrain เพื่อแชต',
     summarize: 'สรุป',
     explain: 'อธิบาย',
@@ -348,6 +386,8 @@ const STRINGS = Object.freeze({
   },
   tl: {
     askSelection: 'Idagdag sa chat',
+    askHighlightedText: 'Itanong ito sa WebBrain',
+    addSelectionToChat: 'Idagdag ito sa chat',
     openChat: 'Buksan ang WebBrain para makipag-chat',
     summarize: 'Ibuod',
     explain: 'Ipaliwanag',
@@ -366,6 +406,8 @@ const STRINGS = Object.freeze({
   },
   tr: {
     askSelection: 'Sohbete ekle',
+    askHighlightedText: 'Bunu WebBrain’e sor',
+    addSelectionToChat: 'Bunu sohbete ekle',
     openChat: 'Sohbet için WebBrain’i aç',
     summarize: 'Özetle',
     explain: 'Açıkla',
@@ -384,6 +426,8 @@ const STRINGS = Object.freeze({
   },
   uk: {
     askSelection: 'Додати до чату',
+    askHighlightedText: 'Запитати WebBrain про це',
+    addSelectionToChat: 'Додати це до чату',
     openChat: 'Відкрити WebBrain для чату',
     summarize: 'Підсумувати',
     explain: 'Пояснити',
@@ -402,6 +446,8 @@ const STRINGS = Object.freeze({
   },
   vi: {
     askSelection: 'Thêm vào cuộc trò chuyện',
+    askHighlightedText: 'Hỏi WebBrain về nội dung này',
+    addSelectionToChat: 'Thêm nội dung này vào cuộc trò chuyện',
     openChat: 'Mở WebBrain để trò chuyện',
     summarize: 'Tóm tắt',
     explain: 'Giải thích',
