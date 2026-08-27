@@ -81920,6 +81920,50 @@ test('Chrome upload_file injects the exact user attachment bytes without a path 
   }
 });
 
+test('Chrome upload_file preserves a page-proven expired injection as no dispatch', async () => {
+  const originalCdp = {
+    attach: cdpClientCh.attach,
+    querySelectorPierce: cdpClientCh.querySelectorPierce,
+    releaseObjectGroup: cdpClientCh.releaseObjectGroup,
+    setFileInputData: cdpClientCh.setFileInputData,
+  };
+  let receivedDeadlineAt = 0;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.querySelectorPierce = async () => ({ objectIds: ['input-handle'], objectGroup: 'attachment-query' });
+    cdpClientCh.setFileInputData = async (_tabId, _objectId, _payload, options) => {
+      receivedDeadlineAt = Number(options?.deadlineAt) || 0;
+      options.beforeDispatch();
+      return {
+        success: false,
+        dispatched: false,
+        deadlineExpired: true,
+        error: 'Upload action deadline expired before dispatch',
+      };
+    };
+    cdpClientCh.releaseObjectGroup = async () => {};
+
+    const agent = new AgentCh({});
+    const registered = agent._registerUserAttachments(42, [
+      { kind: 'image', name: 'demo.gif', dataUrl: 'data:image/gif;base64,R0lGODlh' },
+    ]);
+    const result = await agent.executeTool(42, 'upload_file', {
+      selector: 'input[type=file]',
+      attachmentId: registered[0].attachmentId,
+    });
+
+    assert.ok(receivedDeadlineAt > Date.now(), 'Chrome upload did not pass its owning absolute deadline to the page function');
+    assert.equal(result.success, false);
+    assert.equal(result.dispatched, false);
+    assert.equal(result.noDispatch, true);
+    assert.equal(result.outcomeUnknown, false);
+    assert.equal(result.retryable, true);
+    assert.equal(result.deadlineExpired, true);
+  } finally {
+    Object.assign(cdpClientCh, originalCdp);
+  }
+});
+
 test('CDP in-memory upload builds a File and dispatches input/change', async () => {
   const client = new CDPClient();
   let command = null;
@@ -81928,19 +81972,53 @@ test('CDP in-memory upload builds a File and dispatches input/change', async () 
     command = { method, params };
     return { result: { value: { success: true, dispatched: true, name: 'demo.gif', size: 6 } } };
   };
+  const deadlineAt = Date.now() + 60_000;
   const result = await client.setFileInputData(42, 'input-object', {
     base64: 'R0lGODlh',
     filename: 'demo.gif',
     mimeType: 'image/gif',
-  });
+  }, { deadlineAt });
   assert.equal(result.success, true);
   assert.equal(command.method, 'Runtime.callFunctionOn');
   assert.equal(command.params.objectId, 'input-object');
   assert.match(command.params.functionDeclaration, /new File\(\[bytes\], filename/);
   assert.match(command.params.functionDeclaration, /new DataTransfer\(\)/);
+  assert.match(command.params.functionDeclaration, /deadlineExpired\(\)[\s\S]*this\.files = transfer\.files/);
   assert.match(command.params.functionDeclaration, /dispatchEvent\(new Event\('input'/);
   assert.match(command.params.functionDeclaration, /dispatchEvent\(new Event\('change'/);
-  assert.deepEqual(command.params.arguments.map(arg => arg.value), ['R0lGODlh', 'demo.gif', 'image/gif']);
+  assert.deepEqual(command.params.arguments.map(arg => arg.value), ['R0lGODlh', 'demo.gif', 'image/gif', deadlineAt]);
+});
+
+test('CDP in-memory upload preserves a page-proven no-dispatch deadline result', async () => {
+  const client = new CDPClient();
+  const controller = new AbortController();
+  const timeoutError = new Error('upload_file did not return a page response within 60 seconds.');
+  timeoutError.code = 'content_action_timeout';
+  client.sendCommand = async (_tabId, method) => {
+    if (method === 'Runtime.enable') return {};
+    controller.abort(timeoutError);
+    return {
+      result: {
+        value: {
+          success: false,
+          dispatched: false,
+          deadlineExpired: true,
+          error: 'Upload action deadline expired before dispatch',
+        },
+      },
+    };
+  };
+  const result = await client.setFileInputData(42, 'input-object', {
+    base64: 'R0lGODlh',
+    filename: 'demo.gif',
+    mimeType: 'image/gif',
+  }, {
+    abortSignal: controller.signal,
+    deadlineAt: Date.now() + 1,
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.dispatched, false);
+  assert.equal(result.deadlineExpired, true);
 });
 
 test('Chrome click paths suppress native file choosers and redirect to upload_file', async () => {
@@ -87952,6 +88030,11 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.notEqual(clickAxEnd, -1, `${label}: click_ax dispatcher boundary missing`);
     const clickAxSource = source.slice(clickAxStart, clickAxEnd);
     assert.match(clickAxSource, /const dispatch = \(\) => this\._withContentActionDeadline\(send, 'click_ax'\);/, `${label}: click_ax bypasses the deadline`);
+    assert.match(
+      clickAxSource,
+      /const actionDeadlineAt = \[upstreamAbortSignal, deadlineAbortSignal\][\s\S]*CONTENT_ACTION_SIGNAL_DEADLINES\.get\(signal\)\?\.deadlineAt[\s\S]*action: 'click_ax',[\s\S]*\.\.\.\(actionDeadlineAt > 0 \? \{ actionDeadlineAt \} : \{\}\)/,
+      `${label}: dedicated click_ax messages lose the owning absolute page deadline`,
+    );
     const clickAxTimeoutCatch = clickAxSource.indexOf("if (error?.code === 'content_action_timeout')");
     const clickAxReinject = clickAxSource.indexOf('await this._injectCoreContentScripts(tabId);');
     assert.notEqual(clickAxTimeoutCatch, -1, `${label}: click_ax timeout is not handled`);
@@ -88185,6 +88268,11 @@ test('Chrome upload_file deadline distinguishes preparation from file-input disp
     cdpSource.slice(dataUploadStart, dataUploadEnd),
     /Runtime\.enable[\s\S]*throwIfAborted\(\)[\s\S]*beforeDispatch[\s\S]*Runtime\.callFunctionOn/,
     'in-memory upload marks dispatch before preparation has completed',
+  );
+  assert.match(
+    cdpSource.slice(dataUploadStart, dataUploadEnd),
+    /function \(base64, filename, mimeType, actionDeadlineAt\)[\s\S]*deadlineExpired\(\)[\s\S]*transfer\.items\.add\(file\);\s*if \(deadlineExpired\(\)\)[\s\S]*this\.files = transfer\.files/,
+    'in-memory upload can mutate FileList after its absolute page deadline',
   );
   const originalCdp = {
     attach: cdpClientCh.attach,

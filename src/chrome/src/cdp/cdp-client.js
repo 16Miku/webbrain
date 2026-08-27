@@ -2254,6 +2254,7 @@ export class CDPClient {
    */
   async setFileInputData(tabId, objectId, { base64, filename, mimeType }, options = {}) {
     const abortSignal = options?.abortSignal || null;
+    const deadlineAt = Number(options?.deadlineAt) || 0;
     const throwIfAborted = () => {
       if (!abortSignal?.aborted) return;
       if (abortSignal.reason instanceof Error) throw abortSignal.reason;
@@ -2266,7 +2267,11 @@ export class CDPClient {
     throwIfAborted();
     if (typeof options?.beforeDispatch === 'function') options.beforeDispatch();
     const res = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
-      functionDeclaration: `function (base64, filename, mimeType) {
+      functionDeclaration: `function (base64, filename, mimeType, actionDeadlineAt) {
+        const deadlineExpired = () => Number(actionDeadlineAt) > 0 && Date.now() >= Number(actionDeadlineAt);
+        if (deadlineExpired()) {
+          return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
+        }
         if (!(this instanceof HTMLInputElement) || this.type !== 'file') {
           return { success: false, dispatched: false, error: 'Target is not an <input type=file>.' };
         }
@@ -2278,6 +2283,9 @@ export class CDPClient {
           const file = new File([bytes], filename, { type: mimeType || 'application/octet-stream' });
           const transfer = new DataTransfer();
           transfer.items.add(file);
+          if (deadlineExpired()) {
+            return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
+          }
           this.files = transfer.files;
           dispatched = true;
           this.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2292,11 +2300,14 @@ export class CDPClient {
         { value: String(base64 ?? '') },
         { value: String(filename || 'attachment') },
         { value: String(mimeType || 'application/octet-stream') },
+        { value: deadlineAt },
       ],
       returnByValue: true,
     });
+    const result = res?.result?.value || { success: false, dispatched: false, error: 'The page did not return an upload result.' };
+    if (result?.deadlineExpired && result?.dispatched !== true) return result;
     throwIfAborted();
-    return res?.result?.value || { success: false, dispatched: false, error: 'The page did not return an upload result.' };
+    return result;
   }
 
   async _disarmProtocolFileChooserGuard(tabId) {

@@ -10528,6 +10528,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
+    const actionDeadlineAt = [upstreamAbortSignal, deadlineAbortSignal]
+      .map(signal => Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(signal)?.deadlineAt))
+      .filter(deadlineAt => Number.isFinite(deadlineAt) && deadlineAt > 0)
+      .sort((a, b) => a - b)[0] || 0;
     const send = () => {
       throwIfAborted();
       dispatchState.started = true;
@@ -10535,6 +10539,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         target: 'content',
         action: 'click_ax',
         params: contentArgs,
+        ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
       }, messageOptions);
     };
     const dispatch = () => this._withContentActionDeadline(send, 'click_ax');
@@ -24551,18 +24556,35 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         if (attachmentPayload) {
           throwIfEarlyCdpAborted();
+          const uploadDeadlineAt = Number(
+            CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.deadlineAt,
+          ) || 0;
           const injected = await cdpClient.setFileInputData(
             tabId,
             objectIds[0],
             attachmentPayload,
             {
               abortSignal: earlyCdpAbortSignal,
+              deadlineAt: uploadDeadlineAt,
               beforeDispatch: () => {
                 uploadDispatched = true;
                 markEarlyCdpDispatched();
               },
             },
           );
+          if (injected?.deadlineExpired && injected?.dispatched !== true) {
+            uploadDispatched = false;
+            earlyCdpDispatchState.started = false;
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+              deadlineExpired: true,
+              error: injected.error || 'Upload action deadline expired before dispatch',
+            };
+          }
           throwIfEarlyCdpAborted();
           if (!injected?.success) {
             return {

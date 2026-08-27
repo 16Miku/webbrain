@@ -7391,6 +7391,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
+    const actionDeadlineAt = [upstreamAbortSignal, deadlineAbortSignal]
+      .map(signal => Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(signal)?.deadlineAt))
+      .filter(deadlineAt => Number.isFinite(deadlineAt) && deadlineAt > 0)
+      .sort((a, b) => a - b)[0] || 0;
     const send = () => {
       throwIfAborted();
       dispatchState.started = true;
@@ -7398,6 +7402,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         target: 'content',
         action: 'click_ax',
         params: contentArgs,
+        ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
       }, messageOptions);
     };
     const dispatch = () => this._withContentActionDeadline(send, 'click_ax');
