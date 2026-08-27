@@ -3985,6 +3985,24 @@ export class CDPClient {
 
     // Step 1: real mouse events at center coordinates.
     let dispatchAttempted = false;
+    const pageDeadlineResult = (priorDispatchAttempted, error) => priorDispatchAttempted
+      ? {
+          success: false,
+          dispatched: true,
+          outcomeUnknown: true,
+          retryable: false,
+          deadlineExpired: true,
+          error: `${error || 'Click action deadline expired'}. An earlier click attempt may already have reached the page.`,
+        }
+      : {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          outcomeUnknown: false,
+          retryable: true,
+          deadlineExpired: true,
+          error: error || 'Click action deadline expired before click dispatch',
+        };
     if (info.inViewport && info.hitOk) {
       try {
         await this.armFileInputClickGuard(tabId);
@@ -4070,10 +4088,11 @@ export class CDPClient {
         throwIfAborted();
         objectId = object?.objectId || null;
         if (objectId) {
+          const priorDispatchAttempted = dispatchAttempted;
           const validation = await authorizeDispatch({ x: info.x, y: info.y, tag: info.tag });
           if (validation.success !== true) return validation;
           dispatchAttempted = true;
-          await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+          const clicked = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
             objectId,
             functionDeclaration: `function(actionDeadlineAt) {
               if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return false;
@@ -4086,6 +4105,9 @@ export class CDPClient {
             returnByValue: true,
             awaitPromise: false,
           });
+          if (clicked?.result?.value === false) {
+            return pageDeadlineResult(priorDispatchAttempted, 'Click action deadline expired before click dispatch');
+          }
           throwIfAborted();
           const blockedFileInput = await this.consumeFileInputClickGuard(tabId);
           if (blockedFileInput?.blocked) {
@@ -4112,7 +4134,7 @@ export class CDPClient {
         // fall through
       } finally {
         if (objectId) {
-          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+          try { void this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }).catch(() => {}); } catch {}
         }
       }
     }
@@ -4124,12 +4146,14 @@ export class CDPClient {
     throwIfAborted();
     const fallbackValidation = await authorizeDispatch({ x: info.x, y: info.y, tag: info.tag });
     if (fallbackValidation.success !== true) return fallbackValidation;
+    const priorDispatchAttempted = dispatchAttempted;
     dispatchAttempted = true;
     const fb = await this.evaluate(tabId, `
       (() => {
         const actionDeadlineAt = ${deadlineAt};
         const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
-        if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Click action deadline expired' };
+        const deadlineFailure = () => ({ success: false, dispatched: false, noDispatch: true, deadlineExpired: true, error: 'Click action deadline expired' });
+        if (deadlineExpired()) return deadlineFailure();
         const sel = ${selectorJSON};
         const queryDeep = (root) => {
           try { const h = root.querySelector(sel); if (h) return h; } catch (e) { return null; }
@@ -4147,9 +4171,9 @@ export class CDPClient {
           : tag === 'BUTTON'
             ? type === 'submit' || (!type && !!(el.form || el.closest?.('form')))
             : false;
-        if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Click action deadline expired' };
+        if (deadlineExpired()) return deadlineFailure();
         try { el.focus(); } catch (e) {}
-        if (deadlineExpired()) return { success: false, deadlineExpired: true, error: 'Click action deadline expired' };
+        if (deadlineExpired()) return deadlineFailure();
         el.click();
         const r = el.getBoundingClientRect();
         return {
@@ -4163,6 +4187,10 @@ export class CDPClient {
         };
       })()
     `);
+    const fallbackResult = fb?.result?.value || { success: false, error: 'Click failed' };
+    if (fallbackResult.deadlineExpired === true && fallbackResult.dispatched !== true) {
+      return pageDeadlineResult(priorDispatchAttempted, fallbackResult.error);
+    }
     throwIfAborted();
     const blockedFileInput = await this.consumeFileInputClickGuard(tabId);
     if (blockedFileInput?.blocked) {
@@ -4171,7 +4199,6 @@ export class CDPClient {
         'Do not click file-upload controls before uploading.',
       );
     }
-    const fallbackResult = fb?.result?.value || { success: false, error: 'Click failed' };
     if (fallbackResult.success === false && fallbackResult.dispatched == null) {
       fallbackResult.dispatched = dispatchAttempted;
     }

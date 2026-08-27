@@ -51063,12 +51063,22 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
     return {};
   };
   client.evaluate = async () => ({
-    result: { value: { success: false, error: 'fallback target disappeared' } },
+    result: {
+      value: {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        deadlineExpired: true,
+        error: 'fallback deadline expired before its click',
+      },
+    },
   });
 
   const uncertain = await client.clickElement(42, '#submit');
   assert.equal(uncertain.success, false);
   assert.equal(uncertain.dispatched, true, 'a mousePressed attempt must fail closed when later fallback also fails');
+  assert.equal(uncertain.outcomeUnknown, true, 'a fallback no-click proof erased an earlier mousePressed uncertainty');
+  assert.equal(uncertain.retryable, false, 'an earlier mousePressed uncertainty invited a blind retry');
 
   client.resolveSelector = async () => ({
     inViewport: false,
@@ -51108,6 +51118,61 @@ test('Chrome selector click distinguishes pre-dispatch failure from uncertain di
   assert.equal(guardedFallback.success, true);
   assert.equal(guardedFallback.method, 'cdp-node-click');
   assert.equal(fallbackDispatchBoundaries, 1, 'selector fallback bypassed the dispatch boundary');
+
+  const pageDeadlineError = new Error('click did not return a page response within 60 seconds.');
+  pageDeadlineError.code = 'content_action_timeout';
+  for (const fallbackKind of ['open-shadow', 'closed-shadow']) {
+    const pageDeadlineController = new AbortController();
+    let pageDeadlineDispatchBoundaries = 0;
+    client.resolveSelector = async () => ({
+      inViewport: false,
+      hitOk: false,
+      nodeId: fallbackKind === 'closed-shadow' ? 99 : null,
+      x: 10,
+      y: 20,
+      width: 30,
+      height: 40,
+      tag: 'BUTTON',
+      type: 'button',
+    });
+    client.evaluate = async () => {
+      pageDeadlineController.abort(pageDeadlineError);
+      return {
+        result: {
+          value: {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            deadlineExpired: true,
+            error: 'Click action deadline expired',
+          },
+        },
+      };
+    };
+    client.sendCommand = async (_tabId, method) => {
+      if (method === 'DOM.resolveNode') return { object: { objectId: 'expired-fallback-node' } };
+      if (method === 'Runtime.callFunctionOn') {
+        pageDeadlineController.abort(pageDeadlineError);
+        return { result: { value: false } };
+      }
+      if (method === 'Runtime.releaseObject') return new Promise(() => {});
+      return {};
+    };
+    const pageDeadlineResult = await client.clickElement(42, '#expired-fallback', {
+      abortSignal: pageDeadlineController.signal,
+      beforeDispatch: async () => {
+        pageDeadlineDispatchBoundaries += 1;
+        return { success: true };
+      },
+    });
+    assert.equal(pageDeadlineDispatchBoundaries, 1, `${fallbackKind}: fallback did not cross its dispatch boundary`);
+    assert.equal(pageDeadlineResult.success, false, `${fallbackKind}: page-expired fallback reported success`);
+    assert.equal(pageDeadlineResult.dispatched, false, `${fallbackKind}: page-expired fallback claimed a click`);
+    assert.equal(pageDeadlineResult.noDispatch, true, `${fallbackKind}: page-expired fallback lost no-click proof`);
+    assert.equal(pageDeadlineResult.outcomeUnknown, false, `${fallbackKind}: page-expired fallback became unknown`);
+    assert.equal(pageDeadlineResult.retryable, true, `${fallbackKind}: page-expired fallback blocked safe retry`);
+    assert.equal(pageDeadlineResult.deadlineExpired, true, `${fallbackKind}: page-expired fallback lost its deadline marker`);
+  }
 
   client.resolveSelector = async () => ({
     inViewport: true,
@@ -88805,6 +88870,49 @@ test('Chrome primary selector clicks classify deadline expiry at mouse dispatch'
       assert.equal(result.retryable, !dispatchStarted);
       assert.equal(result.noDispatch, dispatchStarted ? undefined : true);
     }
+
+    let releasePageProof;
+    let markPageProofReady;
+    const pageProofReady = new Promise(resolve => { markPageProofReady = resolve; });
+    const delayedPageProof = new Promise(resolve => { releasePageProof = resolve; });
+    cdpClientCh.clickElement = async (_tabId, _selector, options) => {
+      await options.beforeDispatch({ x: 10, y: 20 });
+      markPageProofReady();
+      await delayedPageProof;
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        outcomeUnknown: false,
+        retryable: true,
+        deadlineExpired: true,
+        error: 'Click action deadline expired before click dispatch',
+      };
+    };
+    const pageProofAgent = new AgentCh({});
+    pageProofAgent._isPdfTab = async () => false;
+    pageProofAgent._richTextToolbarToolBlock = async () => null;
+    pageProofAgent._chromeProtectedPageFailure = async () => null;
+    pageProofAgent._clickProgressSnapshot = async () => '{"page":"before"}';
+    pageProofAgent._withContentActionDeadline = async (operation, toolName) => {
+      assert.equal(toolName, 'click');
+      const error = new Error('click did not return a page response within 60 seconds.');
+      error.code = 'content_action_timeout';
+      const controller = new AbortController();
+      const started = Promise.resolve().then(() => operation(controller.signal));
+      await pageProofReady;
+      controller.abort(error);
+      releasePageProof();
+      return started;
+    };
+
+    const pageProofResult = await pageProofAgent.executeTool(51, 'click', { selector: '#late-button' });
+    assert.equal(pageProofResult.success, false, 'page-proven selector expiry reported success');
+    assert.equal(pageProofResult.dispatched, false, 'page-proven selector expiry kept the optimistic dispatch marker');
+    assert.equal(pageProofResult.noDispatch, true, 'page-proven selector expiry lost no-click proof');
+    assert.equal(pageProofResult.outcomeUnknown, false, 'page-proven selector expiry became unknown');
+    assert.equal(pageProofResult.retryable, true, 'page-proven selector expiry blocked safe retry');
+    assert.equal(pageProofResult.deadlineExpired, true, 'page-proven selector expiry lost its deadline marker');
   } finally {
     cdpClientCh.attach = originals.attach;
     cdpClientCh.evaluate = originals.evaluate;

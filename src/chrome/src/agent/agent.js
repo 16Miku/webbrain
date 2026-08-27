@@ -25761,6 +25761,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               return { success: true };
             },
           });
+          if (selResult?.deadlineExpired === true && selResult?.dispatched !== true) {
+            earlyCdpDispatchState.started = false;
+            return {
+              ...selResult,
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+            };
+          }
           throwIfEarlyCdpAborted();
           if (selResult?.success) this._showAgentTarget(tabId, selResult.rect || selResult, 'click_selector');
           const redirectedSel = await this._redirectTargetBlankClick(tabId, beforeTabIdsSel);
