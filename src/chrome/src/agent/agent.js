@@ -1606,28 +1606,51 @@ export class Agent extends LoopDetector {
       tools: [],
       toolChoice: null,
     });
+    const readOnlyRecoveryTool = (tool) => {
+      if (tool?.function?.name !== 'fetch_url') return tool;
+      const parameters = tool.function.parameters || {};
+      const properties = parameters.properties || {};
+      const readOnlyProperties = Object.fromEntries(
+        Object.entries(properties).filter(([name]) => !['body', 'replayRequestId'].includes(name)),
+      );
+      return {
+        ...tool,
+        function: {
+          ...tool.function,
+          description: `${tool.function.description || ''} Recovery restriction: this call must use GET and cannot replay or send a mutation body.`,
+          parameters: {
+            ...parameters,
+            properties: {
+              ...readOnlyProperties,
+              method: {
+                ...(properties.method || {}),
+                type: 'string',
+                enum: ['GET'],
+                description: 'GET only for completion verification recovery.',
+              },
+            },
+          },
+        },
+      };
+    };
     if (verification && (state?.verificationDebt || state?.iframeFormVerificationDebt)) {
-      let candidates = state.iframeFormVerificationDebt
-        ? available.filter(tool => tool?.function?.name === 'verify_form')
-        : [];
-      if (state.iframeFormVerificationDebt && !candidates.length) {
-        return unavailableVerification();
-      }
-      if (!candidates.length && state?.lastAction?.name === 'new_tab') {
+      let candidates = [];
+      if (state.verificationDebt && state?.lastAction?.name === 'new_tab') {
         candidates = available.filter(tool => ['fetch_url', 'research_url'].includes(tool?.function?.name));
         if (!candidates.length) return unavailableVerification();
-      }
-      if (!candidates.length && state?.lastAction?.downloadAction === true) {
+      } else if (state.verificationDebt && state?.lastAction?.downloadAction === true) {
         candidates = available.filter(tool => ['list_downloads', 'read_downloaded_file'].includes(tool?.function?.name));
         if (!candidates.length) return unavailableVerification();
-      }
-      if (!candidates.length) {
+      } else if (state.iframeFormVerificationDebt) {
+        candidates = available.filter(tool => tool?.function?.name === 'verify_form');
+        if (!candidates.length) return unavailableVerification();
+      } else {
         candidates = available.filter(tool => COMPLETION_DOCUMENT_OBSERVATION_TOOLS.has(tool?.function?.name));
       }
       if (!candidates.length) return unavailableVerification();
       return {
         kind: 'verification',
-        tools: candidates,
+        tools: candidates.map(readOnlyRecoveryTool),
         toolChoice: 'required',
       };
     }

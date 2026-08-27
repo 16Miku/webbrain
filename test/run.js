@@ -22527,6 +22527,47 @@ test('completion invariant state machine enforces post-action observation with C
     assert.equal(iframeFormState.iframeFormVerificationDebt, false, `${label}: matching iframe verify_form did not clear form debt`);
     assert.equal(invariant.completionDoneBlock(iframeFormState, 'done', { outcome: 'success' }), null);
 
+    let iframeThenBackgroundState = invariant.recordCompletionToolResult(
+      invariant.createCompletionInvariantState(`${label}-iframe-then-background`),
+      'iframe_type',
+      { urlFilter: 'forms.example/embed', selector: '#country', matchIndex: 0, text: 'Türkiye' },
+      { success: true, dispatched: true, verified: true, frameId: 11, value: 'Türkiye' },
+    );
+    iframeThenBackgroundState = invariant.recordCompletionToolResult(
+      iframeThenBackgroundState,
+      'new_tab',
+      { url: 'https://reference.example/guide' },
+      { success: true, url: 'https://reference.example/guide', active: false },
+    );
+    iframeThenBackgroundState = invariant.recordCompletionToolResult(
+      iframeThenBackgroundState,
+      'fetch_url',
+      { url: 'https://reference.example/guide', method: 'GET' },
+      { success: true, url: 'https://reference.example/guide', content: 'Reference loaded.' },
+    );
+    assert.equal(iframeThenBackgroundState.verificationDebt, false, `${label}: matching new-tab read did not clear its own debt`);
+    assert.equal(iframeThenBackgroundState.iframeFormVerificationDebt, true, `${label}: new-tab read erased a pending iframe obligation`);
+    iframeThenBackgroundState = invariant.recordCompletionToolResult(
+      iframeThenBackgroundState,
+      'verify_form',
+      { urlFilter: 'forms.example/embed' },
+      {
+        success: true,
+        scope: 'iframe',
+        urlFilter: 'forms.example/embed',
+        fieldCount: 1,
+        targetChecks: [{
+          scope: 'forms.example/embed',
+          frameId: 11,
+          selector: '#country',
+          matchIndex: 0,
+          matched: true,
+          valueMatchesExpected: true,
+        }],
+      },
+    );
+    assert.equal(iframeThenBackgroundState.iframeFormVerificationDebt, false, `${label}: verified new-tab debt kept blocking iframe verification`);
+
     const unscopedIframeState = invariant.recordCompletionToolResult(
       invariant.createCompletionInvariantState(`${label}-unscoped-iframe-form`),
       'iframe_type',
@@ -22608,10 +22649,10 @@ test('completion invariant state machine enforces post-action observation with C
   }
 });
 
-test('completion recovery keeps skill downloads on download-specific observations', () => {
-  for (const [label, AgentClass, invariant] of [
-    ['chrome', AgentCh, CompletionInvariantCh],
-    ['firefox', AgentFx, CompletionInvariantFx],
+test('completion recovery keeps scoped observations read-only and target-specific', async () => {
+  for (const [label, AgentClass, invariant, getTools] of [
+    ['chrome', AgentCh, CompletionInvariantCh, getToolsForModeCh],
+    ['firefox', AgentFx, CompletionInvariantFx, getToolsForModeFx],
   ]) {
     const agent = new AgentClass({});
     const tabId = label === 'chrome' ? 24852 : 24853;
@@ -22650,15 +22691,95 @@ test('completion recovery keeps skill downloads on download-specific observation
       { success: true, url: 'https://example.com/reference', active: false },
     );
     agent.completionInvariants.set(tabId, backgroundState);
-    const backgroundPolicy = agent._completionRecoveryPolicy(tabId, [
-      { function: { name: 'read_page' } },
-      { function: { name: 'fetch_url' } },
-      { function: { name: 'research_url' } },
-    ], { verification: true });
+    const backgroundPolicy = agent._completionRecoveryPolicy(
+      tabId,
+      getTools('act'),
+      { verification: true },
+    );
     assert.deepEqual(
       backgroundPolicy?.tools?.map(tool => tool.function.name),
       ['fetch_url', 'research_url'],
       `${label}: new-tab recovery exposed observations of the original run tab`,
+    );
+    const recoveryFetch = backgroundPolicy.tools.find(tool => tool.function.name === 'fetch_url');
+    assert.deepEqual(recoveryFetch?.function?.parameters?.properties?.method?.enum, ['GET'], `${label}: new-tab recovery fetch was not GET-only`);
+    assert.equal(recoveryFetch?.function?.parameters?.properties?.body, undefined, `${label}: new-tab recovery fetch retained a mutation body`);
+    assert.equal(recoveryFetch?.function?.parameters?.properties?.replayRequestId, undefined, `${label}: new-tab recovery fetch retained mutation replay`);
+
+    let executedFetch = 0;
+    const messages = [];
+    const updates = [];
+    agent._persist = () => {};
+    agent.executeTool = async () => {
+      executedFetch++;
+      throw new Error('mutating recovery fetch must not execute');
+    };
+    const batch = await agent._executeToolBatch(
+      tabId,
+      [{
+        id: `${label}_mutating_recovery_fetch`,
+        function: {
+          name: 'fetch_url',
+          arguments: JSON.stringify({
+            url: 'https://reference.example/guide',
+            method: 'POST',
+          }),
+        },
+      }],
+      messages,
+      (type, data) => updates.push({ type, data }),
+      { supportsVision: false },
+      null,
+      new Set(backgroundPolicy.tools.map(tool => tool.function.name)),
+      1,
+      {},
+      new Map(backgroundPolicy.tools.map(tool => [tool.function.name, tool.function.parameters])),
+    );
+    assert.deepEqual(batch, { action: 'continue' }, `${label}: invalid recovery fetch did not continue safely`);
+    assert.equal(executedFetch, 0, `${label}: mutating recovery fetch reached execution`);
+    assert.equal(
+      updates.some(update => update.type === 'tool_result' && update.data?.result?.invalidToolArguments === true),
+      true,
+      `${label}: mutating recovery fetch was not rejected by its advertised schema`,
+    );
+    assert.equal(agent.completionInvariants.get(tabId)?.verificationDebt, true, `${label}: rejected recovery mutation cleared verification debt`);
+    assert.equal(
+      agent.completionInvariants.get(tabId)?.lastAction?.backgroundTargetFingerprint,
+      backgroundState.lastAction.backgroundTargetFingerprint,
+      `${label}: rejected recovery mutation replaced the new-tab target`,
+    );
+
+    let layeredState = invariant.recordCompletionToolResult(
+      invariant.createCompletionInvariantState(`${label}-layered-recovery`),
+      'iframe_type',
+      { urlFilter: 'forms.example/embed', selector: '#country', matchIndex: 0, text: 'Türkiye' },
+      { success: true, dispatched: true, verified: true, frameId: 11, value: 'Türkiye' },
+    );
+    layeredState = invariant.recordCompletionToolResult(
+      layeredState,
+      'new_tab',
+      { url: 'https://reference.example/guide' },
+      { success: true, url: 'https://reference.example/guide', active: false },
+    );
+    agent.completionInvariants.set(tabId, layeredState);
+    const layeredBackgroundPolicy = agent._completionRecoveryPolicy(tabId, getTools('act'), { verification: true });
+    assert.deepEqual(
+      layeredBackgroundPolicy?.tools?.map(tool => tool.function.name),
+      ['fetch_url', 'research_url'],
+      `${label}: pending iframe debt displaced the latest new-tab verification`,
+    );
+    layeredState = invariant.recordCompletionToolResult(
+      layeredState,
+      'fetch_url',
+      { url: 'https://reference.example/guide', method: 'GET' },
+      { success: true, url: 'https://reference.example/guide', content: 'Reference loaded.' },
+    );
+    agent.completionInvariants.set(tabId, layeredState);
+    const layeredIframePolicy = agent._completionRecoveryPolicy(tabId, getTools('act'), { verification: true });
+    assert.deepEqual(
+      layeredIframePolicy?.tools?.map(tool => tool.function.name),
+      ['verify_form'],
+      `${label}: cleared new-tab debt kept blocking the pending iframe verification`,
     );
   }
 });
