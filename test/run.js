@@ -17093,18 +17093,19 @@ test('sidepanels hide empty assistant placeholders until output renders', () => 
 
     assert.match(
       panel,
-      /function assistantMessageHasRenderableContent\(msgEl\) \{[\s\S]*?contentEl\.textContent\.trim\(\)[\s\S]*?img, svg, canvas, video, audio, iframe, input, textarea, select, button, hr, progress/,
+      /const ASSISTANT_RENDERABLE_ELEMENT_SELECTOR =[\s\S]*?img, svg, canvas, video, audio, iframe, input, textarea, select, button, hr, progress[\s\S]*?function progressContentNodeIsVisible\(node\)[\s\S]*?node\.matches\?\.\(PROGRESS_CONTENT_SELECTOR\)[\s\S]*?node\.matches\('\.tool-call'\)[\s\S]*?return verboseMode;[\s\S]*?return verboseMode \|\| compactProgressPreviewVisible;[\s\S]*?function nodeHasAssistantRenderableContent\(node\)[\s\S]*?function assistantMessageHasRenderableContent\(msgEl\)/,
       `${label}: assistant visibility should recognize text and non-text output`,
     );
+    assert.doesNotMatch(panel, /visibleContent = contentEl\.cloneNode\(true\)/, `${label}: streamed visibility checks should not clone whole message trees`);
     assert.match(
       panel,
-      /function syncAssistantMessageVisibility\(\) \{[\s\S]*?classList\.toggle\([\s\S]*?'assistant-awaiting-content'[\s\S]*?!assistantMessageHasRenderableContent\(msgEl\)/,
+      /function syncAssistantMessageElementVisibility\(msgEl\) \{[\s\S]*?classList\?\.toggle\([\s\S]*?'assistant-awaiting-content'[\s\S]*?!assistantMessageHasRenderableContent\(msgEl\)[\s\S]*?function syncAssistantMessageVisibility\(\) \{[\s\S]*?syncAssistantMessageElementVisibility\(msgEl\)/,
       `${label}: assistant visibility should follow rendered content`,
     );
     assert.match(
       panel,
-      /const persistObserver = new MutationObserver\(\(\) => \{\s*syncAssistantMessageVisibility\(\);\s*schedulePersist\(\);\s*\}\);/,
-      `${label}: streamed text and cards should reveal the waiting assistant node`,
+      /function syncAssistantMessageVisibilityForMutations\(mutations\)[\s\S]*?affectedMessages\.forEach\(syncAssistantMessageElementVisibility\)[\s\S]*?const persistObserver = new MutationObserver\(\(mutations\) => \{\s*syncAssistantMessageVisibilityForMutations\(mutations\);\s*schedulePersist\(\);\s*\}\);/,
+      `${label}: streamed mutations should reevaluate only their affected assistant messages`,
     );
     assert.match(
       panel,
@@ -19563,7 +19564,7 @@ test('scheduled clarify resumes hide suggested actions immediately', () => {
     const scheduledIdx = panel.indexOf('if (isScheduledClarify) {', submitIdx);
     const isProcessingIdx = panel.indexOf('setTabProcessing(tabId, true);', scheduledIdx);
     const hideIdx = panel.indexOf('hideRecommendedActions();', scheduledIdx);
-    const activityIdx = panel.indexOf("showActivity(t('sp.activity.thinking'));", scheduledIdx);
+    const activityIdx = panel.indexOf('startThinkingActivity();', scheduledIdx);
     assert.notEqual(submitIdx, -1, `${label}: submitClarify missing`);
     assert.notEqual(scheduledIdx, -1, `${label}: scheduled clarify branch missing`);
     assert.notEqual(isProcessingIdx, -1, `${label}: scheduled clarify should mark processing`);
@@ -39030,41 +39031,25 @@ test('sidepanel cloud cost allowance stop offers a persisted one-click $10 bump'
   }
 });
 
-test('sidepanel verbose tool-call headers treat tool names as text', () => {
+test('sidepanel activity-step labels treat tool names as text', () => {
   for (const [label, panelRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
-    const start = panel.indexOf('function appendVerboseToolCall(name, args) {');
-    assert.notEqual(start, -1, `${label}: appendVerboseToolCall missing`);
-    const body = panel.slice(start, panel.indexOf('\n}\n\nfunction appendVerboseToolResult', start) + 2);
+    const start = panel.indexOf('function appendCompactStep(toolName, args) {');
+    const end = panel.indexOf('function updateActiveToolProgress(', start);
+    assert.ok(start >= 0 && end > start, `${label}: activity-step renderer missing`);
+    const body = panel.slice(start, end);
     assert.doesNotMatch(
       body,
-      /header\.innerHTML\s*=/,
-      `${label}: verbose tool-call header must not interpolate tool names through innerHTML`,
+      /label\.innerHTML\s*=/,
+      `${label}: activity-step labels must not interpolate tool names through innerHTML`,
     );
     assert.match(
       body,
-      /const icon = document\.createElement\('span'\);[\s\S]*?icon\.textContent = '\\u26A1';[\s\S]*?nameLabel\.textContent = ` \$\{name \|\| ''\}`;[\s\S]*?header\.append\(icon, nameLabel\);/,
-      `${label}: verbose tool-call header should append the icon element and a textContent-only tool name label`,
-    );
-  }
-});
-
-test('sidepanel verbose done labels recognize explicit failed outcomes', () => {
-  for (const [label, panelRel] of [
-    ['chrome', 'src/chrome/src/ui/sidepanel.js'],
-    ['firefox', 'src/firefox/src/ui/sidepanel.js'],
-  ]) {
-    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
-    const start = panel.indexOf('function appendVerboseToolResult(name, result) {');
-    assert.notEqual(start, -1, `${label}: appendVerboseToolResult missing`);
-    const body = panel.slice(start, panel.indexOf('\n}\n', start) + 2);
-    assert.match(
-      body,
-      /const failed = result\?\.outcome === 'failed'[\s\S]*?\|\| \(result\?\.success === false/,
-      `${label}: explicit failed done outcomes should use the failed completion label`,
+      /const label = document\.createElement\('span'\);[\s\S]*?label\.textContent = friendlyToolLabel\(toolName, args\);/,
+      `${label}: activity-step renderer should assign its friendly label through textContent`,
     );
   }
 });
@@ -39096,11 +39081,10 @@ test('sidepanel suppresses streamed raw tool-call text before rendering tool ste
     const end = panel.indexOf("case 'tool_result':", start);
     assert.notEqual(start, -1, `${label}: tool_call handler missing`);
     const body = panel.slice(start, end);
-    assert.match(body, /clearTransientAssistantTextForToolCall\(\);[\s\S]*?appendVerboseToolCall/, `${label}: verbose tool calls should clear raw streamed text first`);
-    assert.match(body, /clearTransientAssistantTextForToolCall\(\);[\s\S]*?appendCompactStep/, `${label}: compact tool steps should clear raw streamed text first`);
+    assert.match(body, /clearTransientAssistantTextForToolCall\(\);[\s\S]*?if \(verboseMode\) appendVerboseToolCall[\s\S]*?else appendCompactStep/, `${label}: verbose should restore full tool cards while normal mode records compact history`);
     const clearStart = panel.indexOf('function clearTransientAssistantTextForToolCall() {');
     assert.notEqual(clearStart, -1, `${label}: clearTransientAssistantTextForToolCall missing`);
-    const clearEnd = panel.indexOf('function appendVerboseToolCall', clearStart);
+    const clearEnd = panel.indexOf('// UI Helpers', clearStart);
     assert.notEqual(clearEnd, -1, `${label}: clearTransientAssistantTextForToolCall boundary missing`);
     const clearBody = panel.slice(clearStart, clearEnd);
     assert.match(clearBody, /textEl\.textContent = '';/, `${label}: tool-call prose should be cleared when a tool call begins`);
@@ -39968,7 +39952,7 @@ test('sidepanel clears shared activity while restoring an idle destination tab',
     const clearProcessingIdx = idleBody.indexOf('setTabProcessing(numericTabId, false);');
     const idleHideIdx = idleBody.indexOf('hideActivity();');
     const syncComposerIdx = idleBody.indexOf('syncSendButtonState();');
-    assert.match(runningBody, /showActivity\(t\('sp\.activity\.thinking'\)\);/, `${label}: a running destination should restore its activity strip`);
+    assert.match(runningBody, /startThinkingActivity\(\);/, `${label}: a running destination should restore its activity strip`);
     assert.notEqual(clearProcessingIdx, -1, `${label}: idle restore should clear destination processing state`);
     assert.notEqual(idleHideIdx, -1, `${label}: idle restore should hide stale activity even when terminal replay is already acknowledged`);
     assert.notEqual(syncComposerIdx, -1, `${label}: idle restore should resync composer controls`);
@@ -46219,15 +46203,6 @@ test('sidepanel long replies use reading-first turn navigation', () => {
       /getOrCreateStepsContainer\(\)/,
       `${label}: compact tool results should not create an empty post-clarification segment`,
     );
-    const verboseToolSource = panel.slice(
-      panel.indexOf('function appendVerboseToolCall('),
-      panel.indexOf('function appendVerboseToolResult(', panel.indexOf('function appendVerboseToolCall(')),
-    );
-    assert.match(
-      verboseToolSource,
-      /content\.insertBefore\(el, textEl\);/,
-      `${label}: verbose resumed events should render after the repositioned clarification and before final text`,
-    );
     const planReviewSource = panel.slice(
       panel.indexOf('function renderPlanReviewCard('),
       panel.indexOf('function submitPlanReview('),
@@ -46309,7 +46284,7 @@ test('Act-mode risk warning can be dismissed permanently', () => {
   }
 });
 
-test('compact clarification results settle the pending pre-card tool step', () => {
+test('activity results settle matching steps and preserve completion outcomes', () => {
   for (const [label, panelRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
@@ -46325,10 +46300,12 @@ test('compact clarification results settle the pending pre-card tool step', () =
     const makeStep = (toolName) => {
       const classes = new Set(['step-item', 'active']);
       const icon = { className: 'step-icon spinning', textContent: '' };
+      const stepLabel = { textContent: '' };
       const appendedResults = [];
       const details = {
         classList: { contains: (name) => name === 'step-details' },
         appendChild: (child) => appendedResults.push(child),
+        querySelector: () => null,
       };
       const step = {
         dataset: { tool: toolName },
@@ -46337,18 +46314,23 @@ test('compact clarification results settle the pending pre-card tool step', () =
           remove: (name) => classes.delete(name),
           contains: (name) => classes.has(name),
         },
-        querySelector: (selector) => selector === '.step-icon' ? icon : null,
+        querySelector: (selector) => {
+          if (selector === '.step-icon') return icon;
+          if (selector === '.step-label') return stepLabel;
+          return null;
+        },
         nextElementSibling: details,
       };
-      return { step, classes, icon, appendedResults };
+      return { step, classes, icon, stepLabel, appendedResults };
     };
 
     const pendingClarify = makeStep('clarify');
     const laterUnrelated = makeStep('auto_screenshot');
+    let activeSteps = [pendingClarify.step, laterUnrelated.step];
     const currentAssistantEl = {
       querySelectorAll: (selector) => {
         assert.equal(selector, '.steps-container .step-item.active');
-        return [pendingClarify.step, laterUnrelated.step];
+        return activeSteps;
       },
     };
     const runtime = vm.runInNewContext(
@@ -46372,6 +46354,24 @@ test('compact clarification results settle the pending pre-card tool step', () =
     assert.equal(pendingClarify.icon.className, 'step-icon fail', `${label}: failed clarify result should retain failure status`);
     assert.equal(pendingClarify.appendedResults.length, 1, `${label}: clarify result details should stay attached to the original step`);
     assert.equal(laterUnrelated.classes.has('active'), true, `${label}: matching should not settle an unrelated later step`);
+
+    const rejectedDone = makeStep('done');
+    activeSteps = [rejectedDone.step];
+    runtime.markLastStepDone('done', { success: false, blockedDone: true });
+    assert.equal(rejectedDone.icon.className, 'step-icon fail', `${label}: rejected done should render as failed even without an error string`);
+    assert.equal(rejectedDone.stepLabel.textContent, 'sp.tool.done.rejected', `${label}: rejected done should retain its explicit terminal label`);
+
+    const failedDone = makeStep('done');
+    activeSteps = [failedDone.step];
+    runtime.markLastStepDone('done', { success: false, done: true, outcome: 'failed' });
+    assert.equal(failedDone.icon.className, 'step-icon fail', `${label}: explicit failed done should not receive a success check`);
+    assert.equal(failedDone.stepLabel.textContent, 'sp.tool.done.failed', `${label}: explicit failed done should use the failed terminal label`);
+
+    const completedDone = makeStep('done');
+    activeSteps = [completedDone.step];
+    runtime.markLastStepDone('done', { success: true, done: true, outcome: 'success' });
+    assert.equal(completedDone.icon.className, 'step-icon check', `${label}: successful done should retain its success check`);
+    assert.equal(completedDone.stepLabel.textContent, 'sp.tool.done.completed', `${label}: successful done should use the completed terminal label`);
   }
 });
 
@@ -46445,8 +46445,9 @@ test('compact tool detail toggles are rebound after chat restore', () => {
       {
         messagesEl: {
           querySelectorAll: (selector) => {
-            assert.equal(selector, '.step-details-toggle');
-            return toggles;
+            if (selector === '.step-details-toggle') return toggles;
+            assert.ok(selector === '.step-expand-all' || selector === '.progress-expanded-marker');
+            return [];
           },
         },
       },
@@ -46469,6 +46470,127 @@ test('compact tool detail toggles are rebound after chat restore', () => {
     assert.equal(restored.listeners.length, 1, `${label}: restored compact detail button should regain a handler`);
     restored.listeners[0]({ stopPropagation: () => {} });
     assert.equal(restored.classes.has('open'), true, `${label}: restored compact detail button should reveal the panel`);
+  }
+});
+
+test('status-strip clicks preview compact history while verbose restores full tool cards', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+
+    assert.match(
+      html,
+      /id="activity-live-status"[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true"/,
+      `${label}: activity updates should use a dedicated live region`,
+    );
+    assert.match(
+      html,
+      /id="activity-progress-toggle"[^>]*aria-controls="messages"[^>]*aria-expanded="false"[^>]*aria-label="Toggle activity history"[^>]*data-i18n-aria-label="sp\.activity\.toggle_history"[\s\S]*?id="activity-text"[^>]*aria-hidden="true"/,
+      `${label}: the activity toggle should have a stable localized accessible name`,
+    );
+    assert.match(css, /#activity-live-status \{[\s\S]*?position: absolute;[\s\S]*?clip: rect\(0, 0, 0, 0\);/, `${label}: the separate activity live region should remain visually hidden`);
+    assert.match(css, /#agent-activity \{[\s\S]*?gap: 8px;[\s\S]*?padding: 8px 14px;/, `${label}: live activity should retain the compact status-bar footprint`);
+    assert.match(css, /#activity-text \{[\s\S]*?font-size: 11px;[\s\S]*?font-weight: 600;/, `${label}: shimmer should not enlarge the original activity typography`);
+    assert.match(
+      css,
+      /#messages:not\(\.progress-verbose\):not\(\.progress-preview\) \.steps-container \{\s*display: none;[\s\S]*?#messages:not\(\.progress-verbose\) \.tool-call \{\s*display: none;/,
+      `${label}: normal mode should reveal only compact history during an explicit status-strip preview`,
+    );
+    assert.match(css, /@keyframes activity-text-sweep[\s\S]*?background-position: -100% 0;/, `${label}: live activity should have the requested directional shimmer`);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?#activity-text[\s\S]*?animation: none;/, `${label}: activity shimmer should respect reduced motion`);
+    assert.match(
+      panel,
+      /case 'text':[\s\S]*?showActivity\(t\('tool\.done'\)\)[\s\S]*?case 'text_delta':[\s\S]*?showActivity\(t\('tool\.done'\)\)[\s\S]*?case 'tool_call':[\s\S]*?showActivity\(friendlyToolLabel\(data\.name, data\.args\)\)/,
+      `${label}: response rendering and tool calls should replace the generic thinking state with concrete activity`,
+    );
+    assert.match(
+      panel,
+      /function setActivityText\(text, \{ announce = false \} = \{\}\) \{[\s\S]*?const nextText = String\(text \|\| ''\);[\s\S]*?activityText\.textContent !== nextText[\s\S]*?announce && activityLiveStatus\?\.textContent !== nextText[\s\S]*?function showActivity\(text\)[\s\S]*?setActivityText\(text, \{ announce: true \}\);/,
+      `${label}: repeated stream chunks should not re-announce an unchanged finishing status`,
+    );
+    assert.match(
+      panel,
+      /function rotateThinkingActivity\(\)[\s\S]*?announce: thinkingActivityIndex === 0[\s\S]*?function hideActivity\(\)[\s\S]*?activityLiveStatus\.textContent = ''/,
+      `${label}: filler rotations should announce once while concrete and terminal states control the live region`,
+    );
+    assert.match(
+      panel,
+      /const THINKING_ACTIVITY_KEYS = \[[\s\S]*?sp\.activity\.communicating[\s\S]*?sp\.activity\.thinking_more[\s\S]*?sp\.activity\.working_next[\s\S]*?sp\.activity\.coordinating_next[\s\S]*?sp\.activity\.checking_next[\s\S]*?sp\.activity\.preparing_next[\s\S]*?sp\.activity\.connecting_pieces[\s\S]*?sp\.activity\.reviewing_progress[\s\S]*?THINKING_ACTIVITY_ROTATION_MS = 3600/,
+      `${label}: generic waits should rotate a broad, slow-changing filler pool`,
+    );
+    assert.match(
+      panel,
+      /case 'thinking':[\s\S]*?if \(data\?\.note\)[\s\S]*?showActivity\(String\(data\.note\)\);[\s\S]*?else \{\s*startThinkingActivity\(\);/,
+      `${label}: concrete planner notes should win over the generic thinking rotation`,
+    );
+    assert.match(
+      panel,
+      /function startThinkingActivity\(\) \{[\s\S]*?if \(activityDisplayMode !== 'idle'\) return;[\s\S]*?function showActivity\(text\)[\s\S]*?clearThinkingActivityTimers\(\);[\s\S]*?activityDisplayMode = 'concrete';[\s\S]*?function hideActivity\(\) \{\s*clearThinkingActivityTimers\(\);/,
+      `${label}: concrete and terminal activity should stop pending generic rotations`,
+    );
+    assert.doesNotMatch(
+      panel,
+      /concreteActivityVisibleUntil|pendingThinkingActivityTimer/,
+      `${label}: generic filler should never return on a timer and overwrite a concrete status`,
+    );
+    assert.match(
+      panel,
+      /function progressLogIsVisible\(\) \{[\s\S]*?verboseMode \|\| compactProgressPreviewVisible/,
+      `${label}: assistant visibility should account for verbose and transient compact previews`,
+    );
+    assert.match(
+      panel,
+      /function toggleCompactProgressPreview\(\) \{\s*if \(verboseMode\) return;\s*setCompactProgressPreviewVisible\(!compactProgressPreviewVisible\);\s*\}/,
+      `${label}: clicking the status strip should toggle compact history only outside verbose mode`,
+    );
+    assert.match(
+      panel,
+      /function syncProgressDisplayMode\(\) \{[\s\S]*?if \(verboseMode\) compactProgressPreviewVisible = false;[\s\S]*?classList\.toggle\('progress-verbose', verboseMode\)[\s\S]*?classList\.toggle\('progress-preview', !verboseMode && compactProgressPreviewVisible\)[\s\S]*?aria-disabled[\s\S]*?function setCompactProgressPreviewVisible/,
+      `${label}: verbose mode should disable and clear the transient status-strip preview`,
+    );
+    assert.doesNotMatch(panel, /function enableExpandedProgressMode|PROGRESS_EXPANDED_MARKER_CLASS/, `${label}: the obsolete one-way expansion mode should be removed`);
+    const toolCallStart = panel.indexOf("case 'tool_call':");
+    const toolResultEnd = panel.indexOf("case 'run_capture_warning':", toolCallStart);
+    const activityDispatch = panel.slice(toolCallStart, toolResultEnd);
+    assert.match(activityDispatch, /if \(verboseMode\) appendVerboseToolCall\(data\.name, data\.args\);\s*else appendCompactStep\(data\.name, data\.args\);/, `${label}: verbose calls should use the original full-card renderer`);
+    assert.match(activityDispatch, /if \(verboseMode\) appendVerboseToolResult\(data\.name, data\.result\);\s*else markLastStepDone\(data\.name, data\.result\);/, `${label}: verbose results should settle the original full-card renderer`);
+    assert.match(panel, /function appendVerboseToolCall\(name, args\)[\s\S]*?className = 'tool-call'[\s\S]*?function appendVerboseToolResult\(name, result\)[\s\S]*?className = 'tool-result'/, `${label}: verbose mode should once again render always-open argument and result blocks`);
+  }
+});
+
+test('all locales expose the activity-history controls and mode copy', () => {
+  const keys = [
+    'sp.btn.verbose',
+    'sp.slash.verbose',
+    'sp.compact.verbose_on',
+    'sp.compact.verbose_off',
+    'st.display.verbose.desc',
+    'sp.activity.communicating',
+    'sp.activity.thinking_more',
+    'sp.activity.working_next',
+    'sp.activity.coordinating_next',
+    'sp.activity.checking_next',
+    'sp.activity.preparing_next',
+    'sp.activity.connecting_pieces',
+    'sp.activity.reviewing_progress',
+    'sp.activity.toggle_history',
+  ];
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
+    for (const filename of fs.readdirSync(localeDir).filter(name => name.endsWith('.js'))) {
+      const locale = fs.readFileSync(path.join(localeDir, filename), 'utf8');
+      for (const key of keys) {
+        const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        assert.match(locale, new RegExp(`['"]${escapedKey}['"]:\\s*['"][^'"]+['"]`), `${label}/${filename}: missing ${key}`);
+      }
+    }
   }
 });
 
