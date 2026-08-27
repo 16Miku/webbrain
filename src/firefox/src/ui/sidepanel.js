@@ -2689,6 +2689,7 @@ function scheduledJobActions(job) {
 const SCHEDULED_VISIBLE_STATUSES = new Set(['pending', 'queued', 'paused', 'running', 'needs_user_input', 'failed', 'completed']);
 const COMPLETED_SCHEDULED_JOB_AUTO_HIDE_MS = 15 * 1000;
 const pinnedCompletedScheduledJobIds = new Set();
+const pendingScheduledPlannerFallbackMessages = new Map();
 let scheduledJobAutoHideTimer = null;
 
 function visibleScheduledJobs(jobs = []) {
@@ -2766,14 +2767,41 @@ function findScheduledAssistantMessageForJob(jobId) {
   return null;
 }
 
+function queueScheduledPlannerFallbackMessage(jobId, message) {
+  const id = String(jobId || '');
+  if (!id || !message) return;
+  pendingScheduledPlannerFallbackMessages.delete(id);
+  pendingScheduledPlannerFallbackMessages.set(id, message);
+  while (pendingScheduledPlannerFallbackMessages.size > 50) {
+    pendingScheduledPlannerFallbackMessages.delete(
+      pendingScheduledPlannerFallbackMessages.keys().next().value,
+    );
+  }
+}
+
+function flushScheduledPlannerFallbackMessage(jobId, assistantEl = null) {
+  const id = String(jobId || '');
+  if (!id || !pendingScheduledPlannerFallbackMessages.has(id)) return false;
+  if (!assistantEl) assistantEl = findScheduledAssistantMessageForJob(id);
+  if (!assistantEl) return false;
+  const message = pendingScheduledPlannerFallbackMessages.get(id);
+  pendingScheduledPlannerFallbackMessages.delete(id);
+  addPlannerFallbackNote(message, assistantEl);
+  return true;
+}
+
 function ensureScheduledTerminalMessage(job) {
   const jobId = job?.id ? String(job.id) : '';
   if (!jobId || !isUrlTargetScheduledJob(job)) return null;
   const existing = findScheduledAssistantMessageForJob(jobId);
-  if (existing) return existing;
+  if (existing) {
+    flushScheduledPlannerFallbackMessage(jobId, existing);
+    return existing;
+  }
   resetChatNavigation();
   const msgEl = addMessage('assistant', '');
   msgEl.dataset.scheduledJobId = jobId;
+  flushScheduledPlannerFallbackMessage(jobId, msgEl);
   return msgEl;
 }
 
@@ -3060,6 +3088,7 @@ async function handleScheduledJobEvent(data, tabId) {
       currentAssistantEl = addMessage('assistant', '');
     }
     if (jobId) currentAssistantEl.dataset.scheduledJobId = jobId;
+    flushScheduledPlannerFallbackMessage(jobId, currentAssistantEl);
     showActivity(t('sp.scheduled.running', { title }));
   } else if (event === 'completed') {
     ensureScheduledTerminalMessage(job);
@@ -8934,7 +8963,16 @@ function handleAgentUpdateMessage(msg) {
           || retryPayloadForRunAssistant(targetAssistantEl);
         renderPlannerRequestFailure(targetAssistantEl, data, retryPayload);
       } else if (data?.code === 'planner_failed_continue_act') {
-        addPlannerFallbackNote(data?.message || t('sp.plan.intent_unavailable'));
+        const message = data?.message || t('sp.plan.intent_unavailable');
+        const scheduledJobId = String(data?.scheduledJobId || '');
+        const scheduledAssistantEl = scheduledJobId
+          ? findScheduledAssistantMessageForJob(scheduledJobId)
+          : null;
+        if (scheduledJobId && !scheduledAssistantEl) {
+          queueScheduledPlannerFallbackMessage(scheduledJobId, message);
+        } else {
+          addPlannerFallbackNote(message, scheduledAssistantEl || eventAssistantEl || currentAssistantEl);
+        }
       } else if (data?.code === 'ask_stream_fallback') {
         showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
       } else if (data?.code === 'persistence_degraded') {
@@ -9956,9 +9994,9 @@ function placeAnsweredClarifyCardInTimeline(card) {
   content.insertBefore(card, textEl);
 }
 
-function getOrCreateStepsContainer() {
-  if (!currentAssistantEl) return null;
-  const content = currentAssistantEl.querySelector('.message-content');
+function getOrCreateStepsContainer(assistantEl = currentAssistantEl) {
+  if (!assistantEl) return null;
+  const content = assistantEl.querySelector('.message-content');
   const textEl = [...content.children]
     .find(child => child.classList.contains('message-text')) || null;
   if (!textEl) return null;
@@ -11133,12 +11171,12 @@ function addPlanAutoApprovedNote(data) {
   scrollToBottom();
 }
 
-function addPlannerFallbackNote(message) {
-  if (!currentAssistantEl || !message) return;
+function addPlannerFallbackNote(message, assistantEl = currentAssistantEl) {
+  if (!assistantEl || !message) return;
 
-  let note = currentAssistantEl.querySelector('.planner-fallback-note');
+  let note = assistantEl.querySelector('.planner-fallback-note');
   if (!note) {
-    const stepsContainer = getOrCreateStepsContainer();
+    const stepsContainer = getOrCreateStepsContainer(assistantEl);
     if (!stepsContainer) return;
 
     note = document.createElement('div');
