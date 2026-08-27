@@ -2139,8 +2139,12 @@
       if (actionDeadlineExpired()) return deadlineFailure();
       dispatched = true;
       target.dispatchEvent(down);
-      if (actionDeadlineExpired()) return deadlineFailure();
+      // A keydown listener may run across the deadline. Always release the
+      // synthetic key before returning the partial-dispatch timeout so pages
+      // that track held keys are not left in a stuck state.
+      const expiredAfterKeydown = actionDeadlineExpired();
       target.dispatchEvent(up);
+      if (expiredAfterKeydown) return deadlineFailure();
       if (key === 'Tab') {
         moveTabFocus();
         if (actionDeadlineExpired()) return deadlineFailure();

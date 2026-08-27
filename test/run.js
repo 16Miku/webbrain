@@ -88026,8 +88026,8 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     );
     assert.match(
       pressKeysSource,
-      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*dispatched = true;\s*target\.dispatchEvent\(down\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*target\.dispatchEvent\(up\);/,
-      `${label}: press_keys does not guard each key-event dispatch boundary`,
+      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*dispatched = true;\s*target\.dispatchEvent\(down\);[\s\S]*const expiredAfterKeydown = actionDeadlineExpired\(\);\s*target\.dispatchEvent\(up\);\s*if \(expiredAfterKeydown\) return deadlineFailure\(\);/,
+      `${label}: press_keys does not guard dispatch while guaranteeing keyup cleanup`,
     );
     const contentClickStart = contentSource.indexOf('function clickElement(params,');
     const contentClickEnd = contentSource.indexOf('\n  function typeText', contentClickStart);
