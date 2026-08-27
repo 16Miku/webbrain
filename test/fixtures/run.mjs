@@ -419,6 +419,46 @@ test('expired content messages are rejected before page mutation in both builds'
     }
   }
 });
+
+test('set_field cannot submit after its page-action deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <form id="deadline-form">
+        <input id="deadline-field" aria-label="Deadline field">
+      </form>
+      <script>
+        window.__deadlineSubmits = 0;
+        document.getElementById('deadline-form').addEventListener('submit', event => {
+          event.preventDefault();
+          window.__deadlineSubmits += 1;
+        });
+      </script>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const refId = window.__wb_ax_ref(document.getElementById('deadline-field'));
+      window.__wb_handler({
+        target: 'content',
+        action: 'set_field',
+        params: { ref_id: refId, text: 'typed before expiry', submit: true },
+        actionDeadlineAt: Date.now() + 20,
+      }, {}, response => resolve({
+        response,
+        value: document.getElementById('deadline-field').value,
+        submits: window.__deadlineSubmits,
+      }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.submitted !== false
+      || result.response.dispatched !== true
+      || result.value !== 'typed before expiry'
+      || result.submits !== 0
+    ) {
+      throw new Error(`${browserKind} set_field submitted after expiry: ${JSON.stringify(result)}`);
+    }
+  }
+});
 const firefoxTests = [];
 function firefoxTest(name, fn) { firefoxTests.push({ name, fn }); }
 

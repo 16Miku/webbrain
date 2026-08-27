@@ -70242,6 +70242,12 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     assert.ok(settleIndex >= 0 && readbackIndex > settleIndex, `${label}: verification must happen after controlled-input reconciliation`);
     assert.match(branch, /(?:const|let) actual = el\.isContentEditable \? _editableTextValue\(el\)/, `${label}: rich-editor verification must use rendered text`);
     assert.match(branch, /_setFieldValueMatches\(actual, prevValue, text, clear, el\.isContentEditable\)/, `${label}: newline normalization must remain contenteditable-only`);
+    assert.match(branch, /await new Promise\(resolve => setTimeout\(resolve, SET_FIELD_VERIFY_DELAY_MS\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can continue after its verification wait expires`);
+    assert.match(branch, /if \(usesNativeSubmit\)[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*try \{\s*form\.requestSubmit\(\)/, `${label}: native set_field submission is not guarded at the mutation boundary`);
+    assert.match(branch, /await new Promise\(r => setTimeout\(r, 80\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*await new Promise\(r => setTimeout\(r, 30\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*dispatchKey\('keydown', 'Enter'/, `${label}: page-owned set_field submission can resume after its deadline`);
+    if (label === 'firefox') {
+      assert.match(branch, /await _retryFieldWithExecCommand\([\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, 'firefox: set_field fallback can continue after its reconciliation wait expires');
+    }
     assert.match(branch, /!el\.isConnected \|\| !rect \|\| rect\.w < 1 \|\| rect\.h < 1/, `${label}: stale or zero-sized targets must fail before typing`);
      assert.match(branch, /if \(submit && verified\)/, `${label}: mismatched field values must not be submitted`);
      assert.match(branch, /addEventListener\('submit'/, `${label}: submit handling must observe actual submit events`);
@@ -70277,7 +70283,7 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
     assert.ok(blockStart >= 0 && blockEnd > blockStart, `${label}: submit block not found`);
     const block = source.slice(blockStart, blockEnd);
     const runner = vm.runInNewContext(`async (stubs) => {
-      const { dispatchKey, el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, ref_id, rect } = stubs;
+      const { dispatchKey, el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, actionDeadlineExpired, deadlineFailure, ref_id, rect } = stubs;
       let nativeSubmitAttempted = false;
       let submissionOutcomeUnknown = true;
       ${block}
@@ -70335,6 +70341,8 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
         isCombobox,
         _setFieldUsesNativeSubmit: usesNativeSubmit,
         _consumeMessageRecipientDispatchBinding: () => ({ success: true }),
+        actionDeadlineExpired: () => false,
+        deadlineFailure: () => { throw new Error('unexpected deadline failure'); },
         ref_id: 'ref_1',
         rect: { x: 0, y: 0, w: 1, h: 1 },
       });
@@ -87997,6 +88005,13 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
       assert.ok(uploadStart >= 0 && uploadEnd > uploadStart, 'firefox: upload page-injection deadline guard missing');
       const uploadInjection = source.slice(uploadStart, uploadEnd);
       assert.match(uploadInjection, /if \(deadlineExpired\(\)\)[\s\S]*el\.files = dt\.files/, 'firefox: late upload injection can assign FileList after its deadline');
+      const uploadPhaseEnd = source.indexOf('// ─── CAPTCHA solver', uploadEnd);
+      const uploadPhase = source.slice(uploadEnd, uploadPhaseEnd);
+      assert.match(
+        uploadPhase,
+        /if \(res\?\.deadlineExpired\) \{[\s\S]*contentPipelineDispatchState\.started = false;[\s\S]*dispatched: false,[\s\S]*noDispatch: true,[\s\S]*retryable: true,[\s\S]*deadlineExpired: true,[\s\S]*\}\s*this\._throwIfAborted\(abortSignal\);/,
+        'firefox: upload loses the page script\'s proven no-dispatch deadline result',
+      );
     }
 
     const toolbarProbe = fs.readFileSync(path.join(ROOT, prefix, 'src/agent/rich-text-toolbar-probe.js'), 'utf8');

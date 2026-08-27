@@ -4023,7 +4023,8 @@
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.target !== 'content') return;
     const actionDeadlineAt = Number(msg.actionDeadlineAt) || 0;
-    if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) {
+    const actionDeadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+    if (actionDeadlineExpired()) {
       sendResponse({
         success: false,
         dispatched: false,
@@ -4798,6 +4799,15 @@
             ? { dispatched: true }
             : { dispatched: false, noDispatch: true }),
         });
+        const deadlineFailure = () => failure(
+          'The page action deadline expired before submission. The field value may have changed, but no submit action was sent.',
+          {
+            deadlineExpired: true,
+            submitted: false,
+            outcomeUnknown: false,
+            retryable: false,
+          },
+        );
         try {
           const { ref_id, text, clear = true, submit = false } = msg.params || {};
           if (typeof ref_id !== 'string') return failure('ref_id (string, e.g. "ref_42") is required');
@@ -4866,6 +4876,7 @@
           // Verify only after that turn, and require the complete expected
           // value rather than accepting a matching substring.
           await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
+          if (actionDeadlineExpired()) return deadlineFailure();
           if (!el.isConnected) {
             return failure(
               `ref_id ${ref_id} was replaced while the value was being set. Re-read the accessibility tree and retry with the current field ref_id.`,
@@ -4887,11 +4898,13 @@
           if (!verified) {
             fallbackAttempted = true;
             await _retryFieldWithExecCommand(el, (clear ? '' : prevValue) + text);
+            if (actionDeadlineExpired()) return deadlineFailure();
             actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
             verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable);
           }
 
           if (submit && verified) {
+            if (actionDeadlineExpired()) return deadlineFailure();
             submissionOutcomeUnknown = true;
             try {
               const roleAttr = (el.getAttribute && el.getAttribute('role') || '').toLowerCase();
@@ -4954,6 +4967,7 @@
                       { verified: true, submitted: false, invalid: true, ref_id, rect },
                     );
                   }
+                  if (actionDeadlineExpired()) return deadlineFailure();
                   try {
                     form.requestSubmit();
                   } catch {}
@@ -4964,10 +4978,13 @@
                   // submission, and an unobserved handler may already have acted.
                   if (isCombobox) {
                     await new Promise(r => setTimeout(r, 80));
+                    if (actionDeadlineExpired()) return deadlineFailure();
                     dispatchKey('keydown', 'ArrowDown', 40);
                     dispatchKey('keyup', 'ArrowDown', 40);
                     await new Promise(r => setTimeout(r, 30));
+                    if (actionDeadlineExpired()) return deadlineFailure();
                   }
+                  if (actionDeadlineExpired()) return deadlineFailure();
                   dispatchKey('keydown', 'Enter', 13);
                   dispatchKey('keypress', 'Enter', 13);
                   dispatchKey('keyup', 'Enter', 13);

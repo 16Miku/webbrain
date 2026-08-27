@@ -19893,7 +19893,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           let results;
           try {
             results = await browser.tabs.executeScript(tabId, { code: buildInjectCode(actionDeadlineAt) });
-            this._throwIfAborted(abortSignal);
           } catch (e) {
             this._throwIfAborted(abortSignal);
             return {
@@ -19905,7 +19904,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             };
           }
           const res = results && results[0];
-          if (res?.deadlineExpired) this._throwIfAborted(abortSignal);
+          if (res?.deadlineExpired) {
+            // The page-side absolute guard proves FileList assignment never
+            // happened. Clear the optimistic dispatch marker before the
+            // deadline error is classified so a safe retry remains possible.
+            contentPipelineDispatchState.started = false;
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+              deadlineExpired: true,
+              error: res.error || 'Upload action deadline expired before dispatch',
+            };
+          }
+          this._throwIfAborted(abortSignal);
           if (!res) {
             return {
               success: false,
