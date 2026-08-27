@@ -5669,10 +5669,10 @@
   // with the same bell character.
   let attentionFlashOwnTitle = null;
   // Favicon blink state. Every icon <link> present when the flash started is
-  // remembered with its original href so the browser's preferred icon can't
-  // outrank ours; the alert data URL replaces it each marked tick. A link
-  // whose href no longer holds either value was rewritten by the page
-  // mid-flash and is left alone from then on, mirroring the title rule.
+  // remembered with its original href; the alert data URL replaces it each
+  // marked tick and originals are handed back during quiet ticks — unless
+  // the page swapped in its own new icon meanwhile, which then becomes the
+  // baseline we hand back at stop instead.
   let attentionFlashAlertUrl = null;
   let attentionFlashIconLinks = null;
   let attentionFlashFallbackEl = null;
@@ -5705,13 +5705,16 @@
   function attentionFlashCaptureIcons() {
     try {
       attentionFlashIconLinks = [];
-      for (const el of document.querySelectorAll('link[rel="icon" i], link[rel="shortcut icon" i]')) {
+      // Substring match on purpose: GitHub declares "alternate icon",
+      // others use "shortcut icon"/"apple-touch-icon" — exact-value
+      // selectors miss real-world rel spellings.
+      for (const el of document.querySelectorAll('link[rel*="icon" i]')) {
         attentionFlashIconLinks.push({ el, href: el.getAttribute('href') });
       }
       // Pages declaring no icon link get a temporary one instead — browsers
       // prefer the last-declared favicon, so dropping it at stop restores
       // the original without touching site elements.
-      if (!attentionFlashIconLinks.length) {
+      if (!attentionFlashIconLinks.length && !attentionFlashFallbackEl) {
         attentionFlashFallbackEl = document.createElement('link');
         attentionFlashFallbackEl.setAttribute('rel', 'icon');
         attentionFlashFallbackEl.setAttribute('data-webbrain-attention', '1');
@@ -5726,15 +5729,29 @@
   function attentionFlashToggleFavicon(show) {
     if (!attentionFlashAlertUrl) return;
     try {
+      // Dynamic sites (e.g. GitHub's pjax) replace their favicon <link>
+      // nodes outright; re-anchor before writing so we never blink at
+      // detached elements.
+      if (attentionFlashIconLinks?.some(entry => !entry.el.isConnected)) {
+        attentionFlashCaptureIcons();
+      }
       for (const entry of attentionFlashIconLinks || []) {
-        // Only touch links we own: still showing the captured original or
-        // the alert URL we last wrote. Anything else means the page swapped
-        // in its own new favicon mid-flash — leave it untouched.
-        const current = entry.el.getAttribute('href');
-        if (current !== entry.href && current !== attentionFlashAlertUrl) continue;
-        const target = show ? attentionFlashAlertUrl : entry.href;
-        if (target == null) entry.el.removeAttribute('href');
-        else entry.el.setAttribute('href', target);
+        if (show) {
+          // Overwrite unconditionally during the marked phase: sites like
+          // GitHub rewrite these hrefs themselves, so a strict ownership
+          // guard would silently stop blinking forever.
+          entry.el.setAttribute('href', attentionFlashAlertUrl);
+        } else {
+          const current = entry.el.getAttribute('href');
+          if (current === attentionFlashAlertUrl) {
+            if (entry.href == null) entry.el.removeAttribute('href');
+            else entry.el.setAttribute('href', entry.href);
+          } else {
+            // The page swapped in its own new icon mid-flash — adopt it as
+            // the baseline we will eventually hand back.
+            entry.href = current;
+          }
+        }
       }
       if (attentionFlashFallbackEl) {
         if (show) attentionFlashFallbackEl.setAttribute('href', attentionFlashAlertUrl);
