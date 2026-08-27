@@ -241,36 +241,40 @@ export class RichTextToolbarProbe {
       func: (sel, index, txt, clr, actionDeadlineAt) => {
         let targetDispatched = false;
         const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+        const deadlineFailure = () => ({ ok: false, deadlineExpired: true, dispatched: targetDispatched });
         try {
-          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: false };
+          if (deadlineExpired()) return deadlineFailure();
           const el = document.querySelectorAll(sel)[index];
           if (!el) return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
-          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: false };
-          targetDispatched = true;
+          if (deadlineExpired()) return deadlineFailure();
           el.focus();
-          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+          if (deadlineExpired()) return deadlineFailure();
           if (el.isContentEditable) {
             if (clr) {
-              if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+              if (deadlineExpired()) return deadlineFailure();
+              targetDispatched = true;
               el.textContent = '';
-              if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+              if (deadlineExpired()) return deadlineFailure();
             }
+            if (deadlineExpired()) return deadlineFailure();
+            targetDispatched = true;
             el.textContent += txt;
-            if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+            if (deadlineExpired()) return deadlineFailure();
             el.dispatchEvent(new InputEvent('input', { bubbles: true, data: txt }));
-            if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+            if (deadlineExpired()) return deadlineFailure();
             return { ok: true, url: location.href, method: 'contenteditable', value: el.textContent.slice(0, 100), dispatched: true };
           }
           const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
           const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
           const newValue = (clr ? '' : (el.value || '')) + txt;
-          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+          if (deadlineExpired()) return deadlineFailure();
+          targetDispatched = true;
           if (setter) setter.call(el, newValue); else el.value = newValue;
-          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+          if (deadlineExpired()) return deadlineFailure();
           el.dispatchEvent(new Event('input', { bubbles: true }));
-          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+          if (deadlineExpired()) return deadlineFailure();
           el.dispatchEvent(new Event('change', { bubbles: true }));
-          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+          if (deadlineExpired()) return deadlineFailure();
           return { ok: true, url: location.href, method: 'native-setter', value: (el.value || '').slice(0, 100), dispatched: true };
         } catch (error) {
           return { ok: false, url: location.href, dispatched: targetDispatched, error: error.message };

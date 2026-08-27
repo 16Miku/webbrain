@@ -88201,6 +88201,14 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.ok(legacyTypeStart >= 0 && legacyTypeEnd > legacyTypeStart, `${label}: legacy iframe typing boundary missing`);
     const legacyType = toolbarProbe.slice(legacyTypeStart, legacyTypeEnd);
     assert.match(legacyType, /actionDeadlineAt[\s\S]*deadlineExpired[\s\S]*el\.focus\(\)/, `${label}: legacy iframe typing does not reject expired page injection before focus`);
+    assert.match(legacyType, /const deadlineFailure = \(\) => \(\{ ok: false, deadlineExpired: true, dispatched: targetDispatched \}\)/, `${label}: legacy iframe typing does not preserve exact page-mutation evidence`);
+    const iframeFocus = legacyType.indexOf('el.focus();');
+    const postFocusDeadline = legacyType.indexOf('if (deadlineExpired()) return deadlineFailure();', iframeFocus);
+    const firstIframeMutation = legacyType.indexOf('targetDispatched = true;', iframeFocus);
+    assert.ok(
+      iframeFocus >= 0 && postFocusDeadline > iframeFocus && firstIframeMutation > postFocusDeadline,
+      `${label}: focus-only iframe expiry is misclassified as a text dispatch`,
+    );
     assert.match(legacyType, /if \(deadlineExpired\(\)\)[\s\S]*el\.textContent|if \(deadlineExpired\(\)\)[\s\S]*setter\.call/, `${label}: legacy iframe typing does not guard field mutation after focus`);
     assert.match(
       legacyType,
