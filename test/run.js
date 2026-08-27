@@ -22383,6 +22383,12 @@ test('completion invariant state machine enforces post-action observation with C
 
     state = invariant.recordCompletionToolResult(state, 'new_tab', { url: 'https://example.com' }, { success: true });
     assert.equal(state.verificationDebt, true, `${label}: new-tab navigation did not open debt`);
+    assert.ok(state.lastAction?.backgroundTargetFingerprint, `${label}: new-tab target identity was not retained`);
+    assert.doesNotMatch(
+      JSON.stringify(state.lastAction),
+      /example\.com/,
+      `${label}: raw new-tab URL leaked into completion state`,
+    );
     state = invariant.recordCompletionToolResult(
       state,
       'auto_screenshot',
@@ -22390,8 +22396,22 @@ test('completion invariant state machine enforces post-action observation with C
       { success: true, method: 'image_attach', _attachImage: true },
     );
     assert.equal(state.verificationDebt, true, `${label}: current-tab auto-screenshot verified a background new-tab action`);
+    state = invariant.recordCompletionToolResult(
+      state,
+      'read_page',
+      {},
+      { success: true, content: 'The original run tab is still visible.' },
+    );
+    assert.equal(state.verificationDebt, true, `${label}: original-tab page read verified a background new-tab action`);
+    state = invariant.recordCompletionToolResult(
+      state,
+      'fetch_url',
+      { url: 'https://wrong.example/' },
+      { success: true, url: 'https://wrong.example/', content: 'Wrong target.' },
+    );
+    assert.equal(state.verificationDebt, true, `${label}: unrelated URL read verified a background new-tab action`);
     state = invariant.recordCompletionToolResult(state, 'fetch_url', { url: 'https://example.com', method: 'GET' }, { success: true });
-    assert.equal(state.verificationDebt, false, `${label}: safe GET did not clear debt`);
+    assert.equal(state.verificationDebt, false, `${label}: matching background URL read did not clear debt`);
     state = invariant.recordCompletionToolResult(state, 'fetch_url', { url: 'https://example.com', method: 'POST' }, { success: false, status: 500 });
     assert.equal(state.verificationDebt, true, `${label}: dispatched network mutation failure did not fail closed`);
 
@@ -22597,6 +22617,24 @@ test('completion recovery keeps skill downloads on download-specific observation
       policy?.tools?.map(tool => tool.function.name),
       ['list_downloads', 'read_downloaded_file'],
       `${label}: skill download recovery exposed unrelated page observations`,
+    );
+
+    const backgroundState = invariant.recordCompletionToolResult(
+      invariant.createCompletionInvariantState(`${label}-new-tab-recovery`),
+      'new_tab',
+      { url: 'https://example.com/reference' },
+      { success: true, url: 'https://example.com/reference', active: false },
+    );
+    agent.completionInvariants.set(tabId, backgroundState);
+    const backgroundPolicy = agent._completionRecoveryPolicy(tabId, [
+      { function: { name: 'read_page' } },
+      { function: { name: 'fetch_url' } },
+      { function: { name: 'research_url' } },
+    ], { verification: true });
+    assert.deepEqual(
+      backgroundPolicy?.tools?.map(tool => tool.function.name),
+      ['fetch_url', 'research_url'],
+      `${label}: new-tab recovery exposed observations of the original run tab`,
     );
   }
 });

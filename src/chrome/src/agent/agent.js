@@ -1605,6 +1605,10 @@ export class Agent extends LoopDetector {
       let candidates = state.iframeFormVerificationDebt
         ? available.filter(tool => tool?.function?.name === 'verify_form')
         : [];
+      if (!candidates.length && state?.lastAction?.name === 'new_tab') {
+        candidates = available.filter(tool => ['fetch_url', 'research_url'].includes(tool?.function?.name));
+        if (!candidates.length) return null;
+      }
       if (!candidates.length && state?.lastAction?.downloadAction === true) {
         candidates = available.filter(tool => ['list_downloads', 'read_downloaded_file'].includes(tool?.function?.name));
       }

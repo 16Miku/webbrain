@@ -46,6 +46,22 @@ const BACKGROUND_ACTION_TOOLS = new Set([
   'delegate_research',
 ]);
 
+function completionUrlFingerprint(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  let normalized = raw;
+  try {
+    const parsed = new URL(raw);
+    parsed.hash = '';
+    normalized = parsed.href;
+  } catch {}
+  let hash = 2166136261;
+  for (let index = 0; index < normalized.length; index++) {
+    hash = Math.imul(hash ^ normalized.charCodeAt(index), 16777619);
+  }
+  return `${normalized.length}:${(hash >>> 0).toString(36)}`;
+}
+
 // v1 deliberately enforces ordering, not semantic postcondition matching:
 // any successful explicit observation in this allowlist after the latest
 // action clears debt. This deterministically blocks success-without-a-read,
@@ -385,6 +401,9 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
     const selfVerified = isSelfVerifyingActionResult(name, result);
     const downloadAction = DOWNLOAD_ACTION_TOOLS.has(name)
       || args?.__completionDownloadAction === true;
+    const backgroundTargetFingerprint = name === 'new_tab'
+      ? completionUrlFingerprint(args?.url || result?.url)
+      : '';
     next.hadAction = true;
     // A persisted scheduler result proves its own mutation, but it must never
     // erase verification debt opened by an earlier page action.
@@ -395,6 +414,7 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
       sequence,
       ...(selfVerified ? { selfVerified: true } : {}),
       ...(downloadAction ? { downloadAction: true } : {}),
+      ...(backgroundTargetFingerprint ? { backgroundTargetFingerprint } : {}),
       uncertain: !!(
         result == null
         || result?.missingToolResponse
@@ -424,6 +444,12 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
   }
 
   if (isCompletionObservationTool(name, args, result)) {
+    if (current.lastAction?.name === 'new_tab') {
+      const scopedBackgroundRead = ['fetch_url', 'research_url'].includes(name)
+        && !!current.lastAction.backgroundTargetFingerprint
+        && completionUrlFingerprint(args?.url) === current.lastAction.backgroundTargetFingerprint;
+      if (!scopedBackgroundRead) return next;
+    }
     if (
       name === 'auto_screenshot'
       && (
