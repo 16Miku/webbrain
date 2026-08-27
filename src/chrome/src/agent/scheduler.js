@@ -1684,9 +1684,13 @@ export class ScheduledJobManager {
           console.warn('[WebBrain] failed to resume scheduled job after clarify timeout:', e);
         });
       }
-      // Tag scheduled clarify prompts (and their auto-timeout follow-ups) with
-      // the job id so the sidepanel can scope cards and lock on timeout.
-      const withJob = (type === 'clarify' || type === 'clarify_timeout_extended' || type === 'clarify_auto')
+      // Tag scheduled clarify prompts and planner fallbacks with the job id so
+      // the sidepanel can bind them to the correct scheduled assistant turn.
+      const jobScopedUpdate = type === 'clarify'
+        || type === 'clarify_timeout_extended'
+        || type === 'clarify_auto'
+        || (type === 'warning' && data?.code === 'planner_failed_continue_act');
+      const withJob = jobScopedUpdate
         ? { ...data, scheduledJobId: job.id }
         : data;
       this.sendUpdate(tabId, type, withJob);

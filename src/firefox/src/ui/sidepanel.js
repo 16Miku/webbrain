@@ -2689,6 +2689,8 @@ function scheduledJobActions(job) {
 const SCHEDULED_VISIBLE_STATUSES = new Set(['pending', 'queued', 'paused', 'running', 'needs_user_input', 'failed', 'completed']);
 const COMPLETED_SCHEDULED_JOB_AUTO_HIDE_MS = 15 * 1000;
 const pinnedCompletedScheduledJobIds = new Set();
+const pendingScheduledPlannerFallbackMessages = new Map();
+const scheduledAssistantPreparationJobIds = new Set();
 let scheduledJobAutoHideTimer = null;
 
 function visibleScheduledJobs(jobs = []) {
@@ -2756,8 +2758,11 @@ function findScheduledClarifyCardForJob(jobId) {
 function findScheduledAssistantMessageForJob(jobId) {
   const id = String(jobId || '');
   if (!id) return null;
-  for (const msgEl of messagesEl?.querySelectorAll?.('.message.assistant[data-scheduled-job-id]') || []) {
-    if (msgEl.dataset.scheduledJobId === id) return msgEl;
+  const messages = Array.from(
+    messagesEl?.querySelectorAll?.('.message.assistant[data-scheduled-job-id]') || [],
+  );
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].dataset.scheduledJobId === id) return messages[i];
   }
   const card = findScheduledClarifyCardForJob(id);
   const msgEl = card?.closest?.('.message.assistant');
@@ -2766,14 +2771,42 @@ function findScheduledAssistantMessageForJob(jobId) {
   return null;
 }
 
+function queueScheduledPlannerFallbackMessage(jobId, message) {
+  const id = String(jobId || '');
+  if (!id || !message) return;
+  pendingScheduledPlannerFallbackMessages.delete(id);
+  pendingScheduledPlannerFallbackMessages.set(id, message);
+  while (pendingScheduledPlannerFallbackMessages.size > 50) {
+    pendingScheduledPlannerFallbackMessages.delete(
+      pendingScheduledPlannerFallbackMessages.keys().next().value,
+    );
+  }
+}
+
+function flushScheduledPlannerFallbackMessage(jobId, assistantEl = null) {
+  const id = String(jobId || '');
+  if (!id || !pendingScheduledPlannerFallbackMessages.has(id)) return false;
+  if (!assistantEl) assistantEl = findScheduledAssistantMessageForJob(id);
+  if (!assistantEl) return false;
+  const message = pendingScheduledPlannerFallbackMessages.get(id);
+  pendingScheduledPlannerFallbackMessages.delete(id);
+  addPlannerFallbackNote(message, assistantEl);
+  return true;
+}
+
 function ensureScheduledTerminalMessage(job) {
   const jobId = job?.id ? String(job.id) : '';
   if (!jobId || !isUrlTargetScheduledJob(job)) return null;
   const existing = findScheduledAssistantMessageForJob(jobId);
-  if (existing) return existing;
+  if (existing && scheduledAssistantPreparationJobIds.has(jobId)) return existing;
+  if (existing) {
+    flushScheduledPlannerFallbackMessage(jobId, existing);
+    return existing;
+  }
   resetChatNavigation();
   const msgEl = addMessage('assistant', '');
   msgEl.dataset.scheduledJobId = jobId;
+  flushScheduledPlannerFallbackMessage(jobId, msgEl);
   return msgEl;
 }
 
@@ -3038,29 +3071,41 @@ async function handleScheduledJobEvent(data, tabId) {
     || terminalScheduledEvent
     || watchPollEvent
     || event === 'needs_user_input';
+  const preparingScheduledAssistant = event === 'running' && !!jobId;
+  if (preparingScheduledAssistant) scheduledAssistantPreparationJobIds.add(jobId);
   if (scopeChangingScheduledEvent && runTabId != null) {
-    await refreshConversationScopeState(runTabId);
+    try {
+      await refreshConversationScopeState(runTabId);
+    } catch (error) {
+      if (preparingScheduledAssistant) scheduledAssistantPreparationJobIds.delete(jobId);
+      throw error;
+    }
   }
 
   const title = scheduledJobTitle(job);
   if (event === 'created') {
     renderScheduledJobCreatedMessage(job);
   } else if (event === 'running') {
-    clearActiveChatPayloadForTab(runTabId);
-    setTabProcessing(runTabId, true);
-    setTabAbortRequested(runTabId, false);
-    syncSendButtonState();
-    if (job?.source === 'watch') {
-      hideRecommendedActions();
-      resetChatNavigation();
-      currentAssistantEl = ensureScheduledTerminalMessage(job);
-    } else {
-      hideRecommendedActions();
-      resetChatNavigation();
-      currentAssistantEl = addMessage('assistant', '');
+    try {
+      clearActiveChatPayloadForTab(runTabId);
+      setTabProcessing(runTabId, true);
+      setTabAbortRequested(runTabId, false);
+      syncSendButtonState();
+      if (job?.source === 'watch') {
+        hideRecommendedActions();
+        resetChatNavigation();
+        currentAssistantEl = ensureScheduledTerminalMessage(job);
+      } else {
+        hideRecommendedActions();
+        resetChatNavigation();
+        currentAssistantEl = addMessage('assistant', '');
+      }
+      if (jobId) currentAssistantEl.dataset.scheduledJobId = jobId;
+      flushScheduledPlannerFallbackMessage(jobId, currentAssistantEl);
+      showActivity(t('sp.scheduled.running', { title }));
+    } finally {
+      if (preparingScheduledAssistant) scheduledAssistantPreparationJobIds.delete(jobId);
     }
-    if (jobId) currentAssistantEl.dataset.scheduledJobId = jobId;
-    showActivity(t('sp.scheduled.running', { title }));
   } else if (event === 'completed') {
     ensureScheduledTerminalMessage(job);
     settleScheduledRun(event, job, runTabId);
@@ -8934,7 +8979,17 @@ function handleAgentUpdateMessage(msg) {
           || retryPayloadForRunAssistant(targetAssistantEl);
         renderPlannerRequestFailure(targetAssistantEl, data, retryPayload);
       } else if (data?.code === 'planner_failed_continue_act') {
-        showComposerToast(data?.message || t('sp.plan.intent_unavailable'), { duration: 10000 });
+        const message = data?.message || t('sp.plan.intent_unavailable');
+        const scheduledJobId = String(data?.scheduledJobId || '');
+        const scheduledAssistantPending = scheduledAssistantPreparationJobIds.has(scheduledJobId);
+        const scheduledAssistantEl = scheduledJobId && !scheduledAssistantPending
+          ? findScheduledAssistantMessageForJob(scheduledJobId)
+          : null;
+        if (scheduledJobId && (scheduledAssistantPending || !scheduledAssistantEl)) {
+          queueScheduledPlannerFallbackMessage(scheduledJobId, message);
+        } else {
+          addPlannerFallbackNote(message, scheduledAssistantEl || eventAssistantEl || currentAssistantEl);
+        }
       } else if (data?.code === 'ask_stream_fallback') {
         showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
       } else if (data?.code === 'persistence_degraded') {
@@ -9956,9 +10011,9 @@ function placeAnsweredClarifyCardInTimeline(card) {
   content.insertBefore(card, textEl);
 }
 
-function getOrCreateStepsContainer() {
-  if (!currentAssistantEl) return null;
-  const content = currentAssistantEl.querySelector('.message-content');
+function getOrCreateStepsContainer(assistantEl = currentAssistantEl) {
+  if (!assistantEl) return null;
+  const content = assistantEl.querySelector('.message-content');
   const textEl = [...content.children]
     .find(child => child.classList.contains('message-text')) || null;
   if (!textEl) return null;
@@ -11130,6 +11185,34 @@ function addPlanAutoApprovedNote(data) {
   } else {
     messagesEl.appendChild(note);
   }
+  scrollToBottom();
+}
+
+function addPlannerFallbackNote(message, assistantEl = currentAssistantEl) {
+  if (!assistantEl || !message) return;
+
+  let note = assistantEl.querySelector('.planner-fallback-note');
+  if (!note) {
+    const stepsContainer = getOrCreateStepsContainer(assistantEl);
+    if (!stepsContainer) return;
+
+    note = document.createElement('div');
+    note.className = 'planner-fallback-note';
+    note.setAttribute('role', 'status');
+    note.setAttribute('aria-live', 'polite');
+
+    const icon = document.createElement('span');
+    icon.className = 'planner-fallback-note-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '!';
+
+    const text = document.createElement('span');
+    text.className = 'planner-fallback-note-text';
+    note.append(icon, text);
+    stepsContainer.appendChild(note);
+  }
+
+  note.querySelector('.planner-fallback-note-text').textContent = message;
   scrollToBottom();
 }
 
