@@ -5181,8 +5181,20 @@
               });
             }
           }
+          if (actionDeadlineExpired()) {
+            return failure(
+              'The page action deadline expired during recipient validation.',
+              { deadlineExpired: true, retryable: true },
+            );
+          }
           rememberInteractionPoint(el, 'click_ax');
           const syntheticClickStartedAt = Date.now();
+          if (actionDeadlineExpired()) {
+            return failure(
+              'The page action deadline expired before click dispatch.',
+              { deadlineExpired: true, retryable: true },
+            );
+          }
           dispatched = true;
           const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
           const fallbackStateAfterImmediate = _axFallbackState(el);

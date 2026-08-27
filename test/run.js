@@ -88009,6 +88009,15 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     const messageDeadlineGuard = contentSource.slice(messageHandlerStart, handlersStart);
     assert.match(messageDeadlineGuard, /Date\.now\(\) >= actionDeadlineAt/, `${label}: expired messages can reach a page handler`);
     assert.match(messageDeadlineGuard, /dispatched: false,[\s\S]*noDispatch: true,[\s\S]*deadlineExpired: true/, `${label}: expired page messages do not fail as proven no-dispatch`);
+    const contentClickAxStart = contentSource.indexOf("'click_ax': () => {", handlersStart);
+    const contentClickAxEnd = contentSource.indexOf("'type_ax':", contentClickAxStart);
+    assert.ok(contentClickAxStart >= 0 && contentClickAxEnd > contentClickAxStart, `${label}: click_ax content handler boundary missing`);
+    const contentClickAx = contentSource.slice(contentClickAxStart, contentClickAxEnd);
+    assert.match(
+      contentClickAx,
+      /_consumeMessageRecipientDispatchBinding\([\s\S]*if \(actionDeadlineExpired\(\)\)[\s\S]*rememberInteractionPoint\(el, 'click_ax'\);[\s\S]*if \(actionDeadlineExpired\(\)\)[\s\S]*dispatched = true;[\s\S]*clickWithoutNativeFilePicker\(\(\) => el\.click\(\)\)/,
+      `${label}: click_ax can cross its deadline during recipient validation or at the click boundary`,
+    );
     const toolPipelineStart = source.indexOf('const _toolStart = Date.now();');
     const toolPipelineEnd = source.indexOf("if (fnName !== 'done')", toolPipelineStart);
     assert.ok(toolPipelineStart >= 0 && toolPipelineEnd > toolPipelineStart, `${label}: shared tool pipeline boundary missing`);
