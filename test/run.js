@@ -75504,6 +75504,135 @@ test('non-stream and stream runs keep forced done active across empty and reject
   }
 });
 
+test('non-stream and stream runs expose failure completion after a verifier makes no progress', async () => {
+  const buildResponses = () => [
+    {
+      content: null,
+      toolCalls: [{
+        id: 'failed_verifier_new_tab',
+        function: { name: 'new_tab', arguments: JSON.stringify({ url: 'https://protected.example/reference' }) },
+      }],
+    },
+    { content: 'The reference is open.', toolCalls: [] },
+    {
+      content: null,
+      toolCalls: [{
+        id: 'failed_verifier_fetch',
+        function: { name: 'fetch_url', arguments: JSON.stringify({ url: 'https://protected.example/reference', method: 'GET' }) },
+      }],
+    },
+    {
+      content: null,
+      toolCalls: [{
+        id: 'failed_verifier_partial',
+        function: { name: 'done', arguments: JSON.stringify({ summary: 'The reference opened, but its contents could not be verified.', outcome: 'partial' }) },
+      }],
+    },
+  ];
+
+  for (const streaming of [false, true]) {
+    for (const AgentClass of [AgentCh, AgentFx]) {
+      const responses = buildResponses();
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        calls: 0,
+        requests: [],
+      };
+      if (streaming) {
+        provider.chatStream = async function* (_messages, options) {
+          this.calls++;
+          this.requests.push(options);
+          const next = responses.shift();
+          assert.ok(next, `${AgentClass.name}: streamed model was called too many times`);
+          if (next.content) yield { type: 'text', content: next.content };
+          if (next.toolCalls?.length) {
+            yield {
+              type: 'tool_call',
+              content: next.toolCalls.map((call, index) => ({ index, id: call.id, function: call.function })),
+            };
+          }
+          yield { type: 'done' };
+        };
+      } else {
+        provider.chat = async (_messages, options) => {
+          provider.calls++;
+          provider.requests.push(options);
+          const next = responses.shift();
+          assert.ok(next, `${AgentClass.name}: model was called too many times`);
+          return next;
+        };
+      }
+
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = streaming ? 24816 : 24815;
+      agent.planBeforeAct = false;
+      agent._maybeRunPlannerGate = async () => ({
+        proceed: true,
+        requestKind: 'execute',
+        requiresStateChange: true,
+      });
+      agent.maxSteps = 4;
+      agent.autoScreenshot = 'off';
+      agent._skipPermissionGate = true;
+      agent._manageContext = async () => {};
+      agent._currentUrl = async () => 'https://source.example/';
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
+      agent._maybeReinjectAdapter = async () => {};
+      agent._ensureProgressSessionForCurrentTask = async () => ({ mode: 'inactive' });
+      agent._persist = () => {};
+      const executedDone = [];
+      agent.executeTool = async (_toolTabId, name, args) => {
+        if (name === 'new_tab') {
+          return { success: true, url: args.url, active: false };
+        }
+        if (name === 'fetch_url') {
+          return { success: false, error: 'The protected reference could not be read.' };
+        }
+        if (name === 'done') {
+          executedDone.push(args.outcome);
+          return { done: true, summary: args.summary, outcome: args.outcome };
+        }
+        throw new Error(`unexpected tool ${name}`);
+      };
+
+      const updates = [];
+      const run = streaming ? agent.processMessageStream.bind(agent) : agent.processMessage.bind(agent);
+      const final = await run(tabId, 'open and verify the reference', (type, data) => updates.push({ type, data }), 'act');
+
+      assert.equal(final, 'The reference opened, but its contents could not be verified.');
+      assert.equal(provider.calls, 4, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: failed verifier recovery used extra turns`);
+      assert.equal(
+        provider.requests[2]?.tools?.some(tool => tool?.function?.name === 'done'),
+        false,
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: first verification attempt exposed failure completion prematurely`,
+      );
+      assert.deepEqual(
+        provider.requests[3]?.tools?.map(tool => tool?.function?.name),
+        ['fetch_url', 'research_url', 'done'],
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: failed verifier did not retain observations plus failure completion`,
+      );
+      assert.deepEqual(
+        provider.requests[3]?.tools?.find(tool => tool?.function?.name === 'done')?.function?.parameters?.properties?.outcome?.enum,
+        ['partial', 'failed'],
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: failed verifier recovery allowed success completion`,
+      );
+      assert.deepEqual(executedDone, ['partial'], `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: failed verifier executed the wrong completion`);
+      assert.ok(
+        updates.some(update => update.type === 'tool_result' && update.data?.name === 'fetch_url' && update.data?.result?.success === false),
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: verifier failure was not observed`,
+      );
+    }
+  }
+});
+
 test('non-stream and stream runs release forced done when progress work remains', async () => {
   const buildResponses = () => [
     {

@@ -1597,26 +1597,20 @@ export class Agent extends LoopDetector {
     return completionPlainFinalBlock(this.completionInvariants.get(tabId));
   }
 
-  _completionRecoveryPolicy(tabId, tools, { verification = false, done = false } = {}) {
+  _completionRecoveryPolicy(tabId, tools, { verification = false, done = false, failure = false } = {}) {
     if (!this._isActionMode(this._effectiveRunMode(tabId))) return null;
     const state = this.completionInvariants.get(tabId);
     const available = Array.isArray(tools) ? tools : [];
-    const unavailableVerification = () => {
+    const failureOnlyTerminalTool = () => {
       const terminalTool = available.find(tool => tool?.function?.name === 'done');
-      if (!terminalTool) {
-        return {
-          kind: 'verification_unavailable',
-          tools: [],
-          toolChoice: null,
-        };
-      }
+      if (!terminalTool) return null;
       const parameters = terminalTool.function.parameters || {};
       const properties = parameters.properties || {};
-      const failureTool = {
+      return {
         ...terminalTool,
         function: {
           ...terminalTool.function,
-          description: `${terminalTool.function.description || ''} Verification is unavailable in this recovery turn, so outcome must be partial or failed; success is not allowed.`,
+          description: `${terminalTool.function.description || ''} Required verification has not succeeded, so outcome must be partial or failed; success is not allowed.`,
           parameters: {
             ...parameters,
             properties: {
@@ -1625,12 +1619,22 @@ export class Agent extends LoopDetector {
                 ...(properties.outcome || {}),
                 type: 'string',
                 enum: ['partial', 'failed'],
-                description: 'Use partial or failed because the required completion verification tool is unavailable.',
+                description: 'Use partial or failed because required completion verification has not succeeded.',
               },
             },
           },
         },
       };
+    };
+    const unavailableVerification = () => {
+      const failureTool = failureOnlyTerminalTool();
+      if (!failureTool) {
+        return {
+          kind: 'verification_unavailable',
+          tools: [],
+          toolChoice: null,
+        };
+      }
       return {
         kind: 'verification_unavailable',
         tools: [failureTool],
@@ -1679,9 +1683,12 @@ export class Agent extends LoopDetector {
         candidates = available.filter(tool => COMPLETION_DOCUMENT_OBSERVATION_TOOLS.has(tool?.function?.name));
       }
       if (!candidates.length) return unavailableVerification();
+      const recoveryTools = candidates.map(readOnlyRecoveryTool);
+      const failureTool = failure ? failureOnlyTerminalTool() : null;
+      if (failureTool) recoveryTools.push(failureTool);
       return {
         kind: 'verification',
-        tools: candidates.map(readOnlyRecoveryTool),
+        tools: recoveryTools,
         toolChoice: 'required',
       };
     }
@@ -1696,6 +1703,18 @@ export class Agent extends LoopDetector {
       };
     }
     return null;
+  }
+
+  _completionVerificationMadeProgress(before, after) {
+    if (!before || !after) return false;
+    if (before.verificationDebt && !after.verificationDebt) return true;
+    const beforeObligations = Array.isArray(before.iframeFormVerificationObligations)
+      ? before.iframeFormVerificationObligations.length
+      : (before.iframeFormVerificationDebt ? 1 : 0);
+    const afterObligations = Array.isArray(after.iframeFormVerificationObligations)
+      ? after.iframeFormVerificationObligations.length
+      : (after.iframeFormVerificationDebt ? 1 : 0);
+    return afterObligations < beforeObligations;
   }
 
   _completionPlainFinalPartial(tabId, content, { progressBlocked = false, readBlocked = false } = {}) {
@@ -29110,6 +29129,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let structuredOutputRecoveryAttempted = false;
     let completionPlainFinalRecoveryAttempted = 0;
     let forceCompletionVerificationTurn = false;
+    let allowCompletionFailureTurn = false;
     let forceCompletionDoneAfterVerification = false;
     let forceCompletionDoneTurn = false;
     let standaloneWikipediaModelSearchAttempted = false;
@@ -29313,6 +29333,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const completionState = this.completionInvariants.get(tabId);
         if (!completionState?.verificationDebt && !completionState?.iframeFormVerificationDebt) {
           forceCompletionVerificationTurn = false;
+          allowCompletionFailureTurn = false;
           if (forceCompletionDoneAfterVerification) {
             forceCompletionDoneAfterVerification = false;
             forceCompletionDoneTurn = true;
@@ -29322,7 +29343,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const completionRecoveryPolicy = this._completionRecoveryPolicy(tabId, tools, {
         verification: forceCompletionVerificationTurn,
         done: forceCompletionDoneTurn,
+        failure: allowCompletionFailureTurn,
       });
+      const completionRecoveryStartState = completionRecoveryPolicy?.kind === 'verification'
+        ? this.completionInvariants.get(tabId)
+        : null;
       if (completionRecoveryPolicy) {
         tools = completionRecoveryPolicy.tools;
       }
@@ -29655,13 +29680,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           _traceStatus = 'cancelled';
           return finalResponse;
         }
+        if (completionRecoveryPolicy?.kind === 'verification') {
+          const completionState = this.completionInvariants.get(tabId);
+          const verificationPending = !!(
+            completionState?.verificationDebt
+            || completionState?.iframeFormVerificationDebt
+          );
+          allowCompletionFailureTurn = verificationPending
+            && !this._completionVerificationMadeProgress(completionRecoveryStartState, completionState);
+        }
         if (batchResult.completionRecovery === 'verification') {
           forceCompletionVerificationTurn = true;
           forceCompletionDoneAfterVerification = true;
+          allowCompletionFailureTurn = false;
         } else if (batchResult.completionRecovery === 'done') {
           forceCompletionDoneTurn = true;
+          allowCompletionFailureTurn = false;
         } else if (batchResult.completionRecovery === 'release') {
           forceCompletionDoneTurn = false;
+          allowCompletionFailureTurn = false;
         }
         // 'continue' → fall through to next loop iteration
         continue;
@@ -30272,6 +30309,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let compressionPlaceholderRecoveryAttempted = false;
     let completionPlainFinalRecoveryAttempted = 0;
     let forceCompletionVerificationTurn = false;
+    let allowCompletionFailureTurn = false;
     let forceCompletionDoneAfterVerification = false;
     let forceCompletionDoneTurn = false;
     let standaloneWikipediaModelSearchAttempted = false;
@@ -30325,6 +30363,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const completionState = this.completionInvariants.get(tabId);
         if (!completionState?.verificationDebt && !completionState?.iframeFormVerificationDebt) {
           forceCompletionVerificationTurn = false;
+          allowCompletionFailureTurn = false;
           if (forceCompletionDoneAfterVerification) {
             forceCompletionDoneAfterVerification = false;
             forceCompletionDoneTurn = true;
@@ -30334,7 +30373,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const completionRecoveryPolicy = this._completionRecoveryPolicy(tabId, tools, {
         verification: forceCompletionVerificationTurn,
         done: forceCompletionDoneTurn,
+        failure: allowCompletionFailureTurn,
       });
+      const completionRecoveryStartState = completionRecoveryPolicy?.kind === 'verification'
+        ? this.completionInvariants.get(tabId)
+        : null;
       if (completionRecoveryPolicy) {
         tools = completionRecoveryPolicy.tools;
       }
@@ -30600,13 +30643,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (batchResult.action === 'abort') {
             return finish(batchResult.value, 'cancelled');
           }
+          if (completionRecoveryPolicy?.kind === 'verification') {
+            const completionState = this.completionInvariants.get(tabId);
+            const verificationPending = !!(
+              completionState?.verificationDebt
+              || completionState?.iframeFormVerificationDebt
+            );
+            allowCompletionFailureTurn = verificationPending
+              && !this._completionVerificationMadeProgress(completionRecoveryStartState, completionState);
+          }
           if (batchResult.completionRecovery === 'verification') {
             forceCompletionVerificationTurn = true;
             forceCompletionDoneAfterVerification = true;
+            allowCompletionFailureTurn = false;
           } else if (batchResult.completionRecovery === 'done') {
             forceCompletionDoneTurn = true;
+            allowCompletionFailureTurn = false;
           } else if (batchResult.completionRecovery === 'release') {
             forceCompletionDoneTurn = false;
+            allowCompletionFailureTurn = false;
           }
           closeTraceStep({ ok: true });
           continue;
