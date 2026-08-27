@@ -24143,7 +24143,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!Number.isInteger(targetFrameId) || !binding?.token) {
           dispatched = true;
           throwIfEarlyCdpAborted();
-          return this._legacyIframeTypeAllFrames(tabId, {
+          const legacyResult = await this._legacyIframeTypeAllFrames(tabId, {
             selector,
             text,
             clear,
@@ -24155,6 +24155,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(earlyCdpAbortSignal)?.error || null,
             beforeDispatch: markEarlyCdpDispatched,
           });
+          if (legacyResult?.deadlineExpired && legacyResult.dispatched !== true) {
+            earlyCdpDispatchState.started = false;
+          }
+          return legacyResult;
         }
         throwIfEarlyCdpAborted();
         dispatched = true;

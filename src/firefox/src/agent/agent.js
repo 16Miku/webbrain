@@ -21156,7 +21156,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!Number.isInteger(targetFrameId) || !binding?.token) {
           dispatched = true;
           throwIfContentPipelineAborted();
-          return this._legacyIframeTypeAllFrames(tabId, {
+          const legacyResult = await this._legacyIframeTypeAllFrames(tabId, {
             selector,
             text,
             clear,
@@ -21168,6 +21168,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(contentPipelineAbortSignal)?.error || null,
             beforeDispatch: markContentPipelineDispatched,
           });
+          if (legacyResult?.deadlineExpired && legacyResult.dispatched !== true) {
+            contentPipelineDispatchState.started = false;
+          }
+          return legacyResult;
         }
         throwIfContentPipelineAborted();
         dispatched = true;

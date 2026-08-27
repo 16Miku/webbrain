@@ -4861,24 +4861,45 @@ test('message recipient dispatch binding detects composer and active-thread race
     const enterDispatch = branch.indexOf("dispatchKey('keydown', 'Enter', 13)");
     assert.ok(recipientCheck >= 0 && enterDispatch > recipientCheck, `${label}: recipient must be revalidated immediately before Enter`);
 
-    const pressStart = source.indexOf('function pressKeys(params,');
+    const pressStart = source.indexOf('function pressKeys(params, actionDeadlineExpired = () => false)');
     const pressEnd = source.indexOf('\n\n  /**', pressStart + 20);
     const pressBranch = source.slice(pressStart, pressEnd);
     const pressRecipientCheck = pressBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, focusedTarget)');
+    const pressDeadlineAfterRecipient = pressBranch.indexOf('if (actionDeadlineExpired()) return deadlineFailure();', pressRecipientCheck);
     const pressDispatch = pressBranch.indexOf('for (let i = 0; i < repeat; i++)');
     assert.ok(
-      pressRecipientCheck >= 0 && pressDispatch > pressRecipientCheck,
-      `${label}: press_keys recipient binding must be consumed before key dispatch`,
+      pressRecipientCheck >= 0
+        && pressDeadlineAfterRecipient > pressRecipientCheck
+        && pressDispatch > pressDeadlineAfterRecipient,
+      `${label}: press_keys must recheck its deadline after recipient validation`,
+    );
+    assert.match(
+      pressBranch,
+      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*dispatched = true;\s*target\.dispatchEvent\(down\);[\s\S]*const expiredAfterKeydown = actionDeadlineExpired\(\);\s*target\.dispatchEvent\(up\);\s*if \(expiredAfterKeydown\) return deadlineFailure\(\);/,
+      `${label}: press_keys must guard keydown and classify deadline-only keyup cleanup as a partial dispatch`,
+    );
+    assert.match(
+      source,
+      /'press_keys': \(\) => pressKeys\(msg\.params \|\| \{\}, actionDeadlineExpired\)/,
+      `${label}: press_keys handler does not receive the owning action deadline`,
     );
 
-    const clickStart = source.indexOf('function clickElement(params,');
+    const clickStart = source.indexOf('function clickElement(params, actionDeadlineExpired = () => false)');
     const clickEnd = source.indexOf('\n\n  function typeText', clickStart);
     const clickBranch = source.slice(clickStart, clickEnd);
     const clickRecipientCheck = clickBranch.indexOf('_consumeMessageRecipientDispatchBinding(params, el)');
+    const clickDeadlineAfterRecipient = clickBranch.indexOf('if (actionDeadlineExpired()) return deadlineFailure();', clickRecipientCheck);
     const clickDispatch = clickBranch.indexOf('clickWithoutNativeFilePicker(() => el.click())');
     assert.ok(
-      clickRecipientCheck >= 0 && clickDispatch > clickRecipientCheck,
-      `${label}: click recipient binding must be consumed before click dispatch`,
+      clickRecipientCheck >= 0
+        && clickDeadlineAfterRecipient > clickRecipientCheck
+        && clickDispatch > clickDeadlineAfterRecipient,
+      `${label}: click must recheck its deadline after recipient validation`,
+    );
+    assert.match(
+      source,
+      /'click': \(\) => clickElement\(msg\.params \|\| \{\}, actionDeadlineExpired\)/,
+      `${label}: click handler does not receive the owning action deadline`,
     );
 
     const clickAxStart = source.indexOf("'click_ax': () => {");
@@ -70135,7 +70156,7 @@ test('native select rescue yields only to exact clickables and refuses ambiguous
   assert.match(autoSelectBody, /const focusResult = await cdpClient\.evaluate[\s\S]*deadlineExpired\(\)[\s\S]*target\.focus\(\)/, 'chrome: auto-select refocus must enforce the page-side deadline');
 
   const firefoxContent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
-  const clickStart = firefoxContent.indexOf('function clickElement(params,');
+  const clickStart = firefoxContent.indexOf('function clickElement(params, actionDeadlineExpired = () => false) {');
   const clickEnd = firefoxContent.indexOf('\n  function ', clickStart + 10);
   const clickBody = firefoxContent.slice(clickStart, clickEnd);
   assert.ok(clickStart >= 0 && clickEnd > clickStart, 'firefox: click helper should be independently inspectable');
@@ -70243,8 +70264,10 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     assert.match(branch, /(?:const|let) actual = el\.isContentEditable \? _editableTextValue\(el\)/, `${label}: rich-editor verification must use rendered text`);
     assert.match(branch, /_setFieldValueMatches\(actual, prevValue, text, clear, el\.isContentEditable\)/, `${label}: newline normalization must remain contenteditable-only`);
     assert.match(branch, /await new Promise\(resolve => setTimeout\(resolve, SET_FIELD_VERIFY_DELAY_MS\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can continue after its verification wait expires`);
-    assert.match(branch, /if \(usesNativeSubmit\)[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*try \{\s*form\.requestSubmit\(\)/, `${label}: native set_field submission is not guarded at the mutation boundary`);
-    assert.match(branch, /await new Promise\(r => setTimeout\(r, 80\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*await new Promise\(r => setTimeout\(r, 30\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*dispatchKey\('keydown', 'Enter'/, `${label}: page-owned set_field submission can resume after its deadline`);
+    assert.match(branch, /if \(usesNativeSubmit\)[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*submissionDispatched = true;\s*try \{\s*form\.requestSubmit\(\)/, `${label}: native set_field submission is not guarded at the mutation boundary`);
+    assert.match(branch, /await new Promise\(r => setTimeout\(r, 80\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*await new Promise\(r => setTimeout\(r, 30\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*submissionDispatched = true;\s*if \(!dispatchKey\('keydown', 'Enter'/, `${label}: page-owned set_field submission can resume after its deadline`);
+    assert.match(branch, /el\.focus\(\{ preventScroll: true \}\);\s*\} catch \{\}\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can mutate after focus handlers cross the deadline`);
+    assert.match(branch, /if \(setter\) setter\.call\(el, newVal\); else el\.value = newVal;\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*el\.dispatchEvent\(new Event\('input'/, `${label}: set_field does not recheck its deadline before page events`);
     if (label === 'firefox') {
       assert.match(branch, /await _retryFieldWithExecCommand\([\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, 'firefox: set_field fallback can continue after its reconciliation wait expires');
     }
@@ -70286,6 +70309,7 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
       const { dispatchKey, el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, actionDeadlineExpired, deadlineFailure, ref_id, rect } = stubs;
       let nativeSubmitAttempted = false;
       let submissionOutcomeUnknown = true;
+      let submissionDispatched = false;
       ${block}
       return { nativeSubmitAttempted, submissionOutcomeUnknown };
     }`, { setTimeout: callback => callback() });
@@ -70330,7 +70354,8 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
         calls.push(`${type}:${key}`);
         if (type === 'keydown' && key === 'Enter' && pageSubmitsOnKeydown) emitSubmit();
         if (type === 'keydown' && key === 'Enter' && pageUsesDirectSubmitOnKeydown) calls.push('form.submit');
-        return el.dispatchEvent({ type, key });
+        el.dispatchEvent({ type, key });
+        return true;
       };
       let failureResult = null;
       const failure = (msg, data) => { failureResult = data; return { success: false, ...data }; };
@@ -71005,7 +71030,7 @@ test('content auto-select refuses ambiguous option matches in both browser build
     ['firefox', 'src/firefox/src/content/content.js'],
   ]) {
     const content = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const start = content.indexOf('function clickElement(params,');
+    const start = content.indexOf('function clickElement(params, actionDeadlineExpired = () => false) {');
     const end = content.indexOf('\n  function ', start + 10);
     const body = content.slice(start, end);
     assert.match(body, /const matchingSelects = \[\];/, `${label}: native select rescue should collect every option match`);
@@ -88157,6 +88182,52 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     const legacyType = toolbarProbe.slice(legacyTypeStart, legacyTypeEnd);
     assert.match(legacyType, /actionDeadlineAt[\s\S]*deadlineExpired[\s\S]*el\.focus\(\)/, `${label}: legacy iframe typing does not reject expired page injection before focus`);
     assert.match(legacyType, /if \(deadlineExpired\(\)\)[\s\S]*el\.textContent|if \(deadlineExpired\(\)\)[\s\S]*setter\.call/, `${label}: legacy iframe typing does not guard field mutation after focus`);
+    assert.match(
+      legacyType,
+      /if \(result\?\.deadlineExpired\) \{[\s\S]*dispatched,[\s\S]*noDispatch: true,[\s\S]*deadlineExpired: true,[\s\S]*\}\s*throwIfAborted\(\);/,
+      `${label}: legacy iframe typing discards the page's proven no-dispatch deadline result`,
+    );
+    assert.match(
+      source,
+      label === 'chrome'
+        ? /const legacyResult = await this\._legacyIframeTypeAllFrames[\s\S]*legacyResult\?\.deadlineExpired[\s\S]*earlyCdpDispatchState\.started = false;/
+        : /const legacyResult = await this\._legacyIframeTypeAllFrames[\s\S]*legacyResult\?\.deadlineExpired[\s\S]*contentPipelineDispatchState\.started = false;/,
+      `${label}: legacy iframe typing keeps an optimistic dispatch marker after page-proven expiry`,
+    );
+
+    const fallbackTypeStart = contentSource.indexOf('async function _typeTextInner(params, actionDeadlineExpired = () => false)');
+    const fallbackTypeEnd = contentSource.indexOf('\n\n  /**', fallbackTypeStart + 20);
+    const fallbackType = contentSource.slice(fallbackTypeStart, fallbackTypeEnd);
+    assert.ok(fallbackTypeStart >= 0 && fallbackTypeEnd > fallbackTypeStart, `${label}: fallback typing deadline boundary missing`);
+    assert.match(
+      fallbackType,
+      /el\.focus\(\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/,
+      `${label}: fallback typing can mutate a field after late focus handlers cross the deadline`,
+    );
+    assert.match(
+      fallbackType,
+      /dispatched = true;[\s\S]*if \(nativeInputValueSetter\)[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*el\.dispatchEvent\(new Event\('input'/,
+      `${label}: fallback typing does not guard page events at their dispatch boundary`,
+    );
+    assert.match(
+      contentSource,
+      /'type': \(\) => typeText\(msg\.params \|\| \{\}, actionDeadlineExpired\)/,
+      `${label}: fallback typing handler does not receive the owning action deadline`,
+    );
+    const fallbackScrollStart = contentSource.indexOf('function smartScrollPage(params, actionDeadlineExpired = () => false)');
+    const fallbackScrollEnd = contentSource.indexOf('\n\n  function scrollPage(', fallbackScrollStart);
+    const fallbackScroll = contentSource.slice(fallbackScrollStart, fallbackScrollEnd);
+    assert.ok(fallbackScrollStart >= 0 && fallbackScrollEnd > fallbackScrollStart, `${label}: fallback scroll deadline boundary missing`);
+    assert.match(
+      fallbackScroll,
+      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*dispatched = true;\s*scrollElementInstant/,
+      `${label}: fallback container scrolling can start after its deadline`,
+    );
+    assert.match(
+      contentSource,
+      /'scroll': \(\) => scrollPage\(msg\.params \|\| \{\}, actionDeadlineExpired\)/,
+      `${label}: fallback scroll handler does not receive the owning action deadline`,
+    );
 
     const agent = new AgentClass({});
     assert.equal(

@@ -250,17 +250,27 @@ export class RichTextToolbarProbe {
           el.focus();
           if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
           if (el.isContentEditable) {
-            if (clr) el.textContent = '';
+            if (clr) {
+              if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+              el.textContent = '';
+              if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
+            }
             el.textContent += txt;
+            if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
             el.dispatchEvent(new InputEvent('input', { bubbles: true, data: txt }));
+            if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
             return { ok: true, url: location.href, method: 'contenteditable', value: el.textContent.slice(0, 100), dispatched: true };
           }
           const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
           const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
           const newValue = (clr ? '' : (el.value || '')) + txt;
+          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
           if (setter) setter.call(el, newValue); else el.value = newValue;
+          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
           el.dispatchEvent(new Event('input', { bubbles: true }));
+          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
           el.dispatchEvent(new Event('change', { bubbles: true }));
+          if (deadlineExpired()) return { ok: false, deadlineExpired: true, dispatched: true };
           return { ok: true, url: location.href, method: 'native-setter', value: (el.value || '').slice(0, 100), dispatched: true };
         } catch (error) {
           return { ok: false, url: location.href, dispatched: targetDispatched, error: error.message };
@@ -268,9 +278,22 @@ export class RichTextToolbarProbe {
       },
       args: [selector, selectedIndex, text, clear, actionDeadlineAt],
     });
-    throwIfAborted();
     const result = results?.[0]?.result;
-    if (result?.deadlineExpired) throwIfAborted();
+    if (result?.deadlineExpired) {
+      const dispatched = result.dispatched === true;
+      return {
+        success: false,
+        dispatched,
+        ...(dispatched
+          ? { outcomeUnknown: true, retryable: false }
+          : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+        deadlineExpired: true,
+        error: dispatched
+          ? 'The iframe action deadline expired after focus; text entry may be incomplete.'
+          : 'The iframe action deadline expired before field mutation.',
+      };
+    }
+    throwIfAborted();
     if (result?.ok) {
       return { success: true, dispatched: true, frameId: selected.frameId, matchIndex: selectedIndex, frame: result, resolution: 'unique-target' };
     }

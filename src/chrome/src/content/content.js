@@ -1315,15 +1315,19 @@
    * Click an element by selector or coordinates.
    */
   function clickElement(params, actionDeadlineExpired = () => false) {
+    let dispatched = false;
     const deadlineFailure = () => ({
       success: false,
-      dispatched: false,
-      noDispatch: true,
-      outcomeUnknown: false,
-      retryable: true,
+      dispatched,
+      ...(dispatched
+        ? { outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
       deadlineExpired: true,
-      error: 'The page action deadline expired before click dispatch.',
+      error: dispatched
+        ? 'The page action deadline expired during click dispatch.'
+        : 'The page action deadline expired before click dispatch.',
     });
+    if (actionDeadlineExpired()) return deadlineFailure();
     let el;
     // Tracks whether text matching below resolved el via an EXACT-tier
     // match. The auto-select rescue yields only to exact clickables — a
@@ -1397,7 +1401,9 @@
         for (const [ltxt, inp] of labelMap) {
           const ok = (needle === ltxt) || ltxt.startsWith(needle) || ltxt.includes(needle);
           if (ok) {
+            if (actionDeadlineExpired()) return deadlineFailure();
             inp.scrollIntoView({ block: 'center', inline: 'center' });
+            if (actionDeadlineExpired()) return deadlineFailure();
             inp.focus();
             el = inp;
             textResolvedExact = (needle === ltxt);
@@ -1410,6 +1416,7 @@
         // Auto-scroll retry: scroll down up to 3 times to find elements below the fold.
         // Still respect modal scoping — scrollable dialogs exist.
         for (let scrollAttempt = 0; scrollAttempt < 3 && matches.length === 0; scrollAttempt++) {
+          if (actionDeadlineExpired()) return deadlineFailure();
           window.scrollBy(0, Math.round(window.innerHeight * 0.7));
           const _retryScope = _findTopmostModal() || document;
           const allRetry = Array.from(_retryScope.querySelectorAll(sels));
@@ -1438,7 +1445,9 @@
             for (const [ltxt, inp] of labelMap2) {
               const ok = (needle === ltxt) || ltxt.startsWith(needle) || ltxt.includes(needle);
               if (ok) {
+                if (actionDeadlineExpired()) return deadlineFailure();
                 inp.scrollIntoView({ block: 'center', inline: 'center' });
+                if (actionDeadlineExpired()) return deadlineFailure();
                 inp.focus();
                 el = inp;
                 textResolvedExact = (needle === ltxt);
@@ -1523,7 +1532,11 @@
             if (/^(INPUT|TEXTAREA|SELECT)$/i.test(ns.tagName)) target = ns;
             else target = ns.querySelector('input,textarea,select');
           }
-          if (target) { target.focus(); resolved = target; }
+          if (target) {
+            if (actionDeadlineExpired()) return deadlineFailure();
+            target.focus();
+            resolved = target;
+          }
         }
         el = _resolveInteractiveAncestor(resolved);
       }
@@ -1546,6 +1559,7 @@
       return { success: false, dispatched: false, error: 'Element not found' };
     }
 
+    if (actionDeadlineExpired()) return deadlineFailure();
     if (!_consumeDispatchBinding(params.dispatchBinding?.token, el)) {
       return {
         success: false,
@@ -1555,6 +1569,7 @@
         error: 'The click target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
       };
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
 
     // ── Auto-select: if click text matches a <select> option, select it ──
     // Runs when text matching resolved NO element, resolved the <select>
@@ -1594,12 +1609,18 @@
         if (sel.selectedIndex === match.index) {
           return { success: true, method: 'select-already-set', selectedText: match.text.trim(), selectedValue: match.value };
         }
+        if (actionDeadlineExpired()) return deadlineFailure();
         sel.focus();
+        if (actionDeadlineExpired()) return deadlineFailure();
         const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+        dispatched = true;
         if (nativeSetter) nativeSetter.call(sel, match.value);
         else sel.value = match.value;
+        if (actionDeadlineExpired()) return deadlineFailure();
         sel.dispatchEvent(new Event('input', { bubbles: true }));
+        if (actionDeadlineExpired()) return deadlineFailure();
         sel.dispatchEvent(new Event('change', { bubbles: true }));
+        if (actionDeadlineExpired()) return deadlineFailure();
         return { success: true, method: 'auto-select', selectedText: match.text.trim(), selectedValue: match.value };
       }
     }
@@ -1611,7 +1632,9 @@
     // controlled programmatically. Return error so the model uses type_text.
     // Do NOT scrollIntoView (hidden selects inside modals scroll to wrong position).
     if (el instanceof HTMLSelectElement) {
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.focus();
+      if (actionDeadlineExpired()) return deadlineFailure();
       const options = Array.from(el.options).map(o => o.text.trim());
       return {
         success: false,
@@ -1632,7 +1655,9 @@
         if (anc) nearbySel = anc.querySelector('select');
       }
       if (nearbySel) {
+        if (actionDeadlineExpired()) return deadlineFailure();
         nearbySel.focus();
+        if (actionDeadlineExpired()) return deadlineFailure();
         const options = Array.from(nearbySel.options).map(o => o.text.trim());
         return {
           success: false,
@@ -1646,6 +1671,7 @@
 
     // Do NOT scrollIntoView on SELECT elements (hidden selects in modals cause scroll jumps)
     if (el.tagName !== 'SELECT') {
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
@@ -1700,8 +1726,10 @@
       if (recipientValidation.success !== true) return recipientValidation;
       if (actionDeadlineExpired()) return deadlineFailure();
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
     const clickedRect = rememberInteractionPoint(el, 'click');
     if (actionDeadlineExpired()) return deadlineFailure();
+    dispatched = true;
     const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
     if (filePickerGuard.blocked) {
       return {
@@ -1709,6 +1737,7 @@
         ...(clickedRect ? { rect: clickedRect } : {}),
       };
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
     const filePickerGuardMeta = filePickerGuard.guardId
       ? { _filePickerGuardId: filePickerGuard.guardId }
       : {};
@@ -1717,7 +1746,9 @@
     // via a label, wrapper, or overlapping element. Return error, not success.
     const postActive = document.activeElement;
     if (!targetIsSubmitControl && postActive && postActive !== el && postActive instanceof HTMLSelectElement) {
+      if (actionDeadlineExpired()) return deadlineFailure();
       postActive.blur();
+      if (actionDeadlineExpired()) return deadlineFailure();
       postActive.focus(); // close native popup, keep focus
       const postOpts = Array.from(postActive.options).map(o => o.text.trim());
       return {
@@ -1761,11 +1792,23 @@
   /**
    * Type text into an input/textarea.
    */
-  function typeText(params) {
-    return _typeTextInner(params);
+  function typeText(params, actionDeadlineExpired = () => false) {
+    return _typeTextInner(params, actionDeadlineExpired);
   }
 
-  async function _typeTextInner(params) {
+  async function _typeTextInner(params, actionDeadlineExpired = () => false) {
+    let dispatched = false;
+    const deadlineFailure = () => ({
+      success: false,
+      dispatched,
+      ...(dispatched
+        ? { outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+      deadlineExpired: true,
+      error: dispatched
+        ? 'The page action deadline expired during text dispatch.'
+        : 'The page action deadline expired before text dispatch.',
+    });
     const noDispatchFailure = (error, extra = {}) => ({
       success: false,
       error,
@@ -1773,6 +1816,7 @@
       dispatched: false,
       noDispatch: true,
     });
+    if (actionDeadlineExpired()) return deadlineFailure();
     const exactInsertion = (before, after, inserted) => _richTextToolbarExactInsertion(before, after, inserted);
     const verifyValue = async (target, expected, clear, beforeValue) => {
       await new Promise(resolve => setTimeout(resolve, 30));
@@ -1830,20 +1874,29 @@
       return noDispatchFailure(`Cannot type into <${tag}> — it is not an editable field. If you wanted to activate it, use click instead. If the real target is a nearby input, click the input first, then call type_text({text: "..."}) with no selector.`);
     }
 
+    if (actionDeadlineExpired()) return deadlineFailure();
     el.focus();
+    if (actionDeadlineExpired()) return deadlineFailure();
     showAgentWorkingTarget(el, 'type_text');
     const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
     const routeHrefBeforeType = location.href;
 
     if (el.isContentEditable) {
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       if (params.clear) el.textContent = '';
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.textContent += params.text;
       // beforeinput → input → change, so frameworks (React, Lexical,
       // ProseMirror) actually see a trusted-looking edit.
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: params.text }));
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: params.text }));
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.dispatchEvent(new Event('change', { bubbles: true }));
       const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
+      if (actionDeadlineExpired()) return deadlineFailure();
       return { success: true, ...(verified === true ? { verified: true } : {}), method: 'contenteditable', value: el.textContent.slice(0, 100) };
     }
 
@@ -1859,15 +1912,22 @@
         return noDispatchFailure(`No <option> matching "${params.text}" in select.`);
       }
       const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       if (nativeSetter) nativeSetter.call(el, match.value);
       else el.value = match.value;
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.dispatchEvent(new Event('input', { bubbles: true }));
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.dispatchEvent(new Event('change', { bubbles: true }));
       await new Promise(resolve => setTimeout(resolve, 30));
+      if (actionDeadlineExpired()) return deadlineFailure();
       return { success: true, ...(el.isConnected && el.value === match.value ? { verified: true } : {}), method: 'select', value: el.value };
     }
 
     if (params.clear) {
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       el.value = '';
     }
 
@@ -1876,15 +1936,20 @@
       : HTMLInputElement.prototype;
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
 
+    if (actionDeadlineExpired()) return deadlineFailure();
+    dispatched = true;
     if (nativeInputValueSetter) {
       nativeInputValueSetter.call(el, (params.clear ? '' : (el.value || '')) + params.text);
     } else {
       el.value = (params.clear ? '' : (el.value || '')) + params.text;
     }
 
+    if (actionDeadlineExpired()) return deadlineFailure();
     el.dispatchEvent(new Event('input', { bubbles: true }));
+    if (actionDeadlineExpired()) return deadlineFailure();
     el.dispatchEvent(new Event('change', { bubbles: true }));
     const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
+    if (actionDeadlineExpired()) return deadlineFailure();
 
     // Duplicate-field detection. Input handlers can synchronously start a
     // same-document navigation, so never attribute the old field to the route
@@ -2104,13 +2169,13 @@
         const style = window.getComputedStyle(el);
         return style.display !== 'none' && style.visibility !== 'hidden';
       });
-      if (focusables.length === 0) return;
+      if (focusables.length === 0) return !actionDeadlineExpired();
       const active = document.activeElement;
       const currentIndex = focusables.indexOf(active);
       const nextIndex = (currentIndex + 1 + focusables.length) % focusables.length;
       if (actionDeadlineExpired()) return false;
       try { focusables[nextIndex].focus(); } catch (e) {}
-      return true;
+      return !actionDeadlineExpired();
     };
 
     for (let i = 0; i < repeat; i++) {
@@ -2145,10 +2210,7 @@
       const expiredAfterKeydown = actionDeadlineExpired();
       target.dispatchEvent(up);
       if (expiredAfterKeydown) return deadlineFailure();
-      if (key === 'Tab') {
-        moveTabFocus();
-        if (actionDeadlineExpired()) return deadlineFailure();
-      }
+      if (key === 'Tab' && !moveTabFocus()) return deadlineFailure();
     }
 
     return { success: true, dispatched: true, key, repeat, method: 'keyboardevent', focusedTag: document.activeElement?.tagName || null };
@@ -2157,7 +2219,20 @@
   /**
    * Scroll the page.
    */
-  function legacyScrollPage(params) {
+  function legacyScrollPage(params, actionDeadlineExpired = () => false) {
+    let dispatched = false;
+    const deadlineFailure = () => ({
+      success: false,
+      dispatched,
+      ...(dispatched
+        ? { outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+      deadlineExpired: true,
+      error: dispatched
+        ? 'The page action deadline expired during scroll dispatch.'
+        : 'The page action deadline expired before scroll dispatch.',
+    });
+    if (actionDeadlineExpired()) return deadlineFailure();
     const amount = params.amount || 500;
     const direction = params.direction || 'down';
 
@@ -2224,14 +2299,19 @@
     }
 
     if (target) {
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       if (direction === 'down') target.scrollBy(0, amount);
       else if (direction === 'up') target.scrollBy(0, -amount);
       else if (direction === 'top') target.scrollTo(0, 0);
       else if (direction === 'bottom') target.scrollTo(0, target.scrollHeight);
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
 
     // Always also scroll the window in case both are needed (some pages have
     // both window and container scrolling).
+    if (actionDeadlineExpired()) return deadlineFailure();
+    dispatched = true;
     if (direction === 'down') window.scrollBy(0, amount);
     else if (direction === 'up') window.scrollBy(0, -amount);
     else if (direction === 'top') window.scrollTo(0, 0);
@@ -2246,7 +2326,20 @@
     };
   }
 
-  function smartScrollPage(params) {
+  function smartScrollPage(params, actionDeadlineExpired = () => false) {
+    let dispatched = false;
+    const deadlineFailure = () => ({
+      success: false,
+      dispatched,
+      ...(dispatched
+        ? { outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+      deadlineExpired: true,
+      error: dispatched
+        ? 'The page action deadline expired during scroll dispatch.'
+        : 'The page action deadline expired before scroll dispatch.',
+    });
+    if (actionDeadlineExpired()) return deadlineFailure();
     params = params || {};
     const rawAmount = Number(params.amount);
     const amount = Number.isFinite(rawAmount) && rawAmount > 0 ? rawAmount : 500;
@@ -2405,13 +2498,18 @@
     let containerAfter = null;
     if (target) {
       containerBefore = target.scrollTop;
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       scrollElementInstant(target, direction, amount);
       containerAfter = target.scrollTop;
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
 
     const movedContainer = target && Math.abs((containerAfter || 0) - (containerBefore || 0)) > 0.5;
     const shouldScrollWindow = params.alsoWindow === true || !movedContainer;
     if (shouldScrollWindow && windowCanMove) {
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       if (direction === 'down') window.scrollBy(0, amount);
       else if (direction === 'up') window.scrollBy(0, -amount);
       else if (direction === 'top') window.scrollTo(0, 0);
@@ -2459,11 +2557,11 @@
     };
   }
 
-  function scrollPage(params) {
+  function scrollPage(params, actionDeadlineExpired = () => false) {
     try {
-      return smartScrollPage(params);
+      return smartScrollPage(params, actionDeadlineExpired);
     } catch (e) {
-      const fallback = legacyScrollPage(params || {});
+      const fallback = legacyScrollPage(params || {}, actionDeadlineExpired);
       return {
         ...fallback,
         warning: `Smart scroll targeting failed (${e && e.message || e}); fell back to legacy window/container scroll.`,
@@ -4888,7 +4986,7 @@
       'get_file_input_targets': () => getFileInputTargets(),
       'click': () => clickElement(msg.params || {}, actionDeadlineExpired),
       'consume_file_picker_guard': () => consumeFilePickerGuard(msg.params?.guardId),
-      'type': () => typeText(msg.params || {}),
+      'type': () => typeText(msg.params || {}, actionDeadlineExpired),
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
       'release_dispatch_binding': () => _releaseDispatchBinding(msg.params || {}),
       'consume_focused_dispatch_binding': () => _consumeFocusedDispatchBinding(msg.params || {}),
@@ -4900,7 +4998,7 @@
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
       'probe_message_recipient_guard': () => _probeMessageRecipientGuard(msg.params || {}),
       'press_keys': () => pressKeys(msg.params || {}, actionDeadlineExpired),
-      'scroll': () => scrollPage(msg.params || {}),
+      'scroll': () => scrollPage(msg.params || {}, actionDeadlineExpired),
       'extract_data': () => extractData(msg.params || {}),
       'inspect_element_styles': () => inspectElementStyles(msg.params || {}),
       'patch_element': () => patchDevElement(msg.params || {}),
@@ -5396,7 +5494,18 @@
             ? { dispatched: true }
             : { dispatched: false, noDispatch: true }),
         });
+        const deadlineFailure = () => failure(
+          dispatched
+            ? 'The page action deadline expired during checkbox dispatch.'
+            : 'The page action deadline expired before checkbox dispatch.',
+          {
+            deadlineExpired: true,
+            outcomeUnknown: dispatched,
+            retryable: !dispatched,
+          },
+        );
         try {
+          if (actionDeadlineExpired()) return deadlineFailure();
           const {
             ref_id,
             checked,
@@ -5443,8 +5552,11 @@
           if (inputType !== 'checkbox') {
             return failure(`set_checked only supports native input[type="checkbox"] controls; ${ref_id} resolved to ${tag || 'unknown'}${inputType ? `[type="${inputType}"]` : ''}.`);
           }
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           const rect = el.getBoundingClientRect();
           if (!el.isConnected || rect.width < 1 || rect.height < 1) {
             return failure(`ref_id ${ref_id} is stale or not visibly rendered. Re-read the accessibility tree and retry.`);
@@ -5485,9 +5597,11 @@
             let marker = '';
             let trustedSelector = '';
             if (markForTrustedClick === true) {
+              if (actionDeadlineExpired()) return deadlineFailure();
               const markerEntropy = new Uint32Array(3);
               globalThis.crypto.getRandomValues(markerEntropy);
               marker = `wbsc_${Date.now().toString(36)}_${Array.from(markerEntropy, value => value.toString(36)).join('_')}`;
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.setAttribute(SET_CHECKED_MARKER_ATTRIBUTE, marker);
               trustedSelector = setCheckedMarkerSelector(marker);
               const marked = Array.from(document.querySelectorAll(trustedSelector));
@@ -5513,8 +5627,10 @@
               ...base,
             };
           }
+          if (actionDeadlineExpired()) return deadlineFailure();
           dispatched = true;
           el.click();
+          if (actionDeadlineExpired()) return deadlineFailure();
           const checkedAfter = !!el.checked;
           const success = checkedAfter === checked;
           const confirmation = success
@@ -5558,7 +5674,14 @@
             ? { dispatched: true }
             : { dispatched: false, noDispatch: true }),
         });
+        const deadlineFailure = () => failure(
+          dispatched
+            ? 'The page action deadline expired during accessibility-tree text dispatch.'
+            : 'The page action deadline expired before accessibility-tree text dispatch.',
+          { deadlineExpired: true, outcomeUnknown: dispatched, retryable: !dispatched },
+        );
         try {
+          if (actionDeadlineExpired()) return deadlineFailure();
           const { ref_id, text, clear } = msg.params || {};
           if (typeof ref_id !== 'string') return failure('ref_id (string, e.g. "ref_42") is required');
           if (typeof text !== 'string') return failure('text (string) is required');
@@ -5577,8 +5700,11 @@
               : '';
             return failure(`ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids — do NOT guess ref numbers or invent placeholders.`, { suggestions });
           }
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           showAgentWorkingTarget(el, 'type_ax');
           // Capture the element's on-screen rect so the background can
           // remember where the last interaction happened (for annotated
@@ -5638,17 +5764,22 @@
               if (!match) {
                 return failure(`No <option> matching "${text}" in select ref_id ${ref_id}.`);
               }
+              if (actionDeadlineExpired()) return deadlineFailure();
               dispatched = true;
               const selSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
               if (selSetter) selSetter.call(el, match.value); else el.value = match.value;
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.dispatchEvent(new Event('input', { bubbles: true }));
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.dispatchEvent(new Event('change', { bubbles: true }));
               selectExpected = match.value;
               method = 'type_ax_select';
             } else {
+              if (actionDeadlineExpired()) return deadlineFailure();
               dispatched = true;
               previous = el.value || '';
               if (clear) el.value = '';
+              if (actionDeadlineExpired()) return deadlineFailure();
               // Use the native setter so React's synthetic event system picks it up.
               const proto = el.tagName === 'TEXTAREA'
                 ? window.HTMLTextAreaElement.prototype
@@ -5657,7 +5788,9 @@
               const setter = descriptor && descriptor.set;
               const newVal = (clear ? '' : previous) + text;
               if (setter) setter.call(el, newVal); else el.value = newVal;
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.dispatchEvent(new Event('input', { bubbles: true }));
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.dispatchEvent(new Event('change', { bubbles: true }));
               method = 'type_ax_input';
             }
@@ -5666,6 +5799,7 @@
           }
 
           await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
+          if (actionDeadlineExpired()) return deadlineFailure();
           if (!el.isConnected) {
             return failure(
               `ref_id ${ref_id} was replaced while the value was being typed. Re-read the accessibility tree and retry with the current field ref_id.`,
@@ -5711,6 +5845,7 @@
       },
       'set_field': async () => {
         let dispatched = false;
+        let submissionDispatched = false;
         const failure = (error, extra = {}) => ({
           success: false,
           error,
@@ -5720,16 +5855,21 @@
             : { dispatched: false, noDispatch: true }),
         });
         const deadlineFailure = () => failure(
-          'The page action deadline expired before submission. The field value may have changed, but no submit action was sent.',
+          dispatched
+            ? (submissionDispatched
+                ? 'The page action deadline expired during submission dispatch. The field or submission outcome may be incomplete.'
+                : 'The page action deadline expired during field dispatch. The value may be incomplete, but no submit action was sent.')
+            : 'The page action deadline expired before field dispatch.',
           {
             deadlineExpired: true,
-            submitted: false,
-            outcomeUnknown: false,
-            retryable: false,
+            ...(submissionDispatched ? {} : { submitted: false }),
+            outcomeUnknown: dispatched,
+            retryable: !dispatched,
           },
         );
         try {
           const { ref_id, text, clear = true, submit = false } = msg.params || {};
+          if (actionDeadlineExpired()) return deadlineFailure();
           if (typeof ref_id !== 'string') return failure('ref_id (string, e.g. "ref_42") is required');
           if (typeof text !== 'string') return failure('text (string) is required');
           if (typeof window.__wb_ax_lookup !== 'function') return failure('accessibility-tree.js not injected');
@@ -5747,8 +5887,11 @@
               : '';
             return failure(`ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids — do NOT guess ref numbers or invent placeholders.`, { suggestions });
           }
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           showAgentWorkingTarget(el, 'set_field');
           const rect = (() => {
             try {
@@ -5794,6 +5937,7 @@
               },
             );
           } else {
+            if (actionDeadlineExpired()) return deadlineFailure();
             dispatched = true;
             prevValue = el.value || '';
             const proto = el.tagName === 'TEXTAREA'
@@ -5803,8 +5947,11 @@
             const setter = descriptor && descriptor.set;
             const newVal = (clear ? '' : prevValue) + text;
             if (setter) setter.call(el, newVal); else el.value = newVal;
+            if (actionDeadlineExpired()) return deadlineFailure();
             el.dispatchEvent(new Event('input', { bubbles: true }));
+            if (actionDeadlineExpired()) return deadlineFailure();
             el.dispatchEvent(new Event('change', { bubbles: true }));
+            if (actionDeadlineExpired()) return deadlineFailure();
           }
           // Controlled inputs can reconcile on the next task and overwrite or
           // append to the value after their input/change handlers return.
@@ -5851,7 +5998,9 @@
                 } catch {}
               }
               const dispatchKey = (type, key, keyCode) => {
-                return el.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode, bubbles: true, cancelable: true }));
+                if (actionDeadlineExpired()) return false;
+                el.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode, bubbles: true, cancelable: true }));
+                return true;
               };
               const form = el.form || (el.closest && el.closest('form'));
               const usesNativeSubmit = _setFieldUsesNativeSubmit(isCombobox, el.isContentEditable, form);
@@ -5887,16 +6036,23 @@
                   // requestSubmit performs interactive constraint validation and
                   // silently aborts on an invalid form; surface that instead of
                   // reporting a successful submission.
-                  if (form.noValidate !== true && typeof form.checkValidity === 'function' && !form.checkValidity()) {
-                    return failure(
-                      'The form did not submit: a required field is empty or a value is invalid. Fix the field and retry with a fresh ref_id.',
-                      { verified: true, submitted: false, invalid: true, ref_id, rect },
-                    );
+                  if (form.noValidate !== true && typeof form.checkValidity === 'function') {
+                    if (actionDeadlineExpired()) return deadlineFailure();
+                    const formIsValid = form.checkValidity();
+                    if (actionDeadlineExpired()) return deadlineFailure();
+                    if (!formIsValid) {
+                      return failure(
+                        'The form did not submit: a required field is empty or a value is invalid. Fix the field and retry with a fresh ref_id.',
+                        { verified: true, submitted: false, invalid: true, ref_id, rect },
+                      );
+                    }
                   }
                   if (actionDeadlineExpired()) return deadlineFailure();
+                  submissionDispatched = true;
                   try {
                     form.requestSubmit();
                   } catch {}
+                  if (actionDeadlineExpired()) return deadlineFailure();
                 } else {
                   // Comboboxes, contenteditables, and form-less widgets are
                   // committed by page-owned keyboard handlers. Never follow
@@ -5905,15 +6061,17 @@
                   if (isCombobox) {
                     await new Promise(r => setTimeout(r, 80));
                     if (actionDeadlineExpired()) return deadlineFailure();
-                    dispatchKey('keydown', 'ArrowDown', 40);
-                    dispatchKey('keyup', 'ArrowDown', 40);
+                    if (!dispatchKey('keydown', 'ArrowDown', 40)) return deadlineFailure();
+                    if (!dispatchKey('keyup', 'ArrowDown', 40)) return deadlineFailure();
                     await new Promise(r => setTimeout(r, 30));
                     if (actionDeadlineExpired()) return deadlineFailure();
                   }
                   if (actionDeadlineExpired()) return deadlineFailure();
-                  dispatchKey('keydown', 'Enter', 13);
-                  dispatchKey('keypress', 'Enter', 13);
-                  dispatchKey('keyup', 'Enter', 13);
+                  submissionDispatched = true;
+                  if (!dispatchKey('keydown', 'Enter', 13)) return deadlineFailure();
+                  if (!dispatchKey('keypress', 'Enter', 13)) return deadlineFailure();
+                  if (!dispatchKey('keyup', 'Enter', 13)) return deadlineFailure();
+                  if (actionDeadlineExpired()) return deadlineFailure();
                 }
                 submissionCancelled = submitEvent?.defaultPrevented === true;
                 nativeSubmitAttempted = submissionObserved && !submissionCancelled;
