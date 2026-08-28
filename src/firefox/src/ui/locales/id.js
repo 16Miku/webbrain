@@ -172,6 +172,15 @@ export default {
 
   'sp.activity.thinking': 'Berpikir...',
   'sp.activity.thinking_step': 'Berpikir (langkah {step})...',
+  'sp.activity.communicating': 'Berkomunikasi...',
+  'sp.activity.thinking_more': 'Memikirkannya lebih lanjut...',
+  'sp.activity.working_next': 'Mengerjakan langkah berikutnya...',
+  'sp.activity.coordinating_next': 'Mengoordinasikan langkah berikutnya...',
+  'sp.activity.checking_next': 'Memeriksa langkah selanjutnya...',
+  'sp.activity.preparing_next': 'Menyiapkan tindakan berikutnya...',
+  'sp.activity.connecting_pieces': 'Menghubungkan bagian-bagiannya...',
+  'sp.activity.reviewing_progress': 'Meninjau kemajuan...',
+  'sp.activity.toggle_history': 'Tampilkan atau sembunyikan riwayat aktivitas',
   'sp.activity.continuing': 'Melanjutkan...',
   'sp.activity.stopping': 'Menghentikan...',
 

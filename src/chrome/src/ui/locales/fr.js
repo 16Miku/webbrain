@@ -172,6 +172,15 @@ export default {
 
   'sp.activity.thinking': 'Réflexion...',
   'sp.activity.thinking_step': 'Réflexion (étape {step})...',
+  'sp.activity.communicating': 'Communication en cours...',
+  'sp.activity.thinking_more': 'Réflexion plus approfondie...',
+  'sp.activity.working_next': 'Traitement de la prochaine étape...',
+  'sp.activity.coordinating_next': 'Coordination de la prochaine étape...',
+  'sp.activity.checking_next': 'Vérification de la suite...',
+  'sp.activity.preparing_next': 'Préparation de la prochaine action...',
+  'sp.activity.connecting_pieces': 'Mise en relation des éléments...',
+  'sp.activity.reviewing_progress': 'Vérification de la progression...',
+  'sp.activity.toggle_history': 'Afficher ou masquer l’historique de l’activité',
   'sp.activity.continuing': 'Poursuite...',
   'sp.activity.stopping': 'Arrêt...',
 

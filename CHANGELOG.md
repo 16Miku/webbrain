@@ -4,6 +4,12 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.5.0] - 2026-08-27
+
+### Changed
+- Redesigned the sidebar loading and thinking UI with clearer live activity updates and a toggleable compact activity history (Chrome + Firefox)
+- Localized the new activity statuses and improved screen-reader announcements across all supported languages
+
 ## [33.4.1] - 2026-08-27
 
 ### Changed

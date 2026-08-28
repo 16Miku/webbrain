@@ -208,6 +208,15 @@ export default {
 
   'sp.activity.thinking': 'Düşünüyor...',
   'sp.activity.thinking_step': 'Düşünüyor (adım {step})...',
+  'sp.activity.communicating': 'İletişim kuruluyor...',
+  'sp.activity.thinking_more': 'Biraz daha düşünüyor...',
+  'sp.activity.working_next': 'Sonraki adım üzerinde çalışıyor...',
+  'sp.activity.coordinating_next': 'Sonraki adım koordine ediliyor...',
+  'sp.activity.checking_next': 'Sırada ne olduğu kontrol ediliyor...',
+  'sp.activity.preparing_next': 'Sonraki işlem hazırlanıyor...',
+  'sp.activity.connecting_pieces': 'Parçalar birleştiriliyor...',
+  'sp.activity.reviewing_progress': 'İlerleme gözden geçiriliyor...',
+  'sp.activity.toggle_history': 'İşlem geçmişini göster veya gizle',
   'sp.activity.continuing': 'Devam ediyor...',
   'sp.activity.stopping': 'Durduruluyor...',
 

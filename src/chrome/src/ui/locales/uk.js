@@ -172,6 +172,15 @@ export default {
 
   'sp.activity.thinking': 'Думаю...',
   'sp.activity.thinking_step': 'Думаю (крок {step})...',
+  'sp.activity.communicating': 'Спілкуюся...',
+  'sp.activity.thinking_more': 'Обдумую докладніше...',
+  'sp.activity.working_next': 'Працюю над наступним кроком...',
+  'sp.activity.coordinating_next': 'Узгоджую наступний крок...',
+  'sp.activity.checking_next': 'Перевіряю, що буде далі...',
+  'sp.activity.preparing_next': 'Готую наступну дію...',
+  'sp.activity.connecting_pieces': 'Поєдную складові...',
+  'sp.activity.reviewing_progress': 'Перевіряю поступ...',
+  'sp.activity.toggle_history': 'Показати або приховати історію дій',
   'sp.activity.continuing': 'Продовжую...',
   'sp.activity.stopping': 'Зупиняю...',
 
