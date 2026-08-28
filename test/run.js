@@ -12649,13 +12649,69 @@ test('delivery checkpoints escalate at eight and reset only after meaningful pro
 test('delivery checkpoint enforcement is wired into both agent loops', () => {
   for (const browserName of ['chrome', 'firefox']) {
     const source = fs.readFileSync(path.join(ROOT, `src/${browserName}/src/agent/agent.js`), 'utf8');
-    assert.match(source, /const deliveryCheck = this\._checkDeliveryObservationStreak\([\s\S]{0,180}?toolResult,[\s\S]{0,800}?requiredReadProgress,[\s\S]{0,300}?enforceTerminal: runOptions\?\.cloudRun !== true[\s\S]{0,120}?allowedToolNames\.has\('done'\)/, `${browserName}: every interactive mode with done must preserve required-read progress and enforce the second checkpoint`);
+    assert.match(source, /const deliveryCheck = this\._checkDeliveryObservationStreak\([\s\S]{0,180}?toolResult,[\s\S]{0,800}?requiredReadProgress,[\s\S]{0,300}?enforceTerminal: runOptions\?\.cloudRun !== true[\s\S]{0,120}?!this\._isWebBrainCloudProvider\(provider\)[\s\S]{0,120}?allowedToolNames\.has\('done'\)/, `${browserName}: every eligible interactive mode with done must preserve required-read progress and enforce the second checkpoint`);
     assert.doesNotMatch(source, /enforceTerminal:[\s\S]{0,160}?_isActionMode/, `${browserName}: Ask research must not be excluded from terminal delivery`);
     assert.match(source, /deliveryCheck\.kind === 'nudge'/, `${browserName}: warning must reach the model`);
     assert.match(source, /deliveryCheck\.kind === 'deliver'[\s\S]{0,900}?action: 'deliver'/, `${browserName}: second checkpoint must leave the browser loop`);
     assert.match(source, /batchResult\.action === 'deliver'[\s\S]{0,300}?_recoverDeliveryCheckpointTurn/, `${browserName}: caller must enter done-only recovery`);
     assert.match(source, /discoveredActionableTargets:\s*Number\(progressObserved\?\.addedPending \|\| 0\) > 0/, `${browserName}: newly observed progress rows must reset delivery drift`);
     assert.match(source, /this\.deliveryObservationStreaks\.delete\(tabId\)/, `${browserName}: run cleanup must clear state`);
+  }
+});
+
+test('active WebBrain Cloud provider keeps delivery checkpoints advisory', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const mode of ['ask', 'act']) {
+      const agent = new AgentClass({ getVisionProvider: async () => null });
+      const tabId = `${label}-${mode}-webbrain-cloud-delivery`;
+      const messages = [];
+      const updates = [];
+      const executed = [];
+      agent.conversationModes.set(tabId, mode);
+      agent._ensureGateSetting = async () => {};
+      agent._skipPermissionGate = true;
+      agent._currentUrl = async () => 'https://example.com/research';
+      agent._rememberMastodonObservation = async () => null;
+      agent._recordProgressObservation = async () => null;
+      agent._autoRecordProgressAction = () => null;
+      agent._persist = () => {};
+      agent.executeTool = async (_tabId, name, args) => {
+        executed.push(args.url);
+        return { success: true, content: `Evidence from ${args.url}` };
+      };
+      const toolCalls = Array.from({ length: 9 }, (_, index) => ({
+        id: `${mode}_cloud_research_${index + 1}`,
+        function: {
+          name: 'research_url',
+          arguments: JSON.stringify({ url: `https://example.com/cloud-source-${index + 1}` }),
+        },
+      }));
+
+      const result = await agent._executeToolBatch(
+        tabId,
+        toolCalls,
+        messages,
+        (type, data) => updates.push({ type, data }),
+        {
+          supportsVision: false,
+          config: { providerName: 'webbrain-cloud' },
+        },
+        null,
+        new Set(['research_url', 'done']),
+        8,
+      );
+
+      assert.equal(result.action, 'continue', `${label}/${mode}: active WebBrain Cloud was forced into terminal delivery`);
+      assert.equal(executed.length, 9, `${label}/${mode}: active WebBrain Cloud stopped after the eighth observation`);
+      const eighthResult = messages.find(message => message.tool_call_id === `${mode}_cloud_research_8`);
+      assert.match(eighthResult?.content || '', /DELIVERY CHECKPOINT/, `${label}/${mode}: advisory checkpoint was removed`);
+      assert.doesNotMatch(eighthResult?.content || '', /DELIVERY REQUIRED/, `${label}/${mode}: advisory checkpoint became terminal`);
+      assert.equal(
+        updates.some(update => /Observation limit reached/i.test(update.data?.message || '')),
+        false,
+        `${label}/${mode}: active WebBrain Cloud displayed terminal observation-limit recovery`,
+      );
+    }
   }
 });
 
