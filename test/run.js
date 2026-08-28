@@ -41535,7 +41535,7 @@ test('settings async test controls surface rejected background results', () => {
     );
     assert.match(
       settings,
-      /document\.querySelectorAll\('\.loaded-model-dialog'\)\.forEach\(dialog => \{[\s\S]*?dialog\.addEventListener\('click', \(event\) => \{[\s\S]*?event\.target === dialog[\s\S]*?closeLoadedModelDialog\(dialog\);[\s\S]*?event\.target\.closest\('\.loaded-model-option'\);[\s\S]*?const providerId = dialog\.dataset\.loadedModelsFor;[\s\S]*?const selectedModel = option\.dataset\.model \|\| '';[\s\S]*?input\.value = selectedModel;[\s\S]*?saveProvider\(providerId, \{ showFlash: false \}\)[\s\S]*?detectProviderContextWindowForModel\(providerId, selectedModel\)[\s\S]*?closeLoadedModelDialog\(dialog\);[\s\S]*?\}\);[\s\S]*?\}\);/,
+      /document\.querySelectorAll\('\.loaded-model-dialog'\)\.forEach\(dialog => \{[\s\S]*?dialog\.addEventListener\('click', \(event\) => \{[\s\S]*?event\.target === dialog[\s\S]*?closeLoadedModelDialog\(dialog\);[\s\S]*?event\.target\.closest\('\.loaded-model-option'\);[\s\S]*?const providerId = dialog\.dataset\.loadedModelsFor;[\s\S]*?const selectedModel = option\.dataset\.model \|\| '';[\s\S]*?input\.value = selectedModel;[\s\S]*?syncInferredOpenRouterRoutingVariant\(providerId, selectedModel\);[\s\S]*?saveProvider\(providerId, \{ showFlash: false \}\)[\s\S]*?detectProviderContextWindowForModel\(providerId, selectedModel\)[\s\S]*?closeLoadedModelDialog\(dialog\);[\s\S]*?\}\);[\s\S]*?\}\);/,
       `${label}: choosing a loaded model should save it before detecting context for that model`,
     );
     assert.match(
