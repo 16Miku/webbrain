@@ -4193,6 +4193,8 @@
         : [],
       supportsRecipientSets: dispatch.supportsRecipientSets === true,
       identityKey,
+      messageBody: String(dispatch.messageBody || ''),
+      messageBodyBaselineCount: Number(dispatch.messageBodyBaselineCount || 0),
       pageUrl: location.href,
       timer: null,
     };
@@ -4255,7 +4257,9 @@
         : live?.strongIdentityCandidates,
     );
     if (live?.success !== true || live?.conclusive !== true || live?.messageSend !== true
-      || liveIdentityKey !== expected.identityKey) {
+      || liveIdentityKey !== expected.identityKey
+      || !expected.messageBody
+      || live?.messageBody !== expected.messageBody) {
       return {
         success: false,
         dispatched: false,
@@ -4681,6 +4685,96 @@
           || role === 'textbox'
           || role === 'searchbox';
       };
+      const normalizedMessageBody = (value) => {
+        let text = String(value ?? '')
+          .replace(/[\u200b-\u200d\ufeff]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        try { text = text.normalize('NFKC'); } catch {}
+        return text.length <= 20000 ? text : '';
+      };
+      const composerMessageBody = (el) => {
+        try {
+          return normalizedMessageBody('value' in el ? el.value : (el.innerText || el.textContent || ''));
+        } catch {
+          return '';
+        }
+      };
+      const expectedRecipientIdentities = (Array.isArray(params.expectedRecipients)
+        ? params.expectedRecipients
+        : [])
+        .map(value => normalizedIdentity(value && typeof value === 'object' ? value.identity : value))
+        .filter(Boolean);
+      const outgoingMessageContainer = (el) => {
+        let current = el;
+        for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
+          const direction = normalizedIdentity([
+            current.getAttribute?.('data-message-direction'),
+            current.getAttribute?.('data-direction'),
+            current.getAttribute?.('data-message-author-role'),
+            current.getAttribute?.('data-author-role'),
+          ].filter(Boolean).join(' '));
+          const booleanOutgoing = String(
+            current.getAttribute?.('data-outgoing')
+            || current.getAttribute?.('data-is-outgoing')
+            || '',
+          ).toLowerCase();
+          const className = normalizedIdentity(
+            typeof current.className === 'string' ? current.className : '',
+          );
+          const ariaLabel = normalizedIdentity(current.getAttribute?.('aria-label'));
+          if (/\b(?:outgoing|sent|self|own|user|from-me)\b/.test(direction)
+              || booleanOutgoing === 'true'
+              || /(?:^|[-_\s])(?:outgoing|message-out|sent-message|is-sent|from-me|own-message|self-message)(?:$|[-_\s])/.test(className)
+              || /^(?:you(?:\s+sent\b|[:,])|outgoing message\b|sent by you\b)/.test(ariaLabel)) {
+            return current;
+          }
+          if (params.adapterName === 'gmail'
+              && expectedRecipientIdentities.length > 0
+              && (current.hasAttribute?.('data-message-id')
+                || current.hasAttribute?.('data-legacy-message-id'))) {
+            let recipientNodes = [];
+            try {
+              recipientNodes = Array.from(current.querySelectorAll?.(
+                '[email],[data-email],[data-hovercard-id]'
+              ) || []);
+            } catch {}
+            const observedRecipients = new Set(recipientNodes.flatMap(node => [
+              node.getAttribute?.('email'),
+              node.getAttribute?.('data-email'),
+              node.getAttribute?.('data-hovercard-id'),
+            ]).map(normalizedIdentity).filter(Boolean));
+            if (expectedRecipientIdentities.every(identity => observedRecipients.has(identity))) return current;
+          }
+        }
+        return null;
+      };
+      const matchingMessageBodyCount = (expectedBody, activeComposer = null) => {
+        const expected = normalizedMessageBody(expectedBody);
+        if (!expected) return 0;
+        let candidates = [];
+        try {
+          candidates = Array.from(document.querySelectorAll(
+            'div,span,p,li,article,[role="listitem"],[data-message-id],[data-legacy-message-id]'
+          )).slice(0, 12000);
+        } catch {
+          return 0;
+        }
+        const matches = candidates.filter((el) => {
+          if (!visible(el) || editable(el)) return false;
+          if (activeComposer && (el === activeComposer || activeComposer.contains?.(el))) return false;
+          if (!outgoingMessageContainer(el)) return false;
+          try {
+            if (el.closest?.('button,[role="button"],[role="alert"],[role="status"],[aria-live],nav,[role="navigation"]')) {
+              return false;
+            }
+          } catch {}
+          return normalizedMessageBody(el.innerText || el.textContent || '') === expected;
+        });
+        // Nested wrappers often repeat the same innerText. Count only the
+        // innermost exact nodes so the before/after cardinality is stable.
+        return matches.filter(el => !matches.some(other => other !== el && el.contains?.(other))).length;
+      };
       const verifiedNavigationEditable = (el) => {
         if (!editable(el)) return false;
         const tag = String(el.tagName || '').toLowerCase();
@@ -4920,6 +5014,7 @@
           messageSend: null,
           conclusive: false,
           composerAvailable: false,
+          matchingOutgoingMessageCount: matchingMessageBodyCount(params.expectedMessageBody, null),
           identityCandidates: [],
           error: 'Active conversation composer could not be resolved.',
         };
@@ -5111,8 +5206,24 @@
         for (const identity of strongIdentities) strongRecipients.push({ identity, role: 'to' });
       }
 
+      const composerText = (() => {
+        try {
+          if ('value' in composer) return String(composer.value || '');
+          return String(composer.innerText || composer.textContent || '');
+        } catch { return ''; }
+      })();
+      const submittedFieldBody = tool === 'set_field' && args.submit === true
+        ? normalizedMessageBody(args.text)
+        : '';
+      const messageBody = submittedFieldBody || composerMessageBody(composer);
+      const messageBodyBaselineCount = matchingMessageBodyCount(messageBody, composer);
+      const matchingOutgoingMessageCount = matchingMessageBodyCount(
+        params.expectedMessageBody,
+        composer,
+      );
       const messageRecipientDispatchToken = params.bindDispatch === true
         && messageSend === true
+        && !!messageBody
         && (params.supportsRecipientSets === true
           ? strongRecipients.length > 0
           : strongRecipients.length === 1)
@@ -5123,20 +5234,19 @@
             adapterName: params.adapterName,
             expectedRecipients: params.expectedRecipients,
             supportsRecipientSets: params.supportsRecipientSets,
+            messageBody,
+            messageBodyBaselineCount,
           })
         : '';
-      const composerText = (() => {
-        try {
-          if ('value' in composer) return String(composer.value || '');
-          return String(composer.innerText || composer.textContent || '');
-        } catch { return ''; }
-      })();
       return {
         success: true,
         messageSend: observationOnly ? false : messageSend === true,
         conclusive: true,
         composerAvailable: true,
         composerEmpty: composerText.replace(/[\u200b-\u200d\ufeff]/g, '').trim() === '',
+        messageBody,
+        messageBodyBaselineCount,
+        matchingOutgoingMessageCount,
         // Only recipient-specific header evidence is authoritative. Ordinary
         // message text, test-id containers, and other leaf content are never
         // returned as dispatch identities.

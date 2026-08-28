@@ -4617,6 +4617,8 @@ test('direct-message recipient guard uses structured intent and exact active ide
       conclusive: true,
       composerAvailable: true,
       messageSend: true,
+      messageBody: 'Hello Alice',
+      messageBodyBaselineCount: 0,
       identityCandidates: ['alice@example.com'],
       strongIdentityCandidates: ['alice@example.com'],
       messageRecipientDispatchBinding: { token: `gmail-recipient-binding-${label}` },
@@ -4639,6 +4641,8 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.deepEqual(gmailExecutionContext, {
       messageRecipientGuardRequired: true,
       messageRecipientDispatchBinding: { token: `gmail-recipient-binding-${label}` },
+      messageRecipientBody: 'Hello Alice',
+      messageRecipientBodyBaselineCount: 0,
     });
 
     agent._planExecutionGuards.set(tabId, {
@@ -4660,6 +4664,8 @@ test('direct-message recipient guard uses structured intent and exact active ide
       success: true,
       conclusive: true,
       messageSend: true,
+      messageBody: 'Hello',
+      messageBodyBaselineCount: 0,
       identityCandidates: ['迷你世界皓宸'],
       strongIdentityCandidates: ['迷你世界皓宸'],
       messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
@@ -4679,6 +4685,8 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.deepEqual(enterExecutionContext, {
       messageRecipientGuardRequired: true,
       messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+      messageRecipientBody: 'Hello',
+      messageRecipientBodyBaselineCount: 0,
     });
     assert.deepEqual(lastProbeParams?.expectedRecipients, [{ identity: '迷你世界皓宸', role: 'to' }],
       `${label}: named recipient set was not passed to the dispatch probe`);
@@ -4701,6 +4709,8 @@ test('direct-message recipient guard uses structured intent and exact active ide
       assert.deepEqual(clickExecutionContext, {
         messageRecipientGuardRequired: true,
         messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+        messageRecipientBody: 'Hello',
+        messageRecipientBodyBaselineCount: 0,
       });
     }
     const recipientExecutionContext = {};
@@ -4718,6 +4728,8 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.deepEqual(recipientExecutionContext, {
       messageRecipientGuardRequired: true,
       messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
+      messageRecipientBody: 'Hello',
+      messageRecipientBodyBaselineCount: 0,
     });
     delete probe.messageRecipientDispatchBinding;
     const unboundSubmit = await agent._messageRecipientGuardBlock(
@@ -4804,6 +4816,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       tagName: 'TEXTAREA', value: 'hello',
     });
     let gmailRecipientChips = [];
+    let renderedMessages = [];
     const gmailComposeRoot = {
       querySelectorAll: (selector) => selector === '[email],[data-hovercard-id],[data-email]'
         ? gmailRecipientChips
@@ -4883,6 +4896,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
         if (selector.startsWith('[aria-selected')) return [];
         if (selector.startsWith('h1,')) return [searchedName, activeHeader, conversationMessageHeading];
         if (selector.startsWith('[data-testid')) return [];
+        if (selector.startsWith('div,span,p,li,article')) return renderedMessages;
         return [];
       },
       body: { querySelectorAll: () => [searchedName, activeHeader, conversationMessageHeading] },
@@ -4892,6 +4906,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       window: {
         innerHeight: 1000,
         __wb_ax_lookup: (refId) => {
+          if (refId === 'composer') return composer;
           if (refId === 'conversation-row-label') return conversationRowLabel;
           if (refId === 'conversation-row-menu-leaf') return conversationRowMenuLeaf;
           if (refId === 'alternate-composer') return alternateComposer;
@@ -4908,6 +4923,9 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const probe = vm.runInNewContext(`(${source.slice(start, end)})`, context);
     const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
     const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    const fieldSubmitResult = probe({
+      tool: 'set_field', args: { ref_id: 'composer', text: 'replacement body', submit: true },
+    });
 
     activeElement = searchBox;
     const searchEnterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
@@ -4989,11 +5007,26 @@ test('direct-message recipient probe accepts only a unique active-thread header 
         { identity: 'Bob', role: 'to' },
       ], supportsRecipientSets: true,
     });
+    const incomingMessage = element('hello', {
+      left: 450, right: 850, top: 420, bottom: 480, width: 400, height: 60,
+    }, { role: 'listitem' });
+    renderedMessages = [incomingMessage];
+    const incomingBodyObservationResult = probe({
+      tool: 'observe_active_conversation', args: {}, expectedMessageBody: 'hello',
+    });
+    const sentMessage = element('hello', {
+      left: 450, right: 850, top: 500, bottom: 560, width: 400, height: 60,
+    }, { role: 'listitem', attributes: { 'data-message-direction': 'outgoing' } });
+    renderedMessages = [sentMessage];
+    const outgoingBodyObservationResult = probe({
+      tool: 'observe_active_conversation', args: {}, expectedMessageBody: 'hello',
+    });
     composer.value = '';
     const emptyComposerCustomSendResult = probe({ tool: 'click', args: { text: 'Quick send' } });
     return {
       observationResult,
       enterResult,
+      fieldSubmitResult,
       searchEnterResult,
       searchWithoutComposerResult,
       collapsedObservationResult,
@@ -5016,6 +5049,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       gmailExtraRecipientResult,
       gmailMatchingRoleResult,
       gmailWrongRoleResult,
+      incomingBodyObservationResult,
+      outgoingBodyObservationResult,
     };
   };
 
@@ -5023,6 +5058,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const {
       observationResult,
       enterResult: result,
+      fieldSubmitResult,
       searchEnterResult,
       searchWithoutComposerResult,
       collapsedObservationResult,
@@ -5045,15 +5081,21 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       gmailExtraRecipientResult,
       gmailMatchingRoleResult,
       gmailWrongRoleResult,
+      incomingBodyObservationResult,
+      outgoingBodyObservationResult,
     } = runProbe(prefix);
     assert.equal(observationResult.success, true);
     assert.equal(observationResult.conclusive, true);
     assert.equal(observationResult.composerEmpty, false, `${prefix}: non-empty composer was reported empty`);
+    assert.equal(observationResult.messageBody, 'hello');
+    assert.equal(observationResult.messageBodyBaselineCount, 0);
     assert.deepEqual(Array.from(observationResult.strongIdentityCandidates), ['清辉月下夜']);
     assert.equal(observationResult.strongIdentityCandidates.includes('迷你世界皓宸'), false);
     assert.equal(result.success, true);
     assert.equal(result.conclusive, true);
     assert.equal(result.messageSend, true);
+    assert.equal(fieldSubmitResult.messageBody, 'replacement body',
+      `${prefix}: set_field submit was not bound to its dispatched text argument`);
     assert.deepEqual(Array.from(result.identityCandidates), ['清辉月下夜']);
     assert.equal(result.identityCandidates.includes('迷你世界皓宸'), false, `${prefix}: message heading became recipient evidence`);
     assert.equal(searchEnterResult.messageSend, false, `${prefix}: search Enter was classified as a message send`);
@@ -5102,6 +5144,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     ], `${prefix}: exact Gmail To/BCC authorization was rejected`);
     assert.deepEqual(Array.from(gmailWrongRoleResult.strongRecipientCandidates), [],
       `${prefix}: moving a Gmail BCC recipient into To authorized dispatch`);
+    assert.equal(incomingBodyObservationResult.matchingOutgoingMessageCount, 0,
+      `${prefix}: incoming text matching the dispatch body was treated as outgoing proof`);
+    assert.equal(outgoingBodyObservationResult.matchingOutgoingMessageCount, 1,
+      `${prefix}: exact outgoing message body was not observed after dispatch`);
   }
 });
 
@@ -5124,6 +5170,7 @@ test('message recipient dispatch binding detects composer and active-thread race
     let liveTarget = sendButton;
     let liveIdentities = ['Alice'];
     let liveRecipients = null;
+    let liveMessageBody = 'Hello Alice';
     const helpers = vm.runInNewContext(`(() => {
       ${source.slice(start, end)}
       return {
@@ -5143,13 +5190,20 @@ test('message recipient dispatch binding detects composer and active-thread race
               success: true,
               conclusive: true,
               messageSend: true,
+              messageBody: liveMessageBody,
               strongIdentityCandidates: liveIdentities,
               ...(Array.isArray(liveRecipients) ? { strongRecipientCandidates: liveRecipients } : {}),
             }
       ),
     });
 
-    const dispatch = { tool: 'click_ax', args: { ref_id: 'ref_send' }, actionTarget: sendButton };
+    const dispatch = {
+      tool: 'click_ax',
+      args: { ref_id: 'ref_send' },
+      actionTarget: sendButton,
+      messageBody: 'Hello Alice',
+      messageBodyBaselineCount: 0,
+    };
     const matchingToken = helpers.remember(composer, ['Alice'], dispatch);
     assert.equal(helpers.consume({
       messageRecipientDispatchBinding: { token: matchingToken },
@@ -5194,6 +5248,16 @@ test('message recipient dispatch binding detects composer and active-thread race
     }, replacementButton);
     assert.equal(changedTarget.success, false);
     assert.equal(changedTarget.reasonCode, 'recipient_dispatch_binding_stale');
+
+    liveTarget = sendButton;
+    const changedBodyToken = helpers.remember(composer, ['Alice'], dispatch);
+    liveMessageBody = 'Different draft';
+    const changedBody = helpers.consume({
+      messageRecipientDispatchBinding: { token: changedBodyToken },
+    }, sendButton);
+    assert.equal(changedBody.success, false, `${label}: changed message body survived dispatch revalidation`);
+    assert.equal(changedBody.reasonCode, 'active_recipient_changed_before_dispatch');
+    liveMessageBody = 'Hello Alice';
 
     const branchStart = source.indexOf("'set_field': async () => {");
     const branchEnd = source.indexOf(label === 'chrome' ? "'ax_prepare_field_for_trusted_type':" : "'hover':", branchStart);
@@ -79451,6 +79515,44 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     assert.equal(failedValidation.ok, false,
       `${AgentClass.name}: a failed workflow obligation passed successful reconciliation`);
     assert.match(failedValidation.error, /failed workflow rows/i);
+    const unprovenValidation = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'The complete accessibility-tree inventory was reviewed.',
+    }, terminalInventoryItems, 'unproven-workflow-session');
+    assert.equal(unprovenValidation.ok, false,
+      `${AgentClass.name}: one global consequential call proved every processed form row`);
+    assert.match(unprovenValidation.error, /per-control action evidence/i);
+
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'click_ax', {
+      ref_id: 'ref_name',
+    }, { success: true, dispatched: true, verified: true });
+    assert.equal(guard.workflowControlActionEvidence[terminalInventoryItems[0].id], undefined,
+      `${AgentClass.name}: clicking a textbox was accepted as proof that it contains the requested value`);
+    agent._recordCompletionToolResult(tabId, 'type_ax', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+    agent._recordCompletionToolResult(tabId, 'set_checked', {
+      ref_id: 'ref_terms', checked: true,
+    }, { success: true, dispatched: true, verified: true });
+    agent._recordCompletionToolResult(tabId, 'click_ax', {
+      ref_id: 'ref_resume',
+    }, { success: true, dispatched: true, verified: true });
+    const resumeItem = inventory.items.find(item => item.ref_id === 'ref_resume');
+    assert.equal(guard.workflowControlActionEvidence[resumeItem.id], undefined,
+      `${AgentClass.name}: opening a file picker was accepted as proof of an attached file`);
+    agent._recordCompletionToolResult(tabId, 'upload_file', {
+      selector: 'input[type="file"]', path: 'resume.pdf',
+    }, {
+      success: true,
+      dispatched: true,
+      attachmentState: 'input_attached',
+      attached: { name: 'resume.pdf', size: 128 },
+    });
+    assert.equal(Object.keys(guard.workflowControlActionEvidence).length, 3,
+      `${AgentClass.name}: exact per-control action evidence was not retained`);
     const terminalOnly = agent._progressUpdate(tabId, { items: terminalInventoryItems });
     assert.equal(terminalOnly.success, true);
     assert.equal(guard.workflowLedgerReconciliation, null,
@@ -79476,6 +79578,15 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     reconciledRow.status = reconciledStatus;
     assert.equal(agent._workflowLedgerReconciliationSatisfied(tabId, guard), true,
       `${AgentClass.name}: restoring the successful row did not restore reconciliation`);
+    delete guard.workflowControlActionEvidence[terminalInventoryItems[0].id];
+    assert.equal(agent._workflowLedgerReconciliationSatisfied(tabId, guard), false,
+      `${AgentClass.name}: reconciliation survived deletion of exact per-row evidence`);
+    guard.workflowControlActionEvidence[terminalInventoryItems[0].id] = {
+      itemId: terminalInventoryItems[0].id,
+      tool: 'type_ax',
+      actionSequence: 1,
+      directVerified: true,
+    };
     assert.equal(agent._planOnlyTerminalDecision(tabId, 'Submitted.', {
       viaDone: true,
       outcome: 'success',
@@ -79513,6 +79624,103 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     readGuard.successfulTaskToolCalls = 1;
     assert.equal(readGuard.requiresStateChange, false);
     assert.equal(agent._executionEvidenceSatisfied(readGuard), true);
+  }
+});
+
+test('iframe-backed application forms expose a complete trusted inventory and exact row evidence', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 8932 + index;
+    const pageUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
+    const frameUrl = 'https://acme.wd1.myworkdayjobs.com/application/frame';
+    const selected = agent._resolvePlannerSiteWorkflow(pageUrl, {
+      request_kind: 'execute',
+      site_job: 'prepare-application',
+    });
+    assert.equal(selected?.adapterName, 'workday');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Prepare every application field for review.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflow: selected,
+    });
+    const narrow = agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
+      selector: 'input[name="email"]',
+    }, {
+      success: true,
+      pageUrl,
+      frames: [{
+        frameId: 7,
+        ok: true,
+        url: frameUrl,
+        matchCount: 1,
+        truncated: false,
+        matches: [{
+          tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: '', matchIndex: 0,
+        }],
+      }],
+    });
+    assert.equal(narrow?.complete, false,
+      `${AgentClass.name}: a narrow iframe selector claimed complete form coverage`);
+
+    const inventorySelector = 'input,textarea,select,[contenteditable="true"],[role="textbox"],[role="checkbox"],[role="radio"]';
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
+      selector: inventorySelector,
+    }, {
+      success: true,
+      pageUrl,
+      frames: [{
+        frameId: 7,
+        ok: true,
+        url: frameUrl,
+        matchCount: 3,
+        truncated: false,
+        matches: [
+          { tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: '', matchIndex: 0 },
+          { tag: 'textarea', id: 'cover-letter', name: 'coverLetter', label: 'Cover letter', value: '', matchIndex: 1 },
+          { tag: 'select', id: 'country', name: 'country', label: 'Country', value: 'US', matchIndex: 2 },
+        ],
+      }],
+    });
+    assert.equal(inventory?.complete, true,
+      `${AgentClass.name}: exhaustive iframe form controls were not trusted as complete`);
+    assert.equal(inventory?.source, 'iframe_read');
+    assert.equal(inventory?.itemCount, 3,
+      `${AgentClass.name}: iframe inventory retained a duplicate narrow-read row`);
+    assert.deepEqual(inventory.items.map(item => item.label).sort(), ['Country', 'Cover letter', 'Email']);
+    assert.equal(agent._trustedWorkflowInventory(tabId, [], guard)?.source, 'iframe_read');
+
+    agent._beginCompletionInvariant(tabId);
+    const emailItem = inventory.items.find(item => item.label === 'Email');
+    agent._recordCompletionToolResult(tabId, 'iframe_type', {
+      urlFilter: 'acme.wd1.myworkdayjobs.com',
+      selector: inventorySelector,
+      matchIndex: 0,
+      text: 'ada@example.com',
+    }, { success: true, dispatched: true, verified: true });
+    assert.equal(guard.workflowControlActionEvidence[emailItem.id]?.tool, 'iframe_type',
+      `${AgentClass.name}: iframe action was not bound to its exact inventory row`);
+    const rows = inventory.items.map(item => ({
+      id: item.id,
+      label: item.label,
+      status: item.id === emailItem.id ? 'processed' : 'skipped',
+    }));
+    const reconciled = agent._progressUpdate(tabId, {
+      items: rows,
+      workflowReconciliation: {
+        job: 'prepare-application',
+        coverageComplete: true,
+        itemCount: 3,
+        basis: 'Exhaustive iframe inventory reviewed; the email control was verified after typing.',
+      },
+    });
+    assert.equal(reconciled.success, true, `${AgentClass.name}: exact iframe evidence could not reconcile`);
+    assert.equal(agent._workflowLedgerReconciliationSatisfied(tabId, guard), true);
   }
 });
 
@@ -79795,6 +80003,12 @@ test('site workflow bindings are revalidated on the live URL and preserved acros
       documents: { 'form-document': { complete: true } },
       complete: true,
     };
+    priorGuard.workflowControlActionEvidence = Object.fromEntries(inventoryIds.map((id, itemIndex) => [id, {
+      itemId: id,
+      tool: 'type_ax',
+      actionSequence: itemIndex + 1,
+      directVerified: true,
+    }]));
     agent.progressLedgers.set(tabId, inventoryIds.map(id => ({
       id,
       status: 'processed',
@@ -79843,6 +80057,8 @@ test('site workflow bindings are revalidated on the live URL and preserved acros
       `${AgentClass.name}: carried job-bound submit evidence was unusable`);
     assert.equal(continuedGuard.workflowLedgerReconciliation?.job, 'submit-form',
       `${AgentClass.name}: trusted fallback dropped workflow reconciliation evidence`);
+    assert.equal(Object.keys(continuedGuard.workflowControlActionEvidence).length, 2,
+      `${AgentClass.name}: trusted fallback dropped exact per-control evidence`);
     assert.equal(agent._workflowLedgerReconciliationSatisfied(tabId, continuedGuard), true,
       `${AgentClass.name}: carried app-owned inventory reconciliation was unusable`);
 
@@ -80176,18 +80392,28 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       siteWorkflow: messageWorkflow,
     });
     messageGuard.successfulConsequentialToolCalls = 1;
+    const missingBaselineBinding = agent._workflowSubmitBindingForAttempt(messageTabId, messageUrl, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: 'incomplete-bound-recipient' },
+      messageRecipientBody: 'Hello Ada',
+    });
+    assert.equal(missingBaselineBinding?.recipientBound, false,
+      `${AgentClass.name}: message binding synthesized a missing outgoing-body baseline`);
     const messageSubmit = {
       dispatched: true,
       observedAfterSubmit: true,
       workflowBinding: agent._workflowSubmitBindingForAttempt(messageTabId, messageUrl, {
         messageRecipientGuardRequired: true,
         messageRecipientDispatchBinding: { token: 'bound-recipient' },
+        messageRecipientBody: 'Hello Ada',
+        messageRecipientBodyBaselineCount: 0,
       }),
     };
     const messageProbe = {
       success: true,
       conclusive: true,
       composerEmpty: true,
+      matchingOutgoingMessageCount: 1,
       strongIdentityCandidates: ['Ada'],
     };
     assert.equal(agent._workflowTerminalEvidenceFromDone(
@@ -80211,6 +80437,13 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { submit: messageSubmit, verifiedFinalSubmit: false, relevantForms: 0 },
       messageProbe,
     ), null, `${AgentClass.name}: a failed-send status was treated as successful delivery`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      messageTabId,
+      { workflowPageText: '', liveRegionMessages: ['Message sent'] },
+      messageUrl,
+      { submit: messageSubmit, verifiedFinalSubmit: false, relevantForms: 0 },
+      { ...messageProbe, matchingOutgoingMessageCount: 0 },
+    ), null, `${AgentClass.name}: sent status without the dispatched message body proved delivery`);
     const messageTerminal = agent._workflowTerminalEvidenceFromDone(
       messageTabId,
       { workflowPageText: '消息发送成功', liveRegionMessages: ['消息发送成功'] },
@@ -80219,7 +80452,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       messageProbe,
     );
     assert.equal(messageTerminal?.verificationKind, 'message_sent');
-    assert.equal(messageTerminal?.source, 'recipient_bound_dispatch_empty_composer_and_sent_confirmation');
+    assert.equal(messageTerminal?.source, 'recipient_body_bound_dispatch_empty_composer_and_sent_confirmation');
     messageGuard.workflowTerminalEvidence = messageTerminal;
     assert.equal(agent._executionEvidenceSatisfied(messageGuard), true,
       `${AgentClass.name}: recipient-bound same-page message send could not satisfy its job contract`);
@@ -80265,6 +80498,8 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       workflowBinding: agent._workflowSubmitBindingForAttempt(gmailTabId, gmailUrl, {
         messageRecipientGuardRequired: true,
         messageRecipientDispatchBinding: { token: 'gmail-bound-recipient' },
+        messageRecipientBody: 'Quarterly update',
+        messageRecipientBodyBaselineCount: 0,
       }),
     };
     assert.equal(agent._workflowTerminalEvidenceFromDone(
@@ -80272,8 +80507,8 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { workflowPageText: 'Message sent', liveRegionMessages: ['Message sent'] },
       gmailUrl,
       { submit: recipientBoundGmailSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
-      { success: false, conclusive: false },
-    )?.source, 'recipient_bound_dispatch_and_sent_confirmation',
+      { success: false, conclusive: false, matchingOutgoingMessageCount: 1 },
+    )?.source, 'recipient_body_bound_dispatch_and_sent_confirmation',
     `${AgentClass.name}: recipient-bound Gmail send could not use its positive sent confirmation`);
 
     const linkedInMessageTabId = 9005 + index;
@@ -80292,12 +80527,15 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       workflowBinding: agent._workflowSubmitBindingForAttempt(linkedInMessageTabId, linkedInMessageUrl, {
         messageRecipientGuardRequired: true,
         messageRecipientDispatchBinding: { token: 'linkedin-bound-recipient' },
+        messageRecipientBody: 'Hello Ada',
+        messageRecipientBodyBaselineCount: 0,
       }),
     };
     const linkedInMessageProbe = {
       success: true,
       conclusive: true,
       composerEmpty: true,
+      matchingOutgoingMessageCount: 1,
       strongIdentityCandidates: ['Ada'],
     };
     assert.equal(agent._workflowTerminalEvidenceFromDone(
@@ -80313,7 +80551,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       linkedInMessageUrl,
       { submit: linkedInMessageSubmit, verifiedFinalSubmit: false, relevantForms: 0 },
       linkedInMessageProbe,
-    )?.source, 'recipient_bound_dispatch_empty_composer_and_sent_confirmation',
+    )?.source, 'recipient_body_bound_dispatch_empty_composer_and_sent_confirmation',
     `${AgentClass.name}: pinned LinkedIn reply with positive sent status was not verified`);
   }
 });

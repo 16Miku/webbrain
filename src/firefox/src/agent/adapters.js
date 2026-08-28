@@ -17461,7 +17461,7 @@ const ADAPTERS = [
   {
     name: 'workday',
     category: 'general',
-    revision: 1,
+    revision: 2,
     regions: ['global'],
     jobs: ['prepare-application', 'submit-application'],
     workflow: { schema: ADAPTER_WORKFLOW_SCHEMA, jobs: applicationWorkflowJobs() },
@@ -17473,7 +17473,7 @@ const ADAPTERS = [
 - Many fields are nested in collapsed accordions (Education, Experience, References). EXPAND each accordion before reading or filling — collapsed required fields will fail validation but you can't see what's missing.
 - Date pickers are custom widgets. Click the field, type MM/DD/YYYY (or DD/MM/YYYY depending on tenant locale), then Tab. Don't try to click calendar cells — the popup is portal-rendered outside the field's subtree.
 - "Add Another" buttons for experiences / education clone the entire panel — fill the FIRST one fully before clicking Add Another, or the new clone may copy partial state.
-- Some employers wrap Workday in an iframe — if get_accessibility_tree shows almost no form fields, check for an iframe and switch to iframe_read / iframe_type.
+- Some employers wrap Workday in an iframe — if get_accessibility_tree shows almost no form fields, use iframe_read with one broad control selector and limit 50 before filling. A truncated read is not a complete inventory; narrow reads are only for follow-up inspection. Reuse the returned selector + matchIndex with iframe_type.
 - File upload (resume, CV) lives in the "My Information" or "Resume/CV" step. The drop zone has a "Select Files" button over an underlying \`input[type=file]\` — use \`upload_file({selector: "input[type=file]", downloadId: N})\` when the file is already downloaded, or omit downloadId to open the user picker.
 - "Review" step at the end shows everything filled — read it back to the user before clicking Submit; mistakes at this stage usually require restarting the whole application.`,
   },

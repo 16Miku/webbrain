@@ -897,7 +897,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'iframe_read',
-      description: 'Enumerate matching elements inside iframes — INCLUDING cross-origin frames. Returns every matched element (bounded by limit) with its matchIndex, semantic label, attributes, text, and current value, plus frame URLs. Reuse the returned selector + matchIndex for iframe_click/iframe_type; broad mutating selectors are rejected when ambiguous.',
+      description: 'Enumerate matching elements inside iframes — INCLUDING cross-origin frames. Returns every matched element (bounded by limit) with its matchIndex, semantic label, attributes, text, and current value, plus frame URLs. For a selected form workflow, inventory controls with one broad selector covering input, textarea, select, contenteditable, and ARIA form-control roles, using limit 50; a truncated result is not complete. Reuse the returned selector + matchIndex for iframe_click/iframe_type; broad mutating selectors are rejected when ambiguous.',
       parameters: {
         type: 'object',
         properties: {

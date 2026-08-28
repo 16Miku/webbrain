@@ -1046,6 +1046,16 @@ export class Agent extends LoopDetector {
     if (workflowInventory && result && typeof result === 'object') result.workflowInventory = workflowInventory;
     const next = recordCompletionToolResult(state, name, completionArgs, result);
     this.completionInvariants.set(tabId, next);
+    const workflowControlEvidence = this._rememberWorkflowControlActionEvidence(
+      tabId,
+      name,
+      args,
+      result,
+      next,
+    );
+    if (workflowControlEvidence && result && typeof result === 'object') {
+      result.workflowControlEvidence = workflowControlEvidence;
+    }
     const submitState = this._completionSubmitStates.get(tabId);
     if (
       submitState
@@ -1250,8 +1260,14 @@ export class Agent extends LoopDetector {
     const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
     if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
     const recipientTarget = normalizeMessageTarget(guard.messaging);
+    const messageBody = this._workflowMessageBody(executionContext?.messageRecipientBody);
+    const messageBodyBaselineCount = Number(executionContext?.messageRecipientBodyBaselineCount);
     const recipientBound = executionContext?.messageRecipientGuardRequired === true
       && !!executionContext?.messageRecipientDispatchBinding?.token
+      && !!messageBody
+      && Object.prototype.hasOwnProperty.call(executionContext, 'messageRecipientBodyBaselineCount')
+      && Number.isInteger(messageBodyBaselineCount)
+      && messageBodyBaselineCount >= 0
       && recipientTarget?.target_kind === 'named';
     const metadataRequirements = siteWorkflow.job.id === 'update-metadata'
       ? this._normalizeWorkflowMetadataRequirements(guard.workflowMetadataRequirements)
@@ -1265,6 +1281,8 @@ export class Agent extends LoopDetector {
       recipientBound,
       ...(recipientBound ? {
         recipientTargets: recipientTarget.recipients.map(recipient => ({ ...recipient })),
+        messageBody,
+        messageBodyBaselineCount,
       } : {}),
       ...(metadataRequirements.length ? {
         metadataRequirements: metadataRequirements.map(requirement => ({ ...requirement })),
@@ -1274,6 +1292,15 @@ export class Agent extends LoopDetector {
 
   _workflowTerminalText(value) {
     return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 20000);
+  }
+
+  _workflowMessageBody(value) {
+    let text = String(value ?? '')
+      .replace(/[\u200b-\u200d\ufeff]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    try { text = text.normalize('NFKC'); } catch {}
+    return text.length <= 20000 ? text : '';
   }
 
   _workflowTerminalEvidenceMatchesState(state, record) {
@@ -1475,18 +1502,25 @@ export class Agent extends LoopDetector {
       const dispatchRecipientObserved = binding.recipientBound === true
         && messageTargetMatchesObservedIdentities(state.messaging, binding.recipientTargets);
       const requiresRecipientBinding = normalizeMessageTarget(state.messaging)?.target_kind === 'named';
+      const messageBodyBaselineCount = Number(binding.messageBodyBaselineCount);
+      const matchingOutgoingMessageCount = Number(messageProbe?.matchingOutgoingMessageCount);
+      const messageBodyObserved = !!this._workflowMessageBody(binding.messageBody)
+        && Number.isInteger(messageBodyBaselineCount)
+        && messageBodyBaselineCount >= 0
+        && Number.isInteger(matchingOutgoingMessageCount)
+        && matchingOutgoingMessageCount > messageBodyBaselineCount;
       const postDispatchRecipientObserved = recipientObserved
         || (siteWorkflow.adapterName === 'gmail' && dispatchRecipientObserved);
       verified = submit?.dispatched === true
         && submit?.observedAfterSubmit === true
         && submit?.formValidationFailed !== true
         && (requiresRecipientBinding
-          ? (dispatchRecipientObserved && postDispatchRecipientObserved && sentStatusObserved)
+          ? (dispatchRecipientObserved && postDispatchRecipientObserved && sentStatusObserved && messageBodyObserved)
           : (recipientObserved || sentStatusObserved));
       source = requiresRecipientBinding
         ? (recipientObserved
-          ? 'recipient_bound_dispatch_empty_composer_and_sent_confirmation'
-          : 'recipient_bound_dispatch_and_sent_confirmation')
+          ? 'recipient_body_bound_dispatch_empty_composer_and_sent_confirmation'
+          : 'recipient_body_bound_dispatch_and_sent_confirmation')
         : (recipientObserved ? 'observed_recipient_and_empty_composer' : 'provider_sent_confirmation');
     } else if (verificationKind === 'transaction_fulfilled') {
       verified = submit?.dispatched === true
@@ -9821,16 +9855,214 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       seen.add(id);
       const value = /\bvalue="([^"]*)"/i.exec(line)?.[1];
       const checked = /\b(?:aria-checked|checked)=(?:"?)(true|false)(?:"?)/i.exec(line)?.[1];
+      const type = /\btype="([^"]+)"/i.exec(line)?.[1]?.toLowerCase() || '';
       items.push({
         id,
         label,
         role,
         ref_id: refId,
         documentScope: scope,
+        ...(type ? { type } : {}),
         ...(value !== undefined ? { value } : (checked !== undefined ? { value: checked.toLowerCase() } : {})),
       });
     }
     return items;
+  }
+
+  _workflowIframeInventorySelectorCoversControls(selector) {
+    const value = String(selector || '').toLowerCase();
+    return /(?:^|[\s,>+~])input(?=$|[\s,.#:\[])/.test(value)
+      && /(?:^|[\s,>+~])textarea(?=$|[\s,.#:\[])|\[contenteditable/.test(value)
+      && /(?:^|[\s,>+~])select(?=$|[\s,.#:\[])|\[role\s*=\s*["']?(?:combobox|listbox)/.test(value);
+  }
+
+  _workflowIframeFormInventory(result = {}, bindingKey = '', args = {}) {
+    const selector = String(args?.selector || 'body').trim().slice(0, 500);
+    const selectorComplete = this._workflowIframeInventorySelectorCoversControls(selector);
+    const items = [];
+    const documents = {};
+    const seen = new Set();
+    for (const frame of (Array.isArray(result?.frames) ? result.frames : [])) {
+      const frameUrl = String(frame?.url || '').slice(0, 1000);
+      const frameId = Number(frame?.frameId);
+      if (!frameUrl || !Number.isInteger(frameId)) continue;
+      const documentScope = `iframe:${frameId}:${frameUrl}`;
+      const matches = Array.isArray(frame?.matches) ? frame.matches : [];
+      const matchCount = Number(frame?.matchCount);
+      const complete = selectorComplete
+        && frame?.ok === true
+        && frame?.truncated !== true
+        && Number.isInteger(matchCount)
+        && matchCount === matches.length;
+      documents[documentScope] = { complete, scope: 'iframe' };
+      for (const match of matches) {
+        const tag = String(match?.tag || '').toLowerCase();
+        const type = String(match?.type || '').toLowerCase();
+        const explicitRole = String(match?.role || '').toLowerCase();
+        let role = ['textbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton', 'listbox', 'button']
+          .includes(explicitRole) ? explicitRole : '';
+        if (!role) {
+          if (tag === 'textarea' || match?.contentEditable === true) role = 'textbox';
+          else if (tag === 'select') role = 'combobox';
+          else if (tag === 'input' && type === 'checkbox') role = 'checkbox';
+          else if (tag === 'input' && type === 'radio') role = 'radio';
+          else if (tag === 'input' && type === 'file') role = 'button';
+          else if (tag === 'input' && !/^(?:submit|button|reset|image|hidden)$/.test(type)) role = 'textbox';
+          else if (tag === 'button' || (tag === 'input' && /^(?:submit|button)$/.test(type))) role = 'button';
+        }
+        if (!role || (role === 'button' && type !== 'file')) continue;
+        const label = [match?.label, match?.ariaLabel, match?.placeholder, match?.name, match?.id]
+          .map(value => String(value || '').replace(/\s+/g, ' ').trim())
+          .find(Boolean)?.slice(0, 160) || `${role} ${Number(match?.matchIndex) || 0}`;
+        const locator = match?.id
+          ? `id:${String(match.id).slice(0, 240)}`
+          : (match?.name
+            ? `name:${String(match.name).slice(0, 240)}|type:${type}|label:${label}`
+            : `selector:${selector}|index:${Number(match?.matchIndex) || 0}|label:${label}`);
+        const id = `workflow:${this._workflowInventoryFingerprint(`${bindingKey}|${documentScope}|${role}|${locator}`)}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        items.push({
+          id,
+          label,
+          role,
+          documentScope,
+          ...(type ? { type } : {}),
+          value: String(match?.value ?? '').slice(0, 10000),
+          iframeTarget: {
+            frameId,
+            frameUrl,
+            selector,
+            matchIndex: Number(match?.matchIndex) || 0,
+          },
+        });
+      }
+    }
+    return { items, documents, selectorComplete };
+  }
+
+  _rememberWorkflowIframeInventoryObservation(tabId, args, result, guard, siteWorkflow) {
+    const pageUrl = String(result?.pageUrl || result?.currentUrl || result?.url || '').trim();
+    if (!pageUrl) return null;
+    const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
+    if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
+    const bindingKey = this._adapterWorkflowBindingKey(siteWorkflow);
+    const observed = this._workflowIframeFormInventory(result, bindingKey, args);
+    if (!Object.keys(observed.documents).length) return null;
+    const taskKey = this._progressTaskKeyHash(tabId);
+    const prior = guard.workflowInventoryEvidence;
+    const compatible = prior?.bindingKey === bindingKey && prior?.taskKey === taskKey;
+    const observationSequence = Number(this.completionInvariants.get(tabId)?.sequence || 0) + 1;
+    const observedScopes = new Set(Object.keys(observed.documents));
+    const priorItems = compatible && Array.isArray(prior.items) ? prior.items : [];
+    const retainedItems = observed.selectorComplete
+      ? priorItems.filter(item => !observedScopes.has(String(item?.documentScope || '')))
+      : priorItems;
+    const items = new Map(retainedItems
+      .map(item => [item.id, item]));
+    for (const item of observed.items) items.set(item.id, { ...item, observationSequence });
+    const documents = { ...(compatible ? prior.documents : {}) };
+    for (const [documentKey, document] of Object.entries(observed.documents)) {
+      const priorDocument = documents[documentKey];
+      const complete = document.complete === true || priorDocument?.complete === true;
+      documents[documentKey] = {
+        ...document,
+        complete,
+        ...(document.complete
+          ? { rootObservationSequence: observationSequence }
+          : (priorDocument?.rootObservationSequence
+            ? { rootObservationSequence: priorDocument.rootObservationSequence }
+            : {})),
+      };
+    }
+    const priorSource = compatible ? String(prior?.source || '') : '';
+    const source = priorSource && priorSource !== 'iframe_read'
+      ? 'accessibility_tree+iframe_read'
+      : 'iframe_read';
+    const evidence = {
+      bindingKey,
+      taskKey,
+      source,
+      items: [...items.values()],
+      documents,
+      observationSequence,
+      complete: Object.keys(documents).length > 0
+        && Object.values(documents).every(document => document.complete === true),
+    };
+    guard.workflowInventoryEvidence = evidence;
+    return {
+      job: siteWorkflow.job.id,
+      source: evidence.source,
+      complete: evidence.complete,
+      itemCount: evidence.items.length,
+      items: evidence.items,
+    };
+  }
+
+  _rememberWorkflowControlActionEvidence(tabId, name, args = {}, result = {}, completionState = null) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const siteWorkflow = guard?.siteWorkflow;
+    if (!guard?.enabled || siteWorkflow?.job?.requiresLedger !== true
+        || siteWorkflow.job.template !== 'form'
+        || !this._isSuccessfulExecutionEvidence(result)) return null;
+    const inventoryItems = Array.isArray(guard.workflowInventoryEvidence?.items)
+      ? guard.workflowInventoryEvidence.items
+      : [];
+    if (!inventoryItems.length) return null;
+    let candidates = [];
+    const refId = String(args?.ref_id || '').trim();
+    if (refId && ['type_ax', 'set_field', 'set_checked', 'click_ax'].includes(name)) {
+      const documentScope = String(this._lastAxScopes.get(tabId)?.documentToken || '');
+      candidates = inventoryItems.filter(item => item.ref_id === refId
+        && (!documentScope || !item.documentScope || item.documentScope === documentScope));
+    } else if (name === 'upload_file') {
+      candidates = inventoryItems.filter(item => item.type === 'file');
+      if (candidates.length !== 1) return null;
+    } else if (name === 'iframe_type' || name === 'iframe_click') {
+      const selector = String(args?.selector || '').trim();
+      const matchIndex = Number(args?.matchIndex ?? 0);
+      const urlFilter = String(args?.urlFilter || '').trim();
+      candidates = inventoryItems.filter(item => item.iframeTarget
+        && item.iframeTarget.selector === selector
+        && item.iframeTarget.matchIndex === matchIndex
+        && (!urlFilter || (frameHostMatches(item.iframeTarget.frameUrl, urlFilter)
+          && item.iframeTarget.frameUrl.includes(urlFilter))));
+    }
+    if (candidates.length !== 1) return null;
+    const item = candidates[0];
+    const actionMatchesControl = name === 'upload_file'
+      ? item.type === 'file'
+      : (['type_ax', 'set_field', 'iframe_type'].includes(name)
+        ? ['textbox', 'combobox', 'listbox', 'spinbutton', 'slider'].includes(item.role)
+        : (name === 'set_checked'
+          ? ['checkbox', 'radio', 'switch'].includes(item.role)
+          : (['click_ax', 'iframe_click'].includes(name)
+            && ['checkbox', 'radio', 'switch', 'button'].includes(item.role))));
+    if (!actionMatchesControl) return null;
+    const buttonDispatch = item.role === 'button'
+      && item.type !== 'file'
+      && ['click_ax', 'iframe_click'].includes(name)
+      && result?.dispatched !== false;
+    const verifiedUpload = name === 'upload_file'
+      && result?.attachmentState === 'input_attached'
+      && !!result?.attached?.name;
+    const directVerified = item.type === 'file'
+      ? verifiedUpload
+      : (result?.verified === true || buttonDispatch);
+    if (!directVerified) return null;
+    const actionSequence = Number(completionState?.lastAction?.sequence || completionState?.sequence || 0);
+    if (!actionSequence) return null;
+    if (!guard.workflowControlActionEvidence || typeof guard.workflowControlActionEvidence !== 'object') {
+      guard.workflowControlActionEvidence = {};
+    }
+    const proof = {
+      itemId: item.id,
+      tool: name,
+      actionSequence,
+      directVerified: true,
+    };
+    guard.workflowControlActionEvidence[item.id] = proof;
+    return proof;
   }
 
   _rememberWorkflowInventoryObservation(tabId, name, args, result) {
@@ -9838,8 +10070,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const siteWorkflow = guard?.siteWorkflow;
     if (!guard?.enabled || siteWorkflow?.job?.requiresLedger !== true
         || siteWorkflow.job.template !== 'form'
-        || name !== 'get_accessibility_tree'
+        || !['get_accessibility_tree', 'iframe_read'].includes(name)
         || !this._isSuccessfulExecutionEvidence(result)) return null;
+    if (name === 'iframe_read') {
+      return this._rememberWorkflowIframeInventoryObservation(tabId, args, result, guard, siteWorkflow);
+    }
     const axScope = this._lastAxScopes.get(tabId);
     const pageUrl = [
       result?.refScopeUrl,
@@ -13145,8 +13380,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
+    const messageBodyBaselineCount = Number(probe?.messageBodyBaselineCount);
     const verified = probe?.success === true
       && probe.messageSend === true
+      && !!this._workflowMessageBody(probe?.messageBody)
+      && Number.isInteger(messageBodyBaselineCount)
+      && messageBodyBaselineCount >= 0
       && messageTargetMatchesObservedIdentities(target, this._messageRecipientCandidates(probe));
     if (verified) {
       const binding = probe?.messageRecipientDispatchBinding;
@@ -13164,6 +13403,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (executionContext && typeof executionContext === 'object') {
         executionContext.messageRecipientGuardRequired = true;
         executionContext.messageRecipientDispatchBinding = binding;
+        executionContext.messageRecipientBody = this._workflowMessageBody(probe.messageBody);
+        executionContext.messageRecipientBodyBaselineCount = messageBodyBaselineCount;
       }
       return null;
     }
@@ -15026,6 +15267,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return mastodonProgressGuard(items, this.mastodonStates.get(tabId));
   }
 
+  _workflowProcessedRowsHaveControlEvidence(rows, state) {
+    if (state?.siteWorkflow?.job?.template !== 'form') return true;
+    const inventoryItems = Array.isArray(state?.workflowInventoryEvidence?.items)
+      ? state.workflowInventoryEvidence.items
+      : [];
+    const inventoryById = new Map(inventoryItems.map(item => [String(item?.id || ''), item]));
+    const evidence = state?.workflowControlActionEvidence;
+    if (!evidence || typeof evidence !== 'object') {
+      return !rows.some(row => String(row?.status || '').toLowerCase() === 'processed');
+    }
+    return rows.every((row) => {
+      if (String(row?.status || '').toLowerCase() !== 'processed') return true;
+      const itemId = String(row?.id || '');
+      const item = inventoryById.get(itemId);
+      const proof = evidence[itemId];
+      return !!item
+        && proof?.itemId === itemId
+        && proof?.directVerified === true
+        && Number.isInteger(Number(proof?.actionSequence))
+        && Number(proof.actionSequence) > 0;
+    });
+  }
+
   _validateWorkflowReconciliation(tabId, value, rows, sessionId) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return { ok: false, error: 'progress_update: workflowReconciliation must be an object.' };
@@ -15049,7 +15313,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const inventory = this._trustedWorkflowInventory(tabId, rows, guard);
     if (!inventory) {
-      return { ok: false, error: 'progress_update: complete workflow reconciliation requires an app-owned inventory. Use the exact workflowInventory item ids returned by a complete accessibility-tree read, or the app-seeded expected/classifier rows; model-created rows alone cannot prove full coverage.' };
+      return { ok: false, error: 'progress_update: complete workflow reconciliation requires an app-owned inventory. Use the exact workflowInventory item ids returned by a complete trusted form read (accessibility tree or iframe), or the app-seeded expected/classifier rows; model-created rows alone cannot prove full coverage.' };
     }
     if (!Number.isInteger(itemCount) || itemCount < 1
         || itemCount !== rows.length || itemCount !== inventory.itemCount) {
@@ -15069,6 +15333,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (rows.some(row => !isTerminalLedgerStatus(row?.status))) {
       return { ok: false, error: 'progress_update: every current-task row must be processed or skipped before reconciliation can be complete.' };
+    }
+    if (!this._workflowProcessedRowsHaveControlEvidence(rows, guard)) {
+      return { ok: false, error: 'progress_update: every processed form row requires verified per-control action evidence bound to its exact app-owned inventory item. Mark untouched rows skipped or interact with each control before reconciling.' };
     }
     return {
       ok: true,
@@ -15107,7 +15374,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && rowIds.length === inventoryIds.length
       && rowIds.every((id, index) => id === inventoryIds[index])
       && rows.every(row => isTerminalLedgerStatus(row?.status)
-        && String(row?.status || '').toLowerCase() !== 'failed');
+        && String(row?.status || '').toLowerCase() !== 'failed')
+      && this._workflowProcessedRowsHaveControlEvidence(rows, state);
   }
 
   _progressUpdate(tabId, args = {}, opts = {}) {
@@ -16224,6 +16492,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             documents: { ...(carried.workflowInventoryEvidence.documents || {}) },
           }
         : null,
+      workflowControlActionEvidence: carryMatches && carried.workflowControlActionEvidence
+        ? Object.fromEntries(Object.entries(carried.workflowControlActionEvidence)
+            .map(([itemId, proof]) => [itemId, { ...proof }]))
+        : {},
       workflowMetadataRequirements: carryMatches && Array.isArray(carried.workflowMetadataRequirements)
         ? carried.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
         : [],
@@ -16426,6 +16698,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || !!guard.workflowTerminalEvidence
       || !!guard.workflowLedgerReconciliation
       || !!guard.workflowInventoryEvidence
+      || Object.keys(guard.workflowControlActionEvidence || {}).length > 0
     )) {
       const submit = this._completionSubmitStates.get(tabId);
       this._continuationExecutionEvidence.set(tabId, {
@@ -16456,6 +16729,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               documents: { ...(guard.workflowInventoryEvidence.documents || {}) },
             }
           : null,
+        workflowControlActionEvidence: Object.fromEntries(
+          Object.entries(guard.workflowControlActionEvidence || {})
+            .map(([itemId, proof]) => [itemId, { ...proof }]),
+        ),
         workflowMetadataRequirements: Array.isArray(guard.workflowMetadataRequirements)
           ? guard.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
           : [],
@@ -20445,6 +20722,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 tool: 'observe_active_conversation',
                 args: {},
                 adapterName: executionGuard.siteWorkflow.adapterName,
+                expectedMessageBody: submissionEvidence?.submit?.workflowBinding?.messageBody || '',
+                expectedRecipients: submissionEvidence?.submit?.workflowBinding?.recipientTargets || [],
+                supportsRecipientSets: executionGuard.siteWorkflow.adapterName === 'gmail',
               });
             }
 
@@ -21965,6 +22245,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   tag,
                   type,
                   role: String(el.getAttribute?.('role') || ''),
+                  contentEditable: el.isContentEditable === true,
                   id: String(el.id || ''),
                   name: String(el.getAttribute?.('name') || ''),
                   label: semanticLabel(el),
@@ -21991,9 +22272,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             } catch (e) { return { ok: false, url: location.href, isTop: window.top === window, error: e.message }; }
           })()
         `;
-        const results = await browser.tabs.executeScript(tabId, { code, allFrames: true });
-        const frames = (results || []).filter(r => r && !r.isTop && (!urlFilter || frameHostMatches(r.url, urlFilter) && r.url.includes(urlFilter)));
-        return { success: true, frameCount: frames.length, frames };
+        const frameInfos = await browser.webNavigation.getAllFrames({ tabId }) || [];
+        const candidates = frameInfos.filter(frame => frame.frameId !== 0
+          && (!urlFilter || (frameHostMatches(frame.url, urlFilter) && frame.url.includes(urlFilter))));
+        const inspected = await Promise.all(candidates.map(async (frame) => {
+          const results = await browser.tabs.executeScript(tabId, { code, frameId: frame.frameId });
+          const result = results?.[0];
+          return result ? { frameId: frame.frameId, ...result } : null;
+        }));
+        const frames = inspected.filter(r => r && !r.isTop
+          && (!urlFilter || (frameHostMatches(r.url, urlFilter) && r.url.includes(urlFilter))));
+        return {
+          success: true,
+          pageUrl: await this._currentUrl(tabId),
+          frameCount: frames.length,
+          frames,
+        };
       } catch (e) {
         return { success: false, error: `Iframe read failed: ${e.message}` };
       }
