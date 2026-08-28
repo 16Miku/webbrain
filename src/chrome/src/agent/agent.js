@@ -1429,6 +1429,14 @@ export class Agent extends LoopDetector {
       )
     );
     const workflowBinding = this._workflowSubmitBindingForAttempt(tabId, beforeUrl, executionContext);
+    if (workflowBinding?.verificationKind === 'published_resource'
+        && Array.isArray(detectedSubmit?.publicationResourceUrls)) {
+      workflowBinding.preDispatchPublishedResourceIdentities = this._workflowPublishedResourceIdentities(
+        workflowBinding,
+        detectedSubmit.publicationResourceUrls,
+        beforeUrl,
+      );
+    }
     if (
       workflowBinding?.verificationKind === 'published_resource'
       && !explicitlyNotDispatched
@@ -1537,7 +1545,7 @@ export class Agent extends LoopDetector {
       job: siteWorkflow.job.id,
       verificationKind: this._workflowVerificationKind(siteWorkflow),
       recipientBound,
-      ...(recipientBound ? { recipientIdentity: recipientTarget.recipient } : {}),
+      ...(recipientBound ? { recipientIdentities: [...recipientTarget.recipients] } : {}),
     };
   }
 
@@ -1623,6 +1631,29 @@ export class Agent extends LoopDetector {
     return '';
   }
 
+  _workflowPublishedResourceIdentities(siteWorkflow, values, baseUrl = '') {
+    const identities = new Set();
+    const addCandidate = (candidate) => {
+      let resolved = String(candidate || '').trim().replace(/[),.;]+$/, '');
+      if (!resolved) return;
+      try { resolved = new URL(resolved, baseUrl || undefined).href; } catch {}
+      const identity = this._workflowPublishedResourceIdentity(siteWorkflow, resolved);
+      if (identity) identities.add(identity);
+    };
+    const queue = Array.isArray(values) ? [...values] : [values];
+    for (const value of queue.slice(0, 40)) {
+      if (Array.isArray(value)) {
+        for (const nested of value.slice(0, 200)) addCandidate(nested);
+        continue;
+      }
+      const text = String(value || '').slice(0, 50000);
+      addCandidate(text);
+      for (const match of text.matchAll(/https?:\/\/[^\s"'<>]+/ig)) addCandidate(match[0]);
+      for (const match of text.matchAll(/\bhref=["']([^"']+)["']/ig)) addCandidate(match[1]);
+    }
+    return [...identities].slice(0, 200);
+  }
+
   _workflowTerminalEvidenceFromDone(tabId, pageState, pageUrl, submissionEvidence, messageProbe = null) {
     const state = this._planExecutionGuards.get(tabId);
     const siteWorkflow = state?.siteWorkflow;
@@ -1646,7 +1677,7 @@ export class Agent extends LoopDetector {
       );
       const sentStatusObserved = this._workflowMessageSentSignal(siteWorkflow, sentStatusText);
       const dispatchRecipientObserved = binding.recipientBound === true
-        && messageTargetMatchesObservedIdentities(state.messaging, [binding.recipientIdentity]);
+        && messageTargetMatchesObservedIdentities(state.messaging, binding.recipientIdentities);
       const requiresRecipientBinding = normalizeMessageTarget(state.messaging)?.target_kind === 'named';
       const postDispatchRecipientObserved = recipientObserved
         || (siteWorkflow.adapterName === 'gmail' && dispatchRecipientObserved);
@@ -1679,10 +1710,32 @@ export class Agent extends LoopDetector {
       verified = submissionEvidence?.verifiedFinalSubmit === true && this._workflowResolvedStateSignal(text);
       source = 'resolved_state';
     } else if (verificationKind === 'published_resource') {
-      const observedResourceIdentity = this._workflowPublishedResourceIdentity(siteWorkflow, pageUrl);
+      const observedResourceIdentities = this._workflowPublishedResourceIdentities(siteWorkflow, [
+        pageUrl,
+        pageState?.workflowResourceUrls,
+        pageState?.workflowPageText,
+      ], pageUrl);
+      if (!binding.publishedResourceIdentity
+          && siteWorkflow.adapterName === 'linkedin'
+          && Array.isArray(binding.preDispatchPublishedResourceIdentities)
+          && submissionEvidence?.verifiedFinalSubmit === true
+          && Number(this.completionInvariants.get(tabId)?.lastAction?.sequence || 0)
+            === Number(submit?.actionSequence || 0)) {
+        const existing = new Set(binding.preDispatchPublishedResourceIdentities);
+        const newlyObserved = observedResourceIdentities.filter(identity => !existing.has(identity));
+        const livePublishStatusObserved = (Array.isArray(pageState?.successMessages)
+          ? pageState.successMessages
+          : []).some(value => this._completionTextSignalsSuccess(value));
+        if (livePublishStatusObserved && newlyObserved.length === 1) {
+          binding.publishedResourceIdentity = newlyObserved[0];
+          binding.publishedResourceIdentityObservationSequence = Number(
+            this.completionInvariants.get(tabId)?.lastObservation?.sequence || 0,
+          );
+        }
+      }
       verified = submissionEvidence?.verifiedFinalSubmit === true
         && !!binding.publishedResourceIdentity
-        && observedResourceIdentity === binding.publishedResourceIdentity;
+        && observedResourceIdentities.includes(binding.publishedResourceIdentity);
       source = 'dispatch_bound_published_resource';
     } else {
       verified = submissionEvidence?.verifiedFinalSubmit === true;
@@ -15085,6 +15138,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       tool: 'observe_active_conversation',
       args: {},
       adapterName: policy.adapterName,
+      supportsRecipientSets: policy.supportsRecipientSets === true,
     });
     const identities = new Map();
     for (const value of Array.isArray(probe?.strongIdentityCandidates)
@@ -15094,10 +15148,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const normalized = normalizeRecipientIdentity(identity);
       if (identity && normalized && !identities.has(normalized)) identities.set(normalized, identity);
     }
-    if (probe?.success === true && probe?.conclusive === true && identities.size === 1) {
+    const identityCountAccepted = policy.supportsRecipientSets === true
+      ? identities.size > 0
+      : identities.size === 1;
+    if (probe?.success === true && probe?.conclusive === true && identityCountAccepted) {
       return {
         ok: true,
-        target: { target_kind: 'named', recipient: [...identities.values()][0] },
+        target: { target_kind: 'named', recipients: [...identities.values()] },
         pinnedActiveConversation: true,
       };
     }
@@ -15166,13 +15223,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       args,
       adapterName: policy.adapterName,
       bindDispatch: true,
-      ...(target?.target_kind === 'named' ? { expectedRecipient: target.recipient } : {}),
+      supportsRecipientSets: policy.supportsRecipientSets === true,
+      ...(target?.target_kind === 'named' ? { expectedRecipients: target.recipients } : {}),
     });
     if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) return null;
     // Gmail reply editors can be collapsed when planning begins. Allow only a
     // content-verified Reply/Reply all/Forward control to open the editor;
     // every other unresolved click remains blocked. Recipient authorization
-    // is still deferred: the eventual send must bind to exactly one chip.
+    // is still deferred: the eventual send must bind to the exact chip set.
     if (policy.deferActiveConversationUntilComposer === true
         && target?.target_kind === 'active_conversation'
         && probe?.composerAvailable === false
@@ -15192,8 +15250,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const normalized = normalizeRecipientIdentity(identity);
         if (identity && normalized && !identities.has(normalized)) identities.set(normalized, identity);
       }
-      if (identities.size === 1) {
-        target = { target_kind: 'named', recipient: [...identities.values()][0] };
+      if ((policy.supportsRecipientSets === true && identities.size > 0)
+          || (policy.supportsRecipientSets !== true && identities.size === 1)) {
+        target = { target_kind: 'named', recipients: [...identities.values()] };
         if (guard) guard.messaging = target;
       }
     }
@@ -15328,6 +15387,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           summary: String(detected.summary || '').slice(0, 1200),
           fields: Array.isArray(detected.fields) ? detected.fields.slice(0, 12) : [],
           changedFields: Array.isArray(detected.changedFields) ? detected.changedFields.slice(0, 8) : [],
+          publicationResourceUrls: Array.isArray(detected.publicationResourceUrls)
+            ? detected.publicationResourceUrls.slice(0, 200)
+            : [],
         };
       }
     } catch {
@@ -15586,12 +15648,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         changedFields,
       };
     };
+    const publicationResourceUrls = () => {
+      try {
+        return Array.from(doc.querySelectorAll('a[href]'))
+          .map((link) => {
+            try { return new URL(link.getAttribute('href') || link.href || '', url).href; } catch { return ''; }
+          })
+          .filter(value => /linkedin\.com\/(?:feed\/update|posts)\/|github\.com\/[^/]+\/[^/]+\/releases\/tag\/|douyin\.com\/video\/\d+/i.test(value))
+          .slice(0, 200);
+      } catch {
+        return [];
+      }
+    };
     const submitInfo = (form, reason, pendingEl = null, pendingValue = null, validationSubmitEvidence = 'strong') => ({
       isSubmit: true,
       host,
       url,
       reason,
       validationSubmitEvidence,
+      publicationResourceUrls: publicationResourceUrls(),
       ...summarizeForm(form, pendingEl, pendingValue),
     });
     const labelControlFor = (el) => {
@@ -23672,6 +23747,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   /success|saved|submitted|created|sent|published|complete|done|updated|added|approved|resolved/i.test(text)
                   && !/\\b(?:not|never|failed|failure|error|unable|cannot|can't|could not|couldn't|did not|didn't|was not|wasn't|were not|weren't|invalid|denied|rejected|unsuccessful)\\b/i.test(text)
                 ).slice(0, 5);
+                const workflowResourceUrls = Array.from(document.querySelectorAll('a[href]'))
+                  .map(link => {
+                    try { return new URL(link.getAttribute('href') || link.href || '', location.href).href; } catch { return ''; }
+                  })
+                  .filter(url => /linkedin\\.com\\/(?:feed\\/update|posts)\\/|github\\.com\\/[^/]+\\/[^/]+\\/releases\\/tag\\/|douyin\\.com\\/video\\/\\d+/i.test(url))
+                  .slice(0, 200);
                 return {
                   openDialogCount: dialogs.length,
                   dialogTitles: dialogs.map(d => {
@@ -23683,6 +23764,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   formDescriptors: formDescriptors.slice(0, 12),
                   liveRegionMessages: toasts.slice(0, 6),
                   successMessages,
+                  workflowResourceUrls,
                   workflowPageText: String(document.body?.innerText || '')
                     .replace(/\s+/g, ' ').trim().slice(0, 20000),
                 };
@@ -23716,7 +23798,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 tabId, pageState, probe?.url || '', submissionEvidence, workflowMessageProbe,
               )
             : null;
-          if (pageState && typeof pageState === 'object') delete pageState.workflowPageText;
+          if (pageState && typeof pageState === 'object') {
+            delete pageState.workflowPageText;
+            delete pageState.workflowResourceUrls;
+          }
           if (executionGuard?.enabled && !completionWarning) {
             if (executionGuard.siteWorkflow?.job?.requiresSubmission === true) {
               if (workflowTerminalEvidence) {

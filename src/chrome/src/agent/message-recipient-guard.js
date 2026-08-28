@@ -18,10 +18,20 @@ export function normalizeMessageTarget(value) {
   const targetKind = String(value.target_kind || '').trim();
   if (!MESSAGE_TARGET_KINDS.has(targetKind)) return null;
   if (targetKind === 'active_conversation') {
-    return { target_kind: targetKind, recipient: '' };
+    return { target_kind: targetKind, recipients: [] };
   }
-  const recipient = compact(value.recipient);
-  return recipient ? { target_kind: targetKind, recipient } : null;
+  const recipients = new Map();
+  const rawRecipients = Array.isArray(value.recipients)
+    ? value.recipients
+    : [value.recipient];
+  for (const value of rawRecipients.slice(0, 16)) {
+    const recipient = compact(value, 240);
+    const normalized = normalizeRecipientIdentity(recipient);
+    if (recipient && normalized && !recipients.has(normalized)) recipients.set(normalized, recipient);
+  }
+  return recipients.size
+    ? { target_kind: targetKind, recipients: [...recipients.values()] }
+    : null;
 }
 
 export function normalizeRecipientIdentity(value) {
@@ -48,10 +58,12 @@ export function messageTargetMatchesObservedIdentities(target, candidates) {
     const normalized = normalizeRecipientIdentity(identity);
     if (identity && normalized && !identities.has(normalized)) identities.set(normalized, identity);
   }
-  if (!normalizedTarget || identities.size !== 1) return false;
+  if (!normalizedTarget) return false;
   // active_conversation is planner intent, not a dispatch-time identity. A
   // protected adapter must pin it to a concrete named identity before tools
   // run; accepting any later conversation would authorize retargeting.
   if (normalizedTarget.target_kind === 'active_conversation') return false;
-  return recipientMatchesObservedIdentity(normalizedTarget.recipient, [...identities.values()][0]);
+  const expected = new Set(normalizedTarget.recipients.map(normalizeRecipientIdentity));
+  return expected.size === identities.size
+    && [...expected].every(identity => identities.has(identity));
 }

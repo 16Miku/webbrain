@@ -4455,11 +4455,11 @@ test('direct-message recipient guard uses structured intent and exact active ide
     'Chrome and Firefox recipient comparison helpers diverged',
   );
   for (const helper of [MessageRecipientGuardCh, MessageRecipientGuardFx]) {
-    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'named', recipient: ' 迷你世界皓宸 ' }), {
-      target_kind: 'named', recipient: '迷你世界皓宸',
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'named', recipients: [' 迷你世界皓宸 '] }), {
+      target_kind: 'named', recipients: ['迷你世界皓宸'],
     });
-    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipient: 'ignored' }), {
-      target_kind: 'active_conversation', recipient: '',
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipients: ['ignored'] }), {
+      target_kind: 'active_conversation', recipients: [],
     });
     assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice'), true);
     assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice · online'), false);
@@ -4468,19 +4468,27 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Search results for Alice'), false);
     assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Malice'), false);
     assert.equal(helper.messageTargetMatchesObservedIdentities(
-      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      { target_kind: 'named', recipients: ['迷你世界皓宸'] },
       ['迷你世界皓宸'],
     ), true);
     assert.equal(helper.messageTargetMatchesObservedIdentities(
-      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      { target_kind: 'named', recipients: ['Alice', 'bob@example.com'] },
+      ['bob@example.com', 'Alice'],
+    ), true, 'the exact authorized recipient set should be order-independent');
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipients: ['Alice', 'bob@example.com'] },
+      ['Alice'],
+    ), false, 'a partial observed recipient set must not authorize dispatch');
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipients: ['迷你世界皓宸'] },
       ['清辉月下夜', '迷你世界皓宸'],
     ), false, 'ambiguous identity evidence must never authorize dispatch');
     assert.equal(helper.messageTargetMatchesObservedIdentities(
-      { target_kind: 'named', recipient: '迷你世界皓宸' },
+      { target_kind: 'named', recipients: ['迷你世界皓宸'] },
       ['清辉月下夜'],
     ), false);
     assert.equal(helper.messageTargetMatchesObservedIdentities(
-      { target_kind: 'active_conversation', recipient: '' },
+      { target_kind: 'active_conversation', recipients: [] },
       ['清辉月下夜'],
     ), false, 'un-pinned active-conversation intent must never authorize dispatch');
   }
@@ -4489,6 +4497,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
       adapterName: 'gmail',
       verifyActiveRecipient: true,
       deferActiveConversationUntilComposer: true,
+      supportsRecipientSets: true,
     });
     assert.deepEqual(getPolicy('https://www.linkedin.com/messaging/thread/2-abc/'), {
       adapterName: 'linkedin', verifyActiveRecipient: true,
@@ -4515,19 +4524,19 @@ test('direct-message recipient guard uses structured intent and exact active ide
 
     const pinned = await agent._pinActiveConversationMessagingTarget(
       tabId,
-      { target_kind: 'active_conversation', recipient: '' },
+      { target_kind: 'active_conversation', recipients: [] },
       'https://www.douyin.com/chat',
     );
     assert.deepEqual(pinned.target, {
-      target_kind: 'named', recipient: '清辉月下夜',
+      target_kind: 'named', recipients: ['清辉月下夜'],
     }, `${label}: active conversation was not pinned before execution`);
     const linkedInPinned = await agent._pinActiveConversationMessagingTarget(
       tabId,
-      { target_kind: 'active_conversation', recipient: '' },
+      { target_kind: 'active_conversation', recipients: [] },
       'https://www.linkedin.com/messaging/thread/2-abc/',
     );
     assert.deepEqual(linkedInPinned.target, {
-      target_kind: 'named', recipient: '清辉月下夜',
+      target_kind: 'named', recipients: ['清辉月下夜'],
     }, `${label}: LinkedIn active conversation was not pinned before execution`);
     probe = {
       success: true,
@@ -4538,7 +4547,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
     };
     const ambiguousPin = await agent._pinActiveConversationMessagingTarget(
       tabId,
-      { target_kind: 'active_conversation', recipient: '' },
+      { target_kind: 'active_conversation', recipients: [] },
       'https://www.douyin.com/chat',
     );
     assert.equal(ambiguousPin.ok, false, `${label}: ambiguous active conversation was authorized`);
@@ -4554,12 +4563,12 @@ test('direct-message recipient guard uses structured intent and exact active ide
     };
     const deferredGmailPin = await agent._pinActiveConversationMessagingTarget(
       tabId,
-      { target_kind: 'active_conversation', recipient: '' },
+      { target_kind: 'active_conversation', recipients: [] },
       'https://mail.google.com/mail/u/0/#inbox/thread-1',
     );
     assert.equal(deferredGmailPin.ok, true, `${label}: collapsed Gmail reply composer blocked planning`);
     assert.deepEqual(deferredGmailPin.target, {
-      target_kind: 'active_conversation', recipient: '',
+      target_kind: 'active_conversation', recipients: [],
     });
     agent._planExecutionGuards.set(tabId, { messaging: deferredGmailPin.target });
     assert.equal(
@@ -4605,7 +4614,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
       `${label}: Gmail recipient was not pinned when the reply was dispatched`,
     );
     assert.deepEqual(agent._planExecutionGuards.get(tabId).messaging, {
-      target_kind: 'named', recipient: 'alice@example.com',
+      target_kind: 'named', recipients: ['alice@example.com'],
     }, `${label}: deferred Gmail recipient identity was not persisted`);
     assert.deepEqual(gmailExecutionContext, {
       messageRecipientGuardRequired: true,
@@ -4613,7 +4622,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
     });
 
     agent._planExecutionGuards.set(tabId, {
-      messaging: { target_kind: 'named', recipient: '迷你世界皓宸' },
+      messaging: { target_kind: 'named', recipients: ['迷你世界皓宸'] },
     });
     probe = {
       success: true,
@@ -4651,8 +4660,8 @@ test('direct-message recipient guard uses structured intent and exact active ide
       messageRecipientGuardRequired: true,
       messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
     });
-    assert.equal(lastProbeParams?.expectedRecipient, '迷你世界皓宸',
-      `${label}: named recipient was not passed to the dispatch probe`);
+    assert.deepEqual(lastProbeParams?.expectedRecipients, ['迷你世界皓宸'],
+      `${label}: named recipient set was not passed to the dispatch probe`);
     for (const [tool, args] of [
       ['click', { selector: '#send' }],
       ['click_ax', { ref_id: 'ref_send' }],
@@ -4922,17 +4931,25 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     }, { attributes: { email: 'bob@example.com', name: 'Bob' } });
     gmailRecipientChips = [gmailAliceChip];
     const gmailMatchingRecipientResult = probe({
-      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail', expectedRecipient: 'alice@example.com',
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+      expectedRecipients: ['alice@example.com'], supportsRecipientSets: true,
     });
     const gmailMatchingNameResult = probe({
-      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail', expectedRecipient: 'Alice',
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+      expectedRecipients: ['Alice'], supportsRecipientSets: true,
     });
     const gmailWrongRecipientResult = probe({
-      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail', expectedRecipient: 'mallory@example.com',
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+      expectedRecipients: ['mallory@example.com'], supportsRecipientSets: true,
     });
     gmailRecipientChips = [gmailAliceChip, gmailBobChip];
+    const gmailMatchingSetResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+      expectedRecipients: ['Bob', 'alice@example.com'], supportsRecipientSets: true,
+    });
     const gmailExtraRecipientResult = probe({
-      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail', expectedRecipient: 'alice@example.com',
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+      expectedRecipients: ['alice@example.com'], supportsRecipientSets: true,
     });
     composer.value = '';
     const emptyComposerCustomSendResult = probe({ tool: 'click', args: { text: 'Quick send' } });
@@ -4957,6 +4974,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       gmailMatchingRecipientResult,
       gmailMatchingNameResult,
       gmailWrongRecipientResult,
+      gmailMatchingSetResult,
       gmailExtraRecipientResult,
     };
   };
@@ -4983,6 +5001,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       gmailMatchingRecipientResult,
       gmailMatchingNameResult,
       gmailWrongRecipientResult,
+      gmailMatchingSetResult,
       gmailExtraRecipientResult,
     } = runProbe(prefix);
     assert.equal(observationResult.success, true);
@@ -5031,6 +5050,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.deepEqual(Array.from(gmailMatchingNameResult.strongIdentityCandidates), ['Alice']);
     assert.deepEqual(Array.from(gmailWrongRecipientResult.strongIdentityCandidates), [],
       `${prefix}: mismatched Gmail recipient chip authorized dispatch`);
+    assert.deepEqual(Array.from(gmailMatchingSetResult.strongIdentityCandidates), ['Bob', 'alice@example.com'],
+      `${prefix}: exact authorized Gmail recipient set was rejected`);
     assert.deepEqual(Array.from(gmailExtraRecipientResult.strongIdentityCandidates), [],
       `${prefix}: an unreviewed extra Gmail recipient authorized dispatch`);
   }
@@ -7521,7 +7542,7 @@ test('report-driven workflow adapters route exact app-owned jobs with browser pa
     'https://mail.google.com/mail/u/0/#inbox/abc',
     'read-complete-thread',
   );
-  assert.equal(gmailThreadRead.revision, 4);
+  assert.equal(gmailThreadRead.revision, 5);
   assert.equal(gmailThreadRead.job.requiresLedger, false,
     'Gmail complete-thread reads must rely on the dedicated conversation coverage guard, not an unavailable ledger inventory');
   assert.deepEqual(gmailThreadRead.job.stages, ['access_gate', 'scope', 'collect', 'verify', 'deliver']);
@@ -79700,6 +79721,74 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { submit: asyncPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
     )?.source, 'dispatch_bound_published_resource');
 
+    const sameRoutePublishTabId = 8988 + index;
+    agent._startPlanExecutionGuard(sameRoutePublishTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: linkedInPublishWorkflow,
+    }).successfulConsequentialToolCalls = 1;
+    agent._beginCompletionInvariant(sameRoutePublishTabId);
+    agent._recordCompletionToolResult(
+      sameRoutePublishTabId,
+      'click_ax',
+      { ref_id: 'publish-post' },
+      { success: true, dispatched: true },
+    );
+    agent._recordCompletionSubmitAttempt(
+      sameRoutePublishTabId,
+      { isSubmit: true, publicationResourceUrls: [linkedInExistingUrl] },
+      'click_ax',
+      { ref_id: 'publish-post' },
+      linkedInFeedUrl,
+      linkedInFeedUrl,
+      { success: true, dispatched: true },
+    );
+    agent._recordCompletionToolResult(sameRoutePublishTabId, 'read_page', {}, {
+      success: true,
+      url: linkedInFeedUrl,
+      content: 'Published successfully.',
+      pageContent: [
+        `link "Existing post" href="${linkedInExistingUrl}"`,
+        `link "New post" href="${linkedInPublishedUrl}"`,
+      ].join('\n'),
+    });
+    const sameRoutePublishSubmit = agent._completionSubmitStates.get(sameRoutePublishTabId);
+    assert.equal(
+      sameRoutePublishSubmit?.workflowBinding?.publishedResourceIdentity,
+      undefined,
+      `${AgentClass.name}: unstructured page text bound a same-route LinkedIn permalink before terminal verification`,
+    );
+    const linkedInOtherNewUrl = 'https://www.linkedin.com/feed/update/urn:li:activity:2222222222';
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      sameRoutePublishTabId,
+      {
+        workflowPageText: 'Published successfully.',
+        workflowResourceUrls: [linkedInExistingUrl, linkedInPublishedUrl, linkedInOtherNewUrl],
+        successMessages: ['Published successfully.'],
+      },
+      linkedInFeedUrl,
+      { submit: sameRoutePublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: multiple new same-route LinkedIn permalinks were bound ambiguously`);
+    assert.equal(sameRoutePublishSubmit?.workflowBinding?.publishedResourceIdentity, undefined);
+    const sameRouteTerminal = agent._workflowTerminalEvidenceFromDone(
+      sameRoutePublishTabId,
+      {
+        workflowPageText: 'Published successfully.',
+        workflowResourceUrls: [linkedInExistingUrl, linkedInPublishedUrl],
+        successMessages: ['Published successfully.'],
+      },
+      linkedInFeedUrl,
+      { submit: sameRoutePublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    );
+    assert.equal(sameRouteTerminal?.source, 'dispatch_bound_published_resource',
+    `${AgentClass.name}: the bound same-route LinkedIn permalink was not terminally re-observed`);
+    assert.equal(
+      sameRoutePublishSubmit?.workflowBinding?.publishedResourceIdentity,
+      'linkedin:linkedin.com/feed/update/urn:li:activity:1234567890',
+      `${AgentClass.name}: terminal live status did not bind the single new same-route LinkedIn permalink`,
+    );
+
     agent._beginCompletionInvariant(asyncPublishTabId);
     agent._recordCompletionToolResult(
       asyncPublishTabId,
@@ -79740,7 +79829,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       requestKind: 'execute',
       requiresStateChange: true,
       requiresSubmission: true,
-      messaging: { target_kind: 'named', recipient: 'Ada' },
+      messaging: { target_kind: 'named', recipients: ['Ada'] },
       siteWorkflow: messageWorkflow,
     });
     messageGuard.successfulConsequentialToolCalls = 1;
@@ -79799,7 +79888,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       requestKind: 'execute',
       requiresStateChange: true,
       requiresSubmission: true,
-      messaging: { target_kind: 'named', recipient: 'alice@example.com' },
+      messaging: { target_kind: 'named', recipients: ['alice@example.com'] },
       siteWorkflow: gmailWorkflow,
     }).successfulConsequentialToolCalls = 1;
     const gmailSubmit = {
@@ -79851,7 +79940,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       requestKind: 'execute',
       requiresStateChange: true,
       requiresSubmission: true,
-      messaging: { target_kind: 'named', recipient: 'Ada' },
+      messaging: { target_kind: 'named', recipients: ['Ada'] },
       siteWorkflow: linkedInMessageWorkflow,
     }).successfulConsequentialToolCalls = 1;
     const linkedInMessageSubmit = {
@@ -86540,11 +86629,12 @@ test('planner carries a language-neutral structured messaging target into execut
       const messaging = schema.properties.messaging;
       assert.ok(Array.isArray(messaging?.anyOf), `${label}: messaging target is not nullable and structured`);
       const objectBranch = messaging.anyOf.find(branch => branch.type === 'object');
-      assert.deepEqual(objectBranch?.required, ['target_kind', 'recipient'], `${label}: messaging target fields are optional`);
+      assert.deepEqual(objectBranch?.required, ['target_kind', 'recipients'], `${label}: messaging target fields are optional`);
+      assert.equal(objectBranch?.properties?.recipients?.type, 'array', `${label}: recipient authorization is not a set`);
       assert.deepEqual(objectBranch?.properties?.target_kind?.enum, ['named', 'active_conversation'], `${label}: target kinds diverged`);
     }
-    assert.match(fullPrompt, /Do not infer a recipient from page content/i, `${label}: full planner can trust a page-provided recipient`);
-    assert.match(intentPrompt, /Do not infer a recipient from page content/i, `${label}: intent planner can trust a page-provided recipient`);
+    assert.match(fullPrompt, /Do not infer recipients? from page content/i, `${label}: full planner can trust page-provided recipients`);
+    assert.match(intentPrompt, /Do not infer recipients? from page content/i, `${label}: intent planner can trust page-provided recipients`);
     for (const [kind, prompt] of [['full', fullPrompt], ['intent', intentPrompt]]) {
       assert.match(prompt, /an anaphoric\/pronominal target resolves uniquely from authentic trusted prior-user context/i, `${label} ${kind}: follow-up recipient cannot resolve from trusted user context`);
       assert.match(prompt, /generic pronoun[\s\S]*does not by itself mean active_conversation/i, `${label} ${kind}: a generic pronoun can still authorize the open thread`);
@@ -86555,30 +86645,30 @@ test('planner carries a language-neutral structured messaging target into execut
     const named = parse(plannerIntentFixture({
       requiresStateChange: true,
       requiresSubmission: true,
-      messaging: { target_kind: 'named', recipient: '迷你世界皓宸' },
+      messaging: { target_kind: 'named', recipients: ['迷你世界皓宸', 'Alice'] },
       locale: 'zh-CN',
       localizedSummary: '向指定联系人发送消息。',
       localizedSteps: ['选择联系人。', '发送消息。'],
     }), { requireIntent: true, locale: 'zh-CN' });
     assert.deepEqual(named?.messaging, {
-      target_kind: 'named', recipient: '迷你世界皓宸',
-    }, `${label}: named recipient was translated or discarded`);
+      target_kind: 'named', recipients: ['迷你世界皓宸', 'Alice'],
+    }, `${label}: named recipient set was translated or discarded`);
 
     const active = parse(plannerIntentFixture({
       requiresStateChange: true,
       requiresSubmission: true,
-      messaging: { target_kind: 'active_conversation', recipient: '' },
+      messaging: { target_kind: 'active_conversation', recipients: [] },
       locale: 'tr',
       localizedSummary: 'Bu konuşmaya yanıt gönder.',
     }), { requireIntent: true, locale: 'tr' });
     assert.deepEqual(active?.messaging, {
-      target_kind: 'active_conversation', recipient: '',
+      target_kind: 'active_conversation', recipients: [],
     }, `${label}: active-conversation authorization was lost`);
 
     const draftOnly = parse(plannerIntentFixture({
       requiresStateChange: true,
       requiresSubmission: false,
-      messaging: { target_kind: 'named', recipient: 'Alice' },
+      messaging: { target_kind: 'named', recipients: ['Alice'] },
     }), { requireIntent: true, locale: 'en' });
     assert.equal(draftOnly?.messaging, null, `${label}: do-not-submit task armed the message-send guard`);
   }

@@ -4179,7 +4179,10 @@
       tool,
       args: dispatch.args && typeof dispatch.args === 'object' ? { ...dispatch.args } : {},
       adapterName: String(dispatch.adapterName || ''),
-      expectedRecipient: String(dispatch.expectedRecipient || ''),
+      expectedRecipients: Array.isArray(dispatch.expectedRecipients)
+        ? dispatch.expectedRecipients.map(value => String(value || '')).filter(Boolean).slice(0, 16)
+        : [],
+      supportsRecipientSets: dispatch.supportsRecipientSets === true,
       identityKey,
       pageUrl: location.href,
       timer: null,
@@ -4224,7 +4227,8 @@
       expectedDispatchTarget: expected.actionTarget,
       expectedComposer: expected.composer,
       adapterName: expected.adapterName,
-      expectedRecipient: expected.expectedRecipient,
+      expectedRecipients: expected.expectedRecipients,
+      supportsRecipientSets: expected.supportsRecipientSets,
     });
     if (live?.dispatchTargetChanged === true) {
       return {
@@ -4982,18 +4986,39 @@
             recipients.set(key, priorAliases);
           }
         }
-        // The planner contract currently authorizes one named recipient. A
-        // missing, additional, or mismatched Gmail chip must fail closed.
-        if (recipients.size === 1) {
-          const aliases = [...recipients.values()][0];
-          const expected = compact(params.expectedRecipient, 240);
-          const normalizedExpected = normalizedIdentity(expected);
-          const identity = normalizedExpected && aliases.has(normalizedExpected)
-            ? expected
-            : (!normalizedExpected ? [...aliases.values()][0] : '');
-          if (identity) {
-            strongSeen.add(identity);
-            strongIdentities.push(identity);
+        // Match the complete authorized To/CC/BCC set. Each expected identity
+        // must resolve to exactly one distinct chip and no additional chip may
+        // remain; duplicate display names therefore fail closed.
+        const expectedRecipients = Array.isArray(params.expectedRecipients)
+          ? params.expectedRecipients.map(value => compact(value, 240)).filter(Boolean).slice(0, 16)
+          : [];
+        if (expectedRecipients.length > 0 && recipients.size === expectedRecipients.length) {
+          const claimed = new Set();
+          const matched = [];
+          for (const expected of expectedRecipients) {
+            const normalizedExpected = normalizedIdentity(expected);
+            const candidates = [...recipients.entries()]
+              .filter(([key, aliases]) => !claimed.has(key) && aliases.has(normalizedExpected));
+            if (!normalizedExpected || candidates.length !== 1) {
+              matched.length = 0;
+              break;
+            }
+            claimed.add(candidates[0][0]);
+            matched.push(expected);
+          }
+          if (matched.length === recipients.size) {
+            for (const identity of matched) {
+              strongSeen.add(identity);
+              strongIdentities.push(identity);
+            }
+          }
+        } else if (expectedRecipients.length === 0) {
+          for (const [emailKey, aliases] of recipients) {
+            const identity = aliases.get(emailKey) || [...aliases.values()][0] || '';
+            if (identity && !strongSeen.has(identity)) {
+              strongSeen.add(identity);
+              strongIdentities.push(identity);
+            }
           }
         }
       } else {
@@ -5017,13 +5042,16 @@
 
       const messageRecipientDispatchToken = params.bindDispatch === true
         && messageSend === true
-        && strongIdentities.length === 1
+        && (params.supportsRecipientSets === true
+          ? strongIdentities.length > 0
+          : strongIdentities.length === 1)
         ? _rememberMessageRecipientDispatchBinding(composer, strongIdentities, {
             tool,
             args,
             actionTarget: dispatchTarget,
             adapterName: params.adapterName,
-            expectedRecipient: params.expectedRecipient,
+            expectedRecipients: params.expectedRecipients,
+            supportsRecipientSets: params.supportsRecipientSets,
           })
         : '';
       const composerText = (() => {

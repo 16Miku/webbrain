@@ -18,6 +18,7 @@ import {
  *   - fullPageCapture?.infiniteScroll(url): optional machine-readable capture policy
  *   - messaging?.verifyActiveRecipient: optional URL-aware pre-dispatch recipient guard
  *   - messaging?.deferActiveConversationUntilComposer: allow composer setup before pinning
+ *   - messaging?.supportsRecipientSets: require exact multi-recipient set equality
  *   - revision?: positive workflow-contract revision for trace attribution
  *   - regions?: stable region identifiers for structured adapter discovery
  *   - jobs?: stable job identifiers covered by the optional workflow profile
@@ -15976,7 +15977,7 @@ const ADAPTERS = [
   {
     name: 'gmail',
     category: 'general',
-    revision: 4,
+    revision: 5,
     regions: ['global'],
     jobs: ['read-complete-thread', 'count-results', 'draft-email', 'send-email'],
     workflow: {
@@ -16028,6 +16029,7 @@ const ADAPTERS = [
     messaging: {
       verifyActiveRecipient: true,
       deferActiveConversationUntilComposer: true,
+      supportsRecipientSets: true,
     },
     notes: `
 - Composing: the "Compose" button opens a floating window. The "To" field is a contact picker — type the name and pick from the dropdown, don't just type the raw email.
@@ -16190,7 +16192,7 @@ const ADAPTERS = [
   {
     name: 'linkedin',
     category: 'general',
-    revision: 2,
+    revision: 3,
     regions: ['global'],
     jobs: ['publish-post', 'send-message'],
     workflow: {
@@ -17833,6 +17835,9 @@ export function getMessageRecipientGuardPolicy(url) {
     verifyActiveRecipient: true,
     ...(adapter.messaging.deferActiveConversationUntilComposer === true
       ? { deferActiveConversationUntilComposer: true }
+      : {}),
+    ...(adapter.messaging.supportsRecipientSets === true
+      ? { supportsRecipientSets: true }
       : {}),
   };
 }
