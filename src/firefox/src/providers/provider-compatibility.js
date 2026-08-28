@@ -51,6 +51,13 @@ export function normalizeOpenAICompatibleBaseUrl(value) {
   if (!trimmed) return '';
   try {
     const url = new URL(trimmed);
+    // DeepSeek's OpenAI-compatible endpoint is rooted at the origin, unlike
+    // most OpenAI-compatible servers whose API lives below /v1.
+    if (url.hostname.toLowerCase() === 'api.deepseek.com' &&
+        (url.protocol === 'http:' || url.protocol === 'https:') &&
+        url.pathname === '/' && !url.search && !url.hash) {
+      return trimmed;
+    }
     if ((url.protocol === 'http:' || url.protocol === 'https:')
         && url.pathname === '/'
         && !url.search
@@ -71,9 +78,18 @@ export function openAiCompatiblePayloadError(payload, maxLength = 500) {
   return detail.slice(0, maxLength);
 }
 
-export function visionGenerationOptions(maxTokens = 800, { reasoningControl = true } = {}) {
+export function visionGenerationOptions(maxTokens = 800, {
+  reasoningControl = true,
+  providerConfig = null,
+} = {}) {
   const extraBody = {};
   if (reasoningControl) {
+    if (isDirectDeepSeekConfig(providerConfig || {})) {
+      // DeepSeek does not use the local Qwen/LM Studio template controls. Its
+      // native Chat Completions switch is a top-level `thinking` object.
+      extraBody.thinking = { type: 'disabled' };
+      return { maxTokens, temperature: 0, extraBody };
+    }
     // LM Studio 0.4.8+ honors these fields for Chat Completions. They prevent
     // Qwen vision models from spending the entire output budget in a hidden
     // reasoning channel and leaving no caption for the browser agent.
@@ -89,15 +105,16 @@ export function unsupportedVisionGenerationControl(error) {
   return /reasoning_effort|reasoning_tokens|chat_template_kwargs|enable_thinking/i.test(message);
 }
 
-function isDirectDeepSeekConfig(config = {}) {
+export function isDirectDeepSeekConfig(config = {}) {
   const providerName = clean(config.providerName);
+  if (clean(config.category) === 'local' || LOCAL_OPENAI_COMPAT_PROVIDER_NAMES.has(providerName)) {
+    return false;
+  }
   if (providerName === 'deepseek') return true;
   try {
     if (new URL(config.baseUrl || '').hostname.toLowerCase() === 'api.deepseek.com') return true;
   } catch {}
-  return normalizeProviderCompatibility(config).preset === 'deepseek'
-    && clean(config.category) !== 'local'
-    && !LOCAL_OPENAI_COMPAT_PROVIDER_NAMES.has(providerName);
+  return normalizeProviderCompatibility(config).preset === 'deepseek';
 }
 
 export function isPlainObject(value) {
@@ -285,6 +302,15 @@ function mappedReasoningEffort(effort, preset) {
   return effort;
 }
 
+function mappedDeepSeekReasoningEffort(effort) {
+  // DeepSeek's public ladder is low/high/max. Keep the shared UI ladder
+  // expressive while translating values that DeepSeek only accepts for
+  // compatibility (medium and xhigh both mean high in its API).
+  if (effort === 'minimal') return 'low';
+  if (effort === 'medium' || effort === 'xhigh') return 'high';
+  return effort;
+}
+
 export function compatibilityRequestBody(config = {}) {
   const compat = normalizeProviderCompatibility(config);
   if (compat.reasoningEffort === 'auto') return {};
@@ -299,7 +325,14 @@ export function compatibilityRequestBody(config = {}) {
     };
   }
   if (preset === 'deepseek') {
-    return { chat_template_kwargs: { thinking: enabled } };
+    if (!isDirectDeepSeekConfig(config)) {
+      return { chat_template_kwargs: { thinking: enabled } };
+    }
+    if (!enabled) return { thinking: { type: 'disabled' } };
+    return {
+      thinking: { type: 'enabled' },
+      reasoning_effort: mappedDeepSeekReasoningEffort(compat.reasoningEffort),
+    };
   }
   if (preset === 'openrouter') {
     return enabled
@@ -390,6 +423,12 @@ export function mergeProviderRequestBody(body, config = {}, perRequestExtraBody 
     } else {
       result[key] = isPlainObject(value) || Array.isArray(value) ? safeClone(value) : value;
     }
+  }
+  // DeepSeek's disabled-thinking contract omits reasoning_effort entirely.
+  // Per-call planner and vision overrides must clear an effort inherited from
+  // the configured compatibility preset.
+  if (isDirectDeepSeekConfig(config) && result.thinking?.type === 'disabled') {
+    delete result.reasoning_effort;
   }
   return result;
 }

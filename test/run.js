@@ -65747,7 +65747,7 @@ test('provider compatibility maps reasoning, roles, token fields, and per-call o
       providerName: 'deepseek',
       model: 'deepseek-v4',
       compat: { reasoningEffort: 'off' },
-    }), { chat_template_kwargs: { thinking: false } });
+    }), { thinking: { type: 'disabled' } });
     assert.deepEqual(compat.compatibilityRequestBody({
       providerName: 'openrouter',
       compat: { reasoningEffort: 'medium' },
@@ -65850,6 +65850,216 @@ test('provider compatibility maps reasoning, roles, token fields, and per-call o
       }),
       { model: 'safe', stream: false, temperature: 0.4 },
     );
+  }
+});
+
+test('DeepSeek Chat Completions uses native thinking, vision, streaming, and replay contracts', async () => {
+  const originalFetch = globalThis.fetch;
+  const tools = [{
+    type: 'function',
+    function: {
+      name: 'read_page',
+      description: 'Read the page',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+    },
+  }];
+  try {
+    for (const [label, compatibility] of [
+      ['chrome', ProviderCompatibilityCh],
+      ['firefox', ProviderCompatibilityFx],
+    ]) {
+      assert.equal(
+        compatibility.normalizeOpenAICompatibleBaseUrl('https://api.deepseek.com'),
+        'https://api.deepseek.com',
+        `${label}: DeepSeek's root endpoint must not be rewritten to /v1`,
+      );
+      assert.equal(
+        compatibility.normalizeOpenAICompatibleBaseUrl('https://api.deepseek.com/v1'),
+        'https://api.deepseek.com/v1',
+        `${label}: explicit DeepSeek-compatible paths must remain unchanged`,
+      );
+      assert.equal(
+        compatibility.isDirectDeepSeekConfig({ providerName: 'proxy', baseUrl: 'https://api.deepseek.com' }),
+        true,
+        `${label}: the official DeepSeek host should select its native preset`,
+      );
+      for (const providerConfig of [
+        { providerName: 'lmstudio', category: 'local', baseUrl: 'http://localhost:1234/v1' },
+        { providerName: 'ollama', category: 'local', baseUrl: 'http://localhost:11434/v1' },
+        { providerName: 'vllm', category: 'local', baseUrl: 'http://localhost:8000/v1' },
+        { providerName: 'deepseek', category: 'local', baseUrl: 'http://localhost:9000/v1' },
+      ]) {
+        const localConfig = {
+          ...providerConfig,
+          model: 'deepseek-v4-flash',
+          compat: { reasoningEffort: 'high' },
+        };
+        assert.equal(
+          compatibility.isDirectDeepSeekConfig(localConfig),
+          false,
+          `${label}: ${providerConfig.providerName} must not be treated as the direct DeepSeek API`,
+        );
+        assert.deepEqual(
+          compatibility.compatibilityRequestBody(localConfig),
+          { chat_template_kwargs: { thinking: true } },
+          `${label}: ${providerConfig.providerName} should keep local DeepSeek template controls`,
+        );
+      }
+      for (const [effort, expected] of [
+        ['minimal', { thinking: { type: 'enabled' }, reasoning_effort: 'low' }],
+        ['low', { thinking: { type: 'enabled' }, reasoning_effort: 'low' }],
+        ['medium', { thinking: { type: 'enabled' }, reasoning_effort: 'high' }],
+        ['high', { thinking: { type: 'enabled' }, reasoning_effort: 'high' }],
+        ['xhigh', { thinking: { type: 'enabled' }, reasoning_effort: 'high' }],
+        ['max', { thinking: { type: 'enabled' }, reasoning_effort: 'max' }],
+        ['off', { thinking: { type: 'disabled' } }],
+      ]) {
+        assert.deepEqual(
+          compatibility.compatibilityRequestBody({
+            providerName: 'deepseek',
+            model: 'deepseek-v4-flash',
+            compat: { reasoningEffort: effort },
+          }),
+          expected,
+          `${label}: ${effort} should map to DeepSeek's documented wire fields`,
+        );
+      }
+      assert.equal(
+        compatibility.compatibilityRequestBody({
+          providerName: 'deepseek',
+          model: 'deepseek-v4-flash',
+          compat: { reasoningEffort: 'off' },
+        }).chat_template_kwargs,
+        undefined,
+        `${label}: DeepSeek must not receive Qwen chat-template thinking fields`,
+      );
+      const deepSeekVisionConfig = {
+        providerName: 'deepseek',
+        category: 'cloud',
+        baseUrl: 'https://api.deepseek.com',
+        compat: { reasoningEffort: 'high' },
+      };
+      const deepSeekVisionOptions = compatibility.visionGenerationOptions(160, {
+        providerConfig: deepSeekVisionConfig,
+      });
+      assert.deepEqual(
+        deepSeekVisionOptions,
+        { maxTokens: 160, temperature: 0, extraBody: { thinking: { type: 'disabled' } } },
+        `${label}: DeepSeek vision probes should disable thinking natively`,
+      );
+      assert.deepEqual(
+        compatibility.mergeProviderRequestBody({}, deepSeekVisionConfig, deepSeekVisionOptions.extraBody),
+        { thinking: { type: 'disabled' } },
+        `${label}: disabling DeepSeek vision thinking must clear configured reasoning effort`,
+      );
+    }
+
+    for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs();
+      assert.equal(defaults.deepseek.baseUrl, 'https://api.deepseek.com', `${PM.name}: official DeepSeek base URL`);
+      assert.equal(defaults.deepseek.model, 'deepseek-v4-flash', `${PM.name}: current DeepSeek default model`);
+      assert.equal(defaults.deepseek.contextWindow, 1000000, `${PM.name}: DeepSeek context window`);
+      const migrated = manager._migrateStoredProviderConfigs({
+        deepseek: {
+          model: 'deepseek-v4-flash',
+          baseUrl: 'https://api.deepseek.com/v1',
+          inputCostPerMillionUsd: 0.27,
+          outputCostPerMillionUsd: 1.1,
+        },
+      });
+      assert.equal(migrated.deepseek.baseUrl, 'https://api.deepseek.com', `${PM.name}: untouched legacy DeepSeek defaults should migrate`);
+    }
+
+    for (const [label, Provider, AgentClass] of [
+      ['chrome', OpenAIProviderCh, AgentCh],
+      ['firefox', OpenAIProviderFx, AgentFx],
+    ]) {
+      const provider = new Provider({
+        category: 'cloud',
+        providerName: 'deepseek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        compat: { reasoningEffort: 'high' },
+        supportsStreamUsageOptions: true,
+      });
+      assert.equal(provider.supportsVision, false, `${label}: the text-only DeepSeek model must not advertise vision`);
+      const vision = new Provider({ ...provider.config, model: 'deepseek-v4-flash-vision-exp' });
+      assert.equal(vision.supportsVision, true, `${label}: the official DeepSeek vision model must advertise vision`);
+
+      const body = provider._buildChatCompletionsBody(
+        [{ role: 'user', content: 'Read the page' }],
+        { tools, maxTokens: 321, temperature: 0.2 },
+        true,
+      );
+      assert.equal(body.max_tokens, 321, `${label}: DeepSeek must use max_tokens`);
+      assert.equal(body.max_completion_tokens, undefined, `${label}: DeepSeek must not use max_completion_tokens`);
+      assert.deepEqual(body.thinking, { type: 'enabled' }, `${label}: thinking must be enabled natively`);
+      assert.equal(body.reasoning_effort, 'high', `${label}: reasoning effort must use the DeepSeek field`);
+      assert.equal(body.chat_template_kwargs, undefined, `${label}: legacy Qwen fields must be absent`);
+      assert.deepEqual(body.stream_options, { include_usage: true }, `${label}: DeepSeek streaming should request usage`);
+      assert.equal(body.tools.length, 1, `${label}: function tools must be sent`);
+
+      const agent = new AgentClass({});
+      const assistant = {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'read_page', arguments: '{}' } }],
+      };
+      const replayable = agent._withResponseItems(assistant, null, 'DeepSeek reasoning', provider);
+      assert.equal(replayable.reasoning_content, 'DeepSeek reasoning', `${label}: reasoning content must be persisted`);
+      assert.equal(replayable._reasoning_replay?.preserveAcrossTurns, true, `${label}: tool-loop reasoning must be marked persistent`);
+      assert.equal(provider._chatMessages([replayable])[0].reasoning_content, 'DeepSeek reasoning', `${label}: reasoning content must be replayed`);
+      agent._expireCurrentToolReasoning([replayable]);
+      assert.equal(replayable.reasoning_content, 'DeepSeek reasoning', `${label}: DeepSeek reasoning must survive later turns`);
+
+      let capturedUrl = '';
+      let capturedBody = null;
+      globalThis.fetch = async (url, options = {}) => {
+        capturedUrl = String(url);
+        capturedBody = JSON.parse(options.body);
+        const events = [
+          { choices: [{ delta: { reasoning_content: 'think' } }] },
+          { choices: [{ delta: { content: 'answer' } }] },
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'read_page', arguments: '{}' } }] } }] },
+          { choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 } },
+        ];
+        const sse = `${events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')}data: [DONE]\n\n`;
+        return new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      };
+      const chunks = [];
+      for await (const chunk of provider.chatStream([{ role: 'user', content: 'Read the page' }], { tools, maxTokens: 321 })) {
+        chunks.push(chunk);
+      }
+      assert.equal(capturedUrl, 'https://api.deepseek.com/chat/completions', `${label}: requests must use the official Chat Completions path`);
+      assert.deepEqual(capturedBody.thinking, { type: 'enabled' });
+      assert.equal(capturedBody.reasoning_effort, 'high');
+      assert.deepEqual(chunks.slice(0, 3), [
+        { type: 'reasoning', content: 'think' },
+        { type: 'text', content: 'answer' },
+        { type: 'tool_call', content: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'read_page', arguments: '{}' } }] },
+      ], `${label}: DeepSeek reasoning, text, and tool deltas must be exposed`);
+      assert.deepEqual(chunks[3], { type: 'usage', usage: { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 } });
+      assert.deepEqual(chunks[4], { type: 'done', content: '', finishReason: 'tool_calls' });
+
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: 'answer',
+            reasoning_content: 'non-stream reasoning',
+            tool_calls: [{ id: 'call-2', type: 'function', function: { name: 'read_page', arguments: '{}' } }],
+          },
+          finish_reason: 'tool_calls',
+        }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const result = await provider.chat([{ role: 'user', content: 'Read the page' }], { tools, maxTokens: 321 });
+      assert.equal(result.reasoningContent, 'non-stream reasoning', `${label}: non-stream reasoning content must be returned`);
+      assert.equal(result.toolCalls?.[0]?.id, 'call-2', `${label}: non-stream tool calls must be returned`);
+      assert.deepEqual(result.usage, { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 });
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 
