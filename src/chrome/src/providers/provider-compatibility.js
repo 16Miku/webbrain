@@ -3,6 +3,7 @@ const REASONING_EFFORTS = new Set(['auto', 'off', 'minimal', 'low', 'medium', 'h
 const SYSTEM_PROMPT_ROLES = new Set(['auto', 'system', 'developer']);
 const MAX_TOKEN_FIELDS = new Set(['auto', 'max_tokens', 'max_completion_tokens']);
 const OPENROUTER_ROUTING_VARIANT_VALUES = new Set(['standard', 'nitro', 'exacto']);
+const OPENROUTER_MODEL_VARIANT_SUFFIXES = /(?::(?:free|extended|thinking|online|nitro|floor|exacto))+$/i;
 export const OPENROUTER_ROUTING_VARIANTS = Object.freeze(['standard', 'nitro', 'exacto']);
 const STRUCTURED_OUTPUT_PROVIDER_NAMES = new Set([
   'azure-openai',
@@ -58,13 +59,15 @@ export function applyOpenRouterRoutingVariant(body, config = {}) {
 
   const next = { ...body };
   if (typeof next.model === 'string') {
-    next.model = next.model.replace(/:(?:nitro|exacto)$/i, '');
+    next.model = variant === 'exacto'
+      ? `${next.model.replace(OPENROUTER_MODEL_VARIANT_SUFFIXES, '')}:exacto`
+      : next.model.replace(/:(?:nitro|exacto)$/i, '');
   }
 
   const hasProviderPreferences = next.provider
     && typeof next.provider === 'object'
     && !Array.isArray(next.provider);
-  if (variant === 'standard') {
+  if (variant !== 'nitro') {
     if (hasProviderPreferences && Object.hasOwn(next.provider, 'sort')) {
       const provider = { ...next.provider };
       delete provider.sort;
@@ -76,7 +79,7 @@ export function applyOpenRouterRoutingVariant(body, config = {}) {
 
   next.provider = {
     ...(hasProviderPreferences ? next.provider : {}),
-    sort: variant === 'nitro' ? 'throughput' : 'exacto',
+    sort: 'throughput',
   };
   return next;
 }

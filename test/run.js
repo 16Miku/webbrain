@@ -63445,9 +63445,12 @@ test('OpenRouter advanced routing variants map Standard, Nitro, and Exacto onto 
     assert.equal(nitro.model, 'qwen/qwen3.8-27b');
     assert.deepEqual(nitro.provider, { sort: 'throughput' });
 
-    const exacto = requestBody({ routingVariant: 'exacto' });
-    assert.equal(exacto.model, 'qwen/qwen3.8-27b');
-    assert.deepEqual(exacto.provider, { sort: 'exacto' });
+    const exacto = requestBody({
+      routingVariant: 'exacto',
+      extraBody: { provider: { only: ['deepinfra'], sort: 'throughput' } },
+    });
+    assert.equal(exacto.model, 'qwen/qwen3.8-27b:exacto');
+    assert.deepEqual(exacto.provider, { only: ['deepinfra'] }, 'Exacto should use the model suffix without a conflicting provider sort');
 
     const freeNitro = requestBody({
       model: 'poolside/laguna-xs-2.1:free',
@@ -63456,6 +63459,10 @@ test('OpenRouter advanced routing variants map Standard, Nitro, and Exacto onto 
     });
     assert.equal(freeNitro.model, 'poolside/laguna-xs-2.1:free', 'routing must preserve a static model variant');
     assert.deepEqual(freeNitro.provider, { only: ['deepinfra'], sort: 'throughput' });
+
+    const freeExacto = requestBody({ model: 'poolside/laguna-xs-2.1:free', routingVariant: 'exacto' });
+    assert.equal(freeExacto.model, 'poolside/laguna-xs-2.1:exacto', 'Exacto should replace a conflicting static model variant');
+    assert.equal(freeExacto.provider, undefined);
 
     const responsesLegacy = responsesRequestBody({});
     assert.equal(responsesLegacy.model, 'qwen/qwen3.8-27b:exacto', 'Responses should preserve a legacy manual suffix');
@@ -63466,8 +63473,8 @@ test('OpenRouter advanced routing variants map Standard, Nitro, and Exacto onto 
     assert.equal(responsesNitro.model, 'poolside/laguna-xs-2.1:free');
     assert.deepEqual(responsesNitro.provider, { sort: 'throughput' });
     const responsesExacto = responsesRequestBody({ model: 'poolside/laguna-xs-2.1:free', routingVariant: 'exacto' });
-    assert.equal(responsesExacto.model, 'poolside/laguna-xs-2.1:free');
-    assert.deepEqual(responsesExacto.provider, { sort: 'exacto' });
+    assert.equal(responsesExacto.model, 'poolside/laguna-xs-2.1:exacto');
+    assert.equal(responsesExacto.provider, undefined);
 
     const nonOpenRouter = new Provider({
       providerName: 'together',
