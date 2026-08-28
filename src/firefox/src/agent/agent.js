@@ -9871,9 +9871,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _workflowIframeInventorySelectorCoversControls(selector) {
     const value = String(selector || '').toLowerCase();
-    return /(?:^|[\s,>+~])input(?=$|[\s,.#:\[])/.test(value)
-      && /(?:^|[\s,>+~])textarea(?=$|[\s,.#:\[])|\[contenteditable/.test(value)
-      && /(?:^|[\s,>+~])select(?=$|[\s,.#:\[])|\[role\s*=\s*["']?(?:combobox|listbox)/.test(value);
+    const coversElement = tag => new RegExp(`(?:^|[\\s,>+~])${tag}(?=$|[\\s,.#:\\[])`).test(value);
+    const coversRole = role => new RegExp(`\\[role\\s*=\\s*["']?${role}["']?\\s*\\]`).test(value);
+    return coversElement('input')
+      && coversElement('textarea')
+      && coversElement('select')
+      && /\[contenteditable(?:\s*=|\s*\])/.test(value)
+      && ['textbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton', 'listbox']
+        .every(coversRole);
   }
 
   _workflowIframeFormInventory(result = {}, bindingKey = '', args = {}) {
@@ -9888,13 +9893,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!frameUrl || !Number.isInteger(frameId)) continue;
       const documentScope = `iframe:${frameId}:${frameUrl}`;
       const matches = Array.isArray(frame?.matches) ? frame.matches : [];
-      const matchCount = Number(frame?.matchCount);
+      const matchCount = Number.isInteger(frame?.matchCount) ? frame.matchCount : NaN;
       const complete = selectorComplete
-        && frame?.ok === true
+        && !frame?.error
+        && (matchCount === 0 || frame?.ok === true)
         && frame?.truncated !== true
         && Number.isInteger(matchCount)
         && matchCount === matches.length;
-      documents[documentScope] = { complete, scope: 'iframe' };
+      documents[documentScope] = {
+        complete,
+        scope: 'iframe',
+        ...(complete && matchCount === 0 ? { empty: true } : {}),
+      };
       for (const match of matches) {
         const tag = String(match?.tag || '').toLowerCase();
         const type = String(match?.type || '').toLowerCase();

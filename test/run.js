@@ -79668,9 +79668,8 @@ test('iframe-backed application forms expose a complete trusted inventory and ex
     assert.equal(narrow?.complete, false,
       `${AgentClass.name}: a narrow iframe selector claimed complete form coverage`);
 
-    const inventorySelector = 'input,textarea,select,[contenteditable="true"],[role="textbox"],[role="checkbox"],[role="radio"]';
-    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
-      selector: inventorySelector,
+    const ariaIncomplete = agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
+      selector: 'input,textarea,select',
     }, {
       success: true,
       pageUrl,
@@ -79687,11 +79686,52 @@ test('iframe-backed application forms expose a complete trusted inventory and ex
         ],
       }],
     });
+    assert.equal(ariaIncomplete?.complete, false,
+      `${AgentClass.name}: input/textarea/select omitted ARIA-only form controls but claimed completeness`);
+
+    const inventorySelector = [
+      'input', 'textarea', 'select', '[contenteditable="true"]',
+      '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+    ].join(',');
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
+      selector: inventorySelector,
+    }, {
+      success: true,
+      pageUrl,
+      frames: [
+        {
+          frameId: 7,
+          ok: true,
+          url: frameUrl,
+          matchCount: 3,
+          truncated: false,
+          matches: [
+            { tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: '', matchIndex: 0 },
+            { tag: 'textarea', id: 'cover-letter', name: 'coverLetter', label: 'Cover letter', value: '', matchIndex: 1 },
+            { tag: 'select', id: 'country', name: 'country', label: 'Country', value: 'US', matchIndex: 2 },
+          ],
+        },
+        {
+          frameId: 9,
+          ok: false,
+          url: 'https://acme.wd1.myworkdayjobs.com/application/helper-frame',
+          matchCount: 0,
+          truncated: false,
+          matches: [],
+        },
+      ],
+    });
     assert.equal(inventory?.complete, true,
       `${AgentClass.name}: exhaustive iframe form controls were not trusted as complete`);
     assert.equal(inventory?.source, 'iframe_read');
     assert.equal(inventory?.itemCount, 3,
       `${AgentClass.name}: iframe inventory retained a duplicate narrow-read row`);
+    assert.deepEqual(
+      guard.workflowInventoryEvidence.documents['iframe:9:https://acme.wd1.myworkdayjobs.com/application/helper-frame'],
+      { complete: true, scope: 'iframe', empty: true, rootObservationSequence: 1 },
+      `${AgentClass.name}: an inspected zero-match helper iframe blocked completeness`,
+    );
     assert.deepEqual(inventory.items.map(item => item.label).sort(), ['Country', 'Cover letter', 'Email']);
     assert.equal(agent._trustedWorkflowInventory(tabId, [], guard)?.source, 'iframe_read');
 
