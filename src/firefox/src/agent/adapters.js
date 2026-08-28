@@ -15788,7 +15788,7 @@ const ADAPTERS = [
   {
     name: 'github',
     category: 'general',
-    revision: 1,
+    revision: 2,
     regions: ['global'],
     jobs: ['publish-release', 'upload-release-assets', 'review-pull-request', 'resolve-review-threads'],
     workflow: {
@@ -15819,9 +15819,9 @@ const ADAPTERS = [
           template: 'reading',
           stateChange: false,
           requiresSubmission: false,
-          requiresLedger: true,
-          stages: ['scope', 'inventory', 'collect', 'reconcile', 'verify', 'deliver'],
-          successEvidence: ['Reviewed files and actionable findings are reconciled, with no finding asserted without code evidence.'],
+          requiresLedger: false,
+          stages: ['scope', 'collect', 'verify', 'deliver'],
+          successEvidence: ['Every file in the requested review scope is inspected, and every actionable finding is supported by code evidence.'],
           partialEvidence: ['Reviewed and unread files, current findings, and the exact access or scale blocker are reported.'],
         },
         'resolve-review-threads': {

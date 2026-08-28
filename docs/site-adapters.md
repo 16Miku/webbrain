@@ -71,8 +71,9 @@ tool result, job-bound terminal evidence after its submit/commit dispatch, or
 item-level progress-ledger reconciliation. A generic success toast or another
 site's submit cannot satisfy the selected job: transaction workflows require a
 paid/ticket-issued state, protected messaging requires the recipient-bound
-dispatch plus an empty composer in that conversation, and form/publish/update
-jobs require their own confirmation state. A workflow that requires a ledger
+dispatch, an empty composer in that conversation, and a positive sent-status
+confirmation, while form/publish/update jobs require their own confirmation
+state. A workflow that requires a ledger
 must reconcile exact app-owned inventory IDs from a complete accessibility-tree
 read or app-seeded expected/classifier targets. Model-created rows—even one
 terminal row—cannot prove complete coverage. The executor receives the

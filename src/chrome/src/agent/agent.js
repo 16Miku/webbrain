@@ -1539,6 +1539,12 @@ export class Agent extends LoopDetector {
   }
 
   _workflowMessageSentSignal(siteWorkflow, text) {
+    if (/\b(?:not|never|failed|failure|error|unable|cannot|can't|could not|did not|was not|unsuccessful)\b|(?:发送失败|未发送|发送未成功)/i.test(text)) {
+      return false;
+    }
+    if (siteWorkflow?.adapterName === 'douyin') {
+      return /(?:消息已发送|发送成功|消息发送成功)/.test(text);
+    }
     if (siteWorkflow?.adapterName !== 'gmail') return false;
     return /\bmessage\s+sent\b|(?:邮件已发送|郵件已傳送|メッセージを送信しました|메시지를 보냈습니다|ileti gönderildi|message envoyé|mensaje enviado|mensagem enviada)/i.test(text);
   }
@@ -1575,14 +1581,18 @@ export class Agent extends LoopDetector {
         && messageProbe?.conclusive === true
         && messageProbe?.composerEmpty === true
         && messageTargetMatchesObservedIdentities(state.messaging, messageProbe.strongIdentityCandidates);
-      const sentStatusObserved = submissionEvidence?.verifiedFinalSubmit === true
-        && this._workflowMessageSentSignal(siteWorkflow, text);
+      const sentStatusText = this._workflowTerminalText(
+        Array.isArray(pageState?.liveRegionMessages) ? pageState.liveRegionMessages.join('\n') : '',
+      );
+      const sentStatusObserved = this._workflowMessageSentSignal(siteWorkflow, sentStatusText);
       verified = submit?.dispatched === true
         && submit?.observedAfterSubmit === true
         && submit?.formValidationFailed !== true
-        && (binding.recipientBound === true ? recipientObserved : (recipientObserved || sentStatusObserved));
+        && (binding.recipientBound === true
+          ? (recipientObserved && sentStatusObserved)
+          : (recipientObserved || sentStatusObserved));
       source = binding.recipientBound === true
-        ? 'recipient_bound_dispatch_and_empty_composer'
+        ? 'recipient_bound_dispatch_empty_composer_and_sent_confirmation'
         : (recipientObserved ? 'observed_recipient_and_empty_composer' : 'provider_sent_confirmation');
     } else if (verificationKind === 'transaction_fulfilled') {
       verified = submit?.dispatched === true

@@ -14,7 +14,7 @@ This changelog was generated from the repository Git history and release tags. V
 ### Changed
 - Redesigned the sidebar loading and thinking UI with clearer live activity updates and a toggleable compact activity history (Chrome + Firefox)
 - Localized the new activity statuses and improved screen-reader announcements across all supported languages
-- Tightened selected site-workflow completion: live-URL binding survives trusted continuation only on the same adapter/job, the executor receives the app-owned stages/evidence contract, submission success needs job-bound terminal evidence (including paid/ticket-issued transaction state and recipient-bound message state), and repeated workflows need exact reconciliation against an app-owned inventory rather than model-created rows
+- Tightened selected site-workflow completion: live-URL binding survives trusted continuation only on the same adapter/job, the executor receives the app-owned stages/evidence contract, submission success needs job-bound terminal evidence (including paid/ticket-issued transaction state and recipient-bound sent confirmation), and ledger-backed workflows need exact reconciliation against an app-owned inventory rather than model-created rows
 
 ## [33.4.1] - 2026-08-27
 

@@ -7347,6 +7347,17 @@ test('report-driven workflow adapters route exact app-owned jobs with browser pa
 
   assert.equal(getAdapterWorkflowRouting('https://example.com/'), null);
   assert.equal(resolveAdapterWorkflowJob('https://www.producthunt.com/', 'send-email'), null);
+  const pullRequestReview = resolveAdapterWorkflowJob(
+    'https://github.com/esokullu/webbrain/pull/1',
+    'review-pull-request',
+  );
+  assert.equal(pullRequestReview.job.requiresLedger, false,
+    'PR review must not require reconciliation without a trusted changed-file inventory');
+  assert.deepEqual(pullRequestReview.job.stages, ['scope', 'collect', 'verify', 'deliver']);
+  assert.doesNotMatch(
+    formatAdapterWorkflowExecutionPolicy(pullRequestReview),
+    /workflowReconciliation|complete app-owned inventory/,
+  );
 });
 
 test('report-driven adapter notes remain bounded and do not overfit low-evidence sites', () => {
@@ -79356,14 +79367,42 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
         messageRecipientDispatchBinding: { token: 'bound-recipient' },
       }),
     };
-    const messageTerminal = agent._workflowTerminalEvidenceFromDone(
+    const messageProbe = {
+      success: true,
+      conclusive: true,
+      composerEmpty: true,
+      strongIdentityCandidates: ['Ada'],
+    };
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
       messageTabId,
       { workflowPageText: '' },
       messageUrl,
       { submit: messageSubmit, verifiedFinalSubmit: false, relevantForms: 0 },
-      { success: true, conclusive: true, composerEmpty: true, strongIdentityCandidates: ['Ada'] },
+      messageProbe,
+    ), null, `${AgentClass.name}: an empty composer was treated as proof of delivery`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      messageTabId,
+      { workflowPageText: '消息发送成功' },
+      messageUrl,
+      { submit: messageSubmit, verifiedFinalSubmit: false, relevantForms: 0 },
+      messageProbe,
+    ), null, `${AgentClass.name}: ordinary page text was treated as a sent-status confirmation`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      messageTabId,
+      { workflowPageText: '发送失败', liveRegionMessages: ['发送失败'] },
+      messageUrl,
+      { submit: messageSubmit, verifiedFinalSubmit: false, relevantForms: 0 },
+      messageProbe,
+    ), null, `${AgentClass.name}: a failed-send status was treated as successful delivery`);
+    const messageTerminal = agent._workflowTerminalEvidenceFromDone(
+      messageTabId,
+      { workflowPageText: '消息发送成功', liveRegionMessages: ['消息发送成功'] },
+      messageUrl,
+      { submit: messageSubmit, verifiedFinalSubmit: false, relevantForms: 0 },
+      messageProbe,
     );
     assert.equal(messageTerminal?.verificationKind, 'message_sent');
+    assert.equal(messageTerminal?.source, 'recipient_bound_dispatch_empty_composer_and_sent_confirmation');
     messageGuard.workflowTerminalEvidence = messageTerminal;
     assert.equal(agent._executionEvidenceSatisfied(messageGuard), true,
       `${AgentClass.name}: recipient-bound same-page message send could not satisfy its job contract`);
@@ -79392,7 +79431,14 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     ), null, `${AgentClass.name}: Gmail draft status was treated as sent`);
     assert.equal(agent._workflowTerminalEvidenceFromDone(
       gmailTabId,
-      { workflowPageText: 'Message sent' },
+      { workflowPageText: 'Message not sent', liveRegionMessages: ['Message not sent'] },
+      gmailUrl,
+      { submit: gmailSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+      { success: false, conclusive: false },
+    ), null, `${AgentClass.name}: Gmail failure status was treated as sent`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      gmailTabId,
+      { workflowPageText: 'Message sent', liveRegionMessages: ['Message sent'] },
       gmailUrl,
       { submit: gmailSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
       { success: false, conclusive: false },
