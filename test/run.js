@@ -79091,17 +79091,34 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     assert.equal(ledgerRetry?.retry, true);
     assert.match(ledgerRetry?.nudge || '', /complete item-level reconciliation/i);
 
-    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+    const partialInventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
       success: true,
-      pageContent: 'textbox "Full name" [ref_name]\ncheckbox "Accept terms" [ref_terms]',
-      hasMore: false,
-      truncated: false,
-      textTruncated: false,
+      pageContent: 'textbox "Full name" [ref_name]',
+      continuationArgs: { filter: 'all', page: 2 },
       documentToken: 'form-document-1',
       refScopeUrl: formUrl,
     });
-    assert.equal(inventory?.complete, true);
-    assert.equal(inventory?.itemCount, 2);
+    assert.equal(partialInventory?.complete, false,
+      `${AgentClass.name}: an accessibility tree with a continuation was treated as terminal`);
+
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name]',
+        'checkbox "Accept terms" [ref_terms]',
+        'button "Upload résumé" [ref_resume] type="file"',
+        'button "Submit" [ref_submit] type="submit"',
+      ].join('\n'),
+      documentToken: 'form-document-1',
+      refScopeUrl: formUrl,
+    });
+    assert.equal(inventory?.complete, true,
+      `${AgentClass.name}: an unpaginated accessibility tree was not terminal`);
+    assert.equal(inventory?.itemCount, 3);
+    assert.ok(inventory.items.some(item => item.ref_id === 'ref_resume' && item.role === 'button'),
+      `${AgentClass.name}: file-upload control was omitted from the trusted inventory`);
+    assert.ok(!inventory.items.some(item => item.ref_id === 'ref_submit'),
+      `${AgentClass.name}: an ordinary action button entered the trusted form inventory`);
     const reconciled = agent._progressUpdate(tabId, {
       items: inventory.items.map(item => ({
         id: item.id,
@@ -79112,7 +79129,7 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       workflowReconciliation: {
         job: 'submit-form',
         coverageComplete: true,
-        itemCount: 2,
+        itemCount: 3,
         basis: 'The complete accessibility-tree inventory was reviewed.',
       },
     });

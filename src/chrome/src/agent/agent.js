@@ -11785,12 +11785,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ).slice(0, 500);
     const items = [];
     const seen = new Set();
-    const rolePattern = /^\s*(textbox|combobox|checkbox|radio|switch|slider|spinbutton|listbox)\b/i;
+    const rolePattern = /^\s*(textbox|combobox|checkbox|radio|switch|slider|spinbutton|listbox|button)\b/i;
     for (const line of text.split(/\r?\n/)) {
       const roleMatch = rolePattern.exec(line);
       const refMatch = /\[(ref_[A-Za-z0-9_.:-]+)\]/.exec(line);
       if (!roleMatch || !refMatch) continue;
       const role = roleMatch[1].toLowerCase();
+      // Native file inputs are emitted as role=button. Include only those
+      // buttons whose app-owned AX line preserves type="file"; ordinary
+      // action buttons are not form questions and must not enter the ledger.
+      if (role === 'button' && !/\btype="file"/i.test(line)) continue;
       const refId = refMatch[1];
       const label = (/^\s*[a-z]+\s+"([^"]+)"/i.exec(line)?.[1] || `${role} ${refId}`)
         .replace(/\s+/g, ' ').trim().slice(0, 160);
@@ -11837,11 +11841,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const items = new Map((compatible ? prior.items : []).map(item => [item.id, item]));
     for (const item of observed) items.set(item.id, item);
     const documents = { ...(compatible ? prior.documents : {}) };
-    documents[documentKey] = {
-      complete: result?.hasMore === false
-        && result?.truncated !== true
-        && result?.textTruncated !== true,
-    };
+    const continuationPending = result?.hasMore === true
+      || result?.truncated === true
+      || result?.textTruncated === true
+      || !!result?.continuationArgs
+      || result?.nextPage != null;
+    documents[documentKey] = { complete: !continuationPending };
     const evidence = {
       bindingKey,
       taskKey,
