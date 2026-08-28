@@ -2,6 +2,9 @@ const COMPATIBILITY_PRESETS = new Set(['auto', 'openai', 'qwen', 'deepseek', 'op
 const REASONING_EFFORTS = new Set(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const SYSTEM_PROMPT_ROLES = new Set(['auto', 'system', 'developer']);
 const MAX_TOKEN_FIELDS = new Set(['auto', 'max_tokens', 'max_completion_tokens']);
+const OPENROUTER_ROUTING_VARIANT_VALUES = new Set(['standard', 'nitro', 'exacto']);
+const OPENROUTER_MODEL_VARIANT_SUFFIXES = /(?::(?:free|extended|thinking|online|nitro|floor|exacto))+$/i;
+export const OPENROUTER_ROUTING_VARIANTS = Object.freeze(['standard', 'nitro', 'exacto']);
 const STRUCTURED_OUTPUT_PROVIDER_NAMES = new Set([
   'azure-openai',
   'llamacpp',
@@ -39,6 +42,46 @@ const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function clean(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+export function openRouterRoutingVariant(config = {}) {
+  const configured = clean(config.routingVariant);
+  if (OPENROUTER_ROUTING_VARIANT_VALUES.has(configured)) return configured;
+  const suffix = String(config.model || '').trim().match(/:(nitro|exacto)$/i);
+  return suffix ? suffix[1].toLowerCase() : 'standard';
+}
+
+export function applyOpenRouterRoutingVariant(body, config = {}) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  if (clean(config.providerName) !== 'openrouter' || !Object.hasOwn(config, 'routingVariant')) return body;
+  const variant = clean(config.routingVariant);
+  if (!OPENROUTER_ROUTING_VARIANT_VALUES.has(variant)) return body;
+
+  const next = { ...body };
+  if (typeof next.model === 'string') {
+    next.model = variant === 'exacto'
+      ? `${next.model.replace(OPENROUTER_MODEL_VARIANT_SUFFIXES, '')}:exacto`
+      : next.model.replace(/:(?:nitro|exacto)$/i, '');
+  }
+
+  const hasProviderPreferences = next.provider
+    && typeof next.provider === 'object'
+    && !Array.isArray(next.provider);
+  if (variant !== 'nitro') {
+    if (hasProviderPreferences && Object.hasOwn(next.provider, 'sort')) {
+      const provider = { ...next.provider };
+      delete provider.sort;
+      if (Object.keys(provider).length) next.provider = provider;
+      else delete next.provider;
+    }
+    return next;
+  }
+
+  next.provider = {
+    ...(hasProviderPreferences ? next.provider : {}),
+    sort: 'throughput',
+  };
+  return next;
 }
 
 /**

@@ -41868,7 +41868,7 @@ test('settings async test controls surface rejected background results', () => {
     );
     assert.match(
       settings,
-      /document\.querySelectorAll\('\.loaded-model-dialog'\)\.forEach\(dialog => \{[\s\S]*?dialog\.addEventListener\('click', \(event\) => \{[\s\S]*?event\.target === dialog[\s\S]*?closeLoadedModelDialog\(dialog\);[\s\S]*?event\.target\.closest\('\.loaded-model-option'\);[\s\S]*?const providerId = dialog\.dataset\.loadedModelsFor;[\s\S]*?const selectedModel = option\.dataset\.model \|\| '';[\s\S]*?input\.value = selectedModel;[\s\S]*?saveProvider\(providerId, \{ showFlash: false \}\)[\s\S]*?detectProviderContextWindowForModel\(providerId, selectedModel\)[\s\S]*?closeLoadedModelDialog\(dialog\);[\s\S]*?\}\);[\s\S]*?\}\);/,
+      /document\.querySelectorAll\('\.loaded-model-dialog'\)\.forEach\(dialog => \{[\s\S]*?dialog\.addEventListener\('click', \(event\) => \{[\s\S]*?event\.target === dialog[\s\S]*?closeLoadedModelDialog\(dialog\);[\s\S]*?event\.target\.closest\('\.loaded-model-option'\);[\s\S]*?const providerId = dialog\.dataset\.loadedModelsFor;[\s\S]*?const selectedModel = option\.dataset\.model \|\| '';[\s\S]*?input\.value = selectedModel;[\s\S]*?syncInferredOpenRouterRoutingVariant\(providerId, selectedModel\);[\s\S]*?saveProvider\(providerId, \{ showFlash: false \}\)[\s\S]*?detectProviderContextWindowForModel\(providerId, selectedModel\)[\s\S]*?closeLoadedModelDialog\(dialog\);[\s\S]*?\}\);[\s\S]*?\}\);/,
       `${label}: choosing a loaded model should save it before detecting context for that model`,
     );
     assert.match(
@@ -63778,6 +63778,133 @@ test('non-local OpenAI-compatible providers keep the legacy model fallback', () 
       {},
     );
     assert.equal(body.model, 'gpt-4o', 'non-local fallback model must stay on the wire');
+  }
+});
+
+test('OpenRouter advanced routing variants map Standard, Nitro, and Exacto onto provider routing', () => {
+  const messages = [{ role: 'user', content: 'hello' }];
+  for (const compatibility of [ProviderCompatibilityCh, ProviderCompatibilityFx]) {
+    assert.deepEqual(compatibility.OPENROUTER_ROUTING_VARIANTS, ['standard', 'nitro', 'exacto']);
+    assert.equal(compatibility.openRouterRoutingVariant({ model: 'qwen/model:nitro' }), 'nitro');
+    assert.equal(compatibility.openRouterRoutingVariant({ model: 'qwen/model:exacto' }), 'exacto');
+    assert.equal(compatibility.openRouterRoutingVariant({ model: 'qwen/model' }), 'standard');
+  }
+
+  for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
+    const requestBody = (config) => new Provider({
+      providerName: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'qwen/qwen3.8-27b:exacto',
+      ...config,
+    })._buildChatCompletionsBody(messages, {}, false);
+    const responsesRequestBody = (config) => new Provider({
+      providerName: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiFormat: 'responses',
+      model: 'qwen/qwen3.8-27b:exacto',
+      ...config,
+    })._responsesBody(messages, {}, false);
+
+    assert.equal(requestBody({}).model, 'qwen/qwen3.8-27b:exacto', 'legacy manual suffix should remain untouched');
+    assert.equal(requestBody({ routingVariant: 'invalid' }).model, 'qwen/qwen3.8-27b:exacto', 'invalid stored values should fail closed');
+
+    const standard = requestBody({
+      routingVariant: 'standard',
+      extraBody: { provider: { only: ['deepinfra'], sort: 'throughput' } },
+    });
+    assert.equal(standard.model, 'qwen/qwen3.8-27b');
+    assert.deepEqual(standard.provider, { only: ['deepinfra'] }, 'Standard should remove only the explicit routing sort');
+
+    const nitro = requestBody({ routingVariant: 'nitro' });
+    assert.equal(nitro.model, 'qwen/qwen3.8-27b');
+    assert.deepEqual(nitro.provider, { sort: 'throughput' });
+
+    const exacto = requestBody({
+      routingVariant: 'exacto',
+      extraBody: { provider: { only: ['deepinfra'], sort: 'throughput' } },
+    });
+    assert.equal(exacto.model, 'qwen/qwen3.8-27b:exacto');
+    assert.deepEqual(exacto.provider, { only: ['deepinfra'] }, 'Exacto should use the model suffix without a conflicting provider sort');
+
+    const freeNitro = requestBody({
+      model: 'poolside/laguna-xs-2.1:free',
+      routingVariant: 'nitro',
+      extraBody: { provider: { only: ['deepinfra'] } },
+    });
+    assert.equal(freeNitro.model, 'poolside/laguna-xs-2.1:free', 'routing must preserve a static model variant');
+    assert.deepEqual(freeNitro.provider, { only: ['deepinfra'], sort: 'throughput' });
+
+    const freeExacto = requestBody({ model: 'poolside/laguna-xs-2.1:free', routingVariant: 'exacto' });
+    assert.equal(freeExacto.model, 'poolside/laguna-xs-2.1:exacto', 'Exacto should replace a conflicting static model variant');
+    assert.equal(freeExacto.provider, undefined);
+
+    const responsesLegacy = responsesRequestBody({});
+    assert.equal(responsesLegacy.model, 'qwen/qwen3.8-27b:exacto', 'Responses should preserve a legacy manual suffix');
+    const responsesStandard = responsesRequestBody({ routingVariant: 'standard' });
+    assert.equal(responsesStandard.model, 'qwen/qwen3.8-27b');
+    assert.equal(responsesStandard.provider, undefined);
+    const responsesNitro = responsesRequestBody({ model: 'poolside/laguna-xs-2.1:free', routingVariant: 'nitro' });
+    assert.equal(responsesNitro.model, 'poolside/laguna-xs-2.1:free');
+    assert.deepEqual(responsesNitro.provider, { sort: 'throughput' });
+    const responsesExacto = responsesRequestBody({ model: 'poolside/laguna-xs-2.1:free', routingVariant: 'exacto' });
+    assert.equal(responsesExacto.model, 'poolside/laguna-xs-2.1:exacto');
+    assert.equal(responsesExacto.provider, undefined);
+
+    const nonOpenRouter = new Provider({
+      providerName: 'together',
+      model: 'qwen/qwen3.8-27b:exacto',
+      routingVariant: 'nitro',
+    });
+    const nonOpenRouterBody = nonOpenRouter._buildChatCompletionsBody(messages, {}, false);
+    assert.equal(nonOpenRouterBody.model, 'qwen/qwen3.8-27b:exacto', 'OpenRouter routing must not rewrite another provider model');
+    assert.equal(nonOpenRouterBody.provider, undefined, 'OpenRouter routing must not add preferences to another provider');
+  }
+});
+
+test('OpenRouter routing selector is confined to Advanced settings in both browser builds', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const settings = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const manager = fs.readFileSync(path.join(ROOT, prefix, 'src/providers/manager.js'), 'utf8');
+    assert.match(
+      settings,
+      /function renderProviderCompatibilitySettings\(id, config\)[\s\S]*?showOpenRouterRouting = String\(config\.providerName \|\| ''\)\.toLowerCase\(\) === 'openrouter'[\s\S]*?<details class="provider-compatibility"[\s\S]*?showOpenRouterRouting \? `[\s\S]*?data-key="routingVariant"[\s\S]*?data-routing-explicit="\$\{Object\.hasOwn\(config, 'routingVariant'\) \? 'true' : 'false'\}"[\s\S]*?OPENROUTER_ROUTING_VARIANTS/,
+      `${label}: OpenRouter routing should render only inside the Advanced compatibility panel`,
+    );
+    assert.match(
+      settings,
+      /function shouldPersistProviderInput\(input\) \{[\s\S]*?input\.dataset\.key !== 'routingVariant' \|\| input\.dataset\.routingExplicit === 'true'[\s\S]*?\}/,
+      `${label}: an inferred routing value should not be serialized as an explicit override`,
+    );
+    assert.match(
+      settings,
+      /function syncInferredOpenRouterRoutingVariant\(id, model\) \{[\s\S]*?data-key="routingVariant"[\s\S]*?routingExplicit === 'true'[\s\S]*?openRouterRoutingVariant\(\{ model \}\)[\s\S]*?\}/,
+      `${label}: untouched routing selectors should follow model suffix edits`,
+    );
+    assert.match(
+      settings,
+      /input\.dataset\.key === 'routingVariant'\) input\.dataset\.routingExplicit = 'true'/,
+      `${label}: changing the Advanced selector should make it authoritative`,
+    );
+    assert.match(
+      settings,
+      /select\.dataset\.key === 'routingVariant'[\s\S]*?select\.value = 'standard';[\s\S]*?select\.dataset\.routingExplicit = 'true';/,
+      `${label}: Advanced reset should explicitly restore Standard routing`,
+    );
+    const saveStart = settings.indexOf('async function saveProvider(id, { showFlash = true, markConfigured = true } = {}) {');
+    const saveEnd = settings.indexOf('\n}\n\nfunction refreshProviderCardStatus', saveStart);
+    assert.match(
+      settings.slice(saveStart, saveEnd),
+      /inputs\.forEach\(input => \{[\s\S]*?if \(!shouldPersistProviderInput\(input\)\) return;[\s\S]*?setProviderConfigValue/,
+      `${label}: Save should omit an untouched inferred routing selector`,
+    );
+    assert.match(
+      manager,
+      /const DUPLICATE_BLANK_CONFIG_KEYS = \[[\s\S]*?'routingVariant'/,
+      `${label}: duplicated OpenRouter cards should not inherit a hidden routing choice`,
+    );
   }
 });
 
