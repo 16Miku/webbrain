@@ -4484,6 +4484,12 @@ test('direct-message recipient guard uses structured intent and exact active ide
       ['清辉月下夜'],
     ), false, 'un-pinned active-conversation intent must never authorize dispatch');
   }
+  for (const getPolicy of [getMessageRecipientGuardPolicy, getMessageRecipientGuardPolicyFx]) {
+    assert.deepEqual(getPolicy('https://www.linkedin.com/messaging/thread/2-abc/'), {
+      adapterName: 'linkedin', verifyActiveRecipient: true,
+    });
+    assert.equal(getPolicy('https://linkedin.example.com/messaging/'), null);
+  }
 
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -4506,6 +4512,14 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.deepEqual(pinned.target, {
       target_kind: 'named', recipient: '清辉月下夜',
     }, `${label}: active conversation was not pinned before execution`);
+    const linkedInPinned = await agent._pinActiveConversationMessagingTarget(
+      tabId,
+      { target_kind: 'active_conversation', recipient: '' },
+      'https://www.linkedin.com/messaging/thread/2-abc/',
+    );
+    assert.deepEqual(linkedInPinned.target, {
+      target_kind: 'named', recipient: '清辉月下夜',
+    }, `${label}: LinkedIn active conversation was not pinned before execution`);
     probe = {
       success: true,
       conclusive: true,
@@ -79465,6 +79479,93 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     );
     assert.equal(publishTerminal?.source, 'dispatch_bound_published_resource');
 
+    const asyncPublishTabId = 8987 + index;
+    const linkedInFeedUrl = 'https://www.linkedin.com/feed/';
+    const linkedInPublishedUrl = 'https://www.linkedin.com/feed/update/urn:li:activity:1234567890';
+    const linkedInExistingUrl = 'https://www.linkedin.com/feed/update/urn:li:activity:9876543210';
+    const linkedInPublishWorkflow = resolveAdapterWorkflowJob(linkedInFeedUrl, 'publish-post');
+    agent._startPlanExecutionGuard(asyncPublishTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: linkedInPublishWorkflow,
+    }).successfulConsequentialToolCalls = 1;
+    agent._beginCompletionInvariant(asyncPublishTabId);
+    agent._recordCompletionToolResult(
+      asyncPublishTabId,
+      'click_ax',
+      { ref_id: 'publish-post' },
+      { success: true, dispatched: true },
+    );
+    agent._recordCompletionSubmitAttempt(
+      asyncPublishTabId,
+      { isSubmit: true },
+      'click_ax',
+      { ref_id: 'publish-post' },
+      linkedInFeedUrl,
+      linkedInFeedUrl,
+      { success: true, dispatched: true },
+    );
+    assert.equal(
+      agent._completionSubmitStates.get(asyncPublishTabId)?.workflowBinding?.publishedResourceIdentity,
+      undefined,
+      `${AgentClass.name}: same-route LinkedIn dispatch invented a resource identity`,
+    );
+    agent._recordCompletionToolResult(asyncPublishTabId, 'read_page', {}, {
+      success: true,
+      url: linkedInPublishedUrl,
+      content: 'Published successfully.',
+    });
+    const asyncPublishSubmit = agent._completionSubmitStates.get(asyncPublishTabId);
+    assert.equal(
+      asyncPublishSubmit?.workflowBinding?.publishedResourceIdentity,
+      'linkedin:linkedin.com/feed/update/urn:li:activity:1234567890',
+      `${AgentClass.name}: the first post-submit observation did not bind an async LinkedIn permalink`,
+    );
+    assert.ok(
+      Number(asyncPublishSubmit?.workflowBinding?.publishedResourceIdentityObservationSequence || 0) > 0,
+      `${AgentClass.name}: async publication binding did not retain its observation sequence`,
+    );
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      asyncPublishTabId,
+      { workflowPageText: 'Published successfully.' },
+      linkedInPublishedUrl,
+      { submit: asyncPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    )?.source, 'dispatch_bound_published_resource');
+
+    agent._beginCompletionInvariant(asyncPublishTabId);
+    agent._recordCompletionToolResult(
+      asyncPublishTabId,
+      'click_ax',
+      { ref_id: 'publish-post' },
+      { success: true, dispatched: true },
+    );
+    agent._recordCompletionSubmitAttempt(
+      asyncPublishTabId,
+      { isSubmit: true },
+      'click_ax',
+      { ref_id: 'publish-post' },
+      linkedInFeedUrl,
+      linkedInFeedUrl,
+      { success: true, dispatched: true },
+    );
+    agent._recordCompletionToolResult(
+      asyncPublishTabId,
+      'navigate',
+      { url: linkedInExistingUrl },
+      { success: true },
+    );
+    agent._recordCompletionToolResult(asyncPublishTabId, 'read_page', {}, {
+      success: true,
+      url: linkedInExistingUrl,
+      content: 'An existing post.',
+    });
+    assert.equal(
+      agent._completionSubmitStates.get(asyncPublishTabId)?.workflowBinding?.publishedResourceIdentity,
+      undefined,
+      `${AgentClass.name}: a permalink opened by a later action was bound to the earlier publish dispatch`,
+    );
+
     const messageTabId = 8990 + index;
     const messageUrl = 'https://www.douyin.com/chat/123';
     const messageWorkflow = resolveAdapterWorkflowJob(messageUrl, 'send-message');
@@ -79561,6 +79662,46 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { success: false, conclusive: false },
     )?.source, 'provider_sent_confirmation',
     `${AgentClass.name}: Gmail sent confirmation could not satisfy its selected job`);
+
+    const linkedInMessageTabId = 9005 + index;
+    const linkedInMessageUrl = 'https://www.linkedin.com/messaging/thread/2-abc/';
+    const linkedInMessageWorkflow = resolveAdapterWorkflowJob(linkedInMessageUrl, 'send-message');
+    agent._startPlanExecutionGuard(linkedInMessageTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'named', recipient: 'Ada' },
+      siteWorkflow: linkedInMessageWorkflow,
+    }).successfulConsequentialToolCalls = 1;
+    const linkedInMessageSubmit = {
+      dispatched: true,
+      observedAfterSubmit: true,
+      workflowBinding: agent._workflowSubmitBindingForAttempt(linkedInMessageTabId, linkedInMessageUrl, {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: 'linkedin-bound-recipient' },
+      }),
+    };
+    const linkedInMessageProbe = {
+      success: true,
+      conclusive: true,
+      composerEmpty: true,
+      strongIdentityCandidates: ['Ada'],
+    };
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      linkedInMessageTabId,
+      { workflowPageText: '' },
+      linkedInMessageUrl,
+      { submit: linkedInMessageSubmit, verifiedFinalSubmit: false, relevantForms: 0 },
+      linkedInMessageProbe,
+    ), null, `${AgentClass.name}: LinkedIn empty composer was accepted without sent status`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      linkedInMessageTabId,
+      { workflowPageText: '', liveRegionMessages: ['Message sent'] },
+      linkedInMessageUrl,
+      { submit: linkedInMessageSubmit, verifiedFinalSubmit: false, relevantForms: 0 },
+      linkedInMessageProbe,
+    )?.source, 'recipient_bound_dispatch_empty_composer_and_sent_confirmation',
+    `${AgentClass.name}: pinned LinkedIn reply with positive sent status was not verified`);
   }
 });
 

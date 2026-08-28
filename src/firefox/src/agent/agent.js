@@ -1081,6 +1081,24 @@ export class Agent extends LoopDetector {
         (observedUrl && previousObservedUrl && normalizedObservedUrl !== previousObservedUrl)
         || (observedDocument && submitState.currentDocument && observedDocument !== submitState.currentDocument)
       );
+      let workflowBinding = submitState.workflowBinding;
+      if (
+        workflowBinding?.verificationKind === 'published_resource'
+        && !workflowBinding.publishedResourceIdentity
+        && submitState.dispatched === true
+        && observationChangedDocument
+        && observedUrl
+        && Number(next.lastAction?.sequence || 0) === Number(submitState.actionSequence || 0)
+      ) {
+        const publishedResourceIdentity = this._workflowPublishedResourceIdentity(workflowBinding, observedUrl);
+        if (publishedResourceIdentity) {
+          workflowBinding = {
+            ...workflowBinding,
+            publishedResourceIdentity,
+            publishedResourceIdentityObservationSequence: Number(next.lastObservation?.sequence || 0),
+          };
+        }
+      }
       this._completionSubmitStates.set(tabId, {
         ...submitState,
         ...(observedUrl ? { currentUrl: observedUrl } : {}),
@@ -1094,6 +1112,7 @@ export class Agent extends LoopDetector {
           ? completionSignalObserved
           : !!(submitState.completionSignalObserved || completionSignalObserved),
         observedAfterSubmit: true,
+        workflowBinding,
       });
     }
     return next;
@@ -1278,7 +1297,7 @@ export class Agent extends LoopDetector {
     if (siteWorkflow?.adapterName === 'douyin') {
       return /(?:消息已发送|发送成功|消息发送成功)/.test(text);
     }
-    if (siteWorkflow?.adapterName !== 'gmail') return false;
+    if (siteWorkflow?.adapterName !== 'gmail' && siteWorkflow?.adapterName !== 'linkedin') return false;
     return /\bmessage\s+sent\b|(?:邮件已发送|郵件已傳送|メッセージを送信しました|메시지를 보냈습니다|ileti gönderildi|message envoyé|mensaje enviado|mensagem enviada)/i.test(text);
   }
 

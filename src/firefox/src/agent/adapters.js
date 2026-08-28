@@ -16184,7 +16184,7 @@ const ADAPTERS = [
   {
     name: 'linkedin',
     category: 'general',
-    revision: 1,
+    revision: 2,
     regions: ['global'],
     jobs: ['publish-post', 'send-message'],
     workflow: {
@@ -16213,6 +16213,7 @@ const ADAPTERS = [
       },
     },
     matches: (url) => /^https?:\/\/(www\.)?linkedin\.com\//.test(url),
+    messaging: { verifyActiveRecipient: true },
     fullPageCapture: { infiniteScroll: isLinkedInInfiniteScrollUrl },
     notes: `
 - LinkedIn aggressively lazy-loads everything; scroll to populate the feed/profile, but most content lives in modal-style detail panes.
