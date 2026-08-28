@@ -78234,6 +78234,87 @@ test('app-owned runtime messages cannot change the execution task binding', () =
   }
 });
 
+test('planner clarification answers stay bound to their original task through compaction', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = 8665 + index;
+    const originalTask = 'Schedule the weekly report.';
+    const messages = [{ role: 'system', content: 'sys' }];
+    agent.conversations.set(tabId, messages);
+    agent._persistSubmittedTurn = async () => {};
+    agent._persist = () => {};
+    const plannerClarificationGate = async () => ({
+      proceed: false,
+      requestKind: 'clarify',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      message: 'When should I schedule it?',
+    });
+    agent._runPlannerIntentGate = plannerClarificationGate;
+    agent._runPlannerGate = plannerClarificationGate;
+    const gate = await agent._maybeRunPlannerGate(
+      tabId,
+      messages,
+      { role: 'user', content: originalTask },
+      () => {},
+      'act',
+      null,
+      null,
+      { tabUrl: 'https://example.test/reports', tabTitle: 'Reports' },
+    );
+    assert.equal(gate.proceed, false, `${AgentClass.name}: clarification fixture unexpectedly proceeded`);
+    const clarification = messages[2];
+    messages.push({ role: 'user', content: 'Tomorrow at 9.' });
+    for (let step = 0; step < 35; step += 1) {
+      messages.push({ role: 'assistant', content: `later step ${step}` });
+    }
+
+    assert.equal(clarification.webbrainPlannerClarification?.taskText, originalTask,
+      `${AgentClass.name}: planner clarification did not retain its task snapshot`);
+    assert.equal(clarification.webbrainPlannerClarification?.requiresSubmission, false,
+      `${AgentClass.name}: non-submit clarification metadata was not retained`);
+    const binding = agent._activeTaskBinding(messages);
+    assert.equal(binding.index, 3, `${AgentClass.name}: clarification answer was not the latest genuine turn`);
+    assert.deepEqual(binding.pinnedIndices, [1, 2, 3],
+      `${AgentClass.name}: clarification authority chain was incomplete`);
+    assert.match(binding.text, /Schedule the weekly report[\s\S]*Tomorrow at 9/i,
+      `${AgentClass.name}: active task omitted the request or clarification answer`);
+    assert.notEqual(binding.text, 'Tomorrow at 9.',
+      `${AgentClass.name}: clarification answer became a standalone task`);
+
+    const taskKey = agent._progressTaskKeyHash(tabId);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+    });
+    assert.equal(guard.taskKey, taskKey, `${AgentClass.name}: execution guard used a different clarification task key`);
+    assert.match(guard.taskText, /Schedule the weekly report[\s\S]*Tomorrow at 9/i,
+      `${AgentClass.name}: execution recovery bound only the short clarification answer`);
+
+    const originalLog = console.log;
+    console.log = () => {};
+    let result;
+    try {
+      result = await agent._manageContext(tabId, messages, () => {}, null, { force: true });
+    } finally {
+      console.log = originalLog;
+    }
+
+    assert.equal(result.compacted, true, `${AgentClass.name}: clarification history should compact`);
+    assert.equal(agent._progressTaskKeyHash(tabId), taskKey,
+      `${AgentClass.name}: compaction changed the clarified task key`);
+    assert.match(agent._progressTaskAnchorText(tabId), /Schedule the weekly report[\s\S]*Tomorrow at 9/i,
+      `${AgentClass.name}: compaction lost the composite task authority`);
+    assert.ok(messages.some(message => message === clarification),
+      `${AgentClass.name}: compaction discarded planner clarification metadata`);
+    assert.ok(messages.some(message => message?.role === 'user' && message.content === 'Tomorrow at 9.'),
+      `${AgentClass.name}: compaction discarded the genuine clarification answer`);
+    const summary = messages.find(message => /Context window was trimmed/i.test(String(message?.content || '')));
+    assert.match(String(summary?.content || ''), /clarification context[\s\S]*answer[\s\S]*CURRENT ACTIVE TASK/i,
+      `${AgentClass.name}: compaction did not describe the clarified task chain as authoritative`);
+  }
+});
+
 test('execution evidence and trusted continuation are scoped to the authorized task key', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
