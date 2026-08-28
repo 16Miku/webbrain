@@ -1124,6 +1124,18 @@ export class Agent extends LoopDetector {
         || (result.success !== false && !result.error)
       )
     );
+    const workflowBinding = this._workflowSubmitBindingForAttempt(tabId, beforeUrl, executionContext);
+    if (
+      workflowBinding?.verificationKind === 'published_resource'
+      && !explicitlyNotDispatched
+      && dispatchMayHaveOccurred
+      && before
+      && after
+      && before !== after
+    ) {
+      const publishedResourceIdentity = this._workflowPublishedResourceIdentity(workflowBinding, afterUrl);
+      if (publishedResourceIdentity) workflowBinding.publishedResourceIdentity = publishedResourceIdentity;
+    }
     const state = {
       originatingUrl: beforeUrl || '',
       currentUrl: afterUrl || beforeUrl || '',
@@ -1142,7 +1154,7 @@ export class Agent extends LoopDetector {
       formValidationFailed: !!result?.formValidationFailed,
       completionSignalObserved: false,
       observedAfterSubmit: false,
-      workflowBinding: this._workflowSubmitBindingForAttempt(tabId, beforeUrl, executionContext),
+      workflowBinding,
     };
     this._completionSubmitStates.set(tabId, state);
     return state;
@@ -1247,10 +1259,16 @@ export class Agent extends LoopDetector {
   _workflowTransactionFulfilledSignal(text) {
     const value = String(text || '');
     const orderPattern = /\b(?:order|booking|ticket)\s*(?:number|no\.?|id|reference)\s*[:#-]?\s*[A-Z0-9][A-Z0-9-]{3,}|(?:订单号|訂單號|订单编号|车票订单|取票号)\s*[:：]?\s*[A-Z0-9][A-Z0-9-]{3,}/ig;
-    const fulfilledPattern = /\b(?:payment\s+(?:successful|complete|confirmed)|paid|ticket(?:s)?\s+issued|booking\s+confirmed)\b|(?:支付成功|已支付|出票成功|已出票|购票成功|订单已完成)/ig;
+    const fulfilledPattern = /\b(?:payment\s+(?:successful|complete|confirmed)|paid|ticket(?:s)?\s+issued)\b|(?:支付成功|已支付|出票成功|已出票|购票成功|订单已完成)/ig;
+    const pendingPattern = /\b(?:payment\s+(?:is\s+)?(?:pending|processing|failed|declined|incomplete|unpaid)|(?:pending|awaiting)\s+payment|not\s+(?:yet\s+)?paid|paid\s*[:=-]\s*(?:no|false|pending)|payment\s+not\s+(?:yet\s+)?(?:complete|completed|confirmed|successful)|tickets?\s+not\s+issued|not\s+(?:yet\s+)?ticketed)\b|(?:待支付|未支付|支付中|支付失败|付款失败|未出票)/i;
     const orders = [...value.matchAll(orderPattern)].map(match => match.index || 0);
     const fulfilled = [...value.matchAll(fulfilledPattern)].map(match => match.index || 0);
-    return orders.some(orderIndex => fulfilled.some(statusIndex => Math.abs(orderIndex - statusIndex) <= 320));
+    return orders.some(orderIndex => fulfilled.some((statusIndex) => {
+      if (Math.abs(orderIndex - statusIndex) > 320) return false;
+      const start = Math.max(0, Math.min(orderIndex, statusIndex) - 80);
+      const end = Math.min(value.length, Math.max(orderIndex, statusIndex) + 80);
+      return !pendingPattern.test(value.slice(start, end));
+    }));
   }
 
   _workflowMessageSentSignal(siteWorkflow, text) {
@@ -1264,18 +1282,37 @@ export class Agent extends LoopDetector {
     return /\bmessage\s+sent\b|(?:邮件已发送|郵件已傳送|メッセージを送信しました|메시지를 보냈습니다|ileti gönderildi|message envoyé|mensaje enviado|mensagem enviada)/i.test(text);
   }
 
-  _workflowPublishedResourceSignal(siteWorkflow, pageUrl, text) {
-    if (siteWorkflow?.adapterName === 'github') {
-      return /\/releases\/tag\/[^/?#]+/i.test(String(pageUrl || ''));
+  _workflowPublishedResourceIdentity(siteWorkflow, pageUrl) {
+    let parsed;
+    try {
+      parsed = new URL(String(pageUrl || ''));
+    } catch (_) {
+      return '';
     }
-    if (siteWorkflow?.adapterName === 'linkedin') {
-      return /\/(?:posts\/|feed\/update\/)/i.test(String(pageUrl || ''))
-        || /\bpost\s+published\b|\bpublished\s+successfully\b/i.test(text);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const path = parsed.pathname.replace(/\/+$/, '') || '/';
+    if (
+      siteWorkflow?.adapterName === 'github'
+      && host === 'github.com'
+      && /^\/[^/]+\/[^/]+\/releases\/tag\/[^/]+$/i.test(path)
+    ) {
+      return `github:${host}${path}`;
     }
-    if (siteWorkflow?.adapterName === 'douyin') {
-      return /\/video\/\d+/i.test(String(pageUrl || '')) || /(?:发布成功|作品已发布|作品发布成功)/.test(text);
+    if (
+      siteWorkflow?.adapterName === 'linkedin'
+      && host === 'linkedin.com'
+      && /^\/(?:posts\/[^/]+|feed\/update\/[^/]+)$/i.test(path)
+    ) {
+      return `linkedin:${host}${path}`;
     }
-    return /\b(?:published\s+successfully|publication\s+complete)\b/i.test(text);
+    if (
+      siteWorkflow?.adapterName === 'douyin'
+      && host === 'douyin.com'
+      && /^\/video\/\d+$/i.test(path)
+    ) {
+      return `douyin:${host}${path}`;
+    }
+    return '';
   }
 
   _workflowTerminalEvidenceFromDone(tabId, pageState, pageUrl, submissionEvidence, messageProbe = null) {
@@ -1327,9 +1364,11 @@ export class Agent extends LoopDetector {
       verified = submissionEvidence?.verifiedFinalSubmit === true && this._workflowResolvedStateSignal(text);
       source = 'resolved_state';
     } else if (verificationKind === 'published_resource') {
+      const observedResourceIdentity = this._workflowPublishedResourceIdentity(siteWorkflow, pageUrl);
       verified = submissionEvidence?.verifiedFinalSubmit === true
-        && this._workflowPublishedResourceSignal(siteWorkflow, pageUrl, text);
-      source = 'published_resource';
+        && !!binding.publishedResourceIdentity
+        && observedResourceIdentity === binding.publishedResourceIdentity;
+      source = 'dispatch_bound_published_resource';
     } else {
       verified = submissionEvidence?.verifiedFinalSubmit === true;
       source = 'verified_submit_transition';
@@ -9606,7 +9645,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (seen.has(id)) continue;
       seen.add(id);
       items.push({ id, label, role, ref_id: refId });
-      if (items.length >= 200) break;
     }
     return items;
   }

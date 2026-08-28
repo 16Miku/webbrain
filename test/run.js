@@ -79136,6 +79136,14 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       `${AgentClass.name}: an ordinary action button entered the trusted form inventory`);
     assert.equal(inventory.items.find(item => item.ref_id === 'ref_name')?.id, nameIdBeforeFill,
       `${AgentClass.name}: mutable tree revisions changed a stable form-control inventory id`);
+    const oversizedInventoryItems = agent._workflowFormInventoryItems({
+      pageContent: Array.from(
+        { length: 205 },
+        (_, itemIndex) => `textbox "Question ${itemIndex + 1}" [ref_question_${itemIndex + 1}]`,
+      ).join('\n'),
+    }, agent._adapterWorkflowBindingKey(selected), 'large-form-document');
+    assert.equal(oversizedInventoryItems.length, 205,
+      `${AgentClass.name}: a complete form inventory was silently capped at 200 controls`);
     const terminalInventoryItems = inventory.items.map(item => ({
         id: item.id,
         label: item.label,
@@ -79376,6 +79384,19 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       railUrl,
       { submit: railSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
     ), null, `${AgentClass.name}: pending 12306 order was treated as fulfilled`);
+    for (const pendingTransaction of [
+      'Order number E123456. Booking confirmed. Payment pending.',
+      'Order number E123456. Booking confirmed, but not paid.',
+      'Order number E123456. Booking confirmed.',
+      'Order number E123456. Paid: false.',
+    ]) {
+      assert.equal(agent._workflowTerminalEvidenceFromDone(
+        railTabId,
+        { workflowPageText: pendingTransaction },
+        railUrl,
+        { submit: railSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+      ), null, `${AgentClass.name}: pending transaction was accepted: ${pendingTransaction}`);
+    }
     const railTerminal = agent._workflowTerminalEvidenceFromDone(
       railTabId,
       { workflowPageText: 'Order number E123456. Payment successful. Ticket issued.' },
@@ -79386,6 +79407,63 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     railGuard.workflowTerminalEvidence = railTerminal;
     assert.equal(agent._executionEvidenceSatisfied(railGuard), true,
       `${AgentClass.name}: paid/ticket-issued 12306 state did not satisfy its job contract`);
+
+    const publishTabId = 8985 + index;
+    const publishBeforeUrl = 'https://github.com/esokullu/webbrain/releases/new';
+    const publishedUrl = 'https://github.com/esokullu/webbrain/releases/tag/v33.6.0';
+    const unrelatedReleaseUrl = 'https://github.com/esokullu/webbrain/releases/tag/v33.5.0';
+    const publishWorkflow = resolveAdapterWorkflowJob(publishBeforeUrl, 'publish-release');
+    agent._startPlanExecutionGuard(publishTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: publishWorkflow,
+    }).successfulConsequentialToolCalls = 1;
+    const unboundPublishSubmit = agent._recordCompletionSubmitAttempt(
+      publishTabId,
+      { isSubmit: true },
+      'click_ax',
+      { ref_id: 'publish-release' },
+      publishBeforeUrl,
+      publishBeforeUrl,
+      { success: true, dispatched: true },
+    );
+    assert.equal(unboundPublishSubmit?.workflowBinding?.publishedResourceIdentity, undefined,
+      `${AgentClass.name}: same-document dispatch invented a published resource identity`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      publishTabId,
+      { workflowPageText: 'Published successfully.' },
+      unrelatedReleaseUrl,
+      { submit: unboundPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: an existing release satisfied an unbound publish dispatch`);
+
+    const boundPublishSubmit = agent._recordCompletionSubmitAttempt(
+      publishTabId,
+      { isSubmit: true },
+      'click_ax',
+      { ref_id: 'publish-release' },
+      publishBeforeUrl,
+      publishedUrl,
+      { success: true, dispatched: true, pageUrlChanged: true },
+    );
+    assert.equal(
+      boundPublishSubmit?.workflowBinding?.publishedResourceIdentity,
+      'github:github.com/esokullu/webbrain/releases/tag/v33.6.0',
+      `${AgentClass.name}: submit transition did not bind the published resource identity`,
+    );
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      publishTabId,
+      { workflowPageText: 'Published successfully.' },
+      unrelatedReleaseUrl,
+      { submit: boundPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: an unrelated existing release satisfied a bound publish dispatch`);
+    const publishTerminal = agent._workflowTerminalEvidenceFromDone(
+      publishTabId,
+      { workflowPageText: 'Published successfully.' },
+      publishedUrl,
+      { submit: boundPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    );
+    assert.equal(publishTerminal?.source, 'dispatch_bound_published_resource');
 
     const messageTabId = 8990 + index;
     const messageUrl = 'https://www.douyin.com/chat/123';
