@@ -8434,7 +8434,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       vision,
       messages,
       {
-        ...visionGenerationOptions(tokenLimit, { reasoningControl }),
+        ...visionGenerationOptions(tokenLimit, {
+          reasoningControl,
+          providerConfig: vision?.config,
+        }),
         ...(signal ? { signal } : {}),
       },
       costState,
