@@ -9784,9 +9784,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // the subtree itself has no continuation metadata. Until an app-owned,
     // form-root scope is available, only a document-root read can close the
     // workflow inventory for exact reconciliation.
+    const priorDocument = documents[documentKey];
+    const rootComplete = priorDocument?.complete === true
+      || (!requestRefId && !continuationPending);
+    // Once an exhaustive document-root read has completed this stable
+    // document, a later subtree drill-down cannot make sibling coverage
+    // unknown again. Keep completion monotonic while still allowing an
+    // incomplete root read to replace an earlier subtree-only observation.
     documents[documentKey] = {
-      complete: !requestRefId && !continuationPending,
-      scope: requestRefId ? 'subtree' : 'document',
+      complete: rootComplete,
+      scope: rootComplete ? 'document' : (requestRefId ? 'subtree' : 'document'),
     };
     const evidence = {
       bindingKey,
@@ -15372,6 +15379,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'Schema: {"mode":"active|read_only|inactive","allowedActions":["follow"],"forbiddenActions":[],"targets":[],"confidence":0.0,"pageScopePolicy":"none|page|site","reason":"short"}.',
           'Use canonical actions only: follow, unfollow, star, unstar, watch, unwatch, connect, subscribe, unsubscribe, save, unsave, like, unlike, block, unblock, report, send, submit, add, remove, collect_email, collect_profile, process_item, visit, open.',
           'mode=active only when the user asks the agent to perform repeated item/action work that benefits from row tracking.',
+          'Exception: for siteContext.workflow.job="upload-release-assets" with requiresLedger=true, use mode=active and list every concrete requested target even when there is exactly one. Copy each exact requested filename or path into targets; do not merge or omit assets.',
           'mode=read_only for questions, summaries, inspections, or reference-only uses of UI labels.',
           'If an action is negated or forbidden, put it in forbiddenActions even if its label appears in the task text.',
         ].join('\n'),
@@ -15392,9 +15400,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const provider = opts.provider || this.providerManager?.getActive?.();
     if (!provider?.chat) return null;
     const pageScope = String(opts.pageScope || this._currentProgressPageScope(tabId) || '').trim();
+    const siteWorkflow = this._planExecutionGuards.get(tabId)?.siteWorkflow;
     const siteContext = {
       pageScope,
       site: this._isGithubStargazersUrl(pageScope) ? 'github_stargazers' : 'unknown',
+      ...(siteWorkflow?.job?.requiresLedger === true ? {
+        workflow: {
+          adapter: siteWorkflow.adapterName,
+          job: siteWorkflow.job.id,
+          requiresLedger: true,
+        },
+      } : {}),
     };
     try {
       const response = await this._chatWithCostAllowance(provider, this._progressIntentClassifierMessages(taskText, siteContext), {
@@ -15410,12 +15426,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _seedClassifierProgressTargets(tabId, session) {
+    const siteWorkflow = this._planExecutionGuards.get(tabId)?.siteWorkflow;
+    // Repeated-work classifiers normally need at least two targets. Release
+    // asset reconciliation is mandatory even for one requested file, so its
+    // app-bound classifier inventory must retain that single obligation.
+    const acceptsSingleTarget = siteWorkflow?.adapterName === 'github'
+      && siteWorkflow?.job?.id === 'upload-release-assets'
+      && siteWorkflow.job.requiresLedger === true;
     if (
       !session
       || session.source !== 'classifier'
       || !isProgressIntentActive(session)
       || !Array.isArray(session.targets)
-      || session.targets.length < 2
+      || session.targets.length < (acceptsSingleTarget ? 1 : 2)
       || !Array.isArray(session.allowedActions)
       || session.allowedActions.length < 1
     ) {

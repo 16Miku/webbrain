@@ -79338,6 +79338,19 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       `${AgentClass.name}: an ordinary action button entered the trusted form inventory`);
     assert.equal(inventory.items.find(item => item.ref_id === 'ref_name')?.id, nameIdBeforeFill,
       `${AgentClass.name}: mutable tree revisions changed a stable form-control inventory id`);
+    const rootThenSubtree = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      ref_id: 'ref_section',
+    }, {
+      success: true,
+      pageContent: 'textbox "Full name" [ref_name] value="Ada"',
+      treeRevision: 'tree-later-subtree',
+    });
+    assert.equal(rootThenSubtree?.complete, true,
+      `${AgentClass.name}: a later subtree read erased completed document-root coverage`);
+    assert.deepEqual(guard.workflowInventoryEvidence.documents['stable-form-document'], {
+      complete: true,
+      scope: 'document',
+    }, `${AgentClass.name}: completed root scope was downgraded to a subtree`);
     const oversizedInventoryItems = agent._workflowFormInventoryItems({
       pageContent: Array.from(
         { length: 205 },
@@ -79385,6 +79398,68 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     readGuard.successfulTaskToolCalls = 1;
     assert.equal(readGuard.requiresStateChange, false);
     assert.equal(agent._executionEvidenceSatisfied(readGuard), true);
+  }
+});
+
+test('GitHub release-asset workflow seeds an exact single-target inventory', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
+    agent.useSiteAdapters = true;
+    agent._persist = () => {};
+    const tabId = 8934 + index;
+    const releaseUrl = 'https://github.com/esokullu/webbrain/releases/edit/v33.5.0';
+    const taskText = 'Upload dist/webbrain-chrome-33.5.0.zip to this release and save it.';
+    const selected = agent._resolvePlannerSiteWorkflow(releaseUrl, {
+      request_kind: 'execute',
+      site_job: 'upload-release-assets',
+    });
+    assert.equal(selected?.adapterName, 'github');
+    assert.equal(selected?.job?.requiresLedger, true);
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: taskText },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    let classifierContext = null;
+    agent._chatWithCostAllowance = async (_provider, messages) => {
+      classifierContext = JSON.parse(messages[1].content).siteContext;
+      return {
+        content: JSON.stringify({
+          mode: 'active',
+          allowedActions: ['process_item'],
+          forbiddenActions: [],
+          targets: ['dist/webbrain-chrome-33.5.0.zip'],
+          confidence: 0.98,
+          pageScopePolicy: 'page',
+        }),
+      };
+    };
+    const session = await agent._ensureProgressSessionForCurrentTask(tabId, {
+      provider: { chat: async () => ({ content: '{}' }) },
+      taskText,
+      pageScope: releaseUrl,
+      progressLedgerPolicy: 'enabled',
+      progressAction: 'process_item',
+    });
+    assert.deepEqual(classifierContext?.workflow, {
+      adapter: 'github',
+      job: 'upload-release-assets',
+      requiresLedger: true,
+    }, `${AgentClass.name}: the classifier did not receive the app-owned asset workflow`);
+    const rows = agent._rowsForProgressSession(tabId, session.sessionId);
+    assert.equal(rows.length, 1, `${AgentClass.name}: a single release asset was not seeded`);
+    assert.equal(rows[0].label, 'dist/webbrain-chrome-33.5.0.zip');
+    assert.equal(rows[0].fields?.classifierTarget, true);
+    assert.deepEqual(agent._trustedWorkflowInventory(tabId, rows, guard), {
+      source: 'classifier_targets',
+      itemIds: [rows[0].id],
+      itemCount: 1,
+    }, `${AgentClass.name}: the single asset did not become trusted workflow inventory`);
   }
 });
 
