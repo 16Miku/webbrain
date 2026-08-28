@@ -1,6 +1,7 @@
 import { BaseLLMProvider } from './base.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
 import {
+  isDirectDeepSeekConfig,
   isNewOpenAIContractConfig,
   isOfficialOpenAIConfig,
   shouldUseOpenAIResponsesApi,
@@ -132,7 +133,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     // checkpoint needed), so qwen3\.[5-9] catches those alongside the
     // older qwen*vl-suffixed lines.
     const m = (this.config.model || '').toLowerCase();
-    return /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|claude|gemini|grok|minimax-m3|kimi-k(?:-?3|2\.[5-9])|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|qwen3p8-27b|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|step-3/.test(m);
+    return /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|claude|gemini|grok|minimax-m3|kimi-k(?:-?3|2\.[5-9])|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|qwen3p8-27b|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|step-3|deepseek-v4-flash-vision-exp/.test(m);
   }
 
   get useCompactPrompt() {
@@ -380,6 +381,12 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   _supportsReasoningContentReplay(options = {}) {
+    if (isDirectDeepSeekConfig({
+      ...this.config,
+      providerName: this.config.providerName || this.name,
+      baseUrl: this.baseUrl,
+      model: this.model,
+    })) return true;
     if (String(this.config.providerName || '').trim().toLowerCase() !== 'kimi') return false;
     const model = String(this.model || '').trim().toLowerCase();
     if (KIMI_PRESERVED_THINKING_MODELS.has(model)) return true;

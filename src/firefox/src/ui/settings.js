@@ -2411,7 +2411,7 @@ function renderProviders() {
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-v4-flash',
           suggestions: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'] },
-        { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.deepseek.com/v1' },
+        { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.deepseek.com' },
         ...COST_ESTIMATE_FIELDS,
       ],
     },
