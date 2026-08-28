@@ -2,6 +2,8 @@ const COMPATIBILITY_PRESETS = new Set(['auto', 'openai', 'qwen', 'deepseek', 'op
 const REASONING_EFFORTS = new Set(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const SYSTEM_PROMPT_ROLES = new Set(['auto', 'system', 'developer']);
 const MAX_TOKEN_FIELDS = new Set(['auto', 'max_tokens', 'max_completion_tokens']);
+const OPENROUTER_ROUTING_VARIANT_VALUES = new Set(['standard', 'nitro', 'exacto']);
+export const OPENROUTER_ROUTING_VARIANTS = Object.freeze(['standard', 'nitro', 'exacto']);
 const STRUCTURED_OUTPUT_PROVIDER_NAMES = new Set([
   'azure-openai',
   'llamacpp',
@@ -39,6 +41,24 @@ const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function clean(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+export function openRouterRoutingVariant(config = {}) {
+  const configured = clean(config.routingVariant);
+  if (OPENROUTER_ROUTING_VARIANT_VALUES.has(configured)) return configured;
+  const suffix = String(config.model || '').trim().match(/:(nitro|exacto)$/i);
+  return suffix ? suffix[1].toLowerCase() : 'standard';
+}
+
+export function withOpenRouterRoutingVariant(model, config = {}) {
+  const value = String(model || '');
+  if (clean(config.providerName) !== 'openrouter' || !Object.hasOwn(config, 'routingVariant')) {
+    return value;
+  }
+  const variant = clean(config.routingVariant);
+  if (!OPENROUTER_ROUTING_VARIANT_VALUES.has(variant)) return value;
+  const baseModel = value.replace(/:(?:nitro|exacto)$/i, '');
+  return variant === 'standard' ? baseModel : `${baseModel}:${variant}`;
 }
 
 /**
