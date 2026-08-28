@@ -4178,6 +4178,8 @@
       actionTarget,
       tool,
       args: dispatch.args && typeof dispatch.args === 'object' ? { ...dispatch.args } : {},
+      adapterName: String(dispatch.adapterName || ''),
+      expectedRecipient: String(dispatch.expectedRecipient || ''),
       identityKey,
       pageUrl: location.href,
       timer: null,
@@ -4221,6 +4223,8 @@
       bindDispatch: false,
       expectedDispatchTarget: expected.actionTarget,
       expectedComposer: expected.composer,
+      adapterName: expected.adapterName,
+      expectedRecipient: expected.expectedRecipient,
     });
     if (live?.dispatchTargetChanged === true) {
       return {
@@ -4629,6 +4633,11 @@
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, max);
+      const normalizedIdentity = (value) => {
+        const identity = compact(value, 240);
+        if (!identity) return '';
+        try { return identity.normalize('NFKC').toLocaleLowerCase(); } catch { return identity.toLowerCase(); }
+      };
       const visible = (el) => {
         if (!el || el.nodeType !== 1 || !el.isConnected) return false;
         try {
@@ -4893,6 +4902,7 @@
       );
       const strongIdentities = [];
       const strongSeen = new Set();
+      const gmailRecipientMode = params.adapterName === 'gmail';
       const inConversationHeaderBand = (el) => {
         if (headerBandBottom <= 0) return false;
         const rect = el.getBoundingClientRect();
@@ -4915,17 +4925,63 @@
         strongIdentities.push(text);
       };
 
-      for (const el of document.querySelectorAll(
-        '[aria-selected="true"],[aria-current]:not([aria-current="false"])'
-      )) {
-        // Search results and navigation rows can also be selected/current, so
-        // they count only inside the narrow, non-scrollable conversation
-        // header above the composer.
-        addStrongIdentity(el);
-        if (strongIdentities.length >= 8) break;
-      }
+      if (gmailRecipientMode) {
+        const composeRoot = composer.closest?.('[role="dialog"],form') || null;
+        const recipients = new Map();
+        if (composeRoot?.querySelectorAll) {
+          for (const el of composeRoot.querySelectorAll('[email],[data-hovercard-id],[data-email]')) {
+            if (!visible(el) || editable(el)) continue;
+            const email = [
+              el.getAttribute?.('email'),
+              el.getAttribute?.('data-email'),
+              el.getAttribute?.('data-hovercard-id'),
+            ].map(value => compact(value, 240)).find(value => /@/.test(value)) || '';
+            if (!email) continue;
+            const aliases = new Map();
+            for (const value of [
+              email,
+              el.getAttribute?.('name'),
+              el.getAttribute?.('aria-label'),
+              el.getAttribute?.('title'),
+              el.innerText,
+              el.textContent,
+            ]) {
+              const alias = compact(value, 240);
+              const normalized = normalizedIdentity(alias);
+              if (alias && normalized && !aliases.has(normalized)) aliases.set(normalized, alias);
+            }
+            const key = normalizedIdentity(email);
+            if (!key) continue;
+            const priorAliases = recipients.get(key) || new Map();
+            for (const [normalized, alias] of aliases) priorAliases.set(normalized, alias);
+            recipients.set(key, priorAliases);
+          }
+        }
+        // The planner contract currently authorizes one named recipient. A
+        // missing, additional, or mismatched Gmail chip must fail closed.
+        if (recipients.size === 1) {
+          const aliases = [...recipients.values()][0];
+          const expected = compact(params.expectedRecipient, 240);
+          const normalizedExpected = normalizedIdentity(expected);
+          const identity = normalizedExpected && aliases.has(normalizedExpected)
+            ? expected
+            : (!normalizedExpected ? [...aliases.values()][0] : '');
+          if (identity) {
+            strongSeen.add(identity);
+            strongIdentities.push(identity);
+          }
+        }
+      } else {
+        for (const el of document.querySelectorAll(
+          '[aria-selected="true"],[aria-current]:not([aria-current="false"])'
+        )) {
+          // Search results and navigation rows can also be selected/current, so
+          // they count only inside the narrow, non-scrollable conversation
+          // header above the composer.
+          addStrongIdentity(el);
+          if (strongIdentities.length >= 8) break;
+        }
 
-      if (strongIdentities.length < 8) {
         for (const el of document.querySelectorAll(
           'h1,h2,h3,h4,[role="heading"]'
         )) {
@@ -4941,6 +4997,8 @@
             tool,
             args,
             actionTarget: dispatchTarget,
+            adapterName: params.adapterName,
+            expectedRecipient: params.expectedRecipient,
           })
         : '';
       const composerText = (() => {

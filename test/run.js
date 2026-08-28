@@ -4485,6 +4485,9 @@ test('direct-message recipient guard uses structured intent and exact active ide
     ), false, 'un-pinned active-conversation intent must never authorize dispatch');
   }
   for (const getPolicy of [getMessageRecipientGuardPolicy, getMessageRecipientGuardPolicyFx]) {
+    assert.deepEqual(getPolicy('https://mail.google.com/mail/u/0/#inbox'), {
+      adapterName: 'gmail', verifyActiveRecipient: true,
+    });
     assert.deepEqual(getPolicy('https://www.linkedin.com/messaging/thread/2-abc/'), {
       adapterName: 'linkedin', verifyActiveRecipient: true,
     });
@@ -4502,7 +4505,11 @@ test('direct-message recipient guard uses structured intent and exact active ide
       strongIdentityCandidates: ['清辉月下夜'],
       identityCandidates: ['清辉月下夜'],
     };
-    agent._messageRecipientContentProbe = async () => probe;
+    let lastProbeParams = null;
+    agent._messageRecipientContentProbe = async (_probeTabId, params) => {
+      lastProbeParams = params;
+      return probe;
+    };
 
     const pinned = await agent._pinActiveConversationMessagingTarget(
       tabId,
@@ -4573,6 +4580,8 @@ test('direct-message recipient guard uses structured intent and exact active ide
       messageRecipientGuardRequired: true,
       messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
     });
+    assert.equal(lastProbeParams?.expectedRecipient, '迷你世界皓宸',
+      `${label}: named recipient was not passed to the dispatch probe`);
     for (const [tool, args] of [
       ['click', { selector: '#send' }],
       ['click_ax', { ref_id: 'ref_send' }],
@@ -4694,6 +4703,15 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const composer = element('', { left: 400, right: 900, top: 700, bottom: 760, width: 500, height: 60 }, {
       tagName: 'TEXTAREA', value: 'hello',
     });
+    let gmailRecipientChips = [];
+    const gmailComposeRoot = {
+      querySelectorAll: (selector) => selector === '[email],[data-hovercard-id],[data-email]'
+        ? gmailRecipientChips
+        : [],
+    };
+    composer.closest = (selector) => selector.includes('[role="dialog"]') || selector === 'form'
+      ? gmailComposeRoot
+      : null;
     const searchBox = element('', { left: 20, right: 300, top: 130, bottom: 180, width: 280, height: 50 }, {
       tagName: 'TEXTAREA', role: 'searchbox', value: 'Bob',
     });
@@ -4815,6 +4833,27 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const conversationMenuResult = probe({ tool: 'click', args: { text: 'More' } });
     const conversationMenuLeafResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-menu-leaf' } });
     const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen' } });
+    activeElement = composer;
+    const gmailAliceChip = element('Alice', {
+      left: 430, right: 620, top: 610, bottom: 650, width: 190, height: 40,
+    }, { attributes: { email: 'alice@example.com', name: 'Alice' } });
+    const gmailBobChip = element('Bob', {
+      left: 630, right: 800, top: 610, bottom: 650, width: 170, height: 40,
+    }, { attributes: { email: 'bob@example.com', name: 'Bob' } });
+    gmailRecipientChips = [gmailAliceChip];
+    const gmailMatchingRecipientResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail', expectedRecipient: 'alice@example.com',
+    });
+    const gmailMatchingNameResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail', expectedRecipient: 'Alice',
+    });
+    const gmailWrongRecipientResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail', expectedRecipient: 'mallory@example.com',
+    });
+    gmailRecipientChips = [gmailAliceChip, gmailBobChip];
+    const gmailExtraRecipientResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail', expectedRecipient: 'alice@example.com',
+    });
     composer.value = '';
     const emptyComposerCustomSendResult = probe({ tool: 'click', args: { text: 'Quick send' } });
     return {
@@ -4832,6 +4871,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       conversationMenuLeafResult,
       unresolvedClickResult,
       emptyComposerCustomSendResult,
+      gmailMatchingRecipientResult,
+      gmailMatchingNameResult,
+      gmailWrongRecipientResult,
+      gmailExtraRecipientResult,
     };
   };
 
@@ -4851,6 +4894,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       conversationMenuLeafResult,
       unresolvedClickResult,
       emptyComposerCustomSendResult,
+      gmailMatchingRecipientResult,
+      gmailMatchingNameResult,
+      gmailWrongRecipientResult,
+      gmailExtraRecipientResult,
     } = runProbe(prefix);
     assert.equal(observationResult.success, true);
     assert.equal(observationResult.conclusive, true);
@@ -4888,6 +4935,12 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(conversationMenuLeafResult.conclusive, false);
     assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
     assert.equal(unresolvedClickResult.conclusive, false);
+    assert.deepEqual(Array.from(gmailMatchingRecipientResult.strongIdentityCandidates), ['alice@example.com']);
+    assert.deepEqual(Array.from(gmailMatchingNameResult.strongIdentityCandidates), ['Alice']);
+    assert.deepEqual(Array.from(gmailWrongRecipientResult.strongIdentityCandidates), [],
+      `${prefix}: mismatched Gmail recipient chip authorized dispatch`);
+    assert.deepEqual(Array.from(gmailExtraRecipientResult.strongIdentityCandidates), [],
+      `${prefix}: an unreviewed extra Gmail recipient authorized dispatch`);
   }
 });
 
@@ -7376,7 +7429,7 @@ test('report-driven workflow adapters route exact app-owned jobs with browser pa
     'https://mail.google.com/mail/u/0/#inbox/abc',
     'read-complete-thread',
   );
-  assert.equal(gmailThreadRead.revision, 2);
+  assert.equal(gmailThreadRead.revision, 3);
   assert.equal(gmailThreadRead.job.requiresLedger, false,
     'Gmail complete-thread reads must rely on the dedicated conversation coverage guard, not an unavailable ledger inventory');
   assert.deepEqual(gmailThreadRead.job.stages, ['access_gate', 'scope', 'collect', 'verify', 'deliver']);
@@ -7384,6 +7437,18 @@ test('report-driven workflow adapters route exact app-owned jobs with browser pa
     formatAdapterWorkflowExecutionPolicy(gmailThreadRead),
     /workflowReconciliation|complete app-owned inventory/,
   );
+  for (const [url, jobId] of [
+    ['https://www.producthunt.com/', 'collect-ranked-products'],
+    ['https://www.douyin.com/video/1', 'collect-comments'],
+  ]) {
+    const collection = resolveAdapterWorkflowJob(url, jobId);
+    assert.equal(collection.job.requiresLedger, false,
+      `${jobId}: collection must not require reconciliation without a complete app-owned inventory`);
+    assert.doesNotMatch(
+      formatAdapterWorkflowExecutionPolicy(collection),
+      /workflowReconciliation|complete app-owned inventory/,
+    );
+  }
 });
 
 test('report-driven adapter notes remain bounded and do not overfit low-evidence sites', () => {
@@ -79660,8 +79725,22 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       gmailUrl,
       { submit: gmailSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
       { success: false, conclusive: false },
-    )?.source, 'provider_sent_confirmation',
-    `${AgentClass.name}: Gmail sent confirmation could not satisfy its selected job`);
+    ), null, `${AgentClass.name}: unbound Gmail sent toast satisfied the intended-recipient contract`);
+    const recipientBoundGmailSubmit = {
+      ...gmailSubmit,
+      workflowBinding: agent._workflowSubmitBindingForAttempt(gmailTabId, gmailUrl, {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: 'gmail-bound-recipient' },
+      }),
+    };
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      gmailTabId,
+      { workflowPageText: 'Message sent', liveRegionMessages: ['Message sent'] },
+      gmailUrl,
+      { submit: recipientBoundGmailSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+      { success: false, conclusive: false },
+    )?.source, 'recipient_bound_dispatch_and_sent_confirmation',
+    `${AgentClass.name}: recipient-bound Gmail send could not use its positive sent confirmation`);
 
     const linkedInMessageTabId = 9005 + index;
     const linkedInMessageUrl = 'https://www.linkedin.com/messaging/thread/2-abc/';

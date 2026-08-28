@@ -15901,7 +15901,7 @@ const ADAPTERS = [
   {
     name: 'producthunt',
     category: 'general',
-    revision: 1,
+    revision: 2,
     regions: ['global'],
     jobs: ['collect-ranked-products'],
     workflow: {
@@ -15912,8 +15912,8 @@ const ADAPTERS = [
           template: 'collection',
           stateChange: false,
           requiresSubmission: false,
-          requiresLedger: true,
-          stages: ['scope', 'inventory', 'collect', 'reconcile', 'verify', 'deliver'],
+          requiresLedger: false,
+          stages: ['scope', 'collect', 'verify', 'deliver'],
           successEvidence: ['Every requested row is reconciled with product name, stable product URL, observed rank context, and requested fields.'],
           partialEvidence: ['Collected, duplicate, promoted, inaccessible, and remaining rows plus the exact coverage blocker are reported.'],
         },
@@ -15974,7 +15974,7 @@ const ADAPTERS = [
   {
     name: 'gmail',
     category: 'general',
-    revision: 2,
+    revision: 3,
     regions: ['global'],
     jobs: ['read-complete-thread', 'count-results', 'draft-email', 'send-email'],
     workflow: {
@@ -16023,6 +16023,7 @@ const ADAPTERS = [
       },
     },
     matches: (url) => /^https?:\/\/mail\.google\.com\//.test(url),
+    messaging: { verifyActiveRecipient: true },
     notes: `
 - Composing: the "Compose" button opens a floating window. The "To" field is a contact picker — type the name and pick from the dropdown, don't just type the raw email.
 - For a task that explicitly starts a new email or saves a new draft, if no compose window is open and the user named a recipient, click Compose immediately and use the To contact picker. Do not inspect the current thread or search the page merely to discover the recipient's raw email first; do that only if the picker fails, returns multiple ambiguous matches, or the user explicitly asked for the address. This fast path does not apply to reply or forward tasks; use the thread's Reply/Forward controls for those.
@@ -17221,7 +17222,7 @@ const ADAPTERS = [
   },
   {
     name: 'douyin', category: 'general',
-    revision: 1,
+    revision: 2,
     regions: ['CN'],
     jobs: ['collect-comments', 'publish-content', 'send-message'],
     workflow: {
@@ -17232,8 +17233,8 @@ const ADAPTERS = [
           template: 'collection',
           stateChange: false,
           requiresSubmission: false,
-          requiresLedger: true,
-          stages: ['access_gate', 'scope', 'inventory', 'collect', 'reconcile', 'verify', 'deliver'],
+          requiresLedger: false,
+          stages: ['access_gate', 'scope', 'collect', 'verify', 'deliver'],
           successEvidence: ['Collected rows come from the verified comments container and requested coverage is reconciled.'],
           partialEvidence: ['Collected comment count, remaining coverage, and the exact verification or pagination blocker are reported.'],
         },

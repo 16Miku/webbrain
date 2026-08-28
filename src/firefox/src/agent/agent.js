@@ -1241,14 +1241,18 @@ export class Agent extends LoopDetector {
     if (!guard?.enabled || siteWorkflow?.job?.requiresSubmission !== true || !pageUrl) return null;
     const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
     if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
+    const recipientTarget = normalizeMessageTarget(guard.messaging);
+    const recipientBound = executionContext?.messageRecipientGuardRequired === true
+      && !!executionContext?.messageRecipientDispatchBinding?.token
+      && recipientTarget?.target_kind === 'named';
     return {
       bindingKey: this._adapterWorkflowBindingKey(siteWorkflow),
       adapterName: siteWorkflow.adapterName,
       revision: siteWorkflow.revision,
       job: siteWorkflow.job.id,
       verificationKind: this._workflowVerificationKind(siteWorkflow),
-      recipientBound: executionContext?.messageRecipientGuardRequired === true
-        && !!executionContext?.messageRecipientDispatchBinding?.token,
+      recipientBound,
+      ...(recipientBound ? { recipientIdentity: recipientTarget.recipient } : {}),
     };
   }
 
@@ -1356,14 +1360,21 @@ export class Agent extends LoopDetector {
         Array.isArray(pageState?.liveRegionMessages) ? pageState.liveRegionMessages.join('\n') : '',
       );
       const sentStatusObserved = this._workflowMessageSentSignal(siteWorkflow, sentStatusText);
+      const dispatchRecipientObserved = binding.recipientBound === true
+        && messageTargetMatchesObservedIdentities(state.messaging, [binding.recipientIdentity]);
+      const requiresRecipientBinding = normalizeMessageTarget(state.messaging)?.target_kind === 'named';
+      const postDispatchRecipientObserved = recipientObserved
+        || (siteWorkflow.adapterName === 'gmail' && dispatchRecipientObserved);
       verified = submit?.dispatched === true
         && submit?.observedAfterSubmit === true
         && submit?.formValidationFailed !== true
-        && (binding.recipientBound === true
-          ? (recipientObserved && sentStatusObserved)
+        && (requiresRecipientBinding
+          ? (dispatchRecipientObserved && postDispatchRecipientObserved && sentStatusObserved)
           : (recipientObserved || sentStatusObserved));
-      source = binding.recipientBound === true
-        ? 'recipient_bound_dispatch_empty_composer_and_sent_confirmation'
+      source = requiresRecipientBinding
+        ? (recipientObserved
+          ? 'recipient_bound_dispatch_empty_composer_and_sent_confirmation'
+          : 'recipient_bound_dispatch_and_sent_confirmation')
         : (recipientObserved ? 'observed_recipient_and_empty_composer' : 'provider_sent_confirmation');
     } else if (verificationKind === 'transaction_fulfilled') {
       verified = submit?.dispatched === true
@@ -12884,16 +12895,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
 
+    const guard = this._planExecutionGuards.get(tabId);
+    const target = normalizeMessageTarget(guard?.messaging);
     const probe = await this._messageRecipientContentProbe(tabId, {
       tool: name,
       args,
       adapterName: policy.adapterName,
       bindDispatch: true,
+      ...(target?.target_kind === 'named' ? { expectedRecipient: target.recipient } : {}),
     });
     if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) return null;
 
-    const guard = this._planExecutionGuards.get(tabId);
-    const target = normalizeMessageTarget(guard?.messaging);
     const verified = probe?.success === true
       && probe.messageSend === true
       && messageTargetMatchesObservedIdentities(target, probe.strongIdentityCandidates);
