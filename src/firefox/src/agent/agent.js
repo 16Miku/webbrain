@@ -1042,7 +1042,7 @@ export class Agent extends LoopDetector {
     const completionArgs = this._activeSkillToolForName(tabId, name)?.requiresDownloadPermission
       ? { ...(args || {}), __completionDownloadAction: true }
       : args;
-    const workflowInventory = this._rememberWorkflowInventoryObservation(tabId, name, result);
+    const workflowInventory = this._rememberWorkflowInventoryObservation(tabId, name, args, result);
     if (workflowInventory && result && typeof result === 'object') result.workflowInventory = workflowInventory;
     const next = recordCompletionToolResult(state, name, completionArgs, result);
     this.completionInvariants.set(tabId, next);
@@ -9679,7 +9679,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return items;
   }
 
-  _rememberWorkflowInventoryObservation(tabId, name, result) {
+  _rememberWorkflowInventoryObservation(tabId, name, args, result) {
     const guard = this._planExecutionGuards.get(tabId);
     const siteWorkflow = guard?.siteWorkflow;
     if (!guard?.enabled || siteWorkflow?.job?.requiresLedger !== true
@@ -9725,7 +9725,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || result?.textTruncated === true
       || !!result?.continuationArgs
       || result?.nextPage != null;
-    documents[documentKey] = { complete: !continuationPending };
+    const requestRefId = String(args?.ref_id || args?.continuationArgs?.ref_id || '').trim();
+    // A ref-scoped AX request proves only that subtree was exhausted. It says
+    // nothing about sibling questions elsewhere in the document, even when
+    // the subtree itself has no continuation metadata. Until an app-owned,
+    // form-root scope is available, only a document-root read can close the
+    // workflow inventory for exact reconciliation.
+    documents[documentKey] = {
+      complete: !requestRefId && !continuationPending,
+      scope: requestRefId ? 'subtree' : 'document',
+    };
     const evidence = {
       bindingKey,
       taskKey,
@@ -12845,6 +12854,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         pinnedActiveConversation: true,
       };
     }
+    if (policy.deferActiveConversationUntilComposer === true
+        && probe?.composerAvailable === false) {
+      return {
+        ok: true,
+        target,
+        deferredActiveConversation: true,
+      };
+    }
     return {
       ok: false,
       target: null,
@@ -12896,7 +12913,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const guard = this._planExecutionGuards.get(tabId);
-    const target = normalizeMessageTarget(guard?.messaging);
+    let target = normalizeMessageTarget(guard?.messaging);
     const probe = await this._messageRecipientContentProbe(tabId, {
       tool: name,
       args,
@@ -12905,6 +12922,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(target?.target_kind === 'named' ? { expectedRecipient: target.recipient } : {}),
     });
     if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) return null;
+    // Gmail reply editors can be collapsed when planning begins. Allow only a
+    // content-verified Reply/Reply all/Forward control to open the editor;
+    // every other unresolved click remains blocked. Recipient authorization
+    // is still deferred: the eventual send must bind to exactly one chip.
+    if (policy.deferActiveConversationUntilComposer === true
+        && target?.target_kind === 'active_conversation'
+        && probe?.composerAvailable === false
+        && probe?.composerSetup === true
+        && (name === 'click' || name === 'click_ax')) return null;
+
+    if (policy.deferActiveConversationUntilComposer === true
+        && target?.target_kind === 'active_conversation'
+        && probe?.success === true
+        && probe?.conclusive === true
+        && probe?.messageSend === true) {
+      const identities = new Map();
+      for (const value of Array.isArray(probe.strongIdentityCandidates)
+        ? probe.strongIdentityCandidates
+        : []) {
+        const identity = String(value || '').trim();
+        const normalized = normalizeRecipientIdentity(identity);
+        if (identity && normalized && !identities.has(normalized)) identities.set(normalized, identity);
+      }
+      if (identities.size === 1) {
+        target = { target_kind: 'named', recipient: [...identities.values()][0] };
+        if (guard) guard.messaging = target;
+      }
+    }
 
     const verified = probe?.success === true
       && probe.messageSend === true

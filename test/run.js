@@ -4486,7 +4486,9 @@ test('direct-message recipient guard uses structured intent and exact active ide
   }
   for (const getPolicy of [getMessageRecipientGuardPolicy, getMessageRecipientGuardPolicyFx]) {
     assert.deepEqual(getPolicy('https://mail.google.com/mail/u/0/#inbox'), {
-      adapterName: 'gmail', verifyActiveRecipient: true,
+      adapterName: 'gmail',
+      verifyActiveRecipient: true,
+      deferActiveConversationUntilComposer: true,
     });
     assert.deepEqual(getPolicy('https://www.linkedin.com/messaging/thread/2-abc/'), {
       adapterName: 'linkedin', verifyActiveRecipient: true,
@@ -4540,6 +4542,75 @@ test('direct-message recipient guard uses structured intent and exact active ide
       'https://www.douyin.com/chat',
     );
     assert.equal(ambiguousPin.ok, false, `${label}: ambiguous active conversation was authorized`);
+
+    probe = {
+      success: false,
+      conclusive: false,
+      composerAvailable: false,
+      composerSetup: true,
+      messageSend: null,
+      strongIdentityCandidates: [],
+      identityCandidates: [],
+    };
+    const deferredGmailPin = await agent._pinActiveConversationMessagingTarget(
+      tabId,
+      { target_kind: 'active_conversation', recipient: '' },
+      'https://mail.google.com/mail/u/0/#inbox/thread-1',
+    );
+    assert.equal(deferredGmailPin.ok, true, `${label}: collapsed Gmail reply composer blocked planning`);
+    assert.deepEqual(deferredGmailPin.target, {
+      target_kind: 'active_conversation', recipient: '',
+    });
+    agent._planExecutionGuards.set(tabId, { messaging: deferredGmailPin.target });
+    assert.equal(
+      await agent._messageRecipientGuardBlock(
+        tabId,
+        'click_ax',
+        { ref_id: 'ref_reply' },
+        'https://mail.google.com/mail/u/0/#inbox/thread-1',
+        {},
+      ),
+      null,
+      `${label}: Gmail Reply could not open its collapsed composer`,
+    );
+    delete probe.composerSetup;
+    const collapsedGmailSend = await agent._messageRecipientGuardBlock(
+      tabId,
+      'click_ax',
+      { ref_id: 'ref_send' },
+      'https://mail.google.com/mail/u/0/#inbox/thread-1',
+      {},
+    );
+    assert.equal(collapsedGmailSend?.reasonCode, 'message_send_classification_inconclusive',
+      `${label}: an unresolved Gmail click bypassed deferred recipient pinning`);
+    probe = {
+      success: true,
+      conclusive: true,
+      composerAvailable: true,
+      messageSend: true,
+      identityCandidates: ['alice@example.com'],
+      strongIdentityCandidates: ['alice@example.com'],
+      messageRecipientDispatchBinding: { token: `gmail-recipient-binding-${label}` },
+    };
+    const gmailExecutionContext = {};
+    assert.equal(
+      await agent._messageRecipientGuardBlock(
+        tabId,
+        'click_ax',
+        { ref_id: 'ref_send' },
+        'https://mail.google.com/mail/u/0/#inbox/thread-1',
+        gmailExecutionContext,
+      ),
+      null,
+      `${label}: Gmail recipient was not pinned when the reply was dispatched`,
+    );
+    assert.deepEqual(agent._planExecutionGuards.get(tabId).messaging, {
+      target_kind: 'named', recipient: 'alice@example.com',
+    }, `${label}: deferred Gmail recipient identity was not persisted`);
+    assert.deepEqual(gmailExecutionContext, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: `gmail-recipient-binding-${label}` },
+    });
 
     agent._planExecutionGuards.set(tabId, {
       messaging: { target_kind: 'named', recipient: '迷你世界皓宸' },
@@ -4814,6 +4885,15 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     composer.isConnected = false;
     alternateComposer.isConnected = false;
     const searchWithoutComposerResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
+    const collapsedObservationResult = probe({
+      tool: 'observe_active_conversation', args: {}, adapterName: 'gmail',
+    });
+    const collapsedReplyResult = probe({
+      tool: 'click', args: { text: 'Forward' }, adapterName: 'gmail',
+    });
+    const collapsedSendResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+    });
     composer.isConnected = true;
     alternateComposer.isConnected = true;
 
@@ -4861,6 +4941,9 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       enterResult,
       searchEnterResult,
       searchWithoutComposerResult,
+      collapsedObservationResult,
+      collapsedReplyResult,
+      collapsedSendResult,
       alternateComposerEnterResult,
       alternateComposerSubmitResult,
       unfocusedClickResult,
@@ -4884,6 +4967,9 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       enterResult: result,
       searchEnterResult,
       searchWithoutComposerResult,
+      collapsedObservationResult,
+      collapsedReplyResult,
+      collapsedSendResult,
       alternateComposerEnterResult,
       alternateComposerSubmitResult,
       unfocusedClickResult,
@@ -4913,6 +4999,12 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(searchEnterResult.conclusive, true);
     assert.equal(searchWithoutComposerResult.messageSend, null, `${prefix}: upper search field was promoted to composer`);
     assert.equal(searchWithoutComposerResult.conclusive, false);
+    assert.equal(collapsedObservationResult.composerAvailable, false,
+      `${prefix}: collapsed Gmail composer was not exposed to deferred pinning`);
+    assert.equal(collapsedReplyResult.composerSetup, true,
+      `${prefix}: Gmail reply control was not recognized as deferred composer setup`);
+    assert.equal(collapsedSendResult.composerSetup, undefined,
+      `${prefix}: unresolved Gmail Send was treated as safe composer setup`);
     assert.equal(alternateComposerEnterResult.messageSend, null, `${prefix}: alternate composer Enter bypassed recipient verification`);
     assert.equal(alternateComposerEnterResult.conclusive, false);
     assert.equal(alternateComposerSubmitResult.messageSend, null, `${prefix}: alternate composer submit bypassed recipient verification`);
@@ -7429,7 +7521,7 @@ test('report-driven workflow adapters route exact app-owned jobs with browser pa
     'https://mail.google.com/mail/u/0/#inbox/abc',
     'read-complete-thread',
   );
-  assert.equal(gmailThreadRead.revision, 3);
+  assert.equal(gmailThreadRead.revision, 4);
   assert.equal(gmailThreadRead.job.requiresLedger, false,
     'Gmail complete-thread reads must rely on the dedicated conversation coverage guard, not an unavailable ledger inventory');
   assert.deepEqual(gmailThreadRead.job.stages, ['access_gate', 'scope', 'collect', 'verify', 'deliver']);
@@ -79186,7 +79278,7 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       documentToken: 'stable-form-document',
       pageUrl: formUrl,
     });
-    const partialInventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+    const partialInventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {}, {
       success: true,
       pageContent: 'textbox "Full name" [ref_name] value=""',
       continuationArgs: { filter: 'all', page: 2 },
@@ -79196,7 +79288,17 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       `${AgentClass.name}: an accessibility tree with a continuation was treated as terminal`);
     const nameIdBeforeFill = partialInventory.items.find(item => item.ref_id === 'ref_name')?.id;
 
-    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+    const subtreeInventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      ref_id: 'ref_section',
+    }, {
+      success: true,
+      pageContent: 'textbox "Full name" [ref_name] value=""',
+      treeRevision: 'tree-subtree',
+    });
+    assert.equal(subtreeInventory?.complete, false,
+      `${AgentClass.name}: a ref-scoped subtree was treated as the complete form inventory`);
+
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {}, {
       success: true,
       pageContent: [
         'textbox "Full name" [ref_name] value="Ada"',

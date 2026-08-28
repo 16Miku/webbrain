@@ -17,6 +17,7 @@ import {
  *   - notes: short bulleted guidance, injected into the first user message
  *   - fullPageCapture?.infiniteScroll(url): optional machine-readable capture policy
  *   - messaging?.verifyActiveRecipient: optional URL-aware pre-dispatch recipient guard
+ *   - messaging?.deferActiveConversationUntilComposer: allow composer setup before pinning
  *   - revision?: positive workflow-contract revision for trace attribution
  *   - regions?: stable region identifiers for structured adapter discovery
  *   - jobs?: stable job identifiers covered by the optional workflow profile
@@ -15975,7 +15976,7 @@ const ADAPTERS = [
   {
     name: 'gmail',
     category: 'general',
-    revision: 3,
+    revision: 4,
     regions: ['global'],
     jobs: ['read-complete-thread', 'count-results', 'draft-email', 'send-email'],
     workflow: {
@@ -16024,7 +16025,10 @@ const ADAPTERS = [
       },
     },
     matches: (url) => /^https?:\/\/mail\.google\.com\//.test(url),
-    messaging: { verifyActiveRecipient: true },
+    messaging: {
+      verifyActiveRecipient: true,
+      deferActiveConversationUntilComposer: true,
+    },
     notes: `
 - Composing: the "Compose" button opens a floating window. The "To" field is a contact picker — type the name and pick from the dropdown, don't just type the raw email.
 - For a task that explicitly starts a new email or saves a new draft, if no compose window is open and the user named a recipient, click Compose immediately and use the To contact picker. Do not inspect the current thread or search the page merely to discover the recipient's raw email first; do that only if the picker fails, returns multiple ambiguous matches, or the user explicitly asked for the address. This fast path does not apply to reply or forward tasks; use the thread's Reply/Forward controls for those.
@@ -17824,7 +17828,13 @@ export function getMessageRecipientGuardPolicy(url) {
     enabled = false;
   }
   if (!enabled) return null;
-  return { adapterName: adapter.name, verifyActiveRecipient: true };
+  return {
+    adapterName: adapter.name,
+    verifyActiveRecipient: true,
+    ...(adapter.messaging.deferActiveConversationUntilComposer === true
+      ? { deferActiveConversationUntilComposer: true }
+      : {}),
+  };
 }
 
 /**

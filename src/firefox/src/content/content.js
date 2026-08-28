@@ -4053,7 +4053,25 @@
         }
         composer = layoutComposer;
         if (!composer) {
-          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+          const actionLabel = compact(
+            control.getAttribute?.('aria-label')
+            || control.getAttribute?.('title')
+            || control.getAttribute?.('data-tooltip')
+            || control.value
+            || control.innerText
+            || control.textContent,
+            120,
+          );
+          const composerSetup = params.adapterName === 'gmail'
+            && /^(?:reply|reply all|forward)$/i.test(actionLabel);
+          return {
+            success: true,
+            messageSend: null,
+            conclusive: false,
+            composerAvailable: false,
+            ...(composerSetup ? { composerSetup: true } : {}),
+            identityCandidates: [],
+          };
         }
         if (editable(target) && target !== composer) {
           return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
@@ -4083,7 +4101,14 @@
       }
 
       if (!composer) {
-        return { success: false, messageSend: null, conclusive: false, identityCandidates: [], error: 'Active conversation composer could not be resolved.' };
+        return {
+          success: false,
+          messageSend: null,
+          conclusive: false,
+          composerAvailable: false,
+          identityCandidates: [],
+          error: 'Active conversation composer could not be resolved.',
+        };
       }
       if (params.expectedDispatchTarget
         && (dispatchTarget !== params.expectedDispatchTarget || composer !== params.expectedComposer)) {
@@ -4214,6 +4239,7 @@
         success: true,
         messageSend: observationOnly ? false : messageSend === true,
         conclusive: true,
+        composerAvailable: true,
         composerEmpty: composerText.replace(/[\u200b-\u200d\ufeff]/g, '').trim() === '',
         // Only recipient-specific header evidence is authoritative. Ordinary
         // message text, test-id containers, and other leaf content are never
