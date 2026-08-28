@@ -107,13 +107,14 @@ export function unsupportedVisionGenerationControl(error) {
 
 export function isDirectDeepSeekConfig(config = {}) {
   const providerName = clean(config.providerName);
+  if (clean(config.category) === 'local' || LOCAL_OPENAI_COMPAT_PROVIDER_NAMES.has(providerName)) {
+    return false;
+  }
   if (providerName === 'deepseek') return true;
   try {
     if (new URL(config.baseUrl || '').hostname.toLowerCase() === 'api.deepseek.com') return true;
   } catch {}
-  return normalizeProviderCompatibility(config).preset === 'deepseek'
-    && clean(config.category) !== 'local'
-    && !LOCAL_OPENAI_COMPAT_PROVIDER_NAMES.has(providerName);
+  return normalizeProviderCompatibility(config).preset === 'deepseek';
 }
 
 export function isPlainObject(value) {
@@ -324,6 +325,9 @@ export function compatibilityRequestBody(config = {}) {
     };
   }
   if (preset === 'deepseek') {
+    if (!isDirectDeepSeekConfig(config)) {
+      return { chat_template_kwargs: { thinking: enabled } };
+    }
     if (!enabled) return { thinking: { type: 'disabled' } };
     return {
       thinking: { type: 'enabled' },
@@ -419,6 +423,12 @@ export function mergeProviderRequestBody(body, config = {}, perRequestExtraBody 
     } else {
       result[key] = isPlainObject(value) || Array.isArray(value) ? safeClone(value) : value;
     }
+  }
+  // DeepSeek's disabled-thinking contract omits reasoning_effort entirely.
+  // Per-call planner and vision overrides must clear an effort inherited from
+  // the configured compatibility preset.
+  if (isDirectDeepSeekConfig(config) && result.thinking?.type === 'disabled') {
+    delete result.reasoning_effort;
   }
   return result;
 }

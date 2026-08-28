@@ -65746,6 +65746,28 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
         true,
         `${label}: the official DeepSeek host should select its native preset`,
       );
+      for (const providerConfig of [
+        { providerName: 'lmstudio', category: 'local', baseUrl: 'http://localhost:1234/v1' },
+        { providerName: 'ollama', category: 'local', baseUrl: 'http://localhost:11434/v1' },
+        { providerName: 'vllm', category: 'local', baseUrl: 'http://localhost:8000/v1' },
+        { providerName: 'deepseek', category: 'local', baseUrl: 'http://localhost:9000/v1' },
+      ]) {
+        const localConfig = {
+          ...providerConfig,
+          model: 'deepseek-v4-flash',
+          compat: { reasoningEffort: 'high' },
+        };
+        assert.equal(
+          compatibility.isDirectDeepSeekConfig(localConfig),
+          false,
+          `${label}: ${providerConfig.providerName} must not be treated as the direct DeepSeek API`,
+        );
+        assert.deepEqual(
+          compatibility.compatibilityRequestBody(localConfig),
+          { chat_template_kwargs: { thinking: true } },
+          `${label}: ${providerConfig.providerName} should keep local DeepSeek template controls`,
+        );
+      }
       for (const [effort, expected] of [
         ['minimal', { thinking: { type: 'enabled' }, reasoning_effort: 'low' }],
         ['low', { thinking: { type: 'enabled' }, reasoning_effort: 'low' }],
@@ -65774,12 +65796,24 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
         undefined,
         `${label}: DeepSeek must not receive Qwen chat-template thinking fields`,
       );
+      const deepSeekVisionConfig = {
+        providerName: 'deepseek',
+        category: 'cloud',
+        baseUrl: 'https://api.deepseek.com',
+        compat: { reasoningEffort: 'high' },
+      };
+      const deepSeekVisionOptions = compatibility.visionGenerationOptions(160, {
+        providerConfig: deepSeekVisionConfig,
+      });
       assert.deepEqual(
-        compatibility.visionGenerationOptions(160, {
-          providerConfig: { providerName: 'deepseek', baseUrl: 'https://api.deepseek.com' },
-        }),
+        deepSeekVisionOptions,
         { maxTokens: 160, temperature: 0, extraBody: { thinking: { type: 'disabled' } } },
         `${label}: DeepSeek vision probes should disable thinking natively`,
+      );
+      assert.deepEqual(
+        compatibility.mergeProviderRequestBody({}, deepSeekVisionConfig, deepSeekVisionOptions.extraBody),
+        { thinking: { type: 'disabled' } },
+        `${label}: disabling DeepSeek vision thinking must clear configured reasoning effort`,
       );
     }
 
