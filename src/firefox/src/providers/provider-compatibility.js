@@ -50,15 +50,35 @@ export function openRouterRoutingVariant(config = {}) {
   return suffix ? suffix[1].toLowerCase() : 'standard';
 }
 
-export function withOpenRouterRoutingVariant(model, config = {}) {
-  const value = String(model || '');
-  if (clean(config.providerName) !== 'openrouter' || !Object.hasOwn(config, 'routingVariant')) {
-    return value;
-  }
+export function applyOpenRouterRoutingVariant(body, config = {}) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  if (clean(config.providerName) !== 'openrouter' || !Object.hasOwn(config, 'routingVariant')) return body;
   const variant = clean(config.routingVariant);
-  if (!OPENROUTER_ROUTING_VARIANT_VALUES.has(variant)) return value;
-  const baseModel = value.replace(/:(?:nitro|exacto)$/i, '');
-  return variant === 'standard' ? baseModel : `${baseModel}:${variant}`;
+  if (!OPENROUTER_ROUTING_VARIANT_VALUES.has(variant)) return body;
+
+  const next = { ...body };
+  if (typeof next.model === 'string') {
+    next.model = next.model.replace(/:(?:nitro|exacto)$/i, '');
+  }
+
+  const hasProviderPreferences = next.provider
+    && typeof next.provider === 'object'
+    && !Array.isArray(next.provider);
+  if (variant === 'standard') {
+    if (hasProviderPreferences && Object.hasOwn(next.provider, 'sort')) {
+      const provider = { ...next.provider };
+      delete provider.sort;
+      if (Object.keys(provider).length) next.provider = provider;
+      else delete next.provider;
+    }
+    return next;
+  }
+
+  next.provider = {
+    ...(hasProviderPreferences ? next.provider : {}),
+    sort: variant === 'nitro' ? 'throughput' : 'exacto',
+  };
+  return next;
 }
 
 /**

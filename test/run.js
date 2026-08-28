@@ -63407,7 +63407,7 @@ test('non-local OpenAI-compatible providers keep the legacy model fallback', () 
   }
 });
 
-test('OpenRouter advanced routing variants map Standard, Nitro, and Exacto onto the request model', () => {
+test('OpenRouter advanced routing variants map Standard, Nitro, and Exacto onto provider routing', () => {
   const messages = [{ role: 'user', content: 'hello' }];
   for (const compatibility of [ProviderCompatibilityCh, ProviderCompatibilityFx]) {
     assert.deepEqual(compatibility.OPENROUTER_ROUTING_VARIANTS, ['standard', 'nitro', 'exacto']);
@@ -63417,40 +63417,66 @@ test('OpenRouter advanced routing variants map Standard, Nitro, and Exacto onto 
   }
 
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
-    const requestModel = (config) => new Provider({
+    const requestBody = (config) => new Provider({
       providerName: 'openrouter',
       baseUrl: 'https://openrouter.ai/api/v1',
       model: 'qwen/qwen3.8-27b:exacto',
       ...config,
-    })._buildChatCompletionsBody(messages, {}, false).model;
-    const responsesRequestModel = (config) => new Provider({
+    })._buildChatCompletionsBody(messages, {}, false);
+    const responsesRequestBody = (config) => new Provider({
       providerName: 'openrouter',
       baseUrl: 'https://openrouter.ai/api/v1',
       apiFormat: 'responses',
       model: 'qwen/qwen3.8-27b:exacto',
       ...config,
-    })._responsesBody(messages, {}, false).model;
+    })._responsesBody(messages, {}, false);
 
-    assert.equal(requestModel({}), 'qwen/qwen3.8-27b:exacto', 'legacy manual suffix should remain untouched');
-    assert.equal(requestModel({ routingVariant: 'standard' }), 'qwen/qwen3.8-27b');
-    assert.equal(requestModel({ routingVariant: 'nitro' }), 'qwen/qwen3.8-27b:nitro');
-    assert.equal(requestModel({ routingVariant: 'exacto' }), 'qwen/qwen3.8-27b:exacto');
-    assert.equal(requestModel({ routingVariant: 'invalid' }), 'qwen/qwen3.8-27b:exacto', 'invalid stored values should fail closed');
-    assert.equal(responsesRequestModel({}), 'qwen/qwen3.8-27b:exacto', 'Responses should preserve a legacy manual suffix');
-    assert.equal(responsesRequestModel({ routingVariant: 'standard' }), 'qwen/qwen3.8-27b');
-    assert.equal(responsesRequestModel({ routingVariant: 'nitro' }), 'qwen/qwen3.8-27b:nitro');
-    assert.equal(responsesRequestModel({ routingVariant: 'exacto' }), 'qwen/qwen3.8-27b:exacto');
+    assert.equal(requestBody({}).model, 'qwen/qwen3.8-27b:exacto', 'legacy manual suffix should remain untouched');
+    assert.equal(requestBody({ routingVariant: 'invalid' }).model, 'qwen/qwen3.8-27b:exacto', 'invalid stored values should fail closed');
+
+    const standard = requestBody({
+      routingVariant: 'standard',
+      extraBody: { provider: { only: ['deepinfra'], sort: 'throughput' } },
+    });
+    assert.equal(standard.model, 'qwen/qwen3.8-27b');
+    assert.deepEqual(standard.provider, { only: ['deepinfra'] }, 'Standard should remove only the explicit routing sort');
+
+    const nitro = requestBody({ routingVariant: 'nitro' });
+    assert.equal(nitro.model, 'qwen/qwen3.8-27b');
+    assert.deepEqual(nitro.provider, { sort: 'throughput' });
+
+    const exacto = requestBody({ routingVariant: 'exacto' });
+    assert.equal(exacto.model, 'qwen/qwen3.8-27b');
+    assert.deepEqual(exacto.provider, { sort: 'exacto' });
+
+    const freeNitro = requestBody({
+      model: 'poolside/laguna-xs-2.1:free',
+      routingVariant: 'nitro',
+      extraBody: { provider: { only: ['deepinfra'] } },
+    });
+    assert.equal(freeNitro.model, 'poolside/laguna-xs-2.1:free', 'routing must preserve a static model variant');
+    assert.deepEqual(freeNitro.provider, { only: ['deepinfra'], sort: 'throughput' });
+
+    const responsesLegacy = responsesRequestBody({});
+    assert.equal(responsesLegacy.model, 'qwen/qwen3.8-27b:exacto', 'Responses should preserve a legacy manual suffix');
+    const responsesStandard = responsesRequestBody({ routingVariant: 'standard' });
+    assert.equal(responsesStandard.model, 'qwen/qwen3.8-27b');
+    assert.equal(responsesStandard.provider, undefined);
+    const responsesNitro = responsesRequestBody({ model: 'poolside/laguna-xs-2.1:free', routingVariant: 'nitro' });
+    assert.equal(responsesNitro.model, 'poolside/laguna-xs-2.1:free');
+    assert.deepEqual(responsesNitro.provider, { sort: 'throughput' });
+    const responsesExacto = responsesRequestBody({ model: 'poolside/laguna-xs-2.1:free', routingVariant: 'exacto' });
+    assert.equal(responsesExacto.model, 'poolside/laguna-xs-2.1:free');
+    assert.deepEqual(responsesExacto.provider, { sort: 'exacto' });
 
     const nonOpenRouter = new Provider({
       providerName: 'together',
       model: 'qwen/qwen3.8-27b:exacto',
       routingVariant: 'nitro',
     });
-    assert.equal(
-      nonOpenRouter._buildChatCompletionsBody(messages, {}, false).model,
-      'qwen/qwen3.8-27b:exacto',
-      'OpenRouter routing settings must not affect another provider',
-    );
+    const nonOpenRouterBody = nonOpenRouter._buildChatCompletionsBody(messages, {}, false);
+    assert.equal(nonOpenRouterBody.model, 'qwen/qwen3.8-27b:exacto', 'OpenRouter routing must not rewrite another provider model');
+    assert.equal(nonOpenRouterBody.provider, undefined, 'OpenRouter routing must not add preferences to another provider');
   }
 });
 

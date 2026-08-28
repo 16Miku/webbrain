@@ -6,7 +6,7 @@ import {
   isOfficialOpenAIConfig,
   shouldUseOpenAIResponsesApi,
   supportsOpenAIAskStreaming,
-  withOpenRouterRoutingVariant,
+  applyOpenRouterRoutingVariant,
 } from './provider-compatibility.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { canonicalizeOllamaBaseUrl } from './context-windows.js';
@@ -462,7 +462,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       body.tool_choice = options.toolChoice || 'auto';
     }
     body = this._mergeConfiguredRequestBody(body, options);
-    if (body.model) body.model = withOpenRouterRoutingVariant(body.model, this.config);
+    body = applyOpenRouterRoutingVariant(body, this.config);
     this._addWebBrainCloudContext(body, options);
     if (stream && body.tools && this.config.supportsToolStreamOption === true) {
       body.tool_stream = true;
@@ -600,7 +600,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     // base Responses shape. Reserved keys like model/input/stream/tools are
     // filtered out by mergeProviderRequestBody.
     body = this._mergeConfiguredRequestBody(body, options);
-    if (body.model) body.model = withOpenRouterRoutingVariant(body.model, this.config);
+    body = applyOpenRouterRoutingVariant(body, this.config);
 
     // Normalize Chat Completions-style reasoning_effort if a preset emitted it.
     if (typeof body.reasoning_effort === 'string') {
