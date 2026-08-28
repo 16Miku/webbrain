@@ -17093,7 +17093,7 @@ test('sidepanels hide empty assistant placeholders until output renders', () => 
 
     assert.match(
       panel,
-      /const ASSISTANT_RENDERABLE_ELEMENT_SELECTOR =[\s\S]*?img, svg, canvas, video, audio, iframe, input, textarea, select, button, hr, progress[\s\S]*?function progressContentNodeIsVisible\(node\)[\s\S]*?node\.matches\?\.\(PROGRESS_CONTENT_SELECTOR\)[\s\S]*?node\.matches\('\.tool-call'\)[\s\S]*?return verboseMode;[\s\S]*?return verboseMode \|\| compactProgressPreviewVisible;[\s\S]*?function nodeHasAssistantRenderableContent\(node\)[\s\S]*?function assistantMessageHasRenderableContent\(msgEl\)/,
+      /const ASSISTANT_RENDERABLE_ELEMENT_SELECTOR =[\s\S]*?img, svg, canvas, video, audio, iframe, input, textarea, select, button, hr, progress[\s\S]*?function progressContentNodeIsVisible\(node\)[\s\S]*?node\.matches\?\.\(PROGRESS_CONTENT_SELECTOR\)[\s\S]*?node\.matches\('\.tool-call'\)[\s\S]*?return verboseMode;[\s\S]*?return verboseMode \|\| compactProgressVisible;[\s\S]*?function nodeHasAssistantRenderableContent\(node\)[\s\S]*?function assistantMessageHasRenderableContent\(msgEl\)/,
       `${label}: assistant visibility should recognize text and non-text output`,
     );
     assert.doesNotMatch(panel, /visibleContent = contentEl\.cloneNode\(true\)/, `${label}: streamed visibility checks should not clone whole message trees`);
@@ -46473,7 +46473,7 @@ test('compact tool detail toggles are rebound after chat restore', () => {
   }
 });
 
-test('status-strip clicks preview compact history while verbose restores full tool cards', () => {
+test('status-strip clicks hide default compact history while verbose restores full tool cards', () => {
   for (const [label, prefix] of [
     ['chrome', 'src/chrome'],
     ['firefox', 'src/firefox'],
@@ -46489,7 +46489,7 @@ test('status-strip clicks preview compact history while verbose restores full to
     );
     assert.match(
       html,
-      /id="activity-progress-toggle"[^>]*aria-controls="messages"[^>]*aria-expanded="false"[^>]*aria-label="Toggle activity history"[^>]*data-i18n-aria-label="sp\.activity\.toggle_history"[\s\S]*?id="activity-text"[^>]*aria-hidden="true"/,
+      /id="activity-progress-toggle"[^>]*aria-controls="messages"[^>]*aria-expanded="true"[^>]*aria-label="Toggle activity history"[^>]*data-i18n-aria-label="sp\.activity\.toggle_history"[\s\S]*?id="activity-text"[^>]*aria-hidden="true"/,
       `${label}: the activity toggle should have a stable localized accessible name`,
     );
     assert.match(css, /#activity-live-status \{[\s\S]*?position: absolute;[\s\S]*?clip: rect\(0, 0, 0, 0\);/, `${label}: the separate activity live region should remain visually hidden`);
@@ -46497,8 +46497,8 @@ test('status-strip clicks preview compact history while verbose restores full to
     assert.match(css, /#activity-text \{[\s\S]*?font-size: 11px;[\s\S]*?font-weight: 600;/, `${label}: shimmer should not enlarge the original activity typography`);
     assert.match(
       css,
-      /#messages:not\(\.progress-verbose\):not\(\.progress-preview\) \.steps-container \{\s*display: none;[\s\S]*?#messages:not\(\.progress-verbose\) \.tool-call \{\s*display: none;/,
-      `${label}: normal mode should reveal only compact history during an explicit status-strip preview`,
+      /#messages:not\(\.progress-verbose\)\.progress-status-only \.steps-container \{\s*display: none;[\s\S]*?#messages:not\(\.progress-verbose\) \.tool-call \{\s*display: none;/,
+      `${label}: compact history should stay visible by default and hide only in explicit status-only mode`,
     );
     assert.match(css, /@keyframes activity-text-sweep[\s\S]*?background-position: -100% 0;/, `${label}: live activity should have the requested directional shimmer`);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?#activity-text[\s\S]*?animation: none;/, `${label}: activity shimmer should respect reduced motion`);
@@ -46539,18 +46539,59 @@ test('status-strip clicks preview compact history while verbose restores full to
     );
     assert.match(
       panel,
-      /function progressLogIsVisible\(\) \{[\s\S]*?verboseMode \|\| compactProgressPreviewVisible/,
-      `${label}: assistant visibility should account for verbose and transient compact previews`,
+      /let compactProgressVisible = true;[\s\S]*?function progressLogIsVisible\(\) \{[\s\S]*?verboseMode \|\| compactProgressVisible/,
+      `${label}: assistant visibility should include the default compact history`,
     );
     assert.match(
       panel,
-      /function toggleCompactProgressPreview\(\) \{\s*if \(verboseMode\) return;\s*setCompactProgressPreviewVisible\(!compactProgressPreviewVisible\);\s*\}/,
-      `${label}: clicking the status strip should toggle compact history only outside verbose mode`,
+      /function toggleCompactProgressVisibility\(\) \{\s*if \(verboseMode\) return;\s*setCompactProgressVisible\(!compactProgressVisible\);\s*\}/,
+      `${label}: clicking the status strip should toggle default compact history only outside verbose mode`,
     );
     assert.match(
       panel,
-      /function syncProgressDisplayMode\(\) \{[\s\S]*?if \(verboseMode\) compactProgressPreviewVisible = false;[\s\S]*?classList\.toggle\('progress-verbose', verboseMode\)[\s\S]*?classList\.toggle\('progress-preview', !verboseMode && compactProgressPreviewVisible\)[\s\S]*?aria-disabled[\s\S]*?function setCompactProgressPreviewVisible/,
-      `${label}: verbose mode should disable and clear the transient status-strip preview`,
+      /function syncProgressDisplayMode\(\) \{[\s\S]*?if \(verboseMode\) compactProgressVisible = true;[\s\S]*?classList\.toggle\('progress-verbose', verboseMode\)[\s\S]*?classList\.toggle\('progress-status-only', !verboseMode && !compactProgressVisible\)[\s\S]*?aria-expanded'[\s\S]*?verboseMode \|\| compactProgressVisible[\s\S]*?aria-disabled[\s\S]*?function setCompactProgressVisible/,
+      `${label}: verbose mode should force visible history while status-only mode hides compact steps`,
+    );
+    const displayStart = panel.indexOf('function progressLogIsVisible()');
+    const displayEnd = panel.indexOf('function bindCompactStepDetailsToggle(', displayStart);
+    assert.ok(displayStart >= 0 && displayEnd > displayStart, `${label}: compact progress display runtime missing`);
+    const displayRuntime = Function(`
+      let verboseMode = false;
+      let compactProgressVisible = true;
+      const messageClasses = new Set();
+      const attributes = new Map();
+      const messagesEl = {
+        classList: {
+          toggle(name, enabled) { if (enabled) messageClasses.add(name); else messageClasses.delete(name); },
+          remove(...names) { names.forEach((name) => messageClasses.delete(name)); },
+        },
+      };
+      const activityProgressToggle = { setAttribute(name, value) { attributes.set(name, value); } };
+      const agentActivity = { classList: { toggle() {} } };
+      function syncAssistantMessageVisibility() {}
+      ${panel.slice(displayStart, displayEnd)}
+      return {
+        sync: syncProgressDisplayMode,
+        toggle: toggleCompactProgressVisibility,
+        visible: () => progressLogIsVisible(),
+        hasClass: (name) => messageClasses.has(name),
+        attribute: (name) => attributes.get(name),
+      };
+    `)();
+    displayRuntime.sync();
+    assert.equal(displayRuntime.visible(), true, `${label}: compact history should start visible`);
+    assert.equal(displayRuntime.hasClass('progress-status-only'), false, `${label}: default mode should not hide compact history`);
+    assert.equal(displayRuntime.attribute('aria-expanded'), 'true', `${label}: default activity toggle should announce expanded history`);
+    displayRuntime.toggle();
+    assert.equal(displayRuntime.visible(), false, `${label}: first status click should enter status-only mode`);
+    assert.equal(displayRuntime.hasClass('progress-status-only'), true, `${label}: status-only mode should hide compact history`);
+    assert.equal(displayRuntime.attribute('aria-expanded'), 'false', `${label}: status-only mode should announce collapsed history`);
+    displayRuntime.toggle();
+    assert.equal(displayRuntime.visible(), true, `${label}: second status click should restore compact history`);
+    assert.match(
+      panel,
+      /function hideActivity\(\) \{[\s\S]*?if \(!compactProgressVisible\) setCompactProgressVisible\(true\);/,
+      `${label}: compact history should return when the transient activity control disappears`,
     );
     assert.doesNotMatch(panel, /function enableExpandedProgressMode|PROGRESS_EXPANDED_MARKER_CLASS/, `${label}: the obsolete one-way expansion mode should be removed`);
     const toolCallStart = panel.indexOf("case 'tool_call':");

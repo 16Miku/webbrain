@@ -1,6 +1,6 @@
 /**
  * WebBrain Side Panel — Chat UI logic.
- * Default: one live label with click-to-preview compact history.
+ * Default: compact history in chat plus the live label; click for status-only mode.
  * Verbose mode: always-open tool calls with arguments and results.
  */
 
@@ -1078,7 +1078,7 @@ const attachmentGenerationByTab = new Map();
 let isProcessing = false;
 let currentAssistantEl = null;
 let verboseMode = false;
-let compactProgressPreviewVisible = false;
+let compactProgressVisible = true;
 let agentMode = 'ask'; // 'ask' | 'act' | 'dev'
 let abortRequested = false;
 const awaitingPlanReviewTabs = new Set();
@@ -2475,7 +2475,7 @@ const PROGRESS_CONTENT_SELECTOR = '.steps-container, .tool-call';
 function progressContentNodeIsVisible(node) {
   if (!node.matches?.(PROGRESS_CONTENT_SELECTOR)) return true;
   if (node.matches('.tool-call')) return verboseMode;
-  return verboseMode || compactProgressPreviewVisible;
+  return verboseMode || compactProgressVisible;
 }
 
 function nodeHasAssistantRenderableContent(node) {
@@ -4532,7 +4532,7 @@ if (verboseBtn) {
   });
 }
 
-activityProgressToggle?.addEventListener('click', toggleCompactProgressPreview);
+activityProgressToggle?.addEventListener('click', toggleCompactProgressVisibility);
 
 async function switchToTab(newTabId) {
   if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
@@ -5310,28 +5310,29 @@ function rebindCopyButtons() {
 }
 
 function progressLogIsVisible() {
-  return verboseMode || compactProgressPreviewVisible;
+  return verboseMode || compactProgressVisible;
 }
 
 function syncProgressDisplayMode() {
-  if (verboseMode) compactProgressPreviewVisible = false;
+  if (verboseMode) compactProgressVisible = true;
   messagesEl?.classList.toggle('progress-verbose', verboseMode);
-  messagesEl?.classList.toggle('progress-preview', !verboseMode && compactProgressPreviewVisible);
+  messagesEl?.classList.toggle('progress-status-only', !verboseMode && !compactProgressVisible);
+  messagesEl?.classList.remove('progress-preview');
   messagesEl?.classList.remove('progress-expanded');
-  activityProgressToggle?.setAttribute('aria-expanded', String(!verboseMode && compactProgressPreviewVisible));
+  activityProgressToggle?.setAttribute('aria-expanded', String(verboseMode || compactProgressVisible));
   activityProgressToggle?.setAttribute('aria-disabled', String(verboseMode));
   agentActivity?.classList.toggle('progress-toggle-enabled', !verboseMode);
   syncAssistantMessageVisibility();
 }
 
-function setCompactProgressPreviewVisible(visible) {
-  compactProgressPreviewVisible = !verboseMode && visible === true;
+function setCompactProgressVisible(visible) {
+  compactProgressVisible = verboseMode || visible !== false;
   syncProgressDisplayMode();
 }
 
-function toggleCompactProgressPreview() {
+function toggleCompactProgressVisibility() {
   if (verboseMode) return;
-  setCompactProgressPreviewVisible(!compactProgressPreviewVisible);
+  setCompactProgressVisible(!compactProgressVisible);
 }
 
 function bindCompactStepDetailsToggle(toggle) {
@@ -11998,7 +11999,7 @@ function hideActivity() {
   clearThinkingActivityTimers();
   activityDisplayMode = 'idle';
   if (activityLiveStatus) activityLiveStatus.textContent = '';
-  if (compactProgressPreviewVisible) setCompactProgressPreviewVisible(false);
+  if (!compactProgressVisible) setCompactProgressVisible(true);
   agentActivity.classList.add('hidden');
   hideInspectionBanner();
 }
