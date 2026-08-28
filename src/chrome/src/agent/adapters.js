@@ -15975,7 +15975,7 @@ const ADAPTERS = [
   {
     name: 'gmail',
     category: 'general',
-    revision: 1,
+    revision: 2,
     regions: ['global'],
     jobs: ['read-complete-thread', 'count-results', 'draft-email', 'send-email'],
     workflow: {
@@ -15986,8 +15986,8 @@ const ADAPTERS = [
           template: 'reading',
           stateChange: false,
           requiresSubmission: false,
-          requiresLedger: true,
-          stages: ['access_gate', 'scope', 'inventory', 'collect', 'reconcile', 'verify', 'deliver'],
+          requiresLedger: false,
+          stages: ['access_gate', 'scope', 'collect', 'verify', 'deliver'],
           successEvidence: ['Trusted conversation-root coverage reaches its terminal page after every message is expanded and read oldest to newest.'],
           partialEvidence: ['Read and unread message coverage plus the exact expansion, pagination, or access blocker are reported.'],
         },

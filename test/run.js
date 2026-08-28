@@ -7358,6 +7358,18 @@ test('report-driven workflow adapters route exact app-owned jobs with browser pa
     formatAdapterWorkflowExecutionPolicy(pullRequestReview),
     /workflowReconciliation|complete app-owned inventory/,
   );
+  const gmailThreadRead = resolveAdapterWorkflowJob(
+    'https://mail.google.com/mail/u/0/#inbox/abc',
+    'read-complete-thread',
+  );
+  assert.equal(gmailThreadRead.revision, 2);
+  assert.equal(gmailThreadRead.job.requiresLedger, false,
+    'Gmail complete-thread reads must rely on the dedicated conversation coverage guard, not an unavailable ledger inventory');
+  assert.deepEqual(gmailThreadRead.job.stages, ['access_gate', 'scope', 'collect', 'verify', 'deliver']);
+  assert.doesNotMatch(
+    formatAdapterWorkflowExecutionPolicy(gmailThreadRead),
+    /workflowReconciliation|complete app-owned inventory/,
+  );
 });
 
 test('report-driven adapter notes remain bounded and do not overfit low-evidence sites', () => {
@@ -79091,26 +79103,29 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     assert.equal(ledgerRetry?.retry, true);
     assert.match(ledgerRetry?.nudge || '', /complete item-level reconciliation/i);
 
+    agent._lastAxScopes.set(tabId, {
+      documentToken: 'stable-form-document',
+      pageUrl: formUrl,
+    });
     const partialInventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
       success: true,
-      pageContent: 'textbox "Full name" [ref_name]',
+      pageContent: 'textbox "Full name" [ref_name] value=""',
       continuationArgs: { filter: 'all', page: 2 },
-      documentToken: 'form-document-1',
-      refScopeUrl: formUrl,
+      treeRevision: 'tree-before-fill',
     });
     assert.equal(partialInventory?.complete, false,
       `${AgentClass.name}: an accessibility tree with a continuation was treated as terminal`);
+    const nameIdBeforeFill = partialInventory.items.find(item => item.ref_id === 'ref_name')?.id;
 
     const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
       success: true,
       pageContent: [
-        'textbox "Full name" [ref_name]',
+        'textbox "Full name" [ref_name] value="Ada"',
         'checkbox "Accept terms" [ref_terms]',
         'button "Upload résumé" [ref_resume] type="file"',
         'button "Submit" [ref_submit] type="submit"',
       ].join('\n'),
-      documentToken: 'form-document-1',
-      refScopeUrl: formUrl,
+      treeRevision: 'tree-after-fill',
     });
     assert.equal(inventory?.complete, true,
       `${AgentClass.name}: an unpaginated accessibility tree was not terminal`);
@@ -79119,13 +79134,20 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       `${AgentClass.name}: file-upload control was omitted from the trusted inventory`);
     assert.ok(!inventory.items.some(item => item.ref_id === 'ref_submit'),
       `${AgentClass.name}: an ordinary action button entered the trusted form inventory`);
-    const reconciled = agent._progressUpdate(tabId, {
-      items: inventory.items.map(item => ({
+    assert.equal(inventory.items.find(item => item.ref_id === 'ref_name')?.id, nameIdBeforeFill,
+      `${AgentClass.name}: mutable tree revisions changed a stable form-control inventory id`);
+    const terminalInventoryItems = inventory.items.map(item => ({
         id: item.id,
         label: item.label,
         status: 'processed',
         fields: { verified: true },
-      })),
+      }));
+    const terminalOnly = agent._progressUpdate(tabId, { items: terminalInventoryItems });
+    assert.equal(terminalOnly.success, true);
+    assert.equal(guard.workflowLedgerReconciliation, null,
+      `${AgentClass.name}: terminal rows without reconciliation metadata satisfied the workflow`);
+    const reconciled = agent._progressUpdate(tabId, {
+      items: terminalInventoryItems,
       workflowReconciliation: {
         job: 'submit-form',
         coverageComplete: true,

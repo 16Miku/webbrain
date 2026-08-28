@@ -9571,18 +9571,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return hash.toString(16).padStart(8, '0');
   }
 
-  _workflowFormInventoryItems(result = {}, bindingKey = '') {
+  _workflowFormInventoryItems(result = {}, bindingKey = '', documentScope = '') {
     const text = [result?.pageContent, result?.text]
       .find(value => typeof value === 'string' && value.trim()) || '';
     if (!text || !bindingKey) return [];
     const scope = String(
-      result?.documentToken
-      || result?.tree_revision
-      || result?.treeRevision
+      documentScope
+      || result?.documentToken
       || result?.refScopeUrl
       || result?.pageUrl
       || result?.currentUrl
       || result?.url
+      || result?.tree_revision
+      || result?.treeRevision
       || 'document',
     ).slice(0, 500);
     const items = [];
@@ -9617,21 +9618,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || siteWorkflow.job.template !== 'form'
         || name !== 'get_accessibility_tree'
         || !this._isSuccessfulExecutionEvidence(result)) return null;
+    const axScope = this._lastAxScopes.get(tabId);
     const pageUrl = [
       result?.refScopeUrl,
       result?.pageUrl,
       result?.currentUrl,
       result?.url,
-      this._lastAxScopes.get(tabId)?.pageUrl,
+      axScope?.pageUrl,
     ].find(value => typeof value === 'string' && value.trim()) || '';
     if (!pageUrl) return null;
     const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
     if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
     const bindingKey = this._adapterWorkflowBindingKey(siteWorkflow);
-    const observed = this._workflowFormInventoryItems(result, bindingKey);
+    const stableDocumentScope = [
+      result?.documentToken,
+      axScope?.documentToken,
+      result?.refScopeUrl,
+      axScope?.pageUrl,
+      pageUrl,
+    ].find(value => typeof value === 'string' && value.trim()) || '';
+    const observed = this._workflowFormInventoryItems(result, bindingKey, stableDocumentScope);
     if (!observed.length) return null;
     const documentKey = String(
-      result?.documentToken
+      stableDocumentScope
       || result?.tree_revision
       || result?.treeRevision
       || pageUrl
@@ -14922,9 +14931,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       taskKey,
       allowReopen: args.reopen === true,
     });
-    if (!result.changed) {
-      return { success: false, error: 'progress_update: no valid items were provided. Each item needs a stable id.' };
-    }
     const workflowReconciliation = args.workflowReconciliation || args.workflow_reconciliation || null;
     const prospectiveRows = sessionId
       ? this._rowsForProgressSession(tabId, sessionId, result.rows)
@@ -14934,6 +14940,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : null;
     if (workflowReconciliationValidation && !workflowReconciliationValidation.ok) {
       return { success: false, error: workflowReconciliationValidation.error };
+    }
+    const reconciliationOnly = !result.changed
+      && workflowReconciliationValidation?.ok === true
+      && scopedItems.length > 0
+      && scopedItems.every(item => {
+        const key = ledgerRowKey(item);
+        return !!key && result.rows.some(row => ledgerRowKey(row) === key);
+      });
+    if (!result.changed && !reconciliationOnly) {
+      return { success: false, error: 'progress_update: no valid items were provided. Each item needs a stable id.' };
     }
     if (evidenceRequirementIds.length) {
       if (hasCurrentRunEvidence) this._consumeCompletionObservation(tabId);
@@ -14978,7 +14994,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(blockedDowngrades.length ? {
         warnings: blockedDowngrades.map(b => `row ${b.id} is already ${b.keptStatus}; status change to ${b.requestedStatus} ignored. Pass reopen:true only if the user explicitly asked to redo it.`),
       } : {}),
-      note: 'progress ledger updated',
+      note: reconciliationOnly ? 'workflow reconciliation recorded' : 'progress ledger updated',
     };
   }
 
