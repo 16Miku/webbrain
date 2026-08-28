@@ -12084,10 +12084,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const prior = guard.workflowInventoryEvidence;
     const compatible = prior?.bindingKey === bindingKey && prior?.taskKey === taskKey;
     const priorItems = compatible && Array.isArray(prior.items) ? prior.items : [];
-    // A page-one document-root read starts a new authoritative snapshot. Drop
-    // stale controls from the same document (and legacy unscoped controls),
-    // then merge only this snapshot's continuation pages and later subtrees.
-    const retainedItems = startingRootRead
+    // Saved-state verification needs one current page snapshot so a vanished
+    // value cannot be reused. Other form workflows are cumulative: wizard
+    // sections and resolved-thread controls may disappear after being handled.
+    const replaceCurrentRootSnapshot = this._workflowVerificationKind(siteWorkflow) === 'saved_state';
+    const retainedItems = replaceCurrentRootSnapshot && startingRootRead
       ? priorItems.filter(item => item?.documentScope && item.documentScope !== stableDocumentScope)
       : priorItems;
     const items = new Map(retainedItems.map(item => [item.id, item]));
@@ -12140,6 +12141,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const siteWorkflow = guard?.siteWorkflow;
     if (!siteWorkflow?.job?.requiresLedger) return null;
     const taskKey = this._progressTaskKeyHash(tabId);
+    const evidence = guard?.workflowInventoryEvidence;
+    const accessibilityInventory = evidence?.complete === true
+        && evidence.bindingKey === this._adapterWorkflowBindingKey(siteWorkflow)
+        && evidence.taskKey === taskKey
+        && Array.isArray(evidence.items)
+        && evidence.items.length > 0
+      ? {
+          source: evidence.source,
+          itemIds: evidence.items.map(item => String(item.id)),
+          itemCount: evidence.items.length,
+        }
+      : null;
+    // Form workflows must reconcile the controls the app actually exposed.
+    // Classifier/expected rows describe task scope, not screening questions,
+    // conditional sections, upload controls, or other concrete obligations.
+    if (siteWorkflow.job.template === 'form') return accessibilityInventory;
     const expected = this.progressExpectedItems.get(tabId);
     if (expected) {
       const expectedRows = rows.filter(row => Number.isInteger(Number(row?.fields?.expectedOrdinal)));
@@ -12154,15 +12171,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (classifierRows.length > 0) {
       return { source: 'classifier_targets', itemIds: classifierRows.map(row => String(row.id)), itemCount: classifierRows.length };
     }
-    const evidence = guard?.workflowInventoryEvidence;
-    if (evidence?.complete === true
-        && evidence.bindingKey === this._adapterWorkflowBindingKey(siteWorkflow)
-        && evidence.taskKey === taskKey
-        && Array.isArray(evidence.items)
-        && evidence.items.length > 0) {
-      return { source: evidence.source, itemIds: evidence.items.map(item => String(item.id)), itemCount: evidence.items.length };
-    }
-    return null;
+    return accessibilityInventory;
   }
 
   async _resolvePlannerSiteWorkflowForLiveTab(tabId, plannedUrl, plan) {
@@ -17453,8 +17462,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!basis || basis.length > 240) {
       return { ok: false, error: 'progress_update: basis must be a short non-empty evidence statement (maximum 240 characters).' };
     }
+    if (rows.some(row => String(row?.status || '').toLowerCase() === 'failed')) {
+      return { ok: false, error: 'progress_update: failed workflow rows cannot satisfy successful reconciliation; report a partial or failed outcome.' };
+    }
     if (rows.some(row => !isTerminalLedgerStatus(row?.status))) {
-      return { ok: false, error: 'progress_update: every current-task row must be processed, skipped, or failed before reconciliation can be complete.' };
+      return { ok: false, error: 'progress_update: every current-task row must be processed or skipped before reconciliation can be complete.' };
     }
     return {
       ok: true,
@@ -17481,13 +17493,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         row => String(row?.taskKey || '') === String(record.taskKey || ''),
       );
     const inventory = this._trustedWorkflowInventory(tabId, rows, state);
-    const inventoryIds = inventory?.itemIds?.map(id => String(id)).sort() || [];
+    const inventoryIds = [...new Set(inventory?.itemIds?.map(id => String(id)) || [])].sort();
+    const rowIds = [...new Set(rows.map(row => String(row?.id || '')))].sort();
     return !!inventory
       && record.inventorySource === inventory.source
       && record.inventoryFingerprint === this._workflowInventoryFingerprint(inventoryIds.join('\n'))
       && rows.length > 0
       && rows.length === record.itemCount
-      && rows.every(row => isTerminalLedgerStatus(row?.status));
+      && record.itemCount === inventory.itemCount
+      && rowIds.length === rows.length
+      && rowIds.length === inventoryIds.length
+      && rowIds.every((id, index) => id === inventoryIds[index])
+      && rows.every(row => isTerminalLedgerStatus(row?.status)
+        && String(row?.status || '').toLowerCase() !== 'failed');
   }
 
   _progressUpdate(tabId, args = {}, opts = {}) {
@@ -19068,7 +19086,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : missingRequiredSubmission
           ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job requires terminal evidence for its own submit/send/publish/commit contract. Filling fields, another site's submit, or an unrelated success signal is not completion. Dispatch the intended action and observe the job-specific terminal state (for example recipient-bound sent state, saved/published resource, form confirmation, or paid/ticket-issued transaction) before calling done again. If that cannot be verified, use outcome partial or failed and report the exact blocker.]`
           : missingRequiredLedger
-          ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow.job.id} site workflow requires complete item-level reconciliation before success. Obtain a complete app-owned workflow inventory, use its exact item ids for one terminal ledger row per item, then call progress_update with workflowReconciliation {job:"${state.siteWorkflow.job.id}", coverageComplete:true, itemCount:N, basis:"..."}. N and the row ids must exactly match that inventory; model-created rows alone are not coverage evidence. If complete coverage cannot be verified, call done with outcome partial or failed and report completed versus unresolved work.]`
+          ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow.job.id} site workflow requires complete item-level reconciliation before success. Obtain a complete app-owned workflow inventory, use its exact item ids for one processed or intentionally skipped ledger row per item, then call progress_update with workflowReconciliation {job:"${state.siteWorkflow.job.id}", coverageComplete:true, itemCount:N, basis:"..."}. N and the row ids must exactly match that inventory; model-created rows alone are not coverage evidence, and any failed row requires a partial or failed outcome. If complete coverage cannot be verified, call done with outcome partial or failed and report completed versus unresolved work.]`
           : unknownMutationIntent
           ? '[PLAN EXECUTION BLOCK: Planning failed, so the runtime could not determine whether this task requires a state change. Continue with normally permitted tools. A success outcome now requires a verified consequential tool call; if the useful result is read-only or no safe consequential action is needed, deliver that result with done outcome partial instead of claiming success. Do not invent or perform a mutation merely to satisfy this guard.]'
           : '[PLAN EXECUTION BLOCK: This is an execute task, so plain text cannot end it. If work remains, use permitted task tools. If complete, call done with outcome success. If blocked, unsafe, cancelled, or user input is required, call done with outcome failed or partial; do not take unsafe action. Read-only work needs a successful task tool and state-changing work needs a successful consequential tool. Do not return another plan, promise, or plain terminal.]',

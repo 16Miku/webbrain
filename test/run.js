@@ -79411,6 +79411,20 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       `${AgentClass.name}: completed root scope lost completion`);
     assert.equal(guard.workflowInventoryEvidence.documents['stable-form-document']?.scope, 'document',
       `${AgentClass.name}: completed root scope was downgraded to a subtree`);
+    const classifierOnlyRows = [{
+      id: 'classifier-only-job-target',
+      label: 'Job selected from the task',
+      source: 'classifier',
+      fields: { classifierTarget: true },
+    }];
+    const trustedFormInventory = agent._trustedWorkflowInventory(tabId, classifierOnlyRows, guard);
+    assert.equal(trustedFormInventory?.source, 'accessibility_tree',
+      `${AgentClass.name}: classifier targets displaced the complete form-control inventory`);
+    assert.deepEqual(
+      [...trustedFormInventory.itemIds].sort(),
+      inventory.items.map(item => item.id).sort(),
+      `${AgentClass.name}: form reconciliation did not retain the exact AX inventory`,
+    );
     const oversizedInventoryItems = agent._workflowFormInventoryItems({
       pageContent: Array.from(
         { length: 205 },
@@ -79425,6 +79439,18 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
         status: 'processed',
         fields: { verified: true },
       }));
+    const failedValidation = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'The complete accessibility-tree inventory was reviewed.',
+    }, terminalInventoryItems.map((item, itemIndex) => ({
+      ...item,
+      status: itemIndex === 0 ? 'failed' : item.status,
+    })), 'failed-workflow-session');
+    assert.equal(failedValidation.ok, false,
+      `${AgentClass.name}: a failed workflow obligation passed successful reconciliation`);
+    assert.match(failedValidation.error, /failed workflow rows/i);
     const terminalOnly = agent._progressUpdate(tabId, { items: terminalInventoryItems });
     assert.equal(terminalOnly.success, true);
     assert.equal(guard.workflowLedgerReconciliation, null,
@@ -79440,10 +79466,39 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     });
     assert.equal(reconciled.success, true);
     assert.equal(reconciled.workflowReconciled, true);
+    const reconciledRow = (agent.progressLedgers.get(tabId) || [])
+      .find(row => row.id === terminalInventoryItems[0].id);
+    assert.ok(reconciledRow, `${AgentClass.name}: reconciled workflow row was not persisted`);
+    const reconciledStatus = reconciledRow.status;
+    reconciledRow.status = 'failed';
+    assert.equal(agent._workflowLedgerReconciliationSatisfied(tabId, guard), false,
+      `${AgentClass.name}: a reconciled row could become failed without invalidating success`);
+    reconciledRow.status = reconciledStatus;
+    assert.equal(agent._workflowLedgerReconciliationSatisfied(tabId, guard), true,
+      `${AgentClass.name}: restoring the successful row did not restore reconciliation`);
     assert.equal(agent._planOnlyTerminalDecision(tabId, 'Submitted.', {
       viaDone: true,
       outcome: 'success',
     }), null);
+
+    const nextWizardSection = agent._rememberWorkflowInventoryObservation(
+      tabId,
+      'get_accessibility_tree',
+      {},
+      {
+        success: true,
+        pageContent: 'radio "Work authorization" [ref_work_authorization] checked=false',
+        treeRevision: 'tree-wizard-section-two',
+      },
+    );
+    assert.equal(nextWizardSection?.complete, true);
+    assert.equal(nextWizardSection?.itemCount, 4,
+      `${AgentClass.name}: advancing a same-document wizard discarded earlier section obligations`);
+    assert.deepEqual(
+      nextWizardSection.items.map(item => item.ref_id).sort(),
+      ['ref_name', 'ref_resume', 'ref_terms', 'ref_work_authorization'].sort(),
+      `${AgentClass.name}: multi-step form inventory did not accumulate exact section controls`,
+    );
 
     const reading = agent._resolvePlannerSiteWorkflow('https://www.producthunt.com/', {
       request_kind: 'execute',
