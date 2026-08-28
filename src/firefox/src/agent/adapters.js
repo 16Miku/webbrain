@@ -15790,7 +15790,7 @@ const ADAPTERS = [
   {
     name: 'github',
     category: 'general',
-    revision: 2,
+    revision: 3,
     regions: ['global'],
     jobs: ['publish-release', 'upload-release-assets', 'review-pull-request', 'resolve-review-threads'],
     workflow: {
@@ -15976,7 +15976,7 @@ const ADAPTERS = [
   {
     name: 'gmail',
     category: 'general',
-    revision: 5,
+    revision: 6,
     regions: ['global'],
     jobs: ['read-complete-thread', 'count-results', 'draft-email', 'send-email'],
     workflow: {
@@ -16246,7 +16246,7 @@ const ADAPTERS = [
   {
     name: 'youtube',
     category: 'general',
-    revision: 1,
+    revision: 2,
     regions: ['global'],
     jobs: ['read-transcript', 'update-metadata'],
     workflow: {

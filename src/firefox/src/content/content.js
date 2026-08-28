@@ -3498,10 +3498,15 @@
 
   function _messageRecipientIdentityKey(values = []) {
     return JSON.stringify(Array.from(new Set((Array.isArray(values) ? values : [])
-      .map(value => String(value ?? '')
+      .map(value => {
+        const legacy = typeof value === 'string' || typeof value === 'number';
+        const identity = String(legacy ? value : (value?.identity ?? value?.recipient) ?? '')
         .replace(/[\u200b-\u200d\ufeff]/g, '')
         .replace(/\s+/g, ' ')
-        .trim())
+        .trim();
+        const role = String(legacy ? 'to' : value?.role || '').trim().toLowerCase();
+        return identity && /^(?:to|cc|bcc)$/.test(role) ? `${role}:${identity}` : '';
+      })
       .filter(Boolean))).sort());
   }
 
@@ -3533,7 +3538,11 @@
       args: dispatch.args && typeof dispatch.args === 'object' ? { ...dispatch.args } : {},
       adapterName: String(dispatch.adapterName || ''),
       expectedRecipients: Array.isArray(dispatch.expectedRecipients)
-        ? dispatch.expectedRecipients.map(value => String(value || '')).filter(Boolean).slice(0, 16)
+        ? dispatch.expectedRecipients.map(value => (
+            value && typeof value === 'object'
+              ? { identity: String(value.identity || ''), role: String(value.role || '') }
+              : { identity: String(value || ''), role: 'to' }
+          )).filter(value => value.identity && /^(?:to|cc|bcc)$/.test(value.role)).slice(0, 16)
         : [],
       supportsRecipientSets: dispatch.supportsRecipientSets === true,
       identityKey,
@@ -3593,7 +3602,11 @@
         error: 'Message send blocked because the verified action target or composer changed before dispatch. Re-read the active conversation and retry the send once.',
       };
     }
-    const liveIdentityKey = _messageRecipientIdentityKey(live?.strongIdentityCandidates);
+    const liveIdentityKey = _messageRecipientIdentityKey(
+      Array.isArray(live?.strongRecipientCandidates)
+        ? live.strongRecipientCandidates
+        : live?.strongIdentityCandidates,
+    );
     if (live?.success !== true || live?.conclusive !== true || live?.messageSend !== true
       || liveIdentityKey !== expected.identityKey) {
       return {
@@ -4133,6 +4146,7 @@
         Math.min(220, Math.max(140, viewportHeight * 0.2)),
       );
       const strongIdentities = [];
+      const strongRecipients = [];
       const strongSeen = new Set();
       const gmailRecipientMode = params.adapterName === 'gmail';
       const inConversationHeaderBand = (el) => {
@@ -4160,6 +4174,48 @@
       if (gmailRecipientMode) {
         const composeRoot = composer.closest?.('[role="dialog"],form') || null;
         const recipients = new Map();
+        const recipientRole = (el) => {
+          const roleFromAttribute = (attribute, value) => {
+            const text = compact(value, 120).toLowerCase();
+            if (!text) return '';
+            if (attribute === 'aria-label') {
+              if (/^(?:bcc|blind\s+carbon\s+copy)(?:$|\s*[:,-]\s*)/.test(text)) return 'bcc';
+              if (/^(?:cc|carbon\s+copy)(?:$|\s*[:,-]\s*)/.test(text)) return 'cc';
+              if (/^to(?:$|\s*[:,-]\s*)/.test(text)) return 'to';
+              return '';
+            }
+            if (attribute === 'name') {
+              return /^(?:to|cc|bcc)$/.test(text) ? text : '';
+            }
+            const tokens = text.split(/[^a-z]+/).filter(Boolean);
+            if (tokens.includes('bcc')) return 'bcc';
+            if (tokens.includes('cc')) return 'cc';
+            if (tokens.length === 1 && tokens[0] === 'to') return 'to';
+            return '';
+          };
+          let current = el;
+          for (let depth = 0; current && depth < 7; depth++, current = current.parentElement) {
+            for (const attribute of ['data-recipient-type', 'data-type', 'name', 'aria-label']) {
+              const role = roleFromAttribute(attribute, current.getAttribute?.(attribute));
+              if (role) return role;
+            }
+            if (current === composeRoot) break;
+            try {
+              const descendantRoles = new Set();
+              for (const marker of current.querySelectorAll?.(
+                'input[name="to"],input[name="cc"],input[name="bcc"],[aria-label]'
+              ) || []) {
+                const role = roleFromAttribute('name', marker.getAttribute?.('name'))
+                  || roleFromAttribute('aria-label', marker.getAttribute?.('aria-label'));
+                if (role) descendantRoles.add(role);
+              }
+              // A nearest row containing one role marker can classify its
+              // chips. A shared ancestor containing multiple rows cannot.
+              if (descendantRoles.size === 1) return [...descendantRoles][0];
+            } catch {}
+          }
+          return '';
+        };
         if (composeRoot?.querySelectorAll) {
           for (const el of composeRoot.querySelectorAll('[email],[data-hovercard-id],[data-email]')) {
             if (!visible(el) || editable(el)) continue;
@@ -4184,24 +4240,35 @@
             }
             const key = normalizedIdentity(email);
             if (!key) continue;
-            const priorAliases = recipients.get(key) || new Map();
-            for (const [normalized, alias] of aliases) priorAliases.set(normalized, alias);
-            recipients.set(key, priorAliases);
+            const role = recipientRole(el);
+            if (!role) continue;
+            const recipientKey = `${role}:${key}`;
+            const prior = recipients.get(recipientKey) || { identity: email, role, aliases: new Map() };
+            for (const [normalized, alias] of aliases) prior.aliases.set(normalized, alias);
+            recipients.set(recipientKey, prior);
           }
         }
         // Match the complete authorized To/CC/BCC set. Each expected identity
         // must resolve to exactly one distinct chip and no additional chip may
         // remain; duplicate display names therefore fail closed.
         const expectedRecipients = Array.isArray(params.expectedRecipients)
-          ? params.expectedRecipients.map(value => compact(value, 240)).filter(Boolean).slice(0, 16)
+          ? params.expectedRecipients.map(value => {
+              const legacy = typeof value === 'string' || typeof value === 'number';
+              return {
+                identity: compact(legacy ? value : (value?.identity ?? value?.recipient), 240),
+                role: compact(legacy ? 'to' : value?.role, 12).toLowerCase(),
+              };
+            }).filter(value => value.identity && /^(?:to|cc|bcc)$/.test(value.role)).slice(0, 16)
           : [];
         if (expectedRecipients.length > 0 && recipients.size === expectedRecipients.length) {
           const claimed = new Set();
           const matched = [];
           for (const expected of expectedRecipients) {
-            const normalizedExpected = normalizedIdentity(expected);
+            const normalizedExpected = normalizedIdentity(expected.identity);
             const candidates = [...recipients.entries()]
-              .filter(([key, aliases]) => !claimed.has(key) && aliases.has(normalizedExpected));
+              .filter(([key, recipient]) => !claimed.has(key)
+                && recipient.role === expected.role
+                && recipient.aliases.has(normalizedExpected));
             if (!normalizedExpected || candidates.length !== 1) {
               matched.length = 0;
               break;
@@ -4210,17 +4277,20 @@
             matched.push(expected);
           }
           if (matched.length === recipients.size) {
-            for (const identity of matched) {
-              strongSeen.add(identity);
-              strongIdentities.push(identity);
+            for (const recipient of matched) {
+              strongSeen.add(`${recipient.role}:${recipient.identity}`);
+              strongIdentities.push(recipient.identity);
+              strongRecipients.push(recipient);
             }
           }
         } else if (expectedRecipients.length === 0) {
-          for (const [emailKey, aliases] of recipients) {
-            const identity = aliases.get(emailKey) || [...aliases.values()][0] || '';
-            if (identity && !strongSeen.has(identity)) {
-              strongSeen.add(identity);
+          for (const [recipientKey, recipient] of recipients) {
+            const emailKey = recipientKey.slice(recipientKey.indexOf(':') + 1);
+            const identity = recipient.aliases.get(emailKey) || [...recipient.aliases.values()][0] || '';
+            if (identity && !strongSeen.has(recipientKey)) {
+              strongSeen.add(recipientKey);
               strongIdentities.push(identity);
+              strongRecipients.push({ identity, role: recipient.role });
             }
           }
         }
@@ -4241,14 +4311,15 @@
           addStrongIdentity(el);
           if (strongIdentities.length >= 8) break;
         }
+        for (const identity of strongIdentities) strongRecipients.push({ identity, role: 'to' });
       }
 
       const messageRecipientDispatchToken = params.bindDispatch === true
         && messageSend === true
         && (params.supportsRecipientSets === true
-          ? strongIdentities.length > 0
-          : strongIdentities.length === 1)
-        ? _rememberMessageRecipientDispatchBinding(composer, strongIdentities, {
+          ? strongRecipients.length > 0
+          : strongRecipients.length === 1)
+        ? _rememberMessageRecipientDispatchBinding(composer, strongRecipients, {
             tool,
             args,
             actionTarget: dispatchTarget,
@@ -4274,6 +4345,7 @@
         // returned as dispatch identities.
         identityCandidates: strongIdentities.slice(0, 8),
         strongIdentityCandidates: strongIdentities.slice(0, 8),
+        strongRecipientCandidates: strongRecipients.slice(0, 8),
         ...(messageRecipientDispatchToken
           ? { messageRecipientDispatchBinding: { token: messageRecipientDispatchToken } }
           : {}),

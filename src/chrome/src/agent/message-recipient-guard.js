@@ -3,6 +3,7 @@
 // byte-identical.
 
 export const MESSAGE_TARGET_KINDS = new Set(['named', 'active_conversation']);
+export const MESSAGE_RECIPIENT_ROLES = new Set(['to', 'cc', 'bcc']);
 
 function compact(value, max = 200) {
   return String(value ?? '')
@@ -25,9 +26,14 @@ export function normalizeMessageTarget(value) {
     ? value.recipients
     : [value.recipient];
   for (const value of rawRecipients.slice(0, 16)) {
-    const recipient = compact(value, 240);
-    const normalized = normalizeRecipientIdentity(recipient);
-    if (recipient && normalized && !recipients.has(normalized)) recipients.set(normalized, recipient);
+    const legacy = typeof value === 'string' || typeof value === 'number';
+    const identity = compact(legacy ? value : (value?.identity ?? value?.recipient), 240);
+    const role = compact(legacy ? 'to' : value?.role, 12).toLowerCase();
+    const normalized = normalizeRecipientIdentity(identity);
+    const key = `${role}:${normalized}`;
+    if (identity && normalized && MESSAGE_RECIPIENT_ROLES.has(role) && !recipients.has(key)) {
+      recipients.set(key, { identity, role });
+    }
   }
   return recipients.size
     ? { target_kind: targetKind, recipients: [...recipients.values()] }
@@ -52,18 +58,25 @@ export function recipientMatchesObservedIdentity(recipient, observedIdentity) {
 
 export function messageTargetMatchesObservedIdentities(target, candidates) {
   const normalizedTarget = normalizeMessageTarget(target);
-  const identities = new Map();
+  const recipients = new Map();
   for (const value of (Array.isArray(candidates) ? candidates : []).slice(0, 16)) {
-    const identity = compact(value, 240);
+    const legacy = typeof value === 'string' || typeof value === 'number';
+    const identity = compact(legacy ? value : (value?.identity ?? value?.recipient), 240);
+    const role = compact(legacy ? 'to' : value?.role, 12).toLowerCase();
     const normalized = normalizeRecipientIdentity(identity);
-    if (identity && normalized && !identities.has(normalized)) identities.set(normalized, identity);
+    const key = `${role}:${normalized}`;
+    if (identity && normalized && MESSAGE_RECIPIENT_ROLES.has(role) && !recipients.has(key)) {
+      recipients.set(key, { identity, role });
+    }
   }
   if (!normalizedTarget) return false;
   // active_conversation is planner intent, not a dispatch-time identity. A
   // protected adapter must pin it to a concrete named identity before tools
   // run; accepting any later conversation would authorize retargeting.
   if (normalizedTarget.target_kind === 'active_conversation') return false;
-  const expected = new Set(normalizedTarget.recipients.map(normalizeRecipientIdentity));
-  return expected.size === identities.size
-    && [...expected].every(identity => identities.has(identity));
+  const expected = new Set(normalizedTarget.recipients.map(recipient => (
+    `${recipient.role}:${normalizeRecipientIdentity(recipient.identity)}`
+  )));
+  return expected.size === recipients.size
+    && [...expected].every(key => recipients.has(key));
 }

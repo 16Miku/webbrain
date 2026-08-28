@@ -4456,7 +4456,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
   );
   for (const helper of [MessageRecipientGuardCh, MessageRecipientGuardFx]) {
     assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'named', recipients: [' 迷你世界皓宸 '] }), {
-      target_kind: 'named', recipients: ['迷你世界皓宸'],
+      target_kind: 'named', recipients: [{ identity: '迷你世界皓宸', role: 'to' }],
     });
     assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipients: ['ignored'] }), {
       target_kind: 'active_conversation', recipients: [],
@@ -4475,6 +4475,26 @@ test('direct-message recipient guard uses structured intent and exact active ide
       { target_kind: 'named', recipients: ['Alice', 'bob@example.com'] },
       ['bob@example.com', 'Alice'],
     ), true, 'the exact authorized recipient set should be order-independent');
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipients: [
+        { identity: 'Alice', role: 'to' },
+        { identity: 'bob@example.com', role: 'bcc' },
+      ] },
+      [
+        { identity: 'bob@example.com', role: 'bcc' },
+        { identity: 'Alice', role: 'to' },
+      ],
+    ), true, 'recipient identity and delivery role should both match');
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'named', recipients: [
+        { identity: 'Alice', role: 'to' },
+        { identity: 'bob@example.com', role: 'bcc' },
+      ] },
+      [
+        { identity: 'Alice', role: 'to' },
+        { identity: 'bob@example.com', role: 'to' },
+      ],
+    ), false, 'moving a BCC recipient into To must fail closed');
     assert.equal(helper.messageTargetMatchesObservedIdentities(
       { target_kind: 'named', recipients: ['Alice', 'bob@example.com'] },
       ['Alice'],
@@ -4528,7 +4548,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
       'https://www.douyin.com/chat',
     );
     assert.deepEqual(pinned.target, {
-      target_kind: 'named', recipients: ['清辉月下夜'],
+      target_kind: 'named', recipients: [{ identity: '清辉月下夜', role: 'to' }],
     }, `${label}: active conversation was not pinned before execution`);
     const linkedInPinned = await agent._pinActiveConversationMessagingTarget(
       tabId,
@@ -4536,7 +4556,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
       'https://www.linkedin.com/messaging/thread/2-abc/',
     );
     assert.deepEqual(linkedInPinned.target, {
-      target_kind: 'named', recipients: ['清辉月下夜'],
+      target_kind: 'named', recipients: [{ identity: '清辉月下夜', role: 'to' }],
     }, `${label}: LinkedIn active conversation was not pinned before execution`);
     probe = {
       success: true,
@@ -4614,7 +4634,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
       `${label}: Gmail recipient was not pinned when the reply was dispatched`,
     );
     assert.deepEqual(agent._planExecutionGuards.get(tabId).messaging, {
-      target_kind: 'named', recipients: ['alice@example.com'],
+      target_kind: 'named', recipients: [{ identity: 'alice@example.com', role: 'to' }],
     }, `${label}: deferred Gmail recipient identity was not persisted`);
     assert.deepEqual(gmailExecutionContext, {
       messageRecipientGuardRequired: true,
@@ -4660,7 +4680,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
       messageRecipientGuardRequired: true,
       messageRecipientDispatchBinding: { token: `recipient-binding-${label}` },
     });
-    assert.deepEqual(lastProbeParams?.expectedRecipients, ['迷你世界皓宸'],
+    assert.deepEqual(lastProbeParams?.expectedRecipients, [{ identity: '迷你世界皓宸', role: 'to' }],
       `${label}: named recipient set was not passed to the dispatch probe`);
     for (const [tool, args] of [
       ['click', { selector: '#send' }],
@@ -4925,10 +4945,13 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     activeElement = composer;
     const gmailAliceChip = element('Alice', {
       left: 430, right: 620, top: 610, bottom: 650, width: 190, height: 40,
-    }, { attributes: { email: 'alice@example.com', name: 'Alice' } });
+    }, { attributes: { email: 'alice@example.com', name: 'Alice', 'data-recipient-type': 'to' } });
     const gmailBobChip = element('Bob', {
       left: 630, right: 800, top: 610, bottom: 650, width: 170, height: 40,
-    }, { attributes: { email: 'bob@example.com', name: 'Bob' } });
+    }, { attributes: { email: 'bob@example.com', name: 'Bob', 'data-recipient-type': 'to' } });
+    const gmailBccBobChip = element('Bob', {
+      left: 630, right: 800, top: 610, bottom: 650, width: 170, height: 40,
+    }, { attributes: { email: 'bob@example.com', name: 'Bob', 'data-recipient-type': 'bcc' } });
     gmailRecipientChips = [gmailAliceChip];
     const gmailMatchingRecipientResult = probe({
       tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
@@ -4950,6 +4973,21 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const gmailExtraRecipientResult = probe({
       tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
       expectedRecipients: ['alice@example.com'], supportsRecipientSets: true,
+    });
+    gmailRecipientChips = [gmailAliceChip, gmailBccBobChip];
+    const gmailMatchingRoleResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+      expectedRecipients: [
+        { identity: 'alice@example.com', role: 'to' },
+        { identity: 'Bob', role: 'bcc' },
+      ], supportsRecipientSets: true,
+    });
+    const gmailWrongRoleResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+      expectedRecipients: [
+        { identity: 'alice@example.com', role: 'to' },
+        { identity: 'Bob', role: 'to' },
+      ], supportsRecipientSets: true,
     });
     composer.value = '';
     const emptyComposerCustomSendResult = probe({ tool: 'click', args: { text: 'Quick send' } });
@@ -4976,6 +5014,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       gmailWrongRecipientResult,
       gmailMatchingSetResult,
       gmailExtraRecipientResult,
+      gmailMatchingRoleResult,
+      gmailWrongRoleResult,
     };
   };
 
@@ -5003,6 +5043,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       gmailWrongRecipientResult,
       gmailMatchingSetResult,
       gmailExtraRecipientResult,
+      gmailMatchingRoleResult,
+      gmailWrongRoleResult,
     } = runProbe(prefix);
     assert.equal(observationResult.success, true);
     assert.equal(observationResult.conclusive, true);
@@ -5054,6 +5096,12 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       `${prefix}: exact authorized Gmail recipient set was rejected`);
     assert.deepEqual(Array.from(gmailExtraRecipientResult.strongIdentityCandidates), [],
       `${prefix}: an unreviewed extra Gmail recipient authorized dispatch`);
+    assert.deepEqual(JSON.parse(JSON.stringify(gmailMatchingRoleResult.strongRecipientCandidates)), [
+      { identity: 'alice@example.com', role: 'to' },
+      { identity: 'Bob', role: 'bcc' },
+    ], `${prefix}: exact Gmail To/BCC authorization was rejected`);
+    assert.deepEqual(Array.from(gmailWrongRoleResult.strongRecipientCandidates), [],
+      `${prefix}: moving a Gmail BCC recipient into To authorized dispatch`);
   }
 });
 
@@ -5075,6 +5123,7 @@ test('message recipient dispatch binding detects composer and active-thread race
     let liveComposer = composer;
     let liveTarget = sendButton;
     let liveIdentities = ['Alice'];
+    let liveRecipients = null;
     const helpers = vm.runInNewContext(`(() => {
       ${source.slice(start, end)}
       return {
@@ -5095,6 +5144,7 @@ test('message recipient dispatch binding detects composer and active-thread race
               conclusive: true,
               messageSend: true,
               strongIdentityCandidates: liveIdentities,
+              ...(Array.isArray(liveRecipients) ? { strongRecipientCandidates: liveRecipients } : {}),
             }
       ),
     });
@@ -5118,7 +5168,17 @@ test('message recipient dispatch binding detects composer and active-thread race
     assert.equal(changedRecipient.success, false);
     assert.equal(changedRecipient.reasonCode, 'active_recipient_changed_before_dispatch');
 
+    liveIdentities = ['Bob'];
+    liveRecipients = [{ identity: 'Bob', role: 'to' }];
+    const changedRoleToken = helpers.remember(composer, [{ identity: 'Bob', role: 'bcc' }], dispatch);
+    const changedRole = helpers.consume({
+      messageRecipientDispatchBinding: { token: changedRoleToken },
+    }, sendButton);
+    assert.equal(changedRole.success, false, `${label}: recipient role change survived dispatch revalidation`);
+    assert.equal(changedRole.reasonCode, 'active_recipient_changed_before_dispatch');
+
     liveIdentities = ['Alice'];
+    liveRecipients = null;
     const changedComposerToken = helpers.remember(composer, ['Alice'], dispatch);
     liveComposer = replacementComposer;
     const changedComposer = helpers.consume({
@@ -7542,7 +7602,7 @@ test('report-driven workflow adapters route exact app-owned jobs with browser pa
     'https://mail.google.com/mail/u/0/#inbox/abc',
     'read-complete-thread',
   );
-  assert.equal(gmailThreadRead.revision, 5);
+  assert.equal(gmailThreadRead.revision, 6);
   assert.equal(gmailThreadRead.job.requiresLedger, false,
     'Gmail complete-thread reads must rely on the dedicated conversation coverage guard, not an unavailable ledger inventory');
   assert.deepEqual(gmailThreadRead.job.stages, ['access_gate', 'scope', 'collect', 'verify', 'deliver']);
@@ -79347,10 +79407,10 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     });
     assert.equal(rootThenSubtree?.complete, true,
       `${AgentClass.name}: a later subtree read erased completed document-root coverage`);
-    assert.deepEqual(guard.workflowInventoryEvidence.documents['stable-form-document'], {
-      complete: true,
-      scope: 'document',
-    }, `${AgentClass.name}: completed root scope was downgraded to a subtree`);
+    assert.equal(guard.workflowInventoryEvidence.documents['stable-form-document']?.complete, true,
+      `${AgentClass.name}: completed root scope lost completion`);
+    assert.equal(guard.workflowInventoryEvidence.documents['stable-form-document']?.scope, 'document',
+      `${AgentClass.name}: completed root scope was downgraded to a subtree`);
     const oversizedInventoryItems = agent._workflowFormInventoryItems({
       pageContent: Array.from(
         { length: 205 },
@@ -79460,6 +79520,159 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
       itemIds: [rows[0].id],
       itemCount: 1,
     }, `${AgentClass.name}: the single asset did not become trusted workflow inventory`);
+  }
+});
+
+test('GitHub review-thread workflow inventories only unresolved thread controls', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 8937 + index;
+    const pullUrl = 'https://github.com/esokullu/webbrain/pull/320';
+    const selected = agent._resolvePlannerSiteWorkflow(pullUrl, {
+      request_kind: 'execute',
+      site_job: 'resolve-review-threads',
+    });
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Resolve all open review threads.' },
+    ]);
+    agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'pull-request-document', pageUrl: pullUrl });
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageContent: [
+        'textbox "Reply" [ref_reply_1] value=""',
+        'button "Resolve conversation" [ref_resolve_1]',
+        'button "Add comment" [ref_add_comment]',
+        'button "Resolve conversation" [ref_resolve_2]',
+      ].join('\n'),
+      treeRevision: 'review-threads-root',
+    });
+    assert.equal(inventory?.complete, true);
+    assert.equal(inventory?.itemCount, 2, `${AgentClass.name}: unresolved thread controls were not the exact inventory`);
+    assert.deepEqual(inventory.items.map(item => item.ref_id), ['ref_resolve_1', 'ref_resolve_2']);
+    assert.ok(inventory.items.every(item => item.label === 'Resolve conversation'));
+  }
+});
+
+test('YouTube metadata success requires exact app-classified post-save readback', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
+    agent.useSiteAdapters = true;
+    agent._persist = () => {};
+    const tabId = 8939 + index;
+    const videoUrl = 'https://studio.youtube.com/video/abc/edit';
+    const taskText = 'Set the title to "Launch Video" and visibility to Public, then save.';
+    const selected = agent._resolvePlannerSiteWorkflow(videoUrl, {
+      request_kind: 'execute',
+      site_job: 'update-metadata',
+    });
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: taskText },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._chatWithCostAllowance = async () => ({
+      content: JSON.stringify({
+        mode: 'active',
+        allowedActions: ['process_item'],
+        forbiddenActions: [],
+        targets: ['title', 'visibility'],
+        workflowFields: [
+          { field: 'title', value: 'Launch Video' },
+          { field: 'visibility', value: 'Public' },
+        ],
+        confidence: 0.99,
+        pageScopePolicy: 'page',
+      }),
+    });
+    await agent._ensureProgressSessionForCurrentTask(tabId, {
+      provider: { chat: async () => ({ content: '{}' }) },
+      taskText,
+      pageScope: videoUrl,
+      progressLedgerPolicy: 'enabled',
+      progressAction: 'process_item',
+    });
+    assert.deepEqual(guard.workflowMetadataRequirements, [
+      { field: 'title', value: 'Launch Video' },
+      { field: 'visibility', value: 'Public' },
+    ], `${AgentClass.name}: trusted task metadata requirements were not retained`);
+
+    agent._beginCompletionInvariant(tabId);
+    agent._lastAxScopes.set(tabId, { documentToken: 'youtube-metadata-document', pageUrl: videoUrl });
+    agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageUrl: videoUrl,
+      pageContent: [
+        'textbox "Title (required)" [ref_title] value="Launch Video"',
+        'combobox "Visibility" [ref_visibility] value="Public"',
+      ].join('\n'),
+    });
+    agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_save' }, {
+      success: true,
+      dispatched: true,
+    });
+    const submit = agent._recordCompletionSubmitAttempt(
+      tabId,
+      { isSubmit: true },
+      'click_ax',
+      { ref_id: 'ref_save' },
+      videoUrl,
+      videoUrl,
+      { success: true, dispatched: true },
+    );
+    assert.deepEqual(submit?.workflowBinding?.metadataRequirements, guard.workflowMetadataRequirements);
+    agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageUrl: videoUrl,
+      pageContent: 'textbox "Title (required)" [ref_title] value="Launch Video"',
+    });
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      tabId,
+      { workflowPageText: 'Changes saved.' },
+      videoUrl,
+      { submit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: a pre-save value missing from the new root snapshot was reused`);
+    agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageUrl: videoUrl,
+      pageContent: [
+        'textbox "Title (required)" [ref_title] value="Launch Video"',
+        'combobox "Visibility" [ref_visibility] value="Private"',
+      ].join('\n'),
+    });
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      tabId,
+      { workflowPageText: 'Changes saved.' },
+      videoUrl,
+      { submit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: mismatched persisted metadata satisfied saved-state success`);
+    agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageUrl: videoUrl,
+      pageContent: [
+        'textbox "Title (required)" [ref_title] value="Launch Video"',
+        'combobox "Visibility" [ref_visibility] value="Public"',
+      ].join('\n'),
+    });
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      tabId,
+      { workflowPageText: 'Changes saved.' },
+      videoUrl,
+      { submit, verifiedFinalSubmit: true, relevantForms: 0 },
+    )?.source, 'saved_state_with_exact_metadata_readback',
+    `${AgentClass.name}: exact persisted metadata readback did not satisfy saved-state success`);
   }
 });
 
@@ -86706,28 +86919,36 @@ test('planner carries a language-neutral structured messaging target into execut
       const objectBranch = messaging.anyOf.find(branch => branch.type === 'object');
       assert.deepEqual(objectBranch?.required, ['target_kind', 'recipients'], `${label}: messaging target fields are optional`);
       assert.equal(objectBranch?.properties?.recipients?.type, 'array', `${label}: recipient authorization is not a set`);
+      assert.deepEqual(objectBranch?.properties?.recipients?.items?.required, ['identity', 'role'], `${label}: recipient identity or role is optional`);
+      assert.deepEqual(objectBranch?.properties?.recipients?.items?.properties?.role?.enum, ['to', 'cc', 'bcc'], `${label}: delivery roles diverged`);
       assert.deepEqual(objectBranch?.properties?.target_kind?.enum, ['named', 'active_conversation'], `${label}: target kinds diverged`);
     }
-    assert.match(fullPrompt, /Do not infer recipients? from page content/i, `${label}: full planner can trust page-provided recipients`);
-    assert.match(intentPrompt, /Do not infer recipients? from page content/i, `${label}: intent planner can trust page-provided recipients`);
+    assert.match(fullPrompt, /Do not infer recipients?(?: or roles)? from page content/i, `${label}: full planner can trust page-provided recipients`);
+    assert.match(intentPrompt, /Do not infer recipients?(?: or roles)? from page content/i, `${label}: intent planner can trust page-provided recipients`);
     for (const [kind, prompt] of [['full', fullPrompt], ['intent', intentPrompt]]) {
       assert.match(prompt, /an anaphoric\/pronominal target resolves uniquely from authentic trusted prior-user context/i, `${label} ${kind}: follow-up recipient cannot resolve from trusted user context`);
       assert.match(prompt, /generic pronoun[\s\S]*does not by itself mean active_conversation/i, `${label} ${kind}: a generic pronoun can still authorize the open thread`);
-      assert.match(prompt, /cannot be resolved uniquely from trusted user context[\s\S]*request_kind="clarify"/i, `${label} ${kind}: ambiguous follow-up recipient does not fail closed`);
+      assert.match(prompt, /cannot be resolved uniquely from authentic trusted prior-user context[\s\S]*request_kind="clarify"/i, `${label} ${kind}: ambiguous follow-up recipient does not fail closed`);
       assert.doesNotMatch(prompt, /send this to them/i, `${label} ${kind}: ambiguous pronoun remains an active-conversation example`);
     }
 
     const named = parse(plannerIntentFixture({
       requiresStateChange: true,
       requiresSubmission: true,
-      messaging: { target_kind: 'named', recipients: ['迷你世界皓宸', 'Alice'] },
+      messaging: { target_kind: 'named', recipients: [
+        { identity: '迷你世界皓宸', role: 'to' },
+        { identity: 'Alice', role: 'bcc' },
+      ] },
       locale: 'zh-CN',
       localizedSummary: '向指定联系人发送消息。',
       localizedSteps: ['选择联系人。', '发送消息。'],
     }), { requireIntent: true, locale: 'zh-CN' });
     assert.deepEqual(named?.messaging, {
-      target_kind: 'named', recipients: ['迷你世界皓宸', 'Alice'],
-    }, `${label}: named recipient set was translated or discarded`);
+      target_kind: 'named', recipients: [
+        { identity: '迷你世界皓宸', role: 'to' },
+        { identity: 'Alice', role: 'bcc' },
+      ],
+    }, `${label}: named recipient identities or roles were translated or discarded`);
 
     const active = parse(plannerIntentFixture({
       requiresStateChange: true,

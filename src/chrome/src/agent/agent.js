@@ -34,7 +34,7 @@ import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock,
 import { cdpClient } from '../cdp/cdp-client.js';
 import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getFullPageCapturePolicy, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
-import { messageTargetMatchesObservedIdentities, normalizeMessageTarget, normalizeRecipientIdentity } from './message-recipient-guard.js';
+import { messageTargetMatchesObservedIdentities, normalizeMessageTarget } from './message-recipient-guard.js';
 import {
   fetchUrl,
   executeHttpSkillTool,
@@ -1538,6 +1538,9 @@ export class Agent extends LoopDetector {
     const recipientBound = executionContext?.messageRecipientGuardRequired === true
       && !!executionContext?.messageRecipientDispatchBinding?.token
       && recipientTarget?.target_kind === 'named';
+    const metadataRequirements = siteWorkflow.job.id === 'update-metadata'
+      ? this._normalizeWorkflowMetadataRequirements(guard.workflowMetadataRequirements)
+      : [];
     return {
       bindingKey: this._adapterWorkflowBindingKey(siteWorkflow),
       adapterName: siteWorkflow.adapterName,
@@ -1545,7 +1548,12 @@ export class Agent extends LoopDetector {
       job: siteWorkflow.job.id,
       verificationKind: this._workflowVerificationKind(siteWorkflow),
       recipientBound,
-      ...(recipientBound ? { recipientIdentities: [...recipientTarget.recipients] } : {}),
+      ...(recipientBound ? {
+        recipientTargets: recipientTarget.recipients.map(recipient => ({ ...recipient })),
+      } : {}),
+      ...(metadataRequirements.length ? {
+        metadataRequirements: metadataRequirements.map(requirement => ({ ...requirement })),
+      } : {}),
     };
   }
 
@@ -1566,6 +1574,76 @@ export class Agent extends LoopDetector {
 
   _workflowSavedStateSignal(text) {
     return /\b(?:changes?\s+saved|saved\s+successfully|successfully\s+(?:saved|updated)|update\s+complete)\b|(?:保存成功|已保存|更新成功|başarıyla kaydedildi|modifications enregistrées|cambios guardados|変更を保存しました|저장되었습니다)/i.test(text);
+  }
+
+  _workflowMetadataFieldKey(value) {
+    let text = String(value || '');
+    try { text = text.normalize('NFKC'); } catch {}
+    text = text.toLowerCase().replace(/[_-]+/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ').trim();
+    const fields = [
+      ['paid_promotion', /\bpaid promotion\b/],
+      ['recording_date', /\b(?:recording date|date recorded)\b/],
+      ['recording_location', /\b(?:recording location|video location)\b/],
+      ['comments', /\bcomments?\b/],
+      ['embedding', /\b(?:embedding|embed)\b/],
+      ['description', /\bdescription\b/],
+      ['visibility', /\b(?:visibility|privacy)\b/],
+      ['audience', /\b(?:audience|made for kids)\b/],
+      ['playlist', /\bplaylist\b/],
+      ['language', /\blanguage\b/],
+      ['category', /\bcategory\b/],
+      ['license', /\blicen[cs]e\b/],
+      ['tags', /\btags?\b/],
+      ['title', /\btitle\b/],
+    ];
+    return fields.find(([, pattern]) => pattern.test(text))?.[0] || '';
+  }
+
+  _workflowMetadataValue(value) {
+    let text = String(value ?? '').replace(/\r\n?/g, '\n')
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+    try { text = text.normalize('NFKC'); } catch {}
+    return text.trim().slice(0, 10000);
+  }
+
+  _normalizeWorkflowMetadataRequirements(values) {
+    if (!Array.isArray(values) || values.length < 1 || values.length > 24) return [];
+    const requirements = new Map();
+    for (const value of values) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      const field = this._workflowMetadataFieldKey(value.field);
+      if (!Object.prototype.hasOwnProperty.call(value, 'value')) return [];
+      const expectedValue = this._workflowMetadataValue(value.value);
+      if (!field || requirements.has(field)) return [];
+      requirements.set(field, { field, value: expectedValue });
+    }
+    return [...requirements.values()];
+  }
+
+  _workflowMetadataRequirementsMatchInventory(requirements, evidence, submitSequence = 0) {
+    if (!Array.isArray(requirements) || requirements.length < 1
+        || evidence?.complete !== true
+        || !evidence.documents || Object.keys(evidence.documents).length < 1
+        || !Object.values(evidence.documents).every(document => (
+          document?.complete === true
+          && Number(document.rootObservationSequence || 0) > Number(submitSequence || 0)
+        ))
+        || !Array.isArray(evidence.items)) return false;
+    const observed = new Map();
+    for (const item of evidence.items) {
+      const field = this._workflowMetadataFieldKey(item?.label);
+      if (!field
+          || Number(item?.observationSequence || 0) <= Number(submitSequence || 0)
+          || !Object.prototype.hasOwnProperty.call(item || {}, 'value')) continue;
+      const values = observed.get(field) || [];
+      values.push(this._workflowMetadataValue(item.value));
+      observed.set(field, values);
+    }
+    return requirements.every(requirement => {
+      const values = observed.get(requirement.field) || [];
+      return values.length === 1 && values[0] === this._workflowMetadataValue(requirement.value);
+    });
   }
 
   _workflowResolvedStateSignal(text) {
@@ -1671,13 +1749,16 @@ export class Agent extends LoopDetector {
       const recipientObserved = messageProbe?.success === true
         && messageProbe?.conclusive === true
         && messageProbe?.composerEmpty === true
-        && messageTargetMatchesObservedIdentities(state.messaging, messageProbe.strongIdentityCandidates);
+        && messageTargetMatchesObservedIdentities(
+          state.messaging,
+          this._messageRecipientCandidates(messageProbe),
+        );
       const sentStatusText = this._workflowTerminalText(
         Array.isArray(pageState?.liveRegionMessages) ? pageState.liveRegionMessages.join('\n') : '',
       );
       const sentStatusObserved = this._workflowMessageSentSignal(siteWorkflow, sentStatusText);
       const dispatchRecipientObserved = binding.recipientBound === true
-        && messageTargetMatchesObservedIdentities(state.messaging, binding.recipientIdentities);
+        && messageTargetMatchesObservedIdentities(state.messaging, binding.recipientTargets);
       const requiresRecipientBinding = normalizeMessageTarget(state.messaging)?.target_kind === 'named';
       const postDispatchRecipientObserved = recipientObserved
         || (siteWorkflow.adapterName === 'gmail' && dispatchRecipientObserved);
@@ -1704,8 +1785,14 @@ export class Agent extends LoopDetector {
         && this._workflowFormConfirmationSignal(text);
       source = 'form_confirmation_state';
     } else if (verificationKind === 'saved_state') {
-      verified = submissionEvidence?.verifiedFinalSubmit === true && this._workflowSavedStateSignal(text);
-      source = 'saved_state';
+      verified = submissionEvidence?.verifiedFinalSubmit === true
+        && this._workflowSavedStateSignal(text)
+        && this._workflowMetadataRequirementsMatchInventory(
+          binding.metadataRequirements,
+          state.workflowInventoryEvidence,
+          submit?.actionSequence,
+        );
+      source = 'saved_state_with_exact_metadata_readback';
     } else if (verificationKind === 'resolved_state') {
       verified = submissionEvidence?.verifiedFinalSubmit === true && this._workflowResolvedStateSignal(text);
       source = 'resolved_state';
@@ -11891,7 +11978,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return hash.toString(16).padStart(8, '0');
   }
 
-  _workflowFormInventoryItems(result = {}, bindingKey = '', documentScope = '') {
+  _workflowFormInventoryItems(result = {}, bindingKey = '', documentScope = '', siteWorkflow = null) {
     const text = [result?.pageContent, result?.text]
       .find(value => typeof value === 'string' && value.trim()) || '';
     if (!text || !bindingKey) return [];
@@ -11908,24 +11995,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ).slice(0, 500);
     const items = [];
     const seen = new Set();
+    const reviewThreadInventory = siteWorkflow?.adapterName === 'github'
+      && siteWorkflow?.job?.id === 'resolve-review-threads';
     const rolePattern = /^\s*(textbox|combobox|checkbox|radio|switch|slider|spinbutton|listbox|button)\b/i;
     for (const line of text.split(/\r?\n/)) {
       const roleMatch = rolePattern.exec(line);
       const refMatch = /\[(ref_[A-Za-z0-9_.:-]+)\]/.exec(line);
       if (!roleMatch || !refMatch) continue;
       const role = roleMatch[1].toLowerCase();
+      const label = (/^\s*[a-z]+\s+"([^"]+)"/i.exec(line)?.[1] || `${role} ${refMatch[1]}`)
+        .replace(/\s+/g, ' ').trim().slice(0, 160);
+      if (reviewThreadInventory) {
+        if (role !== 'button' || !/^resolve\s+(?:conversation|thread)$/i.test(label)) continue;
+      }
       // Native file inputs are emitted as role=button. Include only those
       // buttons whose app-owned AX line preserves type="file"; ordinary
       // action buttons are not form questions and must not enter the ledger.
-      if (role === 'button' && !/\btype="file"/i.test(line)) continue;
+      if (!reviewThreadInventory && role === 'button' && !/\btype="file"/i.test(line)) continue;
       const refId = refMatch[1];
-      const label = (/^\s*[a-z]+\s+"([^"]+)"/i.exec(line)?.[1] || `${role} ${refId}`)
-        .replace(/\s+/g, ' ').trim().slice(0, 160);
       const identity = `${bindingKey}|${scope}|${role}|${refId}`;
       const id = `workflow:${this._workflowInventoryFingerprint(identity)}`;
       if (seen.has(id)) continue;
       seen.add(id);
-      items.push({ id, label, role, ref_id: refId });
+      const value = /\bvalue="([^"]*)"/i.exec(line)?.[1];
+      const checked = /\b(?:aria-checked|checked)=(?:"?)(true|false)(?:"?)/i.exec(line)?.[1];
+      items.push({
+        id,
+        label,
+        role,
+        ref_id: refId,
+        documentScope: scope,
+        ...(value !== undefined ? { value } : (checked !== undefined ? { value: checked.toLowerCase() } : {})),
+      });
     }
     return items;
   }
@@ -11956,8 +12057,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       axScope?.pageUrl,
       pageUrl,
     ].find(value => typeof value === 'string' && value.trim()) || '';
-    const observed = this._workflowFormInventoryItems(result, bindingKey, stableDocumentScope);
-    if (!observed.length) return null;
+    const observed = this._workflowFormInventoryItems(
+      result,
+      bindingKey,
+      stableDocumentScope,
+      siteWorkflow,
+    );
     const documentKey = String(
       stableDocumentScope
       || result?.tree_revision
@@ -11965,26 +12070,39 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || pageUrl
       || 'document',
     ).slice(0, 500);
-    const taskKey = this._progressTaskKeyHash(tabId);
-    const prior = guard.workflowInventoryEvidence;
-    const compatible = prior?.bindingKey === bindingKey && prior?.taskKey === taskKey;
-    const items = new Map((compatible ? prior.items : []).map(item => [item.id, item]));
-    for (const item of observed) items.set(item.id, item);
-    const documents = { ...(compatible ? prior.documents : {}) };
     const continuationPending = result?.hasMore === true
       || result?.truncated === true
       || result?.textTruncated === true
       || !!result?.continuationArgs
       || result?.nextPage != null;
     const requestRefId = String(args?.ref_id || args?.continuationArgs?.ref_id || '').trim();
+    if (!observed.length && requestRefId) return null;
+    const requestPage = Number(args?.page ?? args?.continuationArgs?.page ?? 1);
+    const startingRootRead = !requestRefId && (!Number.isFinite(requestPage) || requestPage <= 1);
+    const observationSequence = Number(this.completionInvariants.get(tabId)?.sequence || 0) + 1;
+    const taskKey = this._progressTaskKeyHash(tabId);
+    const prior = guard.workflowInventoryEvidence;
+    const compatible = prior?.bindingKey === bindingKey && prior?.taskKey === taskKey;
+    const priorItems = compatible && Array.isArray(prior.items) ? prior.items : [];
+    // A page-one document-root read starts a new authoritative snapshot. Drop
+    // stale controls from the same document (and legacy unscoped controls),
+    // then merge only this snapshot's continuation pages and later subtrees.
+    const retainedItems = startingRootRead
+      ? priorItems.filter(item => item?.documentScope && item.documentScope !== stableDocumentScope)
+      : priorItems;
+    const items = new Map(retainedItems.map(item => [item.id, item]));
+    for (const item of observed) items.set(item.id, { ...item, observationSequence });
+    const documents = { ...(compatible ? prior.documents : {}) };
     // A ref-scoped AX request proves only that subtree was exhausted. It says
     // nothing about sibling questions elsewhere in the document, even when
     // the subtree itself has no continuation metadata. Until an app-owned,
     // form-root scope is available, only a document-root read can close the
     // workflow inventory for exact reconciliation.
     const priorDocument = documents[documentKey];
-    const rootComplete = priorDocument?.complete === true
-      || (!requestRefId && !continuationPending);
+    const rootReadComplete = !requestRefId && !continuationPending;
+    const rootComplete = startingRootRead
+      ? rootReadComplete
+      : (priorDocument?.complete === true || rootReadComplete);
     // Once an exhaustive document-root read has completed this stable
     // document, a later subtree drill-down cannot make sibling coverage
     // unknown again. Keep completion monotonic while still allowing an
@@ -11992,6 +12110,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     documents[documentKey] = {
       complete: rootComplete,
       scope: rootComplete ? 'document' : (requestRefId ? 'subtree' : 'document'),
+      ...(rootReadComplete
+        ? { rootObservationSequence: observationSequence }
+        : (!startingRootRead && priorDocument?.rootObservationSequence
+          ? { rootObservationSequence: priorDocument.rootObservationSequence }
+          : {})),
     };
     const evidence = {
       bindingKey,
@@ -11999,6 +12122,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       source: 'accessibility_tree',
       items: [...items.values()],
       documents,
+      observationSequence,
       complete: Object.keys(documents).length > 0
         && Object.values(documents).every(document => document.complete === true),
     };
@@ -15131,6 +15255,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  _messageRecipientCandidates(probe = {}) {
+    const values = Array.isArray(probe.strongRecipientCandidates)
+      ? probe.strongRecipientCandidates
+      : (Array.isArray(probe.strongIdentityCandidates)
+        ? probe.strongIdentityCandidates
+        : []);
+    return normalizeMessageTarget({ target_kind: 'named', recipients: values })?.recipients || [];
+  }
+
   async _pinActiveConversationMessagingTarget(tabId, messaging, pageUrl = '') {
     const target = normalizeMessageTarget(messaging);
     if (target?.target_kind !== 'active_conversation') return { ok: true, target };
@@ -15147,21 +15280,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       adapterName: policy.adapterName,
       supportsRecipientSets: policy.supportsRecipientSets === true,
     });
-    const identities = new Map();
-    for (const value of Array.isArray(probe?.strongIdentityCandidates)
-      ? probe.strongIdentityCandidates
-      : []) {
-      const identity = String(value || '').trim();
-      const normalized = normalizeRecipientIdentity(identity);
-      if (identity && normalized && !identities.has(normalized)) identities.set(normalized, identity);
-    }
+    const recipients = this._messageRecipientCandidates(probe);
     const identityCountAccepted = policy.supportsRecipientSets === true
-      ? identities.size > 0
-      : identities.size === 1;
+      ? recipients.length > 0
+      : recipients.length === 1;
     if (probe?.success === true && probe?.conclusive === true && identityCountAccepted) {
       return {
         ok: true,
-        target: { target_kind: 'named', recipients: [...identities.values()] },
+        target: { target_kind: 'named', recipients },
         pinnedActiveConversation: true,
       };
     }
@@ -15249,24 +15375,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && probe?.success === true
         && probe?.conclusive === true
         && probe?.messageSend === true) {
-      const identities = new Map();
-      for (const value of Array.isArray(probe.strongIdentityCandidates)
-        ? probe.strongIdentityCandidates
-        : []) {
-        const identity = String(value || '').trim();
-        const normalized = normalizeRecipientIdentity(identity);
-        if (identity && normalized && !identities.has(normalized)) identities.set(normalized, identity);
-      }
-      if ((policy.supportsRecipientSets === true && identities.size > 0)
-          || (policy.supportsRecipientSets !== true && identities.size === 1)) {
-        target = { target_kind: 'named', recipients: [...identities.values()] };
+      const recipients = this._messageRecipientCandidates(probe);
+      if ((policy.supportsRecipientSets === true && recipients.length > 0)
+          || (policy.supportsRecipientSets !== true && recipients.length === 1)) {
+        target = { target_kind: 'named', recipients };
         if (guard) guard.messaging = target;
       }
     }
 
     const verified = probe?.success === true
       && probe.messageSend === true
-      && messageTargetMatchesObservedIdentities(target, probe.strongIdentityCandidates);
+      && messageTargetMatchesObservedIdentities(target, this._messageRecipientCandidates(probe));
     if (verified) {
       const binding = probe?.messageRecipientDispatchBinding;
       if (!binding?.token) {
@@ -17774,10 +17893,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'Classify the user task for a browser automation progress ledger.',
           'Use semantic understanding across languages. Do not infer intent from page UI labels.',
           'Return exactly one JSON object, no prose.',
-          'Schema: {"mode":"active|read_only|inactive","allowedActions":["follow"],"forbiddenActions":[],"targets":[],"confidence":0.0,"pageScopePolicy":"none|page|site","reason":"short"}.',
+          'Schema: {"mode":"active|read_only|inactive","allowedActions":["follow"],"forbiddenActions":[],"targets":[],"workflowFields":[{"field":"title","value":"exact requested value"}],"confidence":0.0,"pageScopePolicy":"none|page|site","reason":"short"}.',
           'Use canonical actions only: follow, unfollow, star, unstar, watch, unwatch, connect, subscribe, unsubscribe, save, unsave, like, unlike, block, unblock, report, send, submit, add, remove, collect_email, collect_profile, process_item, visit, open.',
           'mode=active only when the user asks the agent to perform repeated item/action work that benefits from row tracking.',
           'Exception: for siteContext.workflow.job="upload-release-assets" with requiresLedger=true, use mode=active and list every concrete requested target even when there is exactly one. Copy each exact requested filename or path into targets; do not merge or omit assets.',
+          'For siteContext.workflow.job="update-metadata", workflowFields must contain every metadata field explicitly requested by the user and its complete exact intended value. Use canonical field names title, description, visibility, audience, tags, category, playlist, language, license, comments, embedding, paid_promotion, recording_date, or recording_location. Never infer a field or value from page content. Otherwise return workflowFields=[].',
           'mode=read_only for questions, summaries, inspections, or reference-only uses of UI labels.',
           'If an action is negated or forbidden, put it in forbiddenActions even if its label appears in the task text.',
         ].join('\n'),
@@ -17817,6 +17937,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         extraBody: { chat_template_kwargs: { enable_thinking: false } },
       }, opts.costState || this.currentCostState.get(tabId) || null, { tabId, generationName: 'intent' });
       const obj = Agent._extractFirstJsonObject(response?.content || '');
+      if (siteWorkflow?.adapterName === 'youtube' && siteWorkflow?.job?.id === 'update-metadata') {
+        const guard = this._planExecutionGuards.get(tabId);
+        if (guard) {
+          guard.workflowMetadataRequirements = this._normalizeWorkflowMetadataRequirements(
+            obj?.workflowFields ?? obj?.workflow_fields,
+          );
+        }
+      }
       return normalizeProgressIntent(obj, { taskText, pageScope, source: 'classifier' });
     } catch {
       return null;
@@ -18476,6 +18604,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             documents: { ...(carried.workflowInventoryEvidence.documents || {}) },
           }
         : null,
+      workflowMetadataRequirements: carryMatches && Array.isArray(carried.workflowMetadataRequirements)
+        ? carried.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
+        : [],
       recoveryAttempted: false,
       runtimeModeCorrectionAttempted: false,
       staleCancellationRecoveryAttempted: false,
@@ -18705,6 +18836,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               documents: { ...(guard.workflowInventoryEvidence.documents || {}) },
             }
           : null,
+        workflowMetadataRequirements: Array.isArray(guard.workflowMetadataRequirements)
+          ? guard.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
+          : [],
         completionSubmitState: submit ? {
           originatingUrl: submit.originatingUrl || '',
           currentUrl: submit.currentUrl || '',
@@ -18716,7 +18850,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           formValidationFailed: submit.formValidationFailed === true,
           completionSignalObserved: submit.completionSignalObserved === true,
           observedAfterSubmit: submit.observedAfterSubmit === true,
-          workflowBinding: submit.workflowBinding ? { ...submit.workflowBinding } : null,
+          workflowBinding: submit.workflowBinding ? {
+            ...submit.workflowBinding,
+            ...(Array.isArray(submit.workflowBinding.metadataRequirements) ? {
+              metadataRequirements: submit.workflowBinding.metadataRequirements
+                .map(requirement => ({ ...requirement })),
+            } : {}),
+          } : null,
         } : null,
         conversationId: this.conversationIds.get(tabId) || null,
       });
