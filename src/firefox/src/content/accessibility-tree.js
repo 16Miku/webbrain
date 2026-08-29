@@ -718,14 +718,12 @@
       }
       return hash.toString(16).padStart(8, '0');
     };
-    const appendAxValue = (current, raw, escapeBackslash) => {
+    const appendAxValue = (current, raw) => {
       const v = axInventoryValue(raw);
       if (!v) return current;
       const truncated = v.length > AX_VALUE_MAX_LEN;
       const trimmed = truncated ? v.substring(0, AX_VALUE_MAX_LEN) + '...' : v;
-      const escaped = escapeBackslash
-        ? trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-        : trimmed.replace(/"/g, '\\"');
+      const escaped = trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       current += ' value="' + escaped + '"';
       if (truncated) {
         current += ' value_len=' + v.length;
@@ -736,10 +734,10 @@
     if (tag === 'input' || tag === 'textarea') {
       const skipValueTypes = new Set(['submit', 'button', 'reset', 'file', 'checkbox', 'radio', 'image', 'hidden', 'color', 'range', 'password']);
       if (!skipValueTypes.has(inputType)) {
-        line = appendAxValue(line, el.value == null ? '' : String(el.value), false);
+        line = appendAxValue(line, el.value == null ? '' : String(el.value));
       }
     } else if (isEditableRoot(el)) {
-      line = appendAxValue(line, String(el.innerText || el.textContent || '').replace(/\s+/g, ' '), true);
+      line = appendAxValue(line, String(el.innerText || el.textContent || '').replace(/\s+/g, ' '));
     } else if (tag === 'select' || ['combobox', 'listbox'].includes(attrRole)) {
       let v = '';
       if (tag === 'select') {
@@ -761,7 +759,7 @@
         }
         if (!v) v = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
       }
-      line = appendAxValue(line, v, true);
+      line = appendAxValue(line, v);
     }
 
     return line;

@@ -36,6 +36,7 @@ import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
 import {
   invalidateWorkflowInventoryCompleteness,
   isExhaustiveAccessibilityInventoryRead,
+  parseWorkflowAxQuotedValue,
   shouldInvalidateFormInventoryAfterAction,
   workflowRequiredRowsAreProcessed,
 } from './adapter-workflow-evidence.js';
@@ -10161,7 +10162,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const id = `workflow:${this._workflowInventoryFingerprint(identity)}`;
       if (seen.has(id)) continue;
       seen.add(id);
-      const value = /\bvalue="([^"]*)"/i.exec(line)?.[1];
+      const value = parseWorkflowAxQuotedValue(line);
       const checked = /\b(?:aria-checked|checked)=(?:"?)(true|false)(?:"?)/i.exec(line)?.[1];
       const type = /\btype="([^"]+)"/i.exec(line)?.[1]?.toLowerCase() || '';
       const domId = /\bdom_id="([^"]*)"/i.exec(line)?.[1] || '';

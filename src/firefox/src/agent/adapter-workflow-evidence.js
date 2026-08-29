@@ -83,6 +83,14 @@ export function invalidateWorkflowInventoryCompleteness(evidence) {
   };
 }
 
+// AX formatLine backslash-escapes `\` then `"` inside value="...". Inventory
+// readback must consume escaped quotes and restore the app-owned string.
+export function parseWorkflowAxQuotedValue(line) {
+  const match = /\bvalue="((?:[^"\\]|\\.)*)"/i.exec(String(line || ''));
+  if (!match) return undefined;
+  return match[1].replace(/\\([\\"])/g, '$1');
+}
+
 export function workflowRequiredRowsAreProcessed(rows = [], inventory = null, inventoryItems = []) {
   const requiredIds = new Set((inventory?.itemIds || []).map(id => String(id)));
   if (!requiredIds.size) return true;
