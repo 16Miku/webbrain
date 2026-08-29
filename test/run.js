@@ -5027,6 +5027,17 @@ test('direct-message recipient probe accepts only a unique active-thread header 
         { identity: 'Bob', role: 'to' },
       ], supportsRecipientSets: true,
     });
+    const gmailTwelveChips = Array.from({ length: 12 }, (_, i) => element(`User ${i + 1}`, {
+      left: 430, right: 620, top: 610, bottom: 650, width: 190, height: 40,
+    }, { attributes: { email: `user${i + 1}@example.com`, name: `User ${i + 1}`, 'data-recipient-type': i < 8 ? 'to' : (i < 10 ? 'cc' : 'bcc') } }));
+    gmailRecipientChips = gmailTwelveChips;
+    const gmailManyRecipientsResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+      expectedRecipients: Array.from({ length: 12 }, (_, i) => ({
+        identity: `user${i + 1}@example.com`,
+        role: i < 8 ? 'to' : (i < 10 ? 'cc' : 'bcc'),
+      })), supportsRecipientSets: true,
+    });
     const inlineReplyRoot = {
       querySelectorAll: (selector) => selector === '[email],[data-hovercard-id],[data-email]'
         ? gmailRecipientChips
@@ -5108,6 +5119,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       gmailExtraRecipientResult,
       gmailMatchingRoleResult,
       gmailWrongRoleResult,
+      gmailManyRecipientsResult,
       gmailInlineReplyResult,
       gmailInlineObserveResult,
       gmailInlineExpectedResult,
@@ -5144,6 +5156,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       gmailExtraRecipientResult,
       gmailMatchingRoleResult,
       gmailWrongRoleResult,
+      gmailManyRecipientsResult,
       gmailInlineReplyResult,
       gmailInlineObserveResult,
       gmailInlineExpectedResult,
@@ -5213,6 +5226,9 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     ], `${prefix}: exact Gmail To/BCC authorization was rejected`);
     assert.deepEqual(Array.from(gmailWrongRoleResult.strongRecipientCandidates), [],
       `${prefix}: moving a Gmail BCC recipient into To authorized dispatch`);
+    assert.equal(gmailManyRecipientsResult.strongRecipientCandidates.length, 12,
+      `${prefix}: Gmail probe truncated 12 supported recipients to 8`);
+    assert.equal(gmailManyRecipientsResult.strongIdentityCandidates.length, 12);
     assert.deepEqual(JSON.parse(JSON.stringify(gmailInlineReplyResult.strongRecipientCandidates)), [
       { identity: 'alice@example.com', role: 'to' },
     ], `${prefix}: inline Gmail reply chips were not collected without a dialog/form root`);
@@ -81740,6 +81756,17 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       viaDone: true,
       outcome: 'success',
     }), null);
+    agent._recordCompletionToolResult(
+      tabId,
+      'click_ax',
+      { ref_id: 'ref_submit', text: 'Submit' },
+      { success: true, dispatched: true, isSubmitControl: true },
+      { detectedSubmit: { isSubmit: true } },
+    );
+    assert.equal(guard.workflowInventoryEvidence.complete, true,
+      `${AgentClass.name}: clicking Submit invalidated the reconciled form inventory`);
+    assert.equal(agent._workflowLedgerReconciliationSatisfied(tabId, guard), true,
+      `${AgentClass.name}: reconciliation failed after final form submit`);
 
     const nextWizardSection = agent._rememberWorkflowInventoryObservation(
       tabId,
@@ -83673,6 +83700,12 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       linkedInPublishedUrl,
       { submit: asyncPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
     ), null, `${AgentClass.name}: a LinkedIn permalink with the wrong post body satisfied publish success`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      asyncPublishTabId,
+      { workflowPageText: `Published successfully.\n${linkedInPostBody} postponed until next week.` },
+      linkedInPublishedUrl,
+      { submit: asyncPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: a LinkedIn permalink containing the reviewed post body only as a substring satisfied publish success`);
     assert.equal(agent._workflowTerminalEvidenceFromDone(
       asyncPublishTabId,
       { workflowPageText: `Published successfully.\n${linkedInPostBody}` },

@@ -5273,9 +5273,9 @@
         // Only recipient-specific header evidence is authoritative. Ordinary
         // message text, test-id containers, and other leaf content are never
         // returned as dispatch identities.
-        identityCandidates: strongIdentities.slice(0, 8),
-        strongIdentityCandidates: strongIdentities.slice(0, 8),
-        strongRecipientCandidates: strongRecipients.slice(0, 8),
+        identityCandidates: strongIdentities.slice(0, 16),
+        strongIdentityCandidates: strongIdentities.slice(0, 16),
+        strongRecipientCandidates: strongRecipients.slice(0, 16),
         ...(messageRecipientDispatchToken
           ? { messageRecipientDispatchBinding: { token: messageRecipientDispatchToken } }
           : {}),

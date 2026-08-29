@@ -1050,7 +1050,7 @@ export class Agent extends LoopDetector {
     return (positive.test(text) || (allowBare && barePositive.test(text))) && !negative.test(text);
   }
 
-  _recordCompletionToolResult(tabId, name, args, result) {
+  _recordCompletionToolResult(tabId, name, args, result, { detectedSubmit = null } = {}) {
     const state = this.completionInvariants.get(tabId);
     if (!state) return null;
     const completionArgs = this._activeSkillToolForName(tabId, name)?.requiresDownloadPermission
@@ -1087,7 +1087,7 @@ export class Agent extends LoopDetector {
     if (workflowReleaseAssetEvidence && result && typeof result === 'object') {
       result.workflowReleaseAssetEvidence = workflowReleaseAssetEvidence;
     }
-    this._invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result);
+    this._invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result, args, detectedSubmit);
     const submitState = this._completionSubmitStates.get(tabId);
     if (
       submitState
@@ -1532,20 +1532,49 @@ export class Agent extends LoopDetector {
   _workflowPublishedPayloadValueObserved(requirement, sources = {}) {
     const want = this._workflowMetadataValue(requirement?.value);
     if (!want) return false;
-    const haystacks = [
-      sources.pageText,
-      sources.pageUrl,
-      sources.publishedResourceIdentity,
-      ...(Array.isArray(sources.inventory?.items)
-        ? sources.inventory.items.flatMap(item => [item?.value, item?.label])
-        : []),
-    ].map(value => this._workflowMetadataValue(value)).filter(Boolean);
-    if (requirement.field === 'visibility' || requirement.field === 'tag') {
+    const field = requirement?.field;
+
+    if (field === 'tag') {
       const escaped = want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const token = new RegExp(`(?:^|[^\\p{L}\\p{N}_.-])${escaped}(?:$|[^\\p{L}\\p{N}_.-])`, 'u');
-      return haystacks.some(text => text === want || token.test(text));
+      const tagSources = [
+        sources.publishedResourceIdentity,
+        sources.pageUrl,
+        sources.pageText,
+      ].map(value => this._workflowMetadataValue(value)).filter(Boolean);
+      return tagSources.some(text => text === want || token.test(text));
     }
-    return haystacks.some(text => text.includes(want));
+
+    if (field === 'visibility') {
+      const escaped = want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const token = new RegExp(`(?:^|[^\\p{L}\\p{N}_.-])${escaped}(?:$|[^\\p{L}\\p{N}_.-])`, 'u');
+      const rawLines = String(sources.pageText || '').split(/\r?\n/).map(l => this._workflowMetadataValue(l)).filter(Boolean);
+      for (const line of rawLines) {
+        if (line === want) return true;
+        const lineField = this._workflowMetadataFieldKey(line);
+        if (lineField === 'visibility' && token.test(line)) return true;
+      }
+      return false;
+    }
+
+    const pageText = this._workflowMetadataValue(sources.pageText);
+    if (pageText) {
+      if (pageText === want) return true;
+      const escaped = want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const blockRegex = new RegExp(`(?:^|\\n)${escaped}(?:\\n|$)`);
+      if (blockRegex.test(pageText)) return true;
+    }
+
+    if (Array.isArray(sources.inventory?.items)) {
+      for (const item of sources.inventory.items) {
+        const itemVal = this._workflowMetadataValue(item?.value);
+        const itemLabel = this._workflowMetadataValue(item?.label);
+        if (itemVal === want || itemLabel === want) return true;
+        if (itemVal && this._workflowAxValueMatchesExpected(itemVal, want, item)) return true;
+      }
+    }
+
+    return false;
   }
 
   _workflowPublishedResourcePayloadMatch(binding, state, pageState, pageUrl, submit) {
@@ -7062,7 +7091,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
       }
       const completionStateBeforeTool = this.completionInvariants.get(tabId) || null;
-      const completionStateAfterTool = this._recordCompletionToolResult(tabId, fnName, fnArgs, toolResult);
+      const completionStateAfterTool = this._recordCompletionToolResult(
+        tabId,
+        fnName,
+        fnArgs,
+        toolResult,
+        { detectedSubmit: detectedSubmitAction },
+      );
       const readCompletenessBeforeTool = this.readCompletenessStates.get(tabId) || null;
       const readCompletenessAfterTool = this._recordReadCompleteness(tabId, fnName, fnArgs, toolResult);
       const requiredReadProgress = readCompletenessMadeProgress(
@@ -10867,7 +10902,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  _invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result) {
+  _isWorkflowFormSubmitAction(name, args = {}, result = null, detectedSubmit = null) {
+    if (args?.submit === true) return true;
+    if (result?.isSubmitControl === true || String(result?.type || '').toLowerCase() === 'submit') return true;
+    if (detectedSubmit?.isSubmit === true) return true;
+    if (this._formValidationActionHasStrongSubmitEvidence(name, args, result, detectedSubmit)) return true;
+    const label = String(args?.text || result?.name || result?.matched || result?.text || '').trim();
+    const selector = String(args?.selector || '').toLowerCase();
+    if (/(?:type\s*=\s*["']?submit\b|\bsubmit\b)/i.test(selector)) return true;
+    if (/^(?:submit|apply|send|confirm|place order|pay|checkout|finish)\b/i.test(label)) return true;
+    return false;
+  }
+
+  _invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result, args = {}, detectedSubmit = null) {
     const guard = this._planExecutionGuards.get(tabId);
     const siteWorkflow = guard?.siteWorkflow;
     if (!guard?.workflowInventoryEvidence
@@ -10875,6 +10922,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || siteWorkflow.job.template !== 'form'
         || !shouldInvalidateFormInventoryAfterAction(name)
         || !this._isSuccessfulExecutionEvidence(result)) return;
+    if (this._isWorkflowFormSubmitAction(name, args, result, detectedSubmit)) return;
     guard.workflowInventoryEvidence = invalidateWorkflowInventoryCompleteness(
       guard.workflowInventoryEvidence,
     );
