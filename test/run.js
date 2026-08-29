@@ -80386,6 +80386,10 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
     assert.match(descriptionLine, /required=false/);
     assert.match(descriptionLine, new RegExp(`value="${longDescription.slice(0, 60).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.\\.\\."`),
       `${label}: long description was not truncated at the AX value cap`);
+    assert.match(descriptionLine, new RegExp(`value_len=${longDescription.length}`),
+      `${label}: truncated description omitted value_len`);
+    assert.match(descriptionLine, /value_fp=[0-9a-f]{8}/,
+      `${label}: truncated description omitted value_fp`);
     const requiredLine = formatLine(control({
       tagName: 'INPUT',
       role: 'textbox',
@@ -80631,10 +80635,19 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
       { field: 'title', value: 'Launch Video' },
       { field: 'playlist', value: 'Favorites' },
     ], `${AgentClass.name}: one unknown metadata field discarded the whole list`);
+    const discarded = agent._normalizeWorkflowMetadataRequirementsDetails([
+      { field: 'title', value: 'Launch Video' },
+      { field: 'unknown-custom-field', value: 'nope' },
+      { field: 'playlists', value: 'Favorites' },
+    ]);
+    assert.equal(discarded.incomplete, true,
+      `${AgentClass.name}: discarded classifier fields were treated as complete requirements`);
+    assert.deepEqual(discarded.items.map(item => item.field), ['title', 'playlist']);
 
     const longDescription = 'Launch the product with a detailed description that exceeds sixty characters and must still verify after save.';
     assert.ok(longDescription.length > 60);
     const truncated = `${longDescription.slice(0, 60)}...`;
+    const fp = agent._workflowInventoryFingerprint(agent._workflowMetadataValue(longDescription));
     const evidence = items => ({
       complete: true,
       documents: { doc: { complete: true, rootObservationSequence: 2 } },
@@ -80642,12 +80655,42 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
     });
     assert.equal(agent._workflowMetadataRequirementsMatchInventory(
       [{ field: 'description', value: longDescription }],
-      evidence([{ label: 'Description', value: truncated, observationSequence: 2 }]),
+      evidence([{
+        label: 'Description',
+        value: truncated,
+        valueLength: longDescription.length,
+        valueFp: fp,
+        observationSequence: 2,
+      }]),
       0,
     ), true, `${AgentClass.name}: AX-truncated description did not verify`);
+    const sameLengthDifferentTail = `${longDescription.slice(0, 60)}X${longDescription.slice(61)}`;
+    assert.equal(sameLengthDifferentTail.length, longDescription.length);
+    assert.equal(agent._workflowMetadataRequirementsMatchInventory(
+      [{ field: 'description', value: sameLengthDifferentTail }],
+      evidence([{
+        label: 'Description',
+        value: truncated,
+        valueLength: longDescription.length,
+        valueFp: fp,
+        observationSequence: 2,
+      }]),
+      0,
+    ), false, `${AgentClass.name}: a same-length different tail verified from the 60-char prefix`);
+    assert.equal(agent._workflowMetadataRequirementsMatchInventory(
+      [{ field: 'description', value: longDescription }],
+      evidence([{ label: 'Description', value: truncated, observationSequence: 2 }]),
+      0,
+    ), false, `${AgentClass.name}: truncated prefix without value_len/value_fp verified`);
     assert.equal(agent._workflowMetadataRequirementsMatchInventory(
       [{ field: 'description', value: `B${longDescription.slice(1)}` }],
-      evidence([{ label: 'Description', value: truncated, observationSequence: 2 }]),
+      evidence([{
+        label: 'Description',
+        value: truncated,
+        valueLength: longDescription.length,
+        valueFp: fp,
+        observationSequence: 2,
+      }]),
       0,
     ), false, `${AgentClass.name}: a different long string sharing a short prefix verified`);
     assert.equal(agent._workflowAxValueMatchesExpected(`${'A'.repeat(10)}...`, 'A'.repeat(80)), false,
@@ -80657,6 +80700,13 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
       evidence([{ label: 'Title', value: 'Launch Video', observationSequence: 2 }]),
       0,
     ), true, `${AgentClass.name}: value equal to the accessible name did not verify`);
+    const incompleteReqs = [{ field: 'title', value: 'Launch Video' }];
+    incompleteReqs.incomplete = true;
+    assert.equal(agent._workflowMetadataRequirementsMatchInventory(
+      incompleteReqs,
+      evidence([{ label: 'Title', value: 'Launch Video', observationSequence: 2 }]),
+      0,
+    ), false, `${AgentClass.name}: discarded classifier fields still allowed saved-state verification`);
   }
 });
 
@@ -80795,6 +80845,39 @@ test('optional inventory rows may skip and noisy frames do not block iframe comp
     }, 'bind', { selector: inventorySelector });
     assert.equal(truncatedObserved.documents[`iframe:7:${frameUrl}`]?.complete, false,
       `${AgentClass.name}: a truncated application frame with extra unmatched controls was treated as complete`);
+    const failedAppObserved = agent._workflowIframeFormInventory({
+      pageUrl,
+      frames: [
+        {
+          frameId: 7,
+          ok: true,
+          url: frameUrl,
+          matchCount: 2,
+          truncated: false,
+          matches: [
+            { tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: '', matchIndex: 0, required: true },
+            { tag: 'textarea', id: 'notes', name: 'notes', label: 'Notes', value: '', matchIndex: 1, required: false },
+          ],
+        },
+        {
+          frameId: 12,
+          ok: false,
+          error: 'Script injection failed',
+          url: 'https://acme.wd1.myworkdayjobs.com/application/other-frame',
+          matches: [],
+        },
+      ],
+    }, 'bind', { selector: inventorySelector });
+    assert.equal(
+      failedAppObserved.documents['iframe:12:https://acme.wd1.myworkdayjobs.com/application/other-frame']?.complete,
+      false,
+      `${AgentClass.name}: a failed same-site application frame was omitted from completeness`,
+    );
+    assert.equal(
+      Object.values(failedAppObserved.documents).every(document => document.complete === true),
+      false,
+      `${AgentClass.name}: sibling frames closed inventory despite a failed application frame`,
+    );
   }
 });
 

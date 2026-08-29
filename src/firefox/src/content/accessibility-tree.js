@@ -699,21 +699,44 @@
     // (value is the label there) and checkboxes/radios. Always emit even when
     // the value equals the accessible name so inventory verification can
     // read it back; the model-facing cap is 60 characters plus '...'.
+    // Truncated values also emit value_len and value_fp so verification can
+    // bind the full app-owned string without putting it in the tree.
+    const AX_VALUE_MAX_LEN = 60;
+    const axInventoryValue = (raw) => String(raw ?? '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+      .trim();
+    const axValueFingerprint = (text) => {
+      let hash = 0x811c9dc5;
+      const value = String(text || '');
+      for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+      }
+      return hash.toString(16).padStart(8, '0');
+    };
+    const appendAxValue = (current, raw, escapeBackslash) => {
+      const v = axInventoryValue(raw);
+      if (!v) return current;
+      const truncated = v.length > AX_VALUE_MAX_LEN;
+      const trimmed = truncated ? v.substring(0, AX_VALUE_MAX_LEN) + '...' : v;
+      const escaped = escapeBackslash
+        ? trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+        : trimmed.replace(/"/g, '\\"');
+      current += ' value="' + escaped + '"';
+      if (truncated) {
+        current += ' value_len=' + v.length;
+        current += ' value_fp=' + axValueFingerprint(v);
+      }
+      return current;
+    };
     if (tag === 'input' || tag === 'textarea') {
       const skipValueTypes = new Set(['submit', 'button', 'reset', 'file', 'checkbox', 'radio', 'image', 'hidden', 'color', 'range', 'password']);
       if (!skipValueTypes.has(inputType)) {
-        const v = (el.value == null ? '' : String(el.value));
-        if (v) {
-          const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
-          line += ' value="' + trimmed.replace(/"/g, '\\"') + '"';
-        }
+        line = appendAxValue(line, el.value == null ? '' : String(el.value), false);
       }
     } else if (isEditableRoot(el)) {
-      const v = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (v) {
-        const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
-        line += ' value="' + trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-      }
+      line = appendAxValue(line, String(el.innerText || el.textContent || '').replace(/\s+/g, ' '), true);
     } else if (tag === 'select' || ['combobox', 'listbox'].includes(attrRole)) {
       let v = '';
       if (tag === 'select') {
@@ -735,10 +758,7 @@
         }
         if (!v) v = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
       }
-      if (v) {
-        const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
-        line += ' value="' + trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-      }
+      line = appendAxValue(line, v, true);
     }
 
     return line;

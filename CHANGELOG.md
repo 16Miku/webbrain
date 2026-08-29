@@ -19,9 +19,9 @@ This changelog was generated from the repository Git history and release tags. V
 
 ### Fixed
 - Compact selected-workflow prompts now inject a brief execution contract and a shorter `progress_update.workflowReconciliation` schema; Mid/Full keep the full contract
-- YouTube `update-metadata` verification matches AX-truncated values (60-char cap) and values that equal the accessible name
-- Unknown metadata field names no longer discard the rest of the requirement list; playlist plural aliases are recognized
-- Form inventory no longer fail-closes on decorative DOM depth or erroring/empty third-party iframes with no form controls
+- YouTube `update-metadata` verification matches AX-truncated values via prefix plus `value_len`/`value_fp`, and values that equal the accessible name
+- Unknown metadata field names no longer discard the rest of the requirement list, but discarded classifier fields keep saved-state verification incomplete; playlist plural aliases are recognized
+- Form inventory no longer fail-closes on decorative DOM depth or erroring/empty third-party iframes with no form controls; failed same-site or urlFilter-targeted frames stay incomplete
 
 ## [33.4.1] - 2026-08-27
 
