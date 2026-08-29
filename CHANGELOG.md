@@ -43,6 +43,7 @@ This changelog was generated from the repository Git history and release tags. V
 - AX inventory `value=` tokens escape backslash then quote, and inventory readback restores the app-owned string
 - Unknown metadata field names no longer discard the rest of the requirement list, but discarded classifier fields keep saved-state verification incomplete; playlist plural aliases are recognized
 - Form inventory emits `required=` only for explicit native/`aria-required` state, ignores decorative DOM depth, and omits erroring/empty third-party frames only when another frame already inventoried form controls; a lone failed cross-origin application frame stays incomplete
+- Reviewed plan wording edits re-resolve the live site-workflow contract instead of dropping it, and ARIA `searchbox` controls enter the form inventory
 
 ## [33.4.1] - 2026-08-27
 
