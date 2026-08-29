@@ -1109,6 +1109,28 @@ export class Agent extends LoopDetector {
           };
         }
       }
+      if (
+        workflowBinding?.verificationKind === 'transaction_fulfilled'
+        && !workflowBinding.transactionOrderIdentity
+        && workflowBinding.transactionOrderBaselineCaptured === true
+        && submitState.dispatched === true
+        && Number(next.lastObservation?.sequence || 0) > Number(submitState.actionSequence || 0)
+        && Number(next.lastAction?.sequence || 0) === Number(submitState.actionSequence || 0)
+      ) {
+        const observationText = [result?.pageContent, result?.text, result?.content, result?.description]
+          .filter(value => typeof value === 'string' && value.trim())
+          .join('\n');
+        const existing = new Set(workflowBinding.preDispatchTransactionOrderIdentities || []);
+        const newlyObserved = this._workflowTransactionOrderIdentities(observationText)
+          .filter(identity => !existing.has(identity));
+        if (newlyObserved.length === 1) {
+          workflowBinding = {
+            ...workflowBinding,
+            transactionOrderIdentity: newlyObserved[0],
+            transactionOrderIdentityObservationSequence: Number(next.lastObservation?.sequence || 0),
+          };
+        }
+      }
       this._completionSubmitStates.set(tabId, {
         ...submitState,
         ...(observedUrl ? { currentUrl: observedUrl } : {}),
@@ -1153,7 +1175,12 @@ export class Agent extends LoopDetector {
         || (result.success !== false && !result.error)
       )
     );
-    const workflowBinding = this._workflowSubmitBindingForAttempt(tabId, beforeUrl, executionContext);
+    const workflowBinding = this._workflowSubmitBindingForAttempt(
+      tabId,
+      beforeUrl,
+      executionContext,
+      detectedSubmit,
+    );
     if (workflowBinding?.verificationKind === 'published_resource'
         && Array.isArray(detectedSubmit?.publicationResourceUrls)) {
       workflowBinding.preDispatchPublishedResourceIdentities = this._workflowPublishedResourceIdentities(
@@ -1253,7 +1280,7 @@ export class Agent extends LoopDetector {
     };
   }
 
-  _workflowSubmitBindingForAttempt(tabId, pageUrl = '', executionContext = {}) {
+  _workflowSubmitBindingForAttempt(tabId, pageUrl = '', executionContext = {}, detectedSubmit = null) {
     const guard = this._planExecutionGuards.get(tabId);
     const siteWorkflow = guard?.siteWorkflow;
     if (!guard?.enabled || siteWorkflow?.job?.requiresSubmission !== true || !pageUrl) return null;
@@ -1272,12 +1299,24 @@ export class Agent extends LoopDetector {
     const metadataRequirements = siteWorkflow.job.id === 'update-metadata'
       ? this._normalizeWorkflowMetadataRequirements(guard.workflowMetadataRequirements)
       : [];
+    const verificationKind = this._workflowVerificationKind(siteWorkflow);
+    const normalizeOrderIdentities = values => [...new Set((Array.isArray(values) ? values : [])
+      .map(value => String(value || '').trim().toUpperCase())
+      .filter(value => /^[A-Z0-9][A-Z0-9-]{3,}$/.test(value)))];
+    const transactionOrderIdentities = verificationKind === 'transaction_fulfilled'
+      && detectedSubmit?.transactionOrderIdsComplete === true
+      ? normalizeOrderIdentities(detectedSubmit?.transactionOrderIds)
+      : [];
+    const preDispatchTransactionOrderIdentities = verificationKind === 'transaction_fulfilled'
+      && detectedSubmit?.transactionPageOrderIdsComplete === true
+      ? normalizeOrderIdentities(detectedSubmit?.transactionPageOrderIds)
+      : [];
     return {
       bindingKey: this._adapterWorkflowBindingKey(siteWorkflow),
       adapterName: siteWorkflow.adapterName,
       revision: siteWorkflow.revision,
       job: siteWorkflow.job.id,
-      verificationKind: this._workflowVerificationKind(siteWorkflow),
+      verificationKind,
       recipientBound,
       ...(recipientBound ? {
         recipientTargets: recipientTarget.recipients.map(recipient => ({ ...recipient })),
@@ -1290,6 +1329,13 @@ export class Agent extends LoopDetector {
       } : {}),
       ...(metadataRequirements.length ? {
         metadataRequirements: metadataRequirements.map(requirement => ({ ...requirement })),
+      } : {}),
+      ...(verificationKind === 'transaction_fulfilled' ? {
+        preDispatchTransactionOrderIdentities,
+        transactionOrderBaselineCaptured: detectedSubmit?.transactionPageOrderIdsComplete === true,
+        ...(transactionOrderIdentities.length === 1
+          ? { transactionOrderIdentity: transactionOrderIdentities[0] }
+          : {}),
       } : {}),
     };
   }
@@ -1409,19 +1455,37 @@ export class Agent extends LoopDetector {
     return /\b(?:conversation|thread|review)\s+(?:was\s+)?resolved\b|\bresolved\s+successfully\b|(?:已解决|已處理|çözüldü|résolu|resuelto|解決済み|해결됨)/i.test(text);
   }
 
-  _workflowTransactionFulfilledSignal(text) {
-    const value = String(text || '');
-    const orderPattern = /\b(?:order|booking|ticket)\s*(?:number|no\.?|id|reference)\s*[:#-]?\s*[A-Z0-9][A-Z0-9-]{3,}|(?:订单号|訂單號|订单编号|车票订单|取票号)\s*[:：]?\s*[A-Z0-9][A-Z0-9-]{3,}/ig;
-    const fulfilledPattern = /\b(?:payment\s+(?:successful|complete|confirmed)|paid|ticket(?:s)?\s+issued)\b|(?:支付成功|已支付|出票成功|已出票|购票成功|订单已完成)/ig;
-    const pendingPattern = /\b(?:payment\s+(?:is\s+)?(?:pending|processing|failed|declined|incomplete|unpaid)|(?:pending|awaiting)\s+payment|not\s+(?:yet\s+)?paid|paid\s*[:=-]\s*(?:no|false|pending)|payment\s+not\s+(?:yet\s+)?(?:complete|completed|confirmed|successful)|tickets?\s+not\s+issued|not\s+(?:yet\s+)?ticketed)\b|(?:待支付|未支付|支付中|支付失败|付款失败|未出票)/i;
-    const orders = [...value.matchAll(orderPattern)].map(match => match.index || 0);
-    const fulfilled = [...value.matchAll(fulfilledPattern)].map(match => match.index || 0);
-    return orders.some(orderIndex => fulfilled.some((statusIndex) => {
-      if (Math.abs(orderIndex - statusIndex) > 320) return false;
-      const start = Math.max(0, Math.min(orderIndex, statusIndex) - 80);
-      const end = Math.min(value.length, Math.max(orderIndex, statusIndex) + 80);
-      return !pendingPattern.test(value.slice(start, end));
+  _workflowTransactionOrderRecords(value) {
+    let text = String(value || '').replace(/\s+/g, ' ').trim().slice(0, 50000);
+    try { text = text.normalize('NFKC'); } catch {}
+    const orderPattern = /\b(?:order|booking|ticket)\s*(?:number|no\.?|id|reference)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{3,})|(?:订单号|訂單號|订单编号|車票訂單|车票订单|取票号|取票號)\s*[:：]?\s*([A-Z0-9][A-Z0-9-]{3,})/ig;
+    const matches = [...text.matchAll(orderPattern)].map(match => ({
+      identity: String(match[1] || match[2] || '').toUpperCase(),
+      index: Number(match.index || 0),
+    })).filter(record => !!record.identity);
+    return matches.map((record, index) => ({
+      ...record,
+      text: text.slice(record.index, Math.min(matches[index + 1]?.index ?? text.length, record.index + 800)),
     }));
+  }
+
+  _workflowTransactionOrderIdentities(value) {
+    return [...new Set(this._workflowTransactionOrderRecords(value).map(record => record.identity))];
+  }
+
+  _workflowTransactionFulfilledSignal(text, expectedOrderIdentity = '') {
+    const expected = String(expectedOrderIdentity || '').trim().toUpperCase();
+    if (!/^[A-Z0-9][A-Z0-9-]{3,}$/.test(expected)) return false;
+    const fulfilledPattern = /\b(?:payment\s+(?:successful|complete|confirmed)|paid|ticket(?:s)?\s+issued)\b|(?:支付成功|已支付|出票成功|已出票|购票成功|订单已完成|已兑现|兑现成功)/i;
+    const pendingPattern = /\b(?:payment\s+(?:is\s+)?(?:pending|processing|failed|declined|incomplete|unpaid)|(?:pending|awaiting)\s+payment|not\s+(?:yet\s+)?paid|paid\s*[:=-]\s*(?:no|false|pending)|payment\s+not\s+(?:yet\s+)?(?:complete|completed|confirmed|successful)|tickets?\s+not\s+issued|not\s+(?:yet\s+)?ticketed)\b|(?:待支付|未支付|支付中|支付失败|付款失败|未出票|待兑现|兑现中|兑现失败|候补失败|已退单|未兑现|已取消)/i;
+    const waitlistPattern = /候补/;
+    const waitlistFulfilledPattern = /(?:已兑现|兑现成功|出票成功|已出票)|\bticket(?:s)?\s+issued\b/i;
+    return this._workflowTransactionOrderRecords(text).some(record => (
+      record.identity === expected
+      && fulfilledPattern.test(record.text)
+      && !pendingPattern.test(record.text)
+      && (!waitlistPattern.test(record.text) || waitlistFulfilledPattern.test(record.text))
+    ));
   }
 
   _workflowMessageSentSignal(siteWorkflow, text) {
@@ -1549,8 +1613,8 @@ export class Agent extends LoopDetector {
       verified = submit?.dispatched === true
         && submit?.observedAfterSubmit === true
         && submit?.formValidationFailed !== true
-        && this._workflowTransactionFulfilledSignal(text);
-      source = 'paid_or_ticket_issued_state';
+        && this._workflowTransactionFulfilledSignal(text, binding.transactionOrderIdentity);
+      source = 'dispatch_bound_paid_or_ticket_issued_state';
     } else if (verificationKind === 'form_confirmation') {
       verified = submissionEvidence?.verifiedFinalSubmit === true
         && Number(submissionEvidence?.relevantForms || 0) === 0
@@ -10046,6 +10110,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!expected) return 0;
     const escapedExpected = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const exactFileName = new RegExp(`(^|[^\\p{L}\\p{N}_.-])${escapedExpected}($|[^\\p{L}\\p{N}_.-])`, 'u');
+    const itemLabel = normalize(item?.label);
+    const exactItemLabel = itemLabel
+      ? new RegExp(`(^|[^\\p{L}\\p{N}_.-])${itemLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}_.-])`, 'u')
+      : null;
     const attachmentStatus = /\b(?:attached|uploaded|upload complete|upload successful|remove attachment|remove file|delete attachment|replace file)\b|(?:fichier joint|téléversé|supprimer|hochgeladen|entfernen|adjunto|subido|eliminar|caricato|rimuovi|eklendi|yüklendi|kaldır|添付|アップロード済み|削除|첨부|업로드됨|삭제|已上传|附件|移除|上傳完成|загруж|прикреп|удал)/iu;
     const lines = String(value || '').split(/\r?\n/);
     const fileControls = lines.flatMap((rawLine, index) => {
@@ -10062,7 +10130,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? control.domId === item.domId
       : (item?.fieldName
         ? control.fieldName === item.fieldName
-        : (item?.ref_id ? control.ref_id === item.ref_id : control.label === item?.label)));
+        : (item?.ref_id ? control.ref_id === item.ref_id : normalize(control.label) === itemLabel)));
     let count = 0;
     for (const [index, rawLine] of lines.entries()) {
       const line = normalize(rawLine);
@@ -10070,12 +10138,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const label = normalize(/^\s*[a-z]+\s+"([^"]+)"/i.exec(rawLine)?.[1]);
       const currentValue = normalize(/\bvalue="([^"]+)"/i.exec(rawLine)?.[1]);
       if (label !== expected && currentValue !== expected && !attachmentStatus.test(line)) continue;
+      const labelledWidgetSignal = exactItemLabel?.test(line) === true;
       if (fileControls.length) {
         const distances = fileControls.map(control => ({ control, distance: Math.abs(control.index - index) }));
         const nearestDistance = Math.min(...distances.map(entry => entry.distance));
         const nearest = distances.filter(entry => entry.distance === nearestDistance);
         if (nearestDistance <= 20 && nearest.length === 1 && matchesItem(nearest[0].control)) count += 1;
-      } else if (item?.label && line.includes(normalize(item.label))) {
+        else if (!fileControls.some(matchesItem)
+            && item?.labelUnique === true
+            && labelledWidgetSignal
+            && !fileControls.some(control => normalize(control.label) === itemLabel)) count += 1;
+      } else if (item?.labelUnique === true && labelledWidgetSignal) {
         count += 1;
       }
     }
@@ -10189,6 +10262,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!guard.workflowPendingUploadEvidence || typeof guard.workflowPendingUploadEvidence !== 'object') {
         guard.workflowPendingUploadEvidence = {};
       }
+      const normalizeLabel = (value) => {
+        let label = String(value || '').replace(/\s+/g, ' ').trim();
+        try { label = label.normalize('NFKC'); } catch {}
+        return label.toLocaleLowerCase();
+      };
+      const itemLabel = normalizeLabel(item.label);
+      const labelUnique = !!itemLabel && inventoryItems.filter(candidate => (
+        candidate?.type === 'file' && normalizeLabel(candidate.label) === itemLabel
+      )).length === 1;
+      const pendingItem = {
+        ref_id: item.ref_id,
+        domId: item.domId || '',
+        fieldName: item.fieldName || '',
+        label: item.label,
+        labelUnique,
+      };
       const pending = {
         itemId: item.id,
         tool: name,
@@ -10197,16 +10286,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         pendingObservation: true,
         attachmentState: 'page_consumed',
         fileName: uploadFileName,
-        item: {
-          ref_id: item.ref_id,
-          domId: item.domId || '',
-          fieldName: item.fieldName || '',
-          label: item.label,
-        },
+        item: pendingItem,
         baselineUiSignalCount: this._workflowAttachmentUiSignalCount(
           guard.workflowInventoryObservationText,
           uploadFileName,
-          item,
+          pendingItem,
         ),
       };
       guard.workflowPendingUploadEvidence[item.id] = pending;
@@ -13683,6 +13767,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           publicationResourceUrls: Array.isArray(detected.publicationResourceUrls)
             ? detected.publicationResourceUrls.slice(0, 200)
             : [],
+          transactionOrderIds: Array.isArray(detected.transactionOrderIds)
+            ? detected.transactionOrderIds.slice(0, 20)
+            : [],
+          transactionOrderIdsComplete: detected.transactionOrderIdsComplete === true,
+          transactionPageOrderIds: Array.isArray(detected.transactionPageOrderIds)
+            ? detected.transactionPageOrderIds.slice(0, 20)
+            : [],
+          transactionPageOrderIdsComplete: detected.transactionPageOrderIdsComplete === true,
         };
       }
     } catch {
@@ -13853,6 +13945,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         changedFields,
       };
     };
+    const transactionOrderScan = (root) => {
+      if (!root) return { ids: [], complete: true };
+      const parts = [root.innerText || root.textContent || ''];
+      const fieldIds = [];
+      let completeFields = true;
+      try {
+        const fields = Array.from(root.querySelectorAll('input'));
+        completeFields = fields.length <= 100;
+        for (const field of fields.slice(0, 100)) {
+          const descriptor = `${field.getAttribute?.('name') || ''} ${field.id || ''} ${field.getAttribute?.('aria-label') || ''}`;
+          if (!/(?:order|booking|ticket).*(?:number|no|id|reference)|(?:订单|訂單|車票訂單|车票订单|取票号|取票號)|sequence[_-]?no/i.test(descriptor)) continue;
+          let fieldValue = String(field.value || '').trim();
+          try { fieldValue = fieldValue.normalize('NFKC'); } catch {}
+          fieldValue = fieldValue.toUpperCase();
+          if (/^[A-Z0-9][A-Z0-9-]{3,}$/.test(fieldValue)) fieldIds.push(fieldValue);
+        }
+      } catch { completeFields = false; }
+      let text = parts.join('\n');
+      try { text = text.normalize('NFKC'); } catch {}
+      const completeText = text.length <= 50000;
+      text = text.slice(0, 50000);
+      const pattern = /\b(?:order|booking|ticket)\s*(?:number|no\.?|id|reference)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{3,})|(?:订单号|訂單號|订单编号|車票訂單|车票订单|取票号|取票號)\s*[:：]?\s*([A-Z0-9][A-Z0-9-]{3,})/ig;
+      const ids = [...new Set([...text.matchAll(pattern)]
+        .map(match => String(match[1] || match[2] || '').toUpperCase())
+        .filter(Boolean).concat(fieldIds))];
+      return { ids: ids.slice(0, 20), complete: completeText && completeFields && ids.length <= 20 };
+    };
     const publicationResourceUrls = () => {
       try {
         return Array.from(doc.querySelectorAll('a[href]'))
@@ -13865,15 +13984,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return [];
       }
     };
-    const submitInfo = (form, reason, pendingEl = null, pendingValue = null, validationSubmitEvidence = 'strong') => ({
-      isSubmit: true,
-      host,
-      url,
-      reason,
-      validationSubmitEvidence,
-      publicationResourceUrls: publicationResourceUrls(),
-      ...summarizeForm(form, pendingEl, pendingValue),
-    });
+    const transactionOrderSite = /(?:^|\.)12306\.cn$/i.test(host);
+    const submitInfo = (form, reason, pendingEl = null, pendingValue = null, validationSubmitEvidence = 'strong') => {
+      const formOrders = transactionOrderSite
+        ? transactionOrderScan(form)
+        : { ids: [], complete: false };
+      const pageOrders = transactionOrderSite
+        ? transactionOrderScan(doc.body || doc.documentElement)
+        : { ids: [], complete: false };
+      return {
+        isSubmit: true,
+        host,
+        url,
+        reason,
+        validationSubmitEvidence,
+        publicationResourceUrls: publicationResourceUrls(),
+        transactionOrderIds: formOrders.ids,
+        transactionOrderIdsComplete: formOrders.complete,
+        transactionPageOrderIds: pageOrders.ids,
+        transactionPageOrderIdsComplete: pageOrders.complete,
+        ...summarizeForm(form, pendingEl, pendingValue),
+      };
+    };
     const labelControlFor = (el) => {
       if (!el || el.nodeType !== 1 || String(el.tagName || '').toUpperCase() !== 'LABEL') return null;
       let target = null;

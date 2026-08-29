@@ -79676,10 +79676,13 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     agent._recordCompletionToolResult(multiUploadTabId, 'get_accessibility_tree', {}, {
       success: true,
       pageUrl: formUrl,
-      pageContent: [...multiUploadControls, 'generic "cover.pdf" [ref_cover_attachment]'].join('\n'),
+      pageContent: [
+        multiUploadControls[0],
+        'status "Upload cover letter: cover.pdf uploaded" [ref_cover_attachment]',
+      ].join('\n'),
     });
     assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 2,
-      `${AgentClass.name}: observed async upload did not prove its exact inventory row`);
+      `${AgentClass.name}: a replaced async input did not bind its surviving labelled widget`);
     assert.equal(
       multiUploadGuard.workflowControlActionEvidence?.[multiCover.id]?.attachmentState,
       'page_consumed_observed',
@@ -80395,11 +80398,28 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       siteWorkflow: railWorkflow,
     });
     railGuard.successfulConsequentialToolCalls = 1;
-    const railSubmit = {
+    const unboundRailSubmit = {
       dispatched: true,
       observedAfterSubmit: true,
       workflowBinding: agent._workflowSubmitBindingForAttempt(railTabId, railUrl),
     };
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      railTabId,
+      { workflowPageText: 'Order number OLD9999. Payment successful. Ticket issued.' },
+      railUrl,
+      { submit: unboundRailSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: an unbound historical 12306 order satisfied a new dispatch`);
+    const railSubmit = {
+      ...unboundRailSubmit,
+      workflowBinding: agent._workflowSubmitBindingForAttempt(railTabId, railUrl, {}, {
+        transactionOrderIds: ['E123456'],
+        transactionOrderIdsComplete: true,
+        transactionPageOrderIds: ['OLD9999', 'E123456'],
+        transactionPageOrderIdsComplete: true,
+      }),
+    };
+    assert.equal(railSubmit.workflowBinding?.transactionOrderIdentity, 'E123456',
+      `${AgentClass.name}: the dispatched 12306 order identity was not bound`);
     assert.equal(agent._workflowTerminalEvidenceFromDone(
       railTabId,
       { workflowPageText: 'Order number E123456. Order submitted. Payment pending.' },
@@ -80411,6 +80431,9 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       'Order number E123456. Booking confirmed, but not paid.',
       'Order number E123456. Booking confirmed.',
       'Order number E123456. Paid: false.',
+      '订单号 E123456。支付成功。候补状态：待兑现。',
+      '订单号 E123456。支付成功。候补状态：兑现失败。',
+      'Order number OLD9999. Payment successful. Ticket issued. Order number E123456. Payment pending.',
     ]) {
       assert.equal(agent._workflowTerminalEvidenceFromDone(
         railTabId,
@@ -80426,9 +80449,62 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { submit: railSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
     );
     assert.equal(railTerminal?.verificationKind, 'transaction_fulfilled');
+    assert.equal(railTerminal?.source, 'dispatch_bound_paid_or_ticket_issued_state');
     railGuard.workflowTerminalEvidence = railTerminal;
     assert.equal(agent._executionEvidenceSatisfied(railGuard), true,
       `${AgentClass.name}: paid/ticket-issued 12306 state did not satisfy its job contract`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      railTabId,
+      { workflowPageText: '订单号 E123456。候补状态：已兑现。' },
+      railUrl,
+      { submit: railSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    )?.verificationKind, 'transaction_fulfilled',
+    `${AgentClass.name}: a bound fulfilled 12306 waitlist was not accepted`);
+
+    const observedRailTabId = 9100 + index;
+    agent._startPlanExecutionGuard(observedRailTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: railWorkflow,
+    }).successfulConsequentialToolCalls = 1;
+    agent._beginCompletionInvariant(observedRailTabId);
+    agent._recordCompletionToolResult(
+      observedRailTabId,
+      'click_ax',
+      { ref_id: 'submit-booking' },
+      { success: true, dispatched: true },
+    );
+    const observedRailSubmit = agent._recordCompletionSubmitAttempt(
+      observedRailTabId,
+      {
+        isSubmit: true,
+        transactionOrderIds: [],
+        transactionOrderIdsComplete: true,
+        transactionPageOrderIds: ['OLD9999'],
+        transactionPageOrderIdsComplete: true,
+      },
+      'click_ax',
+      { ref_id: 'submit-booking' },
+      railUrl,
+      railUrl,
+      { success: true, dispatched: true },
+    );
+    assert.equal(observedRailSubmit?.workflowBinding?.transactionOrderIdentity, undefined,
+      `${AgentClass.name}: a targetless 12306 dispatch invented an order identity`);
+    agent._recordCompletionToolResult(observedRailTabId, 'read_page', {}, {
+      success: true,
+      pageUrl: railUrl,
+      pageContent: [
+        'Order number OLD9999. Payment successful. Ticket issued.',
+        'Order number N765432. Payment processing.',
+      ].join('\n'),
+    });
+    assert.equal(
+      agent._completionSubmitStates.get(observedRailTabId)?.workflowBinding?.transactionOrderIdentity,
+      'N765432',
+      `${AgentClass.name}: the unique post-dispatch 12306 order was not bound`,
+    );
 
     const publishTabId = 8985 + index;
     const publishBeforeUrl = 'https://github.com/esokullu/webbrain/releases/new';
