@@ -632,6 +632,7 @@ export default {
   'st.display.scheduled_confirm.label': 'Kumpirmahin ang mga naka-iskedyul na mahahalagang aksyon',
   'st.display.scheduled_confirm.desc': 'Kapag naka-on, hihinto pa rin ang mga naka-iskedyul na run na walang tao para humingi ng pahintulot bago ang mga mahahalagang aksyon. I-off lamang kung pinagkakatiwalaan mo ang mga naka-iskedyul na gawain na kumilos nang walang mga prompt na iyon.',
   'st.provider.field.context_window': 'Context window (mga token)',
+  'st.provider.field.max_output_tokens': 'Pinakamataas na output (token)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'Mga slash command',

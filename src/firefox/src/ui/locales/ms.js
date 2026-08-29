@@ -632,6 +632,7 @@ export default {
   'st.display.scheduled_confirm.label': 'Sahkan tindakan penting berjadual',
   'st.display.scheduled_confirm.desc': 'Apabila dihidupkan, larian berjadual tanpa pengawasan masih berhenti untuk mendapatkan kebenaran sebelum tindakan penting. Matikan hanya jika anda mempercayai tugas berjadual untuk bertindak tanpa gesaan tersebut.',
   'st.provider.field.context_window': 'Tetingkap konteks (token)',
+  'st.provider.field.max_output_tokens': 'Output maksimum (token)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'Perintah slash',

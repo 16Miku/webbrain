@@ -632,6 +632,7 @@ export default {
   'st.display.scheduled_confirm.label': 'Confirmar acciones consecuentes en ejecuciones programadas',
   'st.display.scheduled_confirm.desc': 'Cuando está activado, las ejecuciones programadas desatendidas siguen solicitando permiso antes de realizar acciones consecuentes. Desactívalo solo si confías en que las tareas programadas actúen sin esas confirmaciones.',
   'st.provider.field.context_window': 'Ventana de contexto (tokens)',
+  'st.provider.field.max_output_tokens': 'Salida máxima (tokens)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'Comandos de barra',

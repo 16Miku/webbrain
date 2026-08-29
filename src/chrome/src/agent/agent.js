@@ -101,6 +101,7 @@ import {
   unsupportedVisionGenerationControl,
   visionGenerationOptions,
 } from '../providers/provider-compatibility.js';
+import { resolveMaxOutputTokens } from '../providers/context-windows.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
 import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
@@ -12368,9 +12369,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _plannerChatOptions(provider, retry = false, intentOnly = false, schemaKind = null, portable = false) {
+    const plannerBudget = intentOnly ? 2048 : 4096;
     const opts = {
       temperature: retry ? 0.1 : 0.3,
-      maxTokens: intentOnly ? 2048 : 4096,
+      maxTokens: Math.min(this._providerMaxOutputTokens(provider), plannerBudget),
     };
     if (!portable) {
       const kind = schemaKind || (intentOnly ? 'intent' : 'planner');
@@ -12391,6 +12393,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (Object.keys(extraBody).length) opts.extraBody = extraBody;
     }
     return opts;
+  }
+
+  _providerMaxOutputTokens(provider, fallback = 4096) {
+    const config = provider?.config && typeof provider.config === 'object'
+      ? { ...provider.config, model: provider.model || provider.config.model }
+      : (provider || {});
+    return resolveMaxOutputTokens(config, fallback);
   }
 
   async _tracePlannerAttemptRequest(runId, step, provider, messages, phase, attempt, runtimeMode) {
@@ -13842,7 +13851,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const prunedMessages = this._pruneOldImages(contextMessages, provider);
     const chatOpts = {
       temperature: phase === 'delivery_recovery' ? 0.2 : 0.3,
-      maxTokens: 4096,
+      maxTokens: this._providerMaxOutputTokens(provider),
       ...(Array.isArray(tools) && tools.length ? { tools } : {}),
       ...(toolChoice ? { toolChoice } : {}),
     };
@@ -29128,6 +29137,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let allowedToolNames = new Set(tools.map(t => t.function.name));
     let toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
     const plannerTemperature = this._isActionMode(mode) ? 0.15 : 0.3;
+    const mainMaxTokens = this._providerMaxOutputTokens(provider);
     let steps = 0;
     // Tracks whether we've already nudged the model after an empty
     // (no-content + no-tool-call) response. Used by the recovery branch
@@ -29381,7 +29391,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const chatOpts = {
           tools: useTools ? tools : undefined,
           temperature: plannerTemperature,
-          maxTokens: 4096,
+           maxTokens: mainMaxTokens,
           ...(completionToolChoice ? { toolChoice: completionToolChoice } : {}),
         };
         const prunedMessages = this._pruneOldImages(modelMessagesForRun(), provider);
@@ -29459,7 +29469,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const chatOpts = {
               tools: useTools ? tools : undefined,
               temperature: plannerTemperature,
-              maxTokens: 4096,
+                maxTokens: mainMaxTokens,
               ...(completionToolChoice ? { toolChoice: completionToolChoice } : {}),
             };
             const prunedMessages = this._pruneOldImages(modelMessagesForRun(), provider);
@@ -29520,7 +29530,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const chatOpts2 = {
               tools: useTools2 ? tools : undefined,
               temperature: plannerTemperature,
-              maxTokens: 4096,
+                maxTokens: mainMaxTokens,
               ...(completionToolChoice ? { toolChoice: completionToolChoice } : {}),
             };
             result = await chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' });
@@ -29776,7 +29786,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         // Second empty in a row: give up with a transparent message.
         finalResponse = emptyOutputFailureMessage(modelOutputDiagnostics(result, {
-          requestedMaxTokens: 4096,
+          requestedMaxTokens: mainMaxTokens,
           recoveryAttempt: 2,
         }));
         _traceStatus = 'empty_output';
@@ -30311,6 +30321,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let allowedToolNames = new Set(tools.map(t => t.function.name));
     let toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
     const plannerTemperature = this._isActionMode(mode) ? 0.15 : 0.3;
+    const mainMaxTokens = this._providerMaxOutputTokens(provider);
     let steps = 0;
     // See processMessage — used to break the empty-response→nudge cycle.
     let emptyOutputRecoveryAttempted = false;
@@ -30424,7 +30435,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const streamOpts = this._cloudGenerationOptions(provider, {
           tools: provider.supportsTools && tools.length > 0 ? tools : undefined,
           temperature: plannerTemperature,
-          maxTokens: 4096,
+            maxTokens: mainMaxTokens,
           ...(completionToolChoice ? { toolChoice: completionToolChoice } : {}),
         }, { tabId, generationName: 'main' });
         const prunedMessages = pendingVisionFallbackMessages

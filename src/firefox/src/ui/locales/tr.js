@@ -671,6 +671,7 @@ export default {
   'st.display.scheduled_confirm.label': 'Zamanlanmış kritik işlemleri onayla',
   'st.display.scheduled_confirm.desc': 'Etkinken, gözetimsiz zamanlanmış çalışmalar kritik işlemlerden önce yine de izin ister. Yalnızca zamanlanmış görevlerin bu istemlere gerek kalmadan hareket etmesine güveniyorsanız kapatın.',
   'st.provider.field.context_window': 'Bağlam penceresi (token)',
+  'st.provider.field.max_output_tokens': 'Maksimum çıktı (token)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'Eğik çizgi komutları',

@@ -648,6 +648,7 @@ export default {
   'st.display.scheduled_confirm.label': 'Konfirmasi tindakan penting pada jadwal yang berjalan tanpa pengawasan',
   'st.display.scheduled_confirm.desc': 'Saat aktif, jadwal yang berjalan tanpa pengawasan tetap berhenti untuk meminta izin sebelum tindakan penting. Matikan hanya jika Anda mempercayai tugas terjadwal untuk bertindak tanpa konfirmasi tersebut.',
   'st.provider.field.context_window': 'Jendela konteks (token)',
+  'st.provider.field.max_output_tokens': 'Output maksimal (token)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'Perintah slash',
