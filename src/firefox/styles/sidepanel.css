@@ -1898,10 +1898,10 @@ body {
 
 
 /* ==========================================================================
-   COMPACT ACTIVITY HISTORY — painted when the normal-mode status is clicked
+   COMPACT ACTIVITY HISTORY — visible by default; status click hides it
    ========================================================================== */
 
-#messages:not(.progress-verbose):not(.progress-preview) .steps-container {
+#messages:not(.progress-verbose).progress-status-only .steps-container {
   display: none;
 }
 

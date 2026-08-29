@@ -51,6 +51,9 @@ const OPENROUTER_DEFAULT_MODEL = 'openrouter/free';
 const OPENROUTER_LEGACY_DEFAULT_MODEL = 'stepfun/step-3.7-flash';
 const OPENAI_DEFAULT_MODEL = 'gpt-5.6-terra';
 const OPENAI_LEGACY_DEFAULT_MODEL = 'gpt-5.5';
+const DEEPSEEK_DEFAULT_BASE_URL = 'https://api.deepseek.com';
+const DEEPSEEK_LEGACY_DEFAULT_BASE_URL = 'https://api.deepseek.com/v1';
+const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-flash';
 const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'openai', 'azure_openai', 'aws_bedrock', 'anthropic', 'anthropic_oauth', 'vertex_anthropic']);
 const SAFE_PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const ROUTER_PROVIDER_IDS = ['openrouter', 'cloudflare', 'nvidia', 'groq', 'huggingface', 'fireworks', 'together'];
@@ -238,6 +241,7 @@ const DUPLICATE_BLANK_CONFIG_KEYS = [
   'cacheWrite1hCostPerMillionUsd',
   'outputCostPerMillionUsd',
   'promptTier',
+  'routingVariant',
   'visionMode',
   'visionDetection',
   'supportsVision',
@@ -652,8 +656,8 @@ export class ProviderManager {
         category: 'cloud',
         label: 'DeepSeek',
         providerName: 'deepseek',
-        baseUrl: 'https://api.deepseek.com/v1',
-        model: 'deepseek-v4-flash',
+        baseUrl: DEEPSEEK_DEFAULT_BASE_URL,
+        model: DEEPSEEK_DEFAULT_MODEL,
         contextWindow: 1000000,
         inputCostPerMillionUsd: 0.27,
         outputCostPerMillionUsd: 1.1,
@@ -838,6 +842,20 @@ export class ProviderManager {
       migrated.openrouter = {
         ...migrated.openrouter,
         model: OPENROUTER_DEFAULT_MODEL,
+      };
+    }
+    const storedDeepSeek = migrated.deepseek;
+    const deepSeekBaseUrl = String(storedDeepSeek?.baseUrl || '').replace(/\/+$/, '');
+    const untouchedDeepSeekDefault = storedDeepSeek?.model === DEEPSEEK_DEFAULT_MODEL
+      && storedDeepSeek?.configured !== true
+      && !String(storedDeepSeek?.apiKey || '').trim()
+      && deepSeekBaseUrl === DEEPSEEK_LEGACY_DEFAULT_BASE_URL
+      && (storedDeepSeek?.inputCostPerMillionUsd == null || Number(storedDeepSeek.inputCostPerMillionUsd) === 0.27)
+      && (storedDeepSeek?.outputCostPerMillionUsd == null || Number(storedDeepSeek.outputCostPerMillionUsd) === 1.1);
+    if (untouchedDeepSeekDefault) {
+      migrated.deepseek = {
+        ...storedDeepSeek,
+        baseUrl: DEEPSEEK_DEFAULT_BASE_URL,
       };
     }
     this._migrateUntouchedShippedDefaults(migrated);
@@ -1604,7 +1622,10 @@ export class ProviderManager {
     let result;
     try {
       result = await provider.chat(messages, {
-        ...visionGenerationOptions(256, { reasoningControl }),
+        ...visionGenerationOptions(256, {
+          reasoningControl,
+          providerConfig: provider?.config,
+        }),
         webbrainVisionProbe: true,
       });
     } catch (error) {
@@ -1613,7 +1634,10 @@ export class ProviderManager {
       attempts++;
       try {
         result = await provider.chat(messages, {
-          ...visionGenerationOptions(800, { reasoningControl }),
+          ...visionGenerationOptions(800, {
+            reasoningControl,
+            providerConfig: provider?.config,
+          }),
           webbrainVisionProbe: true,
         });
       } catch (fallbackError) {
@@ -1624,7 +1648,10 @@ export class ProviderManager {
       attempts++;
       try {
         result = await provider.chat(messages, {
-          ...visionGenerationOptions(800, { reasoningControl }),
+          ...visionGenerationOptions(800, {
+            reasoningControl,
+            providerConfig: provider?.config,
+          }),
           webbrainVisionProbe: true,
         });
       } catch (error) {

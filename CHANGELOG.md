@@ -4,6 +4,26 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [33.6.0] - 2026-08-28
+
+### Added
+- Added OpenRouter routing variant controls, including support for encoding **Exacto** as an OpenRouter model variant
+
+### Changed
+- Restored the **default compact activity history** behavior
+- Preserved OpenRouter model variants when routing, and synced routing after loaded model selection (Chrome + Firefox)
+- Updated provider compatibility handling for DeepSeek support
+
+### Fixed
+- Improved completion recovery behavior around verification availability:
+  - Allowed honest exit after failed verification
+  - Preserved honest completion when verification is unavailable
+  - Hardened scoped completion observations and recovery across retries
+  - Fixed background-tab completion verification and post-navigation completion recovery
+
+### Tests
+- Added/updated OpenRouter routing and DeepSeek-related benchmark fixtures/snapshots (including DeepSeek V4 Flash Vision)
+
 ## [33.5.0] - 2026-08-27
 
 ### Added

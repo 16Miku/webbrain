@@ -39,12 +39,36 @@ const DOWNLOAD_ACTION_TOOLS = new Set([
   'download_social_media',
 ]);
 
+// These actions complete outside the run tab, so a screenshot of the run
+// tab cannot serve as their post-action observation.
+const BACKGROUND_ACTION_TOOLS = new Set([
+  'new_tab',
+  'delegate_research',
+]);
+
+function completionUrlFingerprint(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  let normalized = raw;
+  try {
+    const parsed = new URL(raw);
+    parsed.hash = '';
+    normalized = parsed.href;
+  } catch {}
+  let hash = 2166136261;
+  for (let index = 0; index < normalized.length; index++) {
+    hash = Math.imul(hash ^ normalized.charCodeAt(index), 16777619);
+  }
+  return `${normalized.length}:${(hash >>> 0).toString(36)}`;
+}
+
 // v1 deliberately enforces ordering, not semantic postcondition matching:
 // any successful explicit observation in this allowlist after the latest
 // action clears debt. This deterministically blocks success-without-a-read,
 // but it cannot prove that the read was relevant to the task. Action-specific
 // and domain-specific postconditions belong to a later enforcement layer.
 const OBSERVATION_TOOLS = new Set([
+  'auto_screenshot',
   'get_accessibility_tree',
   'read_page',
   'read_pdf',
@@ -343,7 +367,7 @@ export function isCompletionObservationTool(name, args = {}, result) {
   if (name === 'wait_for_element' && (result.found !== true || result.timedOut === true)) {
     return false;
   }
-  if (name === 'inspect_viewport' || name === 'screenshot' || name === 'full_page_screenshot') {
+  if (name === 'auto_screenshot' || name === 'inspect_viewport' || name === 'screenshot' || name === 'full_page_screenshot') {
     if (result.method === 'save_only') return false;
     if (result.method === 'vision_describe') return !!result.description;
     if (result.method === 'image_attach') return !!result._attachImage;
@@ -375,6 +399,11 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
 
   if (didCompletionActionExecute(name, args, result)) {
     const selfVerified = isSelfVerifyingActionResult(name, result);
+    const downloadAction = DOWNLOAD_ACTION_TOOLS.has(name)
+      || args?.__completionDownloadAction === true;
+    const backgroundTargetFingerprint = name === 'new_tab'
+      ? completionUrlFingerprint(args?.url || result?.url)
+      : '';
     next.hadAction = true;
     // A persisted scheduler result proves its own mutation, but it must never
     // erase verification debt opened by an earlier page action.
@@ -384,6 +413,8 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
       name,
       sequence,
       ...(selfVerified ? { selfVerified: true } : {}),
+      ...(downloadAction ? { downloadAction: true } : {}),
+      ...(backgroundTargetFingerprint ? { backgroundTargetFingerprint } : {}),
       uncertain: !!(
         result == null
         || result?.missingToolResponse
@@ -413,6 +444,28 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
   }
 
   if (isCompletionObservationTool(name, args, result)) {
+    if (
+      current.verificationDebt
+      && current.lastAction?.downloadAction === true
+      && !['list_downloads', 'read_downloaded_file'].includes(name)
+    ) {
+      return next;
+    }
+    if (current.verificationDebt && current.lastAction?.name === 'new_tab') {
+      const scopedBackgroundRead = ['fetch_url', 'research_url'].includes(name)
+        && !!current.lastAction.backgroundTargetFingerprint
+        && completionUrlFingerprint(args?.url) === current.lastAction.backgroundTargetFingerprint;
+      if (!scopedBackgroundRead) return next;
+    }
+    if (
+      name === 'auto_screenshot'
+      && (
+        current.lastAction?.downloadAction === true
+        || BACKGROUND_ACTION_TOOLS.has(current.lastAction?.name)
+      )
+    ) {
+      return next;
+    }
     next.lastObservation = { name, sequence };
     if (current.verificationDebt) next.verificationDebt = false;
     if (
@@ -521,7 +574,13 @@ export function completionDoneBlock(state, toolName, args = {}) {
 
 export function completionPlainFinalBlock(state) {
   if (!state?.hadAction) return null;
-  return '[RUNTIME COMPLETION BLOCK: This Act/Dev run executed a consequential action, so a plain final answer cannot end it. Call done with an explicit outcome of success, partial, or failed. Use success only after a post-action observation verified the current state.]';
+  if (state.iframeFormVerificationDebt) {
+    return '[RUNTIME COMPLETION BLOCK: A plain final answer cannot end this run because edited iframe form state still requires semantic verification. Do not call done with outcome="success" yet. Call verify_form for every pending iframe target, inspect the returned labels and values, correct any mismatch, and only then call done on a later turn. Use outcome="partial" or outcome="failed" if verification cannot be completed.]';
+  }
+  if (state.verificationDebt) {
+    return '[RUNTIME COMPLETION BLOCK: A plain final answer cannot end this run because the latest consequential action has not been verified by a successful post-action observation. Do not call done with outcome="success" yet. Call one available read-only page/state observation tool now, inspect its result, and only then call done on a later turn. Use outcome="partial" or outcome="failed" if verification cannot be completed.]';
+  }
+  return '[RUNTIME COMPLETION BLOCK: This Act/Dev run executed a consequential action and its post-action state has been observed, but a plain final answer cannot end it. Call done now with an explicit outcome of success, partial, or failed.]';
 }
 
 export function completionPlainFinalPartial(state, content, { verificationPending = false } = {}) {
