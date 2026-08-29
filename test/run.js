@@ -81253,6 +81253,7 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     assert.equal(guard.requiresSubmission, true);
     assert.equal(agent._executionEvidenceSatisfied(guard), false);
     guard.successfulTaskToolCalls = 1;
+    guard.evidenceTaskKey = guard.taskKey;
     assert.equal(agent._executionEvidenceSatisfied(guard), false, 'read evidence must not prove submitted form completion');
     guard.successfulConsequentialToolCalls = 1;
     assert.equal(agent._executionEvidenceSatisfied(guard), false, 'field mutations must not prove the required submit');
@@ -81669,6 +81670,7 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       siteWorkflow: reading,
     });
     readGuard.successfulTaskToolCalls = 1;
+    readGuard.evidenceTaskKey = readGuard.taskKey;
     assert.equal(readGuard.requiresStateChange, false);
     assert.equal(agent._executionEvidenceSatisfied(readGuard), true);
   }
