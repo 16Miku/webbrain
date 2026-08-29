@@ -35650,6 +35650,30 @@ test('all locales cover English keys and preserve interpolation placeholders', a
    }
 });
 
+test('zh Ask-streaming setting copy is not damaged/mojibake placeholder text', async () => {
+  // Regression test for the corruption fixed by PR #2949: 'st.display.openai_ask_streaming.label'/'.desc'
+  // in zh.js had shipped as literal runs of '?' (e.g. "? Ask ????????") instead of translated Chinese text.
+  // The generic locale-parity test above only checks key presence and {placeholder} token parity, so a
+  // value that is entirely '?' characters (zero placeholders, same as its English source) passes it
+  // trivially and would not have caught this. This check is intentionally scoped to zh only — several
+  // other locales (ar, bn, fa, he, hi, ja, ko, ru, th, uk) have the identical unfixed corruption for this
+  // same key today and are tracked separately rather than failing this PR's build.
+  for (const [label, localeDir] of [
+    ['chrome', 'src/chrome/src/ui/locales'],
+    ['firefox', 'src/firefox/src/ui/locales'],
+  ]) {
+    const dir = path.join(ROOT, localeDir);
+    const zh = (await import('file://' + path.join(dir, 'zh.js').replace(/\\/g, '/'))).default;
+    for (const key of ['st.display.openai_ask_streaming.label', 'st.display.openai_ask_streaming.desc']) {
+      assert.doesNotMatch(
+        String(zh[key]),
+        /\?{4,}/,
+        `${label}/zh.js: ${key} contains damaged/mojibake placeholder text`,
+      );
+    }
+  }
+});
+
 test('Apocalypse Mode translation blocks cover every canonical key with matching placeholders in all 22 locales', async () => {
   const apocalypseCopy = (await import(
     pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/apocalypse-copy.mjs')).href
