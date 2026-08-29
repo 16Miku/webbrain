@@ -668,6 +668,12 @@
     } catch {}
     if (disabled) line += ' disabled=true';
 
+    let required = false;
+    try {
+      required = !!el.required || el.getAttribute('aria-required') === 'true';
+    } catch {}
+    if (required) line += ' required=true';
+
     // Checkbox/radio state is an action-critical value, not decorative
     // metadata. Without it the model has to infer state from a focus ring or
     // screenshot and can accidentally toggle a control back off.
@@ -752,8 +758,24 @@
   }
 
   // ── Walker ─────────────────────────────────────────────────────────────
+  function nodeHasWalkableChildren(el) {
+    if (!el) return false;
+    if (el.children && el.children.length) return true;
+    try {
+      return !!(window.__wbSiteInteractions.shouldPierceShadowRoots()
+        && el.shadowRoot
+        && el.shadowRoot.children
+        && el.shadowRoot.children.length);
+    } catch {
+      return false;
+    }
+  }
+
   function walk(el, depth, opts, lines) {
-    if (depth > opts.maxDepth) return;
+    if (depth > opts.maxDepth) {
+      opts.depthTruncated = true;
+      return;
+    }
     if (!el || !el.tagName) return;
 
     // Skip nodes already emitted in the priority/action prelude.
@@ -778,9 +800,9 @@
       }
     }
 
-    if (el.children && depth < opts.maxDepth) {
+    if (nodeHasWalkableChildren(el) && depth < opts.maxDepth) {
       const nextDepth = included ? depth + 1 : depth;
-      for (const child of el.children) {
+      for (const child of el.children || []) {
         walk(child, nextDepth, opts, lines);
       }
       // Bilibili's current comment system is a hierarchy of open custom-
@@ -791,6 +813,8 @@
           walk(child, nextDepth, opts, lines);
         }
       }
+    } else if (nodeHasWalkableChildren(el)) {
+      opts.depthTruncated = true;
     }
   }
 
@@ -1341,6 +1365,7 @@
 
       const output = lines.join('\n');
       const treeRevision = fingerprintTreeContent(output);
+      const depthTruncated = opts.depthTruncated === true;
       const revisionBound = !!refId;
       const continuationBase = {
         ...baseTreeScope,
@@ -1375,7 +1400,7 @@
         };
       }
       if (effMaxChars != null && page != null && Math.floor(Number(page) || 1) > 1) {
-        return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, treeRevision, ...conversationMetadata };
+        return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, treeRevision, depthTruncated, ...conversationMetadata };
       }
       // For 'visible' / 'interactive', truncate gracefully on overflow —
       // small models prefer a partial tree to a hard error. For 'all'
@@ -1390,7 +1415,7 @@
       //      empty (chunkSize too small).
       if (effMaxChars != null && output.length > effMaxChars) {
         if (filter && filter !== 'all' && maxChars == null) {
-          return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, treeRevision, ...conversationMetadata };
+          return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, treeRevision, depthTruncated, ...conversationMetadata };
         }
         const sliced = sliceTreePage(output, lines, effMaxChars, page, continuationBase);
         if (sliced.pageContent && !sliced.pageContent.startsWith('[tree page')) {
@@ -1402,6 +1427,7 @@
             ...sliced,
             viewport,
             treeRevision,
+            depthTruncated,
             autoDegraded: true,
             notice: hint,
             ...conversationMetadata,
@@ -1418,7 +1444,7 @@
         return { error: hint, pageContent: '', viewport };
       }
 
-      return { pageContent: output, viewport, treeRevision, ...conversationMetadata };
+      return { pageContent: output, viewport, treeRevision, depthTruncated, ...conversationMetadata };
     } catch (e) {
       return {
         error: 'Error generating accessibility tree: ' + (e && e.message || 'Unknown error'),

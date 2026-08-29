@@ -300,6 +300,22 @@ const {
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/adapter-workflow.js').replace(/\\/g, '/')
 );
+const {
+  isExhaustiveAccessibilityInventoryRead,
+  invalidateWorkflowInventoryCompleteness,
+  shouldInvalidateFormInventoryAfterAction,
+  workflowRequiredRowsAreProcessed,
+} = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/adapter-workflow-evidence.js').replace(/\\/g, '/')
+);
+const {
+  isExhaustiveAccessibilityInventoryRead: isExhaustiveAccessibilityInventoryReadFx,
+  invalidateWorkflowInventoryCompleteness: invalidateWorkflowInventoryCompletenessFx,
+  shouldInvalidateFormInventoryAfterAction: shouldInvalidateFormInventoryAfterActionFx,
+  workflowRequiredRowsAreProcessed: workflowRequiredRowsAreProcessedFx,
+} = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/adapter-workflow-evidence.js').replace(/\\/g, '/')
+);
 
 // trace-export.js is pure ESM — the /export --traces serializer, tested here.
 const { tracesToMarkdown, sanitizeTraceExport } = await import(
@@ -7431,6 +7447,72 @@ test('adapter workflow profile accepts read-only and consequential jobs', () => 
   assert.deepEqual(validateAdapterWorkflowProfile(consequential), { ok: true });
   assert.deepEqual(validateAdapterWorkflowProfileFx(readOnly), { ok: true });
   assert.deepEqual(validateAdapterWorkflowProfileFx(consequential), { ok: true });
+});
+
+test('adapter workflow evidence kernel is bounded and mirrored', () => {
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/adapter-workflow-evidence.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/adapter-workflow-evidence.js'), 'utf8'),
+    'adapter-workflow-evidence.js must remain byte-identical across browser builds',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/adapter-workflow.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/adapter-workflow.js'), 'utf8'),
+    'adapter-workflow.js must remain byte-identical across browser builds',
+  );
+  const truncated = isExhaustiveAccessibilityInventoryRead({ filter: 'all', maxDepth: 15 }, {
+    depthTruncated: true,
+  });
+  const truncatedFx = isExhaustiveAccessibilityInventoryReadFx({ filter: 'all', maxDepth: 15 }, {
+    depthTruncated: true,
+  });
+  assert.deepEqual(truncatedFx, truncated);
+  assert.equal(truncated.exhaustiveRootScope, true);
+  assert.equal(truncated.rootReadComplete, false);
+
+  const complete = isExhaustiveAccessibilityInventoryRead({}, {});
+  assert.equal(complete.rootReadComplete, true);
+  assert.equal(isExhaustiveAccessibilityInventoryRead({ filter: 'visible' }, {}).rootReadComplete, false);
+  assert.equal(isExhaustiveAccessibilityInventoryRead({ maxDepth: 10 }, {}).rootReadComplete, false);
+  assert.equal(isExhaustiveAccessibilityInventoryRead({ ref_id: 'ref_x' }, {}).rootReadComplete, false);
+
+  assert.equal(shouldInvalidateFormInventoryAfterAction('set_checked'), true);
+  assert.equal(shouldInvalidateFormInventoryAfterAction('click_ax'), true);
+  assert.equal(shouldInvalidateFormInventoryAfterActionFx('iframe_click'), true);
+  assert.equal(shouldInvalidateFormInventoryAfterAction('type_ax'), false);
+  assert.equal(shouldInvalidateFormInventoryAfterAction('screenshot'), false);
+  assert.equal(shouldInvalidateFormInventoryAfterAction('get_accessibility_tree'), false);
+
+  const stale = invalidateWorkflowInventoryCompleteness({
+    complete: true,
+    documents: { doc: { complete: true, scope: 'document' } },
+    items: [{ id: 'a' }],
+  });
+  assert.deepEqual(invalidateWorkflowInventoryCompletenessFx({
+    complete: true,
+    documents: { doc: { complete: true, scope: 'document' } },
+    items: [{ id: 'a' }],
+  }), stale);
+  assert.equal(stale.complete, false);
+  assert.equal(stale.documents.doc.complete, false);
+
+  const rows = [
+    { id: 'required-field', status: 'skipped' },
+    { id: 'optional-field', status: 'skipped' },
+  ];
+  const inventory = { itemIds: ['required-field', 'optional-field'] };
+  assert.equal(workflowRequiredRowsAreProcessed(rows, inventory, [
+    { id: 'required-field' },
+    { id: 'optional-field', required: false },
+  ]), false);
+  assert.equal(workflowRequiredRowsAreProcessed([
+    { id: 'required-field', status: 'processed' },
+    { id: 'optional-field', status: 'skipped' },
+  ], inventory, [
+    { id: 'required-field' },
+    { id: 'optional-field', required: false },
+  ]), true);
+  assert.equal(workflowRequiredRowsAreProcessedFx(rows, inventory), false);
 });
 
 test('adapter workflow profile rejects unsafe or unverifiable job contracts', () => {
@@ -79483,6 +79565,15 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     assert.equal(shallowInventory?.complete, false,
       `${AgentClass.name}: a shallow AX root read closed whole-document form coverage`);
 
+    const depthTruncatedInventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageContent: 'textbox "Full name" [ref_name] value="Ada"',
+      depthTruncated: true,
+      treeRevision: 'tree-depth-truncated',
+    });
+    assert.equal(depthTruncatedInventory?.complete, false,
+      `${AgentClass.name}: a depth-limited AX walk closed whole-document form coverage`);
+
     const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {}, {
       success: true,
       pageContent: [
@@ -79564,6 +79655,18 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     assert.equal(unprovenValidation.ok, false,
       `${AgentClass.name}: one global consequential call proved every processed form row`);
     assert.match(unprovenValidation.error, /per-control action evidence/i);
+    const skippedAxRow = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'The complete accessibility-tree inventory was reviewed.',
+    }, terminalInventoryItems.map((item, itemIndex) => ({
+      ...item,
+      status: itemIndex === 1 ? 'skipped' : item.status,
+    })), 'skipped-ax-workflow-session');
+    assert.equal(skippedAxRow.ok, false,
+      `${AgentClass.name}: a skipped accessibility-tree control passed successful reconciliation`);
+    assert.match(skippedAxRow.error, /required inventory rows must be processed/i);
 
     agent._beginCompletionInvariant(tabId);
     agent._recordCompletionToolResult(tabId, 'click_ax', {
@@ -79709,6 +79812,24 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       'page_consumed_observed',
       `${AgentClass.name}: widget-observed upload evidence did not retain its state`,
     );
+
+    assert.equal(guard.workflowInventoryEvidence.complete, false,
+      `${AgentClass.name}: checkbox/click actions left a stale complete form inventory`);
+    agent._recordCompletionToolResult(tabId, 'screenshot', {}, { success: true });
+    assert.equal(guard.workflowInventoryEvidence.complete, false,
+      `${AgentClass.name}: a screenshot restored complete form coverage after a branching action`);
+    const refreshedInventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] value="Ada"',
+        'checkbox "Accept terms" [ref_terms]',
+        'button "Upload résumé" [ref_resume] type="file"',
+        'button "Submit" [ref_submit] type="submit"',
+      ].join('\n'),
+      treeRevision: 'tree-after-structural-actions',
+    });
+    assert.equal(refreshedInventory?.complete, true,
+      `${AgentClass.name}: a fresh exhaustive root read did not restore form coverage`);
 
     const terminalOnly = agent._progressUpdate(tabId, { items: terminalInventoryItems });
     assert.equal(terminalOnly.success, true);
@@ -79894,6 +80015,8 @@ test('iframe-backed application forms expose a complete trusted inventory and ex
 
     agent._beginCompletionInvariant(tabId);
     const emailItem = inventory.items.find(item => item.label === 'Email');
+    const coverItem = inventory.items.find(item => item.label === 'Cover letter');
+    const countryItem = inventory.items.find(item => item.label === 'Country');
     agent._recordCompletionToolResult(tabId, 'iframe_type', {
       urlFilter: 'acme.wd1.myworkdayjobs.com',
       selector: inventorySelector,
@@ -79902,11 +80025,37 @@ test('iframe-backed application forms expose a complete trusted inventory and ex
     }, { success: true, dispatched: true, verified: true });
     assert.equal(guard.workflowControlActionEvidence[emailItem.id]?.tool, 'iframe_type',
       `${AgentClass.name}: iframe action was not bound to its exact inventory row`);
-    const rows = inventory.items.map(item => ({
+    agent._recordCompletionToolResult(tabId, 'iframe_type', {
+      urlFilter: 'acme.wd1.myworkdayjobs.com',
+      selector: inventorySelector,
+      matchIndex: 1,
+      text: 'Cover letter body',
+    }, { success: true, dispatched: true, verified: true });
+    agent._recordCompletionToolResult(tabId, 'iframe_type', {
+      urlFilter: 'acme.wd1.myworkdayjobs.com',
+      selector: inventorySelector,
+      matchIndex: 2,
+      text: 'US',
+    }, { success: true, dispatched: true, verified: true });
+    const skippedIframeRows = inventory.items.map(item => ({
       id: item.id,
       label: item.label,
       status: item.id === emailItem.id ? 'processed' : 'skipped',
     }));
+    const skippedIframe = agent._validateWorkflowReconciliation(tabId, {
+      job: 'prepare-application',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'Exhaustive iframe inventory reviewed; only email was typed.',
+    }, skippedIframeRows, 'skipped-iframe-session');
+    assert.equal(skippedIframe.ok, false,
+      `${AgentClass.name}: skipped iframe controls passed successful reconciliation`);
+    const rows = inventory.items.map(item => ({
+      id: item.id,
+      label: item.label,
+      status: 'processed',
+    }));
+    assert.ok(coverItem && countryItem);
     const reconciled = agent._progressUpdate(tabId, {
       items: rows,
       workflowReconciliation: {
@@ -80350,7 +80499,7 @@ test('adapter workflow execution policy is bounded and mirrored', () => {
   assert.match(chromePolicy, /Required stages, in order:/);
   assert.match(chromePolicy, /verified commit\/submit dispatch/);
   assert.match(chromePolicy, /exact workflowInventory item ids/);
-  assert.match(chromePolicy, /Model-created rows alone cannot prove full coverage/);
+  assert.match(chromePolicy, /Skipped or model-created rows cannot prove full coverage/);
 });
 
 test('site workflow bindings are revalidated on the live URL and preserved across trusted planner fallback', async () => {

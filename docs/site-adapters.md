@@ -76,7 +76,10 @@ confirmation, while form/publish/update jobs require their own confirmation
 state. A workflow that requires a ledger
 must reconcile exact app-owned inventory IDs from a complete accessibility-tree
 read or app-seeded expected/classifier targets. Model-created rows—even one
-terminal row—cannot prove complete coverage. The executor receives the
+terminal row—cannot prove complete coverage. Form inventory v1 is the last
+exhaustive document-root snapshot (`filter: all`, not depth-truncated).
+Skipped rows cannot prove success, and checkbox/radio/Next actions stale
+completeness until a fresh root read. The executor receives the
 app-owned stages plus success and partial evidence contract. Edited plan-review
 text clears hidden workflow routing instead of retaining stale authorization.
 Metadata-only traces retain only the adapter match/injection flag and, for a

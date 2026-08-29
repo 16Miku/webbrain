@@ -33,6 +33,12 @@ import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressActio
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, recordCompletionToolResult } from './completion-invariant.js';
 import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
+import {
+  invalidateWorkflowInventoryCompleteness,
+  isExhaustiveAccessibilityInventoryRead,
+  shouldInvalidateFormInventoryAfterAction,
+  workflowRequiredRowsAreProcessed,
+} from './adapter-workflow-evidence.js';
 import { messageTargetMatchesObservedIdentities, normalizeMessageTarget } from './message-recipient-guard.js';
 import {
   fetchUrl,
@@ -1073,6 +1079,7 @@ export class Agent extends LoopDetector {
     if (workflowReleaseAssetEvidence && result && typeof result === 'object') {
       result.workflowReleaseAssetEvidence = workflowReleaseAssetEvidence;
     }
+    this._invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result);
     const submitState = this._completionSubmitStates.get(tabId);
     if (
       submitState
@@ -9962,6 +9969,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const type = /\btype="([^"]+)"/i.exec(line)?.[1]?.toLowerCase() || '';
       const domId = /\bdom_id="([^"]*)"/i.exec(line)?.[1] || '';
       const fieldName = /\bfield_name="([^"]*)"/i.exec(line)?.[1] || '';
+      const requiredMatch = /\brequired=(?:"?)(true|false)(?:"?)/i.exec(line);
       items.push({
         id,
         label,
@@ -9971,6 +9979,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...(type ? { type } : {}),
         ...(domId ? { domId } : {}),
         ...(fieldName ? { fieldName } : {}),
+        ...(requiredMatch ? { required: requiredMatch[1].toLowerCase() === 'true' } : {}),
         ...(value !== undefined ? { value } : (checked !== undefined ? { value: checked.toLowerCase() } : {})),
       });
     }
@@ -10476,23 +10485,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || pageUrl
       || 'document',
     ).slice(0, 500);
-    const continuationPending = result?.hasMore === true
-      || result?.truncated === true
-      || result?.textTruncated === true
-      || !!result?.continuationArgs
-      || result?.nextPage != null;
     const requestRefId = String(args?.ref_id || args?.continuationArgs?.ref_id || '').trim();
     if (!observed.length && requestRefId) return null;
     const requestPage = Number(args?.page ?? args?.continuationArgs?.page ?? 1);
     const startingRootRead = !requestRefId && (!Number.isFinite(requestPage) || requestPage <= 1);
-    const requestFilter = String(args?.filter || args?.continuationArgs?.filter || 'all').trim().toLowerCase();
-    const requestedMaxDepth = Number(args?.maxDepth ?? args?.continuationArgs?.maxDepth ?? (
-      requestFilter === 'all' ? 15 : 10
-    ));
-    const exhaustiveRootScope = !requestRefId
-      && requestFilter === 'all'
-      && Number.isFinite(requestedMaxDepth)
-      && requestedMaxDepth >= 15;
+    const inventoryRead = isExhaustiveAccessibilityInventoryRead(args, result);
+    const exhaustiveRootScope = inventoryRead.exhaustiveRootScope;
     const observationSequence = Number(this.completionInvariants.get(tabId)?.sequence || 0) + 1;
     const taskKey = this._progressTaskKeyHash(tabId);
     const prior = guard.workflowInventoryEvidence;
@@ -10514,7 +10512,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // form-root scope is available, only a document-root read can close the
     // workflow inventory for exact reconciliation.
     const priorDocument = documents[documentKey];
-    const rootReadComplete = exhaustiveRootScope && !continuationPending;
+    const rootReadComplete = inventoryRead.rootReadComplete;
     const rootComplete = priorDocument?.complete === true || rootReadComplete;
     // Once an exhaustive document-root read has completed this stable
     // document, a later subtree drill-down cannot make sibling coverage
@@ -10551,6 +10549,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       itemCount: evidence.items.length,
       items: evidence.items,
     };
+  }
+
+  _invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const siteWorkflow = guard?.siteWorkflow;
+    if (!guard?.workflowInventoryEvidence
+        || siteWorkflow?.job?.requiresLedger !== true
+        || siteWorkflow.job.template !== 'form'
+        || !shouldInvalidateFormInventoryAfterAction(name)
+        || !this._isSuccessfulExecutionEvidence(result)) return;
+    guard.workflowInventoryEvidence = invalidateWorkflowInventoryCompleteness(
+      guard.workflowInventoryEvidence,
+    );
   }
 
   _trustedWorkflowInventory(tabId, rows, guard = this._planExecutionGuards.get(tabId)) {
@@ -15737,11 +15748,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
   }
 
-  _workflowRequiredTargetRowsAreProcessed(rows, inventory) {
-    if (!['expected_items', 'classifier_targets'].includes(String(inventory?.source || ''))) return true;
-    const requiredIds = new Set((inventory?.itemIds || []).map(id => String(id)));
-    return rows.every(row => !requiredIds.has(String(row?.id || ''))
-      || String(row?.status || '').toLowerCase() === 'processed');
+  _workflowRequiredTargetRowsAreProcessed(rows, inventory, guard = null) {
+    const items = Array.isArray(guard?.workflowInventoryEvidence?.items)
+      ? guard.workflowInventoryEvidence.items
+      : [];
+    return workflowRequiredRowsAreProcessed(rows, inventory, items);
   }
 
   _validateWorkflowReconciliation(tabId, value, rows, sessionId) {
@@ -15785,8 +15796,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (rows.some(row => String(row?.status || '').toLowerCase() === 'failed')) {
       return { ok: false, error: 'progress_update: failed workflow rows cannot satisfy successful reconciliation; report a partial or failed outcome.' };
     }
-    if (!this._workflowRequiredTargetRowsAreProcessed(rows, inventory)) {
-      return { ok: false, error: 'progress_update: required expected/classifier target rows must be processed; skipped required targets need a partial outcome.' };
+    if (!this._workflowRequiredTargetRowsAreProcessed(rows, inventory, guard)) {
+      return { ok: false, error: 'progress_update: required inventory rows must be processed; skipped rows need a partial outcome.' };
     }
     if (rows.some(row => !isTerminalLedgerStatus(row?.status))) {
       return { ok: false, error: 'progress_update: every current-task row must be processed or skipped before reconciliation can be complete.' };
@@ -15830,7 +15841,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && rowIds.length === rows.length
       && rowIds.length === inventoryIds.length
       && rowIds.every((id, index) => id === inventoryIds[index])
-      && this._workflowRequiredTargetRowsAreProcessed(rows, inventory)
+      && this._workflowRequiredTargetRowsAreProcessed(rows, inventory, state)
       && rows.every(row => isTerminalLedgerStatus(row?.status)
         && String(row?.status || '').toLowerCase() !== 'failed')
       && this._workflowProcessedRowsHaveControlEvidence(rows, state);

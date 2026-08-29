@@ -15,6 +15,7 @@ This changelog was generated from the repository Git history and release tags. V
 - Redesigned the sidebar loading and thinking UI with clearer live activity updates and a toggleable compact activity history (Chrome + Firefox)
 - Localized the new activity statuses and improved screen-reader announcements across all supported languages
 - Tightened selected site-workflow completion: live-URL binding survives trusted continuation only on the same adapter/job, the executor receives the app-owned stages/evidence contract, submission success needs job-bound terminal evidence (including paid/ticket-issued transaction state and recipient-bound sent confirmation), and ledger-backed workflows need exact reconciliation against an app-owned inventory rather than model-created rows
+- Bounded form-workflow inventory v1: exhaustive root reads must not be depth-truncated, skipped rows cannot prove success, and checkbox/Next actions stale completeness until a fresh root read
 
 ## [33.4.1] - 2026-08-27
 
