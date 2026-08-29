@@ -5066,9 +5066,7 @@
       };
 
       if (gmailRecipientMode) {
-        const composeRoot = composer.closest?.('[role="dialog"],form') || null;
-        const recipients = new Map();
-        const recipientRole = (el) => {
+        const recipientRole = (el, root = null) => {
           const roleFromAttribute = (attribute, value) => {
             const text = compact(value, 120).toLowerCase();
             if (!text) return '';
@@ -5093,7 +5091,7 @@
               const role = roleFromAttribute(attribute, current.getAttribute?.(attribute));
               if (role) return role;
             }
-            if (current === composeRoot) break;
+            if (root && current === root) break;
             try {
               const descendantRoles = new Set();
               for (const marker of current.querySelectorAll?.(
@@ -5110,9 +5108,12 @@
           }
           return '';
         };
-        if (composeRoot?.querySelectorAll) {
-          for (const el of composeRoot.querySelectorAll('[email],[data-hovercard-id],[data-email]')) {
+        const collectGmailRecipients = (root) => {
+          const collected = new Map();
+          if (!root?.querySelectorAll) return collected;
+          for (const el of root.querySelectorAll('[email],[data-hovercard-id],[data-email]')) {
             if (!visible(el) || editable(el)) continue;
+            if (el === composer || composer.contains?.(el)) continue;
             const email = [
               el.getAttribute?.('email'),
               el.getAttribute?.('data-email'),
@@ -5134,14 +5135,30 @@
             }
             const key = normalizedIdentity(email);
             if (!key) continue;
-            const role = recipientRole(el);
+            const role = recipientRole(el, root);
             if (!role) continue;
             const recipientKey = `${role}:${key}`;
-            const prior = recipients.get(recipientKey) || { identity: email, role, aliases: new Map() };
+            const prior = collected.get(recipientKey) || { identity: email, role, aliases: new Map() };
             for (const [normalized, alias] of aliases) prior.aliases.set(normalized, alias);
-            recipients.set(recipientKey, prior);
+            collected.set(recipientKey, prior);
           }
-        }
+          return collected;
+        };
+        // Dialog/popup compose keeps its form root. Inline thread replies are
+        // not inside [role=dialog] or form; use the nearest ancestor that
+        // already contains role-qualified To/Cc/Bcc chips so thread hovercards
+        // without a recipient role cannot pin a send.
+        const composeRoot = (() => {
+          const explicit = composer.closest?.('[role="dialog"],form') || null;
+          if (explicit) return explicit;
+          let current = composer.parentElement;
+          for (let depth = 0; current && depth < 16; depth += 1, current = current.parentElement) {
+            if (current === document.body || current === document.documentElement) break;
+            if (collectGmailRecipients(current).size > 0) return current;
+          }
+          return null;
+        })();
+        const recipients = collectGmailRecipients(composeRoot);
         // Match the complete authorized To/CC/BCC set. Each expected identity
         // must resolve to exactly one distinct chip and no additional chip may
         // remain; duplicate display names therefore fail closed.

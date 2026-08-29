@@ -46,6 +46,7 @@ This changelog was generated from the repository Git history and release tags. V
 - Reviewed plan wording edits re-resolve the live site-workflow contract instead of dropping it, and ARIA `searchbox` controls enter the form inventory
 - GitHub, LinkedIn, and Douyin publish success now requires the classifier-bound tag, title, notes, body, or visibility on the published resource, not only a re-observed URL
 - A complete empty GitHub `resolve-review-threads` inventory can reconcile as a no-op when no unresolved threads exist
+- Gmail inline thread replies resolve To/Cc/Bcc chips from the enclosing reply container when the composer is not inside a dialog or form
 
 ## [33.4.1] - 2026-08-27
 

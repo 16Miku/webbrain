@@ -5027,6 +5027,45 @@ test('direct-message recipient probe accepts only a unique active-thread header 
         { identity: 'Bob', role: 'to' },
       ], supportsRecipientSets: true,
     });
+    const inlineReplyRoot = {
+      querySelectorAll: (selector) => selector === '[email],[data-hovercard-id],[data-email]'
+        ? gmailRecipientChips
+        : [],
+    };
+    const inlineReplyInner = {
+      parentElement: inlineReplyRoot,
+      querySelectorAll: () => [],
+    };
+    const originalComposerClosest = composer.closest;
+    const originalComposerParent = composer.parentElement;
+    composer.closest = () => null;
+    composer.parentElement = inlineReplyInner;
+    gmailRecipientChips = [gmailAliceChip];
+    const gmailInlineReplyResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+    });
+    const gmailInlineObserveResult = probe({
+      tool: 'observe_active_conversation', args: {}, adapterName: 'gmail',
+    });
+    const gmailInlineExpectedResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+      expectedRecipients: ['alice@example.com'], supportsRecipientSets: true,
+    });
+    const gmailHovercard = element('Alice', {
+      left: 430, right: 620, top: 610, bottom: 650, width: 190, height: 40,
+    }, { attributes: { email: 'alice@example.com', name: 'Alice' } });
+    const hovercardOnlyRoot = {
+      querySelectorAll: (selector) => selector === '[email],[data-hovercard-id],[data-email]'
+        ? [gmailHovercard]
+        : [],
+    };
+    composer.parentElement = hovercardOnlyRoot;
+    const gmailInlineHovercardResult = probe({
+      tool: 'click', args: { text: 'Send' }, adapterName: 'gmail',
+    });
+    composer.closest = originalComposerClosest;
+    composer.parentElement = originalComposerParent;
+    gmailRecipientChips = [gmailAliceChip];
     const incomingMessage = element('hello', {
       left: 450, right: 850, top: 420, bottom: 480, width: 400, height: 60,
     }, { role: 'listitem' });
@@ -5069,6 +5108,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       gmailExtraRecipientResult,
       gmailMatchingRoleResult,
       gmailWrongRoleResult,
+      gmailInlineReplyResult,
+      gmailInlineObserveResult,
+      gmailInlineExpectedResult,
+      gmailInlineHovercardResult,
       incomingBodyObservationResult,
       outgoingBodyObservationResult,
     };
@@ -5101,6 +5144,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       gmailExtraRecipientResult,
       gmailMatchingRoleResult,
       gmailWrongRoleResult,
+      gmailInlineReplyResult,
+      gmailInlineObserveResult,
+      gmailInlineExpectedResult,
+      gmailInlineHovercardResult,
       incomingBodyObservationResult,
       outgoingBodyObservationResult,
     } = runProbe(prefix);
@@ -5166,6 +5213,20 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     ], `${prefix}: exact Gmail To/BCC authorization was rejected`);
     assert.deepEqual(Array.from(gmailWrongRoleResult.strongRecipientCandidates), [],
       `${prefix}: moving a Gmail BCC recipient into To authorized dispatch`);
+    assert.deepEqual(JSON.parse(JSON.stringify(gmailInlineReplyResult.strongRecipientCandidates)), [
+      { identity: 'alice@example.com', role: 'to' },
+    ], `${prefix}: inline Gmail reply chips were not collected without a dialog/form root`);
+    assert.equal(gmailInlineReplyResult.gmailComposeFlow, false,
+      `${prefix}: inline Gmail reply was treated as compose-flow`);
+    assert.deepEqual(JSON.parse(JSON.stringify(gmailInlineObserveResult.strongRecipientCandidates)), [
+      { identity: 'alice@example.com', role: 'to' },
+    ], `${prefix}: inline Gmail observe did not pin the reply recipient`);
+    assert.equal(gmailInlineObserveResult.gmailComposeFlow, false);
+    assert.deepEqual(Array.from(gmailInlineExpectedResult.strongIdentityCandidates), ['alice@example.com'],
+      `${prefix}: inline Gmail expected-recipient matching failed without a dialog/form root`);
+    assert.deepEqual(Array.from(gmailInlineHovercardResult.strongRecipientCandidates), [],
+      `${prefix}: a Gmail hovercard without a To/Cc/Bcc role pinned an inline reply`);
+    assert.equal(gmailInlineHovercardResult.gmailComposeFlow, false);
     assert.equal(incomingBodyObservationResult.matchingOutgoingMessageCount, 0,
       `${prefix}: incoming text matching the dispatch body was treated as outgoing proof`);
     assert.equal(outgoingBodyObservationResult.matchingOutgoingMessageCount, 1,
