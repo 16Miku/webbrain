@@ -149,11 +149,17 @@ export class BaseLLMProvider {
 
   _mapMessages(messages) {
     const sanitized = (Array.isArray(messages) ? messages : []).map((message) => {
-      if (!message || typeof message !== 'object' || !Object.hasOwn(message, 'webbrainPlannerClarification')) {
+      if (!message || typeof message !== 'object' || (
+        !Object.hasOwn(message, 'webbrainPlannerClarification')
+        && !Object.hasOwn(message, 'webbrainAppOwned')
+        && !Object.hasOwn(message, 'webbrainAppOwnedKind')
+      )) {
         return message;
       }
       const {
         webbrainPlannerClarification: _plannerClarification,
+        webbrainAppOwned: _appOwned,
+        webbrainAppOwnedKind: _appOwnedKind,
         ...providerMessage
       } = message;
       return providerMessage;
