@@ -584,6 +584,8 @@ export class ProviderManager {
         providerName: 'openai',
         baseUrl: 'https://api.openai.com/v1',
         model: OPENAI_DEFAULT_MODEL,
+        contextWindow: 1050000,
+        maxOutputTokens: 128000,
         inputCostPerMillionUsd: 2.5,
         cacheReadCostPerMillionUsd: 0.25,
         // GPT-5.6 family bills included cache writes at 1.25× input.
@@ -600,6 +602,8 @@ export class ProviderManager {
         label: 'Anthropic Claude',
         baseUrl: 'https://api.anthropic.com',
         model: 'claude-sonnet-5',
+        contextWindow: 1000000,
+        maxOutputTokens: 128000,
         inputCostPerMillionUsd: 2,
         cacheReadCostPerMillionUsd: 0.2,
         cacheWriteCostPerMillionUsd: 2.5,

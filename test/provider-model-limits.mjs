@@ -13,6 +13,14 @@ for (const browser of ['chrome', 'firefox']) {
   assert.equal(new BaseLLMProvider({ maxOutputTokens: 32768 }).maxOutputTokens, 32768, `${browser}: configured output budget ignored`);
 
   const manager = fs.readFileSync(path.join(prefix, 'providers', 'manager.js'), 'utf8');
+  const openai = manager.slice(manager.indexOf('      openai: {'), manager.indexOf('      anthropic: {'));
+  assert.match(openai, /contextWindow: 1050000/, `${browser}: OpenAI context window should be 1.05M`);
+  assert.match(openai, /maxOutputTokens: 128000/, `${browser}: OpenAI output budget should be 128k`);
+
+  const anthropic = manager.slice(manager.indexOf('      anthropic: {'), manager.indexOf('      gemini: {'));
+  assert.match(anthropic, /contextWindow: 1000000/, `${browser}: Anthropic context window should be 1M`);
+  assert.match(anthropic, /maxOutputTokens: 128000/, `${browser}: Anthropic output budget should be 128k`);
+
   const deepseek = manager.slice(manager.indexOf('deepseek: {'), manager.indexOf('xai: {'));
   assert.match(deepseek, /contextWindow: 1000000/, `${browser}: DeepSeek context window should be 1M`);
   assert.match(deepseek, /maxOutputTokens: 384000/, `${browser}: DeepSeek output budget should be 384k`);
