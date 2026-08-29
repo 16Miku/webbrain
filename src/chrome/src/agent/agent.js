@@ -3704,6 +3704,10 @@ export class Agent extends LoopDetector {
     return actionSequence > 0 && observationSequence > actionSequence;
   }
 
+  _isWebBrainCloudProvider(provider) {
+    return String(provider?.config?.providerName || '').trim().toLowerCase() === 'webbrain-cloud';
+  }
+
   _checkDeliveryObservationStreak(tabId, name, args = {}, result = null, options = {}) {
     const observation = this.constructor.DELIVERY_OBSERVATION_TOOLS.has(name)
       && !isNetworkMutation(name, args);
@@ -8262,9 +8266,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           discoveredActionableTargets: Number(progressObserved?.addedPending || 0) > 0,
           requiredReadProgress,
           // Ask research can lose a useful deliverable to the same observation
-          // drift as Act/Dev. Any interactive mode that advertises `done`
-          // gets the second-checkpoint terminal recovery.
+          // drift as Act/Dev. Eligible interactive modes that advertise `done`
+          // get terminal recovery; managed WebBrain Cloud stays advisory.
           enforceTerminal: runOptions?.cloudRun !== true
+            && !this._isWebBrainCloudProvider(provider)
             && allowedToolNames.has('done'),
         },
       );
