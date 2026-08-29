@@ -1044,6 +1044,14 @@ export class Agent extends LoopDetector {
       : args;
     const workflowInventory = this._rememberWorkflowInventoryObservation(tabId, name, args, result);
     if (workflowInventory && result && typeof result === 'object') result.workflowInventory = workflowInventory;
+    const workflowReleaseAssetObservation = this._rememberWorkflowReleaseAssetObservation(
+      tabId,
+      name,
+      result,
+    );
+    if (workflowReleaseAssetObservation && result && typeof result === 'object') {
+      result.workflowReleaseAssetObservation = workflowReleaseAssetObservation;
+    }
     const next = recordCompletionToolResult(state, name, completionArgs, result);
     this.completionInvariants.set(tabId, next);
     const workflowControlEvidence = this._rememberWorkflowControlActionEvidence(
@@ -1055,6 +1063,15 @@ export class Agent extends LoopDetector {
     );
     if (workflowControlEvidence && result && typeof result === 'object') {
       result.workflowControlEvidence = workflowControlEvidence;
+    }
+    const workflowReleaseAssetEvidence = this._rememberWorkflowReleaseAssetActionEvidence(
+      tabId,
+      name,
+      result,
+      next,
+    );
+    if (workflowReleaseAssetEvidence && result && typeof result === 'object') {
+      result.workflowReleaseAssetEvidence = workflowReleaseAssetEvidence;
     }
     const submitState = this._completionSubmitStates.get(tabId);
     if (
@@ -10100,6 +10117,112 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  _isWorkflowReleaseAssetJob(guard) {
+    return guard?.enabled === true
+      && guard?.siteWorkflow?.adapterName === 'github'
+      && guard?.siteWorkflow?.job?.id === 'upload-release-assets'
+      && guard.siteWorkflow.job.requiresLedger === true;
+  }
+
+  _workflowReleaseAssetFileName(value) {
+    let normalized = String(value || '').replace(/\\/g, '/').trim();
+    try { normalized = normalized.normalize('NFKC'); } catch {}
+    return normalized.split('/').filter(Boolean).at(-1) || '';
+  }
+
+  _workflowReleaseAssetSignalCount(value, fileName) {
+    const normalize = (input) => {
+      let text = String(input || '').replace(/\s+/g, ' ').trim();
+      try { text = text.normalize('NFKC'); } catch {}
+      return text;
+    };
+    const expected = normalize(fileName);
+    if (!expected) return 0;
+    const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const exactFileName = new RegExp(`(^|[^\\p{L}\\p{N}_.-])${escaped}($|[^\\p{L}\\p{N}_.-])`, 'u');
+    const attachmentStatus = /\b(?:attached|uploaded|upload complete|upload successful|remove attachment|remove file|delete attachment|replace file)\b|(?:已上传|附件|上传完成|已上傳|上傳完成|添付|アップロード済み|첨부|업로드됨|yüklendi|eklendi)/iu;
+    let count = 0;
+    for (const rawLine of String(value || '').split(/\r?\n/)) {
+      const line = normalize(rawLine);
+      if (!exactFileName.test(line)) continue;
+      const label = normalize(/^\s*[a-z]+\s+"([^"]+)"/i.exec(rawLine)?.[1]);
+      const currentValue = normalize(/\bvalue="([^"]+)"/i.exec(rawLine)?.[1]);
+      if (label === expected || currentValue === expected || attachmentStatus.test(line)) count += 1;
+    }
+    return count;
+  }
+
+  _rememberWorkflowReleaseAssetObservation(tabId, name, result) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!this._isWorkflowReleaseAssetJob(guard)
+        || !COMPLETION_DOCUMENT_OBSERVATION_TOOLS.has(name)
+        || !this._isSuccessfulExecutionEvidence(result)) return null;
+    const pageUrl = [result?.pageUrl, result?.currentUrl, result?.url, this._lastAxScopes.get(tabId)?.pageUrl]
+      .find(value => typeof value === 'string' && value.trim()) || '';
+    if (!pageUrl) return null;
+    const live = resolveAdapterWorkflowJob(pageUrl, guard.siteWorkflow.job.id);
+    if (!this._sameAdapterWorkflowBinding(guard.siteWorkflow, live)) return null;
+    const observationText = [result?.pageContent, result?.text, result?.content, result?.description]
+      .filter(value => typeof value === 'string' && value.trim())
+      .join('\n');
+    const observationSequence = Number(this.completionInvariants.get(tabId)?.sequence || 0) + 1;
+    const pending = guard.workflowPendingReleaseAssetEvidence;
+    let promoted = 0;
+    if (pending && typeof pending === 'object') {
+      if (!guard.workflowReleaseAssetEvidence || typeof guard.workflowReleaseAssetEvidence !== 'object') {
+        guard.workflowReleaseAssetEvidence = {};
+      }
+      for (const [itemId, candidate] of Object.entries(pending)) {
+        if (observationSequence <= Number(candidate?.actionSequence || 0)
+            || this._workflowReleaseAssetSignalCount(observationText, candidate?.fileName) < 1) continue;
+        guard.workflowReleaseAssetEvidence[itemId] = {
+          itemId,
+          tool: 'upload_file',
+          fileName: candidate.fileName,
+          actionSequence: candidate.actionSequence,
+          observationSequence,
+          directVerified: true,
+          source: 'upload_action_and_asset_filename_readback',
+        };
+        delete pending[itemId];
+        promoted += 1;
+      }
+    }
+    return { job: guard.siteWorkflow.job.id, promoted };
+  }
+
+  _rememberWorkflowReleaseAssetActionEvidence(tabId, name, result, completionState = null) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!this._isWorkflowReleaseAssetJob(guard)
+        || name !== 'upload_file'
+        || !this._isSuccessfulExecutionEvidence(result)
+        || !['input_attached', 'page_consumed'].includes(result?.attachmentState)) return null;
+    const fileName = this._workflowReleaseAssetFileName(result?.attached?.name);
+    if (!fileName) return null;
+    const rows = this._currentTaskLedgerRows(tabId);
+    const inventory = this._trustedWorkflowInventory(tabId, rows, guard);
+    if (!['expected_items', 'classifier_targets'].includes(String(inventory?.source || ''))) return null;
+    const inventoryIds = new Set(inventory.itemIds.map(id => String(id)));
+    const candidates = rows.filter(row => inventoryIds.has(String(row?.id || ''))
+      && this._workflowReleaseAssetFileName(row?.label || row?.target) === fileName);
+    if (candidates.length !== 1) return null;
+    const actionSequence = Number(completionState?.lastAction?.sequence || completionState?.sequence || 0);
+    if (!actionSequence) return null;
+    if (!guard.workflowPendingReleaseAssetEvidence || typeof guard.workflowPendingReleaseAssetEvidence !== 'object') {
+      guard.workflowPendingReleaseAssetEvidence = {};
+    }
+    const pending = {
+      itemId: String(candidates[0].id),
+      tool: 'upload_file',
+      fileName,
+      actionSequence,
+      directVerified: false,
+      pendingObservation: true,
+    };
+    guard.workflowPendingReleaseAssetEvidence[pending.itemId] = pending;
+    return pending;
+  }
+
   _workflowAttachmentUiSignalCount(value, fileName, item = null) {
     const normalize = (input) => {
       let text = String(input || '').replace(/\s+/g, ' ').trim();
@@ -10362,6 +10485,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!observed.length && requestRefId) return null;
     const requestPage = Number(args?.page ?? args?.continuationArgs?.page ?? 1);
     const startingRootRead = !requestRefId && (!Number.isFinite(requestPage) || requestPage <= 1);
+    const requestFilter = String(args?.filter || args?.continuationArgs?.filter || 'all').trim().toLowerCase();
+    const requestedMaxDepth = Number(args?.maxDepth ?? args?.continuationArgs?.maxDepth ?? (
+      requestFilter === 'all' ? 15 : 10
+    ));
+    const exhaustiveRootScope = !requestRefId
+      && requestFilter === 'all'
+      && Number.isFinite(requestedMaxDepth)
+      && requestedMaxDepth >= 15;
     const observationSequence = Number(this.completionInvariants.get(tabId)?.sequence || 0) + 1;
     const taskKey = this._progressTaskKeyHash(tabId);
     const prior = guard.workflowInventoryEvidence;
@@ -10383,17 +10514,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // form-root scope is available, only a document-root read can close the
     // workflow inventory for exact reconciliation.
     const priorDocument = documents[documentKey];
-    const rootReadComplete = !requestRefId && !continuationPending;
-    const rootComplete = startingRootRead
-      ? rootReadComplete
-      : (priorDocument?.complete === true || rootReadComplete);
+    const rootReadComplete = exhaustiveRootScope && !continuationPending;
+    const rootComplete = priorDocument?.complete === true || rootReadComplete;
     // Once an exhaustive document-root read has completed this stable
     // document, a later subtree drill-down cannot make sibling coverage
     // unknown again. Keep completion monotonic while still allowing an
     // incomplete root read to replace an earlier subtree-only observation.
     documents[documentKey] = {
       complete: rootComplete,
-      scope: rootComplete ? 'document' : (requestRefId ? 'subtree' : 'document'),
+      scope: rootComplete ? 'document' : (requestRefId ? 'subtree' : (exhaustiveRootScope ? 'document' : 'partial_document')),
       ...(rootReadComplete
         ? { rootObservationSequence: observationSequence }
         : (!startingRootRead && priorDocument?.rootObservationSequence
@@ -15569,6 +15698,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _workflowProcessedRowsHaveControlEvidence(rows, state) {
+    if (this._isWorkflowReleaseAssetJob(state)) {
+      const evidence = state?.workflowReleaseAssetEvidence;
+      if (!evidence || typeof evidence !== 'object') {
+        return !rows.some(row => String(row?.status || '').toLowerCase() === 'processed');
+      }
+      return rows.every((row) => {
+        if (String(row?.status || '').toLowerCase() !== 'processed') return true;
+        const itemId = String(row?.id || '');
+        const proof = evidence[itemId];
+        return proof?.itemId === itemId
+          && proof?.directVerified === true
+          && proof?.fileName === this._workflowReleaseAssetFileName(row?.label || row?.target)
+          && Number.isInteger(Number(proof?.actionSequence))
+          && Number(proof.actionSequence) > 0
+          && Number(proof?.observationSequence || 0) > Number(proof.actionSequence);
+      });
+    }
     if (state?.siteWorkflow?.job?.template !== 'form') return true;
     const inventoryItems = Array.isArray(state?.workflowInventoryEvidence?.items)
       ? state.workflowInventoryEvidence.items
@@ -15589,6 +15735,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && Number.isInteger(Number(proof?.actionSequence))
         && Number(proof.actionSequence) > 0;
     });
+  }
+
+  _workflowRequiredTargetRowsAreProcessed(rows, inventory) {
+    if (!['expected_items', 'classifier_targets'].includes(String(inventory?.source || ''))) return true;
+    const requiredIds = new Set((inventory?.itemIds || []).map(id => String(id)));
+    return rows.every(row => !requiredIds.has(String(row?.id || ''))
+      || String(row?.status || '').toLowerCase() === 'processed');
   }
 
   _validateWorkflowReconciliation(tabId, value, rows, sessionId) {
@@ -15632,11 +15785,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (rows.some(row => String(row?.status || '').toLowerCase() === 'failed')) {
       return { ok: false, error: 'progress_update: failed workflow rows cannot satisfy successful reconciliation; report a partial or failed outcome.' };
     }
+    if (!this._workflowRequiredTargetRowsAreProcessed(rows, inventory)) {
+      return { ok: false, error: 'progress_update: required expected/classifier target rows must be processed; skipped required targets need a partial outcome.' };
+    }
     if (rows.some(row => !isTerminalLedgerStatus(row?.status))) {
       return { ok: false, error: 'progress_update: every current-task row must be processed or skipped before reconciliation can be complete.' };
     }
     if (!this._workflowProcessedRowsHaveControlEvidence(rows, guard)) {
-      return { ok: false, error: 'progress_update: every processed form row requires verified per-control action evidence bound to its exact app-owned inventory item. Mark untouched rows skipped or interact with each control before reconciling.' };
+      return { ok: false, error: 'progress_update: every processed workflow row that requires item-level proof must have verified per-control action evidence or per-asset upload/readback evidence bound to its exact app-owned inventory item.' };
     }
     return {
       ok: true,
@@ -15674,6 +15830,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && rowIds.length === rows.length
       && rowIds.length === inventoryIds.length
       && rowIds.every((id, index) => id === inventoryIds[index])
+      && this._workflowRequiredTargetRowsAreProcessed(rows, inventory)
       && rows.every(row => isTerminalLedgerStatus(row?.status)
         && String(row?.status || '').toLowerCase() !== 'failed')
       && this._workflowProcessedRowsHaveControlEvidence(rows, state);

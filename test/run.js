@@ -79462,6 +79462,27 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     assert.equal(subtreeInventory?.complete, false,
       `${AgentClass.name}: a ref-scoped subtree was treated as the complete form inventory`);
 
+    const visibleInventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'visible',
+    }, {
+      success: true,
+      pageContent: 'textbox "Full name" [ref_name] value="Ada"',
+      treeRevision: 'tree-visible-root',
+    });
+    assert.equal(visibleInventory?.complete, false,
+      `${AgentClass.name}: an in-viewport AX read closed whole-document form coverage`);
+    assert.equal(guard.workflowInventoryEvidence.documents['stable-form-document']?.scope, 'partial_document');
+    const shallowInventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all',
+      maxDepth: 10,
+    }, {
+      success: true,
+      pageContent: 'textbox "Full name" [ref_name] value="Ada"',
+      treeRevision: 'tree-shallow-root',
+    });
+    assert.equal(shallowInventory?.complete, false,
+      `${AgentClass.name}: a shallow AX root read closed whole-document form coverage`);
+
     const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {}, {
       success: true,
       pageContent: [
@@ -79959,6 +79980,121 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
       itemIds: [rows[0].id],
       itemCount: 1,
     }, `${AgentClass.name}: the single asset did not become trusted workflow inventory`);
+
+    const multiAgent = new AgentClass({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
+    multiAgent.useSiteAdapters = true;
+    multiAgent._persist = () => {};
+    const multiTabId = 8944 + index;
+    const multiTaskText = 'Upload dist/alpha.zip and dist/beta.zip to this release and save it.';
+    multiAgent.conversations.set(multiTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: multiTaskText },
+    ]);
+    const multiGuard = multiAgent._startPlanExecutionGuard(multiTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    multiAgent._chatWithCostAllowance = async () => ({
+      content: JSON.stringify({
+        mode: 'active',
+        allowedActions: ['process_item'],
+        forbiddenActions: [],
+        targets: ['dist/alpha.zip', 'dist/beta.zip'],
+        confidence: 0.99,
+        pageScopePolicy: 'page',
+      }),
+    });
+    const multiSession = await multiAgent._ensureProgressSessionForCurrentTask(multiTabId, {
+      provider: { chat: async () => ({ content: '{}' }) },
+      taskText: multiTaskText,
+      pageScope: releaseUrl,
+      progressLedgerPolicy: 'enabled',
+      progressAction: 'process_item',
+    });
+    const multiRows = multiAgent._rowsForProgressSession(multiTabId, multiSession.sessionId);
+    assert.equal(multiRows.length, 2);
+    const processedRows = multiRows.map(row => ({ ...row, status: 'processed' }));
+    const skippedRequired = processedRows.map((row, rowIndex) => ({
+      ...row,
+      status: rowIndex === 1 ? 'skipped' : row.status,
+    }));
+    const reconciliation = {
+      job: 'upload-release-assets',
+      coverageComplete: true,
+      itemCount: 2,
+      basis: 'Both exact requested release assets were checked.',
+    };
+    const skippedValidation = multiAgent._validateWorkflowReconciliation(
+      multiTabId,
+      reconciliation,
+      skippedRequired,
+      multiSession.sessionId,
+    );
+    assert.equal(skippedValidation.ok, false,
+      `${AgentClass.name}: a skipped required release asset passed successful reconciliation`);
+    assert.match(skippedValidation.error, /required.*must be processed/i);
+    const unprovenAssets = multiAgent._validateWorkflowReconciliation(
+      multiTabId,
+      reconciliation,
+      processedRows,
+      multiSession.sessionId,
+    );
+    assert.equal(unprovenAssets.ok, false,
+      `${AgentClass.name}: processed release assets needed no per-asset evidence`);
+    assert.match(unprovenAssets.error, /per-asset upload\/readback evidence/i);
+
+    multiAgent._beginCompletionInvariant(multiTabId);
+    const recordAssetUpload = (fileName) => multiAgent._recordCompletionToolResult(
+      multiTabId,
+      'upload_file',
+      { selector: 'input[type="file"]', filePath: `C:/dist/${fileName}` },
+      {
+        success: true,
+        dispatched: true,
+        attachmentState: 'input_attached',
+        attached: { name: fileName, size: 128 },
+      },
+    );
+    recordAssetUpload('alpha.zip');
+    multiAgent._recordCompletionToolResult(multiTabId, 'get_accessibility_tree', { filter: 'all' }, {
+      success: true,
+      pageUrl: releaseUrl,
+      pageContent: 'link "prefix-alpha.zip" [ref_wrong_asset]',
+    });
+    assert.equal(Object.keys(multiGuard.workflowReleaseAssetEvidence || {}).length, 0,
+      `${AgentClass.name}: a release filename substring proved an asset upload`);
+    multiAgent._recordCompletionToolResult(multiTabId, 'get_accessibility_tree', { filter: 'all' }, {
+      success: true,
+      pageUrl: releaseUrl,
+      pageContent: 'link "alpha.zip" [ref_alpha_asset]',
+    });
+    assert.equal(Object.keys(multiGuard.workflowReleaseAssetEvidence || {}).length, 1,
+      `${AgentClass.name}: exact alpha upload/readback evidence was not retained`);
+    assert.equal(multiAgent._validateWorkflowReconciliation(
+      multiTabId,
+      reconciliation,
+      processedRows,
+      multiSession.sessionId,
+    ).ok, false, `${AgentClass.name}: one uploaded release asset proved two requested rows`);
+    recordAssetUpload('beta.zip');
+    multiAgent._recordCompletionToolResult(multiTabId, 'get_accessibility_tree', { filter: 'all' }, {
+      success: true,
+      pageUrl: releaseUrl,
+      pageContent: [
+        'link "alpha.zip" [ref_alpha_asset]',
+        'status "beta.zip uploaded" [ref_beta_asset]',
+      ].join('\n'),
+    });
+    assert.equal(Object.keys(multiGuard.workflowReleaseAssetEvidence || {}).length, 2,
+      `${AgentClass.name}: exact beta upload/readback evidence was not retained`);
+    assert.equal(multiAgent._validateWorkflowReconciliation(
+      multiTabId,
+      reconciliation,
+      processedRows,
+      multiSession.sessionId,
+    ).ok, true, `${AgentClass.name}: fully evidenced release assets could not reconcile`);
   }
 });
 
