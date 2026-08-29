@@ -86997,6 +86997,86 @@ test('planner carries a language-neutral structured messaging target into execut
   }
 });
 
+test('unverified active recipients keep the user answer bound to the original send task', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full'].entries()) {
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-recipient-clarification-test',
+          name: 'planner-recipient-clarification-test',
+          chat: async () => ({
+            content: plannerFixtureJson({
+              requires_state_change: true,
+              requires_submission: true,
+              messaging: { target_kind: 'active_conversation', recipient: '' },
+              summary: 'Send the prepared launch note to the requested recipient.',
+              steps: [
+                { id: '1', action: 'Enter the prepared launch note.', tools: ['set_field'] },
+                { id: '2', action: 'Send it and verify delivery.', tools: ['press_keys', 'read_page'] },
+              ],
+              localized: {
+                locale: 'en',
+                summary: 'Send the prepared launch note to the requested recipient.',
+                steps: [
+                  { id: '1', action: 'Enter the prepared launch note.' },
+                  { id: '2', action: 'Send it and verify delivery.' },
+                ],
+                risks: [],
+              },
+            }),
+            usage: {},
+          }),
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'never' });
+        agent._messageRecipientContentProbe = async () => ({
+          success: true,
+          conclusive: true,
+          strongIdentityCandidates: ['Alice', 'Bob'],
+        });
+        const tabId = 9280 + (agentIndex * 20) + (routeIndex * 10);
+        const originalTask = 'Send the prepared launch note to the person in this conversation.';
+        const args = [
+          tabId,
+          { role: 'user', content: originalTask },
+          () => {},
+          null,
+          null,
+          '',
+          { tabUrl: 'https://www.douyin.com/chat', tabTitle: 'Messages' },
+        ];
+        const gate = route === 'intent'
+          ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' })
+          : await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' });
+
+        assert.equal(gate.proceed, false, `${AgentClass.name}: ${route} recipient ambiguity unexpectedly executed`);
+        assert.equal(gate.reason, 'active_recipient_unverified', `${AgentClass.name}: ${route} recipient failure reason changed`);
+        assert.equal(gate.plannerClarification, true,
+          `${AgentClass.name}: ${route} recipient question was not marked as a genuine clarification`);
+        const taskKey = agent._progressTaskKeyForText(originalTask);
+        const terminal = agent._plannerTerminalAssistantMessage(
+          gate,
+          { tabUrl: 'https://www.douyin.com/chat' },
+          originalTask,
+          taskKey,
+        );
+        const messages = [
+          { role: 'system', content: 'sys' },
+          { role: 'user', content: originalTask },
+          terminal,
+          { role: 'user', content: 'Alice' },
+        ];
+        const binding = agent._activeTaskBinding(messages);
+        assert.match(binding.text, /prepared launch note[\s\S]*Alice/i,
+          `${AgentClass.name}: ${route} recipient answer replaced the original send task`);
+        assert.deepEqual(binding.pinnedIndices, [1, 2, 3],
+          `${AgentClass.name}: ${route} recipient clarification chain was incomplete`);
+      }
+    }
+  });
+});
+
 test('planner schemas require a structured response-language policy in both browsers', () => {
   for (const [label, schema] of [
     ['chrome full', PLANNER_RESPONSE_JSON_SCHEMA],

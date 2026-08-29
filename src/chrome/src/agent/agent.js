@@ -13259,6 +13259,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           message: messagingPin.error,
           reason: 'active_recipient_unverified',
           requestKind: 'clarify',
+          plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: true,
         };
@@ -13505,6 +13506,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           message: messagingPin.error,
           reason: 'active_recipient_unverified',
           requestKind: 'clarify',
+          plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: true,
         };
