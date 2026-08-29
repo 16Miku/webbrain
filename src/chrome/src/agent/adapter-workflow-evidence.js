@@ -9,13 +9,16 @@
  * v1 bounds:
  * - Exhaustive means document-root, filter=all, maxDepth >= 15, and the tree
  *   builder did not report truncation (chars, pagination, or depth).
- * - Depth-limited walks must set `depthTruncated`; a missing flag is treated
- *   as not truncated so mocked tests stay explicit, while production trees
- *   always emit the boolean.
- * - Successful reconciliation requires every inventory row processed. Skip is
- *   allowed only when the inventory item is explicitly `required: false`.
+ * - Depth-limited walks set `depthTruncated` only when an omitted descendant
+ *   would have been included. A missing flag is treated as not truncated so
+ *   mocked tests stay explicit, while production trees always emit the boolean.
+ * - Successful reconciliation requires every required inventory row processed.
+ *   Skip is allowed only when the inventory item is explicitly `required: false`.
+ *   Accessibility-tree and iframe inventories emit that flag for form controls.
  * - Checkbox, radio, click, and iframe-click actions stale the snapshot.
  *   Screenshots and other generic observations cannot restore completeness.
+ * - Fail closed on form-relevant omission. Decorative depth and empty/erroring
+ *   third-party frames are not inventory documents.
  */
 
 export const WORKFLOW_INVENTORY_EXHAUSTIVE_FILTER = 'all';

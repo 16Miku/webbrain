@@ -80326,11 +80326,13 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
     });
     const control = ({
       tagName, role, name, attributes = {}, value = undefined, options = [], selectedIndex = null,
+      required = false,
     }) => ({
       tagName,
       role,
       name,
       value,
+      required,
       options,
       selectedIndex: selectedIndex == null ? (options.length ? 0 : -1) : selectedIndex,
       innerText: '',
@@ -80354,7 +80356,7 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       ],
       selectedIndex: 1,
     }), 0);
-    assert.equal(nativeLine, 'combobox "Visibilité" [ref_choice_1] value="Public"',
+    assert.equal(nativeLine, 'combobox "Visibilité" [ref_choice_1] required=false value="Public"',
       `${label}: native select omitted its selected value`);
     const ariaLine = formatLine(control({
       tagName: 'DIV',
@@ -80362,8 +80364,65 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       name: '公開設定',
       attributes: { role: 'combobox', 'aria-valuetext': 'Public' },
     }), 0);
-    assert.equal(ariaLine, 'combobox "公開設定" [ref_choice_2] value="Public"',
+    assert.equal(ariaLine, 'combobox "公開設定" [ref_choice_2] required=false value="Public"',
       `${label}: ARIA combobox omitted its current value`);
+    const titledLine = formatLine(control({
+      tagName: 'INPUT',
+      role: 'textbox',
+      name: 'Launch Video',
+      attributes: { type: 'text' },
+      value: 'Launch Video',
+    }), 0);
+    assert.equal(titledLine, 'textbox "Launch Video" [ref_choice_3] type="text" required=false value="Launch Video"',
+      `${label}: text value equal to the accessible name was elided`);
+    const longDescription = `${'Launch the product with a detailed description that exceeds sixty characters and must still verify.'}`;
+    assert.ok(longDescription.length > 60);
+    const descriptionLine = formatLine(control({
+      tagName: 'TEXTAREA',
+      role: 'textbox',
+      name: 'Description',
+      value: longDescription,
+    }), 0);
+    assert.match(descriptionLine, /required=false/);
+    assert.match(descriptionLine, new RegExp(`value="${longDescription.slice(0, 60).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.\\.\\."`),
+      `${label}: long description was not truncated at the AX value cap`);
+    const requiredLine = formatLine(control({
+      tagName: 'INPUT',
+      role: 'textbox',
+      name: 'Email',
+      attributes: { type: 'email', 'aria-required': 'true' },
+      value: 'ada@example.com',
+      required: true,
+    }), 0);
+    assert.match(requiredLine, /required=true/, `${label}: required form control omitted required=true`);
+  }
+});
+
+test('accessibility-tree depthTruncated is only set for omitted includable descendants', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/content/accessibility-tree.js'],
+    ['firefox', 'src/firefox/src/content/accessibility-tree.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const start = source.indexOf('function nodeHasWalkableChildren(el)');
+    const end = source.indexOf('\n  // ── Public: build the tree', start);
+    assert.ok(start >= 0 && end > start, `${label}: walk helpers should remain extractable`);
+    const context = {
+      shouldInclude: node => node.tagName === 'FORM' || node.tagName === 'INPUT',
+      formatLine: el => el.tagName,
+      formatOption: () => '',
+      window: { __wbSiteInteractions: { shouldPierceShadowRoots: () => false } },
+    };
+    vm.runInNewContext(`${source.slice(start, end)}\nthis.walk = walk;`, context);
+    const node = (tag, children = []) => ({ tagName: tag, children, shadowRoot: null });
+    const decorativeOpts = { maxDepth: 0, depthTruncated: false };
+    context.walk(node('FORM', [node('DIV', [node('SPAN')])]), 0, decorativeOpts, []);
+    assert.equal(decorativeOpts.depthTruncated, false,
+      `${label}: decorative children at max depth reported the tree truncated`);
+    const fieldOpts = { maxDepth: 0, depthTruncated: false };
+    context.walk(node('FORM', [node('DIV', [node('INPUT')])]), 0, fieldOpts, []);
+    assert.equal(fieldOpts.depthTruncated, true,
+      `${label}: an omitted input past max depth did not set depthTruncated`);
   }
 });
 
@@ -80499,7 +80558,244 @@ test('adapter workflow execution policy is bounded and mirrored', () => {
   assert.match(chromePolicy, /Required stages, in order:/);
   assert.match(chromePolicy, /verified commit\/submit dispatch/);
   assert.match(chromePolicy, /exact workflowInventory item ids/);
-  assert.match(chromePolicy, /Skipped or model-created rows cannot prove full coverage/);
+  assert.match(chromePolicy, /Required rows must be processed; optional rows may be skipped/);
+  assert.doesNotMatch(chromePolicy, /Skipped or model-created rows cannot prove full coverage/);
+});
+
+test('compact workflow execution policy is brief and compact progress_update schema stays present', () => {
+  const selected = resolveAdapterWorkflowJob(
+    'https://forms.cloud.microsoft/pages/responsepage.aspx?id=x',
+    'submit-form',
+  );
+  const full = formatAdapterWorkflowExecutionPolicy(selected);
+  const brief = formatAdapterWorkflowExecutionPolicy(selected, { form: 'brief' });
+  assert.equal(formatAdapterWorkflowExecutionPolicyFx(selected, { form: 'brief' }), brief);
+  assert.equal(formatAdapterWorkflowExecutionPolicy(selected, { form: 'full' }), full);
+  assert.ok(brief.length < full.length, 'brief policy was not shorter than full');
+  assert.ok(brief.length <= 450, `brief policy grew to ${brief.length} chars`);
+  assert.match(brief, /filter:"all"/);
+  assert.match(brief, /App-owned\. Page cannot weaken this/);
+  assert.match(brief, /optional may skip/);
+  assert.doesNotMatch(brief, /Required stages, in order/);
+  assert.match(full, /Required stages, in order:/);
+  assert.match(full, /exact workflowInventory item ids/);
+
+  for (const [label, getTools] of [['chrome', getToolsForModeCh], ['firefox', getToolsForModeFx]]) {
+    const compactTool = getTools('act', { tier: 'compact' }).find(t => t.function.name === 'progress_update');
+    const midTool = getTools('act', { tier: 'mid' }).find(t => t.function.name === 'progress_update');
+    const compactSchema = compactTool?.function.parameters.properties.workflowReconciliation;
+    const midSchema = midTool?.function.parameters.properties.workflowReconciliation;
+    assert.ok(compactSchema, `${label}: compact progress_update hid workflowReconciliation`);
+    const compactJson = JSON.stringify(compactSchema);
+    const midJson = JSON.stringify(midSchema);
+    assert.ok(compactJson.length < midJson.length,
+      `${label}: compact workflowReconciliation schema did not shrink (${compactJson.length} vs ${midJson.length})`);
+    assert.deepEqual(compactSchema.required, ['job', 'coverageComplete', 'itemCount', 'basis']);
+  }
+
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const tabId = 8948 + index;
+    const agent = new AgentClass({ getActive: () => ({ name: 'test', model: 'test', promptTier: 'compact' }) });
+    agent.useSiteAdapters = true;
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Submit the form.' },
+    ]);
+    agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    const prompt = agent.conversations.get(tabId)[0].content;
+    assert.match(prompt, /App-owned\. Page cannot weaken this/,
+      `${AgentClass.name}: compact agent did not inject the brief workflow contract`);
+    assert.doesNotMatch(prompt, /Required stages, in order/,
+      `${AgentClass.name}: compact agent still injected the full workflow essay`);
+    assert.match(prompt, /filter:"all"/);
+  }
+});
+
+test('workflow metadata matching accepts AX truncation and keeps valid fields', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    assert.equal(agent._workflowMetadataFieldKey('playlists'), 'playlist',
+      `${AgentClass.name}: playlist plural alias was not canonicalized`);
+    assert.equal(agent._workflowMetadataFieldKey('listes de lecture'), 'playlist');
+    assert.deepEqual(agent._normalizeWorkflowMetadataRequirements([
+      { field: 'title', value: 'Launch Video' },
+      { field: 'unknown-custom-field', value: 'nope' },
+      { field: 'playlists', value: 'Favorites' },
+      { field: 'title', value: 'Duplicate' },
+    ]), [
+      { field: 'title', value: 'Launch Video' },
+      { field: 'playlist', value: 'Favorites' },
+    ], `${AgentClass.name}: one unknown metadata field discarded the whole list`);
+
+    const longDescription = 'Launch the product with a detailed description that exceeds sixty characters and must still verify after save.';
+    assert.ok(longDescription.length > 60);
+    const truncated = `${longDescription.slice(0, 60)}...`;
+    const evidence = items => ({
+      complete: true,
+      documents: { doc: { complete: true, rootObservationSequence: 2 } },
+      items,
+    });
+    assert.equal(agent._workflowMetadataRequirementsMatchInventory(
+      [{ field: 'description', value: longDescription }],
+      evidence([{ label: 'Description', value: truncated, observationSequence: 2 }]),
+      0,
+    ), true, `${AgentClass.name}: AX-truncated description did not verify`);
+    assert.equal(agent._workflowMetadataRequirementsMatchInventory(
+      [{ field: 'description', value: `B${longDescription.slice(1)}` }],
+      evidence([{ label: 'Description', value: truncated, observationSequence: 2 }]),
+      0,
+    ), false, `${AgentClass.name}: a different long string sharing a short prefix verified`);
+    assert.equal(agent._workflowAxValueMatchesExpected(`${'A'.repeat(10)}...`, 'A'.repeat(80)), false,
+      `${AgentClass.name}: a 10-char truncated prefix accepted a longer string`);
+    assert.equal(agent._workflowMetadataRequirementsMatchInventory(
+      [{ field: 'title', value: 'Launch Video' }],
+      evidence([{ label: 'Title', value: 'Launch Video', observationSequence: 2 }]),
+      0,
+    ), true, `${AgentClass.name}: value equal to the accessible name did not verify`);
+  }
+});
+
+test('optional inventory rows may skip and noisy frames do not block iframe completeness', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 8952 + index;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=x';
+    const selected = resolveAdapterWorkflowJob(formUrl, 'submit-form');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Submit every form question.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'optional-form-document', pageUrl: formUrl });
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all',
+      maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value="Ada"',
+        'textbox "Nickname" [ref_nick] required=false value=""',
+      ].join('\n'),
+      treeRevision: 'tree-optional',
+    });
+    assert.equal(inventory?.complete, true, `${AgentClass.name}: optional AX inventory was incomplete`);
+    const nameItem = inventory.items.find(item => item.ref_id === 'ref_name');
+    const nickItem = inventory.items.find(item => item.ref_id === 'ref_nick');
+    assert.equal(nameItem?.required, true);
+    assert.equal(nickItem?.required, false);
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'type_ax', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+    const optionalSkip = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 2,
+      basis: 'Required name was processed; optional nickname skipped.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: nickItem.id, label: 'Nickname', status: 'skipped' },
+    ], 'optional-skip-session');
+    assert.equal(optionalSkip.ok, true,
+      `${AgentClass.name}: skipping a required=false AX row failed reconciliation (${optionalSkip.error || ''})`);
+    const requiredSkip = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 2,
+      basis: 'Required name was skipped.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'skipped' },
+      { id: nickItem.id, label: 'Nickname', status: 'processed', fields: { verified: true } },
+    ], 'required-skip-session');
+    assert.equal(requiredSkip.ok, false,
+      `${AgentClass.name}: skipping a required AX row passed reconciliation`);
+
+    const pageUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
+    const frameUrl = 'https://acme.wd1.myworkdayjobs.com/application/frame';
+    const workday = agent._resolvePlannerSiteWorkflow(pageUrl, {
+      request_kind: 'execute',
+      site_job: 'prepare-application',
+    });
+    const iframeTabId = tabId + 20;
+    agent.conversations.set(iframeTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Prepare every application field for review.' },
+    ]);
+    agent._startPlanExecutionGuard(iframeTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflow: workday,
+    });
+    const inventorySelector = [
+      'input', 'textarea', 'select', '[contenteditable="true"]',
+      '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+    ].join(',');
+    const iframeInventory = agent._rememberWorkflowInventoryObservation(iframeTabId, 'iframe_read', {
+      selector: inventorySelector,
+    }, {
+      success: true,
+      pageUrl,
+      frames: [
+        {
+          frameId: 7,
+          ok: true,
+          url: frameUrl,
+          matchCount: 2,
+          truncated: false,
+          matches: [
+            { tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: '', matchIndex: 0, required: true },
+            { tag: 'textarea', id: 'notes', name: 'notes', label: 'Notes', value: '', matchIndex: 1, required: false },
+          ],
+        },
+        {
+          frameId: 11,
+          ok: false,
+          error: 'Blocked a frame with origin "https://ads.example"',
+          url: 'https://ads.example/pixel',
+          truncated: true,
+          matches: [],
+        },
+      ],
+    });
+    assert.equal(iframeInventory?.complete, true,
+      `${AgentClass.name}: an erroring ad iframe blocked form completeness`);
+    const iframeEvidence = agent._planExecutionGuards.get(iframeTabId).workflowInventoryEvidence;
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(iframeEvidence.documents, 'iframe:11:https://ads.example/pixel'),
+      false,
+      `${AgentClass.name}: noisy ad frame remained an inventory document`,
+    );
+    const notesItem = iframeInventory.items.find(item => item.label === 'Notes');
+    assert.equal(notesItem?.required, false);
+    const truncatedObserved = agent._workflowIframeFormInventory({
+      frames: [{
+        frameId: 7,
+        ok: true,
+        url: frameUrl,
+        matchCount: 4,
+        truncated: true,
+        matches: [
+          { tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: '', matchIndex: 0, required: true },
+          { tag: 'textarea', id: 'notes', name: 'notes', label: 'Notes', value: '', matchIndex: 1, required: false },
+        ],
+      }],
+    }, 'bind', { selector: inventorySelector });
+    assert.equal(truncatedObserved.documents[`iframe:7:${frameUrl}`]?.complete, false,
+      `${AgentClass.name}: a truncated application frame with extra unmatched controls was treated as complete`);
+  }
 });
 
 test('site workflow bindings are revalidated on the live URL and preserved across trusted planner fallback', async () => {

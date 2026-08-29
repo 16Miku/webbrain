@@ -668,75 +668,76 @@
     } catch {}
     if (disabled) line += ' disabled=true';
 
-    let required = false;
-    try {
-      required = !!el.required || el.getAttribute('aria-required') === 'true';
-    } catch {}
-    if (required) line += ' required=true';
-
     // Checkbox/radio state is an action-critical value, not decorative
     // metadata. Without it the model has to infer state from a focus ring or
     // screenshot and can accidentally toggle a control back off.
     const inputType = tag === 'input'
       ? (el.getAttribute('type') || 'text').toLowerCase()
       : '';
+    const attrRole = (el.getAttribute('role') || '').toLowerCase();
+    const inventoryRole = (role || attrRole || '').toLowerCase();
+    const isInventoryFormControl = tag === 'textarea' || tag === 'select'
+      || (tag === 'input' && !['submit', 'button', 'reset', 'image', 'hidden'].includes(inputType))
+      || isEditableRoot(el)
+      || ['textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton', 'listbox'].includes(inventoryRole);
+    if (isInventoryFormControl) {
+      let required = false;
+      try {
+        required = !!el.required || el.getAttribute('aria-required') === 'true';
+      } catch {}
+      line += required ? ' required=true' : ' required=false';
+    }
     if (inputType === 'checkbox' || inputType === 'radio') {
       line += ` checked=${el.checked ? 'true' : 'false'}`;
-    } else {
-      const role = (el.getAttribute('role') || '').toLowerCase();
-      if (['checkbox', 'radio', 'switch'].includes(role) || el.hasAttribute('aria-checked')) {
-        const ariaChecked = el.getAttribute('aria-checked');
-        if (ariaChecked != null) line += ` checked=${ariaChecked}`;
-      }
+    } else if (['checkbox', 'radio', 'switch'].includes(attrRole) || el.hasAttribute('aria-checked')) {
+      const ariaChecked = el.getAttribute('aria-checked');
+      if (ariaChecked != null) line += ` checked=${ariaChecked}`;
     }
 
     // Surface the current value for text-like inputs/textareas so the model
     // can see what's already filled in. Skipped for submit/button/reset/file
-    // (value is the label there), checkboxes/radios, and when the value
-    // already matches the rendered name.
+    // (value is the label there) and checkboxes/radios. Always emit even when
+    // the value equals the accessible name so inventory verification can
+    // read it back; the model-facing cap is 60 characters plus '...'.
     if (tag === 'input' || tag === 'textarea') {
-      const inputType = (el.getAttribute('type') || 'text').toLowerCase();
       const skipValueTypes = new Set(['submit', 'button', 'reset', 'file', 'checkbox', 'radio', 'image', 'hidden', 'color', 'range', 'password']);
       if (!skipValueTypes.has(inputType)) {
         const v = (el.value == null ? '' : String(el.value));
-        if (v && v !== name) {
+        if (v) {
           const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
           line += ' value="' + trimmed.replace(/"/g, '\\"') + '"';
         }
       }
     } else if (isEditableRoot(el)) {
       const v = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (v && v !== name) {
+      if (v) {
         const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
         line += ' value="' + trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
       }
-    } else {
-      const roleAttr = (el.getAttribute('role') || '').toLowerCase();
-      if (tag === 'select' || ['combobox', 'listbox'].includes(roleAttr)) {
-        let v = '';
-        if (tag === 'select') {
-          const selected = (el.options && el.options[el.selectedIndex])
-            || el.querySelector('option[selected]');
-          v = String(selected?.textContent || '').replace(/\s+/g, ' ').trim();
-        } else {
-          v = String(
-            el.getAttribute('aria-valuetext')
-            || el.getAttribute('aria-valuenow')
-            || (el.value == null ? '' : el.value),
-          ).replace(/\s+/g, ' ').trim();
-          if (!v) {
-            let selected = null;
-            try {
-              selected = el.querySelector('[aria-selected="true"],[role="option"][data-selected="true"]');
-            } catch {}
-            v = String(selected?.innerText || selected?.textContent || '').replace(/\s+/g, ' ').trim();
-          }
-          if (!v) v = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    } else if (tag === 'select' || ['combobox', 'listbox'].includes(attrRole)) {
+      let v = '';
+      if (tag === 'select') {
+        const selected = (el.options && el.options[el.selectedIndex])
+          || el.querySelector('option[selected]');
+        v = String(selected?.textContent || '').replace(/\s+/g, ' ').trim();
+      } else {
+        v = String(
+          el.getAttribute('aria-valuetext')
+          || el.getAttribute('aria-valuenow')
+          || (el.value == null ? '' : el.value),
+        ).replace(/\s+/g, ' ').trim();
+        if (!v) {
+          let selected = null;
+          try {
+            selected = el.querySelector('[aria-selected="true"],[role="option"][data-selected="true"]');
+          } catch {}
+          v = String(selected?.innerText || selected?.textContent || '').replace(/\s+/g, ' ').trim();
         }
-        if (v) {
-          const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
-          line += ' value="' + trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-        }
+        if (!v) v = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+      }
+      if (v) {
+        const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
+        line += ' value="' + trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
       }
     }
 
@@ -771,11 +772,32 @@
     }
   }
 
-  function walk(el, depth, opts, lines) {
-    if (depth > opts.maxDepth) {
-      opts.depthTruncated = true;
-      return;
+  function pushWalkableChildren(el, stack) {
+    for (const child of el.children || []) stack.push(child);
+    try {
+      if (window.__wbSiteInteractions.shouldPierceShadowRoots() && el.shadowRoot) {
+        for (const child of el.shadowRoot.children || []) stack.push(child);
+      }
+    } catch {}
+  }
+
+  // depthTruncated is form-relevant: set it only if an omitted descendant
+  // would have been included. Decorative wrappers at the depth cap stay silent.
+  function omittedDescendantWouldBeIncluded(el, opts) {
+    const stack = [];
+    pushWalkableChildren(el, stack);
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node || !node.tagName) continue;
+      if (opts._skipPrioritySet && opts._skipPrioritySet.has(node)) continue;
+      if (opts._skipOverlaySet && opts._skipOverlaySet.has(node)) continue;
+      if (shouldInclude(node, opts)) return true;
+      pushWalkableChildren(node, stack);
     }
+    return false;
+  }
+
+  function walk(el, depth, opts, lines) {
     if (!el || !el.tagName) return;
 
     // Skip nodes already emitted in the priority/action prelude.
@@ -785,6 +807,13 @@
     // guard ensures we still enter the overlay itself when it's the
     // explicit walk root.
     if (depth > 0 && opts._skipOverlaySet && opts._skipOverlaySet.has(el)) return;
+
+    if (depth > opts.maxDepth) {
+      if (shouldInclude(el, opts) || omittedDescendantWouldBeIncluded(el, opts)) {
+        opts.depthTruncated = true;
+      }
+      return;
+    }
 
     // An element anchored via refId is always included at depth 0, even if
     // it wouldn't normally pass the include filter.
@@ -813,7 +842,7 @@
           walk(child, nextDepth, opts, lines);
         }
       }
-    } else if (nodeHasWalkableChildren(el)) {
+    } else if (nodeHasWalkableChildren(el) && omittedDescendantWouldBeIncluded(el, opts)) {
       opts.depthTruncated = true;
     }
   }

@@ -1412,7 +1412,7 @@ export class Agent extends LoopDetector {
       ['description', ['description', 'descripción', 'descrição', 'beschreibung', 'descrizione', 'açıklama', '説明', '설명', '描述', 'описание']],
       ['visibility', ['visibility', 'privacy', 'visibilité', 'confidentialité', 'visibilidad', 'privacidad', 'visibilidade', 'privacidade', 'sichtbarkeit', 'visibilità', 'görünürlük', '公開設定', '公開範囲', '可視性', '공개 상태', '공개 설정', '可见性', '可見度', 'видимость']],
       ['audience', ['audience', 'made for kids', 'audiencia', 'destinado a niños', 'público', 'conteúdo para crianças', 'zielgruppe', 'für kinder', 'pubblico', 'destinato ai bambini', 'kitle', 'çocuklara özel', '視聴者', '子ども向け', '시청자', '아동용', '受众', '面向儿童', '觀眾', '兒童專用', 'аудитория']],
-      ['playlist', ['playlist', 'liste de lecture', 'lista de reproducción', 'lista de reprodução', 'wiedergabeliste', 'elenco di riproduzione', 'oynatma listesi', '再生リスト', '재생목록', '播放列表', 'плейлист']],
+      ['playlist', ['playlist', 'playlists', 'liste de lecture', 'listes de lecture', 'lista de reproducción', 'listas de reproducción', 'lista de reprodução', 'listas de reprodução', 'wiedergabeliste', 'wiedergabelisten', 'elenco di riproduzione', 'elenchi di riproduzione', 'oynatma listesi', 'oynatma listeleri', '再生リスト', '재생목록', '播放列表', 'плейлист', 'плейлисты']],
       ['language', ['language', 'langue', 'idioma', 'sprache', 'lingua', 'dil', '言語', '언어', '语言', '語言', 'язык']],
       ['category', ['category', 'catégorie', 'categoría', 'kategorie', 'categoria', 'kategori', 'カテゴリ', '카테고리', '类别', '類別', 'категория']],
       ['license', ['license', 'licence', 'licencia', 'lizenz', 'licenza', 'lisans', 'ライセンス', '라이선스', '许可', '授權', 'лицензия']],
@@ -1436,16 +1436,28 @@ export class Agent extends LoopDetector {
     return text.trim().slice(0, 10000);
   }
 
+  // AX formatLine truncates values at 60 chars and appends '...'. Match the
+  // serialized inventory, not the pre-truncation classifier string.
+  _workflowAxValueMatchesExpected(observed, expected) {
+    const want = this._workflowMetadataValue(expected);
+    const got = this._workflowMetadataValue(observed);
+    if (got === want) return true;
+    if (got.endsWith('...') && got.length === 63) {
+      const prefix = got.slice(0, 60);
+      return want.startsWith(prefix) && want.length > 60;
+    }
+    return false;
+  }
+
   _normalizeWorkflowMetadataRequirements(values) {
     if (!Array.isArray(values) || values.length < 1 || values.length > 24) return [];
     const requirements = new Map();
     for (const value of values) {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      if (!Object.prototype.hasOwnProperty.call(value, 'value')) continue;
       const field = this._workflowMetadataFieldKey(value.field);
-      if (!Object.prototype.hasOwnProperty.call(value, 'value')) return [];
-      const expectedValue = this._workflowMetadataValue(value.value);
-      if (!field || requirements.has(field)) return [];
-      requirements.set(field, { field, value: expectedValue });
+      if (!field || requirements.has(field)) continue;
+      requirements.set(field, { field, value: this._workflowMetadataValue(value.value) });
     }
     return [...requirements.values()];
   }
@@ -1471,7 +1483,7 @@ export class Agent extends LoopDetector {
     }
     return requirements.every(requirement => {
       const values = observed.get(requirement.field) || [];
-      return values.length === 1 && values[0] === this._workflowMetadataValue(requirement.value);
+      return values.length === 1 && this._workflowAxValueMatchesExpected(values[0], requirement.value);
     });
   }
 
@@ -10011,17 +10023,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const documentScope = `iframe:${frameId}:${frameUrl}`;
       const matches = Array.isArray(frame?.matches) ? frame.matches : [];
       const matchCount = Number.isInteger(frame?.matchCount) ? frame.matchCount : NaN;
-      const complete = selectorComplete
-        && !frame?.error
-        && (matchCount === 0 || frame?.ok === true)
-        && frame?.truncated !== true
-        && Number.isInteger(matchCount)
-        && matchCount === matches.length;
-      documents[documentScope] = {
-        complete,
-        scope: 'iframe',
-        ...(complete && matchCount === 0 ? { empty: true } : {}),
-      };
+      const frameItems = [];
       for (const match of matches) {
         const tag = String(match?.tag || '').toLowerCase();
         const type = String(match?.type || '').toLowerCase();
@@ -10047,14 +10049,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             ? `name:${String(match.name).slice(0, 240)}|type:${type}|label:${label}`
             : `selector:${selector}|index:${Number(match?.matchIndex) || 0}|label:${label}`);
         const id = `workflow:${this._workflowInventoryFingerprint(`${bindingKey}|${documentScope}|${role}|${locator}`)}`;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        items.push({
+        if (seen.has(id) || frameItems.some(item => item.id === id)) continue;
+        frameItems.push({
           id,
           label,
           role,
           documentScope,
           ...(type ? { type } : {}),
+          ...(typeof match?.required === 'boolean' ? { required: match.required } : {}),
           value: String(match?.value ?? '').slice(0, 10000),
           iframeTarget: {
             frameId,
@@ -10063,6 +10065,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             matchIndex: Number(match?.matchIndex) || 0,
           },
         });
+      }
+      // Omit erroring/truncated/failed frames that contribute no form controls
+      // (ad frames). Keep successful zero-match inspections and any frame that
+      // actually has form controls. matchCount===0 with ok:false is empty
+      // success (querySelectorAll found nothing), not a failed read.
+      const noisy = !!frame?.error
+        || frame?.truncated === true
+        || (frame?.ok === false && matchCount !== 0);
+      if (frameItems.length === 0 && noisy) continue;
+      const complete = selectorComplete
+        && !frame?.error
+        && (matchCount === 0 || frame?.ok === true)
+        && frame?.truncated !== true
+        && Number.isInteger(matchCount)
+        && matchCount === matches.length;
+      documents[documentScope] = {
+        complete,
+        scope: 'iframe',
+        ...(complete && matchCount === 0 ? { empty: true } : {}),
+      };
+      for (const item of frameItems) {
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        items.push(item);
       }
     }
     return { items, documents, selectorComplete };
@@ -14543,9 +14569,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       prompt += `\n\n${UNIVERSAL_PREAMBLE.trim()}`;
     }
 
+    const tier = this._resolvePromptTier();
     if (this._isActionMode(mode) && tabId != null) {
       const workflowPolicy = formatAdapterWorkflowExecutionPolicy(
         this._planExecutionGuards.get(tabId)?.siteWorkflow,
+        { form: tier === 'compact' ? 'brief' : 'full' },
       );
       if (workflowPolicy) prompt += `\n\n${workflowPolicy}`;
     }
@@ -14553,7 +14581,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this.researchEscalationEnabled) {
       prompt += `\n\n${RESEARCH_ESCALATION_SYSTEM_NOTE}`;
     }
-    const tier = this._resolvePromptTier();
     const skillsPrompt = buildCustomSkillsPrompt(this.customSkills, {
       mode,
       tier,
@@ -22742,6 +22769,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   label: semanticLabel(el),
                   ariaLabel: String(el.getAttribute?.('aria-label') || ''),
                   placeholder: String(el.getAttribute?.('placeholder') || ''),
+                  required: !!(el.required || el.getAttribute?.('aria-required') === 'true'),
                   value: value.slice(0, 500),
                   text: String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 500),
                 };
