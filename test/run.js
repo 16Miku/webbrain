@@ -78234,7 +78234,7 @@ test('app-owned runtime messages cannot change the execution task binding', () =
   }
 });
 
-test('planner clarification answers stay bound to their original task through compaction', async () => {
+test('repeated planner clarification answers keep their full task chain through compaction', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
     const tabId = 8665 + index;
@@ -78243,13 +78243,19 @@ test('planner clarification answers stay bound to their original task through co
     agent.conversations.set(tabId, messages);
     agent._persistSubmittedTurn = async () => {};
     agent._persist = () => {};
-    const plannerClarificationGate = async () => ({
-      proceed: false,
-      requestKind: 'clarify',
-      requiresStateChange: false,
-      requiresSubmission: false,
-      message: 'When should I schedule it?',
-    });
+    let clarificationCalls = 0;
+    const plannerClarificationGate = async () => {
+      clarificationCalls += 1;
+      return {
+        proceed: false,
+        requestKind: 'clarify',
+        requiresStateChange: false,
+        requiresSubmission: false,
+        message: clarificationCalls === 1
+          ? 'Which day should I schedule it?'
+          : 'What time should I use?',
+      };
+    };
     agent._runPlannerIntentGate = plannerClarificationGate;
     agent._runPlannerGate = plannerClarificationGate;
     const gate = await agent._maybeRunPlannerGate(
@@ -78263,23 +78269,42 @@ test('planner clarification answers stay bound to their original task through co
       { tabUrl: 'https://example.test/reports', tabTitle: 'Reports' },
     );
     assert.equal(gate.proceed, false, `${AgentClass.name}: clarification fixture unexpectedly proceeded`);
-    const clarification = messages[2];
-    messages.push({ role: 'user', content: 'Tomorrow at 9.' });
+    const firstClarification = messages[2];
+    const firstTaskKey = agent._progressTaskKeyForText(originalTask);
+    assert.equal(firstClarification.webbrainPlannerClarification?.taskKey, firstTaskKey,
+      `${AgentClass.name}: first clarification did not retain its task key`);
+    const secondGate = await agent._maybeRunPlannerGate(
+      tabId,
+      messages,
+      { role: 'user', content: 'Tomorrow.' },
+      () => {},
+      'act',
+      null,
+      null,
+      { tabUrl: 'https://example.test/reports', tabTitle: 'Reports' },
+    );
+    assert.equal(secondGate.proceed, false, `${AgentClass.name}: second clarification unexpectedly proceeded`);
+    const secondClarification = messages[4];
+    assert.match(String(secondClarification.webbrainPlannerClarification?.taskText || ''), /Schedule the weekly report[\s\S]*Tomorrow/i,
+      `${AgentClass.name}: second clarification snapshot omitted the first answer`);
+    assert.match(String(secondClarification.webbrainPlannerClarification?.taskKey || ''), /^tk_[0-9a-f]{8}$/,
+      `${AgentClass.name}: second clarification did not retain a stable task key`);
+    messages.push({ role: 'user', content: 'At 9.' });
     for (let step = 0; step < 35; step += 1) {
       messages.push({ role: 'assistant', content: `later step ${step}` });
     }
 
-    assert.equal(clarification.webbrainPlannerClarification?.taskText, originalTask,
+    assert.equal(firstClarification.webbrainPlannerClarification?.taskText, originalTask,
       `${AgentClass.name}: planner clarification did not retain its task snapshot`);
-    assert.equal(clarification.webbrainPlannerClarification?.requiresSubmission, false,
+    assert.equal(firstClarification.webbrainPlannerClarification?.requiresSubmission, false,
       `${AgentClass.name}: non-submit clarification metadata was not retained`);
     const binding = agent._activeTaskBinding(messages);
-    assert.equal(binding.index, 3, `${AgentClass.name}: clarification answer was not the latest genuine turn`);
-    assert.deepEqual(binding.pinnedIndices, [1, 2, 3],
-      `${AgentClass.name}: clarification authority chain was incomplete`);
-    assert.match(binding.text, /Schedule the weekly report[\s\S]*Tomorrow at 9/i,
-      `${AgentClass.name}: active task omitted the request or clarification answer`);
-    assert.notEqual(binding.text, 'Tomorrow at 9.',
+    assert.equal(binding.index, 5, `${AgentClass.name}: second clarification answer was not the latest genuine turn`);
+    assert.deepEqual(binding.pinnedIndices, [1, 2, 3, 4, 5],
+      `${AgentClass.name}: repeated clarification authority chain was incomplete`);
+    assert.match(binding.text, /Schedule the weekly report[\s\S]*Tomorrow[\s\S]*At 9/i,
+      `${AgentClass.name}: active task omitted an earlier clarification answer`);
+    assert.notEqual(binding.text, 'At 9.',
       `${AgentClass.name}: clarification answer became a standalone task`);
 
     const taskKey = agent._progressTaskKeyHash(tabId);
@@ -78288,7 +78313,7 @@ test('planner clarification answers stay bound to their original task through co
       requiresStateChange: true,
     });
     assert.equal(guard.taskKey, taskKey, `${AgentClass.name}: execution guard used a different clarification task key`);
-    assert.match(guard.taskText, /Schedule the weekly report[\s\S]*Tomorrow at 9/i,
+    assert.match(guard.taskText, /Schedule the weekly report[\s\S]*Tomorrow[\s\S]*At 9/i,
       `${AgentClass.name}: execution recovery bound only the short clarification answer`);
 
     const originalLog = console.log;
@@ -78303,12 +78328,14 @@ test('planner clarification answers stay bound to their original task through co
     assert.equal(result.compacted, true, `${AgentClass.name}: clarification history should compact`);
     assert.equal(agent._progressTaskKeyHash(tabId), taskKey,
       `${AgentClass.name}: compaction changed the clarified task key`);
-    assert.match(agent._progressTaskAnchorText(tabId), /Schedule the weekly report[\s\S]*Tomorrow at 9/i,
+    assert.match(agent._progressTaskAnchorText(tabId), /Schedule the weekly report[\s\S]*Tomorrow[\s\S]*At 9/i,
       `${AgentClass.name}: compaction lost the composite task authority`);
-    assert.ok(messages.some(message => message === clarification),
-      `${AgentClass.name}: compaction discarded planner clarification metadata`);
-    assert.ok(messages.some(message => message?.role === 'user' && message.content === 'Tomorrow at 9.'),
-      `${AgentClass.name}: compaction discarded the genuine clarification answer`);
+    assert.ok(messages.some(message => message === firstClarification)
+      && messages.some(message => message === secondClarification),
+    `${AgentClass.name}: compaction discarded planner clarification metadata`);
+    assert.ok(messages.some(message => message?.role === 'user' && message.content === 'Tomorrow.')
+      && messages.some(message => message?.role === 'user' && message.content === 'At 9.'),
+    `${AgentClass.name}: compaction discarded an earlier genuine clarification answer`);
     const summary = messages.find(message => /Context window was trimmed/i.test(String(message?.content || '')));
     assert.match(String(summary?.content || ''), /clarification context[\s\S]*answer[\s\S]*CURRENT ACTIVE TASK/i,
       `${AgentClass.name}: compaction did not describe the clarified task chain as authoritative`);

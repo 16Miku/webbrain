@@ -9745,19 +9745,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const metadata = messages[clarificationIndex].webbrainPlannerClarification || {};
     let taskText = this._progressTaskTextKey(metadata.taskText).slice(0, 1600);
-    let taskIndex = -1;
-    for (let index = clarificationIndex - 1; index >= 1; index -= 1) {
-      const message = messages[index];
-      if (message?.role !== 'user') continue;
-      if (this._isScheduledResumeTurn(message.content) || this._isAgentInjectedUserMessage(message)) continue;
-      const candidate = this._plannerUserAuthoredText(message);
-      if (!candidate) continue;
-      const normalized = candidate.toLowerCase();
-      if (this._isProgressContinuationText(normalized) || this._isProgressAckText(normalized)) continue;
-      if (!taskText) taskText = candidate.slice(0, 1600);
-      if (this._progressTaskTextKey(candidate) === this._progressTaskTextKey(taskText)) taskIndex = index;
-      break;
-    }
+    const storedTaskKey = /^tk_[0-9a-f]{8}$/i.test(String(metadata.taskKey || ''))
+      ? String(metadata.taskKey).toLowerCase()
+      : '';
+    const priorBinding = this._activeTaskBinding(messages.slice(0, clarificationIndex));
+    const priorTaskText = this._progressTaskTextKey(priorBinding.text);
+    const priorTaskKey = this._progressTaskKeyForText(priorTaskText);
+    const storedTextMatches = taskText && (
+      priorTaskText === taskText
+      // Compatibility with metadata written by the first implementation,
+      // which bounded the stored snapshot to 1600 characters.
+      || (taskText.length >= 1600 && priorTaskText.startsWith(taskText))
+    );
+    const carriesPriorBinding = Boolean(priorTaskText) && (
+      (storedTaskKey && storedTaskKey === priorTaskKey)
+      || (!storedTaskKey && (!taskText || storedTextMatches))
+    );
+    let taskIndex = carriesPriorBinding ? priorBinding.taskIndex : -1;
+    let carriedPinnedIndices = carriesPriorBinding ? priorBinding.pinnedIndices : [];
+    if (carriesPriorBinding) taskText = priorBinding.text;
     if (!taskText) return null;
 
     // Both values came from genuine user turns. JSON quoting keeps their
@@ -9767,7 +9773,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       request: taskText,
       answer: answerText.slice(0, 1600),
     })}`;
-    const pinnedIndices = [taskIndex, clarificationIndex, answerIndex]
+    const pinnedIndices = [...carriedPinnedIndices, taskIndex, clarificationIndex, answerIndex]
       .filter(index => index >= 0)
       .filter((index, position, all) => all.indexOf(index) === position)
       .sort((a, b) => a - b);
@@ -10141,7 +10147,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
       );
       if (!gate.proceed) {
-        messages.push(this._plannerTerminalAssistantMessage(gate, tabInfo, this._progressTaskAnchorText(tabId)));
+        messages.push(this._plannerTerminalAssistantMessage(
+          gate, tabInfo, this._progressTaskAnchorText(tabId), this._progressTaskKeyHash(tabId),
+        ));
         this._persist(tabId);
       }
       return gate;
@@ -10172,7 +10180,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
     if (!gate.proceed) {
-      messages.push(this._plannerTerminalAssistantMessage(gate, tabInfo, this._progressTaskAnchorText(tabId)));
+      messages.push(this._plannerTerminalAssistantMessage(
+        gate, tabInfo, this._progressTaskAnchorText(tabId), this._progressTaskKeyHash(tabId),
+      ));
       this._persist(tabId);
       return {
         proceed: false,
@@ -10548,7 +10558,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || 'No plan was produced.';
   }
 
-  _plannerTerminalAssistantMessage(gate = {}, tabInfo = null, activeTaskText = '') {
+  _plannerTerminalAssistantMessage(gate = {}, tabInfo = null, activeTaskText = '', activeTaskKey = '') {
     const message = {
       role: 'assistant',
       content: gate.message || 'More information is required.',
@@ -10558,6 +10568,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresSubmission: gate.requiresSubmission === true,
         pageUrl: String(tabInfo?.tabUrl || ''),
         taskText: this._progressTaskTextKey(activeTaskText).slice(0, 1600),
+        taskKey: /^tk_[0-9a-f]{8}$/i.test(String(activeTaskKey || ''))
+          ? String(activeTaskKey).toLowerCase()
+          : '',
       };
     }
     return message;
@@ -14108,8 +14121,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return this._activeTaskBinding(messages).text;
   }
 
-  _progressTaskKeyHash(tabId) {
-    const text = this._progressTaskTextKey(this._progressTaskAnchorText(tabId) || this._originalTaskText(tabId)).toLowerCase();
+  _progressTaskKeyForText(text) {
+    text = this._progressTaskTextKey(text).toLowerCase();
     if (!text) return '';
     let hash = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) {
@@ -14117,6 +14130,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       hash = Math.imul(hash, 0x01000193) >>> 0;
     }
     return `tk_${hash.toString(16).padStart(8, '0')}`;
+  }
+
+  _progressTaskKeyHash(tabId) {
+    return this._progressTaskKeyForText(
+      this._progressTaskAnchorText(tabId) || this._originalTaskText(tabId),
+    );
   }
 
   _adoptUnscopedProgressRows(tabId, sessionId, opts = {}) {
