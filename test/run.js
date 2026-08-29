@@ -78133,21 +78133,34 @@ test('reported application read-only state is not a WebBrain runtime-mode contra
     });
     agent._markPlanExecutionToolCall(tabId, 'read_page', { success: true });
     const report = 'This session is in read-only mode. Editing controls are disabled for this account.';
+    const applicationConsequence = 'This application session is in read-only mode, so I cannot edit these records.';
     const drafted = 'Draft reply: “This session is in read-only mode.”';
 
     assert.equal(agent._isRuntimeModeContradictionTerminal(report), false,
       `${AgentClass.name}: observed application access state was treated as agent mode drift`);
     assert.equal(agent._isRuntimeModeContradictionTerminal(drafted), false,
       `${AgentClass.name}: drafted content was treated as agent mode drift`);
+    assert.equal(agent._isRuntimeModeContradictionTerminal(applicationConsequence), false,
+      `${AgentClass.name}: first-person consequence of application access was treated as agent mode drift`);
     assert.equal(
       agent._planOnlyTerminalDecision(tabId, report, { viaDone: true, outcome: 'success' }),
       null,
       `${AgentClass.name}: valid read-only state report was rejected after read evidence`,
     );
     assert.equal(
+      agent._planOnlyTerminalDecision(tabId, applicationConsequence, { viaDone: true, outcome: 'success' }),
+      null,
+      `${AgentClass.name}: valid application read-only consequence was rejected after read evidence`,
+    );
+    assert.equal(
       agent._isRuntimeModeContradictionTerminal('I am running in read-only mode, so I cannot complete the submission.'),
       true,
       `${AgentClass.name}: explicit self/runtime inability claim was no longer detected`,
+    );
+    assert.equal(
+      agent._isRuntimeModeContradictionTerminal('This WebBrain run is in Ask mode, so WebBrain cannot complete the submission.'),
+      true,
+      `${AgentClass.name}: explicitly named runtime inability claim was no longer detected`,
     );
   }
 });
@@ -78321,7 +78334,7 @@ test('repeated planner clarification answers keep their full task chain through 
       `${AgentClass.name}: second clarification did not retain a stable task key`);
     messages.push({ role: 'user', content: 'At 9.' });
     for (let step = 0; step < 35; step += 1) {
-      messages.push({ role: 'assistant', content: `later step ${step}` });
+      messages.push({ role: 'assistant', content: `later step ${step} ${'x'.repeat(5_000)}` });
     }
 
     assert.equal(firstClarification.webbrainPlannerClarification?.taskText, originalTask,
@@ -78345,6 +78358,24 @@ test('repeated planner clarification answers keep their full task chain through 
     assert.equal(guard.taskKey, taskKey, `${AgentClass.name}: execution guard used a different clarification task key`);
     assert.match(guard.taskText, /Schedule the weekly report[\s\S]*Tomorrow[\s\S]*At 9/i,
       `${AgentClass.name}: execution recovery bound only the short clarification answer`);
+
+    const persisted = agent._conversationStorageEntry(tabId, { maxBytes: 100_000 });
+    assert.equal(persisted.sessionSnapshotCompacted, true,
+      `${AgentClass.name}: oversized clarification fixture did not use bounded session recovery`);
+    assert.ok(persisted.sessionSnapshotBytes <= 100_000,
+      `${AgentClass.name}: clarification recovery snapshot exceeded its byte budget`);
+    const restarted = new AgentClass({});
+    restarted.conversations.set(tabId, persisted.messages);
+    const restartedBinding = restarted._activeTaskBinding(persisted.messages);
+    assert.match(restartedBinding.text, /Schedule the weekly report[\s\S]*Tomorrow[\s\S]*At 9/i,
+      `${AgentClass.name}: bounded session recovery lost the clarification authority chain`);
+    assert.equal(restarted._progressTaskKeyHash(tabId), taskKey,
+      `${AgentClass.name}: worker restart changed the clarified task key`);
+    assert.equal(
+      persisted.messages.filter(message => message?.webbrainPlannerClarification).length,
+      2,
+      `${AgentClass.name}: bounded snapshot discarded planner clarification metadata`,
+    );
 
     const originalLog = console.log;
     console.log = () => {};

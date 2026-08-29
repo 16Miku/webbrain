@@ -1741,8 +1741,10 @@ export class Agent extends LoopDetector {
           },
         }
       : null;
+    const activeTaskBinding = this._activeTaskBinding(messages);
     const serialized = serializeConversationForSession(messages, {
       maxBytes: options.maxBytes || SESSION_CONVERSATION_BUDGET_BYTES,
+      preserveMessageIndices: activeTaskBinding.pinnedIndices,
     });
     const captchaGateState = this._captchaGateStates.get(tabId) || null;
     return {
@@ -15940,11 +15942,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _isRuntimeModeContradictionTerminal(content) {
     const text = String(content || '');
-    const modeClaim = /\b(?:ask\s+mode|read[- ]only\s+(?:mode|session))\b/i.test(text);
-    const selfInability = /\b(?:i|we)\s+(?:cannot|can't|could\s+not|am\s+unable|are\s+unable|am\s+not\s+able|are\s+not\s+able|do\s+not\s+have|don't\s+have|can\s+only|am\s+not\s+permitted|are\s+not\s+permitted)\b/i.test(text);
-    const runtimeInability = /\b(?:webbrain|the\s+agent|this\s+run|the\s+runtime)\b[^.!?\n]{0,120}\b(?:cannot|can't|could\s+not|is\s+unable|is\s+not\s+able|does\s+not\s+have|is\s+not\s+permitted)\b/i.test(text);
-    const explicitModeSwitchBlocker = /\b(?:switch|change|set)\s+(?:back\s+)?to\s+act\s+mode\b[^.!?\n]{0,100}\b(?:to|before)\s+(?:continue|proceed|complete|execute|use\s+(?:the\s+)?tools?)\b/i.test(text);
-    return (modeClaim && (selfInability || runtimeInability)) || explicitModeSwitchBlocker;
+    const inability = /\b(?:i|we|webbrain|the\s+agent|this\s+run|the\s+runtime)\s+(?:cannot|can't|could\s+not|am\s+unable|are\s+unable|is\s+unable|am\s+not\s+able|are\s+not\s+able|is\s+not\s+able|do(?:es)?\s+not\s+have|don't\s+have|can\s+only|am\s+not\s+permitted|are\s+not\s+permitted|is\s+not\s+permitted)\b/i;
+    const runtimeBoundClaim = text.split(/(?:[.!?]\s+|\n+)/).some(clause => {
+      // Keep the mode claim and inability in one clause and require the mode
+      // subject to be the agent/runtime. An application's read-only session
+      // followed by "I cannot edit" is a task result, not runtime drift.
+      const selfModeClaim = /\b(?:i\s+am|i'm|we\s+are|we're)\s+(?:currently\s+)?(?:running\s+)?in\s+(?:ask|read[- ]only)\s+mode\b/i.test(clause);
+      const namedRuntimeModeClaim = /\b(?:webbrain|the\s+agent|this\s+(?:webbrain\s+)?run|the\s+runtime)\b[^.!?\n]{0,100}\b(?:ask\s+mode|read[- ]only\s+(?:mode|session))\b/i.test(clause);
+      return (selfModeClaim || namedRuntimeModeClaim) && inability.test(clause);
+    });
+    const explicitModeSwitchBlocker = /\b(?:switch|change|set)\s+(?:back\s+)?to\s+act\s+mode\b[^.!?\n]{0,100}\b(?:to|before|and)\s+(?:continue|proceed|complete|execute|retry|use\s+(?:the\s+)?tools?)\b/i.test(text);
+    return runtimeBoundClaim || explicitModeSwitchBlocker;
   }
 
   _planOnlyTerminalDecision(tabId, content, { viaDone = false, outcome = null } = {}) {
