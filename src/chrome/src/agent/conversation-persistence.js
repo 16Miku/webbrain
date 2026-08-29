@@ -103,6 +103,12 @@ function reduceToBudget(messages, maxBytes, state, preserveMessageIndices = []) 
     out[index] = {
       role: message.role,
       ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
+      // The collapsed text is gone, so this turn no longer carries any task
+      // authority. Mark it app-owned or the agent's task binding would treat
+      // the placeholder as the latest genuine user request after a restart.
+      ...(message.role === 'user'
+        ? { webbrainAppOwned: true, webbrainAppOwnedKind: 'session_recovery_placeholder' }
+        : {}),
       content: '[Earlier message omitted from bounded session recovery snapshot.]',
     };
   }

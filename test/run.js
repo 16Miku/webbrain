@@ -65552,10 +65552,10 @@ test('Agent tool loops preserve provider reasoning state on both execution paths
     assert.match(source, /_expireCurrentToolReasoning\(messages\)/, `${prefix}: new user turns should expire immediate-only reasoning replay`);
     assert.match(source, /reasoning_content: reasoningContent/, `${prefix}: assistant helper should retain Chat Completions reasoning content`);
     assert.match(source, /content: assistantToolContent,[\s\S]*tool_calls: result\.toolCalls,[\s\S]*}, result\.responseItems, result\.reasoningContent, provider\)/, `${prefix}: non-stream tool loop should retain provider reasoning state`);
-    assert.match(source, /content: result\.content \}, result\.responseItems, result\.reasoningContent, provider\)[\s\S]*messages\.push\(\{ role: 'user', content: plainFinalBlocks\.join/, `${prefix}: non-stream progress continuations should scope provider reasoning state`);
+    assert.match(source, /content: result\.content \}, result\.responseItems, result\.reasoningContent, provider\)[\s\S]*messages\.push\(this\._appOwnedUserMessage\(plainFinalBlocks\.join/, `${prefix}: non-stream progress continuations should scope provider reasoning state`);
     assert.match(source, /content: finalResponse \}, result\.responseItems, result\.reasoningContent, provider\)/, `${prefix}: non-stream final answers should scope provider reasoning state`);
     assert.match(source, /chunk\.type === 'reasoning'[\s\S]*content: fullText \|\| null,[\s\S]*tool_calls: toolCalls,[\s\S]*}, responseItems, reasoningContent, provider\)/, `${prefix}: stream tool loop should retain provider reasoning state`);
-    assert.match(source, /content: fullText \}, responseItems, reasoningContent, provider\)[\s\S]*messages\.push\(\{ role: 'user', content: plainFinalBlocks\.join/, `${prefix}: stream progress continuations should scope provider reasoning state`);
+    assert.match(source, /content: fullText \}, responseItems, reasoningContent, provider\)[\s\S]*messages\.push\(this\._appOwnedUserMessage\(plainFinalBlocks\.join/, `${prefix}: stream progress continuations should scope provider reasoning state`);
     assert.match(source, /content: fullText \}, responseItems, reasoningContent, provider\)[\s\S]*return finish\(fullText\)/, `${prefix}: stream final answers should scope provider reasoning state`);
     assert.match(source, /if \(msg\.response_items\) totalChars \+= JSON\.stringify\(msg\.response_items\)\.length/, `${prefix}: context budgeting should include encrypted reasoning Items`);
     assert.match(source, /if \(typeof msg\.reasoning_content === 'string'\) totalChars \+= msg\.reasoning_content\.length/, `${prefix}: context budgeting should include Chat Completions reasoning content`);
@@ -78273,6 +78273,155 @@ test('app-owned runtime messages cannot change the execution task binding', () =
     assert.equal(state.successfulConsequentialToolCalls, 1,
       `${AgentClass.name}: valid evidence after an app-owned note was discarded`);
     assert.equal(messages.at(-1).webbrainAppOwnedKind, 'future_runtime_note');
+  }
+});
+
+test('runtime completion blocks pushed mid-run do not read as a new user task', () => {
+  for (const [index, [label, AgentClass]] of [['chrome', AgentCh], ['firefox', AgentFx]].entries()) {
+    const agent = new AgentClass({});
+    const tabId = 8703 + index;
+    const source = fs.readFileSync(path.join(ROOT, `src/${label}/src/agent/agent.js`), 'utf8');
+
+    // These blocks are pushed as user turns while a task is still running, and
+    // none of them starts with a prefix _isAgentInjectedUserContent recognizes.
+    // They stay out of the task binding only because the push site marks them,
+    // so pin the push sites: an unmarked one silently fails the whole run with
+    // "the user task changed after this run was authorized".
+    assert.doesNotMatch(source, /messages\.push\(\{ role: 'user', content: plainFinalBlocks\.join/,
+      `${label}: plain-final blocks must be pushed as app-owned runtime state`);
+    assert.doesNotMatch(source, /messages\.push\(\{ role: 'user', content: planOnlyDecision\.nudge \}\)/,
+      `${label}: plan-execution nudges must be pushed as app-owned runtime state`);
+    assert.doesNotMatch(source, /content: this\._standaloneIncompleteAnswerNudge\(standaloneGroundingGap\),\n\s*\}\)/,
+      `${label}: standalone answer recovery must be pushed as app-owned runtime state`);
+    assert.equal(
+      (source.match(/_appOwnedUserMessage\(plainFinalBlocks\.join/g) || []).length, 2,
+      `${label}: both the streaming and non-streaming loops must mark plain-final blocks`);
+    assert.equal(
+      (source.match(/_appOwnedUserMessage\(planOnlyDecision\.nudge/g) || []).length, 2,
+      `${label}: both the streaming and non-streaming loops must mark plan-execution nudges`);
+    const messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Read my whole email thread with Dana and summarize it.' },
+    ];
+    agent.conversations.set(tabId, messages);
+    const state = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+    });
+    const taskKey = state.taskKey;
+
+    // The run loop pushes these three verbatim while a task is still in flight.
+    // None begins with a prefix _isAgentInjectedUserContent recognizes, so they
+    // only stay out of the task binding because the push sites mark them.
+    const runtimeBlocks = [
+      agent._appOwnedUserMessage(
+        '[COMPLETE THREAD READ REQUIRED: The user explicitly asked for the whole conversation, but the available read coverage is incomplete.]',
+        'plain_final_block',
+      ),
+      agent._appOwnedUserMessage(
+        '[PLAN EXECUTION BLOCK: This is an execute task, so plain text cannot end it.]',
+        'plan_execution_block',
+      ),
+    ];
+    if (typeof agent._standaloneIncompleteAnswerNudge === 'function') {
+      runtimeBlocks.push(agent._appOwnedUserMessage(
+        agent._standaloneIncompleteAnswerNudge(null),
+        'standalone_answer_recovery',
+      ));
+    }
+
+    for (const block of runtimeBlocks) {
+      messages.push(block);
+      assert.equal(agent._isAgentInjectedUserMessage(block), true,
+        `${label}: runtime block was not recognized as app-owned`);
+      assert.equal(agent._findActiveTaskIndex(messages), 1,
+        `${label}: runtime block replaced the genuine task`);
+      assert.equal(agent._progressTaskKeyHash(tabId), taskKey,
+        `${label}: runtime block changed the task hash`);
+    }
+
+    agent._markPlanExecutionToolCall(tabId, 'get_accessibility_tree', { success: true });
+    assert.equal(state.taskDrifted, false,
+      `${label}: runtime blocks caused false task drift`);
+    assert.equal(state.successfulTaskToolCalls, 1,
+      `${label}: evidence after a runtime block was discarded`);
+    assert.equal(agent._executionEvidenceSatisfied(state), true,
+      `${label}: a run was failed for drift the user never caused`);
+  }
+});
+
+test('bounded session recovery placeholders never outrank the preserved task', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const persistence = await import(pathToFileURL(
+      path.join(ROOT, `src/${label}/src/agent/conversation-persistence.js`),
+    ).href);
+    const messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Book the 9am flight to Boston and pay with the saved card.' },
+    ];
+    // A long tool loop pushes the task far outside the recent-message window,
+    // so reduceToBudget collapses the turns between it and the tail.
+    for (let turn = 0; turn < 40; turn++) {
+      messages.push({ role: 'assistant', content: 'x'.repeat(20_000) });
+      messages.push(agent._appOwnedUserMessage('[System nudge: keep going.]', 'runtime'));
+    }
+    const live = agent._activeTaskBinding(messages);
+    const snapshot = persistence.serializeConversationForSession(messages, {
+      maxBytes: 60_000,
+      preserveMessageIndices: live.pinnedIndices,
+    });
+    assert.equal(snapshot.compacted, true, `${label}: snapshot did not exercise the budget path`);
+
+    const restored = agent._activeTaskBinding(snapshot.messages);
+    assert.equal(restored.index, live.index,
+      `${label}: a collapsed placeholder outranked the preserved task after restart`);
+    assert.equal(restored.text, live.text,
+      `${label}: the restored task binding lost the genuine request`);
+    const placeholder = snapshot.messages.find(message => message?.role === 'user'
+      && /Earlier message omitted/.test(String(message.content || '')));
+    assert.ok(placeholder, `${label}: expected a collapsed user placeholder`);
+    assert.equal(agent._isAgentInjectedUserMessage(placeholder), true,
+      `${label}: the collapsed placeholder still carries task authority`);
+  }
+});
+
+test('long clarification chains keep the root request and stay bounded', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    const tabId = 8707 + index;
+    const messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Send the quarterly report to the finance team.' },
+    ];
+    agent.conversations.set(tabId, messages);
+
+    let previousLength = 0;
+    for (let round = 0; round < 20; round++) {
+      messages.push({
+        role: 'assistant',
+        content: `Which recipient should I use? (round ${round})`,
+        webbrainPlannerClarification: { requiresSubmission: true, pageUrl: '', taskText: '', taskKey: '' },
+      });
+      messages.push({ role: 'user', content: `Use recipient number ${round}@example.com please.` });
+      const binding = agent._activeTaskBinding(messages);
+      // The composite is re-serialized every round. Carrying the previous
+      // composite instead of the root request would re-escape its quotes and
+      // double the string on each pass.
+      assert.ok(binding.text.length < 4000,
+        `${AgentClass.name}: composite grew to ${binding.text.length} chars by round ${round}`);
+      assert.ok(binding.text.length >= previousLength || round > 0,
+        `${AgentClass.name}: composite shrank unexpectedly at round ${round}`);
+      previousLength = binding.text.length;
+    }
+
+    const binding = agent._activeTaskBinding(messages);
+    assert.match(binding.text, /quarterly report/,
+      `${AgentClass.name}: the original request was truncated out of the composite`);
+    assert.match(binding.text, /19@example\.com/,
+      `${AgentClass.name}: the latest clarification answer was dropped`);
+    assert.ok(agent._progressTaskKeyHash(tabId),
+      `${AgentClass.name}: a bounded composite must still hash to a task key`);
   }
 });
 
