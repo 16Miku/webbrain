@@ -79,9 +79,12 @@ read or app-seeded expected/classifier targets. Model-created rows—even one
 terminal row—cannot prove complete coverage. Form inventory v1 is the last
 exhaustive document-root snapshot (`filter: all`, not depth-truncated).
 Skipped required rows cannot prove success; optional (`required: false`)
-inventory rows may be skipped. Depth truncation is form-relevant (an omitted
-includable descendant), and empty or erroring third-party frames are not
-inventory documents. Checkbox/radio/Next actions stale completeness until a
+inventory rows may be skipped, and that flag is emitted only when optionality
+is explicit (`aria-required="false"`). Missing `required` stays unknown.
+Depth truncation is form-relevant (an omitted includable descendant). Empty
+or erroring third-party frames are omitted only when another frame already
+inventoried form controls; a lone failed cross-origin application frame stays
+incomplete. Checkbox/radio/Next actions stale completeness until a
 fresh root read. The executor receives the
 app-owned stages plus success and partial evidence contract. Edited plan-review
 text clears hidden workflow routing instead of retaining stale authorization.

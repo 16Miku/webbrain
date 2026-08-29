@@ -12269,9 +12269,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const selector = String(args?.selector || 'body').trim().slice(0, 500);
     const selectorComplete = this._workflowIframeInventorySelectorCoversControls(selector);
     const pageUrl = String(result?.pageUrl || result?.currentUrl || result?.url || '').trim();
-    const items = [];
-    const documents = {};
-    const seen = new Set();
+    const collected = [];
     for (const frame of (Array.isArray(result?.frames) ? result.frames : [])) {
       const frameUrl = String(frame?.url || '').slice(0, 1000);
       const frameId = Number(frame?.frameId);
@@ -12305,7 +12303,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             ? `name:${String(match.name).slice(0, 240)}|type:${type}|label:${label}`
             : `selector:${selector}|index:${Number(match?.matchIndex) || 0}|label:${label}`);
         const id = `workflow:${this._workflowInventoryFingerprint(`${bindingKey}|${documentScope}|${role}|${locator}`)}`;
-        if (seen.has(id) || frameItems.some(item => item.id === id)) continue;
+        if (frameItems.some(item => item.id === id)) continue;
         frameItems.push({
           id,
           label,
@@ -12322,15 +12320,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           },
         });
       }
-      // Omit only known-noise frames: erroring/truncated/failed, no form
-      // controls, and not application-scoped (urlFilter or same-site as the
-      // page). A failed application frame stays in documents so completeness
-      // cannot close from sibling frames alone.
       const noisy = !!frame?.error
         || frame?.truncated === true
         || (frame?.ok === false && matchCount !== 0);
+      collected.push({
+        frame,
+        frameUrl,
+        documentScope,
+        matches,
+        matchCount,
+        frameItems,
+        noisy,
+      });
+    }
+    const hasFormControls = collected.some(entry => entry.frameItems.length > 0);
+    const items = [];
+    const documents = {};
+    const seen = new Set();
+    for (const { frame, frameUrl, documentScope, matches, matchCount, frameItems, noisy } of collected) {
+      // Omit empty third-party noise only when another frame already
+      // inventoried form controls. If no frame produced controls, keep
+      // unclassified failed cross-origin frames incomplete — they may be
+      // the embedded application.
       if (frameItems.length === 0 && noisy
-          && !this._workflowIframeFrameIsApplicationScoped(frameUrl, pageUrl, args?.urlFilter)) {
+          && !this._workflowIframeFrameIsApplicationScoped(frameUrl, pageUrl, args?.urlFilter)
+          && hasFormControls) {
         continue;
       }
       const complete = selectorComplete
@@ -25775,7 +25789,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 else if (tag === 'select') value = String(el.options?.[el.selectedIndex]?.text || el.value || '');
                 else if ('value' in el) value = String(el.value || '');
                 else if (el.isContentEditable) value = String(el.textContent || '');
-                return {
+                const ariaRequired = String(el.getAttribute?.('aria-required') || '').trim().toLowerCase();
+                const match = {
                   matchIndex,
                   tag,
                   type,
@@ -25786,10 +25801,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   label: semanticLabel(el),
                   ariaLabel: String(el.getAttribute?.('aria-label') || ''),
                   placeholder: String(el.getAttribute?.('placeholder') || ''),
-                  required: !!(el.required || el.getAttribute?.('aria-required') === 'true'),
                   value: value.slice(0, 500),
                   text: String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 500),
                 };
+                if (el.required === true || ariaRequired === 'true') match.required = true;
+                else if (ariaRequired === 'false') match.required = false;
+                return match;
               });
               const el = all[0] || null;
               return {

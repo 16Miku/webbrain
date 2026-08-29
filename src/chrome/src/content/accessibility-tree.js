@@ -681,11 +681,11 @@
       || isEditableRoot(el)
       || ['textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton', 'listbox'].includes(inventoryRole);
     if (isInventoryFormControl) {
-      let required = false;
       try {
-        required = !!el.required || el.getAttribute('aria-required') === 'true';
+        const ariaRequired = String(el.getAttribute('aria-required') || '').trim().toLowerCase();
+        if (el.required === true || ariaRequired === 'true') line += ' required=true';
+        else if (ariaRequired === 'false') line += ' required=false';
       } catch {}
-      line += required ? ' required=true' : ' required=false';
     }
     if (inputType === 'checkbox' || inputType === 'radio') {
       line += ` checked=${el.checked ? 'true' : 'false'}`;
@@ -702,10 +702,13 @@
     // Truncated values also emit value_len and value_fp so verification can
     // bind the full app-owned string without putting it in the tree.
     const AX_VALUE_MAX_LEN = 60;
-    const axInventoryValue = (raw) => String(raw ?? '')
-      .replace(/\r\n?/g, '\n')
-      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
-      .trim();
+    const axInventoryValue = (raw) => {
+      let text = String(raw ?? '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+      try { text = text.normalize('NFKC'); } catch { /* ignore */ }
+      return text.trim();
+    };
     const axValueFingerprint = (text) => {
       let hash = 0x811c9dc5;
       const value = String(text || '');

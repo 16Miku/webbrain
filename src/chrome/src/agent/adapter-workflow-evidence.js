@@ -14,11 +14,15 @@
  *   mocked tests stay explicit, while production trees always emit the boolean.
  * - Successful reconciliation requires every required inventory row processed.
  *   Skip is allowed only when the inventory item is explicitly `required: false`.
- *   Accessibility-tree and iframe inventories emit that flag for form controls.
+ *   AX and iframe inventories emit `required=true` only for native or
+ *   `aria-required="true"` controls, and `required=false` only when
+ *   `aria-required="false"`. Missing `required` stays unknown and cannot skip.
  * - Checkbox, radio, click, and iframe-click actions stale the snapshot.
  *   Screenshots and other generic observations cannot restore completeness.
- * - Fail closed on form-relevant omission. Decorative depth and empty/erroring
- *   third-party frames are not inventory documents.
+ * - Fail closed on form-relevant omission. Decorative depth is not truncation.
+ *   Empty or erroring third-party frames are omitted only when another frame
+ *   already inventoried form controls. If no frame produced controls,
+ *   unclassified failed cross-origin frames stay incomplete.
  */
 
 export const WORKFLOW_INVENTORY_EXHAUSTIVE_FILTER = 'all';

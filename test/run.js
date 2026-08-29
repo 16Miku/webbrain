@@ -80356,15 +80356,17 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       ],
       selectedIndex: 1,
     }), 0);
-    assert.equal(nativeLine, 'combobox "Visibilité" [ref_choice_1] required=false value="Public"',
+    assert.equal(nativeLine, 'combobox "Visibilité" [ref_choice_1] value="Public"',
       `${label}: native select omitted its selected value`);
+    assert.doesNotMatch(nativeLine, /\brequired=/,
+      `${label}: a select without explicit optionality emitted required=`);
     const ariaLine = formatLine(control({
       tagName: 'DIV',
       role: 'combobox',
       name: '公開設定',
       attributes: { role: 'combobox', 'aria-valuetext': 'Public' },
     }), 0);
-    assert.equal(ariaLine, 'combobox "公開設定" [ref_choice_2] required=false value="Public"',
+    assert.equal(ariaLine, 'combobox "公開設定" [ref_choice_2] value="Public"',
       `${label}: ARIA combobox omitted its current value`);
     const titledLine = formatLine(control({
       tagName: 'INPUT',
@@ -80373,7 +80375,7 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       attributes: { type: 'text' },
       value: 'Launch Video',
     }), 0);
-    assert.equal(titledLine, 'textbox "Launch Video" [ref_choice_3] type="text" required=false value="Launch Video"',
+    assert.equal(titledLine, 'textbox "Launch Video" [ref_choice_3] type="text" value="Launch Video"',
       `${label}: text value equal to the accessible name was elided`);
     const longDescription = `${'Launch the product with a detailed description that exceeds sixty characters and must still verify.'}`;
     assert.ok(longDescription.length > 60);
@@ -80383,13 +80385,34 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       name: 'Description',
       value: longDescription,
     }), 0);
-    assert.match(descriptionLine, /required=false/);
+    assert.doesNotMatch(descriptionLine, /\brequired=/);
     assert.match(descriptionLine, new RegExp(`value="${longDescription.slice(0, 60).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.\\.\\."`),
       `${label}: long description was not truncated at the AX value cap`);
     assert.match(descriptionLine, new RegExp(`value_len=${longDescription.length}`),
       `${label}: truncated description omitted value_len`);
     assert.match(descriptionLine, /value_fp=[0-9a-f]{8}/,
       `${label}: truncated description omitted value_fp`);
+    const compatDescription = 'Launch the product with a ﬁne detailed description that exceeds sixty characters and must still verify.';
+    const nfkcDescription = compatDescription.normalize('NFKC');
+    assert.notEqual(compatDescription, nfkcDescription);
+    assert.ok(nfkcDescription.length > 60);
+    const compatLine = formatLine(control({
+      tagName: 'TEXTAREA',
+      role: 'textbox',
+      name: 'Description',
+      value: compatDescription,
+    }), 0);
+    assert.match(compatLine, new RegExp(`value="${nfkcDescription.slice(0, 60).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.\\.\\."`),
+      `${label}: compatibility-ligature value was not NFKC-normalized before truncation`);
+    assert.match(compatLine, new RegExp(`value_len=${nfkcDescription.length}`),
+      `${label}: value_len hashed the pre-NFKC compatibility string`);
+    let nfkcHash = 0x811c9dc5;
+    for (let i = 0; i < nfkcDescription.length; i++) {
+      nfkcHash ^= nfkcDescription.charCodeAt(i);
+      nfkcHash = Math.imul(nfkcHash, 0x01000193) >>> 0;
+    }
+    assert.match(compatLine, new RegExp(`value_fp=${nfkcHash.toString(16).padStart(8, '0')}`),
+      `${label}: value_fp hashed the pre-NFKC compatibility string`);
     const requiredLine = formatLine(control({
       tagName: 'INPUT',
       role: 'textbox',
@@ -80399,6 +80422,25 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       required: true,
     }), 0);
     assert.match(requiredLine, /required=true/, `${label}: required form control omitted required=true`);
+    const nativeRequiredLine = formatLine(control({
+      tagName: 'INPUT',
+      role: 'textbox',
+      name: 'Phone',
+      attributes: { type: 'tel' },
+      value: '555',
+      required: true,
+    }), 0);
+    assert.match(nativeRequiredLine, /required=true/,
+      `${label}: native required omitted required=true`);
+    const optionalLine = formatLine(control({
+      tagName: 'INPUT',
+      role: 'textbox',
+      name: 'Nickname',
+      attributes: { type: 'text', 'aria-required': 'false' },
+      value: '',
+    }), 0);
+    assert.match(optionalLine, /\brequired=false\b/,
+      `${label}: aria-required=false did not emit required=false`);
   }
 });
 
@@ -80695,6 +80737,16 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
     ), false, `${AgentClass.name}: a different long string sharing a short prefix verified`);
     assert.equal(agent._workflowAxValueMatchesExpected(`${'A'.repeat(10)}...`, 'A'.repeat(80)), false,
       `${AgentClass.name}: a 10-char truncated prefix accepted a longer string`);
+    const compatDescription = 'Launch the product with a ﬁne detailed description that exceeds sixty characters and must still verify.';
+    const nfkcDescription = agent._workflowMetadataValue(compatDescription);
+    assert.notEqual(compatDescription, nfkcDescription);
+    assert.ok(nfkcDescription.length > 60);
+    const nfkcFp = agent._workflowInventoryFingerprint(nfkcDescription);
+    assert.equal(agent._workflowAxValueMatchesExpected(
+      `${nfkcDescription.slice(0, 60)}...`,
+      compatDescription,
+      { valueLength: nfkcDescription.length, valueFp: nfkcFp },
+    ), true, `${AgentClass.name}: NFKC-normalized truncated metadata did not verify`);
     assert.equal(agent._workflowMetadataRequirementsMatchInventory(
       [{ field: 'title', value: 'Launch Video' }],
       evidence([{ label: 'Title', value: 'Launch Video', observationSequence: 2 }]),
@@ -80770,6 +80822,49 @@ test('optional inventory rows may skip and noisy frames do not block iframe comp
     ], 'required-skip-session');
     assert.equal(requiredSkip.ok, false,
       `${AgentClass.name}: skipping a required AX row passed reconciliation`);
+
+    const unknownTabId = tabId + 10;
+    agent.conversations.set(unknownTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Submit every form question.' },
+    ]);
+    agent._startPlanExecutionGuard(unknownTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(unknownTabId, { documentToken: 'unknown-required-document', pageUrl: formUrl });
+    const unknownInventory = agent._rememberWorkflowInventoryObservation(unknownTabId, 'get_accessibility_tree', {
+      filter: 'all',
+      maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value="Ada"',
+        'textbox "Company" [ref_co] value=""',
+      ].join('\n'),
+      treeRevision: 'tree-unknown-required',
+    });
+    const unknownName = unknownInventory.items.find(item => item.ref_id === 'ref_name');
+    const companyItem = unknownInventory.items.find(item => item.ref_id === 'ref_co');
+    assert.equal(companyItem?.required, undefined,
+      `${AgentClass.name}: a control without required= was treated as optional`);
+    agent._beginCompletionInvariant(unknownTabId);
+    agent._recordCompletionToolResult(unknownTabId, 'type_ax', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+    const unknownSkip = agent._validateWorkflowReconciliation(unknownTabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 2,
+      basis: 'Required name was processed; unmarked company skipped.',
+    }, [
+      { id: unknownName.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: companyItem.id, label: 'Company', status: 'skipped' },
+    ], 'unknown-required-skip-session');
+    assert.equal(unknownSkip.ok, false,
+      `${AgentClass.name}: skipping a control without required= passed reconciliation`);
 
     const pageUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
     const frameUrl = 'https://acme.wd1.myworkdayjobs.com/application/frame';
@@ -80877,6 +80972,39 @@ test('optional inventory rows may skip and noisy frames do not block iframe comp
       Object.values(failedAppObserved.documents).every(document => document.complete === true),
       false,
       `${AgentClass.name}: sibling frames closed inventory despite a failed application frame`,
+    );
+    const jobsPage = 'https://jobs.example.com/apply';
+    const workdayEmbed = 'https://frames.workday.com/app';
+    const onlyCrossOriginFailed = agent._workflowIframeFormInventory({
+      pageUrl: jobsPage,
+      frames: [{
+        frameId: 3,
+        ok: false,
+        error: 'Script injection failed',
+        url: workdayEmbed,
+        matches: [],
+      }],
+    }, 'bind', { selector: inventorySelector });
+    assert.equal(
+      onlyCrossOriginFailed.documents[`iframe:3:${workdayEmbed}`]?.complete,
+      false,
+      `${AgentClass.name}: a lone failed cross-origin application frame was omitted`,
+    );
+    const onlyAdsFailed = agent._workflowIframeFormInventory({
+      pageUrl: jobsPage,
+      frames: [{
+        frameId: 11,
+        ok: false,
+        error: 'Blocked a frame with origin "https://ads.example"',
+        url: 'https://ads.example/pixel',
+        truncated: true,
+        matches: [],
+      }],
+    }, 'bind', { selector: inventorySelector });
+    assert.equal(
+      onlyAdsFailed.documents['iframe:11:https://ads.example/pixel']?.complete,
+      false,
+      `${AgentClass.name}: a lone erroring ad frame was omitted when no form was inventoried`,
     );
   }
 });
