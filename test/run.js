@@ -81909,6 +81909,38 @@ test('iframe-backed application forms expose a complete trusted inventory and ex
       matchIndex: 2,
       text: 'US',
     }, { success: true, dispatched: true, verified: true });
+    assert.equal(guard.workflowInventoryEvidence.complete, false,
+      `${AgentClass.name}: iframe_type left a stale complete form inventory after a value-driven branch`);
+    const refreshedIframeInventory = agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
+      selector: inventorySelector,
+    }, {
+      success: true,
+      pageUrl,
+      frames: [
+        {
+          frameId: 7,
+          ok: true,
+          url: frameUrl,
+          matchCount: 3,
+          truncated: false,
+          matches: [
+            { tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: 'ada@example.com', matchIndex: 0 },
+            { tag: 'textarea', id: 'cover-letter', name: 'coverLetter', label: 'Cover letter', value: 'Cover letter body', matchIndex: 1 },
+            { tag: 'select', id: 'country', name: 'country', label: 'Country', value: 'US', matchIndex: 2 },
+          ],
+        },
+        {
+          frameId: 9,
+          ok: false,
+          url: 'https://acme.wd1.myworkdayjobs.com/application/helper-frame',
+          matchCount: 0,
+          truncated: false,
+          matches: [],
+        },
+      ],
+    });
+    assert.equal(refreshedIframeInventory?.complete, true,
+      `${AgentClass.name}: a fresh exhaustive iframe read did not restore form coverage after iframe_type`);
     const skippedIframeRows = inventory.items.map(item => ({
       id: item.id,
       label: item.label,
@@ -82851,6 +82883,21 @@ test('optional inventory rows may skip and noisy frames do not block iframe comp
     agent._recordCompletionToolResult(tabId, 'type_ax', {
       ref_id: 'ref_name', text: 'Ada',
     }, { success: true, dispatched: true, verified: true });
+    assert.equal(guard.workflowInventoryEvidence.complete, false,
+      `${AgentClass.name}: type_ax left a stale complete form inventory after a value-driven branch`);
+    const refreshedOptional = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all',
+      maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value="Ada"',
+        'textbox "Nickname" [ref_nick] required=false value=""',
+      ].join('\n'),
+      treeRevision: 'tree-optional-after-type',
+    });
+    assert.equal(refreshedOptional?.complete, true,
+      `${AgentClass.name}: a fresh exhaustive root read did not restore form coverage after type_ax`);
     const optionalSkip = agent._validateWorkflowReconciliation(tabId, {
       job: 'submit-form',
       coverageComplete: true,
@@ -82905,6 +82952,19 @@ test('optional inventory rows may skip and noisy frames do not block iframe comp
     agent._recordCompletionToolResult(unknownTabId, 'type_ax', {
       ref_id: 'ref_name', text: 'Ada',
     }, { success: true, dispatched: true, verified: true });
+    const refreshedUnknown = agent._rememberWorkflowInventoryObservation(unknownTabId, 'get_accessibility_tree', {
+      filter: 'all',
+      maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value="Ada"',
+        'textbox "Company" [ref_co] value=""',
+      ].join('\n'),
+      treeRevision: 'tree-unknown-required-after-type',
+    });
+    assert.equal(refreshedUnknown?.complete, true,
+      `${AgentClass.name}: a fresh exhaustive root read did not restore form coverage after type_ax`);
     const unknownSkip = agent._validateWorkflowReconciliation(unknownTabId, {
       job: 'submit-form',
       coverageComplete: true,
