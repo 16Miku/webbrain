@@ -78123,6 +78123,35 @@ test('false Ask-mode completions receive a focused Act recovery and honest termi
   }
 });
 
+test('reported application read-only state is not a WebBrain runtime-mode contradiction', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    const tabId = 8675 + index;
+    agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+    });
+    agent._markPlanExecutionToolCall(tabId, 'read_page', { success: true });
+    const report = 'This session is in read-only mode. Editing controls are disabled for this account.';
+    const drafted = 'Draft reply: “This session is in read-only mode.”';
+
+    assert.equal(agent._isRuntimeModeContradictionTerminal(report), false,
+      `${AgentClass.name}: observed application access state was treated as agent mode drift`);
+    assert.equal(agent._isRuntimeModeContradictionTerminal(drafted), false,
+      `${AgentClass.name}: drafted content was treated as agent mode drift`);
+    assert.equal(
+      agent._planOnlyTerminalDecision(tabId, report, { viaDone: true, outcome: 'success' }),
+      null,
+      `${AgentClass.name}: valid read-only state report was rejected after read evidence`,
+    );
+    assert.equal(
+      agent._isRuntimeModeContradictionTerminal('I am running in read-only mode, so I cannot complete the submission.'),
+      true,
+      `${AgentClass.name}: explicit self/runtime inability claim was no longer detected`,
+    );
+  }
+});
+
 test('execution recovery restates the active task and approved plan for read-only mode drift', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
@@ -78249,6 +78278,7 @@ test('repeated planner clarification answers keep their full task chain through 
       return {
         proceed: false,
         requestKind: 'clarify',
+        plannerClarification: true,
         requiresStateChange: false,
         requiresSubmission: false,
         message: clarificationCalls === 1
@@ -78339,6 +78369,45 @@ test('repeated planner clarification answers keep their full task chain through 
     const summary = messages.find(message => /Context window was trimmed/i.test(String(message?.content || '')));
     assert.match(String(summary?.content || ''), /clarification context[\s\S]*answer[\s\S]*CURRENT ACTIVE TASK/i,
       `${AgentClass.name}: compaction did not describe the clarified task chain as authoritative`);
+  }
+});
+
+test('planner error terminals do not bind the next user request as a clarification answer', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    const tabId = 8671 + index;
+    const priorTask = 'Schedule the weekly report.';
+    const strictFailure = agent._strictPlannerFailure(() => {});
+    const terminal = agent._plannerTerminalAssistantMessage(
+      strictFailure,
+      { tabUrl: 'https://example.test/reports' },
+      priorTask,
+      agent._progressTaskKeyForText(priorTask),
+    );
+    assert.equal(terminal.webbrainPlannerClarification, undefined,
+      `${AgentClass.name}: planner failure was marked as a genuine clarification question`);
+
+    const messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: priorTask },
+      terminal,
+      { role: 'user', content: 'Open the dashboard instead.' },
+    ];
+    agent.conversations.set(tabId, messages);
+    const binding = agent._activeTaskBinding(messages);
+    assert.equal(binding.text, 'Open the dashboard instead.',
+      `${AgentClass.name}: independent request was combined with a planner failure`);
+    assert.deepEqual(binding.pinnedIndices, [3],
+      `${AgentClass.name}: planner failure retained stale task authority`);
+
+    const genuine = agent._plannerTerminalAssistantMessage({
+      requestKind: 'clarify',
+      plannerClarification: true,
+      requiresSubmission: false,
+      message: 'Which day?',
+    }, { tabUrl: 'https://example.test/reports' }, priorTask, agent._progressTaskKeyForText(priorTask));
+    assert.equal(genuine.webbrainPlannerClarification?.taskText, priorTask,
+      `${AgentClass.name}: genuine planner question lost clarification metadata`);
   }
 });
 
@@ -96592,6 +96661,7 @@ test('planner input: active prior task and pending draft survive long tool chatt
       { role: 'user', content: 'Fill these answers and submit the form.' },
       agent._plannerTerminalAssistantMessage({
         requestKind: 'clarify',
+        plannerClarification: true,
         requiresSubmission: true,
         message: 'What should I use for the final answer?',
       }, { tabUrl: 'https://example.test/application' }),

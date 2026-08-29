@@ -12776,7 +12776,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       role: 'assistant',
       content: gate.message || 'More information is required.',
     };
-    if (gate.requestKind === 'clarify') {
+    if (gate.requestKind === 'clarify' && gate.plannerClarification === true) {
       message.webbrainPlannerClarification = {
         requiresSubmission: gate.requiresSubmission === true,
         pageUrl: String(tabInfo?.tabUrl || ''),
@@ -13243,6 +13243,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           message: this._plannerTerminalMessage(plan),
           reason: plan.request_kind,
           requestKind: plan.request_kind,
+          plannerClarification: plan.request_kind === 'clarify',
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
@@ -13487,6 +13488,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           message: this._plannerTerminalMessage(plan),
           reason: plan.request_kind,
           requestKind: plan.request_kind,
+          plannerClarification: plan.request_kind === 'clarify',
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
@@ -18335,7 +18337,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _isRuntimeModeContradictionTerminal(content) {
-    return /\b(?:switch|change|set)\s+(?:back\s+)?to\s+act\s+mode\b|\b(?:currently|still|now)\s+(?:running\s+)?in\s+ask\s+mode\b|\b(?:this|the)\s+(?:session|run)\s+is\s+(?:in\s+)?read[- ]only\s+mode\b|\b(?:running|working|operating)\s+in\s+(?:a\s+)?read[- ]only\s+(?:mode|session)\b/i.test(String(content || ''));
+    const text = String(content || '');
+    const modeClaim = /\b(?:ask\s+mode|read[- ]only\s+(?:mode|session))\b/i.test(text);
+    const selfInability = /\b(?:i|we)\s+(?:cannot|can't|could\s+not|am\s+unable|are\s+unable|am\s+not\s+able|are\s+not\s+able|do\s+not\s+have|don't\s+have|can\s+only|am\s+not\s+permitted|are\s+not\s+permitted)\b/i.test(text);
+    const runtimeInability = /\b(?:webbrain|the\s+agent|this\s+run|the\s+runtime)\b[^.!?\n]{0,120}\b(?:cannot|can't|could\s+not|is\s+unable|is\s+not\s+able|does\s+not\s+have|is\s+not\s+permitted)\b/i.test(text);
+    const explicitModeSwitchBlocker = /\b(?:switch|change|set)\s+(?:back\s+)?to\s+act\s+mode\b[^.!?\n]{0,100}\b(?:to|before)\s+(?:continue|proceed|complete|execute|use\s+(?:the\s+)?tools?)\b/i.test(text);
+    return (modeClaim && (selfInability || runtimeInability)) || explicitModeSwitchBlocker;
   }
 
   _planOnlyTerminalDecision(tabId, content, { viaDone = false, outcome = null } = {}) {
