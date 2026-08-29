@@ -648,6 +648,7 @@ export default {
   'st.display.scheduled_confirm.label': '确认定时敏感操作',
   'st.display.scheduled_confirm.desc': '开启后，无人值守的定时运行在执行敏感操作前仍会停下来请求权限。仅当你完全信任定时任务可自主操作时才关闭。',
   'st.provider.field.context_window': '上下文窗口（token 数）',
+  'st.provider.field.max_output_tokens': '最大输出（token 数）',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': '斜杠命令',

@@ -648,6 +648,7 @@ export default {
   'st.display.scheduled_confirm.label': 'Подтверждать важные действия в запланированных задачах',
   'st.display.scheduled_confirm.desc': 'При включении запланированные задачи без наблюдения всё равно останавливаются для запроса разрешения перед важными действиями. Отключайте только в том случае, если доверяете запланированным задачам действовать без этих запросов.',
   'st.provider.field.context_window': 'Окно контекста (токены)',
+  'st.provider.field.max_output_tokens': 'Максимальный вывод (токены)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'Команды со слешем',

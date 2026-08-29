@@ -632,6 +632,7 @@ export default {
   'st.display.scheduled_confirm.label': 'Підтверджувати важливі заплановані дії',
   'st.display.scheduled_confirm.desc': 'Коли увімкнено, автономні заплановані запуски все одно зупиняються для отримання дозволу перед важливими діями. Вимикайте лише якщо довіряєте запланованим завданням діяти без таких запитів.',
   'st.provider.field.context_window': 'Вікно контексту (токени)',
+  'st.provider.field.max_output_tokens': 'Максимальний вивід (токени)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'Команди зі слешем',

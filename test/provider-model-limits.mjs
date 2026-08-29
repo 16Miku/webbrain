@@ -28,8 +28,12 @@ for (const browser of ['chrome', 'firefox']) {
 
   const settings = fs.readFileSync(path.join(prefix, 'ui', 'settings.js'), 'utf8');
   assert.match(settings, /const MAX_OUTPUT_TOKENS_FIELD = \{[\s\S]*?key: 'maxOutputTokens'/, `${browser}: max output field missing`);
+  assert.match(settings, /labelKey: 'st\.provider\.field\.max_output_tokens'/, `${browser}: max output field label is not translatable`);
   assert.match(settings, /if \(!keys\.has\('contextWindow'\)\) definition\.fields\.push\(CONTEXT_WINDOW_FIELD\)/, `${browser}: context window is not exposed globally`);
   assert.match(settings, /if \(!keys\.has\('maxOutputTokens'\)\) definition\.fields\.push\(MAX_OUTPUT_TOKENS_FIELD\)/, `${browser}: max output is not exposed globally`);
+
+  const enLocale = fs.readFileSync(path.join(prefix, 'ui', 'locales', 'en.js'), 'utf8');
+  assert.match(enLocale, /'st\.provider\.field\.max_output_tokens': 'Max output \(tokens\)'/, `${browser}: max output label key missing from en locale`);
 
   const agent = fs.readFileSync(path.join(prefix, 'agent', 'agent.js'), 'utf8');
   assert.match(agent, /const mainMaxTokens = this\._providerMaxOutputTokens\(provider\)/, `${browser}: provider output budget is not resolved`);

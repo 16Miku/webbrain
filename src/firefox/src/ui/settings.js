@@ -1887,7 +1887,7 @@ const CONTEXT_WINDOW_FIELD = {
 
 const MAX_OUTPUT_TOKENS_FIELD = {
   key: 'maxOutputTokens',
-  label: 'Max output (tokens)',
+  labelKey: 'st.provider.field.max_output_tokens',
   type: 'number',
   placeholder: '4096',
   min: 1,

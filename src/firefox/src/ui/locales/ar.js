@@ -632,6 +632,7 @@ export default {
   'st.display.scheduled_confirm.label': 'تأكيد الإجراءات المجدوَلة ذات الأثر',
   'st.display.scheduled_confirm.desc': 'عند التفعيل، تتوقّف التشغيلات المجدوَلة غير المراقَبة للحصول على إذن قبل الإجراءات ذات الأثر. عطِّله فقط إذا كنت تثق بالمهام المجدوَلة للعمل دون تلك المطالبات.',
   'st.provider.field.context_window': 'نافذة السياق (رموز)',
+  'st.provider.field.max_output_tokens': 'الحد الأقصى للإخراج (رموز)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'أوامر الشرطة المائلة',
