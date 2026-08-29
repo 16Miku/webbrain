@@ -17,7 +17,8 @@
  *   AX and iframe inventories emit `required=true` only for native or
  *   `aria-required="true"` controls, and `required=false` only when
  *   `aria-required="false"`. Missing `required` stays unknown and cannot skip.
- * - Checkbox, radio, click, and iframe-click actions stale the snapshot.
+ * - Checkbox, radio, click, iframe-click, and successful value mutations
+ *   (`type_ax`, `set_field`, `iframe_type`) stale the snapshot.
  *   Screenshots and other generic observations cannot restore completeness.
  * - Fail closed on form-relevant omission. Decorative depth is not truncation.
  *   Empty or erroring third-party frames are omitted only when another frame
@@ -33,6 +34,9 @@ export const WORKFLOW_FORM_STRUCTURE_TOOLS = Object.freeze([
   'click',
   'set_checked',
   'iframe_click',
+  'type_ax',
+  'set_field',
+  'iframe_type',
 ]);
 
 export function isWorkflowInventoryContinuationPending(result = {}) {

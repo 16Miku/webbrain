@@ -7542,7 +7542,9 @@ test('adapter workflow evidence kernel is bounded and mirrored', () => {
   assert.equal(shouldInvalidateFormInventoryAfterAction('set_checked'), true);
   assert.equal(shouldInvalidateFormInventoryAfterAction('click_ax'), true);
   assert.equal(shouldInvalidateFormInventoryAfterActionFx('iframe_click'), true);
-  assert.equal(shouldInvalidateFormInventoryAfterAction('type_ax'), false);
+  assert.equal(shouldInvalidateFormInventoryAfterAction('type_ax'), true);
+  assert.equal(shouldInvalidateFormInventoryAfterAction('set_field'), true);
+  assert.equal(shouldInvalidateFormInventoryAfterActionFx('iframe_type'), true);
   assert.equal(shouldInvalidateFormInventoryAfterAction('screenshot'), false);
   assert.equal(shouldInvalidateFormInventoryAfterAction('get_accessibility_tree'), false);
 
@@ -81661,6 +81663,44 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     });
     assert.equal(refreshedInventory?.complete, true,
       `${AgentClass.name}: a fresh exhaustive root read did not restore form coverage`);
+    const restoreCompleteInventory = (revision) => agent._rememberWorkflowInventoryObservation(
+      tabId,
+      'get_accessibility_tree',
+      {},
+      {
+        success: true,
+        pageContent: [
+          'textbox "Full name" [ref_name] value="Ada"',
+          'checkbox "Accept terms" [ref_terms]',
+          'button "Upload résumé" [ref_resume] type="file"',
+          'button "Submit" [ref_submit] type="submit"',
+        ].join('\n'),
+        treeRevision: revision,
+      },
+    );
+    agent._recordCompletionToolResult(tabId, 'type_ax', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+    assert.equal(guard.workflowInventoryEvidence.complete, false,
+      `${AgentClass.name}: type_ax left a stale complete form inventory after a value-driven branch`);
+    assert.equal(restoreCompleteInventory('tree-after-type-ax')?.complete, true);
+    agent._recordCompletionToolResult(tabId, 'set_field', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+    assert.equal(guard.workflowInventoryEvidence.complete, false,
+      `${AgentClass.name}: set_field left a stale complete form inventory after a value-driven branch`);
+    assert.equal(restoreCompleteInventory('tree-after-set-field')?.complete, true);
+    agent._recordCompletionToolResult(tabId, 'iframe_type', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+    assert.equal(guard.workflowInventoryEvidence.complete, false,
+      `${AgentClass.name}: iframe_type left a stale complete form inventory after a value-driven branch`);
+    assert.equal(restoreCompleteInventory('tree-after-iframe-type')?.complete, true);
+    agent._recordCompletionToolResult(tabId, 'type_ax', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: false });
+    assert.equal(guard.workflowInventoryEvidence.complete, true,
+      `${AgentClass.name}: a failed type_ax invalidated form coverage`);
 
     const terminalOnly = agent._progressUpdate(tabId, { items: terminalInventoryItems });
     assert.equal(terminalOnly.success, true);

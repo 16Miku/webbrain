@@ -47,6 +47,7 @@ This changelog was generated from the repository Git history and release tags. V
 - GitHub, LinkedIn, and Douyin publish success now requires the classifier-bound tag, title, notes, body, or visibility on the published resource, not only a re-observed URL
 - A complete empty GitHub `resolve-review-threads` inventory can reconcile as a no-op when no unresolved threads exist
 - Gmail inline thread replies resolve To/Cc/Bcc chips from the enclosing reply container when the composer is not inside a dialog or form
+- Successful `type_ax`, `set_field`, and `iframe_type` mutations stale a complete form inventory so value-driven branching cannot reconcile against the prior snapshot
 
 ## [33.4.1] - 2026-08-27
 
