@@ -691,6 +691,7 @@ export default {
   "st.provider.field.model": "מודל",
   "st.provider.field.model_optional": "מודל (אופציונלי)",
   "st.provider.field.context_window": "חלון הקשר (אסימונים)",
+  "st.provider.field.max_output_tokens": "פלט מקסימלי (אסימונים)",
   "st.provider.field.supports_vision": "הדגם תומך בראייה (מולטימודאלי)",
   'st.provider.field.vision_auto': 'אוטומטי',
   'st.provider.field.vision_force_on': 'הפעלה מאולצת',

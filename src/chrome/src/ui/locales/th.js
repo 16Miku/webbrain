@@ -648,6 +648,7 @@ export default {
   'st.display.scheduled_confirm.label': 'ยืนยันการดำเนินการสำคัญของงานที่ตั้งเวลาไว้',
   'st.display.scheduled_confirm.desc': 'เมื่อเปิดใช้งาน การรันที่ตั้งเวลาไว้โดยไม่มีผู้ดูแลจะยังหยุดเพื่อขอสิทธิ์ก่อนดำเนินการสำคัญ ปิดเฉพาะเมื่อคุณไว้วางใจงานที่ตั้งเวลาให้ดำเนินการโดยไม่ต้องถาม',
   'st.provider.field.context_window': 'หน้าต่างบริบท (โทเค็น)',
+  'st.provider.field.max_output_tokens': 'เอาต์พุตสูงสุด (โทเค็น)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'คำสั่ง Slash',

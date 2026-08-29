@@ -2283,6 +2283,15 @@ const CONTEXT_WINDOW_FIELD = {
   step: 1024,
 };
 
+const MAX_OUTPUT_TOKENS_FIELD = {
+  key: 'maxOutputTokens',
+  labelKey: 'st.provider.field.max_output_tokens',
+  type: 'number',
+  placeholder: '4096',
+  min: 1,
+  step: 1024,
+};
+
 const INPUT_COST_ESTIMATE_FIELD =
   { key: 'inputCostPerMillionUsd', labelKey: 'st.provider.field.input_cost_per_million', type: 'number', placeholder: '3.00' };
 const CACHE_READ_COST_ESTIMATE_FIELD =
@@ -2970,6 +2979,15 @@ function renderProviders() {
     if (config.category === 'router' || config.category === 'local') fields.push(PROMPT_TIER_FIELD);
     fields.push(...COST_ESTIMATE_FIELDS);
     providerConfigs[id] = { fields };
+  }
+
+  // Model limits are portable provider settings, not local-runtime-only
+  // details. Keep them optional and expose them on every configurable card.
+  for (const [id, definition] of Object.entries(providerConfigs)) {
+    if (id === 'webbrain_cloud' || !Array.isArray(definition.fields)) continue;
+    const keys = new Set(definition.fields.map(field => field.key));
+    if (!keys.has('contextWindow')) definition.fields.push(CONTEXT_WINDOW_FIELD);
+    if (!keys.has('maxOutputTokens')) definition.fields.push(MAX_OUTPUT_TOKENS_FIELD);
   }
 
   providersContainer.appendChild(renderProviderFilterBar());

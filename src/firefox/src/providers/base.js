@@ -1,4 +1,4 @@
-import { inferContextWindow } from './context-windows.js';
+import { inferContextWindow, resolveMaxOutputTokens } from './context-windows.js';
 import {
   addConfiguredMaxTokens,
   mapProviderMessages,
@@ -126,6 +126,16 @@ export class BaseLLMProvider {
     const n = Number(this.config.contextWindow);
     if (Number.isFinite(n) && n > 0) return n;
     return inferContextWindow(this.config);
+  }
+
+  /**
+   * Maximum tokens requested for a normal model generation. Providers may
+   * expose a larger budget in Settings; that value is clamped to the selected
+   * model's known output ceiling when we have one. Legacy configurations
+   * retain the historical 4k request cap.
+   */
+  get maxOutputTokens() {
+    return resolveMaxOutputTokens(this.config);
   }
 
   /**

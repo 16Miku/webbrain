@@ -716,6 +716,7 @@ export default {
   'st.provider.field.model': 'Modell',
   'st.provider.field.model_optional': 'Modell (optional)',
   'st.provider.field.context_window': 'Kontextfenster (Tokens)',
+  'st.provider.field.max_output_tokens': 'Maximale Ausgabe (Tokens)',
   'st.provider.field.supports_vision': 'Modell unterstützt Vision (multimodal)',
   'st.provider.field.vision_auto': 'Automatisch',
   'st.provider.field.vision_force_on': 'Erzwingen',

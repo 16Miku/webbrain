@@ -632,6 +632,7 @@ export default {
   'st.display.scheduled_confirm.label': 'Confirmer les actions importantes des tâches planifiées',
   'st.display.scheduled_confirm.desc': 'Lorsque cette option est activée, les exécutions planifiées sans surveillance s\'arrêtent quand même pour demander une autorisation avant les actions importantes. Désactivez-la uniquement si vous faites confiance aux tâches planifiées pour agir sans ces confirmations.',
   'st.provider.field.context_window': 'Fenêtre de contexte (tokens)',
+  'st.provider.field.max_output_tokens': 'Sortie maximale (tokens)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'Commandes slash',

@@ -532,6 +532,7 @@ export default {
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (opcjonalnie)',
   'st.provider.field.context_window': 'Okno kontekstu (tokeny)',
+  'st.provider.field.max_output_tokens': 'Maksymalne wyjście (tokeny)',
   'st.provider.field.supports_vision': 'Model obsługuje wizję (multimodalność)',
   'st.provider.field.vision_auto': 'Automatycznie',
   'st.provider.field.vision_force_on': 'Wymuś włączenie',

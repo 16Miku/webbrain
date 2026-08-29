@@ -648,6 +648,7 @@ export default {
   'st.display.scheduled_confirm.label': 'スケジュールされた重要なアクションを確認する',
   'st.display.scheduled_confirm.desc': 'オンにすると、無人のスケジュール実行でも重要なアクションの前に権限確認のために停止します。スケジュールタスクが確認なしに動作することを信頼できる場合のみオフにしてください。',
   'st.provider.field.context_window': 'コンテキストウィンドウ（トークン）',
+  'st.provider.field.max_output_tokens': '最大出力（トークン）',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': 'スラッシュコマンド',

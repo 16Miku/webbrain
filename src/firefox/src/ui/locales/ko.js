@@ -632,6 +632,7 @@ export default {
   'st.display.scheduled_confirm.label': '예약된 중요 작업 전 확인',
   'st.display.scheduled_confirm.desc': '켜져 있으면 무인 예약 실행도 중요한 작업 전에 권한을 요청하고 멈춥니다. 예약된 작업이 해당 프롬프트 없이 동작하는 것을 신뢰하는 경우에만 끄세요.',
   'st.provider.field.context_window': '컨텍스트 창 (토큰)',
+  'st.provider.field.max_output_tokens': '최대 출력 (토큰)',
 
   // --- Slash commands & compact feedback (added) ---
   'sp.slash.commands_label': '슬래시 명령어',

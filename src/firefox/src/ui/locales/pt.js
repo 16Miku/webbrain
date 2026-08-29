@@ -765,6 +765,7 @@ export default {
   'st.provider.field.model': "Modelo",
   'st.provider.field.model_optional': "Modelo (opcional)",
   'st.provider.field.context_window': "Janela de contexto (tokens)",
+  'st.provider.field.max_output_tokens': "Saída máxima (tokens)",
   'st.provider.field.supports_vision': "Modelo apoia visão (multimodal)",
   'st.provider.field.vision_auto': 'Automático',
   'st.provider.field.vision_force_on': 'Forçar ativação',
