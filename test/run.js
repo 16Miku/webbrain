@@ -79634,7 +79634,7 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     }, {
       success: true,
       dispatched: true,
-      attachmentState: 'input_attached',
+      attachmentState: 'page_consumed',
       attached: { name: 'cover.pdf', size: 96 },
       uploadTarget: {
         selector: '#cover-upload',
@@ -79645,6 +79645,11 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     });
     assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 2,
       `${AgentClass.name}: exact multi-upload targets did not prove their own inventory rows`);
+    assert.equal(
+      multiUploadGuard.workflowControlActionEvidence?.[multiCover.id]?.attachmentState,
+      'page_consumed',
+      `${AgentClass.name}: an exact async-consumed upload lost its per-control evidence`,
+    );
 
     const terminalOnly = agent._progressUpdate(tabId, { items: terminalInventoryItems });
     assert.equal(terminalOnly.success, true);
@@ -79954,6 +79959,80 @@ test('GitHub review-thread workflow inventories only unresolved thread controls'
     assert.equal(inventory?.itemCount, 2, `${AgentClass.name}: unresolved thread controls were not the exact inventory`);
     assert.deepEqual(inventory.items.map(item => item.ref_id), ['ref_resolve_1', 'ref_resolve_2']);
     assert.ok(inventory.items.every(item => item.label === 'Resolve conversation'));
+  }
+});
+
+test('accessibility trees surface native and ARIA metadata choice values', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/content/accessibility-tree.js'],
+    ['firefox', 'src/firefox/src/content/accessibility-tree.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const nameStart = source.indexOf('function getAccessibleName(el)');
+    const nameEnd = source.indexOf('\n  function isVisible(', nameStart);
+    const formatStart = source.indexOf('function formatLine(el, depth)');
+    const formatEnd = source.indexOf('\n\n  function formatOption(', formatStart);
+    assert.ok(nameStart >= 0 && nameEnd > nameStart && formatStart >= 0 && formatEnd > formatStart);
+
+    const getAccessibleName = vm.runInNewContext(`(${source.slice(nameStart, nameEnd)}\n)`, {
+      MAX_NAME_LEN: 180,
+      getSiteInteractionDescriptor: () => null,
+      document: { getElementById: () => null, querySelector: () => null },
+      CSS: { escape: value => value },
+    });
+    const labelledSelect = {
+      tagName: 'SELECT',
+      id: '',
+      options: [{ textContent: 'Public' }],
+      selectedIndex: 0,
+      getAttribute: name => (name === 'aria-label' ? 'Visibilité' : null),
+      querySelector: () => null,
+      closest: () => null,
+      labels: [],
+    };
+    assert.equal(getAccessibleName(labelledSelect), 'Visibilité',
+      `${label}: native select value displaced its field label`);
+
+    let refSequence = 0;
+    const formatLine = vm.runInNewContext(`(${source.slice(formatStart, formatEnd)})`, {
+      MAX_NAME_LEN: 180,
+      getRole: element => element.role,
+      getAccessibleName: element => element.name,
+      getOrMintRef: () => `ref_choice_${++refSequence}`,
+      isEditableRoot: () => false,
+    });
+    const control = ({ tagName, role, name, attributes = {}, value = undefined, options = [] }) => ({
+      tagName,
+      role,
+      name,
+      value,
+      options,
+      selectedIndex: options.length ? 0 : -1,
+      innerText: '',
+      textContent: '',
+      checked: false,
+      disabled: false,
+      getAttribute: attribute => attributes[attribute] ?? null,
+      hasAttribute: attribute => Object.prototype.hasOwnProperty.call(attributes, attribute),
+      matches: () => false,
+      querySelector: selector => (selector === 'option[selected]' ? null : null),
+    });
+    const nativeLine = formatLine(control({
+      tagName: 'SELECT',
+      role: 'combobox',
+      name: 'Visibilité',
+      options: [{ textContent: 'Public' }],
+    }), 0);
+    assert.equal(nativeLine, 'combobox "Visibilité" [ref_choice_1] value="Public"',
+      `${label}: native select omitted its selected value`);
+    const ariaLine = formatLine(control({
+      tagName: 'DIV',
+      role: 'combobox',
+      name: '公開設定',
+      attributes: { role: 'combobox', 'aria-valuetext': 'Public' },
+    }), 0);
+    assert.equal(ariaLine, 'combobox "公開設定" [ref_choice_2] value="Public"',
+      `${label}: ARIA combobox omitted its current value`);
   }
 });
 

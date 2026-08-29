@@ -271,14 +271,6 @@
     const siteInteraction = getSiteInteractionDescriptor(el);
     if (siteInteraction) return siteInteraction.name;
 
-    // <select> — prefer the currently selected option's label.
-    if (tag === 'select') {
-      const opt = el.querySelector('option[selected]') || (el.options && el.options[el.selectedIndex]);
-      if (opt && opt.textContent && opt.textContent.trim()) {
-        return opt.textContent.trim();
-      }
-    }
-
     const ariaLabel = el.getAttribute('aria-label');
     if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
 
@@ -343,6 +335,16 @@
           : wrappingText;
       }
     } catch {}
+
+    // A native select's accessible name is its associated field label. Only
+    // fall back to the selected option when the control has no label; the
+    // selected option is emitted separately as its current value.
+    if (tag === 'select') {
+      const opt = el.querySelector('option[selected]') || (el.options && el.options[el.selectedIndex]);
+      if (opt && opt.textContent && opt.textContent.trim()) {
+        return opt.textContent.trim();
+      }
+    }
 
     if (tag === 'input') {
       const t = (el.getAttribute('type') || '').toLowerCase();
@@ -629,6 +631,7 @@
     const role = getRole(el);
     let name = getAccessibleName(el);
     const ref = getOrMintRef(el);
+    const tag = el.tagName.toLowerCase();
 
     let line = ' '.repeat(depth) + role;
     if (name) {
@@ -668,7 +671,6 @@
     // Checkbox/radio state is an action-critical value, not decorative
     // metadata. Without it the model has to infer state from a focus ring or
     // screenshot and can accidentally toggle a control back off.
-    const tag = el.tagName.toLowerCase();
     const inputType = tag === 'input'
       ? (el.getAttribute('type') || 'text').toLowerCase()
       : '';
@@ -701,6 +703,34 @@
       if (v && v !== name) {
         const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
         line += ' value="' + trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+      }
+    } else {
+      const roleAttr = (el.getAttribute('role') || '').toLowerCase();
+      if (tag === 'select' || ['combobox', 'listbox'].includes(roleAttr)) {
+        let v = '';
+        if (tag === 'select') {
+          const selected = el.querySelector('option[selected]')
+            || (el.options && el.options[el.selectedIndex]);
+          v = String(selected?.textContent || '').replace(/\s+/g, ' ').trim();
+        } else {
+          v = String(
+            el.getAttribute('aria-valuetext')
+            || el.getAttribute('aria-valuenow')
+            || (el.value == null ? '' : el.value),
+          ).replace(/\s+/g, ' ').trim();
+          if (!v) {
+            let selected = null;
+            try {
+              selected = el.querySelector('[aria-selected="true"],[role="option"][data-selected="true"]');
+            } catch {}
+            v = String(selected?.innerText || selected?.textContent || '').replace(/\s+/g, ' ').trim();
+          }
+          if (!v) v = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+        }
+        if (v) {
+          const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
+          line += ' value="' + trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+        }
       }
     }
 

@@ -10097,7 +10097,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && ['click_ax', 'iframe_click'].includes(name)
       && result?.dispatched !== false;
     const verifiedUpload = name === 'upload_file'
-      && result?.attachmentState === 'input_attached'
+      && ['input_attached', 'page_consumed'].includes(result?.attachmentState)
       && !!result?.attached?.name;
     const directVerified = item.type === 'file'
       ? verifiedUpload
@@ -10113,6 +10113,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       tool: name,
       actionSequence,
       directVerified: true,
+      ...(name === 'upload_file' ? { attachmentState: result.attachmentState } : {}),
     };
     guard.workflowControlActionEvidence[item.id] = proof;
     return proof;

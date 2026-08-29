@@ -12295,7 +12295,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && ['click_ax', 'iframe_click'].includes(name)
       && result?.dispatched !== false;
     const verifiedUpload = name === 'upload_file'
-      && result?.attachmentState === 'input_attached'
+      && ['input_attached', 'page_consumed'].includes(result?.attachmentState)
       && !!result?.attached?.name;
     const directVerified = item.type === 'file'
       ? verifiedUpload
@@ -12311,6 +12311,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       tool: name,
       actionSequence,
       directVerified: true,
+      ...(name === 'upload_file' ? { attachmentState: result.attachmentState } : {}),
     };
     guard.workflowControlActionEvidence[item.id] = proof;
     return proof;
@@ -26074,9 +26075,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             success: true,
             file: attachmentPayload.filename,
             attachmentId: String(args.attachmentId),
+            attached: { name: attachmentPayload.filename, size: attachmentPayload.size },
             verified: false,
             attachmentState: 'page_consumed',
             remoteStateVerified: false,
+            ...(workflowUploadTarget ? { uploadTarget: workflowUploadTarget } : {}),
             note: `The exact user-attached file bytes were dispatched, but the input is now empty or unreadable. An async uploader may already have consumed "${attachmentPayload.filename}"; this does not prove a remote upload or form submission, so verify it appears on the page before retrying.`,
           };
         }
@@ -26155,9 +26158,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             return {
               success: true,
               file: args.filePath,
+              attached: { name: basename, size: Number(probe?.size) || 0 },
               verified: false,
               attachmentState: 'page_consumed',
               remoteStateVerified: false,
+              ...(workflowUploadTarget ? { uploadTarget: workflowUploadTarget } : {}),
               note: `The page consumed the file input, but upload_file does not prove a remote upload or form submission. Confirm "${basename}" appears attached via get_accessibility_tree, then submit/commit the page when the task requires it. Only retry if the file is genuinely missing.`,
             };
           }
@@ -26192,9 +26197,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return {
           success: true,
           file: args.filePath,
+          attached: { name: basename, size: Number(probe?.size) || 0 },
           verified: false,
           attachmentState: 'page_consumed',
           remoteStateVerified: false,
+          ...(workflowUploadTarget ? { uploadTarget: workflowUploadTarget } : {}),
           note: 'The local file was readable and the page handled the attachment event, but upload_file could not read the resulting FileList. This does not prove a remote upload or form submission; verify the page state and submit/commit when required.',
         };
       } catch (e) {
