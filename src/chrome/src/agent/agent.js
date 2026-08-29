@@ -101,6 +101,7 @@ import {
   unsupportedVisionGenerationControl,
   visionGenerationOptions,
 } from '../providers/provider-compatibility.js';
+import { resolveMaxOutputTokens } from '../providers/context-windows.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
 import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
@@ -12395,8 +12396,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _providerMaxOutputTokens(provider, fallback = 4096) {
-    const n = Number(provider?.maxOutputTokens ?? provider?.config?.maxOutputTokens);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+    const config = provider?.config && typeof provider.config === 'object'
+      ? { ...provider.config, model: provider.model || provider.config.model }
+      : (provider || {});
+    return resolveMaxOutputTokens(config, fallback);
   }
 
   async _tracePlannerAttemptRequest(runId, step, provider, messages, phase, attempt, runtimeMode) {
