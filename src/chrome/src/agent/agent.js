@@ -15193,6 +15193,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && plan.completion_requirement_correction === 'download_requires_state_change'
         ? false
         : plan.requires_state_change === true;
+      // A reviewed-text edit that changes the Steps section materially
+      // re-scopes the operation (for example turning a 12306 booking plan into
+      // search-only steps). Keep the app-owned workflow contract only when the
+      // approved steps are unchanged; otherwise reclassify so the stale job's
+      // stateChange/requiresSubmission cannot re-inject a commit or payment
+      // contract the edited plan no longer requests.
+      const approvedSiteWorkflow = approvedPlanEdited && approvedReadScopeStepsChanged
+        ? null
+        : await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, plan);
       const approvedScratchpadText = formatPlanScratchpad(plan, approvedText, canonicalVerboseMarkdown);
       this._armReadCompletenessFromPlan(tabId, { request_kind: 'execute', read_scope: approvedReadScope });
       return {
@@ -15209,7 +15218,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: approvedSchedulingTool,
-        siteWorkflow: await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, plan),
+        siteWorkflow: approvedSiteWorkflow,
         requiresDownload: approvedRequiresDownload,
         expectedItems: approvedExpectedItems,
         ...approvedProgressLedger,

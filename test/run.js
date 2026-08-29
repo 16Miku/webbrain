@@ -83329,6 +83329,74 @@ test('reviewed plan wording edits keep a live site-workflow contract', async () 
   });
 });
 
+test('reviewed plan steps edit re-routes the site-workflow contract', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const bookingUrl = 'https://kyfw.12306.cn/otn/confirmPassenger/initDc';
+      const runStepsEdited = async (tabId, liveUrl, editPlan) => {
+        const agent = new AgentClass({
+          getActive: () => ({ promptTier: 'full', model: 'test', name: 'test' }),
+        });
+        agent.useSiteAdapters = true;
+        agent.setPlanReviewSettings({ mode: 'always' });
+        agent._currentUrl = async () => liveUrl;
+        agent._chatWithCostAllowance = async () => ({
+          content: plannerFixtureJson({
+            request_kind: 'execute',
+            site_job: 'rail-booking',
+            requires_state_change: true,
+            requires_submission: true,
+            summary: 'Book the selected 12306 train after review.',
+            localized: {
+              locale: 'en',
+              summary: 'Book the selected 12306 train after review.',
+              steps: [{ id: '1', action: 'Confirm the passenger and submit the official booking.' }],
+              risks: [],
+            },
+          }),
+        });
+        agent._waitForPlanReview = async (_tabId, _planId, _plan, compactMarkdown) => ({
+          action: 'approve',
+          editedText: editPlan(compactMarkdown),
+          markdownMode: 'compact',
+        });
+        return agent._runPlannerGate(
+          tabId,
+          { role: 'user', content: 'Book this train on 12306.' },
+          () => {},
+          null,
+          null,
+          '',
+          { tabUrl: bookingUrl, tabTitle: '12306' },
+          'try',
+          'act',
+          { locale: 'en' },
+        );
+      };
+
+      const reclassified = await runStepsEdited(
+        label === 'chrome' ? 9311 : 9312,
+        bookingUrl,
+        text => text.replace('submit the official booking', 'list the available trains'),
+      );
+      assert.equal(reclassified.siteWorkflow, null,
+        `${label}: a steps edit that removes the submit operation kept the stale 12306 workflow`);
+      assert.equal(reclassified.requiresSubmission, false,
+        `${label}: a re-routed steps edit still forced submission from the stale workflow`);
+      assert.equal(reclassified.requiresStateChange, false,
+        `${label}: a re-routed steps edit still forced state change from the stale workflow`);
+
+      const kept = await runStepsEdited(
+        label === 'chrome' ? 9313 : 9314,
+        bookingUrl,
+        text => text.replace('Book the selected', 'Book the chosen'),
+      );
+      assert.equal(kept.siteWorkflow?.job?.id, 'rail-booking',
+        `${label}: a summary-only reword incorrectly dropped the 12306 workflow`);
+    }
+  });
+});
+
 test('ARIA searchboxes enter the form inventory and accept text actions', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
