@@ -35,7 +35,13 @@ This changelog was generated from the repository Git history and release tags. V
 - Redesigned the sidebar loading and thinking UI with clearer live activity updates and a toggleable compact activity history (Chrome + Firefox)
 - Localized the new activity statuses and improved screen-reader announcements across all supported languages
 - Tightened selected site-workflow completion: live-URL binding survives trusted continuation only on the same adapter/job, the executor receives the app-owned stages/evidence contract, submission success needs job-bound terminal evidence (including paid/ticket-issued transaction state and recipient-bound sent confirmation), and ledger-backed workflows need exact reconciliation against an app-owned inventory rather than model-created rows
-- Bounded form-workflow inventory v1: exhaustive root reads must not be depth-truncated, skipped rows cannot prove success, and checkbox/Next actions stale completeness until a fresh root read
+- Bounded form-workflow inventory v1: exhaustive root reads must not be depth-truncated on includable descendants, skipped required rows cannot prove success (optional `required: false` rows may skip), and checkbox/Next actions stale completeness until a fresh root read
+
+### Fixed
+- Compact selected-workflow prompts now inject a brief execution contract and a shorter `progress_update.workflowReconciliation` schema; Mid/Full keep the full contract
+- YouTube `update-metadata` verification matches AX-truncated values via prefix plus `value_len`/`value_fp` after the same NFKC normalization used by verification, and values that equal the accessible name
+- Unknown metadata field names no longer discard the rest of the requirement list, but discarded classifier fields keep saved-state verification incomplete; playlist plural aliases are recognized
+- Form inventory emits `required=` only for explicit native/`aria-required` state, ignores decorative DOM depth, and omits erroring/empty third-party frames only when another frame already inventoried form controls; a lone failed cross-origin application frame stays incomplete
 
 ## [33.4.1] - 2026-08-27
 

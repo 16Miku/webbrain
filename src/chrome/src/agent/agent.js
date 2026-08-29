@@ -1612,9 +1612,12 @@ export class Agent extends LoopDetector {
       && Number.isInteger(messageBodyBaselineCount)
       && messageBodyBaselineCount >= 0
       && recipientTarget?.target_kind === 'named';
-    const metadataRequirements = siteWorkflow.job.id === 'update-metadata'
-      ? this._normalizeWorkflowMetadataRequirements(guard.workflowMetadataRequirements)
-      : [];
+    const metadataDetails = siteWorkflow.job.id === 'update-metadata'
+      ? this._normalizeWorkflowMetadataRequirementsDetails(guard.workflowMetadataRequirements)
+      : { items: [], incomplete: false };
+    const metadataRequirements = metadataDetails.items;
+    const metadataIncomplete = guard.workflowMetadataRequirementsIncomplete === true
+      || metadataDetails.incomplete === true;
     const verificationKind = this._workflowVerificationKind(siteWorkflow);
     const normalizeOrderIdentities = values => [...new Set((Array.isArray(values) ? values : [])
       .map(value => String(value || '').trim().toUpperCase())
@@ -1643,8 +1646,9 @@ export class Agent extends LoopDetector {
           ? { gmailComposeFlow: true }
           : {}),
       } : {}),
-      ...(metadataRequirements.length ? {
+      ...(metadataRequirements.length || metadataIncomplete ? {
         metadataRequirements: metadataRequirements.map(requirement => ({ ...requirement })),
+        ...(metadataIncomplete ? { metadataRequirementsIncomplete: true } : {}),
       } : {}),
       ...(verificationKind === 'transaction_fulfilled' ? {
         preDispatchTransactionOrderIdentities,
@@ -1704,7 +1708,7 @@ export class Agent extends LoopDetector {
       ['description', ['description', 'descripción', 'descrição', 'beschreibung', 'descrizione', 'açıklama', '説明', '설명', '描述', 'описание']],
       ['visibility', ['visibility', 'privacy', 'visibilité', 'confidentialité', 'visibilidad', 'privacidad', 'visibilidade', 'privacidade', 'sichtbarkeit', 'visibilità', 'görünürlük', '公開設定', '公開範囲', '可視性', '공개 상태', '공개 설정', '可见性', '可見度', 'видимость']],
       ['audience', ['audience', 'made for kids', 'audiencia', 'destinado a niños', 'público', 'conteúdo para crianças', 'zielgruppe', 'für kinder', 'pubblico', 'destinato ai bambini', 'kitle', 'çocuklara özel', '視聴者', '子ども向け', '시청자', '아동용', '受众', '面向儿童', '觀眾', '兒童專用', 'аудитория']],
-      ['playlist', ['playlist', 'liste de lecture', 'lista de reproducción', 'lista de reprodução', 'wiedergabeliste', 'elenco di riproduzione', 'oynatma listesi', '再生リスト', '재생목록', '播放列表', 'плейлист']],
+      ['playlist', ['playlist', 'playlists', 'liste de lecture', 'listes de lecture', 'lista de reproducción', 'listas de reproducción', 'lista de reprodução', 'listas de reprodução', 'wiedergabeliste', 'wiedergabelisten', 'elenco di riproduzione', 'elenchi di riproduzione', 'oynatma listesi', 'oynatma listeleri', '再生リスト', '재생목록', '播放列表', 'плейлист', 'плейлисты']],
       ['language', ['language', 'langue', 'idioma', 'sprache', 'lingua', 'dil', '言語', '언어', '语言', '語言', 'язык']],
       ['category', ['category', 'catégorie', 'categoría', 'kategorie', 'categoria', 'kategori', 'カテゴリ', '카테고리', '类别', '類別', 'категория']],
       ['license', ['license', 'licence', 'licencia', 'lizenz', 'licenza', 'lisans', 'ライセンス', '라이선스', '许可', '授權', 'лицензия']],
@@ -1728,22 +1732,53 @@ export class Agent extends LoopDetector {
     return text.trim().slice(0, 10000);
   }
 
-  _normalizeWorkflowMetadataRequirements(values) {
-    if (!Array.isArray(values) || values.length < 1 || values.length > 24) return [];
-    const requirements = new Map();
-    for (const value of values) {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-      const field = this._workflowMetadataFieldKey(value.field);
-      if (!Object.prototype.hasOwnProperty.call(value, 'value')) return [];
-      const expectedValue = this._workflowMetadataValue(value.value);
-      if (!field || requirements.has(field)) return [];
-      requirements.set(field, { field, value: expectedValue });
+  // AX formatLine truncates values at 60 chars and appends '...', plus
+  // value_len/value_fp of the full inventory string. Prefix alone is not
+  // exact readback: the fingerprint and length must match the requested value.
+  _workflowAxValueMatchesExpected(observed, expected, observedMeta = {}) {
+    const want = this._workflowMetadataValue(expected);
+    const got = this._workflowMetadataValue(observed);
+    if (got === want) return true;
+    if (!got.endsWith('...') || got.length !== 63) return false;
+    const prefix = got.slice(0, 60);
+    if (!want.startsWith(prefix) || want.length <= 60) return false;
+    const fullLen = Number(observedMeta.valueLength);
+    const fp = String(observedMeta.valueFp || '').toLowerCase();
+    return Number.isInteger(fullLen)
+      && fullLen === want.length
+      && fp === this._workflowInventoryFingerprint(want);
+  }
+
+  _normalizeWorkflowMetadataRequirementsDetails(values) {
+    if (!Array.isArray(values)) return { items: [], incomplete: false };
+    if (values.length < 1 || values.length > 24) {
+      return { items: [], incomplete: values.length > 0 };
     }
-    return [...requirements.values()];
+    const requirements = new Map();
+    let discarded = 0;
+    for (const value of values) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)
+          || !Object.prototype.hasOwnProperty.call(value, 'value')) {
+        discarded += 1;
+        continue;
+      }
+      const field = this._workflowMetadataFieldKey(value.field);
+      if (!field || requirements.has(field)) {
+        discarded += 1;
+        continue;
+      }
+      requirements.set(field, { field, value: this._workflowMetadataValue(value.value) });
+    }
+    return { items: [...requirements.values()], incomplete: discarded > 0 };
+  }
+
+  _normalizeWorkflowMetadataRequirements(values) {
+    return this._normalizeWorkflowMetadataRequirementsDetails(values).items;
   }
 
   _workflowMetadataRequirementsMatchInventory(requirements, evidence, submitSequence = 0) {
     if (!Array.isArray(requirements) || requirements.length < 1
+        || requirements.incomplete === true
         || evidence?.complete !== true
         || !evidence.documents || Object.keys(evidence.documents).length < 1
         || !Object.values(evidence.documents).every(document => (
@@ -1758,12 +1793,20 @@ export class Agent extends LoopDetector {
           || Number(item?.observationSequence || 0) <= Number(submitSequence || 0)
           || !Object.prototype.hasOwnProperty.call(item || {}, 'value')) continue;
       const values = observed.get(field) || [];
-      values.push(this._workflowMetadataValue(item.value));
+      values.push({
+        value: this._workflowMetadataValue(item.value),
+        valueLength: item?.valueLength,
+        valueFp: item?.valueFp,
+      });
       observed.set(field, values);
     }
     return requirements.every(requirement => {
       const values = observed.get(requirement.field) || [];
-      return values.length === 1 && values[0] === this._workflowMetadataValue(requirement.value);
+      return values.length === 1 && this._workflowAxValueMatchesExpected(
+        values[0].value,
+        requirement.value,
+        values[0],
+      );
     });
   }
 
@@ -1939,6 +1982,7 @@ export class Agent extends LoopDetector {
     } else if (verificationKind === 'saved_state') {
       verified = submissionEvidence?.verifiedFinalSubmit === true
         && this._workflowSavedStateSignal(text)
+        && binding.metadataRequirementsIncomplete !== true
         && this._workflowMetadataRequirementsMatchInventory(
           binding.metadataRequirements,
           state.workflowInventoryEvidence,
@@ -12321,6 +12365,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const domId = /\bdom_id="([^"]*)"/i.exec(line)?.[1] || '';
       const fieldName = /\bfield_name="([^"]*)"/i.exec(line)?.[1] || '';
       const requiredMatch = /\brequired=(?:"?)(true|false)(?:"?)/i.exec(line);
+      const valueLenMatch = /\bvalue_len=(\d+)/i.exec(line);
+      const valueFpMatch = /\bvalue_fp=([0-9a-f]{8})/i.exec(line);
       items.push({
         id,
         label,
@@ -12331,10 +12377,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...(domId ? { domId } : {}),
         ...(fieldName ? { fieldName } : {}),
         ...(requiredMatch ? { required: requiredMatch[1].toLowerCase() === 'true' } : {}),
+        ...(valueLenMatch ? { valueLength: Number(valueLenMatch[1]) } : {}),
+        ...(valueFpMatch ? { valueFp: valueFpMatch[1].toLowerCase() } : {}),
         ...(value !== undefined ? { value } : (checked !== undefined ? { value: checked.toLowerCase() } : {})),
       });
     }
     return items;
+  }
+
+  _workflowIframeFrameIsApplicationScoped(frameUrl, pageUrl, urlFilter) {
+    if (String(urlFilter || '').trim()) {
+      const filter = String(urlFilter).trim();
+      try {
+        return frameHostMatches(frameUrl, filter) && String(frameUrl).includes(filter);
+      } catch {
+        return String(frameUrl).includes(filter);
+      }
+    }
+    try {
+      const frameHost = new URL(frameUrl).hostname.toLowerCase().replace(/^www\./, '');
+      const pageHost = new URL(pageUrl).hostname.toLowerCase().replace(/^www\./, '');
+      if (!frameHost || !pageHost) return false;
+      return frameHost === pageHost
+        || frameHost.endsWith(`.${pageHost}`)
+        || pageHost.endsWith(`.${frameHost}`);
+    } catch {
+      return false;
+    }
   }
 
   _workflowIframeInventorySelectorCoversControls(selector) {
@@ -12352,9 +12421,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _workflowIframeFormInventory(result = {}, bindingKey = '', args = {}) {
     const selector = String(args?.selector || 'body').trim().slice(0, 500);
     const selectorComplete = this._workflowIframeInventorySelectorCoversControls(selector);
-    const items = [];
-    const documents = {};
-    const seen = new Set();
+    const pageUrl = String(result?.pageUrl || result?.currentUrl || result?.url || '').trim();
+    const collected = [];
     for (const frame of (Array.isArray(result?.frames) ? result.frames : [])) {
       const frameUrl = String(frame?.url || '').slice(0, 1000);
       const frameId = Number(frame?.frameId);
@@ -12362,17 +12430,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const documentScope = `iframe:${frameId}:${frameUrl}`;
       const matches = Array.isArray(frame?.matches) ? frame.matches : [];
       const matchCount = Number.isInteger(frame?.matchCount) ? frame.matchCount : NaN;
-      const complete = selectorComplete
-        && !frame?.error
-        && (matchCount === 0 || frame?.ok === true)
-        && frame?.truncated !== true
-        && Number.isInteger(matchCount)
-        && matchCount === matches.length;
-      documents[documentScope] = {
-        complete,
-        scope: 'iframe',
-        ...(complete && matchCount === 0 ? { empty: true } : {}),
-      };
+      const frameItems = [];
       for (const match of matches) {
         const tag = String(match?.tag || '').toLowerCase();
         const type = String(match?.type || '').toLowerCase();
@@ -12398,14 +12456,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             ? `name:${String(match.name).slice(0, 240)}|type:${type}|label:${label}`
             : `selector:${selector}|index:${Number(match?.matchIndex) || 0}|label:${label}`);
         const id = `workflow:${this._workflowInventoryFingerprint(`${bindingKey}|${documentScope}|${role}|${locator}`)}`;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        items.push({
+        if (frameItems.some(item => item.id === id)) continue;
+        frameItems.push({
           id,
           label,
           role,
           documentScope,
           ...(type ? { type } : {}),
+          ...(typeof match?.required === 'boolean' ? { required: match.required } : {}),
           value: String(match?.value ?? '').slice(0, 10000),
           iframeTarget: {
             frameId,
@@ -12414,6 +12472,49 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             matchIndex: Number(match?.matchIndex) || 0,
           },
         });
+      }
+      const noisy = !!frame?.error
+        || frame?.truncated === true
+        || (frame?.ok === false && matchCount !== 0);
+      collected.push({
+        frame,
+        frameUrl,
+        documentScope,
+        matches,
+        matchCount,
+        frameItems,
+        noisy,
+      });
+    }
+    const hasFormControls = collected.some(entry => entry.frameItems.length > 0);
+    const items = [];
+    const documents = {};
+    const seen = new Set();
+    for (const { frame, frameUrl, documentScope, matches, matchCount, frameItems, noisy } of collected) {
+      // Omit empty third-party noise only when another frame already
+      // inventoried form controls. If no frame produced controls, keep
+      // unclassified failed cross-origin frames incomplete — they may be
+      // the embedded application.
+      if (frameItems.length === 0 && noisy
+          && !this._workflowIframeFrameIsApplicationScoped(frameUrl, pageUrl, args?.urlFilter)
+          && hasFormControls) {
+        continue;
+      }
+      const complete = selectorComplete
+        && !frame?.error
+        && (matchCount === 0 || frame?.ok === true)
+        && frame?.truncated !== true
+        && Number.isInteger(matchCount)
+        && matchCount === matches.length;
+      documents[documentScope] = {
+        complete,
+        scope: 'iframe',
+        ...(complete && matchCount === 0 ? { empty: true } : {}),
+      };
+      for (const item of frameItems) {
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        items.push(item);
       }
     }
     return { items, documents, selectorComplete };
@@ -17182,6 +17283,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this._isActionMode(mode) && tabId != null) {
       const workflowPolicy = formatAdapterWorkflowExecutionPolicy(
         this._planExecutionGuards.get(tabId)?.siteWorkflow,
+        { form: tier === 'compact' ? 'brief' : 'full' },
       );
       if (workflowPolicy) prompt += `\n\n${workflowPolicy}`;
     }
@@ -18973,9 +19075,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (siteWorkflow?.adapterName === 'youtube' && siteWorkflow?.job?.id === 'update-metadata') {
         const guard = this._planExecutionGuards.get(tabId);
         if (guard) {
-          guard.workflowMetadataRequirements = this._normalizeWorkflowMetadataRequirements(
+          const details = this._normalizeWorkflowMetadataRequirementsDetails(
             obj?.workflowFields ?? obj?.workflow_fields,
           );
+          guard.workflowMetadataRequirements = details.items;
+          guard.workflowMetadataRequirementsIncomplete = details.incomplete;
         }
       }
       return normalizeProgressIntent(obj, { taskText, pageScope, source: 'classifier' });
@@ -19679,6 +19783,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       workflowMetadataRequirements: carryMatches && Array.isArray(carried.workflowMetadataRequirements)
         ? carried.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
         : [],
+      workflowMetadataRequirementsIncomplete: carryMatches
+        && carried.workflowMetadataRequirementsIncomplete === true,
       recoveryAttempted: false,
       runtimeModeCorrectionAttempted: false,
       staleCancellationRecoveryAttempted: false,
@@ -19927,6 +20033,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         workflowMetadataRequirements: Array.isArray(guard.workflowMetadataRequirements)
           ? guard.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
           : [],
+        workflowMetadataRequirementsIncomplete: guard.workflowMetadataRequirementsIncomplete === true,
         completionSubmitState: submit ? {
           originatingUrl: submit.originatingUrl || '',
           currentUrl: submit.currentUrl || '',
@@ -26049,7 +26156,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 else if (tag === 'select') value = String(el.options?.[el.selectedIndex]?.text || el.value || '');
                 else if ('value' in el) value = String(el.value || '');
                 else if (el.isContentEditable) value = String(el.textContent || '');
-                return {
+                const ariaRequired = String(el.getAttribute?.('aria-required') || '').trim().toLowerCase();
+                const match = {
                   matchIndex,
                   tag,
                   type,
@@ -26063,6 +26171,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   value: value.slice(0, 500),
                   text: String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 500),
                 };
+                if (el.required === true || ariaRequired === 'true') match.required = true;
+                else if (ariaRequired === 'false') match.required = false;
+                return match;
               });
               const el = all[0] || null;
               return {

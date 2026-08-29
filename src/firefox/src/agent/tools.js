@@ -1374,6 +1374,34 @@ const WATCH_BEEP_TOOL = {
 // tool or construct CSS. Firefox never had filePath (no CDP).
 const COMPACT_UPLOAD_HIDDEN_PARAMS = ['selector', 'downloadId', 'filePath'];
 
+function compactProgressUpdateTool(tool) {
+  const properties = { ...tool.function.parameters.properties };
+  const workflow = properties.workflowReconciliation || {};
+  return {
+    ...tool,
+    function: {
+      ...tool.function,
+      parameters: {
+        ...tool.function.parameters,
+        properties: {
+          ...properties,
+          workflowReconciliation: {
+            ...workflow,
+            description: 'For a selected ledger workflow, declare complete coverage only after every app-owned inventory id has a terminal row.',
+            properties: {
+              job: { type: 'string', description: 'Exact selected workflow job id.' },
+              coverageComplete: { type: 'boolean', description: 'True only after inventory is complete and every item has a row.' },
+              itemCount: { type: 'number', description: 'Exact inventory and ledger total after this update.' },
+              basis: { type: 'string', description: 'Short evidence for complete coverage.' },
+            },
+            required: ['job', 'coverageComplete', 'itemCount', 'basis'],
+          },
+        },
+      },
+    },
+  };
+}
+
 function compactUploadFileTool(tool) {
   const properties = { ...tool.function.parameters.properties };
   for (const key of COMPACT_UPLOAD_HIDDEN_PARAMS) delete properties[key];
@@ -1478,7 +1506,11 @@ export function getToolsForMode(mode, opts = {}) {
   } else if (tier === 'compact') {
     base = AGENT_TOOLS
       .filter(t => COMPACT_TOOL_NAMES.has(t.function.name))
-      .map(t => (t.function.name === 'upload_file' ? compactUploadFileTool(t) : t));
+      .map(t => {
+        if (t.function.name === 'upload_file') return compactUploadFileTool(t);
+        if (t.function.name === 'progress_update') return compactProgressUpdateTool(t);
+        return t;
+      });
   } else if (tier === 'mid') {
     base = AGENT_TOOLS.filter(t => MID_TOOL_NAMES.has(t.function.name));
   } else {
