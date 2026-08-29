@@ -1568,6 +1568,10 @@ export class Agent extends LoopDetector {
         recipientTargets: recipientTarget.recipients.map(recipient => ({ ...recipient })),
         messageBody,
         messageBodyBaselineCount,
+        ...(siteWorkflow.adapterName === 'gmail'
+          && executionContext?.messageRecipientGmailComposeFlow === true
+          ? { gmailComposeFlow: true }
+          : {}),
       } : {}),
       ...(metadataRequirements.length ? {
         metadataRequirements: metadataRequirements.map(requirement => ({ ...requirement })),
@@ -1608,23 +1612,36 @@ export class Agent extends LoopDetector {
     try { text = text.normalize('NFKC'); } catch {}
     text = text.toLowerCase().replace(/[_-]+/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, ' ')
       .replace(/\s+/g, ' ').trim();
+    const normalizeAlias = (alias) => {
+      let normalized = String(alias || '');
+      try { normalized = normalized.normalize('NFKC'); } catch {}
+      return normalized.toLowerCase().replace(/[_-]+/g, ' ')
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+    };
     const fields = [
-      ['paid_promotion', /\bpaid promotion\b/],
-      ['recording_date', /\b(?:recording date|date recorded)\b/],
-      ['recording_location', /\b(?:recording location|video location)\b/],
-      ['comments', /\bcomments?\b/],
-      ['embedding', /\b(?:embedding|embed)\b/],
-      ['description', /\bdescription\b/],
-      ['visibility', /\b(?:visibility|privacy)\b/],
-      ['audience', /\b(?:audience|made for kids)\b/],
-      ['playlist', /\bplaylist\b/],
-      ['language', /\blanguage\b/],
-      ['category', /\bcategory\b/],
-      ['license', /\blicen[cs]e\b/],
-      ['tags', /\btags?\b/],
-      ['title', /\btitle\b/],
+      ['paid_promotion', ['paid promotion', 'promotion payée', 'contenido promocional pagado', 'promoção paga', 'bezahlte werbung', 'promozione a pagamento', 'ücretli tanıtım', '有料プロモーション', '유료 프로모션', '付费宣传', '付費宣傳']],
+      ['recording_date', ['recording date', 'date recorded', "date d’enregistrement", 'fecha de grabación', 'data de gravação', 'aufnahmedatum', 'data di registrazione', 'kayıt tarihi', '録画日', '撮影日', '촬영 날짜', '录制日期', '錄製日期']],
+      ['recording_location', ['recording location', 'video location', "lieu d’enregistrement", 'ubicación de grabación', 'local de gravação', 'aufnahmeort', 'luogo di registrazione', 'kayıt konumu', '撮影場所', '촬영 위치', '录制地点', '錄製地點']],
+      ['comments', ['comment', 'comments', 'commentaire', 'commentaires', 'comentario', 'comentarios', 'kommentar', 'kommentare', 'commento', 'commenti', 'yorum', 'yorumlar', 'コメント', '댓글', '评论', '評論', 'комментарии']],
+      ['embedding', ['embedding', 'embed', 'intégration', 'incorporation', 'einbetten', 'incorporamento', 'yerleştirme', '埋め込み', '퍼가기', '嵌入', 'встраивание']],
+      ['description', ['description', 'descripción', 'descrição', 'beschreibung', 'descrizione', 'açıklama', '説明', '설명', '描述', 'описание']],
+      ['visibility', ['visibility', 'privacy', 'visibilité', 'confidentialité', 'visibilidad', 'privacidad', 'visibilidade', 'privacidade', 'sichtbarkeit', 'visibilità', 'görünürlük', '公開設定', '公開範囲', '可視性', '공개 상태', '공개 설정', '可见性', '可見度', 'видимость']],
+      ['audience', ['audience', 'made for kids', 'audiencia', 'destinado a niños', 'público', 'conteúdo para crianças', 'zielgruppe', 'für kinder', 'pubblico', 'destinato ai bambini', 'kitle', 'çocuklara özel', '視聴者', '子ども向け', '시청자', '아동용', '受众', '面向儿童', '觀眾', '兒童專用', 'аудитория']],
+      ['playlist', ['playlist', 'liste de lecture', 'lista de reproducción', 'lista de reprodução', 'wiedergabeliste', 'elenco di riproduzione', 'oynatma listesi', '再生リスト', '재생목록', '播放列表', 'плейлист']],
+      ['language', ['language', 'langue', 'idioma', 'sprache', 'lingua', 'dil', '言語', '언어', '语言', '語言', 'язык']],
+      ['category', ['category', 'catégorie', 'categoría', 'kategorie', 'categoria', 'kategori', 'カテゴリ', '카테고리', '类别', '類別', 'категория']],
+      ['license', ['license', 'licence', 'licencia', 'lizenz', 'licenza', 'lisans', 'ライセンス', '라이선스', '许可', '授權', 'лицензия']],
+      ['tags', ['tag', 'tags', 'étiquette', 'étiquettes', 'mot clé', 'mots clés', 'etiqueta', 'etiquetas', 'schlagwort', 'schlagwörter', 'etichette', 'etiket', 'etiketler', 'タグ', '태그', '标签', '標籤', 'теги']],
+      ['title', ['title', 'titre', 'título', 'titulo', 'titel', 'titolo', 'başlık', 'タイトル', '제목', '标题', '標題', 'название']],
     ];
-    return fields.find(([, pattern]) => pattern.test(text))?.[0] || '';
+    const paddedText = ` ${text} `;
+    return fields.find(([, aliases]) => aliases.some((alias) => {
+      const normalizedAlias = normalizeAlias(alias);
+      if (!normalizedAlias) return false;
+      return text === normalizedAlias
+        || paddedText.includes(` ${normalizedAlias} `)
+        || (/[^\u0000-\u024f]/u.test(normalizedAlias) && text.includes(normalizedAlias));
+    }))?.[0] || '';
   }
 
   _workflowMetadataValue(value) {
@@ -1789,11 +1806,15 @@ export class Agent extends LoopDetector {
       const requiresRecipientBinding = normalizeMessageTarget(state.messaging)?.target_kind === 'named';
       const messageBodyBaselineCount = Number(binding.messageBodyBaselineCount);
       const matchingOutgoingMessageCount = Number(messageProbe?.matchingOutgoingMessageCount);
-      const messageBodyObserved = !!this._workflowMessageBody(binding.messageBody)
+      const exactOutgoingBodyObserved = !!this._workflowMessageBody(binding.messageBody)
         && Number.isInteger(messageBodyBaselineCount)
         && messageBodyBaselineCount >= 0
         && Number.isInteger(matchingOutgoingMessageCount)
         && matchingOutgoingMessageCount > messageBodyBaselineCount;
+      const gmailComposeBodyBound = siteWorkflow.adapterName === 'gmail'
+        && binding.gmailComposeFlow === true
+        && !!this._workflowMessageBody(binding.messageBody);
+      const messageBodyObserved = exactOutgoingBodyObserved || gmailComposeBodyBound;
       const postDispatchRecipientObserved = recipientObserved
         || (siteWorkflow.adapterName === 'gmail' && dispatchRecipientObserved);
       verified = submit?.dispatched === true
@@ -1805,7 +1826,9 @@ export class Agent extends LoopDetector {
       source = requiresRecipientBinding
         ? (recipientObserved
           ? 'recipient_body_bound_dispatch_empty_composer_and_sent_confirmation'
-          : 'recipient_body_bound_dispatch_and_sent_confirmation')
+          : (gmailComposeBodyBound && !exactOutgoingBodyObserved
+            ? 'recipient_body_bound_gmail_compose_and_sent_confirmation'
+            : 'recipient_body_bound_dispatch_and_sent_confirmation'))
         : (recipientObserved ? 'observed_recipient_and_empty_composer' : 'provider_sent_confirmation');
     } else if (verificationKind === 'transaction_fulfilled') {
       verified = submit?.dispatched === true
@@ -12054,6 +12077,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const value = /\bvalue="([^"]*)"/i.exec(line)?.[1];
       const checked = /\b(?:aria-checked|checked)=(?:"?)(true|false)(?:"?)/i.exec(line)?.[1];
       const type = /\btype="([^"]+)"/i.exec(line)?.[1]?.toLowerCase() || '';
+      const domId = /\bdom_id="([^"]*)"/i.exec(line)?.[1] || '';
+      const fieldName = /\bfield_name="([^"]*)"/i.exec(line)?.[1] || '';
       items.push({
         id,
         label,
@@ -12061,6 +12086,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ref_id: refId,
         documentScope: scope,
         ...(type ? { type } : {}),
+        ...(domId ? { domId } : {}),
+        ...(fieldName ? { fieldName } : {}),
         ...(value !== undefined ? { value } : (checked !== undefined ? { value: checked.toLowerCase() } : {})),
       });
     }
@@ -12224,8 +12251,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       candidates = inventoryItems.filter(item => item.ref_id === refId
         && (!documentScope || !item.documentScope || item.documentScope === documentScope));
     } else if (name === 'upload_file') {
-      candidates = inventoryItems.filter(item => item.type === 'file');
-      if (candidates.length !== 1) return null;
+      const fileItems = inventoryItems.filter(item => item.type === 'file');
+      if (fileItems.length === 1) {
+        candidates = fileItems;
+      } else {
+        const uploadTarget = result?.uploadTarget;
+        const selector = String(args?.selector || '').trim();
+        if (!selector || uploadTarget?.selector !== selector) return null;
+        const domId = String(uploadTarget?.domId || '').trim();
+        const fieldName = String(uploadTarget?.fieldName || '').trim();
+        const label = String(uploadTarget?.label || '').replace(/\s+/g, ' ').trim();
+        if (domId) {
+          candidates = fileItems.filter(item => item.domId === domId);
+        } else if (fieldName) {
+          candidates = fileItems.filter(item => item.fieldName === fieldName);
+        } else if (label) {
+          candidates = fileItems.filter(item => item.label === label);
+        }
+      }
     } else if (name === 'iframe_type' || name === 'iframe_click') {
       const selector = String(args?.selector || '').trim();
       const matchIndex = Number(args?.matchIndex ?? 0);
@@ -15662,6 +15705,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         executionContext.messageRecipientDispatchBinding = binding;
         executionContext.messageRecipientBody = this._workflowMessageBody(probe.messageBody);
         executionContext.messageRecipientBodyBaselineCount = messageBodyBaselineCount;
+        if (probe.gmailComposeFlow === true) {
+          executionContext.messageRecipientGmailComposeFlow = true;
+        }
       }
       return null;
     }
@@ -25917,6 +25963,53 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         }
 
+        let workflowUploadTarget = null;
+        const guardedInventoryItems = this._planExecutionGuards.get(tabId)
+          ?.workflowInventoryEvidence?.items;
+        const guardedFileItems = Array.isArray(guardedInventoryItems)
+          ? guardedInventoryItems.filter(item => item?.type === 'file')
+          : [];
+        if (guardedFileItems.length > 1) {
+          try {
+            const identityResult = await cdpClient.callFunctionOn(
+              tabId,
+              `function() {
+                const compact = value => String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 160);
+                let label = '';
+                try {
+                  label = Array.from(this.labels || [])
+                    .map(item => compact(item.innerText || item.textContent || ''))
+                    .find(Boolean) || '';
+                } catch {}
+                label = label
+                  || compact(this.getAttribute?.('aria-label'))
+                  || compact(this.getAttribute?.('title'))
+                  || compact(this.getAttribute?.('placeholder'))
+                  || compact(this.getAttribute?.('name'))
+                  || compact(this.getAttribute?.('id'));
+                return {
+                  domId: compact(this.getAttribute?.('id')),
+                  fieldName: compact(this.getAttribute?.('name')),
+                  label,
+                };
+              }`,
+              objectIds[0],
+            );
+            throwIfEarlyCdpAborted();
+            const identity = identityResult?.result?.value;
+            if (identity && typeof identity === 'object') {
+              workflowUploadTarget = {
+                selector: String(args.selector || '').trim(),
+                domId: String(identity.domId || '').trim(),
+                fieldName: String(identity.fieldName || '').trim(),
+                label: String(identity.label || '').replace(/\s+/g, ' ').trim(),
+              };
+            }
+          } catch (error) {
+            if (earlyCdpAbortSignal?.aborted) throwIfEarlyCdpAborted();
+          }
+        }
+
         if (attachmentPayload) {
           throwIfEarlyCdpAborted();
           const uploadDeadlineAt = Number(
@@ -25974,6 +26067,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               verified: false,
               attachmentState: 'input_attached',
               remoteStateVerified: false,
+              ...(workflowUploadTarget ? { uploadTarget: workflowUploadTarget } : {}),
             };
           }
           return {
@@ -26083,6 +26177,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             verified: false,
             attachmentState: 'input_attached',
             remoteStateVerified: false,
+            ...(workflowUploadTarget ? { uploadTarget: workflowUploadTarget } : {}),
           };
         }
 

@@ -4619,6 +4619,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
       messageSend: true,
       messageBody: 'Hello Alice',
       messageBodyBaselineCount: 0,
+      gmailComposeFlow: true,
       identityCandidates: ['alice@example.com'],
       strongIdentityCandidates: ['alice@example.com'],
       messageRecipientDispatchBinding: { token: `gmail-recipient-binding-${label}` },
@@ -4643,6 +4644,7 @@ test('direct-message recipient guard uses structured intent and exact active ide
       messageRecipientDispatchBinding: { token: `gmail-recipient-binding-${label}` },
       messageRecipientBody: 'Hello Alice',
       messageRecipientBodyBaselineCount: 0,
+      messageRecipientGmailComposeFlow: true,
     });
 
     agent._planExecutionGuards.set(tabId, {
@@ -5131,6 +5133,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
     assert.equal(unresolvedClickResult.conclusive, false);
     assert.deepEqual(Array.from(gmailMatchingRecipientResult.strongIdentityCandidates), ['alice@example.com']);
+    assert.equal(gmailMatchingRecipientResult.gmailComposeFlow, true,
+      `${prefix}: Gmail compose dialog was not bound to the send probe`);
     assert.deepEqual(Array.from(gmailMatchingNameResult.strongIdentityCandidates), ['Alice']);
     assert.deepEqual(Array.from(gmailWrongRecipientResult.strongIdentityCandidates), [],
       `${prefix}: mismatched Gmail recipient chip authorized dispatch`);
@@ -5171,6 +5175,7 @@ test('message recipient dispatch binding detects composer and active-thread race
     let liveIdentities = ['Alice'];
     let liveRecipients = null;
     let liveMessageBody = 'Hello Alice';
+    let liveGmailComposeFlow = false;
     const helpers = vm.runInNewContext(`(() => {
       ${source.slice(start, end)}
       return {
@@ -5191,6 +5196,7 @@ test('message recipient dispatch binding detects composer and active-thread race
               conclusive: true,
               messageSend: true,
               messageBody: liveMessageBody,
+              gmailComposeFlow: liveGmailComposeFlow,
               strongIdentityCandidates: liveIdentities,
               ...(Array.isArray(liveRecipients) ? { strongRecipientCandidates: liveRecipients } : {}),
             }
@@ -5258,6 +5264,19 @@ test('message recipient dispatch binding detects composer and active-thread race
     assert.equal(changedBody.success, false, `${label}: changed message body survived dispatch revalidation`);
     assert.equal(changedBody.reasonCode, 'active_recipient_changed_before_dispatch');
     liveMessageBody = 'Hello Alice';
+
+    liveGmailComposeFlow = true;
+    const gmailComposeToken = helpers.remember(composer, ['Alice'], {
+      ...dispatch,
+      adapterName: 'gmail',
+      gmailComposeFlow: true,
+    });
+    liveGmailComposeFlow = false;
+    const changedGmailFlow = helpers.consume({
+      messageRecipientDispatchBinding: { token: gmailComposeToken },
+    }, sendButton);
+    assert.equal(changedGmailFlow.success, false, `${label}: Gmail compose binding was not revalidated at dispatch`);
+    assert.equal(changedGmailFlow.reasonCode, 'active_recipient_changed_before_dispatch');
 
     const branchStart = source.indexOf("'set_field': async () => {");
     const branchEnd = source.indexOf(label === 'chrome' ? "'ax_prepare_field_for_trusted_type':" : "'hover':", branchStart);
@@ -79553,6 +79572,80 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     });
     assert.equal(Object.keys(guard.workflowControlActionEvidence).length, 3,
       `${AgentClass.name}: exact per-control action evidence was not retained`);
+
+    const multiUploadTabId = 8930 + index;
+    const multiUploadGuard = agent._startPlanExecutionGuard(multiUploadTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(multiUploadTabId, {
+      documentToken: 'multi-upload-document',
+      pageUrl: formUrl,
+    });
+    const multiUploadInventory = agent._rememberWorkflowInventoryObservation(
+      multiUploadTabId,
+      'get_accessibility_tree',
+      {},
+      {
+        success: true,
+        pageUrl: formUrl,
+        pageContent: [
+          'button "Upload résumé" [ref_resume_multi] type="file" dom_id="resume-upload" field_name="resume"',
+          'button "Upload cover letter" [ref_cover_multi] type="file" dom_id="cover-upload" field_name="cover"',
+        ].join('\n'),
+      },
+    );
+    assert.equal(multiUploadInventory?.itemCount, 2);
+    agent._beginCompletionInvariant(multiUploadTabId);
+    agent._recordCompletionToolResult(multiUploadTabId, 'upload_file', {
+      selector: '#resume-upload',
+    }, {
+      success: true,
+      dispatched: true,
+      attachmentState: 'input_attached',
+      attached: { name: 'resume.pdf', size: 128 },
+    });
+    assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 0,
+      `${AgentClass.name}: an unbound upload result proved one of multiple file inputs`);
+    agent._recordCompletionToolResult(multiUploadTabId, 'upload_file', {
+      selector: '#resume-upload',
+    }, {
+      success: true,
+      dispatched: true,
+      attachmentState: 'input_attached',
+      attached: { name: 'resume.pdf', size: 128 },
+      uploadTarget: {
+        selector: '#resume-upload',
+        domId: 'resume-upload',
+        fieldName: 'resume',
+        label: 'Upload résumé',
+      },
+    });
+    const multiResume = multiUploadInventory.items.find(item => item.domId === 'resume-upload');
+    const multiCover = multiUploadInventory.items.find(item => item.domId === 'cover-upload');
+    assert.ok(multiUploadGuard.workflowControlActionEvidence?.[multiResume.id],
+      `${AgentClass.name}: selected résumé input was not bound to its inventory row`);
+    assert.equal(multiUploadGuard.workflowControlActionEvidence?.[multiCover.id], undefined,
+      `${AgentClass.name}: résumé upload incorrectly proved the cover-letter row`);
+    agent._recordCompletionToolResult(multiUploadTabId, 'upload_file', {
+      selector: '#cover-upload',
+    }, {
+      success: true,
+      dispatched: true,
+      attachmentState: 'input_attached',
+      attached: { name: 'cover.pdf', size: 96 },
+      uploadTarget: {
+        selector: '#cover-upload',
+        domId: 'cover-upload',
+        fieldName: 'cover',
+        label: 'Upload cover letter',
+      },
+    });
+    assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 2,
+      `${AgentClass.name}: exact multi-upload targets did not prove their own inventory rows`);
+
     const terminalOnly = agent._progressUpdate(tabId, { items: terminalInventoryItems });
     assert.equal(terminalOnly.success, true);
     assert.equal(guard.workflowLedgerReconciliation, null,
@@ -79911,6 +80004,12 @@ test('YouTube metadata success requires exact app-classified post-save readback'
       { field: 'title', value: 'Launch Video' },
       { field: 'visibility', value: 'Public' },
     ], `${AgentClass.name}: trusted task metadata requirements were not retained`);
+    assert.equal(agent._workflowMetadataFieldKey('Visibilité'), 'visibility',
+      `${AgentClass.name}: localized French visibility label was not canonicalized`);
+    assert.equal(agent._workflowMetadataFieldKey('タイトル（必須）'), 'title',
+      `${AgentClass.name}: localized Japanese title label was not canonicalized`);
+    assert.equal(agent._workflowMetadataFieldKey('説明'), 'description',
+      `${AgentClass.name}: localized Japanese description label was not canonicalized`);
 
     agent._beginCompletionInvariant(tabId);
     agent._lastAxScopes.set(tabId, { documentToken: 'youtube-metadata-document', pageUrl: videoUrl });
@@ -79918,8 +80017,8 @@ test('YouTube metadata success requires exact app-classified post-save readback'
       success: true,
       pageUrl: videoUrl,
       pageContent: [
-        'textbox "Title (required)" [ref_title] value="Launch Video"',
-        'combobox "Visibility" [ref_visibility] value="Public"',
+        'textbox "Titre (obligatoire)" [ref_title] value="Launch Video"',
+        'combobox "公開設定" [ref_visibility] value="Public"',
       ].join('\n'),
     });
     agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_save' }, {
@@ -79965,8 +80064,8 @@ test('YouTube metadata success requires exact app-classified post-save readback'
       success: true,
       pageUrl: videoUrl,
       pageContent: [
-        'textbox "Title (required)" [ref_title] value="Launch Video"',
-        'combobox "Visibility" [ref_visibility] value="Public"',
+        'textbox "Titre (obligatoire)" [ref_title] value="Launch Video"',
+        'combobox "公開設定" [ref_visibility] value="Public"',
       ].join('\n'),
     });
     assert.equal(agent._workflowTerminalEvidenceFromDone(
@@ -80547,9 +80646,34 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { workflowPageText: 'Message sent', liveRegionMessages: ['Message sent'] },
       gmailUrl,
       { submit: recipientBoundGmailSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+      { success: false, conclusive: false, matchingOutgoingMessageCount: 0 },
+    ), null, `${AgentClass.name}: a non-compose Gmail send skipped exact outgoing-body observation`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      gmailTabId,
+      { workflowPageText: 'Message sent', liveRegionMessages: ['Message sent'] },
+      gmailUrl,
+      { submit: recipientBoundGmailSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
       { success: false, conclusive: false, matchingOutgoingMessageCount: 1 },
     )?.source, 'recipient_body_bound_dispatch_and_sent_confirmation',
     `${AgentClass.name}: recipient-bound Gmail send could not use its positive sent confirmation`);
+    const composeBoundGmailSubmit = {
+      ...gmailSubmit,
+      workflowBinding: agent._workflowSubmitBindingForAttempt(gmailTabId, gmailUrl, {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: 'gmail-compose-bound-recipient' },
+        messageRecipientBody: 'Quarterly update',
+        messageRecipientBodyBaselineCount: 0,
+        messageRecipientGmailComposeFlow: true,
+      }),
+    };
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      gmailTabId,
+      { workflowPageText: 'Message sent', liveRegionMessages: ['Message sent'] },
+      gmailUrl,
+      { submit: composeBoundGmailSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+      { success: false, conclusive: false, matchingOutgoingMessageCount: 0 },
+    )?.source, 'recipient_body_bound_gmail_compose_and_sent_confirmation',
+    `${AgentClass.name}: a bound Gmail compose send required an inline Sent-body rendering`);
 
     const linkedInMessageTabId = 9005 + index;
     const linkedInMessageUrl = 'https://www.linkedin.com/messaging/thread/2-abc/';

@@ -3548,6 +3548,7 @@
       identityKey,
       messageBody: String(dispatch.messageBody || ''),
       messageBodyBaselineCount: Number(dispatch.messageBodyBaselineCount || 0),
+      gmailComposeFlow: dispatch.gmailComposeFlow === true,
       pageUrl: location.href,
       timer: null,
     };
@@ -3612,7 +3613,8 @@
     if (live?.success !== true || live?.conclusive !== true || live?.messageSend !== true
       || liveIdentityKey !== expected.identityKey
       || !expected.messageBody
-      || live?.messageBody !== expected.messageBody) {
+      || live?.messageBody !== expected.messageBody
+      || (expected.gmailComposeFlow === true && live?.gmailComposeFlow !== true)) {
       return {
         success: false,
         dispatched: false,
@@ -4420,6 +4422,8 @@
         : '';
       const messageBody = submittedFieldBody || composerMessageBody(composer);
       const messageBodyBaselineCount = matchingMessageBodyCount(messageBody, composer);
+      const gmailComposeFlow = gmailRecipientMode
+        && !!composer.closest?.('[role="dialog"]');
       const matchingOutgoingMessageCount = matchingMessageBodyCount(
         params.expectedMessageBody,
         composer,
@@ -4439,6 +4443,7 @@
             supportsRecipientSets: params.supportsRecipientSets,
             messageBody,
             messageBodyBaselineCount,
+            gmailComposeFlow,
           })
         : '';
       return {
@@ -4449,6 +4454,7 @@
         composerEmpty: composerText.replace(/[\u200b-\u200d\ufeff]/g, '').trim() === '',
         messageBody,
         messageBodyBaselineCount,
+        gmailComposeFlow,
         matchingOutgoingMessageCount,
         // Only recipient-specific header evidence is authoritative. Ordinary
         // message text, test-id containers, and other leaf content are never

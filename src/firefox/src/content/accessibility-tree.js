@@ -641,6 +641,15 @@
     if (href) line += ' href="' + href + '"';
     const type = el.getAttribute('type');
     if (type) line += ' type="' + type + '"';
+    if (String(type || '').toLowerCase() === 'file') {
+      const encodeIdentity = value => String(value || '')
+        .replace(/\s+/g, ' ').trim().substring(0, 160)
+        .replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const domId = encodeIdentity(el.getAttribute('id'));
+      const fieldName = encodeIdentity(el.getAttribute('name'));
+      if (domId) line += ' dom_id="' + domId + '"';
+      if (fieldName) line += ' field_name="' + fieldName + '"';
+    }
     const ph = el.getAttribute('placeholder');
     if (ph) line += ' placeholder="' + ph + '"';
 
