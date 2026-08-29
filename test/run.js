@@ -81739,7 +81739,7 @@ test('iframe-backed application forms expose a complete trusted inventory and ex
     const inventorySelector = [
       'input', 'textarea', 'select', '[contenteditable="true"]',
       '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
-      '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+      '[role="searchbox"]', '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
     ].join(',');
     const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
       selector: inventorySelector,
@@ -82678,7 +82678,7 @@ test('optional inventory rows may skip and noisy frames do not block iframe comp
     const inventorySelector = [
       'input', 'textarea', 'select', '[contenteditable="true"]',
       '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
-      '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+      '[role="searchbox"]', '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
     ].join(',');
     const iframeInventory = agent._rememberWorkflowInventoryObservation(iframeTabId, 'iframe_read', {
       selector: inventorySelector,
@@ -82914,6 +82914,114 @@ test('site workflow bindings are revalidated on the live URL and preserved acros
     agent._currentUrl = async () => 'https://www.producthunt.com/';
     assert.equal(await agent._revalidateCarriedSiteWorkflow(tabId, selected), null,
       `${AgentClass.name}: carried workflow survived an adapter change`);
+  }
+});
+
+test('reviewed plan wording edits keep a live site-workflow contract', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const bookingUrl = 'https://kyfw.12306.cn/otn/confirmPassenger/initDc';
+      const runReviewedPlan = async (tabId, liveUrl, editPlan) => {
+        const agent = new AgentClass({
+          getActive: () => ({ promptTier: 'full', model: 'test', name: 'test' }),
+        });
+        agent.useSiteAdapters = true;
+        agent.setPlanReviewSettings({ mode: 'always' });
+        agent._currentUrl = async () => liveUrl;
+        agent._chatWithCostAllowance = async () => ({
+          content: plannerFixtureJson({
+            request_kind: 'execute',
+            site_job: 'rail-booking',
+            requires_state_change: true,
+            requires_submission: true,
+            summary: 'Book the selected 12306 train after review.',
+            localized: {
+              locale: 'en',
+              summary: 'Book the selected 12306 train after review.',
+              steps: [{ id: '1', action: 'Confirm the passenger and submit the official booking.' }],
+              risks: [],
+            },
+          }),
+        });
+        agent._waitForPlanReview = async (_tabId, _planId, _plan, compactMarkdown) => ({
+          action: 'approve',
+          editedText: editPlan(compactMarkdown),
+          markdownMode: 'compact',
+        });
+        return agent._runPlannerGate(
+          tabId,
+          { role: 'user', content: 'Book this train on 12306.' },
+          () => {},
+          null,
+          null,
+          '',
+          { tabUrl: bookingUrl, tabTitle: '12306' },
+          'try',
+          'act',
+          { locale: 'en' },
+        );
+      };
+
+      const kept = await runReviewedPlan(
+        label === 'chrome' ? 9301 : 9302,
+        bookingUrl,
+        text => text.replace('Book the selected', 'Book the chosen'),
+      );
+      assert.equal(kept.siteWorkflow?.job?.id, 'rail-booking',
+        `${label}: wording edit dropped the 12306 workflow`);
+      assert.equal(kept.siteWorkflow?.job?.stages?.includes('payment'), true,
+        `${label}: wording edit lost the payment fulfillment contract`);
+
+      const dropped = await runReviewedPlan(
+        label === 'chrome' ? 9303 : 9304,
+        'https://www.producthunt.com/',
+        text => text.replace('Book the selected', 'Book the chosen'),
+      );
+      assert.equal(dropped.siteWorkflow, null,
+        `${label}: a live adapter mismatch still bound the workflow`);
+    }
+  });
+});
+
+test('ARIA searchboxes enter the form inventory and accept text actions', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=x';
+    const selected = resolveAdapterWorkflowJob(formUrl, 'submit-form');
+    const tabId = 8970 + index;
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Submit every form question.' },
+    ]);
+    agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'searchbox-form-document', pageUrl: formUrl });
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all',
+      maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value=""',
+        'searchbox "Company" [ref_company] required=true value=""',
+      ].join('\n'),
+      treeRevision: 'tree-searchbox',
+    });
+    const company = inventory?.items?.find(item => item.ref_id === 'ref_company');
+    assert.equal(company?.role, 'searchbox',
+      `${AgentClass.name}: searchbox was omitted from the form inventory`);
+    agent._beginCompletionInvariant(tabId);
+    const proof = agent._rememberWorkflowControlActionEvidence(tabId, 'type_ax', {
+      ref_id: 'ref_company',
+      text: 'Acme',
+    }, { success: true, dispatched: true, verified: true }, { sequence: 1 });
+    assert.equal(proof?.directVerified, true,
+      `${AgentClass.name}: type_ax on a searchbox produced no action evidence`);
   }
 });
 

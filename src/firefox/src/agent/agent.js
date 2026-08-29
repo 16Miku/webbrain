@@ -10142,7 +10142,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const seen = new Set();
     const reviewThreadInventory = siteWorkflow?.adapterName === 'github'
       && siteWorkflow?.job?.id === 'resolve-review-threads';
-    const rolePattern = /^\s*(textbox|combobox|checkbox|radio|switch|slider|spinbutton|listbox|button)\b/i;
+    const rolePattern = /^\s*(textbox|searchbox|combobox|checkbox|radio|switch|slider|spinbutton|listbox|button)\b/i;
     for (const line of text.split(/\r?\n/)) {
       const roleMatch = rolePattern.exec(line);
       const refMatch = /\[(ref_[A-Za-z0-9_.:-]+)\]/.exec(line);
@@ -10217,7 +10217,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && coversElement('textarea')
       && coversElement('select')
       && /\[contenteditable(?:\s*=|\s*\])/.test(value)
-      && ['textbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton', 'listbox']
+      && ['textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton', 'listbox']
         .every(coversRole);
   }
 
@@ -10238,7 +10238,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const tag = String(match?.tag || '').toLowerCase();
         const type = String(match?.type || '').toLowerCase();
         const explicitRole = String(match?.role || '').toLowerCase();
-        let role = ['textbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton', 'listbox', 'button']
+        let role = ['textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton', 'listbox', 'button']
           .includes(explicitRole) ? explicitRole : '';
         if (!role) {
           if (tag === 'textarea' || match?.contentEditable === true) role = 'textbox';
@@ -10622,7 +10622,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const actionMatchesControl = name === 'upload_file'
       ? item.type === 'file'
       : (['type_ax', 'set_field', 'iframe_type'].includes(name)
-        ? ['textbox', 'combobox', 'listbox', 'spinbutton', 'slider'].includes(item.role)
+        ? ['textbox', 'searchbox', 'combobox', 'listbox', 'spinbutton', 'slider'].includes(item.role)
         : (name === 'set_checked'
           ? ['checkbox', 'radio', 'switch'].includes(item.role)
           : (['click_ax', 'iframe_click'].includes(name)
@@ -12813,9 +12813,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && editedText
         && editedText !== String(markdown || '').trim();
       const approvedPlanEdited = verbosePlanEdited || compactPlanEdited;
-      // Any reviewed-text edit makes the visible approved text authoritative.
-      // Fail closed for compact and verbose edits instead of retaining hidden
-      // IDs or execution metadata from a stale planner object.
+      // Any reviewed-text edit makes the visible approved text authoritative
+      // for skill IDs and visible gate fields. The site-workflow contract is
+      // re-resolved against the live tab so a wording fix cannot drop
+      // transaction_fulfilled or form_confirmation.
       const approvedSkillIds = approvedPlanEdited ? [] : plan.skill_ids;
       const approvedSchedulingTool = approvedPlanEdited
         ? this._schedulingToolFromApprovedPlanText(approvedText)
@@ -12882,9 +12883,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: approvedSchedulingTool,
-        siteWorkflow: approvedPlanEdited
-          ? null
-          : await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, plan),
+        siteWorkflow: await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, plan),
         requiresDownload: approvedRequiresDownload,
         expectedItems: approvedExpectedItems,
         ...approvedProgressLedger,
