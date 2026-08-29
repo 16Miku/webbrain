@@ -79643,12 +79643,47 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
         label: 'Upload cover letter',
       },
     });
+    assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 1,
+      `${AgentClass.name}: a consumed input proved remote attachment before widget observation`);
+    assert.equal(
+      multiUploadGuard.workflowPendingUploadEvidence?.[multiCover.id]?.attachmentState,
+      'page_consumed',
+      `${AgentClass.name}: an exact async-consumed upload lost its pending selection evidence`,
+    );
+    const multiUploadControls = [
+      'button "Upload résumé" [ref_resume_multi] type="file" dom_id="resume-upload" field_name="resume"',
+      'button "Upload cover letter" [ref_cover_multi] type="file" dom_id="cover-upload" field_name="cover"',
+    ];
+    agent._recordCompletionToolResult(multiUploadTabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageUrl: formUrl,
+      pageContent: [
+        multiUploadControls[0],
+        'generic "cover.pdf" [ref_wrong_widget_attachment]',
+        'generic "Choose another file" [ref_wrong_widget_helper]',
+        multiUploadControls[1],
+      ].join('\n'),
+    });
+    assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 1,
+      `${AgentClass.name}: an attachment name beside the wrong widget promoted a consumed upload`);
+    agent._recordCompletionToolResult(multiUploadTabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageUrl: formUrl,
+      pageContent: [...multiUploadControls, 'status "mycover.pdf uploaded" [ref_cover_collision]'].join('\n'),
+    });
+    assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 1,
+      `${AgentClass.name}: a filename substring promoted a consumed upload`);
+    agent._recordCompletionToolResult(multiUploadTabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageUrl: formUrl,
+      pageContent: [...multiUploadControls, 'generic "cover.pdf" [ref_cover_attachment]'].join('\n'),
+    });
     assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 2,
-      `${AgentClass.name}: exact multi-upload targets did not prove their own inventory rows`);
+      `${AgentClass.name}: observed async upload did not prove its exact inventory row`);
     assert.equal(
       multiUploadGuard.workflowControlActionEvidence?.[multiCover.id]?.attachmentState,
-      'page_consumed',
-      `${AgentClass.name}: an exact async-consumed upload lost its per-control evidence`,
+      'page_consumed_observed',
+      `${AgentClass.name}: widget-observed upload evidence did not retain its state`,
     );
 
     const terminalOnly = agent._progressUpdate(tabId, { items: terminalInventoryItems });
@@ -80001,13 +80036,15 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       getOrMintRef: () => `ref_choice_${++refSequence}`,
       isEditableRoot: () => false,
     });
-    const control = ({ tagName, role, name, attributes = {}, value = undefined, options = [] }) => ({
+    const control = ({
+      tagName, role, name, attributes = {}, value = undefined, options = [], selectedIndex = null,
+    }) => ({
       tagName,
       role,
       name,
       value,
       options,
-      selectedIndex: options.length ? 0 : -1,
+      selectedIndex: selectedIndex == null ? (options.length ? 0 : -1) : selectedIndex,
       innerText: '',
       textContent: '',
       checked: false,
@@ -80015,13 +80052,19 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       getAttribute: attribute => attributes[attribute] ?? null,
       hasAttribute: attribute => Object.prototype.hasOwnProperty.call(attributes, attribute),
       matches: () => false,
-      querySelector: selector => (selector === 'option[selected]' ? null : null),
+      querySelector: selector => (selector === 'option[selected]'
+        ? options.find(option => option.defaultSelected) || null
+        : null),
     });
     const nativeLine = formatLine(control({
       tagName: 'SELECT',
       role: 'combobox',
       name: 'Visibilité',
-      options: [{ textContent: 'Public' }],
+      options: [
+        { textContent: 'Private', defaultSelected: true },
+        { textContent: 'Public', defaultSelected: false },
+      ],
+      selectedIndex: 1,
     }), 0);
     assert.equal(nativeLine, 'combobox "Visibilité" [ref_choice_1] value="Public"',
       `${label}: native select omitted its selected value`);

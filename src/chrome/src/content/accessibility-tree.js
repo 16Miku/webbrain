@@ -340,7 +340,7 @@
     // fall back to the selected option when the control has no label; the
     // selected option is emitted separately as its current value.
     if (tag === 'select') {
-      const opt = el.querySelector('option[selected]') || (el.options && el.options[el.selectedIndex]);
+      const opt = (el.options && el.options[el.selectedIndex]) || el.querySelector('option[selected]');
       if (opt && opt.textContent && opt.textContent.trim()) {
         return opt.textContent.trim();
       }
@@ -709,8 +709,8 @@
       if (tag === 'select' || ['combobox', 'listbox'].includes(roleAttr)) {
         let v = '';
         if (tag === 'select') {
-          const selected = el.querySelector('option[selected]')
-            || (el.options && el.options[el.selectedIndex]);
+          const selected = (el.options && el.options[el.selectedIndex])
+            || el.querySelector('option[selected]');
           v = String(selected?.textContent || '').replace(/\s+/g, ' ').trim();
         } else {
           v = String(

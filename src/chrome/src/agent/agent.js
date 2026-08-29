@@ -12234,6 +12234,82 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  _workflowAttachmentUiSignalCount(value, fileName, item = null) {
+    const normalize = (input) => {
+      let text = String(input || '').replace(/\s+/g, ' ').trim();
+      try { text = text.normalize('NFKC'); } catch {}
+      return text.toLocaleLowerCase();
+    };
+    const expected = normalize(fileName);
+    if (!expected) return 0;
+    const escapedExpected = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const exactFileName = new RegExp(`(^|[^\\p{L}\\p{N}_.-])${escapedExpected}($|[^\\p{L}\\p{N}_.-])`, 'u');
+    const attachmentStatus = /\b(?:attached|uploaded|upload complete|upload successful|remove attachment|remove file|delete attachment|replace file)\b|(?:fichier joint|téléversé|supprimer|hochgeladen|entfernen|adjunto|subido|eliminar|caricato|rimuovi|eklendi|yüklendi|kaldır|添付|アップロード済み|削除|첨부|업로드됨|삭제|已上传|附件|移除|上傳完成|загруж|прикреп|удал)/iu;
+    const lines = String(value || '').split(/\r?\n/);
+    const fileControls = lines.flatMap((rawLine, index) => {
+      if (!/\btype="file"/i.test(rawLine)) return [];
+      return [{
+        index,
+        ref_id: /\[(ref_[A-Za-z0-9_.:-]+)\]/.exec(rawLine)?.[1] || '',
+        domId: /\bdom_id="([^"]*)"/i.exec(rawLine)?.[1] || '',
+        fieldName: /\bfield_name="([^"]*)"/i.exec(rawLine)?.[1] || '',
+        label: (/^\s*[a-z]+\s+"([^"]+)"/i.exec(rawLine)?.[1] || '').replace(/\s+/g, ' ').trim(),
+      }];
+    });
+    const matchesItem = control => (item?.domId
+      ? control.domId === item.domId
+      : (item?.fieldName
+        ? control.fieldName === item.fieldName
+        : (item?.ref_id ? control.ref_id === item.ref_id : control.label === item?.label)));
+    let count = 0;
+    for (const [index, rawLine] of lines.entries()) {
+      const line = normalize(rawLine);
+      if (!exactFileName.test(line) || /\btype="file"/i.test(rawLine)) continue;
+      const label = normalize(/^\s*[a-z]+\s+"([^"]+)"/i.exec(rawLine)?.[1]);
+      const currentValue = normalize(/\bvalue="([^"]+)"/i.exec(rawLine)?.[1]);
+      if (label !== expected && currentValue !== expected && !attachmentStatus.test(line)) continue;
+      if (fileControls.length) {
+        const distances = fileControls.map(control => ({ control, distance: Math.abs(control.index - index) }));
+        const nearestDistance = Math.min(...distances.map(entry => entry.distance));
+        const nearest = distances.filter(entry => entry.distance === nearestDistance);
+        if (nearestDistance <= 20 && nearest.length === 1 && matchesItem(nearest[0].control)) count += 1;
+      } else if (item?.label && line.includes(normalize(item.label))) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  _promoteWorkflowConsumedUploadEvidence(guard, observationText, observationSequence) {
+    const pending = guard?.workflowPendingUploadEvidence;
+    if (!pending || typeof pending !== 'object') return 0;
+    if (!guard.workflowControlActionEvidence || typeof guard.workflowControlActionEvidence !== 'object') {
+      guard.workflowControlActionEvidence = {};
+    }
+    let promoted = 0;
+    for (const [itemId, candidate] of Object.entries(pending)) {
+      if (Number(observationSequence || 0) <= Number(candidate?.actionSequence || 0)) continue;
+      const observedCount = this._workflowAttachmentUiSignalCount(
+        observationText,
+        candidate?.fileName,
+        candidate?.item,
+      );
+      if (observedCount <= Number(candidate?.baselineUiSignalCount || 0)) continue;
+      guard.workflowControlActionEvidence[itemId] = {
+        itemId,
+        tool: 'upload_file',
+        actionSequence: candidate.actionSequence,
+        observationSequence,
+        directVerified: true,
+        attachmentState: 'page_consumed_observed',
+        source: 'accessibility_tree_attachment_ui',
+      };
+      delete pending[itemId];
+      promoted += 1;
+    }
+    return promoted;
+  }
+
   _rememberWorkflowControlActionEvidence(tabId, name, args = {}, result = {}, completionState = null) {
     const guard = this._planExecutionGuards.get(tabId);
     const siteWorkflow = guard?.siteWorkflow;
@@ -12294,15 +12370,46 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && item.type !== 'file'
       && ['click_ax', 'iframe_click'].includes(name)
       && result?.dispatched !== false;
+    const uploadFileName = String(result?.attached?.name || '').trim();
     const verifiedUpload = name === 'upload_file'
-      && ['input_attached', 'page_consumed'].includes(result?.attachmentState)
-      && !!result?.attached?.name;
+      && result?.attachmentState === 'input_attached'
+      && !!uploadFileName;
+    const consumedUpload = name === 'upload_file'
+      && result?.attachmentState === 'page_consumed'
+      && !!uploadFileName;
     const directVerified = item.type === 'file'
       ? verifiedUpload
       : (result?.verified === true || buttonDispatch);
-    if (!directVerified) return null;
     const actionSequence = Number(completionState?.lastAction?.sequence || completionState?.sequence || 0);
     if (!actionSequence) return null;
+    if (!directVerified) {
+      if (!consumedUpload) return null;
+      if (!guard.workflowPendingUploadEvidence || typeof guard.workflowPendingUploadEvidence !== 'object') {
+        guard.workflowPendingUploadEvidence = {};
+      }
+      const pending = {
+        itemId: item.id,
+        tool: name,
+        actionSequence,
+        directVerified: false,
+        pendingObservation: true,
+        attachmentState: 'page_consumed',
+        fileName: uploadFileName,
+        item: {
+          ref_id: item.ref_id,
+          domId: item.domId || '',
+          fieldName: item.fieldName || '',
+          label: item.label,
+        },
+        baselineUiSignalCount: this._workflowAttachmentUiSignalCount(
+          guard.workflowInventoryObservationText,
+          uploadFileName,
+          item,
+        ),
+      };
+      guard.workflowPendingUploadEvidence[item.id] = pending;
+      return pending;
+    }
     if (!guard.workflowControlActionEvidence || typeof guard.workflowControlActionEvidence !== 'object') {
       guard.workflowControlActionEvidence = {};
     }
@@ -12314,6 +12421,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(name === 'upload_file' ? { attachmentState: result.attachmentState } : {}),
     };
     guard.workflowControlActionEvidence[item.id] = proof;
+    if (guard.workflowPendingUploadEvidence) delete guard.workflowPendingUploadEvidence[item.id];
     return proof;
   }
 
@@ -12417,6 +12525,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && Object.values(documents).every(document => document.complete === true),
     };
     guard.workflowInventoryEvidence = evidence;
+    const observationText = [result?.pageContent, result?.text]
+      .find(value => typeof value === 'string' && value.trim()) || '';
+    this._promoteWorkflowConsumedUploadEvidence(guard, observationText, observationSequence);
+    guard.workflowInventoryObservationText = observationText.slice(0, 200000);
     return {
       job: siteWorkflow.job.id,
       source: evidence.source,
