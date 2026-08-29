@@ -303,6 +303,7 @@ const {
 const {
   isExhaustiveAccessibilityInventoryRead,
   invalidateWorkflowInventoryCompleteness,
+  parseWorkflowAxQuotedValue,
   shouldInvalidateFormInventoryAfterAction,
   workflowRequiredRowsAreProcessed,
 } = await import(
@@ -311,6 +312,7 @@ const {
 const {
   isExhaustiveAccessibilityInventoryRead: isExhaustiveAccessibilityInventoryReadFx,
   invalidateWorkflowInventoryCompleteness: invalidateWorkflowInventoryCompletenessFx,
+  parseWorkflowAxQuotedValue: parseWorkflowAxQuotedValueFx,
   shouldInvalidateFormInventoryAfterAction: shouldInvalidateFormInventoryAfterActionFx,
   workflowRequiredRowsAreProcessed: workflowRequiredRowsAreProcessedFx,
 } = await import(
@@ -7513,6 +7515,11 @@ test('adapter workflow evidence kernel is bounded and mirrored', () => {
     { id: 'optional-field', required: false },
   ]), true);
   assert.equal(workflowRequiredRowsAreProcessedFx(rows, inventory), false);
+  const quotedAx = 'textbox "Title" [ref_title] value="Launch \\"Video\\" from C:\\\\Temp"';
+  assert.equal(parseWorkflowAxQuotedValue(quotedAx), 'Launch "Video" from C:\\Temp');
+  assert.equal(parseWorkflowAxQuotedValueFx(quotedAx), 'Launch "Video" from C:\\Temp');
+  assert.equal(parseWorkflowAxQuotedValue('textbox "Title" [ref_title] value="plain"'), 'plain');
+  assert.equal(parseWorkflowAxQuotedValue('textbox "Title" [ref_title]'), undefined);
 });
 
 test('adapter workflow profile rejects unsafe or unverifiable job contracts', () => {
@@ -82139,6 +82146,18 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
     }), 0);
     assert.equal(titledLine, 'textbox "Launch Video" [ref_choice_3] type="text" value="Launch Video"',
       `${label}: text value equal to the accessible name was elided`);
+    const quotedTitle = 'Launch "Video" from C:\\Temp';
+    const quotedLine = formatLine(control({
+      tagName: 'INPUT',
+      role: 'textbox',
+      name: 'Title',
+      attributes: { type: 'text' },
+      value: quotedTitle,
+    }), 0);
+    assert.match(quotedLine, /value="Launch \\"Video\\" from C:\\\\Temp"/,
+      `${label}: quotes or backslashes were not escaped before value=`);
+    assert.doesNotMatch(source, /escapeBackslash/,
+      `${label}: incomplete quote-only value escaping path is still present`);
     const longDescription = `${'Launch the product with a detailed description that exceeds sixty characters and must still verify.'}`;
     assert.ok(longDescription.length > 60);
     const descriptionLine = formatLine(control({
@@ -82509,6 +82528,17 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
       compatDescription,
       { valueLength: nfkcDescription.length, valueFp: nfkcFp },
     ), true, `${AgentClass.name}: NFKC-normalized truncated metadata did not verify`);
+    const quotedTitle = 'Launch "Video" from C:\\Temp';
+    const quotedItems = agent._workflowFormInventoryItems({
+      pageContent: 'textbox "Title" [ref_title] value="Launch \\"Video\\" from C:\\\\Temp"',
+    }, 'bind', 'doc');
+    assert.equal(quotedItems[0]?.value, quotedTitle,
+      `${AgentClass.name}: escaped AX quotes/backslashes did not restore the app-owned title`);
+    assert.equal(agent._workflowMetadataRequirementsMatchInventory(
+      [{ field: 'title', value: quotedTitle }],
+      evidence([{ label: 'Title', value: quotedItems[0].value, observationSequence: 2 }]),
+      0,
+    ), true, `${AgentClass.name}: a title with quotes and backslashes did not verify`);
     assert.equal(agent._workflowMetadataRequirementsMatchInventory(
       [{ field: 'title', value: 'Launch Video' }],
       evidence([{ label: 'Title', value: 'Launch Video', observationSequence: 2 }]),
