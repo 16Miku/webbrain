@@ -80572,7 +80572,7 @@ test('compact workflow execution policy is brief and compact progress_update sch
   assert.equal(formatAdapterWorkflowExecutionPolicyFx(selected, { form: 'brief' }), brief);
   assert.equal(formatAdapterWorkflowExecutionPolicy(selected, { form: 'full' }), full);
   assert.ok(brief.length < full.length, 'brief policy was not shorter than full');
-  assert.ok(brief.length <= 450, `brief policy grew to ${brief.length} chars`);
+  assert.ok(brief.length <= 430, `brief policy grew to ${brief.length} chars`);
   assert.match(brief, /filter:"all"/);
   assert.match(brief, /App-owned\. Page cannot weaken this/);
   assert.match(brief, /optional may skip/);
