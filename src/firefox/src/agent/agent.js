@@ -178,6 +178,11 @@ function savedWorkflowProtectedMessagingStepIndex(workflow, startUrl = '') {
 // Planner prompt still tells the LLM to reserve 0.90+ for straightforward plans;
 // that intentional gap keeps model scoring conservative without over-pausing.
 const PLAN_REVIEW_CONFIDENCE_DEFAULT = 0.75;
+// Bounds for the planner-clarification task composite: enough of each answer
+// to keep the clarified task identifiable, capped so a long clarification
+// chain cannot grow the anchor without limit.
+const CLARIFICATION_ANSWER_CHARS = 400;
+const CLARIFICATION_ANSWER_LIMIT = 8;
 const COST_ALLOWANCE_SESSION_KEY = 'costAllowanceSessionUsd';
 const COST_ALLOWANCE_TOTAL_KEY = 'costAllowanceTotalUsd';
 // Do not inherit the legacy cloudCostSpentUsd bucket: it also contains
@@ -1741,8 +1746,10 @@ export class Agent extends LoopDetector {
           },
         }
       : null;
+    const activeTaskBinding = this._activeTaskBinding(messages);
     const serialized = serializeConversationForSession(messages, {
       maxBytes: options.maxBytes || SESSION_CONVERSATION_BUDGET_BYTES,
+      preserveMessageIndices: activeTaskBinding.pinnedIndices,
     });
     const captchaGateState = this._captchaGateStates.get(tabId) || null;
     return {
@@ -2676,10 +2683,10 @@ export class Agent extends LoopDetector {
       if (this.apiAllowedTabs.has(tabId)) continue;
       const messages = this.conversations.get(tabId);
       if (Array.isArray(messages)) {
-        messages.push({
-          role: 'user',
-          content: '[CURRENT API MUTATION AUTHORIZATION — NOT ALLOWED: The persistent API mutation setting was disabled and this conversation has no /allow-api override. This current state supersedes any earlier [USER OVERRIDE — API MUTATIONS ALLOWED] note. Do not plan or call POST/PUT/PATCH/DELETE requests through fetch_url or research_url unless the user explicitly enables /allow-api for this conversation. Continue through the visible UI or ask for /allow-api.]',
-        });
+        messages.push(this._appOwnedUserMessage(
+          '[CURRENT API MUTATION AUTHORIZATION — NOT ALLOWED: The persistent API mutation setting was disabled and this conversation has no /allow-api override. This current state supersedes any earlier [USER OVERRIDE — API MUTATIONS ALLOWED] note. Do not plan or call POST/PUT/PATCH/DELETE requests through fetch_url or research_url unless the user explicitly enables /allow-api for this conversation. Continue through the visible UI or ask for /allow-api.]',
+          'api_authorization_state',
+        ));
         this._persist(tabId);
       }
       this.apiAllowedInjected.delete(tabId);
@@ -3886,7 +3893,7 @@ export class Agent extends LoopDetector {
     const currentMediaUrl = this._normalizePublicMediaAttemptUrl(currentUrl);
     let scanStart = 0;
     for (let i = list.length - 1; i >= 0; i--) {
-      if (list[i]?.role === 'user' && !this._isAgentInjectedUserContent(list[i].content)) {
+      if (list[i]?.role === 'user' && !this._isAgentInjectedUserMessage(list[i])) {
         scanStart = i + 1;
         break;
       }
@@ -8469,7 +8476,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch { /* ignore UI delivery failures */ }
     try {
       if (Array.isArray(messages)) {
-        messages.push({ role: 'user', content: `[${message}]` });
+        messages.push(this._appOwnedUserMessage(`[${message}]`, 'auto_screenshot_budget'));
       }
     } catch { /* ignore */ }
     try {
@@ -9636,7 +9643,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let scanStart = 0;
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
-      if (message?.role === 'user' && !this._isAgentInjectedUserContent(message.content)) {
+      if (message?.role === 'user' && !this._isAgentInjectedUserMessage(message)) {
         scanStart = i + 1;
         break;
       }
@@ -9722,10 +9729,112 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const message = messages[i];
       if (message?.role !== 'user') continue;
       if (this._isScheduledResumeTurn(message.content)) continue;
-      if (this._isAgentInjectedUserContent(message.content)) continue;
+      if (this._isAgentInjectedUserMessage(message)) continue;
       if (this._plannerUserAuthoredText(message)) return i;
     }
     return -1;
+  }
+
+  _plannerClarificationTaskBinding(messages, answerIndex) {
+    if (!Array.isArray(messages) || answerIndex < 1) return null;
+    const answerMessage = messages[answerIndex];
+    if (answerMessage?.role !== 'user' || this._isAgentInjectedUserMessage(answerMessage)) return null;
+    const answerText = this._plannerUserAuthoredText(answerMessage);
+    if (!answerText) return null;
+
+    // A planner clarification is terminal for its turn. Skip only app-owned
+    // state projected around it; any other real conversational turn breaks the
+    // binding so an old clarification cannot capture a later independent task.
+    let clarificationIndex = -1;
+    for (let index = answerIndex - 1; index >= 1; index -= 1) {
+      const message = messages[index];
+      if (this._isPinnedAgentStateMessage(message) || this._isLocalConversationStatusMessage(message)) continue;
+      if (message?.role === 'user' && this._isAgentInjectedUserMessage(message)) continue;
+      if (message?.role === 'assistant' && message.webbrainPlannerClarification) clarificationIndex = index;
+      break;
+    }
+    if (clarificationIndex < 0) return null;
+
+    const metadata = messages[clarificationIndex].webbrainPlannerClarification || {};
+    let taskText = this._progressTaskTextKey(metadata.taskText).slice(0, 1600);
+    const storedTaskKey = /^tk_[0-9a-f]{8}$/i.test(String(metadata.taskKey || ''))
+      ? String(metadata.taskKey).toLowerCase()
+      : '';
+    const priorBinding = this._activeTaskBinding(messages.slice(0, clarificationIndex));
+    const priorTaskText = this._progressTaskTextKey(priorBinding.text);
+    const priorTaskKey = this._progressTaskKeyForText(priorTaskText);
+    const storedTextMatches = taskText && (
+      priorTaskText === taskText
+      // Compatibility with metadata written by the first implementation,
+      // which bounded the stored snapshot to 1600 characters.
+      || (taskText.length >= 1600 && priorTaskText.startsWith(taskText))
+    );
+    const carriesPriorBinding = Boolean(priorTaskText) && (
+      (storedTaskKey && storedTaskKey === priorTaskKey)
+      || (!storedTaskKey && (!taskText || storedTextMatches))
+    );
+    const taskIndex = carriesPriorBinding ? priorBinding.taskIndex : -1;
+    const carriedPinnedIndices = carriesPriorBinding ? priorBinding.pinnedIndices : [];
+    const carriedAnswers = carriesPriorBinding && Array.isArray(priorBinding.answers)
+      ? priorBinding.answers
+      : [];
+    // Carry the ROOT request, never the prior composite. A composite is itself
+    // JSON, so re-embedding one re-escapes its quotes at every clarification
+    // round: the string grows exponentially and the original request — buried
+    // innermost — is the first thing any length cap discards.
+    if (carriesPriorBinding) taskText = priorBinding.requestText || priorBinding.text;
+    if (!taskText) return null;
+
+    // Every value came from a genuine user turn. JSON quoting keeps their
+    // boundaries unambiguous when this composite is later embedded in the
+    // trusted recovery anchor or hashed as execution evidence authority, and
+    // the flat shape keeps it bounded across an arbitrarily long chain.
+    const requestText = this._progressTaskTextKey(taskText).slice(0, 1600);
+    const answers = [...carriedAnswers, answerText]
+      .map(answer => this._progressTaskTextKey(answer).slice(0, CLARIFICATION_ANSWER_CHARS))
+      .filter(Boolean)
+      .slice(-CLARIFICATION_ANSWER_LIMIT);
+    const text = `User task clarified by the latest answer: ${JSON.stringify({
+      request: requestText,
+      answers,
+    })}`;
+    const pinnedIndices = [...carriedPinnedIndices, taskIndex, clarificationIndex, answerIndex]
+      .filter(index => index >= 0)
+      .filter((index, position, all) => all.indexOf(index) === position)
+      .sort((a, b) => a - b);
+    return { index: answerIndex, taskIndex, clarificationIndex, text, requestText, answers, pinnedIndices };
+  }
+
+  // Return the latest genuine task-bearing user turn, not a synthetic runtime
+  // note, scheduled resume, bare acknowledgment, or continuation command.
+  // Planner clarification answers retain the request they answer as a single
+  // composite authority. When every genuine turn is only a continuation or
+  // acknowledgment, retain the original task instead of promoting it.
+  _activeTaskBinding(messages) {
+    for (let i = messages.length - 1; i >= 1; i--) {
+      const message = messages[i];
+      if (message?.role !== 'user') continue;
+      if (this._isScheduledResumeTurn(message.content)) continue;
+      if (this._isAgentInjectedUserMessage(message)) continue;
+      const text = this._plannerUserAuthoredText(message);
+      if (!text) continue;
+      const clarification = this._plannerClarificationTaskBinding(messages, i);
+      if (clarification) return clarification;
+      const normalized = text.toLowerCase();
+      if (this._isProgressContinuationText(normalized)) continue;
+      if (this._isProgressAckText(normalized)) continue;
+      return { index: i, taskIndex: i, clarificationIndex: -1, text, requestText: text, answers: [], pinnedIndices: [i] };
+    }
+    const index = this._findOriginalTaskIndex(messages);
+    if (index < 0) {
+      return { index: -1, taskIndex: -1, clarificationIndex: -1, text: '', requestText: '', answers: [], pinnedIndices: [] };
+    }
+    const originalText = this._plannerUserAuthoredText(messages[index]);
+    return { index, taskIndex: index, clarificationIndex: -1, text: originalText, requestText: originalText, answers: [], pinnedIndices: [index] };
+  }
+
+  _findActiveTaskIndex(messages) {
+    return this._activeTaskBinding(messages).index;
   }
 
   /**
@@ -10032,8 +10141,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const fastPathPlan = this._recommendedActionFastPathPlan(runOptions);
     if (fastPathPlan) {
       this.plannerFollowUpSkipTabs.delete(tabId);
+      const approvedScratchpadText = this._formatRecommendedActionFastPathScratchpad(fastPathPlan);
       const scratchResult = this._scratchpadWrite(tabId, {
-        text: this._formatRecommendedActionFastPathScratchpad(fastPathPlan),
+        text: approvedScratchpadText,
       });
       if (!scratchResult?.success) {
         onUpdate('warning', { message: scratchResult?.error || 'Could not pin recommended action plan to scratchpad.' });
@@ -10048,6 +10158,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._persist(tabId);
       return {
         proceed: true,
+        approvedScratchpadText,
         requestKind: 'execute',
         requiresStateChange: true,
         requiresDownload: fastPathPlan.id === 'download-media',
@@ -10063,7 +10174,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
       );
       if (!gate.proceed) {
-        messages.push(this._plannerTerminalAssistantMessage(gate, tabInfo));
+        messages.push(this._plannerTerminalAssistantMessage(
+          gate, tabInfo, this._progressTaskAnchorText(tabId), this._progressTaskKeyHash(tabId),
+        ));
         this._persist(tabId);
       }
       return gate;
@@ -10094,7 +10207,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
     if (!gate.proceed) {
-      messages.push(this._plannerTerminalAssistantMessage(gate, tabInfo));
+      messages.push(this._plannerTerminalAssistantMessage(
+        gate, tabInfo, this._progressTaskAnchorText(tabId), this._progressTaskKeyHash(tabId),
+      ));
       this._persist(tabId);
       return {
         proceed: false,
@@ -10133,6 +10248,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     return {
       proceed: true,
+      approvedScratchpadText: gate.approvedScratchpadText || '',
       requestKind: gate.requestKind || 'execute',
       responseOnly: gate.responseOnly === true,
       plannerFailedContinueAct: gate.plannerFailedContinueAct === true,
@@ -10469,15 +10585,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || 'No plan was produced.';
   }
 
-  _plannerTerminalAssistantMessage(gate = {}, tabInfo = null) {
+  _plannerTerminalAssistantMessage(gate = {}, tabInfo = null, activeTaskText = '', activeTaskKey = '') {
     const message = {
       role: 'assistant',
       content: gate.message || 'More information is required.',
     };
-    if (gate.requestKind === 'clarify' && gate.requiresSubmission === true) {
+    if (gate.requestKind === 'clarify' && gate.plannerClarification === true) {
       message.webbrainPlannerClarification = {
-        requiresSubmission: true,
+        requiresSubmission: gate.requiresSubmission === true,
         pageUrl: String(tabInfo?.tabUrl || ''),
+        taskText: this._progressTaskTextKey(activeTaskText).slice(0, 1600),
+        taskKey: /^tk_[0-9a-f]{8}$/i.test(String(activeTaskKey || ''))
+          ? String(activeTaskKey).toLowerCase()
+          : '',
       };
     }
     return message;
@@ -10937,6 +11057,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           message: this._plannerTerminalMessage(plan),
           reason: plan.request_kind,
           requestKind: plan.request_kind,
+          plannerClarification: plan.request_kind === 'clarify',
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
@@ -10950,6 +11071,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           message: messagingPin.error,
           reason: 'active_recipient_unverified',
           requestKind: 'clarify',
+          plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: true,
         };
@@ -11177,6 +11299,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           message: this._plannerTerminalMessage(plan),
           reason: plan.request_kind,
           requestKind: plan.request_kind,
+          plannerClarification: plan.request_kind === 'clarify',
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
@@ -11191,6 +11314,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           message: messagingPin.error,
           reason: 'active_recipient_unverified',
           requestKind: 'clarify',
+          plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: true,
         };
@@ -13153,7 +13277,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const message = messages[index];
       if (message?.role === 'user'
           && message.webbrainStandaloneChat !== true
-          && !this._isAgentInjectedUserContent(message.content)) previousSidepanelUser = index;
+          && !this._isAgentInjectedUserMessage(message)) previousSidepanelUser = index;
     }
     let segmentStart = -1;
     for (let index = previousSidepanelUser + 1; index <= currentIndex; index += 1) {
@@ -14025,23 +14149,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // one anchor across pauses and confirmations.
   _progressTaskAnchorText(tabId) {
     const messages = this.conversations.get(tabId) || [];
-    for (let i = messages.length - 1; i >= 1; i--) {
-      const m = messages[i];
-      if (m.role !== 'user') continue;
-      if (this._isScheduledResumeTurn(m.content)) continue;
-      if (this._isAgentInjectedUserContent(m.content)) continue;
-      const text = this._stripInjectedTaskContext(this._messageText(m.content));
-      if (!text) continue;
-      const lower = text.toLowerCase();
-      if (this._isProgressContinuationText(lower)) continue;
-      if (this._isProgressAckText(lower)) continue;
-      return text;
-    }
-    return '';
+    return this._activeTaskBinding(messages).text;
   }
 
-  _progressTaskKeyHash(tabId) {
-    const text = this._progressTaskTextKey(this._progressTaskAnchorText(tabId) || this._originalTaskText(tabId)).toLowerCase();
+  _progressTaskKeyForText(text) {
+    text = this._progressTaskTextKey(text).toLowerCase();
     if (!text) return '';
     let hash = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) {
@@ -14049,6 +14161,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       hash = Math.imul(hash, 0x01000193) >>> 0;
     }
     return `tk_${hash.toString(16).padStart(8, '0')}`;
+  }
+
+  _progressTaskKeyHash(tabId) {
+    return this._progressTaskKeyForText(
+      this._progressTaskAnchorText(tabId) || this._originalTaskText(tabId),
+    );
   }
 
   _adoptUnscopedProgressRows(tabId, sessionId, opts = {}) {
@@ -14718,11 +14836,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || c.startsWith('[Agent memory')
       || c.startsWith('[PROGRESS LEDGER BLOCK')
       || c.startsWith('[PLAN EXECUTION BLOCK')
+      || c.startsWith('[RUNTIME MODE CORRECTION')
       || c.startsWith('[NAVIGATION OCCURRED')
       || c.startsWith('[Auto-screenshot')
       || c.startsWith('[Completion verification screenshot omitted')
       || c.startsWith('[UNTRUSTED CAPTURE')
       || c.startsWith('[UNTRUSTED DOCUMENT');
+  }
+
+  _appOwnedUserMessage(content, kind = 'runtime') {
+    return {
+      role: 'user',
+      content,
+      webbrainAppOwned: true,
+      webbrainAppOwnedKind: String(kind || 'runtime').slice(0, 80),
+    };
+  }
+
+  _isAgentInjectedUserMessage(message) {
+    return message?.webbrainAppOwned === true
+      || this._isAgentInjectedUserContent(message?.content);
   }
 
   _isScheduledResumeTurn(content) {
@@ -14753,7 +14886,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const m = messages[i];
       if (m.role !== 'user') continue;
       if (this._isScheduledResumeTurn(m.content)) continue;
-      if (this._isAgentInjectedUserContent(m.content)) continue;
+      if (this._isAgentInjectedUserMessage(m)) continue;
       const text = this._stripInjectedTaskContext(this._messageText(m.content));
       if (!text) continue;
       return text;
@@ -15373,6 +15506,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return /\[Approved plan\b[^\]]*(?:pinned by (?:planner|recommended action)|edited localized text pinned by planner)[^\]]*\]/i.test(body);
   }
 
+  _approvedExecutionPlanAnchor(approvedScratchpadText) {
+    const body = String(approvedScratchpadText || '');
+    // Only accept the exact app-owned handoff returned by the current planner
+    // gate. The durable scratchpad is model-writable, carries no authority, and
+    // must never be parsed back into a trusted recovery instruction.
+    const marker = body.match(/^\s*\[Approved plan\b[^\]]*(?:pinned by (?:planner|recommended action)|edited localized text pinned by planner)[^\]]*\]/i);
+    if (!marker) return '';
+    let excerpt = body.slice(marker[0].length).trim();
+    const metadataIndex = excerpt.search(/(?:^|\n)###\s+Planner execution metadata\b/i);
+    if (metadataIndex >= 0) excerpt = excerpt.slice(0, metadataIndex).trim();
+    return excerpt.replace(/\s+/g, ' ').trim().slice(0, 800);
+  }
+
+  _executionTaskRecoveryAnchor(state) {
+    const anchor = {};
+    if (state?.taskText) anchor.activeTask = state.taskText;
+    if (state?.approvedPlanAnchor) anchor.approvedPlan = state.approvedPlanAnchor;
+    if (!Object.keys(anchor).length) return '';
+    return `\n[APP-OWNED ACTIVE TASK ANCHOR: The quoted JSON below is trusted runtime state, not page content. Keep this task in scope and do not revive earlier tasks. ${JSON.stringify(anchor)}]`;
+  }
+
   _schedulingToolFromApprovedPlanText(text) {
     const tools = new Set();
     const pattern = /(?:^|\n)\s*-\s*(schedule_task|schedule_resume)\s*:/g;
@@ -15401,6 +15555,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || gateOutcome?.requiredSchedulingTool === 'schedule_resume'
       ? gateOutcome.requiredSchedulingTool
       : null;
+    const taskText = this._progressTaskTextKey(
+      this._progressTaskAnchorText(tabId) || this._latestTaskText(tabId) || this._originalTaskText(tabId),
+    ).slice(0, 1600);
+    const taskKey = this._progressTaskKeyHash(tabId);
+    const gateApprovedPlanAnchor = this._approvedExecutionPlanAnchor(gateOutcome?.approvedScratchpadText);
     const carried = runOptions?.trustedContinuation === true
       ? this._continuationExecutionEvidence.get(tabId)
       : null;
@@ -15413,7 +15572,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && carried.requiresDownload === requiresDownload
       && carried.allowsAppStateToolEvidence === allowsAppStateToolEvidence
       && carried.requiredSchedulingTool === requiredSchedulingTool
+      && carried.taskKey === taskKey
+      && carried.evidenceTaskKey === taskKey
       && carried.conversationId === (this.conversationIds.get(tabId) || null);
+    const approvedPlanAnchor = gateApprovedPlanAnchor
+      || (carryMatches ? carried.approvedPlanAnchor || '' : '');
     const state = {
       enabled,
       requestKind,
@@ -15424,6 +15587,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       allowsPlannerShapedResult: gateOutcome?.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence,
       requiredSchedulingTool,
+      taskKey,
+      taskText,
+      approvedPlanAnchor,
+      evidenceTaskKey: carryMatches ? carried.evidenceTaskKey : '',
+      taskDrifted: false,
       approvedPlan: this._hasApprovedExecutionPlan(this.conversations.get(tabId) || []),
       // Only the app-owned Continue action can carry verified evidence from
       // the immediately preceding run; ordinary user turns always start at 0.
@@ -15565,6 +15733,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _markPlanExecutionToolCall(tabId, name, result, { consequential = false, download = false } = {}) {
     const state = this._planExecutionGuards.get(tabId);
+    if (state?.enabled && state.taskKey && this._progressTaskKeyHash(tabId) !== state.taskKey) {
+      state.taskDrifted = true;
+      return;
+    }
     const requestedAppStateTool = state?.allowsAppStateToolEvidence === true
       && this.constructor.EXECUTION_APP_STATE_TOOLS.has(name);
     const requiredScheduleSucceeded = state?.requiredSchedulingTool === name
@@ -15578,6 +15750,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (state?.enabled && download) {
       const pendingIds = this._pendingDownloadIdsFromResult(name, result);
       state.pendingDownloadIds = [...new Set([...state.pendingDownloadIds, ...pendingIds])];
+      if (pendingIds.length && state.taskKey) state.evidenceTaskKey = state.taskKey;
     }
     const confirmedPendingDownload = name === 'list_downloads'
       && this._confirmPendingDownloadEvidence(state, result);
@@ -15587,6 +15760,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || unverifiedFindText
         || (!this._isSuccessfulExecutionEvidence(result) && !requiredScheduleSucceeded)) return;
     state.successfulTaskToolCalls += 1;
+    if (state.taskKey) state.evidenceTaskKey = state.taskKey;
     if (requiredScheduleSucceeded) state.successfulRequiredSchedulingToolCalls += 1;
     if ((download && this._isSuccessfulDownloadEvidence(name, result)) || confirmedPendingDownload) {
       state.successfulDownloadToolCalls += 1;
@@ -15601,6 +15775,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _executionEvidenceSatisfied(state) {
     if (!state) return false;
+    if (state.taskDrifted === true) return false;
+    if (state.taskKey && state.evidenceTaskKey !== state.taskKey) return false;
     // Unknown mutation intent is conservative: observational evidence may be
     // useful progress, but it cannot prove successful completion of a task the
     // failed planner may have classified as state-changing.
@@ -15616,7 +15792,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _storeContinuationExecutionEvidence(tabId) {
     const guard = this._planExecutionGuards.get(tabId);
-    if (guard?.enabled && (
+    if (guard?.enabled && !guard.taskDrifted && (
       guard.successfulTaskToolCalls > 0
       || guard.successfulConsequentialToolCalls > 0
       || guard.pendingDownloadIds.length > 0
@@ -15630,6 +15806,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresDownload: guard.requiresDownload,
         allowsAppStateToolEvidence: guard.allowsAppStateToolEvidence,
         requiredSchedulingTool: guard.requiredSchedulingTool,
+        approvedPlanAnchor: guard.approvedPlanAnchor,
+        taskKey: guard.taskKey,
+        evidenceTaskKey: guard.evidenceTaskKey,
         successfulTaskToolCalls: guard.successfulTaskToolCalls,
         successfulConsequentialToolCalls: guard.successfulConsequentialToolCalls,
         successfulDownloadToolCalls: guard.successfulDownloadToolCalls,
@@ -15789,12 +15968,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _isRuntimeModeContradictionTerminal(content) {
-    return /\b(?:switch|change|set)\s+(?:back\s+)?to\s+act\s+mode\b|\b(?:currently|still|now)\s+(?:running\s+)?in\s+ask\s+mode\b/i.test(String(content || ''));
+    const text = String(content || '');
+    const inability = /\b(?:i|we|webbrain|the\s+agent|this\s+run|the\s+runtime)\s+(?:cannot|can't|could\s+not|am\s+unable|are\s+unable|is\s+unable|am\s+not\s+able|are\s+not\s+able|is\s+not\s+able|do(?:es)?\s+not\s+have|don't\s+have|can\s+only|am\s+not\s+permitted|are\s+not\s+permitted|is\s+not\s+permitted)\b/i;
+    const runtimeBoundClaim = text.split(/(?:[.!?]\s+|\n+)/).some(clause => {
+      // Keep the mode claim and inability in one clause and require the mode
+      // subject to be the agent/runtime. An application's read-only session
+      // followed by "I cannot edit" is a task result, not runtime drift.
+      const selfModeClaim = /\b(?:i\s+am|i'm|we\s+are|we're)\s+(?:currently\s+)?(?:running\s+)?in\s+(?:ask|read[- ]only)\s+mode\b/i.test(clause);
+      const namedRuntimeModeClaim = /\b(?:webbrain|the\s+agent|this\s+(?:webbrain\s+)?run|the\s+runtime)\b[^.!?\n]{0,100}\b(?:ask\s+mode|read[- ]only\s+(?:mode|session))\b/i.test(clause);
+      return (selfModeClaim || namedRuntimeModeClaim) && inability.test(clause);
+    });
+    const explicitModeSwitchBlocker = /\b(?:switch|change|set)\s+(?:back\s+)?to\s+act\s+mode\b[^.!?\n]{0,100}\b(?:to|before|and)\s+(?:continue|proceed|complete|execute|retry|use\s+(?:the\s+)?tools?)\b/i.test(text);
+    return runtimeBoundClaim || explicitModeSwitchBlocker;
   }
 
   _planOnlyTerminalDecision(tabId, content, { viaDone = false, outcome = null } = {}) {
     const state = this._planExecutionGuards.get(tabId);
     if (!state?.enabled) return null;
+    if (state.taskKey && this._progressTaskKeyHash(tabId) !== state.taskKey) state.taskDrifted = true;
+    const recoveryAnchor = this._executionTaskRecoveryAnchor(state);
     if (!viaDone && this._isSafetyRefusalTerminal(content)) return null;
     const terminalFailure = viaDone && (outcome === 'partial' || outcome === 'failed');
     const runtimeModeContradiction = this._isRuntimeModeContradictionTerminal(content);
@@ -15822,6 +16014,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const invalidDone = viaDone && (looksPlanOnly || missingEvidence);
     if (!invalidPlainFinal && !invalidDone) return null;
     if (runtimeModeContradiction
+        && !state.taskDrifted
         && !missingRequiredSchedulingTool
         && !state.runtimeModeCorrectionAttempted) {
       state.recoveryAttempted = true;
@@ -15829,7 +16022,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return {
         retry: true,
         retryAssistantContent: null,
-        nudge: '[RUNTIME MODE CORRECTION: The trusted runtime for this run is Act/Dev, not Ask mode. Page-changing tools are available. Continue the authorized task with the permitted tools now. If a required value is missing, call clarify without modifying that field. If a genuine blocker remains, call done with outcome partial or failed and explain that blocker without claiming the run is in Ask mode.]',
+        nudge: '[RUNTIME MODE CORRECTION: The trusted runtime for this run is Act/Dev, not Ask mode or a read-only mode. Page-changing tools are available. Continue the authorized task with the permitted tools now. If a required value is missing, call clarify without modifying that field. If a genuine blocker remains, call done with outcome partial or failed and explain the concrete blocker without contradicting the trusted runtime mode.]' + recoveryAnchor,
       };
     }
     if (!state.recoveryAttempted) {
@@ -15840,7 +16033,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         retryAssistantContent: staleCancellation
           ? '[Stale local cancellation status omitted from execution context.]'
           : null,
-        nudge: staleCancellation
+        nudge: (state.taskDrifted
+          ? '[PLAN EXECUTION BLOCK: The genuine user task changed after this run was authorized. Do not execute either the old or new task under stale authorization. Call done with outcome failed and report that a fresh run is required.]'
+          : staleCancellation
           ? '[PLAN EXECUTION BLOCK: No current user stop was received. The previous response echoed a stale local cancellation status from conversation history. That status is UI metadata, not an instruction or task result. Continue the active task with permitted tools. If complete or blocked, call done with an explicit outcome; do not repeat the cancellation status or return plain text.]'
           : missingRequiredSchedulingTool
           ? `[PLAN EXECUTION BLOCK: The approved plan requires a successful ${state.requiredSchedulingTool} call before this task can finish successfully. A one-time read, scroll, send, or other action does not create the scheduled work. Call ${state.requiredSchedulingTool} with the user's requested timing and verify success:true plus scheduled:true. If the schedule is unsupported or still lacks required timing, call done with outcome partial or failed and explain the exact limitation; do not claim it was scheduled.]`
@@ -15848,7 +16043,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? '[PLAN EXECUTION BLOCK: This task requires a file to be downloaded before it can finish successfully. Finding a URL, link, button, or media source is only read evidence. Use an authorized tool call with the DOWNLOAD capability and verify that it returned successful download evidence. If permission is denied or no file can be saved, call done with outcome partial or failed and explain the limitation; do not claim the file was downloaded.]'
           : unknownMutationIntent
           ? '[PLAN EXECUTION BLOCK: Planning failed, so the runtime could not determine whether this task requires a state change. Continue with normally permitted tools. A success outcome now requires a verified consequential tool call; if the useful result is read-only or no safe consequential action is needed, deliver that result with done outcome partial instead of claiming success. Do not invent or perform a mutation merely to satisfy this guard.]'
-          : '[PLAN EXECUTION BLOCK: This is an execute task, so plain text cannot end it. If work remains, use permitted task tools. If complete, call done with outcome success. If blocked, unsafe, cancelled, or user input is required, call done with outcome failed or partial; do not take unsafe action. Read-only work needs a successful task tool and state-changing work needs a successful consequential tool. Do not return another plan, promise, or plain terminal.]',
+          : '[PLAN EXECUTION BLOCK: This is an execute task and the trusted runtime is Act/Dev, not Ask or read-only mode, so plain text cannot end it. If work remains, use permitted task tools. If complete, call done with outcome success. If blocked, unsafe, cancelled, or user input is required, call done with outcome failed or partial; do not take unsafe action. Read-only work needs a successful task tool and state-changing work needs a successful consequential tool. Do not return another plan, promise, or plain terminal.]') + recoveryAnchor,
+      };
+    }
+    if (state.taskDrifted) {
+      return {
+        failure: 'The user task changed after this run was authorized, so WebBrain discarded its execution evidence and stopped. Start a fresh run for the current task.',
+        status: 'task_binding_changed',
       };
     }
     if (missingRequiredSchedulingTool) {
@@ -16255,7 +16456,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const m = messages[i];
       if (m.role !== 'user') continue;
       if (this._isScheduledResumeTurn(m.content)) return i;
-      if (this._isAgentInjectedUserContent(m.content)) continue;
+      if (this._isAgentInjectedUserMessage(m)) continue;
       if (this._stripInjectedTaskContext(this._messageText(m.content))) return -1;
     }
     return -1;
@@ -16266,8 +16467,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * without dropping any turns. Used as the fallback when we're over the token
    * budget but have too few old messages to summarize (the case most likely to
    * overflow early in a run on a small-window local model). Skips the system
-   * prompt (index 0), the pinned scratchpad, AND the pinned original user task
-   * so none is mangled — the task in particular often carries the real
+   * prompt (index 0), the pinned scratchpad, AND the pinned original/current
+   * user tasks so none is mangled — a task in particular often carries the real
    * instruction at the END of a page-enriched first turn, where head-truncation
    * would silently drop it. Clears the cached input-token count so the next
    * call re-measures the smaller size.
@@ -16297,11 +16498,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _truncateOversizedMessages(tabId, messages) {
-    const taskIdx = this._findOriginalTaskIndex(messages);
+    const originalTaskIdx = this._findOriginalTaskIndex(messages);
+    const activeTaskBinding = this._activeTaskBinding(messages);
+    const protectedTaskIndices = new Set([originalTaskIdx, ...activeTaskBinding.pinnedIndices]);
     const scheduledResumeIdx = this._findLatestScheduledResumeIndex(messages);
     let trimmed = false;
     for (let i = 1; i < messages.length; i++) {
-      if (i === taskIdx) continue; // never truncate the pinned original task
+      if (protectedTaskIndices.has(i)) continue; // preserve the full task/clarification authority chain verbatim
       if (i === scheduledResumeIdx) continue; // preserve scheduled resume instructions
       const m = messages[i];
       if (this._isPinnedAgentStateMessage(m)) continue;
@@ -16366,8 +16569,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { compacted: false, reason: 'not_needed', remaining: messages.length, tokens: usedTokens || null, budget: tokenBudget };
     }
 
-    // Strategy: keep system prompt + ORIGINAL USER TASK (pinned) + summarize
-    // old messages + keep recent messages.
+    // Strategy: keep system prompt + ORIGINAL USER TASK (historical anchor) +
+    // CURRENT ACTIVE TASK (authoritative anchor), summarize old messages, and
+    // keep recent messages.
     const systemMsg = messages[0]; // always the system prompt
     // CRITICAL: the first real user message is the task statement. Folding it
     // into a synthetic summary makes small models forget what they were doing
@@ -16378,10 +16582,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Shared with _truncateOversizedMessages.
     const originalTaskIdx = this._findOriginalTaskIndex(messages);
     const originalTask = originalTaskIdx >= 0 ? messages[originalTaskIdx] : null;
+    const activeTaskBinding = this._activeTaskBinding(messages);
+    const activeTaskIdx = activeTaskBinding.index;
+    const activeTask = activeTaskIdx >= 0 && activeTaskIdx !== originalTaskIdx
+      ? messages[activeTaskIdx]
+      : null;
     const scheduledResumeIdx = this._findLatestScheduledResumeIndex(messages);
-    const scheduledResumeMsg = scheduledResumeIdx >= 0 && scheduledResumeIdx !== originalTaskIdx
+    const scheduledResumeMsg = scheduledResumeIdx >= 0
+      && scheduledResumeIdx !== originalTaskIdx
+      && scheduledResumeIdx !== activeTaskIdx
       ? messages[scheduledResumeIdx]
       : null;
+    const activeTaskPinnedMessages = activeTaskBinding.pinnedIndices
+      .filter(index => index !== originalTaskIdx && index !== scheduledResumeIdx)
+      .map(index => messages[index])
+      .filter(Boolean);
+    const activeTaskPinnedSet = new Set(activeTaskPinnedMessages);
     // Pin the scratchpad alongside system so the model's self-written notes
     // survive summarization. Stripped from old/recent slices below to avoid
     // duplicating it during rebuild.
@@ -16397,19 +16613,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // for long-horizon tasks and caused the model to "forget" outcomes from
     // ~8 steps back (e.g. the file list from list_downloads).
     const keepRecent = 30;
-    // Exclude the pinned original task from both summary and recent slices.
+    // Exclude pinned task anchors from both summary and recent slices.
     const afterPin = originalTaskIdx >= 0 ? originalTaskIdx + 1 : 1;
     const recentStart = Math.max(afterPin, messages.length - keepRecent);
     const oldMessagesRaw = messages.slice(afterPin, recentStart);
     const recentMessagesRaw = messages.slice(recentStart);
+    const protectedPostActiveRecent = activeTask && activeTaskIdx >= recentStart
+      ? new Set(messages.slice(activeTaskIdx + 1))
+      : new Set();
     const oldMessages = oldMessagesRaw.filter(m => (
-      m !== scheduledResumeMsg
+      !activeTaskPinnedSet.has(m)
+      && m !== scheduledResumeMsg
       && !this._isScheduledResumeTurn(m.content)
       && !this._isPinnedAgentStateMessage(m)
       && !this._isLocalConversationStatusMessage(m)
     ));
     const recentMessages = recentMessagesRaw.filter(m => (
-      m !== scheduledResumeMsg
+      !activeTaskPinnedSet.has(m)
+      && m !== scheduledResumeMsg
       && !this._isScheduledResumeTurn(m.content)
       && !this._isPinnedAgentStateMessage(m)
       && !this._isLocalConversationStatusMessage(m)
@@ -16433,19 +16654,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // would leave too little `oldMessages` history to summarize and we'd send
       // the same over-budget prompt again. Move just enough of the earliest
       // recent turns back into the summary set to make compaction possible.
-      const latestUserRecentIndex = () => {
-        for (let i = recentMessages.length - 1; i >= 0; i--) {
-          const msg = recentMessages[i];
-          if (msg?.role === 'user' && !this._isAgentInjectedUserContent(msg.content)) return i;
-        }
-        return -1;
-      };
       const canMoveOldestRecentToSummary = () => {
-        if (!recentMessages.length) return false;
-        const latestUserIdx = latestUserRecentIndex();
-        if (latestUserIdx === 0) return false;
-        if (latestUserIdx < 0 && recentMessages[0]?.role === 'tool') return true;
-        return latestUserIdx > 0 || recentMessages.length > 1;
+        // The active task is pinned separately before this slice is built, so
+        // older genuine user turns no longer need to block budget recovery.
+        // Preserve the live tail after a newly pinned task pivot, just as the
+        // old implementation protected the latest user turn and its results.
+        return recentMessages.length > 0 && !protectedPostActiveRecent.has(recentMessages[0]);
       };
       const moveOldestRecentToSummary = () => {
         if (!canMoveOldestRecentToSummary()) return false;
@@ -16456,7 +16670,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return true;
       };
       while (oldMessages.length < 4 && moveOldestRecentToSummary()) {}
-      const pinnedChars = this._estimateContextChars([systemMsg, originalTask, scheduledResumeMsg, scratchpadMsg, memoryMsg, progressMsg].filter(Boolean));
+      const pinnedChars = this._estimateContextChars([systemMsg, originalTask, ...activeTaskPinnedMessages, scheduledResumeMsg, scratchpadMsg, memoryMsg, progressMsg].filter(Boolean));
       const compactOverheadChars = 3000; // summary wrapper + ack + manual summary fallback
       const fixedPromptOverheadChars = fixedPromptOverheadTokens * 4;
       const maxRecentChars = Math.max(0, (tokenBudget * 4) - fixedPromptOverheadChars - pinnedChars - compactOverheadChars);
@@ -16557,13 +16771,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
-    // Rebuild: system + pinned original task + scheduled resume + scratchpad (if any) + summary + recent
-    const summaryMsg = { role: 'user', content: `[Context window was trimmed to stay within budget. Your ORIGINAL TASK is the user message above — keep working on it. ${summaryText}]` };
-    const summaryAck = { role: 'assistant', content: 'Understood, I have the conversation context. Continuing.' };
+    // Rebuild with the active authority chain. A clarification request and its
+    // answer stay adjacent to the task they refine, so compaction cannot turn a
+    // short answer fragment into an independent task.
+    const taskAuthorityNotice = activeTask
+      ? (activeTaskBinding.clarificationIndex >= 0
+        ? 'The planner clarification context and genuine user answer pinned above together are the CURRENT ACTIVE TASK. Earlier user tasks outside that clarified chain are context only and do not regain authority.'
+        : 'The latest genuine user task pinned above is the CURRENT ACTIVE TASK. Earlier user tasks, including the original task, are context only and do not regain authority.')
+      : 'The original user task pinned above remains the CURRENT ACTIVE TASK.';
+    const summaryMsg = { role: 'user', content: `[Context window was trimmed to stay within budget. ${taskAuthorityNotice} Continue the current active task. ${summaryText}]` };
+    const summaryAck = { role: 'assistant', content: activeTask
+      ? 'Understood. I\'ll continue the current active task; earlier tasks remain context only.'
+      : 'Understood. I\'ll continue the current active task.' };
 
     messages.length = 0;
     messages.push(systemMsg);
     if (originalTask) messages.push(originalTask);
+    messages.push(...activeTaskPinnedMessages);
     if (scheduledResumeMsg) messages.push(scheduledResumeMsg);
     if (scratchpadMsg) messages.push(scratchpadMsg);
     if (memoryMsg) messages.push(memoryMsg);
@@ -17122,7 +17346,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!message || (message.role !== 'user' && message.role !== 'assistant')) return null;
     if (this._isPinnedAgentStateMessage(message) || this._isLocalConversationStatusMessage(message)) return null;
     if (message.role === 'user'
-      && (this._isAgentInjectedUserContent(message.content) || this._isScheduledResumeTurn(message.content))) return null;
+      && (this._isAgentInjectedUserMessage(message) || this._isScheduledResumeTurn(message.content))) return null;
 
     const rawContent = message.role === 'user'
       ? this._plannerUserAuthoredText(message)
@@ -22951,7 +23175,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : null;
       if (clarificationFinalDecision?.retry && steps < this.maxSteps) {
         messages.push(this._withResponseItems({ role: 'assistant', content: result.content }, result.responseItems, result.reasoningContent, provider));
-        messages.push({ role: 'user', content: clarificationFinalDecision.nudge });
+        messages.push(this._appOwnedUserMessage(
+          clarificationFinalDecision.nudge,
+          'clarification_authorization',
+        ));
         onUpdate('warning', { message: 'Plain final completion blocked until the user answers the clarification explicitly.' });
         await this._persistNow(tabId);
         continue;
@@ -23018,7 +23245,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
         messages.push(this._withResponseItems({ role: 'assistant', content: result.content }, result.responseItems, result.reasoningContent, provider));
-        messages.push({ role: 'user', content: plainFinalBlocks.join('\n\n') });
+        messages.push(this._appOwnedUserMessage(plainFinalBlocks.join('\n\n'), 'plain_final_block'));
         if (completionFinalBlock || readFinalBlock) onUpdate('text', { content: '', replace: true });
         onUpdate('warning', { message: readFinalBlock
           ? 'Whole-thread answer blocked until every read page is covered.'
@@ -23039,7 +23266,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           planOnlyDecision.retryAssistantContent ? '' : result.reasoningContent,
           provider,
         ));
-        messages.push({ role: 'user', content: planOnlyDecision.nudge });
+        messages.push(this._appOwnedUserMessage(planOnlyDecision.nudge, 'plan_execution_block'));
         // Clear any already-rendered plan/promise so recovery does not leave
         // rejected terminal text in the assistant bubble (and so run-complete
         // can write the real summary into an empty bubble).
@@ -23743,7 +23970,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : null;
         if (clarificationFinalDecision?.retry && steps < this.maxSteps) {
           messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
-          messages.push({ role: 'user', content: clarificationFinalDecision.nudge });
+          messages.push(this._appOwnedUserMessage(
+            clarificationFinalDecision.nudge,
+            'clarification_authorization',
+          ));
           onUpdate('text', { content: '', replace: true });
           onUpdate('warning', { message: 'Plain final completion blocked until the user answers the clarification explicitly.' });
           await this._persistNow(tabId);
@@ -23810,7 +24040,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             }
           }
           messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
-          messages.push({ role: 'user', content: plainFinalBlocks.join('\n\n') });
+          messages.push(this._appOwnedUserMessage(plainFinalBlocks.join('\n\n'), 'plain_final_block'));
           if (completionFinalBlock || readFinalBlock) onUpdate('text', { content: '', replace: true });
           onUpdate('warning', { message: readFinalBlock
             ? 'Whole-thread answer blocked until every read page is covered.'
@@ -23831,7 +24061,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             planOnlyDecision.retryAssistantContent ? '' : reasoningContent,
             provider,
           ));
-          messages.push({ role: 'user', content: planOnlyDecision.nudge });
+          messages.push(this._appOwnedUserMessage(planOnlyDecision.nudge, 'plan_execution_block'));
           // Streamed plan text already landed via text_delta. Replace it before
           // the recovery turn so later deltas do not append onto the plan and
           // the final done summary is not blocked by a non-empty bubble.
