@@ -14,7 +14,7 @@ for (const browser of ['chrome', 'firefox']) {
 
   const manager = fs.readFileSync(path.join(prefix, 'providers', 'manager.js'), 'utf8');
   const openai = manager.slice(manager.indexOf('      openai: {'), manager.indexOf('      anthropic: {'));
-  assert.match(openai, /contextWindow: 1050000/, `${browser}: OpenAI context window should be 1.05M`);
+  assert.match(openai, /contextWindow: 272000/, `${browser}: OpenAI context window should default to the standard-price 272k threshold`);
   assert.match(openai, /maxOutputTokens: 128000/, `${browser}: OpenAI output budget should be 128k`);
 
   const anthropic = manager.slice(manager.indexOf('      anthropic: {'), manager.indexOf('      gemini: {'));

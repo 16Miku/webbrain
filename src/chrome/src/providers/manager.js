@@ -683,7 +683,9 @@ export class ProviderManager {
         providerName: 'openai',
         baseUrl: 'https://api.openai.com/v1',
         model: OPENAI_DEFAULT_MODEL,
-        contextWindow: 1050000,
+        // Keep the default at the standard-price input threshold; users can
+        // opt into the model's larger window when long-context pricing is acceptable.
+        contextWindow: 272000,
         maxOutputTokens: 128000,
         inputCostPerMillionUsd: 2.5,
         cacheReadCostPerMillionUsd: 0.25,
