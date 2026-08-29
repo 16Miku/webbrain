@@ -129,6 +129,17 @@ export class BaseLLMProvider {
   }
 
   /**
+   * Maximum tokens requested for a normal model generation. Providers may
+   * expose a larger model-specific budget in Settings; legacy configurations
+   * retain the historical 4k request cap.
+   */
+  get maxOutputTokens() {
+    const n = Number(this.config.maxOutputTokens);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+    return 4096;
+  }
+
+  /**
    * Whether this provider is running a small/local model that benefits from
    * a compact system prompt. When true, the agent uses SYSTEM_PROMPT_ACT_COMPACT
    * instead of the full SYSTEM_PROMPT_ACT to save context budget.
