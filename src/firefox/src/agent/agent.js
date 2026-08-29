@@ -1328,7 +1328,7 @@ export class Agent extends LoopDetector {
       && Number.isInteger(messageBodyBaselineCount)
       && messageBodyBaselineCount >= 0
       && recipientTarget?.target_kind === 'named';
-    const metadataDetails = siteWorkflow.job.id === 'update-metadata'
+    const metadataDetails = this._workflowJobStoresMetadataRequirements(siteWorkflow)
       ? this._normalizeWorkflowMetadataRequirementsDetails(guard.workflowMetadataRequirements)
       : { items: [], incomplete: false };
     const metadataRequirements = metadataDetails.items;
@@ -1428,7 +1428,10 @@ export class Agent extends LoopDetector {
       ['language', ['language', 'langue', 'idioma', 'sprache', 'lingua', 'dil', '言語', '언어', '语言', '語言', 'язык']],
       ['category', ['category', 'catégorie', 'categoría', 'kategorie', 'categoria', 'kategori', 'カテゴリ', '카테고리', '类别', '類別', 'категория']],
       ['license', ['license', 'licence', 'licencia', 'lizenz', 'licenza', 'lisans', 'ライセンス', '라이선스', '许可', '授權', 'лицензия']],
-      ['tags', ['tag', 'tags', 'étiquette', 'étiquettes', 'mot clé', 'mots clés', 'etiqueta', 'etiquetas', 'schlagwort', 'schlagwörter', 'etichette', 'etiket', 'etiketler', 'タグ', '태그', '标签', '標籤', 'теги']],
+      ['tag', ['tag', 'choose a tag', 'choose tag', 'git tag', 'release tag']],
+      ['tags', ['tags', 'étiquette', 'étiquettes', 'mot clé', 'mots clés', 'etiqueta', 'etiquetas', 'schlagwort', 'schlagwörter', 'etichette', 'etiket', 'etiketler', 'タグ', '태그', '标签', '標籤', 'теги']],
+      ['notes', ['notes', 'release notes', 'release note', 'release body', 'describe this release', '发行说明', '發行說明', 'リリースノート', '릴리스 노트']],
+      ['body', ['body', 'post', 'post body', 'post text', 'composer']],
       ['title', ['title', 'titre', 'título', 'titulo', 'titel', 'titolo', 'başlık', 'タイトル', '제목', '标题', '標題', 'название']],
     ];
     const paddedText = ` ${text} `;
@@ -1524,6 +1527,43 @@ export class Agent extends LoopDetector {
         values[0],
       );
     });
+  }
+
+  _workflowPublishedPayloadValueObserved(requirement, sources = {}) {
+    const want = this._workflowMetadataValue(requirement?.value);
+    if (!want) return false;
+    const haystacks = [
+      sources.pageText,
+      sources.pageUrl,
+      sources.publishedResourceIdentity,
+      ...(Array.isArray(sources.inventory?.items)
+        ? sources.inventory.items.flatMap(item => [item?.value, item?.label])
+        : []),
+    ].map(value => this._workflowMetadataValue(value)).filter(Boolean);
+    if (requirement.field === 'visibility' || requirement.field === 'tag') {
+      const escaped = want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const token = new RegExp(`(?:^|[^\\p{L}\\p{N}_.-])${escaped}(?:$|[^\\p{L}\\p{N}_.-])`, 'u');
+      return haystacks.some(text => text === want || token.test(text));
+    }
+    return haystacks.some(text => text.includes(want));
+  }
+
+  _workflowPublishedResourcePayloadMatch(binding, state, pageState, pageUrl, submit) {
+    if (!this._workflowJobBindsPublicationPayload(state?.siteWorkflow?.job)) return true;
+    if (binding?.metadataRequirementsIncomplete === true) return false;
+    const requirements = Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [];
+    if (requirements.length < 1) return false;
+    if (this._workflowMetadataRequirementsMatchInventory(
+      requirements,
+      state?.workflowInventoryEvidence,
+      submit?.actionSequence,
+    )) return true;
+    return requirements.every(requirement => this._workflowPublishedPayloadValueObserved(requirement, {
+      pageText: pageState?.workflowPageText,
+      pageUrl,
+      publishedResourceIdentity: binding?.publishedResourceIdentity,
+      inventory: state?.workflowInventoryEvidence,
+    }));
   }
 
   _workflowResolvedStateSignal(text) {
@@ -1734,7 +1774,14 @@ export class Agent extends LoopDetector {
       }
       verified = submissionEvidence?.verifiedFinalSubmit === true
         && !!binding.publishedResourceIdentity
-        && observedResourceIdentities.includes(binding.publishedResourceIdentity);
+        && observedResourceIdentities.includes(binding.publishedResourceIdentity)
+        && this._workflowPublishedResourcePayloadMatch(
+          binding,
+          state,
+          pageState,
+          pageUrl,
+          submit,
+        );
       source = 'dispatch_bound_published_resource';
     } else {
       verified = submissionEvidence?.verifiedFinalSubmit === true;
@@ -10113,6 +10160,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return job.requiresLedger ? 'coverage' : 'generic';
   }
 
+  _workflowJobBindsPublicationPayload(job) {
+    return !!job && job.template === 'publish' && job.requiresLedger !== true;
+  }
+
+  _workflowJobStoresMetadataRequirements(siteWorkflow) {
+    return siteWorkflow?.job?.id === 'update-metadata'
+      || this._workflowJobBindsPublicationPayload(siteWorkflow?.job);
+  }
+
+  _workflowAllowsEmptyCompleteInventory(siteWorkflow) {
+    return siteWorkflow?.adapterName === 'github'
+      && siteWorkflow?.job?.id === 'resolve-review-threads';
+  }
+
   _workflowInventoryFingerprint(value) {
     const text = String(value || '');
     let hash = 0x811c9dc5;
@@ -10828,7 +10889,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && evidence.bindingKey === this._adapterWorkflowBindingKey(siteWorkflow)
         && evidence.taskKey === taskKey
         && Array.isArray(evidence.items)
-        && evidence.items.length > 0
+        && (evidence.items.length > 0 || this._workflowAllowsEmptyCompleteInventory(siteWorkflow))
       ? {
           source: evidence.source,
           itemIds: evidence.items.map(item => String(item.id)),
@@ -16144,8 +16205,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!inventory) {
       return { ok: false, error: 'progress_update: complete workflow reconciliation requires an app-owned inventory. Use the exact workflowInventory item ids returned by a complete trusted form read (accessibility tree or iframe), or the app-seeded expected/classifier rows; model-created rows alone cannot prove full coverage.' };
     }
-    if (!Number.isInteger(itemCount) || itemCount < 1
-        || itemCount !== rows.length || itemCount !== inventory.itemCount) {
+    const emptyComplete = inventory.itemCount === 0
+      && rows.length === 0
+      && this._workflowAllowsEmptyCompleteInventory(guard?.siteWorkflow);
+    if (!Number.isInteger(itemCount)
+        || (itemCount < 1 && !emptyComplete)
+        || itemCount !== rows.length
+        || itemCount !== inventory.itemCount) {
       return { ok: false, error: `progress_update: itemCount must exactly equal both the app-owned inventory (${inventory.itemCount}) and current-task ledger size (${rows.length}).` };
     }
     const inventoryIds = [...new Set(inventory.itemIds.map(id => String(id)))].sort();
@@ -16199,7 +16265,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return !!inventory
       && record.inventorySource === inventory.source
       && record.inventoryFingerprint === this._workflowInventoryFingerprint(inventoryIds.join('\n'))
-      && rows.length > 0
+      && (rows.length > 0 || (
+        inventory.itemCount === 0
+        && this._workflowAllowsEmptyCompleteInventory(state?.siteWorkflow)
+      ))
       && rows.length === record.itemCount
       && record.itemCount === inventory.itemCount
       && rowIds.length === rows.length
@@ -16216,7 +16285,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? args.items
       : (args.item && typeof args.item === 'object' ? [args.item] : []);
     if (!items.length) {
-      return { success: false, error: 'progress_update: pass items:[{id,status,...}] with at least one row.' };
+      const emptyReconciliation = args.workflowReconciliation || args.workflow_reconciliation || null;
+      if (!emptyReconciliation) {
+        return { success: false, error: 'progress_update: pass items:[{id,status,...}] with at least one row.' };
+      }
     }
     const missingStatus = items
       .filter(item => item && typeof item === 'object' && !Array.isArray(item) && !Object.prototype.hasOwnProperty.call(item, 'status'))
@@ -16375,13 +16447,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (workflowReconciliationValidation && !workflowReconciliationValidation.ok) {
       return { success: false, error: workflowReconciliationValidation.error };
     }
+    const emptyReconcile = workflowReconciliationValidation?.ok === true
+      && scopedItems.length === 0
+      && workflowReconciliationValidation.record?.itemCount === 0;
     const reconciliationOnly = !result.changed
       && workflowReconciliationValidation?.ok === true
-      && scopedItems.length > 0
-      && scopedItems.every(item => {
-        const key = ledgerRowKey(item);
-        return !!key && result.rows.some(row => ledgerRowKey(row) === key);
-      });
+      && (
+        emptyReconcile
+        || (scopedItems.length > 0 && scopedItems.every(item => {
+          const key = ledgerRowKey(item);
+          return !!key && result.rows.some(row => ledgerRowKey(row) === key);
+        }))
+      );
     if (!result.changed && !reconciliationOnly) {
       return { success: false, error: 'progress_update: no valid items were provided. Each item needs a stable id.' };
     }
@@ -16634,7 +16711,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'Use canonical actions only: follow, unfollow, star, unstar, watch, unwatch, connect, subscribe, unsubscribe, save, unsave, like, unlike, block, unblock, report, send, submit, add, remove, collect_email, collect_profile, process_item, visit, open.',
           'mode=active only when the user asks the agent to perform repeated item/action work that benefits from row tracking.',
           'Exception: for siteContext.workflow.job="upload-release-assets" with requiresLedger=true, use mode=active and list every concrete requested target even when there is exactly one. Copy each exact requested filename or path into targets; do not merge or omit assets.',
-          'For siteContext.workflow.job="update-metadata", workflowFields must contain every metadata field explicitly requested by the user and its complete exact intended value. Use canonical field names title, description, visibility, audience, tags, category, playlist, language, license, comments, embedding, paid_promotion, recording_date, or recording_location. Never infer a field or value from page content. Otherwise return workflowFields=[].',
+          'For siteContext.workflow.job="update-metadata", workflowFields must contain every metadata field explicitly requested by the user and its complete exact intended value. Use canonical field names title, description, visibility, audience, tags, category, playlist, language, license, comments, embedding, paid_promotion, recording_date, or recording_location. Never infer a field or value from page content.',
+          'For siteContext.workflow.job="publish-release", "publish-post", or "publish-content", workflowFields must contain every publication field explicitly requested by the user and its complete exact intended value. Use canonical field names tag, title, notes, body, or visibility. Never infer a field or value from page content.',
+          'Otherwise return workflowFields=[].',
           'mode=read_only for questions, summaries, inspections, or reference-only uses of UI labels.',
           'If an action is negated or forbidden, put it in forbiddenActions even if its label appears in the task text.',
         ].join('\n'),
@@ -16659,11 +16738,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const siteContext = {
       pageScope,
       site: this._isGithubStargazersUrl(pageScope) ? 'github_stargazers' : 'unknown',
-      ...(siteWorkflow?.job?.requiresLedger === true ? {
+      ...(siteWorkflow?.job && (
+        siteWorkflow.job.requiresLedger === true
+        || this._workflowJobBindsPublicationPayload(siteWorkflow.job)
+      ) ? {
         workflow: {
           adapter: siteWorkflow.adapterName,
           job: siteWorkflow.job.id,
-          requiresLedger: true,
+          requiresLedger: siteWorkflow.job.requiresLedger === true,
         },
       } : {}),
     };
@@ -16674,7 +16756,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         extraBody: { chat_template_kwargs: { enable_thinking: false } },
       }, opts.costState || this.currentCostState.get(tabId) || null, { tabId, generationName: 'intent' });
       const obj = Agent._extractFirstJsonObject(response?.content || '');
-      if (siteWorkflow?.adapterName === 'youtube' && siteWorkflow?.job?.id === 'update-metadata') {
+      if (this._workflowJobStoresMetadataRequirements(siteWorkflow)) {
         const guard = this._planExecutionGuards.get(tabId);
         if (guard) {
           const details = this._normalizeWorkflowMetadataRequirementsDetails(

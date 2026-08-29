@@ -82051,6 +82051,93 @@ test('GitHub review-thread workflow inventories only unresolved thread controls'
     assert.equal(inventory?.itemCount, 2, `${AgentClass.name}: unresolved thread controls were not the exact inventory`);
     assert.deepEqual(inventory.items.map(item => item.ref_id), ['ref_resolve_1', 'ref_resolve_2']);
     assert.ok(inventory.items.every(item => item.label === 'Resolve conversation'));
+
+    const emptyTabId = 8961 + index;
+    agent.conversations.set(emptyTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Resolve all open review threads.' },
+    ]);
+    const emptyGuard = agent._startPlanExecutionGuard(emptyTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(emptyTabId, { documentToken: 'empty-review-document', pageUrl: pullUrl });
+    const emptyInventory = agent._rememberWorkflowInventoryObservation(emptyTabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageContent: [
+        'textbox "Reply" [ref_reply_1] value=""',
+        'button "Add comment" [ref_add_comment]',
+      ].join('\n'),
+      treeRevision: 'review-threads-empty-root',
+    });
+    assert.equal(emptyInventory?.complete, true,
+      `${AgentClass.name}: an exhaustive empty review-thread tree was incomplete`);
+    assert.equal(emptyInventory?.itemCount, 0,
+      `${AgentClass.name}: a page with no unresolved threads still invented inventory rows`);
+    assert.deepEqual(agent._trustedWorkflowInventory(emptyTabId, [], emptyGuard), {
+      source: 'accessibility_tree',
+      itemIds: [],
+      itemCount: 0,
+    }, `${AgentClass.name}: a complete empty review-thread inventory was discarded`);
+    const leftoverRows = agent._validateWorkflowReconciliation(emptyTabId, {
+      job: 'resolve-review-threads',
+      coverageComplete: true,
+      itemCount: 0,
+      basis: 'Exhaustive root AX read found no unresolved review threads.',
+    }, [{ id: 'invented-thread', status: 'processed' }], 'leftover-thread-session');
+    assert.equal(leftoverRows.ok, false,
+      `${AgentClass.name}: leftover ledger rows reconciled an empty review-thread inventory`);
+    const emptyValidation = agent._validateWorkflowReconciliation(emptyTabId, {
+      job: 'resolve-review-threads',
+      coverageComplete: true,
+      itemCount: 0,
+      basis: 'Exhaustive root AX read found no unresolved review threads.',
+    }, [], 'empty-thread-session');
+    assert.equal(emptyValidation.ok, true,
+      `${AgentClass.name}: a complete empty review-thread inventory could not reconcile`);
+    const emptyUpdate = agent._progressUpdate(emptyTabId, {
+      items: [],
+      workflowReconciliation: {
+        job: 'resolve-review-threads',
+        coverageComplete: true,
+        itemCount: 0,
+        basis: 'Exhaustive root AX read found no unresolved review threads.',
+      },
+    });
+    assert.equal(emptyUpdate.success, true,
+      `${AgentClass.name}: empty review-thread reconciliation was rejected`);
+    assert.equal(emptyUpdate.workflowReconciled, true);
+    assert.equal(agent._workflowLedgerReconciliationSatisfied(emptyTabId, emptyGuard), true,
+      `${AgentClass.name}: the already-satisfied empty review-thread job could not finish`);
+
+    const formTabId = 8963 + index;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=x';
+    const formSelected = agent._resolvePlannerSiteWorkflow(formUrl, {
+      request_kind: 'execute',
+      site_job: 'submit-form',
+    });
+    agent.conversations.set(formTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Submit the form.' },
+    ]);
+    const formGuard = agent._startPlanExecutionGuard(formTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: formSelected,
+    });
+    agent._lastAxScopes.set(formTabId, { documentToken: 'empty-form-document', pageUrl: formUrl });
+    const emptyForm = agent._rememberWorkflowInventoryObservation(formTabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageContent: 'heading "Application" [ref_heading]',
+      treeRevision: 'empty-form-root',
+    });
+    assert.equal(emptyForm?.complete, true);
+    assert.equal(emptyForm?.itemCount, 0);
+    assert.equal(agent._trustedWorkflowInventory(formTabId, [], formGuard), null,
+      `${AgentClass.name}: a complete empty generic form inventory became trusted`);
   }
 });
 
@@ -82253,6 +82340,68 @@ test('accessibility-tree depthTruncated is only set for omitted includable desce
   }
 });
 
+test('publication workflows classify and bind requested payload fields', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
+    agent.useSiteAdapters = true;
+    agent._persist = () => {};
+    const tabId = 8977 + index;
+    const releaseUrl = 'https://github.com/esokullu/webbrain/releases/new';
+    const taskText = 'Publish tag v33.6.0 titled "WebBrain 33.6.0" with notes "Kernel evidence fixes."';
+    const selected = agent._resolvePlannerSiteWorkflow(releaseUrl, {
+      request_kind: 'execute',
+      site_job: 'publish-release',
+    });
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: taskText },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    let classifierContext = null;
+    agent._chatWithCostAllowance = async (_provider, messages) => {
+      classifierContext = JSON.parse(messages[1].content).siteContext;
+      return {
+        content: JSON.stringify({
+          mode: 'inactive',
+          allowedActions: [],
+          forbiddenActions: [],
+          targets: [],
+          workflowFields: [
+            { field: 'tag', value: 'v33.6.0' },
+            { field: 'title', value: 'WebBrain 33.6.0' },
+            { field: 'notes', value: 'Kernel evidence fixes.' },
+          ],
+          confidence: 0.99,
+          pageScopePolicy: 'page',
+        }),
+      };
+    };
+    await agent._ensureProgressSessionForCurrentTask(tabId, {
+      provider: { chat: async () => ({ content: '{}' }) },
+      taskText,
+      pageScope: releaseUrl,
+    });
+    assert.deepEqual(classifierContext?.workflow, {
+      adapter: 'github',
+      job: 'publish-release',
+      requiresLedger: false,
+    }, `${AgentClass.name}: the classifier did not receive the publish-release workflow`);
+    assert.deepEqual(guard.workflowMetadataRequirements, [
+      { field: 'tag', value: 'v33.6.0' },
+      { field: 'title', value: 'WebBrain 33.6.0' },
+      { field: 'notes', value: 'Kernel evidence fixes.' },
+    ], `${AgentClass.name}: trusted publication payload fields were not retained`);
+    const prompt = agent._progressIntentClassifierMessages(taskText, classifierContext)[0].content;
+    assert.match(prompt, /publish-release/);
+    assert.match(prompt, /\bcanonical field names tag, title, notes, body, or visibility\b/);
+  }
+});
+
 test('YouTube metadata success requires exact app-classified post-save readback', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
@@ -82449,6 +82598,13 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
     assert.equal(agent._workflowMetadataFieldKey('playlists'), 'playlist',
       `${AgentClass.name}: playlist plural alias was not canonicalized`);
     assert.equal(agent._workflowMetadataFieldKey('listes de lecture'), 'playlist');
+    assert.equal(agent._workflowMetadataFieldKey('tag'), 'tag',
+      `${AgentClass.name}: a release tag was folded into YouTube tags`);
+    assert.equal(agent._workflowMetadataFieldKey('Choose a tag'), 'tag');
+    assert.equal(agent._workflowMetadataFieldKey('tags'), 'tags',
+      `${AgentClass.name}: plural tags lost its YouTube field`);
+    assert.equal(agent._workflowMetadataFieldKey('release notes'), 'notes');
+    assert.equal(agent._workflowMetadataFieldKey('post body'), 'body');
     assert.deepEqual(agent._normalizeWorkflowMetadataRequirements([
       { field: 'title', value: 'Launch Video' },
       { field: 'unknown-custom-field', value: 'nope' },
@@ -83204,12 +83360,18 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     const publishedUrl = 'https://github.com/esokullu/webbrain/releases/tag/v33.6.0';
     const unrelatedReleaseUrl = 'https://github.com/esokullu/webbrain/releases/tag/v33.5.0';
     const publishWorkflow = resolveAdapterWorkflowJob(publishBeforeUrl, 'publish-release');
-    agent._startPlanExecutionGuard(publishTabId, 'act', {
+    const publishGuard = agent._startPlanExecutionGuard(publishTabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: true,
       requiresSubmission: true,
       siteWorkflow: publishWorkflow,
-    }).successfulConsequentialToolCalls = 1;
+    });
+    publishGuard.successfulConsequentialToolCalls = 1;
+    publishGuard.workflowMetadataRequirements = [
+      { field: 'tag', value: 'v33.6.0' },
+      { field: 'title', value: 'WebBrain 33.6.0' },
+      { field: 'notes', value: 'Kernel evidence fixes.' },
+    ];
     const unboundPublishSubmit = agent._recordCompletionSubmitAttempt(
       publishTabId,
       { isSubmit: true },
@@ -83242,15 +83404,44 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       'github:github.com/esokullu/webbrain/releases/tag/v33.6.0',
       `${AgentClass.name}: submit transition did not bind the published resource identity`,
     );
+    assert.deepEqual(
+      boundPublishSubmit?.workflowBinding?.metadataRequirements,
+      publishGuard.workflowMetadataRequirements,
+      `${AgentClass.name}: publish dispatch did not bind the authorized release payload`,
+    );
     assert.equal(agent._workflowTerminalEvidenceFromDone(
       publishTabId,
       { workflowPageText: 'Published successfully.' },
       unrelatedReleaseUrl,
       { submit: boundPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
     ), null, `${AgentClass.name}: an unrelated existing release satisfied a bound publish dispatch`);
-    const publishTerminal = agent._workflowTerminalEvidenceFromDone(
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
       publishTabId,
       { workflowPageText: 'Published successfully.' },
+      publishedUrl,
+      { submit: boundPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: a matching release URL without title or notes satisfied publish success`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      publishTabId,
+      {
+        workflowPageText: [
+          'WebBrain 33.6.0',
+          'Published successfully.',
+          'Draft notes from an earlier tag.',
+        ].join('\n'),
+      },
+      publishedUrl,
+      { submit: boundPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: a matching tag with the wrong notes satisfied publish success`);
+    const publishTerminal = agent._workflowTerminalEvidenceFromDone(
+      publishTabId,
+      {
+        workflowPageText: [
+          'WebBrain 33.6.0',
+          'Published successfully.',
+          'Kernel evidence fixes.',
+        ].join('\n'),
+      },
       publishedUrl,
       { submit: boundPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
     );
@@ -83261,12 +83452,16 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     const linkedInPublishedUrl = 'https://www.linkedin.com/feed/update/urn:li:activity:1234567890';
     const linkedInExistingUrl = 'https://www.linkedin.com/feed/update/urn:li:activity:9876543210';
     const linkedInPublishWorkflow = resolveAdapterWorkflowJob(linkedInFeedUrl, 'publish-post');
-    agent._startPlanExecutionGuard(asyncPublishTabId, 'act', {
+    const linkedInPostBody = 'Shipping the workflow kernel today.';
+    const linkedInRequirements = [{ field: 'body', value: linkedInPostBody }];
+    const asyncPublishGuard = agent._startPlanExecutionGuard(asyncPublishTabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: true,
       requiresSubmission: true,
       siteWorkflow: linkedInPublishWorkflow,
-    }).successfulConsequentialToolCalls = 1;
+    });
+    asyncPublishGuard.successfulConsequentialToolCalls = 1;
+    asyncPublishGuard.workflowMetadataRequirements = linkedInRequirements;
     agent._beginCompletionInvariant(asyncPublishTabId);
     agent._recordCompletionToolResult(
       asyncPublishTabId,
@@ -83308,15 +83503,29 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { workflowPageText: 'Published successfully.' },
       linkedInPublishedUrl,
       { submit: asyncPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: a LinkedIn permalink without the reviewed post body satisfied publish success`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      asyncPublishTabId,
+      { workflowPageText: `Published successfully.\nA different leftover draft.` },
+      linkedInPublishedUrl,
+      { submit: asyncPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: a LinkedIn permalink with the wrong post body satisfied publish success`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      asyncPublishTabId,
+      { workflowPageText: `Published successfully.\n${linkedInPostBody}` },
+      linkedInPublishedUrl,
+      { submit: asyncPublishSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
     )?.source, 'dispatch_bound_published_resource');
 
     const sameRoutePublishTabId = 8988 + index;
-    agent._startPlanExecutionGuard(sameRoutePublishTabId, 'act', {
+    const sameRoutePublishGuard = agent._startPlanExecutionGuard(sameRoutePublishTabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: true,
       requiresSubmission: true,
       siteWorkflow: linkedInPublishWorkflow,
-    }).successfulConsequentialToolCalls = 1;
+    });
+    sameRoutePublishGuard.successfulConsequentialToolCalls = 1;
+    sameRoutePublishGuard.workflowMetadataRequirements = linkedInRequirements;
     agent._beginCompletionInvariant(sameRoutePublishTabId);
     agent._recordCompletionToolResult(
       sameRoutePublishTabId,
@@ -83363,7 +83572,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     const sameRouteTerminal = agent._workflowTerminalEvidenceFromDone(
       sameRoutePublishTabId,
       {
-        workflowPageText: 'Published successfully.',
+        workflowPageText: `Published successfully.\n${linkedInPostBody}`,
         workflowResourceUrls: [linkedInExistingUrl, linkedInPublishedUrl],
         successMessages: ['Published successfully.'],
       },
@@ -83410,6 +83619,48 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       undefined,
       `${AgentClass.name}: a permalink opened by a later action was bound to the earlier publish dispatch`,
     );
+
+    const douyinTabId = 8989 + index;
+    const douyinBeforeUrl = 'https://www.douyin.com/creator';
+    const douyinPublishedUrl = 'https://www.douyin.com/video/1234567890';
+    const douyinWorkflow = resolveAdapterWorkflowJob(douyinBeforeUrl, 'publish-content');
+    const douyinGuard = agent._startPlanExecutionGuard(douyinTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: douyinWorkflow,
+    });
+    douyinGuard.successfulConsequentialToolCalls = 1;
+    douyinGuard.workflowMetadataRequirements = [
+      { field: 'body', value: '今日分享工作流内核。' },
+      { field: 'visibility', value: '公开' },
+    ];
+    const douyinSubmit = agent._recordCompletionSubmitAttempt(
+      douyinTabId,
+      { isSubmit: true },
+      'click_ax',
+      { ref_id: 'publish-content' },
+      douyinBeforeUrl,
+      douyinPublishedUrl,
+      { success: true, dispatched: true, pageUrlChanged: true },
+    );
+    assert.equal(
+      douyinSubmit?.workflowBinding?.publishedResourceIdentity,
+      'douyin:douyin.com/video/1234567890',
+      `${AgentClass.name}: Douyin publish dispatch did not bind the video identity`,
+    );
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      douyinTabId,
+      { workflowPageText: '今日分享工作流内核。\n可见性 仅自己可见' },
+      douyinPublishedUrl,
+      { submit: douyinSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: Douyin content with the wrong visibility satisfied publish success`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      douyinTabId,
+      { workflowPageText: '今日分享工作流内核。\n可见性 公开' },
+      douyinPublishedUrl,
+      { submit: douyinSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    )?.source, 'dispatch_bound_published_resource');
 
     const messageTabId = 8990 + index;
     const messageUrl = 'https://www.douyin.com/chat/123';
