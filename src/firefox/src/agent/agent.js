@@ -36,6 +36,7 @@ import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
 import {
   invalidateWorkflowInventoryCompleteness,
   isExhaustiveAccessibilityInventoryRead,
+  isWorkflowInventoryContinuationPending,
   parseWorkflowAxQuotedValue,
   shouldInvalidateFormInventoryAfterAction,
   workflowRequiredRowsAreProcessed,
@@ -1109,6 +1110,7 @@ export class Agent extends LoopDetector {
       result.workflowReleaseAssetEvidence = workflowReleaseAssetEvidence;
     }
     this._rememberWorkflowTranscriptCoverage(tabId, name, args, result);
+    this._rememberWorkflowDiffCoverage(tabId, name, args, result);
     this._rememberWorkflowEmptyCollectionSignal(tabId, name, result);
     this._invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result, args, detectedSubmit);
     const submitState = this._completionSubmitStates.get(tabId);
@@ -1355,8 +1357,12 @@ export class Agent extends LoopDetector {
       ? this._normalizeWorkflowMetadataRequirementsDetails(guard.workflowMetadataRequirements)
       : { items: [], incomplete: false };
     const metadataRequirements = metadataDetails.items;
+    // Requested fields that were never resolved are not absent fields. A job
+    // whose contract binds them cannot verify anything until they are.
     const metadataIncomplete = guard.workflowMetadataRequirementsIncomplete === true
-      || metadataDetails.incomplete === true;
+      || metadataDetails.incomplete === true
+      || (this._workflowJobStoresMetadataRequirements(siteWorkflow)
+        && guard.workflowMetadataRequirementsResolved !== true);
     const verificationKind = this._workflowVerificationKind(siteWorkflow);
     const normalizeOrderIdentities = values => [...new Set((Array.isArray(values) ? values : [])
       .map(value => String(value || '').trim().toUpperCase())
@@ -1639,7 +1645,10 @@ export class Agent extends LoopDetector {
   }
 
   _normalizeWorkflowMetadataRequirementsDetails(values) {
-    if (!Array.isArray(values)) return { items: [], incomplete: false };
+    // The classifier is told to return workflowFields=[] when the request
+    // named no field. A missing key is not that answer; it is no answer, and a
+    // reviewed subject or body cannot be verified against it.
+    if (!Array.isArray(values)) return { items: [], incomplete: true };
     if (values.length < 1 || values.length > 24) {
       return { items: [], incomplete: values.length > 0 };
     }
@@ -1954,6 +1963,7 @@ export class Agent extends LoopDetector {
       // never stand in for the requested draft.
       const boundFields = new Set([...requirementByField.keys(), ...Object.keys(authoredFields)]);
       const fieldsVerified = state.workflowMetadataRequirementsIncomplete !== true
+        && state.workflowMetadataRequirementsResolved === true
         && metadataDetails.incomplete !== true
         && boundFields.size > 0
         && [...boundFields].every((field) => {
@@ -10599,6 +10609,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && observed.view === 'files';
   }
 
+  // Landing on the changed-files view is where a review starts, not where it
+  // ends. A large diff arrives in pages, so coverage runs the same way the
+  // transcript chain does: from the first page, without a gap, to the last.
+  _rememberWorkflowDiffCoverage(tabId, name, args, result) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled
+        || guard.workflowRequiredJobEvidence !== 'pull_request_diff_read'
+        || !this.constructor.WORKFLOW_CONTENT_READ_TOOLS.has(name)
+        || !this._isSuccessfulExecutionEvidence(result)) return;
+    if (!this._workflowPullRequestDiffRead(guard, this._workflowObservationUrl(tabId, result))) return;
+    const requested = Number(args?.page ?? args?.continuationArgs?.page);
+    const page = Number.isInteger(requested) && requested > 0 ? requested : 1;
+    const prior = guard.workflowDiffCoverage;
+    const continues = page === 1 || (prior && Number(prior.coveredTo) === page);
+    if (!continues) {
+      guard.workflowDiffCoverage = null;
+      return;
+    }
+    guard.workflowDiffCoverage = {
+      coveredTo: page + 1,
+      complete: !isWorkflowInventoryContinuationPending(result),
+    };
+  }
+
   // A video with no comments is a real result, not a failure to collect. Only
   // a job whose set can legitimately be empty may finish with no rows.
   _workflowAllowsEmptyCollection(siteWorkflow) {
@@ -10671,7 +10705,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       case 'reconciled_collection':
         return `A collected set is complete only against an app-seeded expected set: every ordered row processed and carrying ${(state?.siteWorkflow?.job?.requiredRowFields || []).join(', ') || 'the fields this job declares'}, with no duplicates. If the requested set was never bounded, nothing here can prove you collected all of it: call done with outcome partial and report the rows you did collect.`;
       case 'pull_request_diff_read':
-        return 'A review needs the changed files of this exact pull request read, not a screenshot or the overview tab.';
+        return 'A review needs the changed files of this exact pull request read out in full, from the first page through the last, not a screenshot, the overview tab, or a truncated first fragment.';
       case 'scoped_content_read':
         return 'A grounded answer needs a successful read of the exact resource this job selected, not a listing or another tab.';
       default:
@@ -17673,6 +17707,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           );
           guard.workflowMetadataRequirements = details.items;
           guard.workflowMetadataRequirementsIncomplete = details.incomplete;
+          guard.workflowMetadataRequirementsResolved = true;
         }
       }
       if (siteWorkflow?.job?.template === 'form') {
@@ -17871,6 +17906,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
 
+  async _ensureWorkflowMetadataRequirements(tabId, opts, taskText, pageScope) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled
+        || guard.workflowMetadataRequirementsResolved === true
+        || !this._workflowJobStoresMetadataRequirements(guard.siteWorkflow)) return;
+    await this._classifyProgressIntentWithProvider(tabId, {
+      provider: opts.provider,
+      costState: opts.costState,
+      taskText,
+      pageScope,
+    });
+  }
+
   async _ensureProgressSessionForCurrentTask(tabId, opts = {}) {
     const expectedItems = this._normalizeExpectedItems(opts.expectedItems);
     if (expectedItems) this.progressExpectedItems.set(tabId, expectedItems);
@@ -17918,6 +17966,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const existing = this._currentProgressSession(tabId, { pageScope });
     if (existing) {
+      // An open session skips classification, but a workflow whose contract
+      // binds requested fields still needs them resolved before it can verify.
+      await this._ensureWorkflowMetadataRequirements(tabId, opts, taskText, pageScope);
       this._seedClassifierProgressTargets(tabId, existing);
       return existing;
     }
@@ -18421,6 +18472,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       workflowTranscriptCoverage: carryMatches && carried.workflowTranscriptCoverage
         ? { ...carried.workflowTranscriptCoverage }
         : null,
+      workflowDiffCoverage: carryMatches && carried.workflowDiffCoverage
+        ? { ...carried.workflowDiffCoverage }
+        : null,
+      workflowMetadataRequirementsResolved: carryMatches
+        && carried.workflowMetadataRequirementsResolved === true,
       workflowEmptyCollectionObserved: carryMatches && carried.workflowEmptyCollectionObserved === true,
       workflowJobScopeObserved: carryMatches && carried.workflowJobScopeObserved === true,
       workflowJobEvidenceSatisfied: carryMatches && carried.workflowJobEvidenceSatisfied === true,
@@ -18639,7 +18695,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && state.workflowRequiredJobEvidence === 'pull_request_diff_read'
         && this._workflowPullRequestDiffRead(state, observationUrl)) {
       state.workflowJobScopeObserved = true;
-      state.workflowJobEvidenceSatisfied = true;
+      // The diff has to be read out, not merely opened.
+      state.workflowJobEvidenceSatisfied = state.workflowDiffCoverage?.complete === true;
     }
     if (requiredScheduleSucceeded) state.successfulRequiredSchedulingToolCalls += 1;
     if ((download && this._isSuccessfulDownloadEvidence(name, result)) || confirmedPendingDownload) {
@@ -18699,6 +18756,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || !!guard.workflowInventoryEvidence
       || !!guard.workflowComposerFieldEvidence
       || !!guard.workflowTranscriptCoverage
+      || !!guard.workflowDiffCoverage
       || Object.keys(guard.workflowControlActionEvidence || {}).length > 0
       || Object.keys(guard.workflowReleaseAssetEvidence || {}).length > 0
       || Object.keys(guard.workflowPendingReleaseAssetEvidence || {}).length > 0
@@ -18756,6 +18814,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         workflowTranscriptCoverage: guard.workflowTranscriptCoverage
           ? { ...guard.workflowTranscriptCoverage }
           : null,
+        workflowDiffCoverage: guard.workflowDiffCoverage
+          ? { ...guard.workflowDiffCoverage }
+          : null,
+        workflowMetadataRequirementsResolved: guard.workflowMetadataRequirementsResolved === true,
         workflowComposerFieldEvidence: guard.workflowComposerFieldEvidence
           ? {
               ...guard.workflowComposerFieldEvidence,

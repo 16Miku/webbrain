@@ -82974,6 +82974,7 @@ test('release-asset uploads bind their saved release to the intended repository 
       siteWorkflow: selected,
     });
     guard.successfulConsequentialToolCalls = 1;
+    guard.workflowMetadataRequirementsResolved = true;
     const terminal = (identity, observedUrl) => {
       const workflowBinding = agent._workflowSubmitBindingForAttempt(tabId, editUrl);
       workflowBinding.publishedResourceIdentity = identity;
@@ -83011,6 +83012,7 @@ test('release-asset uploads bind their saved release to the intended repository 
     guard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
       { field: 'tag', value: 'v33.5.0' },
     ]);
+    guard.workflowMetadataRequirementsResolved = true;
     assert.equal(terminal('github:github.com/esokullu/webbrain/releases/tag/v33.5.0', tagUrl)?.source,
       'dispatch_bound_published_resource',
       `${AgentClass.name}: the exact requested release tag could not satisfy the job`);
@@ -84533,6 +84535,7 @@ test('a deferred reply stays bound to the thread the user authorized', async () 
     });
     draftGuard.successfulConsequentialToolCalls = 1;
     draftGuard.evidenceTaskKey = draftGuard.taskKey;
+    draftGuard.workflowMetadataRequirementsResolved = true;
     assert.equal(draftGuard.messaging, null,
       `${AgentClass.name}: a draft plan gained send authorization`);
     assert.ok(draftGuard.messagingConversationScope,
@@ -84907,7 +84910,16 @@ test('every declared non-submit job carries its own evidence contract', () => {
     agent._markPlanExecutionToolCall(prTabId, 'read_page', { success: true, url: prUrl });
     assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
       `${AgentClass.name}: the overview tab satisfied a job whose contract is the changed files`);
-    agent._markPlanExecutionToolCall(prTabId, 'read_page', { success: true, url: `${prUrl}/files` });
+    agent._beginCompletionInvariant(prTabId);
+    const diffRead = (args, result) => {
+      agent._recordCompletionToolResult(prTabId, 'read_page', args, result);
+      agent._markPlanExecutionToolCall(prTabId, 'read_page', result);
+    };
+    // A large diff arrives in pages; the first one is not the review.
+    diffRead({}, { success: true, url: `${prUrl}/files`, truncated: true, nextPage: 2 });
+    assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
+      `${AgentClass.name}: a truncated first page of the diff satisfied the review job`);
+    diffRead({ page: 2 }, { success: true, url: `${prUrl}/files` });
     assert.equal(agent._executionEvidenceSatisfied(prGuard), true,
       `${AgentClass.name}: reading the changed files did not satisfy the review job`);
     // Another pull request's diff is not this one's.
@@ -85889,12 +85901,14 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     `${AgentClass.name}: a bound fulfilled 12306 waitlist was not accepted`);
 
     const observedRailTabId = 9100 + index;
-    agent._startPlanExecutionGuard(observedRailTabId, 'act', {
+    const resolvedGuard85908 = agent._startPlanExecutionGuard(observedRailTabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: true,
       requiresSubmission: true,
       siteWorkflow: railWorkflow,
-    }).successfulConsequentialToolCalls = 1;
+    });
+    resolvedGuard85908.successfulConsequentialToolCalls = 1;
+    resolvedGuard85908.workflowMetadataRequirementsResolved = true;
     agent._beginCompletionInvariant(observedRailTabId);
     agent._recordCompletionToolResult(
       observedRailTabId,
@@ -85950,6 +85964,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { field: 'title', value: 'WebBrain 33.6.0' },
       { field: 'notes', value: 'Kernel evidence fixes.' },
     ];
+    publishGuard.workflowMetadataRequirementsResolved = true;
     const unboundPublishSubmit = agent._recordCompletionSubmitAttempt(
       publishTabId,
       { isSubmit: true },
@@ -86040,6 +86055,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     });
     asyncPublishGuard.successfulConsequentialToolCalls = 1;
     asyncPublishGuard.workflowMetadataRequirements = linkedInRequirements;
+    asyncPublishGuard.workflowMetadataRequirementsResolved = true;
     agent._beginCompletionInvariant(asyncPublishTabId);
     agent._recordCompletionToolResult(
       asyncPublishTabId,
@@ -86110,6 +86126,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     });
     sameRoutePublishGuard.successfulConsequentialToolCalls = 1;
     sameRoutePublishGuard.workflowMetadataRequirements = linkedInRequirements;
+    sameRoutePublishGuard.workflowMetadataRequirementsResolved = true;
     agent._beginCompletionInvariant(sameRoutePublishTabId);
     agent._recordCompletionToolResult(
       sameRoutePublishTabId,
@@ -86219,6 +86236,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { field: 'body', value: '今日分享工作流内核。' },
       { field: 'visibility', value: '公开' },
     ];
+    douyinGuard.workflowMetadataRequirementsResolved = true;
     const douyinSubmit = agent._recordCompletionSubmitAttempt(
       douyinTabId,
       { isSubmit: true },
@@ -86257,6 +86275,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       siteWorkflow: messageWorkflow,
     });
     messageGuard.successfulConsequentialToolCalls = 1;
+    messageGuard.workflowMetadataRequirementsResolved = true;
     const missingBaselineBinding = agent._workflowSubmitBindingForAttempt(messageTabId, messageUrl, {
       messageRecipientGuardRequired: true,
       messageRecipientDispatchBinding: { token: 'incomplete-bound-recipient' },
@@ -86325,13 +86344,15 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     const gmailTabId = 9000 + index;
     const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox';
     const gmailWorkflow = resolveAdapterWorkflowJob(gmailUrl, 'send-email');
-    agent._startPlanExecutionGuard(gmailTabId, 'act', {
+    const resolvedGuard86350 = agent._startPlanExecutionGuard(gmailTabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: true,
       requiresSubmission: true,
       messaging: { target_kind: 'named', recipients: ['alice@example.com'] },
       siteWorkflow: gmailWorkflow,
-    }).successfulConsequentialToolCalls = 1;
+    });
+    resolvedGuard86350.successfulConsequentialToolCalls = 1;
+    resolvedGuard86350.workflowMetadataRequirementsResolved = true;
     const gmailSubmit = {
       dispatched: true,
       observedAfterSubmit: true,
@@ -86404,13 +86425,15 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     const linkedInMessageTabId = 9005 + index;
     const linkedInMessageUrl = 'https://www.linkedin.com/messaging/thread/2-abc/';
     const linkedInMessageWorkflow = resolveAdapterWorkflowJob(linkedInMessageUrl, 'send-message');
-    agent._startPlanExecutionGuard(linkedInMessageTabId, 'act', {
+    const resolvedGuard86429 = agent._startPlanExecutionGuard(linkedInMessageTabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: true,
       requiresSubmission: true,
       messaging: { target_kind: 'named', recipients: ['Ada'] },
       siteWorkflow: linkedInMessageWorkflow,
-    }).successfulConsequentialToolCalls = 1;
+    });
+    resolvedGuard86429.successfulConsequentialToolCalls = 1;
+    resolvedGuard86429.workflowMetadataRequirementsResolved = true;
     const linkedInMessageSubmit = {
       dispatched: true,
       observedAfterSubmit: true,
@@ -86468,6 +86491,7 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
     sendGuard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
       { field: 'subject', value: 'Q3 results' },
     ]);
+    sendGuard.workflowMetadataRequirementsResolved = true;
     const sendDispatch = (subject) => ({
       messageRecipientGuardRequired: true,
       messageRecipientDispatchBinding: { token: `gmail-subject-${subject}` },
@@ -86529,6 +86553,7 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
     bodyGuard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
       { field: 'body', value: 'Quarterly update' },
     ]);
+    bodyGuard.workflowMetadataRequirementsResolved = true;
     // The Gmail compose fallback accepts a dispatch-bound body without an
     // inline Sent rendering, so the requested text is the only thing that can
     // tell the reviewed message from a stale one.
@@ -86559,6 +86584,22 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
       `${AgentClass.name}: a body that merely contains the requested text was accepted`);
     assert.equal(bodyTerminal('Quarterly update')?.source, 'recipient_body_bound_gmail_compose_and_sent_confirmation',
       `${AgentClass.name}: the exact requested body could not satisfy the send-email contract`);
+    // The classifier is told to answer with an empty list when the request
+    // named no field. No answer at all is not that, and cannot verify one.
+    bodyGuard.workflowMetadataRequirementsResolved = false;
+    assert.equal(bodyTerminal('Quarterly update'), null,
+      `${AgentClass.name}: an unresolved field set was read as "nothing was requested"`);
+    bodyGuard.workflowMetadataRequirementsResolved = true;
+    assert.deepEqual(
+      agent._normalizeWorkflowMetadataRequirementsDetails(undefined),
+      { items: [], incomplete: true },
+      `${AgentClass.name}: a missing classifier answer was normalized as a complete empty set`,
+    );
+    assert.deepEqual(
+      agent._normalizeWorkflowMetadataRequirementsDetails([]),
+      { items: [], incomplete: false },
+      `${AgentClass.name}: an explicit empty answer was treated as inconclusive`,
+    );
 
     // Line structure is part of the message: paragraphs collapsed onto one
     // line are a different body, while blank-line and spacing differences the
@@ -86576,6 +86617,7 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
     bodyGuard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
       { field: 'body', value: 'First paragraph.\n\nSecond paragraph.' },
     ]);
+    bodyGuard.workflowMetadataRequirementsResolved = true;
     assert.equal(bodyTerminal('First paragraph. Second paragraph.'), null,
       `${AgentClass.name}: a body whose paragraphs were collapsed satisfied the requested text`);
     assert.equal(
@@ -86603,6 +86645,7 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
     draftGuard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
       { field: 'subject', value: 'Q3 results' },
     ]);
+    draftGuard.workflowMetadataRequirementsResolved = true;
     assert.equal(agent._executionEvidenceSatisfied(draftGuard), false,
       `${AgentClass.name}: a composer mutation plus a generic observation completed a draft job`);
     const draftProbe = {
@@ -86659,6 +86702,7 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
     });
     openGuard.successfulConsequentialToolCalls = 1;
     openGuard.evidenceTaskKey = openGuard.taskKey;
+    openGuard.workflowMetadataRequirementsResolved = true;
     assert.deepEqual(openGuard.workflowMetadataRequirements, [],
       `${AgentClass.name}: the open draft request invented field requirements`);
     const openTerminal = (probe) => agent._workflowTerminalEvidenceFromDone(
@@ -86738,6 +86782,7 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
     });
     addressedGuard.successfulConsequentialToolCalls = 1;
     addressedGuard.evidenceTaskKey = addressedGuard.taskKey;
+    addressedGuard.workflowMetadataRequirementsResolved = true;
     assert.equal(addressedGuard.messaging, null,
       `${AgentClass.name}: draft addressees leaked into the send-authorization target`);
     agent._beginCompletionInvariant(addressedTabId);
