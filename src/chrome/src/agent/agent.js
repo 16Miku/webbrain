@@ -12882,6 +12882,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  // Inventory rows the run has already accounted for: a per-control action
+  // proof, or a terminal ledger row. These survive a fresh root read even when
+  // the live page no longer shows the control, so a handled wizard section or
+  // resolved thread stays reconcilable.
+  _workflowAccountedInventoryItemIds(tabId, guard, taskKey) {
+    const accounted = new Set(Object.keys(guard?.workflowControlActionEvidence || {}));
+    for (const row of (this.progressLedgers.get(tabId) || [])) {
+      if (String(row?.taskKey || '') !== String(taskKey || '')) continue;
+      const id = String(row?.id || '');
+      if (id && isTerminalLedgerStatus(row?.status)) accounted.add(id);
+    }
+    return accounted;
+  }
+
   _isWorkflowReleaseAssetJob(guard) {
     return guard?.enabled === true
       && guard?.siteWorkflow?.adapterName === 'github'
@@ -13253,12 +13267,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const compatible = prior?.bindingKey === bindingKey && prior?.taskKey === taskKey;
     const priorItems = compatible && Array.isArray(prior.items) ? prior.items : [];
     // Saved-state verification needs one current page snapshot so a vanished
-    // value cannot be reused. Other form workflows are cumulative: wizard
-    // sections and resolved-thread controls may disappear after being handled.
+    // value cannot be reused, and it keeps nothing from the superseded read.
     const replaceCurrentRootSnapshot = this._workflowVerificationKind(siteWorkflow) === 'saved_state';
+    // Other form workflows are cumulative, but only for work already done.
+    // Wizard sections and resolved threads disappear after being handled, and
+    // those rows must survive; a branching answer can also hide a question
+    // nobody ever answered, and keeping that one leaves a required row with no
+    // action evidence and no way to skip it. So a complete exhaustive root read
+    // rebuilds this document's item set and carries over only what the run has
+    // already accounted for.
+    const rebuildCurrentRootSnapshot = !replaceCurrentRootSnapshot
+      && startingRootRead
+      && inventoryRead.rootReadComplete;
+    const accountedItemIds = rebuildCurrentRootSnapshot
+      ? this._workflowAccountedInventoryItemIds(tabId, guard, taskKey)
+      : null;
     const retainedItems = replaceCurrentRootSnapshot && startingRootRead
       ? priorItems.filter(item => item?.documentScope && item.documentScope !== stableDocumentScope)
-      : priorItems;
+      : (rebuildCurrentRootSnapshot
+        ? priorItems.filter(item => (
+          (item?.documentScope && item.documentScope !== stableDocumentScope)
+          || accountedItemIds.has(String(item?.id || ''))
+        ))
+        : priorItems);
     const items = new Map(retainedItems.map(item => [item.id, item]));
     for (const item of observed) items.set(item.id, { ...item, observationSequence });
     const documents = { ...(compatible ? prior.documents : {}) };
@@ -14223,6 +14254,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : null,
       requiresSubmission: typeof gate.requiresSubmission === 'boolean' ? gate.requiresSubmission : null,
       messaging: normalizeMessageTarget(gate.messaging),
+      draftRecipients: normalizeMessageTarget(gate.draftRecipients),
       allowsPlannerShapedResult: gate.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence: gate.allowsAppStateToolEvidence === true,
       requiredSchedulingTool: gate.requiredSchedulingTool || null,

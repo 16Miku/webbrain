@@ -83312,6 +83312,93 @@ test('paged iframe reads accumulate one complete application inventory', () => {
   }
 });
 
+test('a fresh exhaustive root read drops questions a branch hid before they were answered', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 8996 + index;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=branch';
+    const selected = resolveAdapterWorkflowJob(formUrl, 'submit-form');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Answer and submit every form question.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'branching-form-document', pageUrl: formUrl });
+    const read = (lines, treeRevision) => agent._rememberWorkflowInventoryObservation(
+      tabId,
+      'get_accessibility_tree',
+      { filter: 'all', maxDepth: 15 },
+      { success: true, pageContent: lines.join('\n'), treeRevision },
+    );
+
+    const initial = read([
+      'textbox "Full name" [ref_name] required=true value=""',
+      'radio "Do you have pets?" [ref_pets] required=true aria-checked=false',
+      'textbox "Pet name" [ref_pet_name] required=true value=""',
+    ], 'branching-form-initial');
+    assert.equal(initial?.complete, true, `${AgentClass.name}: the initial branching form read was incomplete`);
+    assert.equal(initial?.itemCount, 3);
+    const nameItem = initial.items.find(item => item.ref_id === 'ref_name');
+    const petsItem = initial.items.find(item => item.ref_id === 'ref_pets');
+    const petNameItem = initial.items.find(item => item.ref_id === 'ref_pet_name');
+
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'type_ax', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+    agent._recordCompletionToolResult(tabId, 'click_ax', {
+      ref_id: 'ref_pets',
+    }, { success: true, dispatched: true, verified: true });
+    assert.ok(guard.workflowControlActionEvidence[nameItem.id],
+      `${AgentClass.name}: the answered name question kept no action evidence`);
+    assert.ok(guard.workflowControlActionEvidence[petsItem.id],
+      `${AgentClass.name}: the answered branching question kept no action evidence`);
+
+    // Answering the branch hid a follow-up nobody ever answered. Keeping that
+    // row would leave a required item with no possible action evidence.
+    const afterBranch = read([
+      'textbox "Full name" [ref_name] required=true value="Ada"',
+      'radio "Do you have pets?" [ref_pets] required=true aria-checked=true',
+    ], 'branching-form-after-branch');
+    assert.equal(afterBranch?.complete, true,
+      `${AgentClass.name}: a fresh exhaustive root read did not restore coverage`);
+    assert.equal(afterBranch.items.some(item => item.id === petNameItem.id), false,
+      `${AgentClass.name}: a question the branch hid before it was answered stayed in the inventory`);
+    assert.equal(afterBranch?.itemCount, 2,
+      `${AgentClass.name}: the rebuilt inventory did not match the live form`);
+
+    const reconciliation = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 2,
+      basis: 'Both live questions were answered; the branch removed the follow-up.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: petsItem.id, label: 'Do you have pets?', status: 'processed', fields: { verified: true } },
+    ], 'branching-form-session');
+    assert.equal(reconciliation.ok, true,
+      `${AgentClass.name}: a live-complete branching form could not reconcile (${reconciliation.error || ''})`);
+
+    // The cumulative half still holds: a handled question that scrolls out of
+    // the next wizard section stays reconcilable.
+    const nextSection = read([
+      'textbox "Comments" [ref_comments] required=false value=""',
+    ], 'branching-form-next-section');
+    assert.equal(nextSection.items.some(item => item.id === nameItem.id), true,
+      `${AgentClass.name}: a handled question vanished from the cumulative inventory`);
+    assert.equal(nextSection.items.some(item => item.id === petsItem.id), true,
+      `${AgentClass.name}: a handled branching question vanished from the cumulative inventory`);
+    assert.equal(nextSection?.itemCount, 3,
+      `${AgentClass.name}: the next wizard section did not extend the handled inventory`);
+  }
+});
+
 test('site workflow bindings are revalidated on the live URL and preserved across trusted planner fallback', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const tabId = 8940 + index;
@@ -83490,6 +83577,77 @@ test('reviewed plan wording edits keep a live site-workflow contract', async () 
       );
       assert.equal(dropped.siteWorkflow, null,
         `${label}: a live adapter mismatch still bound the workflow`);
+    }
+  });
+});
+
+test('draft plans carry their requested addressees through the planner gate', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox';
+      const provider = { name: 'draft-gate', model: 'draft-gate', promptTier: 'full' };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent.useSiteAdapters = true;
+      const tabId = label === 'chrome' ? 9330 : 9331;
+      agent._persist = () => {};
+      agent._persistSubmittedTurn = async () => {};
+      agent._currentUrl = async () => gmailUrl;
+      agent._getTabUrlTitle = async () => ({ tabUrl: gmailUrl, tabTitle: 'Gmail' });
+      agent._chatWithCostAllowance = async (_provider, _messages, _options, _costState, metadata) => {
+        if (metadata?.generationName === 'read_scope') {
+          return { content: JSON.stringify({ read_scope: 'none' }), usage: {} };
+        }
+        return {
+          content: plannerFixtureJson({
+            request_kind: 'execute',
+            site_job: 'draft-email',
+            requires_state_change: true,
+            requires_submission: false,
+            messaging: {
+              target_kind: 'named',
+              recipients: [{ identity: 'alice@example.com', role: 'to' }],
+            },
+            summary: 'Save a Gmail draft addressed to Alice.',
+            localized: {
+              locale: 'en',
+              summary: 'Save a Gmail draft addressed to Alice.',
+              steps: [{ id: '1', action: 'Open compose and write the draft' }],
+              risks: [],
+            },
+          }),
+          usage: {},
+        };
+      };
+
+      const gate = await agent._maybeRunPlannerGate(
+        tabId,
+        [{ role: 'system', content: 'system' }],
+        { role: 'user', content: 'Save a draft to alice@example.com.' },
+        () => {},
+        'act',
+        null,
+        null,
+        { tabUrl: gmailUrl, tabTitle: 'Gmail' },
+        {},
+      );
+      assert.equal(gate.proceed, true, `${label}: the draft plan did not proceed`);
+      assert.equal(gate.messaging, null,
+        `${label}: a non-submitting draft plan carried send authorization out of the gate`);
+      assert.deepEqual(gate.draftRecipients?.recipients, [{ identity: 'alice@example.com', role: 'to' }],
+        `${label}: the planner gate dropped the requested draft addressees`);
+
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system' },
+        { role: 'user', content: 'Save a draft to alice@example.com.' },
+      ]);
+      const guard = agent._startPlanExecutionGuard(tabId, 'act', gate);
+      assert.equal(guard.messaging, null,
+        `${label}: draft addressees became a send authorization in the execution guard`);
+      assert.deepEqual(
+        agent._workflowDraftAuthorizedTarget(guard)?.recipients,
+        [{ identity: 'alice@example.com', role: 'to' }],
+        `${label}: draft verification could not resolve the requested addressee target`,
+      );
     }
   });
 });
