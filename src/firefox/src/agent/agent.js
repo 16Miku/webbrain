@@ -10629,13 +10629,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
     if (name === 'get_accessibility_tree') {
+      // A subtree read of one changed file, or a filter that keeps only some
+      // nodes, says nothing about the files it left out.
+      const inventoryRead = isExhaustiveAccessibilityInventoryRead(args, result);
+      if (!inventoryRead.exhaustiveRootScope) return null;
       const requested = Number(args?.page ?? args?.continuationArgs?.page);
       const start = Number.isInteger(requested) && requested > 0 ? requested : 1;
       return {
         origin: 1,
         start,
         next: start + 1,
-        more: isWorkflowInventoryContinuationPending(result),
+        more: inventoryRead.continuationPending,
       };
     }
     return null;
@@ -10952,6 +10956,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const domId = /\bdom_id="([^"]*)"/i.exec(line)?.[1] || '';
       const fieldName = /\bfield_name="([^"]*)"/i.exec(line)?.[1] || '';
       const requiredMatch = /\brequired=(?:"?)(true|false)(?:"?)/i.exec(line);
+      const disabled = /\bdisabled=(?:"?)true(?:"?)/i.test(line);
       const valueLenMatch = /\bvalue_len=(\d+)/i.exec(line);
       const valueFpMatch = /\bvalue_fp=([0-9a-f]{8})/i.exec(line);
       items.push({
@@ -10967,7 +10972,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // resolve-only request must not be forced to type one. Reply boxes
         // therefore enter as optional rows and a requested-label match
         // promotes them exactly like any other optional control.
-        ...(reviewThreadReply
+        // A disabled control constrains no submission and can take no
+        // action, so it is skippable here. A request that names it anyway
+        // still promotes it, and the run then has to report what blocked it.
+        ...(reviewThreadReply || disabled
           ? { required: false }
           : (requiredMatch ? { required: requiredMatch[1].toLowerCase() === 'true' } : {})),
         ...(valueLenMatch ? { valueLength: Number(valueLenMatch[1]) } : {}),
@@ -11089,7 +11097,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           role,
           documentScope,
           ...(type ? { type } : {}),
-          ...(typeof match?.required === 'boolean' ? { required: match.required } : {}),
+          ...(match?.disabled === true
+            ? { required: false }
+            : (typeof match?.required === 'boolean' ? { required: match.required } : {})),
           value: String(match?.value ?? '').slice(0, 10000),
           iframeTarget: {
             frameId,
@@ -24548,8 +24558,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   value: value.slice(0, 500),
                   text: String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 500),
                 };
+                // HTML answers optionality for a native control: an optional
+                // input, textarea, or select reports required === false while
+                // carrying no ARIA attribute at all.
+                const nativeControl = tag === 'input' || tag === 'textarea' || tag === 'select';
                 if (el.required === true || ariaRequired === 'true') match.required = true;
-                else if (ariaRequired === 'false') match.required = false;
+                else if (ariaRequired === 'false' || (nativeControl && el.required === false)) match.required = false;
+                // A disabled control constrains no submission and cannot take
+                // the verified action a processed row needs.
+                if (el.disabled === true || el.getAttribute?.('aria-disabled') === 'true') match.disabled = true;
                 return match;
               });
               const el = all[0] || null;

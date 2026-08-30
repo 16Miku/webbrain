@@ -83895,6 +83895,7 @@ test('optional controls the user asked for cannot be skipped', () => {
     const referralItem = inventory.items.find(item => item.ref_id === 'ref_referral');
     assert.equal(coverItem?.required, false,
       `${AgentClass.name}: the page-optional cover letter was not read as optional`);
+    assert.equal(referralItem?.required, false);
 
     agent._beginCompletionInvariant(tabId);
     agent._recordCompletionToolResult(tabId, 'type_ax', {
@@ -84315,6 +84316,129 @@ test('a control that remounts keeps one inventory identity', () => {
       `${AgentClass.name}: an unidentifiable control claimed a stable identity`);
     assert.ok(agent._trustedWorkflowInventory(tabId, [], guard),
       `${AgentClass.name}: a remounting form could not produce a trusted inventory`);
+  }
+});
+
+test('a disabled control is not an obligation, and iframe optionality is stated', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9490 + index;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=disabled';
+    const selected = resolveAdapterWorkflowJob(formUrl, 'submit-form');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Answer and submit every form question.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'disabled-form-document', pageUrl: formUrl });
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value="Ada"',
+        // A conditional field the current answers make inapplicable. The page
+        // left required on it but disabled it, so it constrains no submission.
+        'textbox "Employer name" [ref_employer] disabled=true required=true value=""',
+      ].join('\n'),
+      treeRevision: 'disabled-form-tree',
+    });
+    assert.equal(inventory?.itemCount, 2);
+    const nameItem = inventory.items.find(item => item.ref_id === 'ref_name');
+    const employerItem = inventory.items.find(item => item.ref_id === 'ref_employer');
+    assert.equal(employerItem?.required, false,
+      `${AgentClass.name}: a disabled control stayed a submission obligation`);
+
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'type_ax', { ref_id: 'ref_name', text: 'Ada' },
+      { success: true, dispatched: true, verified: true });
+    agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value="Ada"',
+        'textbox "Employer name" [ref_employer] disabled=true required=true value=""',
+      ].join('\n'),
+      treeRevision: 'disabled-form-tree-after',
+    });
+    const reconciled = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 2,
+      basis: 'Answered the name; the employer field is disabled and inapplicable.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: employerItem.id, label: 'Employer name', status: 'skipped' },
+    ], `disabled-form-session-${index}`);
+    assert.equal(reconciled.ok, true,
+      `${AgentClass.name}: a disabled control made the form impossible to reconcile (${reconciled.error || ''})`);
+
+    // A request that names the disabled field still promotes it, and the run
+    // then has to report what blocked it rather than claim success.
+    guard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['employer name']);
+    const requested = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 2,
+      basis: 'Answered the name; skipped the requested employer field.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: employerItem.id, label: 'Employer name', status: 'skipped' },
+    ], `disabled-requested-session-${index}`);
+    assert.equal(requested.ok, false,
+      `${AgentClass.name}: a disabled field the user asked for was silently skipped`);
+
+    // The iframe serializer has to answer the same two questions.
+    const iframeTabId = 9494 + index;
+    const applyUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
+    agent.conversations.set(iframeTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Prepare every application field for review.' },
+    ]);
+    agent._startPlanExecutionGuard(iframeTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflow: agent._resolvePlannerSiteWorkflow(applyUrl, {
+        request_kind: 'execute', site_job: 'prepare-application',
+      }),
+    });
+    const inventorySelector = [
+      'input', 'textarea', 'select', '[contenteditable="true"]',
+      '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="searchbox"]', '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+    ].join(',');
+    const iframeInventory = agent._rememberWorkflowInventoryObservation(iframeTabId, 'iframe_read', {
+      selector: inventorySelector,
+    }, {
+      success: true,
+      pageUrl: applyUrl,
+      frames: [{
+        frameId: 7,
+        ok: true,
+        url: 'https://acme.wd1.myworkdayjobs.com/application/frame',
+        matchCount: 3,
+        offset: 0,
+        truncated: false,
+        matches: [
+          { tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: '', matchIndex: 0, required: true },
+          { tag: 'textarea', id: 'notes', name: 'notes', label: 'Notes', value: '', matchIndex: 1, required: false },
+          { tag: 'input', type: 'text', id: 'employer', name: 'employer', label: 'Employer', value: '', matchIndex: 2, required: true, disabled: true },
+        ],
+      }],
+    });
+    assert.equal(iframeInventory?.itemCount, 3);
+    assert.equal(iframeInventory.items.find(item => item.label === 'Notes')?.required, false,
+      `${AgentClass.name}: an optional iframe control left its optionality unstated`);
+    assert.equal(iframeInventory.items.find(item => item.label === 'Employer')?.required, false,
+      `${AgentClass.name}: a disabled iframe control stayed a submission obligation`);
   }
 });
 
@@ -84939,6 +85063,35 @@ test('every declared non-submit job carries its own evidence contract', () => {
     diffRead({ offset: 4000 }, { success: true, url: `${prUrl}/files`, text: 'tail of the diff' });
     assert.equal(agent._executionEvidenceSatisfied(prGuard), true,
       `${AgentClass.name}: reading the changed files did not satisfy the review job`);
+
+    // An accessibility read closes the diff only when it covers the document
+    // root exhaustively; a subtree or a narrow filter covers one file at best.
+    const axGuard = agent._startPlanExecutionGuard(prTabId + 2, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      siteWorkflowUrl: prUrl,
+      siteWorkflow: agent._resolvePlannerSiteWorkflow(prUrl, {
+        request_kind: 'execute', site_job: 'review-pull-request',
+      }),
+    });
+    agent.conversations.set(prTabId + 2, agent.conversations.get(prTabId));
+    axGuard.evidenceTaskKey = axGuard.taskKey;
+    agent._beginCompletionInvariant(prTabId + 2);
+    const axRead = (args, result) => {
+      agent._recordCompletionToolResult(prTabId + 2, 'get_accessibility_tree', args, result);
+      agent._markPlanExecutionToolCall(prTabId + 2, 'get_accessibility_tree', result);
+    };
+    axRead({ ref_id: 'ref_first_file', filter: 'all', maxDepth: 15 },
+      { success: true, pageUrl: `${prUrl}/files` });
+    assert.equal(agent._executionEvidenceSatisfied(axGuard), false,
+      `${AgentClass.name}: a subtree read of one changed file closed the diff`);
+    axRead({ filter: 'interactive' }, { success: true, pageUrl: `${prUrl}/files` });
+    assert.equal(agent._executionEvidenceSatisfied(axGuard), false,
+      `${AgentClass.name}: a narrow accessibility filter closed the diff`);
+    axRead({ filter: 'all', maxDepth: 15 }, { success: true, pageUrl: `${prUrl}/files` });
+    assert.equal(agent._executionEvidenceSatisfied(axGuard), true,
+      `${AgentClass.name}: an exhaustive root read of the changed files was rejected`);
     // Another pull request's diff is not this one's.
     const otherPrGuard = agent._startPlanExecutionGuard(prTabId + 1, 'act', {
       requestKind: 'execute',
@@ -85279,11 +85432,16 @@ test('iframe_read reports which matches the page hides', () => {
     const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
     const start = source.indexOf('const limit = Math.max(1, Math.min(50,');
     assert.ok(start >= 0, `${label}: iframe_read match probe not found`);
-    const handler = source.slice(start, start + 6000);
+    const handler = source.slice(start, start + 9000);
     assert.match(handler, /style\.display === 'none'/, `${label}: iframe matches ignore display:none`);
     assert.match(handler, /style\.visibility === 'hidden'/, `${label}: iframe matches ignore visibility:hidden`);
     assert.match(handler, /aria-hidden/, `${label}: iframe matches ignore aria-hidden`);
     assert.match(handler, /\{ hidden: true \}/, `${label}: iframe matches never report hidden`);
+    // The serializer answers the same two questions the tree does.
+    assert.match(handler, /nativeControl && el\.required === false/,
+      `${label}: an optional native iframe control leaves its optionality unstated`);
+    assert.match(handler, /match\.disabled = true/,
+      `${label}: iframe matches never report a disabled control`);
   }
 });
 
