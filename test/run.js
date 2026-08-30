@@ -1388,6 +1388,34 @@ test('selectionIsQuoteable requires one non-empty assistant answer element', () 
   assert.equal(selectionIsQuoteableFx({ ...valid, endTextElement: otherAnswer }), false);
 });
 
+test('message body normalization is identical in the agent and the content probe', () => {
+  const pipeline = (source, header) => {
+    const start = source.indexOf(header);
+    assert.notEqual(start, -1, `${header} not found`);
+    const end = source.indexOf('normalize(\'NFKC\')', start);
+    assert.notEqual(end, -1, `${header} has no NFKC normalization`);
+    return source.slice(start + header.length, end)
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith('//'))
+      .join('\n');
+  };
+  const agentSource = fs.readFileSync(new URL('../src/chrome/src/agent/agent.js', import.meta.url), 'utf8');
+  const contentSource = fs.readFileSync(new URL('../src/chrome/src/content/content.js', import.meta.url), 'utf8');
+  const firefoxContent = fs.readFileSync(new URL('../src/firefox/src/content/content.js', import.meta.url), 'utf8');
+  const agentPipeline = pipeline(agentSource, '_workflowMessageBody(value) {');
+  assert.equal(
+    pipeline(contentSource, 'const normalizedMessageBody = (value) => {'),
+    agentPipeline,
+    'the content probe and the agent must normalize message bodies the same way',
+  );
+  assert.equal(
+    pipeline(firefoxContent, 'const normalizedMessageBody = (value) => {'),
+    agentPipeline,
+    'the Firefox content probe must normalize message bodies the same way',
+  );
+});
+
 test('selection quote helper stays byte-identical across browser builds', () => {
   assert.equal(selectionQuoteSources[0], selectionQuoteSources[1]);
 });
@@ -83478,6 +83506,80 @@ test('a fresh exhaustive root read drops questions a branch hid before they were
   }
 });
 
+test('a paginated fresh root read rebuilds from its first page and accumulates continuations', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 8998 + index;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=paged';
+    const selected = resolveAdapterWorkflowJob(formUrl, 'submit-form');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Answer and submit every form question.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'paged-form-document', pageUrl: formUrl });
+    const read = (lines, treeRevision, args = {}, extra = {}) => agent._rememberWorkflowInventoryObservation(
+      tabId,
+      'get_accessibility_tree',
+      { filter: 'all', maxDepth: 15, ...args },
+      { success: true, pageContent: lines.join('\n'), treeRevision, ...extra },
+    );
+
+    const initial = read([
+      'textbox "Full name" [ref_name] required=true value=""',
+      'radio "Do you have pets?" [ref_pets] required=true aria-checked=false',
+      'textbox "Pet name" [ref_pet_name] required=true value=""',
+    ], 'paged-form-initial');
+    assert.equal(initial?.complete, true);
+    const nameItem = initial.items.find(item => item.ref_id === 'ref_name');
+    const petsItem = initial.items.find(item => item.ref_id === 'ref_pets');
+    const petNameItem = initial.items.find(item => item.ref_id === 'ref_pet_name');
+
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'type_ax', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+    agent._recordCompletionToolResult(tabId, 'click_ax', {
+      ref_id: 'ref_pets',
+    }, { success: true, dispatched: true, verified: true });
+
+    // The re-read after the branching answer needs more than one page. Its
+    // continuations never start a root read, so the rebuild has to happen on
+    // page 1 or the hidden follow-up survives forever.
+    const firstPage = read([
+      'textbox "Full name" [ref_name] required=true value="Ada"',
+    ], 'paged-form-page-1', {}, { hasMore: true, nextPage: 2 });
+    assert.equal(firstPage.items.some(item => item.id === petNameItem.id), false,
+      `${AgentClass.name}: the first page of a paginated re-read kept a hidden unanswered question`);
+    assert.equal(firstPage?.complete, false,
+      `${AgentClass.name}: a half-rebuilt paginated inventory still claimed complete coverage`);
+    assert.equal(firstPage.items.some(item => item.id === petsItem.id), true,
+      `${AgentClass.name}: an answered question was dropped by the paginated rebuild`);
+
+    const finalPage = read([
+      'radio "Do you have pets?" [ref_pets] required=true aria-checked=true',
+      'textbox "Comments" [ref_comments] required=false value=""',
+    ], 'paged-form-page-2', { page: 2 });
+    assert.equal(finalPage?.complete, true,
+      `${AgentClass.name}: the terminal continuation page did not close the rebuilt inventory`);
+    assert.equal(finalPage.items.some(item => item.id === petNameItem.id), false,
+      `${AgentClass.name}: a continuation page restored the hidden unanswered question`);
+    assert.deepEqual(
+      finalPage.items.map(item => item.ref_id).sort(),
+      ['ref_comments', 'ref_name', 'ref_pets'],
+      `${AgentClass.name}: the paginated rebuild did not accumulate the live form`,
+    );
+    assert.ok(guard.workflowControlActionEvidence[nameItem.id],
+      `${AgentClass.name}: the paginated rebuild discarded prior action evidence`);
+  }
+});
+
 test('site workflow bindings are revalidated on the live URL and preserved across trusted planner fallback', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const tabId = 8940 + index;
@@ -84641,6 +84743,30 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
       `${AgentClass.name}: a body that merely contains the requested text was accepted`);
     assert.equal(bodyTerminal('Quarterly update')?.source, 'recipient_body_bound_gmail_compose_and_sent_confirmation',
       `${AgentClass.name}: the exact requested body could not satisfy the send-email contract`);
+
+    // Line structure is part of the message: paragraphs collapsed onto one
+    // line are a different body, while blank-line and spacing differences the
+    // editor introduces on its own are not.
+    assert.notEqual(
+      agent._workflowMessageBody('First paragraph.\n\nSecond paragraph.'),
+      agent._workflowMessageBody('First paragraph. Second paragraph.'),
+      `${AgentClass.name}: collapsed paragraphs normalized to the same body`,
+    );
+    assert.equal(
+      agent._workflowMessageBody('First paragraph.\n\n\nSecond paragraph.'),
+      agent._workflowMessageBody('First paragraph.\nSecond   paragraph.'),
+      `${AgentClass.name}: incidental blank lines or spacing changed the body`,
+    );
+    bodyGuard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
+      { field: 'body', value: 'First paragraph.\n\nSecond paragraph.' },
+    ]);
+    assert.equal(bodyTerminal('First paragraph. Second paragraph.'), null,
+      `${AgentClass.name}: a body whose paragraphs were collapsed satisfied the requested text`);
+    assert.equal(
+      bodyTerminal('First paragraph.\nSecond paragraph.')?.source,
+      'recipient_body_bound_gmail_compose_and_sent_confirmation',
+      `${AgentClass.name}: the requested multi-paragraph body could not be verified`,
+    );
 
     const draftTabId = 9210 + index;
     agent.conversations.set(draftTabId, [

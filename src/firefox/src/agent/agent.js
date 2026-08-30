@@ -1400,11 +1400,18 @@ export class Agent extends LoopDetector {
     return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 20000);
   }
 
+  // Line structure is part of an exact body: two paragraphs collapsed onto
+  // one line is a different message and must not compare equal. Horizontal
+  // whitespace and the number of blank lines between paragraphs are not,
+  // because editors rewrite those on their own.
   _workflowMessageBody(value) {
     let text = String(value ?? '')
       .replace(/[\u200b-\u200d\ufeff]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map(line => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join('\n');
     try { text = text.normalize('NFKC'); } catch {}
     return text.length <= 20000 ? text : '';
   }
@@ -11134,9 +11141,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // action evidence and no way to skip it. So a complete exhaustive root read
     // rebuilds this document's item set and carries over only what the run has
     // already accounted for.
+    // The rebuild starts on the first page of a fresh exhaustive root read,
+    // not only on one that finishes in a single page: a paginated read's
+    // continuations never start a root read, so waiting for completion would
+    // leave the stale rows in place forever.
     const rebuildCurrentRootSnapshot = !replaceCurrentRootSnapshot
       && startingRootRead
-      && inventoryRead.rootReadComplete;
+      && exhaustiveRootScope;
     const accountedItemIds = rebuildCurrentRootSnapshot
       ? this._workflowAccountedInventoryItemIds(tabId, guard, taskKey)
       : null;
@@ -11158,7 +11169,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // workflow inventory for exact reconciliation.
     const priorDocument = documents[documentKey];
     const rootReadComplete = inventoryRead.rootReadComplete;
-    const rootComplete = priorDocument?.complete === true || rootReadComplete;
+    // A fresh root read restarts this document's coverage, so while its
+    // continuation pages are still arriving the earlier completion no longer
+    // describes the item set being rebuilt.
+    const rootComplete = rebuildCurrentRootSnapshot
+      ? rootReadComplete
+      : (priorDocument?.complete === true || rootReadComplete);
     // Once an exhaustive document-root read has completed this stable
     // document, a later subtree drill-down cannot make sibling coverage
     // unknown again. Keep completion monotonic while still allowing an

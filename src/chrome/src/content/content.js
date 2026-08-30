@@ -4691,11 +4691,17 @@
           || role === 'textbox'
           || role === 'searchbox';
       };
+      // Must stay identical to the agent's _workflowMessageBody: the probe
+      // compares page text against a body the agent already normalized, and a
+      // body whose paragraphs were collapsed must not match the requested one.
       const normalizedMessageBody = (value) => {
         let text = String(value ?? '')
           .replace(/[\u200b-\u200d\ufeff]/g, '')
-          .replace(/\s+/g, ' ')
-          .trim();
+          .replace(/\r\n?/g, '\n')
+          .split('\n')
+          .map(line => line.replace(/\s+/g, ' ').trim())
+          .filter(Boolean)
+          .join('\n');
         try { text = text.normalize('NFKC'); } catch {}
         return text.length <= 20000 ? text : '';
       };
