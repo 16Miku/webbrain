@@ -20796,6 +20796,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? Object.fromEntries(Object.entries(carried.workflowControlActionEvidence)
             .map(([itemId, proof]) => [itemId, { ...proof }]))
         : {},
+      workflowReleaseAssetEvidence: carryMatches && carried.workflowReleaseAssetEvidence
+        ? Object.fromEntries(Object.entries(carried.workflowReleaseAssetEvidence)
+            .map(([itemId, proof]) => [itemId, { ...proof }]))
+        : {},
+      workflowPendingReleaseAssetEvidence: carryMatches && carried.workflowPendingReleaseAssetEvidence
+        ? Object.fromEntries(Object.entries(carried.workflowPendingReleaseAssetEvidence)
+            .map(([itemId, proof]) => [itemId, { ...proof }]))
+        : {},
       workflowComposerFieldEvidence: carryMatches && carried.workflowComposerFieldEvidence
         ? {
             ...carried.workflowComposerFieldEvidence,
@@ -20808,7 +20816,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       workflowRequiredJobEvidence: '',
       workflowJobScopeIdentity: '',
       workflowObservedScopeIdentities: [],
-      workflowTranscriptCoverage: null,
+      workflowTranscriptCoverage: carryMatches && carried.workflowTranscriptCoverage
+        ? { ...carried.workflowTranscriptCoverage }
+        : null,
       workflowEmptyCollectionObserved: carryMatches && carried.workflowEmptyCollectionObserved === true,
       workflowJobScopeObserved: carryMatches && carried.workflowJobScopeObserved === true,
       workflowJobEvidenceSatisfied: carryMatches && carried.workflowJobEvidenceSatisfied === true,
@@ -21086,7 +21096,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || !!guard.workflowLedgerReconciliation
       || !!guard.workflowInventoryEvidence
       || !!guard.workflowComposerFieldEvidence
+      || !!guard.workflowTranscriptCoverage
       || Object.keys(guard.workflowControlActionEvidence || {}).length > 0
+      || Object.keys(guard.workflowReleaseAssetEvidence || {}).length > 0
+      || Object.keys(guard.workflowPendingReleaseAssetEvidence || {}).length > 0
     )) {
       const submit = this._completionSubmitStates.get(tabId);
       this._continuationExecutionEvidence.set(tabId, {
@@ -21126,6 +21139,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           Object.entries(guard.workflowControlActionEvidence || {})
             .map(([itemId, proof]) => [itemId, { ...proof }]),
         ),
+        // An asset already uploaded and saved cannot be uploaded again, so its
+        // proof has to cross Continue with the ledger row it belongs to.
+        workflowReleaseAssetEvidence: Object.fromEntries(
+          Object.entries(guard.workflowReleaseAssetEvidence || {})
+            .map(([itemId, proof]) => [itemId, { ...proof }]),
+        ),
+        workflowPendingReleaseAssetEvidence: Object.fromEntries(
+          Object.entries(guard.workflowPendingReleaseAssetEvidence || {})
+            .map(([itemId, proof]) => [itemId, { ...proof }]),
+        ),
+        // A paged transcript continues from the offset the last window
+        // returned; without the chain the run would have to reread from zero.
+        workflowTranscriptCoverage: guard.workflowTranscriptCoverage
+          ? { ...guard.workflowTranscriptCoverage }
+          : null,
         workflowComposerFieldEvidence: guard.workflowComposerFieldEvidence
           ? {
               ...guard.workflowComposerFieldEvidence,

@@ -80035,6 +80035,134 @@ test('trusted continuation language policy persists across worker restart withou
   }
 });
 
+test('trusted continuation carries transcript and release-asset evidence', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const videoUrl = 'https://www.youtube.com/watch?v=abcdefghijk';
+    const videoTabId = 8720 + index;
+    agent.conversationIds.set(videoTabId, `transcript_continuation_${index}`);
+    agent.conversations.set(videoTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Summarize this whole video.' },
+    ]);
+    const videoGate = {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      siteWorkflowUrl: videoUrl,
+      siteWorkflow: agent._resolvePlannerSiteWorkflow(videoUrl, {
+        request_kind: 'execute', site_job: 'read-transcript',
+      }),
+    };
+    const videoGuard = agent._startPlanExecutionGuard(videoTabId, 'act', videoGate);
+    videoGuard.evidenceTaskKey = videoGuard.taskKey;
+    agent._beginCompletionInvariant(videoTabId);
+    // A long transcript runs out of turns partway through.
+    agent._recordCompletionToolResult(videoTabId, 'read_youtube_transcript', {}, {
+      success: true,
+      url: videoUrl,
+      data: { text: 'Pricing starts at ten dollars.', has_more_text: true, next_text_offset: 4000 },
+    });
+    assert.equal(videoGuard.workflowTranscriptCoverage?.coveredTo, 4000,
+      `${AgentClass.name}: the transcript chain was not recorded before Continue`);
+    agent._storeContinuationExecutionEvidence(videoTabId);
+
+    const continuedVideo = agent._startPlanExecutionGuard(videoTabId, 'act', videoGate, {
+      trustedContinuation: true,
+    });
+    assert.equal(continuedVideo.workflowTranscriptCoverage?.coveredTo, 4000,
+      `${AgentClass.name}: Continue discarded the transcript chain and forced a reread from zero`);
+    continuedVideo.evidenceTaskKey = continuedVideo.taskKey;
+    agent._beginCompletionInvariant(videoTabId);
+    // The continuation window picks up exactly where the last one stopped.
+    agent._recordCompletionToolResult(videoTabId, 'read_youtube_transcript', { text_offset: 4000 }, {
+      success: true,
+      url: videoUrl,
+      data: { text: 'and the annual plan is cheaper.', text_offset: 4000 },
+    });
+    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', {
+      success: true,
+      url: videoUrl,
+      data: { text: 'and the annual plan is cheaper.', text_offset: 4000 },
+    });
+    assert.equal(agent._executionEvidenceSatisfied(continuedVideo), true,
+      `${AgentClass.name}: a transcript finished across Continue could not satisfy its job`);
+
+    const releaseTabId = 8724 + index;
+    const releaseUrl = 'https://github.com/esokullu/webbrain/releases/edit/v33.5.0';
+    agent.conversationIds.set(releaseTabId, `release_continuation_${index}`);
+    agent.conversations.set(releaseTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Upload both archives to this release and save it.' },
+    ]);
+    const releaseGate = {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflowUrl: releaseUrl,
+      siteWorkflow: agent._resolvePlannerSiteWorkflow(releaseUrl, {
+        request_kind: 'execute', site_job: 'upload-release-assets',
+      }),
+    };
+    const releaseGuard = agent._startPlanExecutionGuard(releaseTabId, 'act', releaseGate);
+    releaseGuard.successfulTaskToolCalls = 1;
+    releaseGuard.evidenceTaskKey = releaseGuard.taskKey;
+    // One asset is already uploaded and saved; a second turn handles the rest.
+    releaseGuard.workflowReleaseAssetEvidence = {
+      'requirement:1:dist/a.zip': {
+        itemId: 'requirement:1:dist/a.zip',
+        fileName: 'a.zip',
+        directVerified: true,
+        actionSequence: 3,
+        observationSequence: 4,
+      },
+    };
+    releaseGuard.workflowPendingReleaseAssetEvidence = {
+      'requirement:2:dist/b.zip': {
+        itemId: 'requirement:2:dist/b.zip',
+        fileName: 'b.zip',
+        actionSequence: 5,
+        pendingObservation: true,
+      },
+    };
+    agent._storeContinuationExecutionEvidence(releaseTabId);
+
+    const continuedRelease = agent._startPlanExecutionGuard(releaseTabId, 'act', releaseGate, {
+      trustedContinuation: true,
+    });
+    assert.deepEqual(
+      continuedRelease.workflowReleaseAssetEvidence,
+      releaseGuard.workflowReleaseAssetEvidence,
+      `${AgentClass.name}: Continue lost the proof for an asset already uploaded and saved`,
+    );
+    assert.deepEqual(
+      continuedRelease.workflowPendingReleaseAssetEvidence,
+      releaseGuard.workflowPendingReleaseAssetEvidence,
+      `${AgentClass.name}: Continue lost an upload waiting on its readback`,
+    );
+    assert.equal(
+      agent._workflowProcessedRowsHaveControlEvidence(
+        [{ id: 'requirement:1:dist/a.zip', label: 'dist/a.zip', status: 'processed' }],
+        continuedRelease,
+      ),
+      true,
+      `${AgentClass.name}: a processed asset row lost its proof across Continue`,
+    );
+
+    // A different task must not inherit either kind of evidence.
+    agent.conversations.set(releaseTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Upload a completely different archive instead.' },
+    ]);
+    const unrelated = agent._startPlanExecutionGuard(releaseTabId, 'act', releaseGate, {
+      trustedContinuation: true,
+    });
+    assert.deepEqual(unrelated.workflowReleaseAssetEvidence, {},
+      `${AgentClass.name}: a new task inherited release-asset proofs`);
+  }
+});
+
 test('trusted continuation carries completed download evidence only for the same requirement', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
