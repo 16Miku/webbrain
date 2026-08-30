@@ -40009,6 +40009,51 @@ test('automatic WebBrain tab grouping has a portable user opt-out', async () => 
   }
 });
 
+test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts', async () => {
+  const chromeScalePath = path.join(ROOT, 'src/chrome/src/ui/ui-scale.js');
+  const firefoxScalePath = path.join(ROOT, 'src/firefox/src/ui/ui-scale.js');
+  const chromeScaleSource = fs.readFileSync(chromeScalePath, 'utf8');
+  const firefoxScaleSource = fs.readFileSync(firefoxScalePath, 'utf8');
+  assert.equal(firefoxScaleSource, chromeScaleSource, 'UI scale helpers should stay byte-identical');
+
+  const scale = await import(pathToFileURL(chromeScalePath).href);
+  assert.deepEqual(scale.UI_SCALE_LEVELS, [75, 80, 90, 100, 110, 125, 150, 175]);
+  assert.equal(scale.normalizeUiScale(undefined), 100);
+  assert.equal(scale.normalizeUiScale('125'), 125);
+  assert.equal(scale.normalizeUiScale(124), 100);
+  assert.equal(scale.stepUiScale(75, -1), 75);
+  assert.equal(scale.stepUiScale(100, -1), 90);
+  assert.equal(scale.stepUiScale(100, 1), 110);
+  assert.equal(scale.stepUiScale(175, 1), 175);
+  assert.deepEqual(scale.uiScaleLayout(125), {
+    scale: 125,
+    zoom: 1.25,
+    width: '80%',
+    height: '80vh',
+  });
+
+  const shortcut = (overrides = {}) => scale.uiScaleShortcutAction({
+    key: '',
+    code: '',
+    ctrlKey: true,
+    metaKey: false,
+    altKey: false,
+    isComposing: false,
+    getModifierState: () => false,
+    ...overrides,
+  });
+  assert.equal(shortcut({ key: '+', code: 'Equal' }), 'increase');
+  assert.equal(shortcut({ key: '=', code: 'Equal' }), 'increase');
+  assert.equal(shortcut({ key: '-', code: 'Minus' }), 'decrease');
+  assert.equal(shortcut({ key: '0', code: 'Digit0' }), 'reset');
+  assert.equal(shortcut({ key: '+', code: 'NumpadAdd' }), 'increase');
+  assert.equal(shortcut({ key: '-', code: 'NumpadSubtract' }), 'decrease');
+  assert.equal(shortcut({ key: '+', code: 'Equal', ctrlKey: false }), '');
+  assert.equal(shortcut({ key: '+', code: 'Equal', altKey: true }), '');
+  assert.equal(shortcut({ key: '+', code: 'Equal', isComposing: true }), '');
+  assert.equal(shortcut({ key: '+', code: 'Equal', getModifierState: () => true }), '');
+});
+
 test('Firefox browser shortcuts avoid reserved defaults and stay window-scoped', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'src/firefox/manifest.json'), 'utf8'));
   const expected = {
