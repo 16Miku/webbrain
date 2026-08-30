@@ -530,6 +530,13 @@ uiScalePopover?.addEventListener('click', (event) => {
   const action = event.target.closest('[data-ui-scale-action]')?.dataset.uiScaleAction;
   if (action) setSidepanelUiScale(action).catch(() => {});
 });
+uiScalePopover?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  uiScalePopover.classList.add('hidden');
+  uiScaleBtn?.setAttribute('aria-expanded', 'false');
+  uiScaleBtn?.focus();
+});
 document.addEventListener('click', (event) => {
   if (uiScaleMenu?.contains(event.target)) return;
   uiScalePopover?.classList.add('hidden');
@@ -11161,6 +11168,7 @@ function dismissSelectionAskAction() {
 
 function positionSelectionAskAction(range) {
   if (!selectionAskActionEl) return;
+  const zoom = currentUiScale / 100 || 1;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const actionRect = selectionAskActionEl.getBoundingClientRect();
@@ -11180,8 +11188,10 @@ function positionSelectionAskAction(range) {
   const belowTop = usable ? rect.bottom + gap : maxTop;
   const preferredTop = usable && aboveTop >= 8 ? aboveTop : belowTop;
   const top = Math.min(maxTop, Math.max(8, preferredTop));
-  selectionAskActionEl.style.left = `${left}px`;
-  selectionAskActionEl.style.top = `${top}px`;
+  // The button is inside the zoomed body, while these measurements are in
+  // viewport pixels. Convert them back to the body's CSS coordinate space.
+  selectionAskActionEl.style.left = `${left / zoom}px`;
+  selectionAskActionEl.style.top = `${top / zoom}px`;
 }
 
 function applySelectionAskActionLabel() {

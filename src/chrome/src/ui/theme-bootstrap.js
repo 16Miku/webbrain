@@ -30,14 +30,45 @@
 
   try {
     if (window.location.pathname.endsWith('/sidepanel.html')) {
+      var root = document.documentElement;
       var levels = [75, 80, 90, 100, 110, 125, 150, 175];
-      var scale = Number(localStorage.getItem('wbUiScale'));
-      if (levels.indexOf(scale) === -1) scale = 100;
-      var inverse = Number((10000 / scale).toFixed(4));
-      document.documentElement.setAttribute('data-ui-scale', String(scale));
-      document.documentElement.style.setProperty('--ui-scale-zoom', String(scale / 100));
-      document.documentElement.style.setProperty('--ui-scale-width', inverse + '%');
-      document.documentElement.style.setProperty('--ui-scale-height', inverse + 'vh');
+      var applyScale = function (value) {
+        var scale = Number(value);
+        if (levels.indexOf(scale) === -1) scale = 100;
+        var inverse = Number((10000 / scale).toFixed(4));
+        root.setAttribute('data-ui-scale', String(scale));
+        root.style.setProperty('--ui-scale-zoom', String(scale / 100));
+        root.style.setProperty('--ui-scale-width', '100%');
+        root.style.setProperty('--ui-scale-height', inverse + 'vh');
+      };
+      var ready = false;
+      var reveal = function () {
+        if (ready) return;
+        ready = true;
+        root.setAttribute('data-ui-scale-ready', 'true');
+      };
+
+      // localStorage is synchronous and avoids a flash on normal page opens.
+      // The canonical storage API is checked below because MV3 service workers
+      // cannot update this mirror when a global command changes the scale.
+      applyScale(localStorage.getItem('wbUiScale'));
+      root.setAttribute('data-ui-scale-ready', 'false');
+      var storage = globalThis.browser?.storage?.local || globalThis.chrome?.storage?.local;
+      if (!storage?.get) {
+        reveal();
+      } else if (globalThis.browser?.storage?.local?.get) {
+        Promise.resolve(storage.get({ uiScale: 100 })).then(function (stored) {
+          applyScale(stored?.uiScale);
+          reveal();
+        }).catch(reveal);
+      } else {
+        storage.get({ uiScale: 100 }, function (stored) {
+          applyScale(stored?.uiScale);
+          reveal();
+        });
+      }
+      // Do not leave the panel hidden if a browser API never resolves.
+      window.setTimeout(reveal, 1000);
     }
   } catch (_) { /* default CSS variables keep the panel at 100% */ }
 })();

@@ -253,24 +253,29 @@ if (themeSelect) {
 }
 
 let currentSettingsUiScale = 100;
+let settingsUiScaleReady = false;
 
 function renderSettingsUiScale(value) {
   currentSettingsUiScale = normalizeUiScale(value);
+  settingsUiScaleReady = true;
   if (settingsUiScaleValue) settingsUiScaleValue.textContent = `${currentSettingsUiScale}%`;
   if (settingsUiScaleDecrease) settingsUiScaleDecrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[0];
   if (settingsUiScaleIncrease) settingsUiScaleIncrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[UI_SCALE_LEVELS.length - 1];
 }
 
 async function changeSettingsUiScale(action) {
+  if (!settingsUiScaleReady) return;
   const next = nextUiScale(currentSettingsUiScale, action);
   renderSettingsUiScale(next);
   await saveUiScale(chrome.storage.local, next);
 }
 
 loadUiScale(chrome.storage.local).then(renderSettingsUiScale);
-settingsUiScaleDecrease?.addEventListener('click', () => changeSettingsUiScale('decrease'));
-settingsUiScaleIncrease?.addEventListener('click', () => changeSettingsUiScale('increase'));
-settingsUiScaleReset?.addEventListener('click', () => changeSettingsUiScale('reset'));
+if (settingsUiScaleDecrease) settingsUiScaleDecrease.disabled = true;
+if (settingsUiScaleIncrease) settingsUiScaleIncrease.disabled = true;
+settingsUiScaleDecrease?.addEventListener('click', () => changeSettingsUiScale('decrease').catch(() => {}));
+settingsUiScaleIncrease?.addEventListener('click', () => changeSettingsUiScale('increase').catch(() => {}));
+settingsUiScaleReset?.addEventListener('click', () => changeSettingsUiScale('reset').catch(() => {}));
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[UI_SCALE_STORAGE_KEY]) {
     renderSettingsUiScale(changes[UI_SCALE_STORAGE_KEY].newValue);
@@ -373,12 +378,14 @@ if (languageSelect) {
     await setLocale(languageSelect.value);
     // Re-render dynamic bits whose text comes from JS.
     renderSubtitle();
+    refreshUiScaleShortcuts().catch(() => {});
     filterGeneralSettings();
     renderProviders();
   });
   document.addEventListener('wb-locale-changed', () => {
     languageSelect.value = getLocale();
     renderSubtitle();
+    refreshUiScaleShortcuts().catch(() => {});
     filterGeneralSettings();
     if (providersContainer) renderProviders();
     renderSkills();

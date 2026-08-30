@@ -29,7 +29,7 @@ export function uiScaleLayout(value) {
   return {
     scale,
     zoom: scale / 100,
-    width: `${inverse}%`,
+    width: '100%',
     height: `${inverse}vh`,
   };
 }

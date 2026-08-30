@@ -40032,7 +40032,7 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
   assert.deepEqual(scale.uiScaleLayout(125), {
     scale: 125,
     zoom: 1.25,
-    width: '80%',
+    width: '100%',
     height: '80vh',
   });
 
@@ -40076,7 +40076,7 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
   assert.equal(scale.applyUiScale(root, 125, { setItem: (key, value) => mirrored.set(key, value) }), 125);
   assert.equal(root.dataset.uiScale, '125');
   assert.equal(properties.get('--ui-scale-zoom'), '1.25');
-  assert.equal(properties.get('--ui-scale-width'), '80%');
+  assert.equal(properties.get('--ui-scale-width'), '100%');
   assert.equal(properties.get('--ui-scale-height'), '80vh');
   assert.equal(mirrored.get('wbUiScale'), '125');
 
@@ -40084,7 +40084,10 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
     const bootstrap = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/theme-bootstrap.js'), 'utf8');
     const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
     const config = await import(pathToFileURL(path.join(ROOT, prefix, 'src/config-transfer.js')).href);
-    assert.match(bootstrap, /endsWith\('\/sidepanel\.html'\)[\s\S]*?localStorage\.getItem\('wbUiScale'\)[\s\S]*?--ui-scale-zoom/, `${label}: saved scale should apply before sidepanel paint only`);
+    assert.match(bootstrap, /endsWith\('\/sidepanel\.html'\)[\s\S]*?localStorage\.getItem\('wbUiScale'\)/, `${label}: saved scale should apply before sidepanel paint only`);
+    assert.match(bootstrap, /applyScale[\s\S]*?--ui-scale-zoom/, `${label}: pre-paint scale should set the zoom variables`);
+    assert.match(bootstrap, /data-ui-scale-ready.*?false[\s\S]*?storage\.get\(\{ uiScale: 100 \}/, `${label}: canonical storage should settle the pre-paint scale before revealing the sidepanel`);
+    assert.match(bootstrap, /data-ui-scale-ready.*?true/, `${label}: sidepanel should be revealed after scale initialization`);
     assert.match(css, /body\s*\{[\s\S]*?width:\s*var\(--ui-scale-width, 100%\);[\s\S]*?height:\s*var\(--ui-scale-height, 100vh\);[\s\S]*?zoom:\s*var\(--ui-scale-zoom, 1\);/, `${label}: sidepanel layout should compensate CSS zoom`);
     assert.match(css, /#app\s*\{[\s\S]*?height:\s*100%;/, `${label}: app should fill the compensated body`);
     assert.equal(config.DEFAULT_CONFIG_SETTINGS.uiScale, 100, `${label}: portable config should default scale to 100%`);
@@ -40109,14 +40112,20 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
     assert.match(sidepanelHtml, /id="ui-scale-popover"[\s\S]*?data-ui-scale-action="decrease"[\s\S]*?id="ui-scale-value"[\s\S]*?data-ui-scale-action="increase"[\s\S]*?data-ui-scale-action="reset"/, `${label}: sidepanel scale menu should expose decrease, increase, value, and reset controls`);
     assert.match(sidepanelCss, /\.ui-scale-popover\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?z-index:/, `${label}: sidepanel scale menu should float above chat content`);
     assert.match(sidepanelJs, /uiScaleShortcutAction\(e\)[\s\S]*?e\.preventDefault\(\)[\s\S]*?setSidepanelUiScale/, `${label}: focused sidepanel zoom shortcuts should suppress browser zoom and update extension scale`);
+    assert.match(sidepanelJs, /uiScalePopover\?\.addEventListener\('keydown'[\s\S]*?event\.key !== 'Escape'[\s\S]*?uiScaleBtn\?\.focus\(\)/, `${label}: Escape should close the scale menu and restore focus to its trigger`);
+    assert.match(sidepanelJs, /positionSelectionAskAction[\s\S]*?currentUiScale \/ 100[\s\S]*?style\.left = `\$\{left \/ zoom\}px`[\s\S]*?style\.top = `\$\{top \/ zoom\}px`/, `${label}: selection action coordinates should remain aligned under CSS zoom`);
     assert.match(sidepanelJs, /loadUiScale\([\s\S]*?storage\.local[\s\S]*?renderSidepanelUiScale/, `${label}: sidepanel should hydrate its persisted scale`);
     assert.match(sidepanelJs, /storage\.onChanged\.addListener\([\s\S]*?changes\[UI_SCALE_STORAGE_KEY\][\s\S]*?renderSidepanelUiScale/, `${label}: open sidepanels should react to scale changes`);
 
     assert.match(settingsHtml, /data-i18n="st\.display\.ui_scale\.label"[\s\S]*?data-i18n="st\.display\.ui_scale\.desc"/, `${label}: settings should explain UI scale`);
     assert.match(settingsHtml, /id="settings-ui-scale-decrease"[\s\S]*?id="settings-ui-scale-value"[\s\S]*?id="settings-ui-scale-increase"[\s\S]*?id="settings-ui-scale-reset"/, `${label}: settings should expose all scale controls`);
+    assert.doesNotMatch(settingsHtml, /data-i18n(?:-title|-aria-label)?="sp\.ui_scale\./, `${label}: settings should use settings-scoped localization keys`);
     assert.match(settingsJs, /loadUiScale\([\s\S]*?storage\.local[\s\S]*?renderSettingsUiScale/, `${label}: settings should hydrate persisted scale`);
     assert.match(settingsJs, /saveUiScale\([\s\S]*?storage\.local/, `${label}: settings controls should persist scale changes`);
+    assert.match(settingsJs, /changeSettingsUiScale\('decrease'\)\.catch\(\(\) => \{\}\)/, `${label}: settings scale writes should handle storage failures`);
+    assert.match(settingsJs, /settingsUiScaleReady = false[\s\S]*?if \(!settingsUiScaleReady\) return/, `${label}: settings controls should wait for canonical scale hydration`);
     assert.match(settingsJs, /storage\.onChanged\.addListener\([\s\S]*?changes\[UI_SCALE_STORAGE_KEY\][\s\S]*?renderSettingsUiScale/, `${label}: settings should reflect scale changes made elsewhere`);
+    assert.match(settingsJs, /setLocale\([\s\S]*?refreshUiScaleShortcuts\(\)\.catch/, `${label}: settings should refresh the shortcut summary after locale changes`);
 
     const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
     for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
@@ -40159,7 +40168,7 @@ test('dedicated UI scale commands are configurable and update the shared prefere
     }
 
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
-    assert.match(background, /commands\.onCommand\.addListener\([\s\S]*?uiScaleCommandAction\(command\)[\s\S]*?loadUiScale\([\s\S]*?storage\.local[\s\S]*?saveUiScale\([\s\S]*?nextUiScale/, `${label}: background commands should serialize updates to the shared scale preference`);
+    assert.match(background, /commands\.onCommand\.addListener\(async \(command[\s\S]*?uiScaleCommandAction\(command\)[\s\S]*?loadUiScale\([\s\S]*?storage\.local[\s\S]*?saveUiScale\([\s\S]*?nextUiScale/, `${label}: background commands should serialize updates to the shared scale preference`);
 
     const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
     const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
@@ -40175,6 +40184,9 @@ test('dedicated UI scale commands are configurable and update the shared prefere
     for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
       for (const key of [
+        'st.display.ui_scale.decrease',
+        'st.display.ui_scale.increase',
+        'st.display.ui_scale.reset',
         'st.display.ui_scale.shortcuts',
         'st.display.ui_scale.shortcuts_none',
         'st.display.ui_scale.manage_shortcuts',

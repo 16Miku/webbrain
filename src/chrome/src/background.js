@@ -3997,7 +3997,7 @@ async function loadProvidersForRecordingFinalize() {
 }
 
 let uiScaleCommandQueue = Promise.resolve();
-chrome.commands.onCommand.addListener((command) => {
+chrome.commands.onCommand.addListener(async (command) => {
   const action = uiScaleCommandAction(command);
   if (!action) return;
   uiScaleCommandQueue = uiScaleCommandQueue.then(async () => {
@@ -4006,4 +4006,5 @@ chrome.commands.onCommand.addListener((command) => {
   }).catch((error) => {
     console.error('[WebBrain] failed to update UI scale:', command, error);
   });
+  await uiScaleCommandQueue;
 });

@@ -98,6 +98,8 @@ body {
   overflow: hidden;
 }
 
+html[data-ui-scale-ready="false"] body { visibility: hidden; }
+
 #app {
   display: flex;
   flex-direction: column;
@@ -708,6 +710,7 @@ body {
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .ui-scale-menu {
@@ -752,6 +755,13 @@ body {
 #header .ui-scale-popover button:disabled { opacity: 0.45; cursor: default; }
 #header .ui-scale-popover .ui-scale-reset { min-width: auto; padding-inline: 9px; }
 .ui-scale-popover output { min-width: 40px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 380px) {
+  #header { padding-inline: 8px; }
+  .header-right { gap: 0; }
+  #header .header-right button:not(.language-picker-btn):not(.language-picker-option) { padding-inline: 2px; }
+  .language-picker-btn { padding-inline: 2px; }
+}
 
 .status-dot {
   width: 8px;
