@@ -24354,13 +24354,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 let hidden = false;
                 try {
                   const style = window.getComputedStyle(el);
-                  hidden = style.display === 'none'
-                    || style.visibility === 'hidden'
-                    || style.opacity === '0'
-                    || el.offsetWidth <= 0
-                    || el.offsetHeight <= 0
-                    || el.getAttribute?.('aria-hidden') === 'true'
+                  const notRendered = style.display === 'none' || style.visibility === 'hidden';
+                  const ariaHidden = el.getAttribute?.('aria-hidden') === 'true'
                     || !!el.closest?.('[aria-hidden="true"]');
+                  const invisible = style.opacity === '0'
+                    || el.offsetWidth <= 0
+                    || el.offsetHeight <= 0;
+                  // A transparent or clipped checkbox, radio, select, or file
+                  // input driven through a visible label or wrapper is a custom
+                  // control, not a hidden field.
+                  const labelDriven = tag === 'select'
+                    || (tag === 'input' && ['checkbox', 'radio', 'file'].includes(type));
+                  let activator = false;
+                  if (labelDriven && !notRendered) {
+                    const controlId = el.getAttribute?.('id') || '';
+                    const labelFor = controlId
+                      ? document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(controlId) : controlId) + '"]')
+                      : null;
+                    const visibleBox = (node) => {
+                      if (!node) return false;
+                      const nodeStyle = window.getComputedStyle(node);
+                      return nodeStyle.display !== 'none' && nodeStyle.visibility !== 'hidden'
+                        && nodeStyle.opacity !== '0' && node.offsetWidth > 0 && node.offsetHeight > 0;
+                    };
+                    activator = visibleBox(labelFor) || visibleBox(el.closest?.('label'));
+                    let parent = el.parentElement;
+                    for (let depth = 0; !activator && parent && depth < 3; depth += 1, parent = parent.parentElement) {
+                      activator = visibleBox(parent);
+                    }
+                  }
+                  hidden = ariaHidden || notRendered || (invisible && !activator);
                 } catch (_) { hidden = false; }
                 const match = {
                   matchIndex,

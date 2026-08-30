@@ -82525,6 +82525,31 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
     assert.equal(getAccessibleName(labelledSelect), 'Visibilité',
       `${label}: native select value displaced its field label`);
 
+    // The hidden marker leans on two module helpers, so run the real ones.
+    const sliceFn = (needle, end) => {
+      const from = source.indexOf(needle);
+      assert.ok(from >= 0, `${label}: ${needle} not found`);
+      const to = source.indexOf(end, from);
+      assert.ok(to > from, `${label}: ${needle} has no terminator`);
+      return source.slice(from, to);
+    };
+    const isVisible = element => element.visible !== false;
+    const helperContext = {
+      isVisible,
+      // The helper reads the CSS global directly, as it does in a page.
+      CSS: { escape: value => value },
+      window: { CSS: { escape: value => value } },
+      document: { querySelector: () => null },
+    };
+    const isLabelDrivenControl = vm.runInNewContext(
+      `(${sliceFn('function isLabelDrivenControl(el)', '\n  function hasVisibleControlActivator')})`,
+      helperContext,
+    );
+    const hasVisibleControlActivator = vm.runInNewContext(
+      `(${sliceFn('function hasVisibleControlActivator(el)', '\n  function isInViewport')})`,
+      helperContext,
+    );
+
     let refSequence = 0;
     const formatLine = vm.runInNewContext(`(${source.slice(formatStart, formatEnd)})`, {
       MAX_NAME_LEN: 180,
@@ -82532,14 +82557,29 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       getAccessibleName: element => element.name,
       getOrMintRef: () => `ref_choice_${++refSequence}`,
       isEditableRoot: () => false,
-      isVisible: element => element.visible !== false,
+      isVisible,
+      isLabelDrivenControl,
+      hasVisibleControlActivator,
+      window: {
+        getComputedStyle: element => element.computedStyle || { display: '', visibility: '' },
+        CSS: { escape: value => value },
+      },
+      CSS: { escape: value => value },
+      document: { querySelector: () => null },
     });
     const control = ({
       tagName, role, name, attributes = {}, value = undefined, options = [], selectedIndex = null,
-      required = false, visible = true, hiddenAncestor = false,
+      required = false, visible = true, hiddenAncestor = false, computedStyle = null,
+      wrappingLabel = null, parentElement = null,
     }) => ({
       visible,
-      closest: selector => (hiddenAncestor && selector === '[aria-hidden="true"]' ? {} : null),
+      computedStyle,
+      parentElement,
+      closest: selector => {
+        if (selector === '[aria-hidden="true"]') return hiddenAncestor ? {} : null;
+        if (selector === 'label') return wrappingLabel;
+        return null;
+      },
       tagName,
       role,
       name,
@@ -82621,6 +82661,56 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
     }), 0);
     assert.doesNotMatch(shownLine, /\bhidden=/,
       `${label}: a visible form control was marked hidden`);
+
+    // A custom control hides the native input behind a visible label. It is
+    // still operable, so it belongs in the inventory.
+    const transparentCheckbox = formatLine(control({
+      tagName: 'INPUT',
+      role: 'checkbox',
+      name: 'I agree to the terms',
+      attributes: { type: 'checkbox', id: 'agree' },
+      visible: false,
+      computedStyle: { display: '', visibility: '', opacity: '0' },
+      wrappingLabel: { visible: true },
+    }), 0);
+    assert.doesNotMatch(transparentCheckbox, /\bhidden=/,
+      `${label}: a transparent checkbox behind a visible label was dropped as hidden`);
+    // The same control actually removed from the layout stays hidden.
+    const unrenderedCheckbox = formatLine(control({
+      tagName: 'INPUT',
+      role: 'checkbox',
+      name: 'Conditional consent',
+      attributes: { type: 'checkbox', id: 'conditional' },
+      visible: false,
+      computedStyle: { display: 'none', visibility: '' },
+      wrappingLabel: { visible: true },
+    }), 0);
+    assert.match(unrenderedCheckbox, /\bhidden=true/,
+      `${label}: a display:none conditional control was kept as actionable`);
+    // A text input is not label-driven, so transparency still hides it.
+    const transparentText = formatLine(control({
+      tagName: 'INPUT',
+      role: 'textbox',
+      name: 'Leave blank',
+      attributes: { type: 'text', id: 'trap' },
+      visible: false,
+      computedStyle: { display: '', visibility: '' },
+      wrappingLabel: { visible: true },
+    }), 0);
+    assert.match(transparentText, /\bhidden=true/,
+      `${label}: a transparent text honeypot was treated as a custom control`);
+    assert.equal(isLabelDrivenControl({
+      tagName: 'INPUT', getAttribute: () => 'checkbox',
+    }), true, `${label}: a checkbox was not recognized as label-driven`);
+    assert.equal(isLabelDrivenControl({
+      tagName: 'INPUT', getAttribute: () => 'text',
+    }), false, `${label}: a text input was treated as label-driven`);
+    assert.equal(hasVisibleControlActivator({
+      getAttribute: () => '', closest: () => null, parentElement: { visible: false, parentElement: null },
+    }), false, `${label}: an invisible wrapper counted as an activator`);
+    assert.equal(hasVisibleControlActivator({
+      getAttribute: () => '', closest: () => null, parentElement: { visible: true, parentElement: null },
+    }), true, `${label}: a visible wrapper was not recognized as an activator`);
     const quotedTitle = 'Launch "Video" from C:\\Temp';
     const quotedLine = formatLine(control({
       tagName: 'INPUT',

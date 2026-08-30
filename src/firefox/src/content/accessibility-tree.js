@@ -466,6 +466,38 @@
     return true;
   }
 
+  // A checkbox, radio, select, or file input is routinely made transparent or
+  // clipped and driven through a visible label or wrapper. Such a control is
+  // still operable by set_checked or by activating its label, so it is not
+  // hidden in the sense a conditional or honeypot field is.
+  function isLabelDrivenControl(el) {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'select') return true;
+    if (tag !== 'input') return false;
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    return type === 'checkbox' || type === 'radio' || type === 'file';
+  }
+
+  function hasVisibleControlActivator(el) {
+    try {
+      const id = el.getAttribute('id');
+      if (id) {
+        const escaped = window.CSS && CSS.escape ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&');
+        const root = el.getRootNode && el.getRootNode() || document;
+        const label = (root.querySelector && root.querySelector('label[for="' + escaped + '"]'))
+          || document.querySelector('label[for="' + escaped + '"]');
+        if (label && isVisible(label)) return true;
+      }
+      const wrapping = el.closest && el.closest('label');
+      if (wrapping && isVisible(wrapping)) return true;
+      let parent = el.parentElement;
+      for (let depth = 0; parent && depth < 3; depth += 1, parent = parent.parentElement) {
+        if (isVisible(parent)) return true;
+      }
+    } catch (e) { /* fall through */ }
+    return false;
+  }
+
   function isInViewport(el) {
     const r = el.getBoundingClientRect();
     return r.top < window.innerHeight && r.bottom > 0 && r.left < window.innerWidth && r.right > 0;
@@ -693,8 +725,17 @@
       // pulls conditional and honeypot inputs into the tree. Mark them so a
       // form inventory can leave out controls the user was never shown and
       // cannot act on. Under the other filters these are already excluded.
+      // A control that is merely transparent or clipped behind a visible label
+      // or wrapper is a custom control, not a hidden field, so it stays.
       try {
-        if (el.getAttribute('aria-hidden') === 'true' || el.closest('[aria-hidden="true"]') || !isVisible(el)) {
+        const style = window.getComputedStyle(el);
+        const notRendered = style.display === 'none' || style.visibility === 'hidden';
+        const ariaHidden = el.getAttribute('aria-hidden') === 'true'
+          || !!el.closest('[aria-hidden="true"]');
+        const visuallyReplaced = !notRendered
+          && isLabelDrivenControl(el)
+          && hasVisibleControlActivator(el);
+        if (ariaHidden || notRendered || (!isVisible(el) && !visuallyReplaced)) {
           line += ' hidden=true';
         }
       } catch {}
