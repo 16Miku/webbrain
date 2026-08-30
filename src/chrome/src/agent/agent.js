@@ -12628,6 +12628,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return '';
   }
 
+  // A transcript answer is grounded only when the run holds transcript content
+  // and no further window is pending. Both the provider and the result trimmer
+  // signal a pending window, so either one leaves coverage incomplete.
+  _workflowTranscriptCoverageComplete(result) {
+    const data = result?.data && typeof result.data === 'object' && !Array.isArray(result.data)
+      ? result.data
+      : null;
+    if (!data) return false;
+    const hasContent = !!String(data.text || '').trim()
+      || (Array.isArray(data.segments) && data.segments.length > 0);
+    if (!hasContent) return false;
+    const nextOffset = data.next_text_offset == null ? NaN : Number(data.next_text_offset);
+    return data.has_more_text !== true && !Number.isFinite(nextOffset);
+  }
+
   // A reading job's evidence is the read itself, so it only counts while the
   // observed page still resolves to the very job the planner selected.
   _workflowObservationStaysInJobScope(tabId, state, result) {
@@ -12651,16 +12666,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
   }
 
-  // A collection job is done when its rows are: at least one, all terminal,
-  // none failed, and matching the count the planner expected when it set one.
+  // A video with no comments is a real result, not a failure to collect. Only
+  // a job whose set can legitimately be empty may finish with no rows.
+  _workflowAllowsEmptyCollection(siteWorkflow) {
+    return siteWorkflow?.adapterName === 'douyin'
+      && siteWorkflow?.job?.id === 'collect-comments';
+  }
+
+  _workflowCollectionRows(tabId) {
+    const rows = this.progressLedgers.get(tabId) || [];
+    const session = this._currentProgressSession(tabId);
+    return session ? this._rowsForProgressSession(tabId, session.sessionId, rows) : rows;
+  }
+
+  // A collection job is done when its rows are all terminal, none failed, and
+  // matching the count the planner expected when it set one. An empty set
+  // counts only where the job allows it and the run actually observed the
+  // resource the job selected.
   _refreshWorkflowCollectionEvidence(tabId, guard, rows) {
     if (guard?.workflowRequiredJobEvidence !== 'reconciled_collection') return;
     const expected = Number(this.progressExpectedItems.get(tabId)?.count);
     const terminal = Array.isArray(rows) ? rows : [];
-    guard.workflowJobEvidenceSatisfied = terminal.length > 0
-      && terminal.every(row => isTerminalLedgerStatus(row?.status)
-        && String(row?.status || '').toLowerCase() !== 'failed')
-      && (!Number.isInteger(expected) || terminal.length === expected);
+    const allTerminal = terminal.every(row => isTerminalLedgerStatus(row?.status)
+      && String(row?.status || '').toLowerCase() !== 'failed');
+    const countMatches = !Number.isInteger(expected) || terminal.length === expected;
+    const verifiedEmpty = terminal.length === 0
+      && guard.workflowJobScopeObserved === true
+      && this._workflowAllowsEmptyCollection(guard.siteWorkflow);
+    guard.workflowJobEvidenceSatisfied = allTerminal
+      && countMatches
+      && (terminal.length > 0 || verifiedEmpty);
   }
 
   _workflowJobEvidenceInstruction(state) {
@@ -12683,13 +12718,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _armWorkflowJobRequiredEvidence(tabId, guard) {
     const kind = guard?.enabled ? this._workflowJobRequiredEvidenceKind(guard.siteWorkflow) : '';
     if (!kind) return;
-    if (kind === 'scoped_content_read') {
-      // Without the URL the job was selected on there is nothing to scope the
-      // read against. Do not impose a requirement that cannot be checked.
-      const identity = this._workflowFormOriginIdentity(guard.siteWorkflowUrl);
-      if (!identity) return;
-      guard.workflowJobScopeIdentity = identity;
-    }
+    // Every contracted job scopes its observations; a reading job additionally
+    // cannot be held to a requirement it has no scope to check against.
+    const identity = this._workflowFormOriginIdentity(guard.siteWorkflowUrl);
+    if (identity) guard.workflowJobScopeIdentity = identity;
+    if (kind === 'scoped_content_read' && !identity) return;
     if (kind === 'terminal_read_coverage') {
       // Only require terminal coverage where the run can actually track it.
       const armed = this._armReadCompletenessFromPlan(tabId, {
@@ -20568,6 +20601,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         : null,
       workflowRequiredJobEvidence: '',
+      workflowJobScopeIdentity: '',
+      workflowJobScopeObserved: carryMatches && carried.workflowJobScopeObserved === true,
       workflowJobEvidenceSatisfied: carryMatches && carried.workflowJobEvidenceSatisfied === true,
       workflowForbiddenSubmission: carryMatches && carried.workflowForbiddenSubmission === true,
       workflowRequestedControlLabels: carryMatches && Array.isArray(carried.workflowRequestedControlLabels)
@@ -20740,20 +20775,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || (!this._isSuccessfulExecutionEvidence(result) && !requiredScheduleSucceeded)) return;
     state.successfulTaskToolCalls += 1;
     if (state.taskKey) state.evidenceTaskKey = state.taskKey;
+    // These read the count tool's own success fields. It reports verified and
+    // exact; there is no separate countVerified on the successful path.
     if (state.workflowRequiredJobEvidence === 'deterministic_count'
         && name === 'gmail_count_results'
-        && result?.countVerified === true
+        && result?.verified === true
+        && result?.exact === true
         && Number.isInteger(Number(result?.count))) {
       state.workflowJobEvidenceSatisfied = true;
     }
     if (state.workflowRequiredJobEvidence === 'transcript_segments'
         && name === 'read_youtube_transcript') {
-      state.workflowJobEvidenceSatisfied = true;
+      // Calling the tool is not the evidence; a transcript with no window left
+      // pending is. Re-evaluated per call so paging to the end satisfies it and
+      // stopping on a partial window does not.
+      state.workflowJobEvidenceSatisfied = this._workflowTranscriptCoverageComplete(result);
     }
-    if (state.workflowRequiredJobEvidence === 'scoped_content_read'
-        && this.constructor.DELIVERY_OBSERVATION_TOOLS.has(name)
+    if (this.constructor.DELIVERY_OBSERVATION_TOOLS.has(name)
         && this._workflowObservationStaysInJobScope(tabId, state, result)) {
-      state.workflowJobEvidenceSatisfied = true;
+      state.workflowJobScopeObserved = true;
+      if (state.workflowRequiredJobEvidence === 'scoped_content_read') {
+        state.workflowJobEvidenceSatisfied = true;
+      }
+      if (state.workflowRequiredJobEvidence === 'reconciled_collection') {
+        this._refreshWorkflowCollectionEvidence(tabId, state, this._workflowCollectionRows(tabId));
+      }
     }
     if (requiredScheduleSucceeded) state.successfulRequiredSchedulingToolCalls += 1;
     if ((download && this._isSuccessfulDownloadEvidence(name, result)) || confirmedPendingDownload) {
@@ -20860,6 +20906,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               ),
             }
           : null,
+        workflowJobScopeObserved: guard.workflowJobScopeObserved === true,
         workflowJobEvidenceSatisfied: guard.workflowJobEvidenceSatisfied === true,
         workflowForbiddenSubmission: guard.workflowForbiddenSubmission === true,
         workflowRequestedControlLabels: Array.isArray(guard.workflowRequestedControlLabels)

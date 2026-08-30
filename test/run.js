@@ -84091,6 +84091,106 @@ test('an iframe write invalidates the iframe document it changed', () => {
   }
 });
 
+test('the Gmail count contract reads the fields the count tool emits', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/agent/agent.js'],
+    ['firefox', 'src/firefox/src/agent/agent.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const producerStart = source.indexOf('async _countGmailResults(');
+    assert.ok(producerStart >= 0, `${label}: _countGmailResults not found`);
+    const producerEnd = source.indexOf('\n  }\n', producerStart);
+    const producer = source.slice(producerStart, producerEnd);
+    // The last return in the producer is its success path.
+    const successReturn = producer.slice(producer.lastIndexOf('return {'));
+    const emitted = new Set(
+      [...successReturn.matchAll(/^\s{6}([a-zA-Z_]+):/gm)].map(match => match[1]),
+    );
+
+    const gateStart = source.indexOf("state.workflowRequiredJobEvidence === 'deterministic_count'");
+    assert.ok(gateStart >= 0, `${label}: the deterministic count gate not found`);
+    const gate = source.slice(gateStart, source.indexOf('}', gateStart));
+    const consumed = [...gate.matchAll(/result\?\.([a-zA-Z_]+)/g)].map(match => match[1]);
+    assert.ok(consumed.length > 0, `${label}: the count gate reads nothing from the result`);
+    for (const field of consumed) {
+      assert.ok(emitted.has(field),
+        `${label}: the count gate requires result.${field}, which the count tool never returns on success`);
+    }
+  }
+});
+
+test('a job whose collection can be empty finishes on a verified empty result', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const videoUrl = 'https://www.douyin.com/video/7300000000000000000';
+    const selected = agent._resolvePlannerSiteWorkflow(videoUrl, {
+      request_kind: 'execute',
+      site_job: 'collect-comments',
+    });
+    assert.ok(selected?.job, `${AgentClass.name}: collect-comments did not resolve`);
+
+    const emptyTabId = 9450 + index;
+    agent.conversations.set(emptyTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Collect the comments on this video.' },
+    ]);
+    const emptyGuard = agent._startPlanExecutionGuard(emptyTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      siteWorkflowUrl: videoUrl,
+      siteWorkflow: selected,
+    });
+    emptyGuard.evidenceTaskKey = emptyGuard.taskKey;
+    assert.equal(emptyGuard.workflowRequiredJobEvidence, 'reconciled_collection');
+    agent._markPlanExecutionToolCall(emptyTabId, 'read_page', { success: true, url: videoUrl });
+    assert.equal(agent._executionEvidenceSatisfied(emptyGuard), true,
+      `${AgentClass.name}: a video with no comments could never finish`);
+
+    // Not looking at the video is still not a verified empty result.
+    const unseenTabId = 9454 + index;
+    agent.conversations.set(unseenTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Collect the comments on this video.' },
+    ]);
+    const unseenGuard = agent._startPlanExecutionGuard(unseenTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      siteWorkflowUrl: videoUrl,
+      siteWorkflow: selected,
+    });
+    unseenGuard.evidenceTaskKey = unseenGuard.taskKey;
+    agent._markPlanExecutionToolCall(unseenTabId, 'read_page', {
+      success: true, url: 'https://www.douyin.com/discover',
+    });
+    assert.equal(agent._executionEvidenceSatisfied(unseenGuard), false,
+      `${AgentClass.name}: an empty collection passed without observing the video`);
+
+    // A collection that can never legitimately be empty still needs rows.
+    const phTabId = 9458 + index;
+    const phUrl = 'https://www.producthunt.com/';
+    agent.conversations.set(phTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Collect the ranked products.' },
+    ]);
+    const phGuard = agent._startPlanExecutionGuard(phTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      siteWorkflowUrl: phUrl,
+      siteWorkflow: agent._resolvePlannerSiteWorkflow(phUrl, {
+        request_kind: 'execute', site_job: 'collect-ranked-products',
+      }),
+    });
+    phGuard.evidenceTaskKey = phGuard.taskKey;
+    agent._markPlanExecutionToolCall(phTabId, 'read_page', { success: true, url: phUrl });
+    assert.equal(agent._executionEvidenceSatisfied(phGuard), false,
+      `${AgentClass.name}: an empty ranked-product collection was accepted`);
+  }
+});
+
 test('every declared non-submit job carries its own evidence contract', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
@@ -84126,9 +84226,23 @@ test('every declared non-submit job carries its own evidence contract', () => {
     agent._markPlanExecutionToolCall(videoTabId, 'read_page', { success: true, url: videoUrl });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
       `${AgentClass.name}: a page read stood in for the video transcript`);
-    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', { success: true, segments: 12 });
+    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', {
+      success: true, data: { text: '' },
+    });
+    assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
+      `${AgentClass.name}: an empty transcript window satisfied the job`);
+    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', {
+      success: true,
+      data: { text: 'Pricing starts at ten dollars.', has_more_text: true, next_text_offset: 4000 },
+    });
+    assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
+      `${AgentClass.name}: a partial transcript window with more text pending satisfied the job`);
+    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', {
+      success: true,
+      data: { text: 'Pricing starts at ten dollars, and the annual plan is cheaper.' },
+    });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), true,
-      `${AgentClass.name}: the transcript tool could not satisfy its own job`);
+      `${AgentClass.name}: a complete transcript could not satisfy its own job`);
 
     // A reading job's evidence is a read of the resource the job selected.
     const prUrl = 'https://github.com/esokullu/webbrain/pull/320';
@@ -84251,8 +84365,15 @@ test('Gmail read and count jobs need their own terminal evidence', async () => {
     });
     assert.equal(agent._executionEvidenceSatisfied(countGuard), false,
       `${AgentClass.name}: an unverified count satisfied the count contract`);
+    // This is the shape _countGmailResults actually returns on success.
     agent._markPlanExecutionToolCall(countTabId, 'gmail_count_results', {
-      success: true, countVerified: true, count: 128,
+      success: true,
+      dispatched: true,
+      verified: true,
+      exact: true,
+      count: 128,
+      unit: 'gmail_conversations',
+      method: 'verified-final-page-range',
     });
     assert.equal(agent._executionEvidenceSatisfied(countGuard), true,
       `${AgentClass.name}: the deterministic count could not satisfy its own job`);
