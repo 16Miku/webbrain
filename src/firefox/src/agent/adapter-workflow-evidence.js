@@ -74,19 +74,35 @@ export function shouldInvalidateFormInventoryAfterAction(name) {
   return WORKFLOW_FORM_STRUCTURE_TOOLS.includes(String(name || ''));
 }
 
-export function invalidateWorkflowInventoryCompleteness(evidence) {
+export function invalidateWorkflowInventoryCompleteness(evidence, currentDocumentScope = '') {
   if (!evidence || typeof evidence !== 'object') return evidence;
+  const scope = String(currentDocumentScope || '');
   const documents = {};
   for (const [key, document] of Object.entries(evidence.documents || {})) {
+    // A structural action only reshapes the document it ran in. Earlier wizard
+    // steps are finished and usually unreachable, so invalidating them would
+    // strand the cumulative inventory on a coverage nobody can restore.
+    if (scope && key !== scope) {
+      documents[key] = { ...(document || {}) };
+      continue;
+    }
     // Paged coverage goes with completeness: a mutated document must be read
     // again from its first page, not re-completed from pre-mutation ranges.
     const { coverage, ...rest } = document || {};
-    documents[key] = { ...rest, complete: false };
+    documents[key] = {
+      ...rest,
+      complete: false,
+      // A Next/Continue click reshapes the current step and leaves it behind at
+      // the same time. Remember that it was complete so a read of the next
+      // document can hand it back as finished history rather than a hole.
+      ...(document?.complete === true ? { completeBeforeMutation: true } : {}),
+    };
   }
   return {
     ...evidence,
     documents,
-    complete: false,
+    complete: Object.keys(documents).length > 0
+      && Object.values(documents).every(document => document.complete === true),
   };
 }
 

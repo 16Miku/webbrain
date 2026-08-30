@@ -82241,14 +82241,40 @@ test('GitHub review-thread workflow inventories only unresolved thread controls'
         'textbox "Reply" [ref_reply_1] value=""',
         'button "Resolve conversation" [ref_resolve_1]',
         'button "Add comment" [ref_add_comment]',
+        'textbox "Reply" [ref_reply_2] value=""',
         'button "Resolve conversation" [ref_resolve_2]',
       ].join('\n'),
       treeRevision: 'review-threads-root',
     });
     assert.equal(inventory?.complete, true);
-    assert.equal(inventory?.itemCount, 2, `${AgentClass.name}: unresolved thread controls were not the exact inventory`);
-    assert.deepEqual(inventory.items.map(item => item.ref_id), ['ref_resolve_1', 'ref_resolve_2']);
-    assert.ok(inventory.items.every(item => item.label === 'Resolve conversation'));
+    // Each unresolved thread contributes its resolve control and the reply box
+    // that belongs to it, so a requested reply can be proved per thread.
+    assert.equal(inventory?.itemCount, 4, `${AgentClass.name}: unresolved thread controls were not the exact inventory`);
+    assert.deepEqual(inventory.items.map(item => item.ref_id),
+      ['ref_reply_1', 'ref_resolve_1', 'ref_reply_2', 'ref_resolve_2']);
+    assert.equal(inventory.items.some(item => item.ref_id === 'ref_add_comment'), false,
+      `${AgentClass.name}: a conversation-level button entered the thread inventory`);
+    const replyRows = inventory.items.filter(item => item.ref_id.startsWith('ref_reply_'));
+    assert.ok(replyRows.every(item => item.required === false),
+      `${AgentClass.name}: a resolve-only request was forced to type a reply`);
+    assert.ok(inventory.items.filter(item => item.ref_id.startsWith('ref_resolve_'))
+      .every(item => item.label === 'Resolve conversation'));
+    // Once the request names a reply, those optional rows can no longer be skipped.
+    const replyGuard = agent._planExecutionGuards.get(tabId);
+    replyGuard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['reply']);
+    const skippedReplies = agent._validateWorkflowReconciliation(tabId, {
+      job: 'resolve-review-threads',
+      coverageComplete: true,
+      itemCount: 4,
+      basis: 'Both threads resolved; replies skipped.',
+    }, inventory.items.map(item => ({
+      id: item.id,
+      label: item.label,
+      status: item.ref_id.startsWith('ref_reply_') ? 'skipped' : 'processed',
+      fields: { verified: true },
+    })), 'requested-reply-session');
+    assert.equal(skippedReplies.ok, false,
+      `${AgentClass.name}: a requested per-thread reply was skipped while the threads were resolved`);
 
     // GitHub ships a localized UI. An English-only match would read these as
     // an empty inventory and let the empty no-op report success.
@@ -82275,10 +82301,10 @@ test('GitHub review-thread workflow inventories only unresolved thread controls'
       ].join('\n'),
       treeRevision: 'localized-review-threads',
     });
-    assert.equal(localized?.itemCount, 3,
+    assert.equal(localized?.itemCount, 4,
       `${AgentClass.name}: localized unresolved-thread controls were read as an empty inventory`);
     assert.deepEqual(localized.items.map(item => item.ref_id),
-      ['ref_resolve_ja', 'ref_resolve_es', 'ref_resolve_zh']);
+      ['ref_reply_1', 'ref_resolve_ja', 'ref_resolve_es', 'ref_resolve_zh']);
     assert.equal(agent._workflowEmptyInventoryNoOp(localizedGuard), false,
       `${AgentClass.name}: a localized page with unresolved threads became a successful no-op`);
 
@@ -83756,6 +83782,151 @@ test('a fresh exhaustive root read drops questions a branch hid before they were
       `${AgentClass.name}: a handled branching question vanished from the cumulative inventory`);
     assert.equal(nextSection?.itemCount, 3,
       `${AgentClass.name}: the next wizard section did not extend the handled inventory`);
+  }
+});
+
+test('a wizard Next keeps earlier completed steps in the cumulative inventory', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9390 + index;
+    const stepOneUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
+    const stepTwoUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply/experience';
+    const selected = agent._resolvePlannerSiteWorkflow(stepOneUrl, {
+      request_kind: 'execute',
+      site_job: 'prepare-application',
+    });
+    assert.equal(selected?.job?.requiresLedger, true);
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Prepare every application field for review.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflow: selected,
+    });
+    const read = (documentToken, pageUrl, lines, treeRevision) => {
+      agent._lastAxScopes.set(tabId, { documentToken, pageUrl });
+      return agent._rememberWorkflowInventoryObservation(
+        tabId,
+        'get_accessibility_tree',
+        { filter: 'all', maxDepth: 15 },
+        { success: true, pageContent: lines.join('\n'), treeRevision, pageUrl },
+      );
+    };
+
+    const stepOne = read('apply-step-1', stepOneUrl, [
+      'textbox "Full name" [ref_name] required=true value="Ada"',
+    ], 'apply-step-1-tree');
+    assert.equal(stepOne?.complete, true);
+    const nameItem = stepOne.items.find(item => item.ref_id === 'ref_name');
+
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'type_ax', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+    // Next is structural, not a submit: it reshapes the step and leaves it.
+    agent._recordCompletionToolResult(tabId, 'click_ax', {
+      ref_id: 'ref_next',
+    }, { success: true, dispatched: true, verified: true });
+    assert.equal(guard.workflowInventoryEvidence.documents['apply-step-1']?.complete, false,
+      `${AgentClass.name}: the mutated step kept its coverage through a structural action`);
+
+    const stepTwo = read('apply-step-2', stepTwoUrl, [
+      'textbox "Most recent employer" [ref_employer] required=true value=""',
+    ], 'apply-step-2-tree');
+    assert.equal(guard.workflowInventoryEvidence.documents['apply-step-1']?.complete, true,
+      `${AgentClass.name}: a completed earlier wizard step stayed incomplete after moving on`);
+    assert.equal(guard.workflowInventoryEvidence.documents['apply-step-2']?.complete, true);
+    assert.equal(stepTwo?.complete, true,
+      `${AgentClass.name}: the cumulative wizard inventory could never complete again`);
+    assert.equal(stepTwo.items.some(item => item.id === nameItem.id), true,
+      `${AgentClass.name}: the answered first step was dropped from the cumulative inventory`);
+    assert.ok(agent._trustedWorkflowInventory(tabId, [], guard),
+      `${AgentClass.name}: a multi-step application inventory could not be trusted`);
+
+    // A structural action inside one step still invalidates that step alone.
+    agent._recordCompletionToolResult(tabId, 'click_ax', {
+      ref_id: 'ref_branch',
+    }, { success: true, dispatched: true, verified: true });
+    assert.equal(guard.workflowInventoryEvidence.documents['apply-step-2']?.complete, false,
+      `${AgentClass.name}: the current step survived its own structural action`);
+    assert.equal(guard.workflowInventoryEvidence.documents['apply-step-1']?.complete, true,
+      `${AgentClass.name}: an action in a later step invalidated an earlier one`);
+  }
+});
+
+test('hidden iframe matches stay out of the exact form inventory', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9394 + index;
+    const pageUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
+    const frameUrl = 'https://acme.wd1.myworkdayjobs.com/application/frame';
+    const selected = agent._resolvePlannerSiteWorkflow(pageUrl, {
+      request_kind: 'execute',
+      site_job: 'prepare-application',
+    });
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Prepare every application field for review.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflow: selected,
+    });
+    const inventorySelector = [
+      'input', 'textarea', 'select', '[contenteditable="true"]',
+      '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="searchbox"]', '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+    ].join(',');
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
+      selector: inventorySelector,
+    }, {
+      success: true,
+      pageUrl,
+      frames: [{
+        frameId: 7,
+        ok: true,
+        url: frameUrl,
+        matchCount: 3,
+        offset: 0,
+        truncated: false,
+        matches: [
+          { tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: '', matchIndex: 0, required: true },
+          // The broad selector also matches what the page hides.
+          { tag: 'input', type: 'text', id: 'trap', name: 'trap', label: 'Leave blank', value: '', matchIndex: 1, hidden: true },
+          { tag: 'input', type: 'text', id: 'followup', name: 'followup', label: 'Conditional follow-up', value: '', matchIndex: 2, required: true, hidden: true },
+        ],
+      }],
+    });
+    assert.equal(inventory?.complete, true,
+      `${AgentClass.name}: the iframe inventory was not complete`);
+    assert.equal(inventory?.itemCount, 1,
+      `${AgentClass.name}: hidden iframe controls entered the exact inventory`);
+    assert.deepEqual(inventory.items.map(item => item.label), ['Email']);
+    assert.ok(agent._trustedWorkflowInventory(tabId, [], guard),
+      `${AgentClass.name}: the filtered iframe inventory was not trusted`);
+  }
+});
+
+test('iframe_read reports which matches the page hides', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/agent/agent.js'],
+    ['firefox', 'src/firefox/src/agent/agent.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const start = source.indexOf('const limit = Math.max(1, Math.min(50,');
+    assert.ok(start >= 0, `${label}: iframe_read match probe not found`);
+    const handler = source.slice(start, start + 6000);
+    assert.match(handler, /style\.display === 'none'/, `${label}: iframe matches ignore display:none`);
+    assert.match(handler, /style\.visibility === 'hidden'/, `${label}: iframe matches ignore visibility:hidden`);
+    assert.match(handler, /aria-hidden/, `${label}: iframe matches ignore aria-hidden`);
+    assert.match(handler, /\{ hidden: true \}/, `${label}: iframe matches never report hidden`);
   }
 });
 

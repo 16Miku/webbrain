@@ -12722,6 +12722,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const seen = new Set();
     const reviewThreadInventory = siteWorkflow?.adapterName === 'github'
       && siteWorkflow?.job?.id === 'resolve-review-threads';
+    const reviewThreadReplyRefs = reviewThreadInventory
+      ? this._workflowReviewThreadReplyRefs(text)
+      : null;
     const rolePattern = /^\s*(textbox|searchbox|combobox|checkbox|radio|switch|slider|spinbutton|listbox|button)\b/i;
     for (const line of text.split(/\r?\n/)) {
       const roleMatch = rolePattern.exec(line);
@@ -12730,7 +12733,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const role = roleMatch[1].toLowerCase();
       const label = (/^\s*[a-z]+\s+"([^"]+)"/i.exec(line)?.[1] || `${role} ${refMatch[1]}`)
         .replace(/\s+/g, ' ').trim().slice(0, 160);
-      if (reviewThreadInventory) {
+      const reviewThreadReply = reviewThreadInventory && reviewThreadReplyRefs.has(refMatch[1]);
+      if (reviewThreadInventory && !reviewThreadReply) {
         if (role !== 'button' || !this._workflowResolveThreadControlLabel(label)) continue;
       }
       // Native file inputs are emitted as role=button. Include only those
@@ -12763,13 +12767,46 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...(type ? { type } : {}),
         ...(domId ? { domId } : {}),
         ...(fieldName ? { fieldName } : {}),
-        ...(requiredMatch ? { required: requiredMatch[1].toLowerCase() === 'true' } : {}),
+        // A reply the request named must be provable per thread, but a
+        // resolve-only request must not be forced to type one. Reply boxes
+        // therefore enter as optional rows and a requested-label match
+        // promotes them exactly like any other optional control.
+        ...(reviewThreadReply
+          ? { required: false }
+          : (requiredMatch ? { required: requiredMatch[1].toLowerCase() === 'true' } : {})),
         ...(valueLenMatch ? { valueLength: Number(valueLenMatch[1]) } : {}),
         ...(valueFpMatch ? { valueFp: valueFpMatch[1].toLowerCase() } : {}),
         ...(value !== undefined ? { value } : (checked !== undefined ? { value: checked.toLowerCase() } : {})),
       });
     }
     return items;
+  }
+
+  // A reply box belongs to a thread only when that thread's own resolve
+  // control follows it. The conversation-level comment box on a pull request
+  // with nothing left to resolve has no such control and stays out.
+  _workflowReviewThreadReplyRefs(text) {
+    const refs = new Set();
+    const rolePattern = /^\s*(textbox|searchbox|button)\b/i;
+    let pendingRef = '';
+    let pendingDistance = 0;
+    for (const line of String(text || '').split(/\r?\n/)) {
+      const roleMatch = rolePattern.exec(line);
+      const refMatch = /\[(ref_[A-Za-z0-9_.:-]+)\]/.exec(line);
+      if (pendingRef) pendingDistance += 1;
+      if (pendingDistance > 12) pendingRef = '';
+      if (!roleMatch || !refMatch) continue;
+      const role = roleMatch[1].toLowerCase();
+      const label = (/^\s*[a-z]+\s+"([^"]+)"/i.exec(line)?.[1] || '').replace(/\s+/g, ' ').trim();
+      if (role === 'button') {
+        if (pendingRef && this._workflowResolveThreadControlLabel(label)) refs.add(pendingRef);
+        pendingRef = '';
+        continue;
+      }
+      pendingRef = refMatch[1];
+      pendingDistance = 0;
+    }
+    return refs;
   }
 
   _workflowIframeFrameIsApplicationScoped(frameUrl, pageUrl, urlFilter) {
@@ -12834,6 +12871,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           else if (tag === 'button' || (tag === 'input' && /^(?:submit|button)$/.test(type))) role = 'button';
         }
         if (!role || (role === 'button' && type !== 'file')) continue;
+        // The broad inventory selector also matches conditional and honeypot
+        // fields the page hides. They can never take a verified user action,
+        // so an exact ledger must not demand a row for them.
+        if (match?.hidden === true) continue;
         const label = [match?.label, match?.ariaLabel, match?.placeholder, match?.name, match?.id]
           .map(value => String(value || '').replace(/\s+/g, ' ').trim())
           .find(Boolean)?.slice(0, 160) || `${role} ${Number(match?.matchIndex) || 0}`;
@@ -13423,6 +13464,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // the subtree itself has no continuation metadata. Until an app-owned,
     // form-root scope is available, only a document-root read can close the
     // workflow inventory for exact reconciliation.
+    // Reading a different document root means the run moved on, so a step it
+    // mutated on the way out is history now and keeps the coverage it had.
+    if (inventoryRead.rootReadComplete) {
+      for (const [key, document] of Object.entries(documents)) {
+        if (key === documentKey || document?.completeBeforeMutation !== true) continue;
+        const { completeBeforeMutation, ...rest } = document;
+        documents[key] = { ...rest, complete: true };
+      }
+    }
     const priorDocument = documents[documentKey];
     const rootReadComplete = inventoryRead.rootReadComplete;
     // A fresh root read restarts this document's coverage, so while its
@@ -13493,6 +13543,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this._isWorkflowFormSubmitAction(name, args, result, detectedSubmit)) return;
     guard.workflowInventoryEvidence = invalidateWorkflowInventoryCompleteness(
       guard.workflowInventoryEvidence,
+      this._workflowInventoryDocumentScope(tabId),
     );
   }
 
@@ -26796,8 +26847,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 else if ('value' in el) value = String(el.value || '');
                 else if (el.isContentEditable) value = String(el.textContent || '');
                 const ariaRequired = String(el.getAttribute?.('aria-required') || '').trim().toLowerCase();
+                let hidden = false;
+                try {
+                  const style = window.getComputedStyle(el);
+                  hidden = style.display === 'none'
+                    || style.visibility === 'hidden'
+                    || style.opacity === '0'
+                    || el.offsetWidth <= 0
+                    || el.offsetHeight <= 0
+                    || el.getAttribute?.('aria-hidden') === 'true'
+                    || !!el.closest?.('[aria-hidden="true"]');
+                } catch (_) { hidden = false; }
                 const match = {
                   matchIndex,
+                  ...(hidden ? { hidden: true } : {}),
                   tag,
                   type,
                   role: String(el.getAttribute?.('role') || ''),
