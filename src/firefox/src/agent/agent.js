@@ -1453,6 +1453,42 @@ export class Agent extends LoopDetector {
     }
   }
 
+  // Form identity ignores the hash and the video/query params, which is right
+  // for a form but useless for a job scope: every Gmail view shares one path,
+  // and every YouTube video shares /watch. A job scope keeps both.
+  _workflowJobScopeIdentity(url) {
+    const base = this._workflowFormOriginIdentity(url);
+    if (!base) return '';
+    try {
+      const parsed = new URL(String(url || ''));
+      const scopeParams = ['v', 'video_id', 'list', 'q', 'query', 'search'];
+      const params = [...parsed.searchParams.entries()]
+        .filter(([key]) => scopeParams.includes(key.toLowerCase()))
+        .map(([key, value]) => `${key.toLowerCase()}=${String(value).slice(0, 240)}`)
+        .sort();
+      const hash = String(parsed.hash || '').replace(/^#/, '').slice(0, 240);
+      return `${base}${params.length ? `|${params.join('&')}` : ''}${hash ? `|#${hash}` : ''}`;
+    } catch {
+      return base;
+    }
+  }
+
+  _workflowGithubPullRequestScope(url) {
+    try {
+      const parsed = new URL(String(url || ''));
+      if (parsed.hostname.toLowerCase().replace(/^www\./, '') !== 'github.com') return null;
+      const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(\/[a-z]+)?\/?$/i.exec(parsed.pathname);
+      if (!match) return null;
+      return {
+        repository: match[1].toLowerCase(),
+        number: match[2],
+        view: String(match[3] || '').replace(/^\//, '').toLowerCase(),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   _workflowInventoryDocumentScope(tabId, pageUrl = '') {
     const axScope = this._lastAxScopes.get(tabId);
     return String(axScope?.documentToken || axScope?.pageUrl || pageUrl || '').slice(0, 500);
@@ -4902,6 +4938,11 @@ export class Agent extends LoopDetector {
     'compare-price': new Set(['get_accessibility_tree']),
     'find-coupons': new Set(['get_accessibility_tree']),
   });
+  // Tools that return page or document content. Deliberately excludes
+  // screenshot, scroll, waits, and window probes: they observe that something
+  // happened, not what it said.
+  static WORKFLOW_CONTENT_READ_TOOLS = new Set(['read_page', 'get_accessibility_tree', 'extract_data', 'get_selection', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript']);
+
   static RECOMMENDED_ACTION_READ_ONLY_FIRST_TOOLS = new Set(['screenshot', 'read_page', 'get_accessibility_tree', 'read_youtube_transcript']);
 
   // System prompt for the dedicated "vision model" sub-call. Kept terse and
@@ -5403,6 +5444,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       dispatched: policy.currentPage !== 1 || probes.length > 1,
       verified: true,
       exact: true,
+      // The count is exact for this route and no other. Naming it lets the
+      // workflow contract bind the number to a result set the run verified.
+      countedUrl: originalUrl,
       count: counted.total,
       unit: 'gmail_conversations',
       lastPage: counted.lastPage,
@@ -10422,6 +10466,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (job.id === 'count-results') return 'deterministic_count';
     if (job.id === 'read-transcript') return 'transcript_segments';
     if (job.id === 'read-complete-thread') return 'terminal_read_coverage';
+    if (job.id === 'review-pull-request') return 'pull_request_diff_read';
     // A collection job's contract is its reconciled rows. A reading job's is
     // weaker: the run must at least have read the resource the job selected,
     // which rules out answering from a listing, a title, or another tab.
@@ -10461,11 +10506,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // An adapter matches a whole host, so resolving the job is not enough: a
     // search page on github.com resolves the same job as the pull request.
     // The resource identity is what separates them.
-    return this._workflowFormOriginIdentity(url) === scopeIdentity
+    return this._workflowJobScopeIdentity(url) === scopeIdentity
       && this._sameAdapterWorkflowBinding(
         state.siteWorkflow,
         resolveAdapterWorkflowJob(url, state.siteWorkflow.job.id),
       );
+  }
+
+  _workflowObservationUrl(tabId, result) {
+    return [
+      result?.pageUrl,
+      result?.currentUrl,
+      result?.url,
+      result?.refScopeUrl,
+      result?.data?.url,
+      this._lastAxScopes.get(tabId)?.pageUrl,
+    ].find(value => typeof value === 'string' && value.trim()) || '';
+  }
+
+  // "Every file in the requested review scope is inspected" cannot be proved
+  // from a URL alone, but a screenshot of the overview is not a review either.
+  // The diff has to have been read on the pull request the job selected.
+  _workflowPullRequestDiffRead(state, url) {
+    const scope = this._workflowGithubPullRequestScope(state?.siteWorkflowUrl);
+    const observed = this._workflowGithubPullRequestScope(url);
+    return !!scope && !!observed
+      && scope.repository === observed.repository
+      && scope.number === observed.number
+      && observed.view === 'files';
   }
 
   // A video with no comments is a real result, not a failure to collect. Only
@@ -10485,19 +10553,44 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // matching the count the planner expected when it set one. An empty set
   // counts only where the job allows it and the run actually observed the
   // resource the job selected.
+  // Rows the model wrote are not their own completeness proof. A collection
+  // is reconciled against the app-seeded expected set when the planner stated
+  // one, and otherwise against the per-row fields the adapter's job contract
+  // declares, so a bare "skipped" row cannot stand in for a collected item.
+  _workflowCollectionRowsAreSubstantiated(guard, rows) {
+    const required = Array.isArray(guard?.siteWorkflow?.job?.requiredRowFields)
+      ? guard.siteWorkflow.job.requiredRowFields
+      : [];
+    if (!required.length) return false;
+    const identityValues = [];
+    for (const row of rows) {
+      if (String(row?.status || '').toLowerCase() !== 'processed') return false;
+      for (const field of required) {
+        const value = row?.fields?.[field];
+        if (value == null || String(value).trim() === '') return false;
+      }
+      identityValues.push(String(row.fields[required[0]]).trim().toLowerCase());
+    }
+    return new Set(identityValues).size === identityValues.length;
+  }
+
   _refreshWorkflowCollectionEvidence(tabId, guard, rows) {
     if (guard?.workflowRequiredJobEvidence !== 'reconciled_collection') return;
-    const expected = Number(this.progressExpectedItems.get(tabId)?.count);
     const terminal = Array.isArray(rows) ? rows : [];
     const allTerminal = terminal.every(row => isTerminalLedgerStatus(row?.status)
       && String(row?.status || '').toLowerCase() !== 'failed');
-    const countMatches = !Number.isInteger(expected) || terminal.length === expected;
     const verifiedEmpty = terminal.length === 0
       && guard.workflowJobScopeObserved === true
       && this._workflowAllowsEmptyCollection(guard.siteWorkflow);
-    guard.workflowJobEvidenceSatisfied = allTerminal
-      && countMatches
-      && (terminal.length > 0 || verifiedEmpty);
+    if (verifiedEmpty) {
+      guard.workflowJobEvidenceSatisfied = true;
+      return;
+    }
+    const expectedSet = this.progressExpectedItems.get(tabId);
+    const substantiated = expectedSet
+      ? this._expectedItemsDoneBlock(tabId) === null
+      : this._workflowCollectionRowsAreSubstantiated(guard, terminal);
+    guard.workflowJobEvidenceSatisfied = allTerminal && terminal.length > 0 && substantiated;
   }
 
   _workflowJobEvidenceInstruction(state) {
@@ -10509,7 +10602,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       case 'terminal_read_coverage':
         return 'A complete conversation needs trusted coverage through its terminal page with every message expanded.';
       case 'reconciled_collection':
-        return 'A collected set needs one progress_update row per requested item, every row processed or skipped, and none failed.';
+        return `A collected set needs one processed progress_update row per item, each carrying ${(state?.siteWorkflow?.job?.requiredRowFields || []).join(', ') || 'the fields this job declares'}, with no duplicate entries. When the app seeded an expected set, every ordered row must be filled in.`;
+      case 'pull_request_diff_read':
+        return 'A review needs the changed files of this exact pull request read, not a screenshot or the overview tab.';
       case 'scoped_content_read':
         return 'A grounded answer needs a successful read of the exact resource this job selected, not a listing or another tab.';
       default:
@@ -10522,9 +10617,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!kind) return;
     // Every contracted job scopes its observations; a reading job additionally
     // cannot be held to a requirement it has no scope to check against.
-    const identity = this._workflowFormOriginIdentity(guard.siteWorkflowUrl);
-    if (identity) guard.workflowJobScopeIdentity = identity;
-    if (kind === 'scoped_content_read' && !identity) return;
+    const identity = this._workflowJobScopeIdentity(guard.siteWorkflowUrl);
+    if (identity) {
+      guard.workflowJobScopeIdentity = identity;
+      guard.workflowObservedScopeIdentities = [identity];
+    }
+    if ((kind === 'scoped_content_read' || kind === 'pull_request_diff_read') && !identity) return;
     if (kind === 'terminal_read_coverage') {
       // Only require terminal coverage where the run can actually track it.
       const armed = this._armReadCompletenessFromPlan(tabId, {
@@ -18204,6 +18302,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : null,
       workflowRequiredJobEvidence: '',
       workflowJobScopeIdentity: '',
+      workflowObservedScopeIdentities: [],
       workflowJobScopeObserved: carryMatches && carried.workflowJobScopeObserved === true,
       workflowJobEvidenceSatisfied: carryMatches && carried.workflowJobEvidenceSatisfied === true,
       workflowForbiddenSubmission: carryMatches && carried.workflowForbiddenSubmission === true,
@@ -18377,24 +18476,39 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || (!this._isSuccessfulExecutionEvidence(result) && !requiredScheduleSucceeded)) return;
     state.successfulTaskToolCalls += 1;
     if (state.taskKey) state.evidenceTaskKey = state.taskKey;
-    // These read the count tool's own success fields. It reports verified and
-    // exact; there is no separate countVerified on the successful path.
+    // Only a content read can ground a contract. A screenshot, a scroll, or a
+    // window-size probe observes nothing the answer can rest on.
+    const contentRead = this.constructor.WORKFLOW_CONTENT_READ_TOOLS.has(name);
+    const observationUrl = contentRead ? this._workflowObservationUrl(tabId, result) : '';
+    if (contentRead && observationUrl && state.workflowRequiredJobEvidence) {
+      const observedIdentity = this._workflowJobScopeIdentity(observationUrl);
+      const seen = Array.isArray(state.workflowObservedScopeIdentities)
+        ? state.workflowObservedScopeIdentities
+        : [];
+      if (observedIdentity && !seen.includes(observedIdentity)) {
+        state.workflowObservedScopeIdentities = [...seen, observedIdentity].slice(-16);
+      }
+    }
+    // The count tool reports an exact number for whatever route it ran on and
+    // says so itself. Bind it to a result set this run actually read.
     if (state.workflowRequiredJobEvidence === 'deterministic_count'
         && name === 'gmail_count_results'
         && result?.verified === true
         && result?.exact === true
-        && Number.isInteger(Number(result?.count))) {
+        && Number.isInteger(Number(result?.count))
+        && (state.workflowObservedScopeIdentities || [])
+          .includes(this._workflowJobScopeIdentity(result?.countedUrl))) {
       state.workflowJobEvidenceSatisfied = true;
     }
     if (state.workflowRequiredJobEvidence === 'transcript_segments'
         && name === 'read_youtube_transcript') {
-      // Calling the tool is not the evidence; a transcript with no window left
-      // pending is. Re-evaluated per call so paging to the end satisfies it and
-      // stopping on a partial window does not.
-      state.workflowJobEvidenceSatisfied = this._workflowTranscriptCoverageComplete(result);
+      // Calling the tool is not the evidence; a complete transcript of the
+      // video this job selected is. Re-evaluated per call so paging to the end
+      // satisfies it and stopping on a partial window does not.
+      state.workflowJobEvidenceSatisfied = this._workflowTranscriptCoverageComplete(result)
+        && this._workflowObservationStaysInJobScope(tabId, state, result);
     }
-    if (this.constructor.DELIVERY_OBSERVATION_TOOLS.has(name)
-        && this._workflowObservationStaysInJobScope(tabId, state, result)) {
+    if (contentRead && this._workflowObservationStaysInJobScope(tabId, state, result)) {
       state.workflowJobScopeObserved = true;
       if (state.workflowRequiredJobEvidence === 'scoped_content_read') {
         state.workflowJobEvidenceSatisfied = true;
@@ -18402,6 +18516,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (state.workflowRequiredJobEvidence === 'reconciled_collection') {
         this._refreshWorkflowCollectionEvidence(tabId, state, this._workflowCollectionRows(tabId));
       }
+    }
+    if (contentRead
+        && state.workflowRequiredJobEvidence === 'pull_request_diff_read'
+        && this._workflowPullRequestDiffRead(state, observationUrl)) {
+      state.workflowJobScopeObserved = true;
+      state.workflowJobEvidenceSatisfied = true;
     }
     if (requiredScheduleSucceeded) state.successfulRequiredSchedulingToolCalls += 1;
     if ((download && this._isSuccessfulDownloadEvidence(name, result)) || confirmedPendingDownload) {

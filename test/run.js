@@ -81836,18 +81836,31 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       `${AgentClass.name}: a collection job declared no terminal evidence`);
     assert.equal(agent._executionEvidenceSatisfied(readGuard), false,
       `${AgentClass.name}: one page read stood in for a reconciled collection`);
+    const row = (n, status) => ({
+      id: `product-${n}`,
+      label: `Product ${n}`,
+      status,
+      fields: {
+        product_name: `Product ${n}`,
+        product_url: `https://www.producthunt.com/posts/product-${n}`,
+        rank_context: `#${n} today`,
+      },
+    });
     const partialCollection = agent._progressUpdate(tabId + 10, {
-      items: [
-        { id: 'product-1', label: 'Product one', status: 'processed' },
-        { id: 'product-2', label: 'Product two', status: 'pending' },
-      ],
+      items: [row(1, 'processed'), row(2, 'pending')],
     });
     assert.equal(partialCollection.success, true, partialCollection.error || '');
     assert.equal(agent._executionEvidenceSatisfied(readGuard), false,
       `${AgentClass.name}: an unfinished row satisfied the collection contract`);
-    const collected = agent._progressUpdate(tabId + 10, {
-      items: [{ id: 'product-2', label: 'Product two', status: 'processed' }],
+    // Rows the model wrote are not their own proof: the adapter's job contract
+    // names the fields each collected row has to carry.
+    const barePayload = agent._progressUpdate(tabId + 10, {
+      items: [row(2, 'processed'), { id: 'product-3', label: 'Product three', status: 'processed' }],
     });
+    assert.equal(barePayload.success, true, barePayload.error || '');
+    assert.equal(agent._executionEvidenceSatisfied(readGuard), false,
+      `${AgentClass.name}: a row without the job's declared fields satisfied the collection`);
+    const collected = agent._progressUpdate(tabId + 10, { items: [row(3, 'processed')] });
     assert.equal(collected.success, true, collected.error || '');
     assert.equal(agent._executionEvidenceSatisfied(readGuard), true,
       `${AgentClass.name}: a reconciled collection could not satisfy its own job`);
@@ -84198,7 +84211,7 @@ test('every declared non-submit job carries its own evidence contract', () => {
     const cases = [
       ['https://www.youtube.com/watch?v=abcdefghijk', 'read-transcript', 'transcript_segments'],
       ['https://www.producthunt.com/', 'collect-ranked-products', 'reconciled_collection'],
-      ['https://github.com/esokullu/webbrain/pull/320', 'review-pull-request', 'scoped_content_read'],
+      ['https://github.com/esokullu/webbrain/pull/320', 'review-pull-request', 'pull_request_diff_read'],
     ];
     for (const [url, jobId, expectedKind] of cases) {
       const selected = agent._resolvePlannerSiteWorkflow(url, { request_kind: 'execute', site_job: jobId });
@@ -84218,6 +84231,7 @@ test('every declared non-submit job carries its own evidence contract', () => {
       requestKind: 'execute',
       requiresStateChange: false,
       requiresSubmission: false,
+      siteWorkflowUrl: videoUrl,
       siteWorkflow: agent._resolvePlannerSiteWorkflow(videoUrl, {
         request_kind: 'execute', site_job: 'read-transcript',
       }),
@@ -84237,8 +84251,17 @@ test('every declared non-submit job carries its own evidence contract', () => {
     });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
       `${AgentClass.name}: a partial transcript window with more text pending satisfied the job`);
+    // A complete transcript of a different video is not this video's answer.
     agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', {
       success: true,
+      url: 'https://www.youtube.com/watch?v=zzzzzzzzzzz',
+      data: { text: 'A complete transcript, but of another video.' },
+    });
+    assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
+      `${AgentClass.name}: another video's transcript satisfied this job`);
+    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', {
+      success: true,
+      url: videoUrl,
       data: { text: 'Pricing starts at ten dollars, and the annual plan is cheaper.' },
     });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), true,
@@ -84260,7 +84283,7 @@ test('every declared non-submit job carries its own evidence contract', () => {
         request_kind: 'execute', site_job: 'review-pull-request',
       }),
     });
-    assert.equal(prGuard.workflowRequiredJobEvidence, 'scoped_content_read',
+    assert.equal(prGuard.workflowRequiredJobEvidence, 'pull_request_diff_read',
       `${AgentClass.name}: the review job declared no evidence contract`);
     prGuard.evidenceTaskKey = prGuard.taskKey;
     agent._markPlanExecutionToolCall(prTabId, 'read_page', {
@@ -84268,9 +84291,33 @@ test('every declared non-submit job carries its own evidence contract', () => {
     });
     assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
       `${AgentClass.name}: a read of an unrelated page satisfied the review job`);
+    // A screenshot of the overview is not a review.
+    agent._markPlanExecutionToolCall(prTabId, 'screenshot', { success: true, url: `${prUrl}/files` });
+    assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
+      `${AgentClass.name}: a screenshot satisfied the review job`);
     agent._markPlanExecutionToolCall(prTabId, 'read_page', { success: true, url: prUrl });
+    assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
+      `${AgentClass.name}: the overview tab satisfied a job whose contract is the changed files`);
+    agent._markPlanExecutionToolCall(prTabId, 'read_page', { success: true, url: `${prUrl}/files` });
     assert.equal(agent._executionEvidenceSatisfied(prGuard), true,
-      `${AgentClass.name}: reading the selected pull request did not satisfy its job`);
+      `${AgentClass.name}: reading the changed files did not satisfy the review job`);
+    // Another pull request's diff is not this one's.
+    const otherPrGuard = agent._startPlanExecutionGuard(prTabId + 1, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      siteWorkflowUrl: prUrl,
+      siteWorkflow: agent._resolvePlannerSiteWorkflow(prUrl, {
+        request_kind: 'execute', site_job: 'review-pull-request',
+      }),
+    });
+    agent.conversations.set(prTabId + 1, agent.conversations.get(prTabId));
+    otherPrGuard.evidenceTaskKey = otherPrGuard.taskKey;
+    agent._markPlanExecutionToolCall(prTabId + 1, 'read_page', {
+      success: true, url: 'https://github.com/esokullu/webbrain/pull/999/files',
+    });
+    assert.equal(agent._executionEvidenceSatisfied(otherPrGuard), false,
+      `${AgentClass.name}: another pull request's diff satisfied this review job`);
   }
 });
 
@@ -84351,12 +84398,15 @@ test('Gmail read and count jobs need their own terminal evidence', async () => {
       requestKind: 'execute',
       requiresStateChange: false,
       requiresSubmission: false,
+      siteWorkflowUrl: listUrl,
       siteWorkflow: resolveAdapterWorkflowJob(listUrl, 'count-results'),
     });
     assert.equal(countGuard.workflowRequiredJobEvidence, 'deterministic_count',
       `${AgentClass.name}: the count job declared no terminal evidence`);
     countGuard.evidenceTaskKey = countGuard.taskKey;
-    agent._markPlanExecutionToolCall(countTabId, 'get_accessibility_tree', { success: true });
+    agent._markPlanExecutionToolCall(countTabId, 'get_accessibility_tree', {
+      success: true, pageUrl: listUrl,
+    });
     assert.ok(countGuard.successfulTaskToolCalls > 0);
     assert.equal(agent._executionEvidenceSatisfied(countGuard), false,
       `${AgentClass.name}: a page read stood in for the deterministic Gmail count`);
@@ -84366,15 +84416,23 @@ test('Gmail read and count jobs need their own terminal evidence', async () => {
     assert.equal(agent._executionEvidenceSatisfied(countGuard), false,
       `${AgentClass.name}: an unverified count satisfied the count contract`);
     // This is the shape _countGmailResults actually returns on success.
-    agent._markPlanExecutionToolCall(countTabId, 'gmail_count_results', {
+    const countResult = (countedUrl) => ({
       success: true,
       dispatched: true,
       verified: true,
       exact: true,
+      countedUrl,
       count: 128,
       unit: 'gmail_conversations',
       method: 'verified-final-page-range',
     });
+    // The tool counts whatever route it runs on and says so itself, so a count
+    // of a result set this run never read cannot stand for the requested one.
+    agent._markPlanExecutionToolCall(countTabId, 'gmail_count_results',
+      countResult('https://mail.google.com/mail/u/0/#search/from%3Aada'));
+    assert.equal(agent._executionEvidenceSatisfied(countGuard), false,
+      `${AgentClass.name}: a count of an unread result set satisfied the job`);
+    agent._markPlanExecutionToolCall(countTabId, 'gmail_count_results', countResult(listUrl));
     assert.equal(agent._executionEvidenceSatisfied(countGuard), true,
       `${AgentClass.name}: the deterministic count could not satisfy its own job`);
 

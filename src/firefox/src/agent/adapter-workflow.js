@@ -48,6 +48,7 @@ const JOB_FIELDS = new Set([
   'stages',
   'successEvidence',
   'partialEvidence',
+  'requiredRowFields',
 ]);
 const MAX_PROFILE_ITEMS = 16;
 const MAX_EVIDENCE_ITEMS = 8;
@@ -115,6 +116,23 @@ function validateWorkflowJob(jobName, job) {
   for (const field of ['stateChange', 'requiresSubmission', 'requiresLedger']) {
     if (typeof job[field] !== 'boolean') {
       return invalid(`Workflow job \`${jobName}\` field \`${field}\` must be boolean.`);
+    }
+  }
+  if (job.requiredRowFields !== undefined) {
+    if (!Array.isArray(job.requiredRowFields) || job.requiredRowFields.length < 1
+        || job.requiredRowFields.length > MAX_EVIDENCE_ITEMS) {
+      return invalid(`Workflow job \`${jobName}\` requiredRowFields must be an array of 1-${MAX_EVIDENCE_ITEMS} field names.`);
+    }
+    if (job.template !== 'collection') {
+      return invalid(`Workflow job \`${jobName}\` may declare requiredRowFields only on a collection template.`);
+    }
+    for (const field of job.requiredRowFields) {
+      if (typeof field !== 'string' || !/^[a-z][a-z0-9_]{0,39}$/.test(field)) {
+        return invalid(`Workflow job \`${jobName}\` requiredRowFields entries must be snake_case names of 1-40 characters.`);
+      }
+    }
+    if (new Set(job.requiredRowFields).size !== job.requiredRowFields.length) {
+      return invalid(`Workflow job \`${jobName}\` requiredRowFields must not repeat a field.`);
     }
   }
   if (job.requiresSubmission && !job.stateChange) {
@@ -187,6 +205,7 @@ export function cloneAdapterWorkflowJob(jobName, job) {
     stages: [...job.stages],
     successEvidence: [...job.successEvidence],
     partialEvidence: [...job.partialEvidence],
+    ...(job.requiredRowFields ? { requiredRowFields: [...job.requiredRowFields] } : {}),
   };
 }
 
