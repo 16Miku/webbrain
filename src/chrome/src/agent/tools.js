@@ -897,13 +897,14 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'iframe_read',
-      description: 'Enumerate matching elements inside iframes — INCLUDING cross-origin frames. Returns every matched element (bounded by limit) with its matchIndex, semantic label, attributes, text, and current value, plus frame URLs. For a selected form workflow, inventory controls with one broad selector covering input, textarea, select, contenteditable, and ARIA form-control roles, using limit 50; a truncated result is not complete. Reuse the returned selector + matchIndex for iframe_click/iframe_type; broad mutating selectors are rejected when ambiguous.',
+      description: 'Enumerate matching elements inside iframes — INCLUDING cross-origin frames. Returns every matched element (bounded by limit) with its absolute matchIndex, semantic label, attributes, text, and current value, plus frame URLs. For a selected form workflow, inventory controls with one broad selector covering input, textarea, select, contenteditable, and ARIA form-control roles, using limit 50; a truncated result is not complete — repeat the identical selector with offset set to the returned nextOffset until truncated is false. Reuse the returned selector + matchIndex for iframe_click/iframe_type; broad mutating selectors are rejected when ambiguous.',
       parameters: {
         type: 'object',
         properties: {
           urlFilter: { type: 'string', description: 'Optional substring to filter frames by URL (e.g. "stripe.com" to only read Stripe iframes). Omit to read all frames.' },
           selector: { type: 'string', description: 'Optional CSS selector to extract specific elements within each frame. Omit to get the full body text.' },
           limit: { type: 'number', description: 'Maximum matching elements returned per frame. Default 25; maximum 50.' },
+          offset: { type: 'number', description: 'Zero-based index of the first match returned per frame. Continue a truncated inventory by passing the returned nextOffset with the identical selector.' },
         },
         required: [],
       },

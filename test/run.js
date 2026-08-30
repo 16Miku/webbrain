@@ -81906,7 +81906,13 @@ test('iframe-backed application forms expose a complete trusted inventory and ex
       `${AgentClass.name}: iframe inventory retained a duplicate narrow-read row`);
     assert.deepEqual(
       guard.workflowInventoryEvidence.documents['iframe:9:https://acme.wd1.myworkdayjobs.com/application/helper-frame'],
-      { complete: true, scope: 'iframe', empty: true, rootObservationSequence: 1 },
+      {
+        complete: true,
+        scope: 'iframe',
+        coverage: { start: 0, end: 0, matchCount: 0 },
+        empty: true,
+        rootObservationSequence: 1,
+      },
       `${AgentClass.name}: an inspected zero-match helper iframe blocked completeness`,
     );
     assert.deepEqual(inventory.items.map(item => item.label).sort(), ['Country', 'Cover letter', 'Email']);
@@ -83147,6 +83153,111 @@ test('optional inventory rows may skip and noisy frames do not block iframe comp
   }
 });
 
+test('paged iframe reads accumulate one complete application inventory', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 8992 + index;
+    const pageUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
+    const frameUrl = 'https://acme.wd1.myworkdayjobs.com/application/frame';
+    const selected = agent._resolvePlannerSiteWorkflow(pageUrl, {
+      request_kind: 'execute',
+      site_job: 'prepare-application',
+    });
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Prepare every application field for review.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflow: selected,
+    });
+    const inventorySelector = [
+      'input', 'textarea', 'select', '[contenteditable="true"]',
+      '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="searchbox"]', '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+    ].join(',');
+    const documentScope = `iframe:7:${frameUrl}`;
+    const radios = (start, end) => {
+      const matches = [];
+      for (let i = start; i < end; i += 1) {
+        matches.push({
+          tag: 'input', type: 'radio', id: `screening-${i}`, name: `screening-${i}`,
+          label: `Screening question ${i}`, value: '', matchIndex: i,
+        });
+      }
+      return matches;
+    };
+    const readPage = (offset, size, matchCount = 120) => agent._rememberWorkflowInventoryObservation(
+      tabId,
+      'iframe_read',
+      { selector: inventorySelector, limit: size, offset },
+      {
+        success: true,
+        pageUrl,
+        frames: [{
+          frameId: 7,
+          ok: true,
+          url: frameUrl,
+          matchCount,
+          offset,
+          truncated: offset + size < matchCount,
+          ...(offset + size < matchCount ? { nextOffset: offset + size } : {}),
+          matches: radios(offset, Math.min(offset + size, matchCount)),
+        }],
+      },
+    );
+
+    const firstPage = readPage(0, 50);
+    assert.equal(firstPage?.complete, false,
+      `${AgentClass.name}: a truncated first page claimed complete iframe coverage`);
+    assert.equal(firstPage?.itemCount, 50,
+      `${AgentClass.name}: the first iframe page did not inventory its own matches`);
+
+    const skipAhead = readPage(60, 50);
+    assert.equal(skipAhead?.complete, false,
+      `${AgentClass.name}: a page starting past the covered end closed an inventory with a gap`);
+    assert.deepEqual(
+      guard.workflowInventoryEvidence.documents[documentScope]?.coverage,
+      { start: 0, end: 50, matchCount: 120 },
+      `${AgentClass.name}: a gapped continuation page extended trusted iframe coverage`,
+    );
+
+    assert.equal(readPage(50, 50)?.complete, false,
+      `${AgentClass.name}: a middle continuation page closed coverage before the tail`);
+    const finalPage = readPage(100, 50);
+    assert.equal(finalPage?.complete, true,
+      `${AgentClass.name}: paged iframe reads could not accumulate a complete inventory`);
+    assert.equal(finalPage?.itemCount, 120,
+      `${AgentClass.name}: a continuation page truncated the accumulated iframe inventory`);
+    assert.equal(agent._trustedWorkflowInventory(tabId, [], guard)?.source, 'iframe_read',
+      `${AgentClass.name}: an accumulated paged iframe inventory was not trusted`);
+
+    const restarted = readPage(0, 50);
+    assert.equal(restarted?.itemCount, 50,
+      `${AgentClass.name}: a restart at offset 0 kept rows from the superseded read`);
+    assert.deepEqual(
+      guard.workflowInventoryEvidence.documents[documentScope]?.coverage,
+      { start: 0, end: 50, matchCount: 120 },
+      `${AgentClass.name}: a restart at offset 0 inherited stale paged coverage`,
+    );
+
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'iframe_type', {
+      urlFilter: 'acme.wd1.myworkdayjobs.com',
+      selector: inventorySelector,
+      matchIndex: 0,
+      text: 'Yes',
+    }, { success: true, dispatched: true, verified: true });
+    assert.equal(guard.workflowInventoryEvidence.complete, false,
+      `${AgentClass.name}: a value mutation left a complete paged iframe inventory`);
+    assert.equal(guard.workflowInventoryEvidence.documents[documentScope]?.coverage, undefined,
+      `${AgentClass.name}: pre-mutation paged coverage survived to re-complete the document`);
+  }
+});
+
 test('site workflow bindings are revalidated on the live URL and preserved across trusted planner fallback', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const tabId = 8940 + index;
@@ -84123,6 +84234,133 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       linkedInMessageProbe,
     )?.source, 'recipient_body_bound_dispatch_empty_composer_and_sent_confirmation',
     `${AgentClass.name}: pinned LinkedIn reply with positive sent status was not verified`);
+  }
+});
+
+test('Gmail message workflows bind the reviewed subject and prove a saved draft', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox';
+
+    const sendTabId = 9200 + index;
+    agent.conversations.set(sendTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Email alice@example.com with subject "Q3 results" and the quarterly update.' },
+    ]);
+    const sendGuard = agent._startPlanExecutionGuard(sendTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'named', recipients: ['alice@example.com'] },
+      siteWorkflow: resolveAdapterWorkflowJob(gmailUrl, 'send-email'),
+    });
+    sendGuard.successfulConsequentialToolCalls = 1;
+    sendGuard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
+      { field: 'subject', value: 'Q3 results' },
+    ]);
+    const sendDispatch = (subject) => ({
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: `gmail-subject-${subject}` },
+      messageRecipientBody: 'Quarterly update',
+      messageRecipientBodyBaselineCount: 0,
+      messageRecipientGmailComposeFlow: true,
+      ...(subject === null ? {} : {
+        messageRecipientSubject: subject,
+        messageRecipientSubjectAvailable: true,
+      }),
+    });
+    const sentPageState = { workflowPageText: 'Message sent', liveRegionMessages: ['Message sent'] };
+    const sentProbe = { success: false, conclusive: false, matchingOutgoingMessageCount: 0 };
+    const sendTerminal = (subject) => agent._workflowTerminalEvidenceFromDone(
+      sendTabId,
+      sentPageState,
+      gmailUrl,
+      {
+        submit: {
+          dispatched: true,
+          observedAfterSubmit: true,
+          workflowBinding: agent._workflowSubmitBindingForAttempt(sendTabId, gmailUrl, sendDispatch(subject)),
+        },
+        verifiedFinalSubmit: true,
+        relevantForms: 0,
+      },
+      sentProbe,
+    );
+    assert.equal(
+      agent._workflowSubmitBindingForAttempt(sendTabId, gmailUrl, sendDispatch('Q3 results'))?.messageSubject,
+      'Q3 results',
+      `${AgentClass.name}: the dispatch binding dropped the observed composer subject`,
+    );
+    assert.equal(sendTerminal(null), null,
+      `${AgentClass.name}: a send with no readable subject satisfied a reviewed subject`);
+    assert.equal(sendTerminal(''), null,
+      `${AgentClass.name}: a blank subject satisfied the reviewed send-email subject`);
+    assert.equal(sendTerminal('Q3 results (draft)'), null,
+      `${AgentClass.name}: a subject that merely contains the reviewed value was accepted`);
+    assert.equal(sendTerminal('Q3 results')?.source, 'recipient_body_bound_gmail_compose_and_sent_confirmation',
+      `${AgentClass.name}: the exact reviewed subject could not satisfy the send-email contract`);
+    sendGuard.workflowMetadataRequirementsIncomplete = true;
+    assert.equal(sendTerminal('Q3 results'), null,
+      `${AgentClass.name}: an unreadable message field set skipped subject verification`);
+
+    const draftTabId = 9210 + index;
+    agent.conversations.set(draftTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Save a draft to alice@example.com with subject "Q3 results".' },
+    ]);
+    const draftWorkflow = resolveAdapterWorkflowJob(gmailUrl, 'draft-email');
+    assert.equal(draftWorkflow?.job?.requiresSubmission, false);
+    const draftGuard = agent._startPlanExecutionGuard(draftTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      messaging: { target_kind: 'named', recipients: ['alice@example.com'] },
+      siteWorkflow: draftWorkflow,
+    });
+    draftGuard.successfulConsequentialToolCalls = 1;
+    draftGuard.evidenceTaskKey = draftGuard.taskKey;
+    draftGuard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
+      { field: 'subject', value: 'Q3 results' },
+    ]);
+    assert.equal(agent._executionEvidenceSatisfied(draftGuard), false,
+      `${AgentClass.name}: a composer mutation plus a generic observation completed a draft job`);
+    const draftProbe = {
+      success: true,
+      conclusive: true,
+      composerAvailable: true,
+      messageBody: 'Quarterly update',
+      composerSubject: 'Q3 results',
+      composerSubjectAvailable: true,
+      composerStatusMessages: ['Draft saved'],
+      strongRecipientCandidates: [{ identity: 'alice@example.com', role: 'to' }],
+    };
+    const draftEvidence = { submit: null, verifiedFinalSubmit: false, relevantForms: 0 };
+    const draftTerminal = (probe, pageState = {}) => agent._workflowTerminalEvidenceFromDone(
+      draftTabId, pageState, gmailUrl, draftEvidence, probe,
+    );
+    assert.equal(draftTerminal({ ...draftProbe, composerStatusMessages: [] }), null,
+      `${AgentClass.name}: a filled composer without a saved-draft status proved an unsent draft`);
+    assert.equal(draftTerminal({ ...draftProbe, messageBody: '' }), null,
+      `${AgentClass.name}: an empty body satisfied the draft-email contract`);
+    assert.equal(draftTerminal({ ...draftProbe, composerSubject: 'Q4 results' }), null,
+      `${AgentClass.name}: a draft subject that differs from the reviewed value was accepted`);
+    assert.equal(draftTerminal({
+      ...draftProbe,
+      strongRecipientCandidates: [{ identity: 'mallory@example.com', role: 'to' }],
+    }), null, `${AgentClass.name}: a draft addressed to an unauthorized recipient was accepted`);
+    const verifiedDraft = draftTerminal(draftProbe);
+    assert.equal(verifiedDraft?.verificationKind, 'message_draft');
+    assert.equal(verifiedDraft?.source, 'draft_recipients_fields_and_saved_draft_state');
+    assert.equal(verifiedDraft?.job, 'draft-email');
+    draftGuard.workflowTerminalEvidence = verifiedDraft;
+    assert.equal(agent._executionEvidenceSatisfied(draftGuard), true,
+      `${AgentClass.name}: a verified saved draft could not satisfy its job contract`);
+    assert.equal(
+      draftTerminal(draftProbe, { liveRegionMessages: ['Draft saved'] })?.source,
+      'draft_recipients_fields_and_saved_draft_state',
+      `${AgentClass.name}: a page-level saved-draft status was ignored`,
+    );
   }
 });
 

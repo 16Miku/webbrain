@@ -4196,6 +4196,8 @@
       messageBody: String(dispatch.messageBody || ''),
       messageBodyBaselineCount: Number(dispatch.messageBodyBaselineCount || 0),
       gmailComposeFlow: dispatch.gmailComposeFlow === true,
+      composerSubject: String(dispatch.composerSubject || ''),
+      composerSubjectAvailable: dispatch.composerSubjectAvailable === true,
       pageUrl: location.href,
       timer: null,
     };
@@ -4261,7 +4263,9 @@
       || liveIdentityKey !== expected.identityKey
       || !expected.messageBody
       || live?.messageBody !== expected.messageBody
-      || (expected.gmailComposeFlow === true && live?.gmailComposeFlow !== true)) {
+      || (expected.gmailComposeFlow === true && live?.gmailComposeFlow !== true)
+      || (expected.composerSubjectAvailable === true
+        && (live?.composerSubjectAvailable !== true || live?.composerSubject !== expected.composerSubject))) {
       return {
         success: false,
         dispatched: false,
@@ -5065,6 +5069,7 @@
         strongIdentities.push(text);
       };
 
+      let gmailComposeRoot = null;
       if (gmailRecipientMode) {
         const recipientRole = (el, root = null) => {
           const roleFromAttribute = (attribute, value) => {
@@ -5158,6 +5163,7 @@
           }
           return null;
         })();
+        gmailComposeRoot = composeRoot;
         const recipients = collectGmailRecipients(composeRoot);
         // Match the complete authorized To/CC/BCC set. Each expected identity
         // must resolve to exactly one distinct chip and no additional chip may
@@ -5236,6 +5242,22 @@
         : '';
       const messageBody = submittedFieldBody || composerMessageBody(composer);
       const messageBodyBaselineCount = matchingMessageBodyCount(messageBody, composer);
+      // Gmail's subject control keeps a locale-independent name, so the
+      // reviewed subject binds without reading a localized label. Only a
+      // visible field counts; a collapsed compose proves nothing.
+      const composeContainer = gmailComposeRoot || composer.closest?.('[role="dialog"],form') || null;
+      const subjectField = composeContainer?.querySelector?.('input[name="subjectbox"]') || null;
+      const composerSubjectAvailable = !!subjectField && visible(subjectField);
+      const composerSubject = composerSubjectAvailable ? compact(subjectField.value, 998) : '';
+      // The provider writes "Draft saved" into the compose window's own status
+      // region. Page-wide text would also match a message that quotes it.
+      const composerStatusMessages = composeContainer
+        ? Array.from(composeContainer.querySelectorAll?.('[aria-live],[role="status"],[role="alert"]') || [])
+            .filter(visible)
+            .map(el => compact(el.innerText || el.textContent, 200))
+            .filter(Boolean)
+            .slice(0, 6)
+        : [];
       const gmailComposeFlow = gmailRecipientMode
         && !!composer.closest?.('[role="dialog"]');
       const matchingOutgoingMessageCount = matchingMessageBodyCount(
@@ -5258,6 +5280,8 @@
             messageBody,
             messageBodyBaselineCount,
             gmailComposeFlow,
+            composerSubject,
+            composerSubjectAvailable,
           })
         : '';
       return {
@@ -5269,6 +5293,9 @@
         messageBody,
         messageBodyBaselineCount,
         gmailComposeFlow,
+        composerSubject,
+        composerSubjectAvailable,
+        composerStatusMessages,
         matchingOutgoingMessageCount,
         // Only recipient-specific header evidence is authoritative. Ordinary
         // message text, test-id containers, and other leaf content are never

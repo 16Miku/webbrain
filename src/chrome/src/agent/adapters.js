@@ -16010,7 +16010,7 @@ const ADAPTERS = [
           requiresSubmission: false,
           requiresLedger: false,
           stages: ['access_gate', 'scope', 'fill', 'review', 'verify'],
-          successEvidence: ['The intended recipients, subject, and complete body are visible in an unsent draft.'],
+          successEvidence: ['Gmail shows its own saved-draft state while the intended recipients, subject, and complete body are visible in the unsent draft.'],
           partialEvidence: ['Verified draft fields and every missing or ambiguous field are reported without claiming the email was sent.'],
         },
         'send-email': {
@@ -17475,7 +17475,7 @@ const ADAPTERS = [
 - Many fields are nested in collapsed accordions (Education, Experience, References). EXPAND each accordion before reading or filling — collapsed required fields will fail validation but you can't see what's missing.
 - Date pickers are custom widgets. Click the field, type MM/DD/YYYY (or DD/MM/YYYY depending on tenant locale), then Tab. Don't try to click calendar cells — the popup is portal-rendered outside the field's subtree.
 - "Add Another" buttons for experiences / education clone the entire panel — fill the FIRST one fully before clicking Add Another, or the new clone may copy partial state.
-- Some employers wrap Workday in an iframe — if get_accessibility_tree shows almost no form fields, use iframe_read with one broad control selector and limit 50 before filling. A truncated read is not a complete inventory; narrow reads are only for follow-up inspection. Reuse the returned selector + matchIndex with iframe_type.
+- Some employers wrap Workday in an iframe — if get_accessibility_tree shows almost no form fields, use iframe_read with one broad control selector and limit 50 before filling. A truncated read is not a complete inventory: repeat the identical selector with offset set to the returned nextOffset until truncated is false. Narrow reads are only for follow-up inspection. Reuse the returned selector + matchIndex with iframe_type.
 - File upload (resume, CV) lives in the "My Information" or "Resume/CV" step. The drop zone has a "Select Files" button — use upload_file against the underlying input.
 - "Review" step at the end shows everything filled — read it back to the user before clicking Submit; mistakes at this stage usually require restarting the whole application.`,
   },

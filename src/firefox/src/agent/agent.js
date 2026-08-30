@@ -1361,6 +1361,12 @@ export class Agent extends LoopDetector {
           && executionContext?.messageRecipientGmailComposeFlow === true
           ? { gmailComposeFlow: true }
           : {}),
+        ...(executionContext?.messageRecipientSubjectAvailable === true
+          ? {
+              messageSubject: this._workflowMetadataValue(executionContext.messageRecipientSubject),
+              messageSubjectAvailable: true,
+            }
+          : {}),
       } : {}),
       ...(metadataRequirements.length || metadataIncomplete ? {
         metadataRequirements: metadataRequirements.map(requirement => ({ ...requirement })),
@@ -1400,6 +1406,23 @@ export class Agent extends LoopDetector {
     return /\b(?:successfully\s+(?:submitted|sent|received)|response\s+(?:was\s+)?submitted|application\s+(?:was\s+)?(?:submitted|received)|submission\s+(?:complete|confirmed)|thank\s+you\s+for\s+(?:submitting|applying))\b|(?:提交成功|已成功提交|申请已提交|申请成功|发送成功|ご応募ありがとうございます|送信しました|제출되었습니다|başvurunuz alındı|başarıyla gönderildi|demande envoyée|candidature reçue|solicitud enviada|candidatura enviada)/i.test(text);
   }
 
+  _workflowDraftSavedSignal(text) {
+    return /\b(?:draft\s+saved|saved\s+draft|draft\s+auto[- ]?saved)\b|(?:草稿已保存|已保存草稿|已儲存草稿|下書きを保存しました|下書きとして保存しました|임시보관함에 저장되었습니다|임시저장되었습니다|brouillon enregistré|borrador guardado|rascunho salvo|entwurf gespeichert|bozza salvata|taslak kaydedildi)/i.test(text);
+  }
+
+  // A reviewed subject is part of the message the user approved. When the task
+  // named one, the subject bound at dispatch must equal it exactly; an
+  // unreadable requirement set fails closed rather than skipping the check.
+  _workflowMessageSubjectVerified(binding) {
+    if (binding?.metadataRequirementsIncomplete === true) return false;
+    const requirement = (Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [])
+      .find(entry => entry?.field === 'subject');
+    if (!requirement) return true;
+    return binding?.messageSubjectAvailable === true
+      && this._workflowMetadataValue(binding.messageSubject)
+        === this._workflowMetadataValue(requirement.value);
+  }
+
   _workflowSavedStateSignal(text) {
     return /\b(?:changes?\s+saved|saved\s+successfully|successfully\s+(?:saved|updated)|update\s+complete)\b|(?:保存成功|已保存|更新成功|başarıyla kaydedildi|modifications enregistrées|cambios guardados|変更を保存しました|저장되었습니다)/i.test(text);
   }
@@ -1431,6 +1454,7 @@ export class Agent extends LoopDetector {
       ['tag', ['tag', 'choose a tag', 'choose tag', 'git tag', 'release tag']],
       ['tags', ['tags', 'étiquette', 'étiquettes', 'mot clé', 'mots clés', 'etiqueta', 'etiquetas', 'schlagwort', 'schlagwörter', 'etichette', 'etiket', 'etiketler', 'タグ', '태그', '标签', '標籤', 'теги']],
       ['notes', ['notes', 'release notes', 'release note', 'release body', 'describe this release', '发行说明', '發行說明', 'リリースノート', '릴리스 노트']],
+      ['subject', ['subject', 'subject line', 'email subject', 'sujet', 'objet', 'asunto', 'assunto', 'betreff', 'oggetto', 'konu', '件名', '主题', '主旨']],
       ['body', ['body', 'post', 'post body', 'post text', 'composer']],
       ['title', ['title', 'titre', 'título', 'titulo', 'titel', 'titolo', 'başlık', 'タイトル', '제목', '标题', '標題', 'название']],
     ];
@@ -1702,17 +1726,57 @@ export class Agent extends LoopDetector {
   _workflowTerminalEvidenceFromDone(tabId, pageState, pageUrl, submissionEvidence, messageProbe = null) {
     const state = this._planExecutionGuards.get(tabId);
     const siteWorkflow = state?.siteWorkflow;
-    if (!state?.enabled || siteWorkflow?.job?.requiresSubmission !== true) return null;
+    if (!state?.enabled) return null;
+    const draftJob = this._workflowJobRequiresDraftEvidence(siteWorkflow);
+    if (!draftJob && siteWorkflow?.job?.requiresSubmission !== true) return null;
     const submit = submissionEvidence?.submit;
     const binding = submit?.workflowBinding;
-    if (!binding || binding.bindingKey !== this._adapterWorkflowBindingKey(siteWorkflow)) return null;
+    // A draft job has no dispatched submit to bind to, so its evidence binds
+    // to the live adapter job and the observed composer instead.
+    if (!draftJob
+        && (!binding || binding.bindingKey !== this._adapterWorkflowBindingKey(siteWorkflow))) return null;
     const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
     if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
     const verificationKind = this._workflowVerificationKind(siteWorkflow);
     const text = this._workflowTerminalText(pageState?.workflowPageText || '');
     let verified = false;
     let source = '';
-    if (verificationKind === 'message_sent') {
+    if (verificationKind === 'message_draft') {
+      const metadataDetails = this._normalizeWorkflowMetadataRequirementsDetails(
+        state.workflowMetadataRequirements,
+      );
+      const statusText = this._workflowTerminalText([
+        ...(Array.isArray(messageProbe?.composerStatusMessages) ? messageProbe.composerStatusMessages : []),
+        ...(Array.isArray(pageState?.liveRegionMessages) ? pageState.liveRegionMessages : []),
+      ].join('\n'));
+      const observedBody = this._workflowMessageBody(messageProbe?.messageBody);
+      const observedSubject = this._workflowMetadataValue(messageProbe?.composerSubject);
+      const observedRecipients = this._messageRecipientCandidates(messageProbe);
+      const messagingTarget = normalizeMessageTarget(state.messaging);
+      // An authorized recipient set must match exactly. Without one, the draft
+      // still has to name someone; an empty To line is not a finished draft.
+      const recipientsVerified = messagingTarget?.target_kind === 'named'
+        ? messageTargetMatchesObservedIdentities(messagingTarget, observedRecipients)
+        : observedRecipients.length > 0;
+      const fieldsVerified = state.workflowMetadataRequirementsIncomplete !== true
+        && metadataDetails.incomplete !== true
+        && metadataDetails.items.every((requirement) => {
+          const want = this._workflowMetadataValue(requirement.value);
+          if (requirement.field === 'subject') {
+            return messageProbe?.composerSubjectAvailable === true && observedSubject === want;
+          }
+          if (requirement.field === 'body') return observedBody === this._workflowMessageBody(want);
+          return false;
+        });
+      verified = messageProbe?.success === true
+        && messageProbe?.conclusive === true
+        && messageProbe?.composerAvailable === true
+        && recipientsVerified
+        && !!observedBody
+        && fieldsVerified
+        && this._workflowDraftSavedSignal(statusText);
+      source = 'draft_recipients_fields_and_saved_draft_state';
+    } else if (verificationKind === 'message_sent') {
       const recipientObserved = messageProbe?.success === true
         && messageProbe?.conclusive === true
         && messageProbe?.composerEmpty === true
@@ -1743,6 +1807,7 @@ export class Agent extends LoopDetector {
       verified = submit?.dispatched === true
         && submit?.observedAfterSubmit === true
         && submit?.formValidationFailed !== true
+        && this._workflowMessageSubjectVerified(binding)
         && (requiresRecipientBinding
           ? (dispatchRecipientObserved && postDispatchRecipientObserved && sentStatusObserved && messageBodyObserved)
           : (recipientObserved || sentStatusObserved));
@@ -1818,7 +1883,7 @@ export class Agent extends LoopDetector {
     }
     if (!verified) return null;
     return {
-      bindingKey: binding.bindingKey,
+      bindingKey: this._adapterWorkflowBindingKey(siteWorkflow),
       job: siteWorkflow.job.id,
       verificationKind,
       source,
@@ -10201,7 +10266,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _workflowJobStoresMetadataRequirements(siteWorkflow) {
     return siteWorkflow?.job?.id === 'update-metadata'
+      || siteWorkflow?.job?.template === 'message'
       || this._workflowJobBindsPublicationPayload(siteWorkflow?.job);
+  }
+
+  // A draft job never dispatches a submit, so its terminal contract is the
+  // composer readback itself rather than a post-submit page transition.
+  _workflowJobRequiresDraftEvidence(siteWorkflow) {
+    return siteWorkflow?.job?.requiresSubmission !== true
+      && this._workflowVerificationKind(siteWorkflow) === 'message_draft';
   }
 
   _workflowAllowsEmptyCompleteInventory(siteWorkflow) {
@@ -10399,15 +10472,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && hasFormControls) {
         continue;
       }
-      const complete = selectorComplete
+      // iframe_read pages its matches, so one page proves completeness only
+      // when it starts at 0 and reaches matchCount. Any other readable page
+      // contributes a covered range that later pages extend.
+      const offset = Number.isInteger(frame?.offset) && frame.offset >= 0 ? frame.offset : 0;
+      const readable = selectorComplete
         && !frame?.error
         && (matchCount === 0 || frame?.ok === true)
-        && frame?.truncated !== true
         && Number.isInteger(matchCount)
-        && matchCount === matches.length;
+        && offset + matches.length <= matchCount;
+      const complete = readable && offset === 0 && matchCount === matches.length;
       documents[documentScope] = {
         complete,
         scope: 'iframe',
+        ...(readable ? { coverage: { start: offset, end: offset + matches.length, matchCount } } : {}),
         ...(complete && matchCount === 0 ? { empty: true } : {}),
       };
       for (const item of frameItems) {
@@ -10417,6 +10495,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
     return { items, documents, selectorComplete };
+  }
+
+  // Contiguous forward coverage only. A page starting past the covered end
+  // would leave unseen controls in the gap, and a changed match count means
+  // the frame's control list moved. Neither extends coverage: the last
+  // contiguous range stands until a page fills the gap or restarts at 0.
+  _mergeWorkflowIframeCoverage(prior, observed) {
+    if (!observed) return prior ? { ...prior } : null;
+    if (observed.start === 0) return { ...observed };
+    if (!prior || prior.matchCount !== observed.matchCount || observed.start > prior.end) {
+      return prior ? { ...prior } : null;
+    }
+    return { start: prior.start, end: Math.max(prior.end, observed.end), matchCount: observed.matchCount };
   }
 
   _rememberWorkflowIframeInventoryObservation(tabId, args, result, guard, siteWorkflow) {
@@ -10431,10 +10522,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const prior = guard.workflowInventoryEvidence;
     const compatible = prior?.bindingKey === bindingKey && prior?.taskKey === taskKey;
     const observationSequence = Number(this.completionInvariants.get(tabId)?.sequence || 0) + 1;
-    const observedScopes = new Set(Object.keys(observed.documents));
+    // Only a page that restarts at offset 0 replaces a scope's prior items.
+    // A continuation page extends that inventory instead of truncating it.
+    const restartedScopes = new Set(Object.entries(observed.documents)
+      .filter(([, document]) => Number(document?.coverage?.start || 0) === 0)
+      .map(([documentKey]) => documentKey));
     const priorItems = compatible && Array.isArray(prior.items) ? prior.items : [];
     const retainedItems = observed.selectorComplete
-      ? priorItems.filter(item => !observedScopes.has(String(item?.documentScope || '')))
+      ? priorItems.filter(item => !restartedScopes.has(String(item?.documentScope || '')))
       : priorItems;
     const items = new Map(retainedItems
       .map(item => [item.id, item]));
@@ -10442,11 +10537,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const documents = { ...(compatible ? prior.documents : {}) };
     for (const [documentKey, document] of Object.entries(observed.documents)) {
       const priorDocument = documents[documentKey];
-      const complete = document.complete === true || priorDocument?.complete === true;
+      const { coverage: observedCoverage, ...documentRest } = document;
+      const coverage = this._mergeWorkflowIframeCoverage(priorDocument?.coverage, observedCoverage);
+      const coverageComplete = !!coverage
+        && coverage.start === 0
+        && Number.isInteger(coverage.matchCount)
+        && coverage.end >= coverage.matchCount;
+      const complete = document.complete === true || coverageComplete || priorDocument?.complete === true;
       documents[documentKey] = {
-        ...document,
+        ...documentRest,
         complete,
-        ...(document.complete
+        ...(coverage ? { coverage } : {}),
+        ...(document.complete || coverageComplete
           ? { rootObservationSequence: observationSequence }
           : (priorDocument?.rootObservationSequence
             ? { rootObservationSequence: priorDocument.rootObservationSequence }
@@ -14282,6 +14384,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         executionContext.messageRecipientDispatchBinding = binding;
         executionContext.messageRecipientBody = this._workflowMessageBody(probe.messageBody);
         executionContext.messageRecipientBodyBaselineCount = messageBodyBaselineCount;
+        if (probe.composerSubjectAvailable === true) {
+          executionContext.messageRecipientSubject = this._workflowMetadataValue(probe.composerSubject);
+          executionContext.messageRecipientSubjectAvailable = true;
+        }
         if (probe.gmailComposeFlow === true) {
           executionContext.messageRecipientGmailComposeFlow = true;
         }
@@ -16770,6 +16876,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'Exception: for siteContext.workflow.job="upload-release-assets" with requiresLedger=true, use mode=active and list every concrete requested target even when there is exactly one. Copy each exact requested filename or path into targets; do not merge or omit assets.',
           'For siteContext.workflow.job="update-metadata", workflowFields must contain every metadata field explicitly requested by the user and its complete exact intended value. Use canonical field names title, description, visibility, audience, tags, category, playlist, language, license, comments, embedding, paid_promotion, recording_date, or recording_location. Never infer a field or value from page content.',
           'For siteContext.workflow.job="publish-release", "publish-post", or "publish-content", workflowFields must contain every publication field explicitly requested by the user and its complete exact intended value. Use canonical field names tag, title, notes, body, or visibility. Never infer a field or value from page content.',
+          'For siteContext.workflow.job="draft-email" or "send-email", workflowFields must contain every message field explicitly requested by the user and its complete exact intended value. Use canonical field names subject or body. Never infer a field or value from page content.',
           'Otherwise return workflowFields=[].',
           'mode=read_only for questions, summaries, inspections, or reference-only uses of UI labels.',
           'If an action is negated or forbidden, put it in forbiddenActions even if its label appears in the task text.',
@@ -16797,6 +16904,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       site: this._isGithubStargazersUrl(pageScope) ? 'github_stargazers' : 'unknown',
       ...(siteWorkflow?.job && (
         siteWorkflow.job.requiresLedger === true
+        || siteWorkflow.job.template === 'message'
         || this._workflowJobBindsPublicationPayload(siteWorkflow.job)
       ) ? {
         workflow: {
@@ -17717,10 +17825,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || (state.siteWorkflow?.job?.requiresSubmission === true
         ? this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence)
         : state.verifiedSubmissionEvidence === true);
+    // A job that requires no submission can still own terminal evidence. A
+    // draft must prove its recipients, fields, and saved state; a mutated
+    // composer plus a generic observation is not that proof.
+    const workflowJobEvidenceSatisfied = !this._workflowJobRequiresDraftEvidence(state.siteWorkflow)
+      || this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence);
     return taskEvidenceSatisfied
       && schedulingEvidenceSatisfied
       && downloadEvidenceSatisfied
-      && submissionEvidenceSatisfied;
+      && submissionEvidenceSatisfied
+      && workflowJobEvidenceSatisfied;
   }
 
   _storeContinuationExecutionEvidence(tabId) {
@@ -17978,6 +18092,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && (state.siteWorkflow?.job?.requiresSubmission === true
         ? !this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence)
         : state.verifiedSubmissionEvidence !== true);
+    const missingDraftEvidence = !terminalFailure
+      && this._workflowJobRequiresDraftEvidence(state.siteWorkflow)
+      && !this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence);
     const missingRequiredLedger = !terminalFailure
       && state.siteWorkflow?.job?.requiresLedger === true
       && !this._workflowLedgerReconciliationSatisfied(tabId, state);
@@ -18019,6 +18136,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? '[PLAN EXECUTION BLOCK: This task requires a file to be downloaded before it can finish successfully. Finding a URL, link, button, or media source is only read evidence. Use an authorized tool call with the DOWNLOAD capability and verify that it returned successful download evidence. If permission is denied or no file can be saved, call done with outcome partial or failed and explain the limitation; do not claim the file was downloaded.]'
           : missingRequiredSubmission
           ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job requires terminal evidence for its own submit/send/publish/commit contract. Filling fields, another site's submit, or an unrelated success signal is not completion. Dispatch the intended action and observe the job-specific terminal state (for example recipient-bound sent state, saved/published resource, form confirmation, or paid/ticket-issued transaction) before calling done again. If that cannot be verified, use outcome partial or failed and report the exact blocker.]`
+          : missingDraftEvidence
+          ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job finishes on the draft itself, not on a tool call. The intended recipients, the requested subject, and the complete body must all be readable in the open composer, and the provider must show its own saved-draft state. Re-read the composer once the app has saved the draft, then call done. If any field or the saved-draft state cannot be verified, call done with outcome partial or failed and report exactly what is unverified; do not send the message.]`
           : missingRequiredLedger
           ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow.job.id} site workflow requires complete item-level reconciliation before success. Obtain a complete app-owned workflow inventory, use its exact item ids for one processed or intentionally skipped ledger row per item, then call progress_update with workflowReconciliation {job:"${state.siteWorkflow.job.id}", coverageComplete:true, itemCount:N, basis:"..."}. N and the row ids must exactly match that inventory; model-created rows alone are not coverage evidence, and any failed row requires a partial or failed outcome. If complete coverage cannot be verified, call done with outcome partial or failed and report completed versus unresolved work.]`
           : unknownMutationIntent
@@ -18047,6 +18166,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (missingRequiredSubmission) {
       return {
         failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job required job-bound terminal evidence after its commit/submit dispatch, but that evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]`,
+        status: 'required_evidence_missing',
+      };
+    }
+    if (missingDraftEvidence) {
+      return {
+        failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job required a verified saved draft — the intended recipients, the requested subject, the complete body, and the provider's own saved-draft state — but that evidence was still missing after one recovery nudge. The composer may still hold unsaved text; inspect it before retrying.]`,
         status: 'required_evidence_missing',
       };
     }
@@ -21800,8 +21925,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             );
             const executionGuard = this._planExecutionGuards.get(tabId);
             let workflowMessageProbe = null;
-            if (executionGuard?.enabled
-                && this._workflowVerificationKind(executionGuard.siteWorkflow) === 'message_sent') {
+            const workflowMessageKind = executionGuard?.enabled
+              ? this._workflowVerificationKind(executionGuard.siteWorkflow)
+              : 'none';
+            if (workflowMessageKind === 'message_sent' || workflowMessageKind === 'message_draft') {
               workflowMessageProbe = await this._messageRecipientContentProbe(tabId, {
                 tool: 'observe_active_conversation',
                 args: {},
@@ -21833,8 +21960,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   executionGuard.workflowTerminalEvidence = workflowTerminalEvidence;
                   executionGuard.verifiedSubmissionEvidence = true;
                 }
-              } else if (submissionEvidence.verifiedFinalSubmit) {
-                executionGuard.verifiedSubmissionEvidence = true;
+              } else {
+                if (workflowTerminalEvidence) {
+                  executionGuard.workflowTerminalEvidence = workflowTerminalEvidence;
+                }
+                if (submissionEvidence.verifiedFinalSubmit) {
+                  executionGuard.verifiedSubmissionEvidence = true;
+                }
               }
             }
             const verification = this._doneVerificationPayload({
@@ -23317,6 +23449,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const urlFilter = args.urlFilter || '';
         const selector = args.selector || 'body';
         const limit = Math.max(1, Math.min(50, Math.floor(Number(args.limit) || 25)));
+        // Embedded applications routinely hold more controls than one page.
+        // offset walks the same match list in order while matchIndex stays
+        // absolute, so iframe_click/iframe_type keep addressing the element.
+        const offset = Math.max(0, Math.min(5000, Math.floor(Number(args.offset) || 0)));
         const code = `
           (() => {
             try {
@@ -23337,7 +23473,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 }
                 return '';
               };
-              const matches = all.slice(0, ${limit}).map((el, matchIndex) => {
+              const matches = all.slice(${offset}, ${offset + limit}).map((el, pageIndex) => {
+                const matchIndex = ${offset} + pageIndex;
                 const tag = String(el.tagName || '').toLowerCase();
                 const type = String(el.getAttribute?.('type') || el.type || '').toLowerCase();
                 let value = '';
@@ -23373,7 +23510,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 title: document.title || '',
                 selector: ${JSON.stringify(selector)},
                 matchCount: all.length,
-                truncated: all.length > matches.length,
+                offset: ${offset},
+                truncated: ${offset} + matches.length < all.length,
+                ...(${offset} + matches.length < all.length
+                  ? { nextOffset: ${offset} + matches.length }
+                  : {}),
                 matches,
                 text: el ? (el.innerText || '').slice(0, 4000) : '',
                 html: el ? (el.innerHTML || '').slice(0, 4000) : '',

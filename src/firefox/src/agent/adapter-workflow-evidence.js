@@ -78,7 +78,10 @@ export function invalidateWorkflowInventoryCompleteness(evidence) {
   if (!evidence || typeof evidence !== 'object') return evidence;
   const documents = {};
   for (const [key, document] of Object.entries(evidence.documents || {})) {
-    documents[key] = { ...document, complete: false };
+    // Paged coverage goes with completeness: a mutated document must be read
+    // again from its first page, not re-completed from pre-mutation ranges.
+    const { coverage, ...rest } = document || {};
+    documents[key] = { ...rest, complete: false };
   }
   return {
     ...evidence,
