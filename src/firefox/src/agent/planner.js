@@ -909,11 +909,11 @@ export function normalizePlan(obj, opts = {}) {
   // but the people the user asked to address are still part of the request.
   // Keep them under a field the recipient guard never reads so a saved draft
   // can be checked against the requested target without becoming sendable.
-  const draftRecipientTarget = executablePlan && requiresSubmission !== true
+  // An open-thread draft arrives as target_kind="active_conversation" and is
+  // pinned to its verified recipients before execution, so both kinds are kept
+  // here; dropping the conversation kind would leave the draft unbound.
+  const draftRecipients = executablePlan && requiresSubmission !== true
     ? normalizeMessageTarget(obj.messaging)
-    : null;
-  const draftRecipients = draftRecipientTarget?.target_kind === 'named'
-    ? draftRecipientTarget
     : null;
   const requiresDownload = executablePlan
     && obj.completion_requirements?.download === true;

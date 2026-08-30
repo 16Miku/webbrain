@@ -82250,6 +82250,38 @@ test('GitHub review-thread workflow inventories only unresolved thread controls'
     assert.deepEqual(inventory.items.map(item => item.ref_id), ['ref_resolve_1', 'ref_resolve_2']);
     assert.ok(inventory.items.every(item => item.label === 'Resolve conversation'));
 
+    // GitHub ships a localized UI. An English-only match would read these as
+    // an empty inventory and let the empty no-op report success.
+    const localizedTabId = 8967 + index;
+    agent.conversations.set(localizedTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Resolve all open review threads.' },
+    ]);
+    const localizedGuard = agent._startPlanExecutionGuard(localizedTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(localizedTabId, { documentToken: 'localized-pr-document', pageUrl: pullUrl });
+    const localized = agent._rememberWorkflowInventoryObservation(localizedTabId, 'get_accessibility_tree', {}, {
+      success: true,
+      pageContent: [
+        'textbox "返信" [ref_reply_1] value=""',
+        'button "会話を解決" [ref_resolve_ja]',
+        'button "コメントする" [ref_add_comment]',
+        'button "Resolver conversación" [ref_resolve_es]',
+        'button "解决对话" [ref_resolve_zh]',
+      ].join('\n'),
+      treeRevision: 'localized-review-threads',
+    });
+    assert.equal(localized?.itemCount, 3,
+      `${AgentClass.name}: localized unresolved-thread controls were read as an empty inventory`);
+    assert.deepEqual(localized.items.map(item => item.ref_id),
+      ['ref_resolve_ja', 'ref_resolve_es', 'ref_resolve_zh']);
+    assert.equal(agent._workflowEmptyInventoryNoOp(localizedGuard), false,
+      `${AgentClass.name}: a localized page with unresolved threads became a successful no-op`);
+
     const emptyTabId = 8961 + index;
     agent.conversations.set(emptyTabId, [
       { role: 'system', content: 'system' },
@@ -82411,11 +82443,14 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       getAccessibleName: element => element.name,
       getOrMintRef: () => `ref_choice_${++refSequence}`,
       isEditableRoot: () => false,
+      isVisible: element => element.visible !== false,
     });
     const control = ({
       tagName, role, name, attributes = {}, value = undefined, options = [], selectedIndex = null,
-      required = false,
+      required = false, visible = true, hiddenAncestor = false,
     }) => ({
+      visible,
+      closest: selector => (hiddenAncestor && selector === '[aria-hidden="true"]' ? {} : null),
       tagName,
       role,
       name,
@@ -82465,6 +82500,38 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
     }), 0);
     assert.equal(titledLine, 'textbox "Launch Video" [ref_choice_3] type="text" value="Launch Video"',
       `${label}: text value equal to the accessible name was elided`);
+
+    // filter=all keeps aria-hidden and invisible nodes on purpose, so the line
+    // has to say which controls the user was never shown.
+    const hiddenLine = formatLine(control({
+      tagName: 'INPUT',
+      role: 'textbox',
+      name: 'Honeypot',
+      attributes: { type: 'text' },
+      value: '',
+      visible: false,
+    }), 0);
+    assert.match(hiddenLine, /\bhidden=true/,
+      `${label}: an invisible form control was not marked hidden`);
+    const ariaHiddenLine = formatLine(control({
+      tagName: 'INPUT',
+      role: 'textbox',
+      name: 'Conditional follow-up',
+      attributes: { type: 'text' },
+      value: '',
+      hiddenAncestor: true,
+    }), 0);
+    assert.match(ariaHiddenLine, /\bhidden=true/,
+      `${label}: a control inside an aria-hidden subtree was not marked hidden`);
+    const shownLine = formatLine(control({
+      tagName: 'INPUT',
+      role: 'textbox',
+      name: 'Full name',
+      attributes: { type: 'text' },
+      value: '',
+    }), 0);
+    assert.doesNotMatch(shownLine, /\bhidden=/,
+      `${label}: a visible form control was marked hidden`);
     const quotedTitle = 'Launch "Video" from C:\\Temp';
     const quotedLine = formatLine(control({
       tagName: 'INPUT',
@@ -83625,9 +83692,18 @@ test('a fresh exhaustive root read drops questions a branch hid before they were
       'textbox "Full name" [ref_name] required=true value=""',
       'radio "Do you have pets?" [ref_pets] required=true aria-checked=false',
       'textbox "Pet name" [ref_pet_name] required=true value=""',
+      // filter=all keeps these in the tree; a control the user was never shown
+      // cannot receive a verified action, so it must not become a ledger row.
+      'textbox "Honeypot" [ref_trap] value="" hidden=true',
+      'textbox "Conditional follow-up" [ref_conditional] required=true value="" hidden=true',
     ], 'branching-form-initial');
     assert.equal(initial?.complete, true, `${AgentClass.name}: the initial branching form read was incomplete`);
-    assert.equal(initial?.itemCount, 3);
+    assert.equal(initial?.itemCount, 3,
+      `${AgentClass.name}: hidden controls entered the form inventory`);
+    assert.equal(initial.items.some(item => item.ref_id === 'ref_trap'), false,
+      `${AgentClass.name}: a hidden honeypot became a mandatory inventory row`);
+    assert.equal(initial.items.some(item => item.ref_id === 'ref_conditional'), false,
+      `${AgentClass.name}: a hidden required control became an unsatisfiable inventory row`);
     const nameItem = initial.items.find(item => item.ref_id === 'ref_name');
     const petsItem = initial.items.find(item => item.ref_id === 'ref_pets');
     const petNameItem = initial.items.find(item => item.ref_id === 'ref_pet_name');
@@ -84005,6 +84081,70 @@ test('draft plans carry their requested addressees through the planner gate', as
         agent._workflowDraftAuthorizedTarget(guard)?.recipients,
         [{ identity: 'alice@example.com', role: 'to' }],
         `${label}: draft verification could not resolve the requested addressee target`,
+      );
+
+      // "Save a reply in this thread" plans as active_conversation. It has to
+      // survive normalization and get pinned, or the draft binds to nobody.
+      const threadTabId = label === 'chrome' ? 9332 : 9333;
+      const threadAgent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      threadAgent.useSiteAdapters = true;
+      threadAgent._persist = () => {};
+      threadAgent._persistSubmittedTurn = async () => {};
+      threadAgent._currentUrl = async () => gmailUrl;
+      threadAgent._getTabUrlTitle = async () => ({ tabUrl: gmailUrl, tabTitle: 'Gmail' });
+      threadAgent._messageRecipientContentProbe = async () => ({
+        success: true,
+        conclusive: true,
+        composerAvailable: true,
+        strongRecipientCandidates: [{ identity: 'bob@example.com', role: 'to' }],
+      });
+      threadAgent._chatWithCostAllowance = async (_provider, _messages, _options, _costState, metadata) => {
+        if (metadata?.generationName === 'read_scope') {
+          return { content: JSON.stringify({ read_scope: 'none' }), usage: {} };
+        }
+        return {
+          content: plannerFixtureJson({
+            request_kind: 'execute',
+            site_job: 'draft-email',
+            requires_state_change: true,
+            requires_submission: false,
+            messaging: { target_kind: 'active_conversation', recipients: [] },
+            summary: 'Save a reply draft in the open thread.',
+            localized: {
+              locale: 'en',
+              summary: 'Save a reply draft in the open thread.',
+              steps: [{ id: '1', action: 'Open the reply editor and write the draft' }],
+              risks: [],
+            },
+          }),
+          usage: {},
+        };
+      };
+      const threadGate = await threadAgent._maybeRunPlannerGate(
+        threadTabId,
+        [{ role: 'system', content: 'system' }],
+        { role: 'user', content: 'Save a reply here as a draft.' },
+        () => {},
+        'act',
+        null,
+        null,
+        { tabUrl: gmailUrl, tabTitle: 'Gmail' },
+        {},
+      );
+      assert.equal(threadGate.proceed, true, `${label}: the open-thread draft plan did not proceed`);
+      assert.equal(threadGate.messaging, null,
+        `${label}: an open-thread draft plan carried send authorization`);
+      assert.deepEqual(threadGate.draftRecipients?.recipients, [{ identity: 'bob@example.com', role: 'to' }],
+        `${label}: the open-thread draft target was dropped instead of pinned`);
+      threadAgent.conversations.set(threadTabId, [
+        { role: 'system', content: 'system' },
+        { role: 'user', content: 'Save a reply here as a draft.' },
+      ]);
+      const threadGuard = threadAgent._startPlanExecutionGuard(threadTabId, 'act', threadGate);
+      assert.deepEqual(
+        threadAgent._workflowDraftAuthorizedTarget(threadGuard)?.recipients,
+        [{ identity: 'bob@example.com', role: 'to' }],
+        `${label}: an open-thread draft could not bind to its pinned conversation`,
       );
     }
   });

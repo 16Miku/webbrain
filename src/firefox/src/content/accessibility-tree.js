@@ -686,6 +686,15 @@
         if (el.required === true || ariaRequired === 'true') line += ' required=true';
         else if (ariaRequired === 'false') line += ' required=false';
       } catch {}
+      // filter=all deliberately keeps aria-hidden and invisible nodes, which
+      // pulls conditional and honeypot inputs into the tree. Mark them so a
+      // form inventory can leave out controls the user was never shown and
+      // cannot act on. Under the other filters these are already excluded.
+      try {
+        if (el.getAttribute('aria-hidden') === 'true' || el.closest('[aria-hidden="true"]') || !isVisible(el)) {
+          line += ' hidden=true';
+        }
+      } catch {}
     }
     if (inputType === 'checkbox' || inputType === 'radio') {
       line += ` checked=${el.checked ? 'true' : 'false'}`;

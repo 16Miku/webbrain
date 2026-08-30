@@ -10464,6 +10464,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return evidence.fields && typeof evidence.fields === 'object' ? evidence.fields : {};
   }
 
+  // GitHub ships a localized UI, so an English-only label match would read a
+  // page full of unresolved threads as an empty inventory and let this job's
+  // empty-inventory no-op report success without resolving anything.
+  _workflowResolveThreadControlLabel(label) {
+    let text = String(label || '');
+    try { text = text.normalize('NFKC'); } catch {}
+    text = text.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!text) return false;
+    return /^(?:resolve (?:conversation|thread)|resolver (?:la )?(?:conversaci[oó]n|conversa|conversação)|r[ée]soudre (?:la )?(?:conversation|discussion)|(?:unterhaltung|konversation|diskussion) aufl[öo]sen|risolvi (?:la )?conversazione|conversa(?:zione)? risolta|konuşmayı çöz|çözümle|解决对话|解決對話|解决此对话|会話を解決(?:する)?|スレッドを解決(?:する)?|대화 ?해결|스레드 ?해결|разрешить (?:обсуждение|беседу))$/u.test(text);
+  }
+
   _workflowAllowsEmptyCompleteInventory(siteWorkflow) {
     return siteWorkflow?.adapterName === 'github'
       && siteWorkflow?.job?.id === 'resolve-review-threads';
@@ -10522,7 +10533,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const label = (/^\s*[a-z]+\s+"([^"]+)"/i.exec(line)?.[1] || `${role} ${refMatch[1]}`)
         .replace(/\s+/g, ' ').trim().slice(0, 160);
       if (reviewThreadInventory) {
-        if (role !== 'button' || !/^resolve\s+(?:conversation|thread)$/i.test(label)) continue;
+        if (role !== 'button' || !this._workflowResolveThreadControlLabel(label)) continue;
       }
       // Native file inputs are emitted as role=button. Include only those
       // buttons whose app-owned AX line preserves type="file"; ordinary
@@ -10533,6 +10544,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const id = `workflow:${this._workflowInventoryFingerprint(identity)}`;
       if (seen.has(id)) continue;
       seen.add(id);
+      // A control the page hides cannot receive a verified user action, so
+      // inventorying it would make reconciliation impossible or push the agent
+      // to fill something the user was never shown.
+      if (/\bhidden=(?:"?)true(?:"?)/i.test(line)) continue;
       const value = parseWorkflowAxQuotedValue(line);
       const checked = /\b(?:aria-checked|checked)=(?:"?)(true|false)(?:"?)/i.exec(line)?.[1];
       const type = /\btype="([^"]+)"/i.exec(line)?.[1]?.toLowerCase() || '';
@@ -12979,6 +12994,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       plan.messaging = messagingPin.target;
+      // Same pin for a draft's addressees. It never becomes send authorization:
+      // messaging stays null whenever the plan submits nothing.
+      const draftPin = await this._pinActiveConversationMessagingTarget(tabId, plan.draft_recipients, tabUrl);
+      if (!draftPin.ok) {
+        onUpdate('warning', { message: draftPin.error });
+        return {
+          proceed: false,
+          message: draftPin.error,
+          reason: 'active_recipient_unverified',
+          requestKind: 'clarify',
+          plannerClarification: true,
+          requiresStateChange: false,
+          requiresSubmission: false,
+        };
+      }
+      plan.draft_recipients = draftPin.target;
       const siteWorkflow = await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, plan);
       if (!recheckOnly) this._armReadCompletenessFromPlan(tabId, plan);
       return {
@@ -13226,6 +13257,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       plan.messaging = messagingPin.target;
+      // Same pin for a draft's addressees. It never becomes send authorization:
+      // messaging stays null whenever the plan submits nothing.
+      const draftPin = await this._pinActiveConversationMessagingTarget(tabId, plan.draft_recipients, tabUrl);
+      if (!draftPin.ok) {
+        onUpdate('warning', { message: draftPin.error });
+        return {
+          proceed: false,
+          message: draftPin.error,
+          reason: 'active_recipient_unverified',
+          requestKind: 'clarify',
+          plannerClarification: true,
+          requiresStateChange: false,
+          requiresSubmission: false,
+        };
+      }
+      plan.draft_recipients = draftPin.target;
       const eligibleSkillIds = new Set(skillCatalog.map((skill) => skill.id));
       plan.skill_ids = (plan.skill_ids || []).filter((skillId) => eligibleSkillIds.has(skillId));
 
@@ -17836,8 +17883,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const messaging = normalizeMessageTarget(gateOutcome?.messaging);
     // Requested addressees for a plan that sends nothing. Held apart from
     // messaging so no send path can read them as authorization.
-    const draftRecipientTarget = normalizeMessageTarget(gateOutcome?.draftRecipients);
-    const draftRecipients = draftRecipientTarget?.target_kind === 'named' ? draftRecipientTarget : null;
+    const draftRecipients = normalizeMessageTarget(gateOutcome?.draftRecipients);
     const allowsAppStateToolEvidence = gateOutcome?.allowsAppStateToolEvidence === true;
     const requiredSchedulingTool = gateOutcome?.requiredSchedulingTool === 'schedule_task'
       || gateOutcome?.requiredSchedulingTool === 'schedule_resume'
