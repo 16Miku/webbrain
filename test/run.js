@@ -40181,9 +40181,16 @@ test('dedicated UI scale commands are configurable and update the shared prefere
     }
 
     const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
+    const englishLocale = (await import(pathToFileURL(path.join(localeDir, 'en.js')).href)).default;
     for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
       for (const key of [
+        'sp.ui_scale.label',
+        'sp.ui_scale.decrease',
+        'sp.ui_scale.increase',
+        'sp.ui_scale.reset',
+        'st.display.ui_scale.label',
+        'st.display.ui_scale.desc',
         'st.display.ui_scale.decrease',
         'st.display.ui_scale.increase',
         'st.display.ui_scale.reset',
@@ -40192,6 +40199,9 @@ test('dedicated UI scale commands are configurable and update the shared prefere
         'st.display.ui_scale.manage_shortcuts',
       ]) {
         assert.ok(locale[key]?.trim(), `${label}/${filename}: missing ${key}`);
+        if (filename !== 'en.js') {
+          assert.notEqual(locale[key], englishLocale[key], `${label}/${filename}: ${key} should be translated`);
+        }
       }
     }
   }
