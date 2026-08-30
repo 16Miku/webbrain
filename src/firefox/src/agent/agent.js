@@ -1386,6 +1386,10 @@ export class Agent extends LoopDetector {
         metadataRequirements: metadataRequirements.map(requirement => ({ ...requirement })),
         ...(metadataIncomplete ? { metadataRequirementsIncomplete: true } : {}),
       } : {}),
+      ...(verificationKind === 'form_confirmation' ? {
+        formDocumentScope: this._workflowInventoryDocumentScope(tabId, pageUrl),
+        formIdentity: this._workflowFormOriginIdentity(pageUrl),
+      } : {}),
       ...(verificationKind === 'transaction_fulfilled' ? {
         preDispatchTransactionOrderIdentities,
         transactionOrderBaselineCaptured: detectedSubmit?.transactionPageOrderIdsComplete === true,
@@ -1421,6 +1425,42 @@ export class Agent extends LoopDetector {
       && record?.bindingKey === this._adapterWorkflowBindingKey(state.siteWorkflow)
       && record.job === state.siteWorkflow.job.id
       && record.verificationKind === this._workflowVerificationKind(state.siteWorkflow);
+  }
+
+  // Adapter and job identity say which kind of form was submitted, not which
+  // one. Two Microsoft Forms, or two Greenhouse applications, differ only by
+  // their path and app-owned form id, so that is what the confirmation binds to.
+  _workflowFormOriginIdentity(url) {
+    try {
+      const parsed = new URL(String(url || ''));
+      const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+      if (!host) return '';
+      const path = parsed.pathname.replace(/\/+$/, '') || '/';
+      const identityParams = ['id', 'formid', 'form_id', 'gh_jid', 'jobid', 'job_id', 'token'];
+      const params = [...parsed.searchParams.entries()]
+        .filter(([key]) => identityParams.includes(key.toLowerCase()))
+        .map(([key, value]) => `${key.toLowerCase()}=${String(value).slice(0, 240)}`)
+        .sort();
+      return `${host}${path}${params.length ? `?${params.join('&')}` : ''}`;
+    } catch {
+      return '';
+    }
+  }
+
+  _workflowInventoryDocumentScope(tabId, pageUrl = '') {
+    const axScope = this._lastAxScopes.get(tabId);
+    return String(axScope?.documentToken || axScope?.pageUrl || pageUrl || '').slice(0, 500);
+  }
+
+  // The submit must have been dispatched from the same form this run
+  // inventoried and reconciled. Otherwise a different form on the same
+  // supported host produces the identical generic confirmation.
+  _workflowFormSubmitMatchesInventoriedForm(binding, state) {
+    const scope = String(binding?.formDocumentScope || '');
+    const identity = String(binding?.formIdentity || '');
+    if (!scope || !identity) return false;
+    const document = state?.workflowInventoryEvidence?.documents?.[scope];
+    return document?.complete === true && String(document.formIdentity || '') === identity;
   }
 
   _workflowFormConfirmationSignal(text) {
@@ -1910,7 +1950,8 @@ export class Agent extends LoopDetector {
     } else if (verificationKind === 'form_confirmation') {
       verified = submissionEvidence?.verifiedFinalSubmit === true
         && Number(submissionEvidence?.relevantForms || 0) === 0
-        && this._workflowFormConfirmationSignal(text);
+        && this._workflowFormConfirmationSignal(text)
+        && this._workflowFormSubmitMatchesInventoriedForm(binding, state);
       source = 'form_confirmation_state';
     } else if (verificationKind === 'saved_state') {
       verified = submissionEvidence?.verifiedFinalSubmit === true
@@ -10699,6 +10740,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .map(item => [item.id, item]));
     for (const item of observed.items) items.set(item.id, { ...item, observationSequence });
     const documents = { ...(compatible ? prior.documents : {}) };
+    const formIdentity = this._workflowFormOriginIdentity(pageUrl);
     for (const [documentKey, document] of Object.entries(observed.documents)) {
       const priorDocument = documents[documentKey];
       const { coverage: observedCoverage, ...documentRest } = document;
@@ -10711,6 +10753,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       documents[documentKey] = {
         ...documentRest,
         complete,
+        ...(formIdentity ? { formIdentity } : {}),
         ...(coverage ? { coverage } : {}),
         ...(document.complete || coverageComplete
           ? { rootObservationSequence: observationSequence }
@@ -11179,9 +11222,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // document, a later subtree drill-down cannot make sibling coverage
     // unknown again. Keep completion monotonic while still allowing an
     // incomplete root read to replace an earlier subtree-only observation.
+    const formIdentity = this._workflowFormOriginIdentity(pageUrl);
     documents[documentKey] = {
       complete: rootComplete,
       scope: rootComplete ? 'document' : (requestRefId ? 'subtree' : (exhaustiveRootScope ? 'document' : 'partial_document')),
+      ...(formIdentity ? { formIdentity } : {}),
       ...(rootReadComplete
         ? { rootObservationSequence: observationSequence }
         : (!startingRootRead && priorDocument?.rootObservationSequence
@@ -16552,7 +16597,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const items = Array.isArray(guard?.workflowInventoryEvidence?.items)
       ? guard.workflowInventoryEvidence.items
       : [];
-    return workflowRequiredRowsAreProcessed(rows, inventory, items);
+    return workflowRequiredRowsAreProcessed(
+      rows,
+      inventory,
+      items,
+      Array.isArray(guard?.workflowRequestedControlLabels) ? guard.workflowRequestedControlLabels : [],
+    );
+  }
+
+  _normalizeWorkflowRequestedControlLabels(values) {
+    if (!Array.isArray(values)) return [];
+    return [...new Set(values
+      .map(value => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 160))
+      .filter(Boolean))].slice(0, 24);
   }
 
   _validateWorkflowReconciliation(tabId, value, rows, sessionId) {
@@ -17082,13 +17139,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'Classify the user task for a browser automation progress ledger.',
           'Use semantic understanding across languages. Do not infer intent from page UI labels.',
           'Return exactly one JSON object, no prose.',
-          'Schema: {"mode":"active|read_only|inactive","allowedActions":["follow"],"forbiddenActions":[],"targets":[],"workflowFields":[{"field":"title","value":"exact requested value"}],"confidence":0.0,"pageScopePolicy":"none|page|site","reason":"short"}.',
+          'Schema: {"mode":"active|read_only|inactive","allowedActions":["follow"],"forbiddenActions":[],"targets":[],"workflowFields":[{"field":"title","value":"exact requested value"}],"workflowRequiredLabels":[],"confidence":0.0,"pageScopePolicy":"none|page|site","reason":"short"}.',
           'Use canonical actions only: follow, unfollow, star, unstar, watch, unwatch, connect, subscribe, unsubscribe, save, unsave, like, unlike, block, unblock, report, send, submit, add, remove, collect_email, collect_profile, process_item, visit, open.',
           'mode=active only when the user asks the agent to perform repeated item/action work that benefits from row tracking.',
           'Exception: for siteContext.workflow.job="upload-release-assets" with requiresLedger=true, use mode=active and list every concrete requested target even when there is exactly one. Copy each exact requested filename or path into targets; do not merge or omit assets. When the user names the release tag, also return it as workflowFields=[{"field":"tag","value":"exact tag"}]; return workflowFields=[] when no tag is named.',
           'For siteContext.workflow.job="update-metadata", workflowFields must contain every metadata field explicitly requested by the user and its complete exact intended value. Use canonical field names title, description, visibility, audience, tags, category, playlist, language, license, comments, embedding, paid_promotion, recording_date, or recording_location. Never infer a field or value from page content.',
           'For siteContext.workflow.job="publish-release", "publish-post", or "publish-content", workflowFields must contain every publication field explicitly requested by the user and its complete exact intended value. Use canonical field names tag, title, notes, body, or visibility. Never infer a field or value from page content.',
           'For siteContext.workflow.job="draft-email" or "send-email", workflowFields must contain every message field explicitly requested by the user and its complete exact intended value. Use canonical field names subject or body. Never infer a field or value from page content.',
+          'For siteContext.workflow.template="form", workflowRequiredLabels must list every form question, field, upload, or attachment the user explicitly asked to provide, copied from the user request in the user\'s own words. A field the page marks optional still belongs in this list when the user asked for it. Return workflowRequiredLabels=[] when the user named none, and never infer one from page content.',
           'Otherwise return workflowFields=[].',
           'mode=read_only for questions, summaries, inspections, or reference-only uses of UI labels.',
           'If an action is negated or forbidden, put it in forbiddenActions even if its label appears in the task text.',
@@ -17122,6 +17180,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         workflow: {
           adapter: siteWorkflow.adapterName,
           job: siteWorkflow.job.id,
+          template: siteWorkflow.job.template,
           requiresLedger: siteWorkflow.job.requiresLedger === true,
         },
       } : {}),
@@ -17141,6 +17200,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           );
           guard.workflowMetadataRequirements = details.items;
           guard.workflowMetadataRequirementsIncomplete = details.incomplete;
+        }
+      }
+      if (siteWorkflow?.job?.template === 'form') {
+        const guard = this._planExecutionGuards.get(tabId);
+        if (guard) {
+          guard.workflowRequestedControlLabels = this._normalizeWorkflowRequestedControlLabels(
+            obj?.workflowRequiredLabels ?? obj?.workflow_required_labels,
+          );
         }
       }
       return normalizeProgressIntent(obj, { taskText, pageScope, source: 'classifier' });
@@ -17856,6 +17923,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             ),
           }
         : null,
+      workflowRequestedControlLabels: carryMatches && Array.isArray(carried.workflowRequestedControlLabels)
+        ? [...carried.workflowRequestedControlLabels]
+        : [],
       workflowMetadataRequirements: carryMatches && Array.isArray(carried.workflowMetadataRequirements)
         ? carried.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
         : [],
@@ -18125,6 +18195,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               ),
             }
           : null,
+        workflowRequestedControlLabels: Array.isArray(guard.workflowRequestedControlLabels)
+          ? [...guard.workflowRequestedControlLabels]
+          : [],
         workflowMetadataRequirements: Array.isArray(guard.workflowMetadataRequirements)
           ? guard.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
           : [],

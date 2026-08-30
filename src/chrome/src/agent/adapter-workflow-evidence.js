@@ -98,12 +98,43 @@ export function parseWorkflowAxQuotedValue(line) {
   return match[1].replace(/\\([\\"])/g, '$1');
 }
 
-export function workflowRequiredRowsAreProcessed(rows = [], inventory = null, inventoryItems = []) {
+export function normalizeWorkflowControlLabel(value) {
+  let text = String(value ?? '');
+  try { text = text.normalize('NFKC'); } catch {}
+  return text.toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// A control the page marks optional can still be something the user asked for.
+// The request names it in its own words ("attach my cover letter") while the
+// page labels it ("Cover letter (optional)"), so either label containing the
+// other counts as a match.
+export function workflowControlLabelIsRequested(label, requestedLabels = []) {
+  const normalized = normalizeWorkflowControlLabel(label);
+  if (!normalized) return false;
+  return (Array.isArray(requestedLabels) ? requestedLabels : []).some((requested) => {
+    const wanted = normalizeWorkflowControlLabel(requested);
+    if (wanted.length < 3) return false;
+    return normalized === wanted
+      || normalized.includes(wanted)
+      || wanted.includes(normalized);
+  });
+}
+
+export function workflowRequiredRowsAreProcessed(
+  rows = [],
+  inventory = null,
+  inventoryItems = [],
+  requestedLabels = [],
+) {
   const requiredIds = new Set((inventory?.itemIds || []).map(id => String(id)));
   if (!requiredIds.size) return true;
   const optionalIds = new Set(
     (Array.isArray(inventoryItems) ? inventoryItems : [])
-      .filter(item => item?.required === false)
+      .filter(item => item?.required === false
+        && !workflowControlLabelIsRequested(item?.label, requestedLabels))
       .map(item => String(item.id || '')),
   );
   return (Array.isArray(rows) ? rows : []).every((row) => {

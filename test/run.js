@@ -81938,6 +81938,7 @@ test('iframe-backed application forms expose a complete trusted inventory and ex
         complete: true,
         scope: 'iframe',
         coverage: { start: 0, end: 0, matchCount: 0 },
+        formIdentity: 'acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply',
         empty: true,
         rootObservationSequence: 1,
       },
@@ -82083,6 +82084,7 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
     assert.deepEqual(classifierContext?.workflow, {
       adapter: 'github',
       job: 'upload-release-assets',
+      template: 'publish',
       requiresLedger: true,
     }, `${AgentClass.name}: the classifier did not receive the app-owned asset workflow`);
     const rows = agent._rowsForProgressSession(tabId, session.sessionId);
@@ -82698,6 +82700,7 @@ test('publication workflows classify and bind requested payload fields', async (
     assert.deepEqual(classifierContext?.workflow, {
       adapter: 'github',
       job: 'publish-release',
+      template: 'publish',
       requiresLedger: false,
     }, `${AgentClass.name}: the classifier did not receive the publish-release workflow`);
     assert.deepEqual(guard.workflowMetadataRequirements, [
@@ -83416,6 +83419,180 @@ test('paged iframe reads accumulate one complete application inventory', () => {
       `${AgentClass.name}: a value mutation left a complete paged iframe inventory`);
     assert.equal(guard.workflowInventoryEvidence.documents[documentScope]?.coverage, undefined,
       `${AgentClass.name}: pre-mutation paged coverage survived to re-complete the document`);
+  }
+});
+
+test('form confirmations bind to the form this run inventoried', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9370 + index;
+    const intendedUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=intended-form';
+    const otherUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=another-form';
+    const selected = resolveAdapterWorkflowJob(intendedUrl, 'submit-form');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Fill in and submit this form.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    guard.successfulConsequentialToolCalls = 1;
+    agent._rememberAxScope(tabId, 'intended-form-document', intendedUrl);
+    agent._lastAxScopes.set(tabId, { documentToken: 'intended-form-document', pageUrl: intendedUrl });
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: 'textbox "Full name" [ref_name] required=true value="Ada"',
+      treeRevision: 'intended-form-tree',
+      pageUrl: intendedUrl,
+    });
+    assert.equal(inventory?.complete, true);
+    assert.equal(
+      guard.workflowInventoryEvidence.documents['intended-form-document']?.formIdentity,
+      'forms.cloud.microsoft/pages/responsepage.aspx?id=intended-form',
+      `${AgentClass.name}: the inventory did not record which form it read`,
+    );
+
+    const terminal = (dispatchUrl) => {
+      const workflowBinding = agent._workflowSubmitBindingForAttempt(tabId, dispatchUrl);
+      return agent._workflowTerminalEvidenceFromDone(
+        tabId,
+        { workflowPageText: 'Your response was submitted.' },
+        dispatchUrl,
+        {
+          submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: dispatchUrl, workflowBinding },
+          verifiedFinalSubmit: true,
+          relevantForms: 0,
+        },
+        null,
+      );
+    };
+
+    assert.equal(terminal(intendedUrl)?.source, 'form_confirmation_state',
+      `${AgentClass.name}: submitting the inventoried form was not verified`);
+    // Same host, same adapter, same generic confirmation, different form.
+    assert.equal(terminal(otherUrl), null,
+      `${AgentClass.name}: a different form on the same host satisfied the workflow`);
+  }
+});
+
+test('optional controls the user asked for cannot be skipped', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9380 + index;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=optional';
+    const selected = resolveAdapterWorkflowJob(formUrl, 'submit-form');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Fill this in and attach my cover letter.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'optional-request-document', pageUrl: formUrl });
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value="Ada"',
+        'textbox "Cover letter (optional)" [ref_cover] required=false value=""',
+        'textbox "Referral code" [ref_referral] required=false value=""',
+      ].join('\n'),
+      treeRevision: 'optional-request-tree',
+    });
+    assert.equal(inventory?.complete, true);
+    const nameItem = inventory.items.find(item => item.ref_id === 'ref_name');
+    const coverItem = inventory.items.find(item => item.ref_id === 'ref_cover');
+    const referralItem = inventory.items.find(item => item.ref_id === 'ref_referral');
+    assert.equal(coverItem?.required, false,
+      `${AgentClass.name}: the page-optional cover letter was not read as optional`);
+
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'type_ax', {
+      ref_id: 'ref_name', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+    // A value mutation invalidates coverage; the fresh exhaustive read is the
+    // normal way back to a complete inventory.
+    agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value="Ada"',
+        'textbox "Cover letter (optional)" [ref_cover] required=false value=""',
+        'textbox "Referral code" [ref_referral] required=false value=""',
+      ].join('\n'),
+      treeRevision: 'optional-request-tree-filled',
+    });
+
+    const reconcile = () => agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'Name answered; optional fields skipped.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: coverItem.id, label: 'Cover letter (optional)', status: 'skipped' },
+      { id: referralItem.id, label: 'Referral code', status: 'skipped' },
+    ], `optional-request-session-${index}`);
+
+    const baseline = reconcile();
+    assert.equal(baseline.ok, true,
+      `${AgentClass.name}: genuinely optional rows could not be skipped before the request was classified (${baseline.error || ''})`);
+    guard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['cover letter']);
+    const requested = reconcile();
+    assert.equal(requested.ok, false,
+      `${AgentClass.name}: an optional control the user explicitly asked for was skipped`);
+    assert.match(requested.error || '', /required inventory rows must be processed/i);
+
+    const withCover = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'Name and requested cover letter answered; referral code skipped.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: coverItem.id, label: 'Cover letter (optional)', status: 'processed', fields: { verified: true } },
+      { id: referralItem.id, label: 'Referral code', status: 'skipped' },
+    ], `optional-request-session-b-${index}`);
+    assert.equal(withCover.ok, false,
+      `${AgentClass.name}: a processed row without per-control action evidence reconciled`);
+    agent._recordCompletionToolResult(tabId, 'type_ax', {
+      ref_id: 'ref_cover', text: 'Dear hiring manager',
+    }, { success: true, dispatched: true, verified: true });
+    agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value="Ada"',
+        'textbox "Cover letter (optional)" [ref_cover] required=false value="Dear hiring manager"',
+        'textbox "Referral code" [ref_referral] required=false value=""',
+      ].join('\n'),
+      treeRevision: 'optional-request-tree-after',
+    });
+    const answered = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'Name and requested cover letter answered; referral code skipped.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: coverItem.id, label: 'Cover letter (optional)', status: 'processed', fields: { verified: true } },
+      { id: referralItem.id, label: 'Referral code', status: 'skipped' },
+    ], `optional-request-session-c-${index}`);
+    assert.equal(answered.ok, true,
+      `${AgentClass.name}: answering the requested optional control still failed reconciliation (${answered.error || ''})`);
   }
 });
 
