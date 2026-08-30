@@ -5,6 +5,12 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Extension UI zoom',
+  'sp.ui_scale.decrease': 'Zoom extension UI out',
+  'sp.ui_scale.increase': 'Zoom extension UI in',
+  'sp.ui_scale.reset': 'Reset',
+  'st.display.ui_scale.label': 'Extension UI zoom',
+  'st.display.ui_scale.desc': 'Resize the side panel and detached chat window without changing page zoom.',
   'tool.delegate_research': 'Menyelidik dengan ChatGPT',
   'st.display.research_escalation.label': 'Eskalasi penyelidikan',
   'st.display.research_escalation.desc': 'Apabila diaktifkan, WebBrain mungkin meminta izin sebelum menghantar gesaan penyelidikan baca sahaja yang luar biasa kompleks kepada ChatGPT. Dimatikan secara lalai. Gesaan tepat hanya dikongsi selepas kelulusan jelas anda.',

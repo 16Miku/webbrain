@@ -710,6 +710,49 @@ body {
   gap: 2px;
 }
 
+.ui-scale-menu {
+  position: relative;
+}
+
+.ui-scale-trigger-label {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+}
+
+.ui-scale-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 7px);
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: max-content;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.ui-scale-popover.hidden { display: none; }
+
+#header .ui-scale-popover button {
+  min-width: 28px;
+  min-height: 28px;
+  justify-content: center;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+#header .ui-scale-popover button:disabled { opacity: 0.45; cursor: default; }
+#header .ui-scale-popover .ui-scale-reset { min-width: auto; padding-inline: 9px; }
+.ui-scale-popover output { min-width: 40px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
+
 .status-dot {
   width: 8px;
   height: 8px;

@@ -3,6 +3,12 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Extension UI zoom',
+  'sp.ui_scale.decrease': 'Zoom extension UI out',
+  'sp.ui_scale.increase': 'Zoom extension UI in',
+  'sp.ui_scale.reset': 'Reset',
+  'st.display.ui_scale.label': 'Extension UI zoom',
+  'st.display.ui_scale.desc': 'Resize the side panel and detached chat window without changing page zoom.',
   'tool.delegate_research': 'Đang nghiên cứu với ChatGPT',
   'st.display.research_escalation.label': 'Leo thang nghiên cứu',
   'st.display.research_escalation.desc': 'Khi được bật, WebBrain có thể xin phép trước khi gửi một lời nhắc nghiên cứu chỉ đọc phức tạp bất thường đến ChatGPT. Tắt theo mặc định. Lời nhắc chính xác chỉ được chia sẻ sau khi bạn chấp thuận rõ ràng.',

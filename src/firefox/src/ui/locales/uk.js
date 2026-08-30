@@ -5,6 +5,12 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Extension UI zoom',
+  'sp.ui_scale.decrease': 'Zoom extension UI out',
+  'sp.ui_scale.increase': 'Zoom extension UI in',
+  'sp.ui_scale.reset': 'Reset',
+  'st.display.ui_scale.label': 'Extension UI zoom',
+  'st.display.ui_scale.desc': 'Resize the side panel and detached chat window without changing page zoom.',
   'tool.delegate_research': 'Дослідження за допомогою ChatGPT',
   'st.display.research_escalation.label': 'Ескалація досліджень',
   'st.display.research_escalation.desc': 'Якщо функцію ввімкнено, WebBrain може попросити дозвіл перед надсиланням до ChatGPT надзвичайно складного дослідницького запиту лише для читання. За замовчуванням вимкнено. Точний запит передається лише після вашої явної згоди.',

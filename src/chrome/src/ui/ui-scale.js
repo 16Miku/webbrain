@@ -16,6 +16,13 @@ export function stepUiScale(value, direction) {
   return UI_SCALE_LEVELS[nextIndex];
 }
 
+export function nextUiScale(value, action) {
+  if (action === 'reset') return UI_SCALE_DEFAULT;
+  if (action === 'decrease') return stepUiScale(value, -1);
+  if (action === 'increase') return stepUiScale(value, 1);
+  return normalizeUiScale(value);
+}
+
 export function uiScaleLayout(value) {
   const scale = normalizeUiScale(value);
   const inverse = Number((10_000 / scale).toFixed(4));
@@ -56,9 +63,14 @@ export async function loadUiScale(storage) {
   }
 }
 
-export async function saveUiScale(storage, value) {
+export async function saveUiScale(storage, value, localStore = globalThis.localStorage) {
   const scale = normalizeUiScale(value);
   await storage?.set?.({ [UI_SCALE_STORAGE_KEY]: scale });
+  try {
+    localStore?.setItem?.(UI_SCALE_LOCAL_STORAGE_KEY, String(scale));
+  } catch {
+    // The storage API remains canonical when localStorage is unavailable.
+  }
   return scale;
 }
 

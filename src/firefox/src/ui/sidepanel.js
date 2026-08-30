@@ -9,6 +9,16 @@ import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
 import { codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables } from './markdown-render.js';
 import { applyMode, loadMode, watch } from './theme.js';
+import {
+  UI_SCALE_LEVELS,
+  UI_SCALE_STORAGE_KEY,
+  applyUiScale,
+  loadUiScale,
+  nextUiScale,
+  normalizeUiScale,
+  saveUiScale,
+  uiScaleShortcutAction,
+} from './ui-scale.js';
 import { buildRecommendedActions, shouldShowRecommendedActions } from './recommended-actions.js';
 import { createContextMenuPromptHandler } from './context-menu-prompts.js';
 import {
@@ -473,6 +483,10 @@ let selectionAskActionEl = document.getElementById('selection-ask-action');
 const historyBtn = document.getElementById('btn-history');
 const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
+const uiScaleMenu = document.getElementById('ui-scale-menu');
+const uiScaleBtn = document.getElementById('btn-ui-scale');
+const uiScalePopover = document.getElementById('ui-scale-popover');
+const uiScaleValue = document.getElementById('ui-scale-value');
 const verboseBtn = document.getElementById('btn-verbose');
 const providerSelect = document.getElementById('provider-select');
 const providerPickerBtn = document.getElementById('provider-picker-btn');
@@ -488,6 +502,44 @@ const statusDot = document.getElementById('status-dot');
 const providerPickerLabelById = new Map();
 let languagePickerTypeahead = '';
 let languagePickerTypeaheadTimer = null;
+
+let currentUiScale = normalizeUiScale(document.documentElement.dataset.uiScale);
+
+function renderSidepanelUiScale(value) {
+  currentUiScale = applyUiScale(document.documentElement, value);
+  if (uiScaleValue) uiScaleValue.textContent = `${currentUiScale}%`;
+  const min = UI_SCALE_LEVELS[0];
+  const max = UI_SCALE_LEVELS[UI_SCALE_LEVELS.length - 1];
+  uiScalePopover?.querySelector('[data-ui-scale-action="decrease"]')?.toggleAttribute('disabled', currentUiScale === min);
+  uiScalePopover?.querySelector('[data-ui-scale-action="increase"]')?.toggleAttribute('disabled', currentUiScale === max);
+}
+
+async function setSidepanelUiScale(action) {
+  const next = nextUiScale(currentUiScale, action);
+  renderSidepanelUiScale(next);
+  await saveUiScale(browser.storage.local, next);
+}
+
+loadUiScale(browser.storage.local).then(renderSidepanelUiScale);
+uiScaleBtn?.addEventListener('click', () => {
+  const willOpen = uiScalePopover?.classList.contains('hidden');
+  uiScalePopover?.classList.toggle('hidden', !willOpen);
+  uiScaleBtn.setAttribute('aria-expanded', String(willOpen));
+});
+uiScalePopover?.addEventListener('click', (event) => {
+  const action = event.target.closest('[data-ui-scale-action]')?.dataset.uiScaleAction;
+  if (action) setSidepanelUiScale(action).catch(() => {});
+});
+document.addEventListener('click', (event) => {
+  if (uiScaleMenu?.contains(event.target)) return;
+  uiScalePopover?.classList.add('hidden');
+  uiScaleBtn?.setAttribute('aria-expanded', 'false');
+});
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[UI_SCALE_STORAGE_KEY]) {
+    renderSidepanelUiScale(changes[UI_SCALE_STORAGE_KEY].newValue);
+  }
+});
 const agentActivity = document.getElementById('agent-activity');
 const activityProgressToggle = document.getElementById('activity-progress-toggle');
 const activityText = document.getElementById('activity-text');
@@ -12279,6 +12331,14 @@ async function sendToBackground(action, data = {}) {
 
 async function handleGlobalKeydown(e) {
   if (e.defaultPrevented) return;
+
+  const scaleAction = uiScaleShortcutAction(e);
+  if (scaleAction) {
+    e.preventDefault();
+    e.stopPropagation();
+    await setSidepanelUiScale(scaleAction);
+    return;
+  }
 
   // Don't steal shortcuts from other input elements (e.g. schedule form fields)
   const tag = e.target?.tagName;

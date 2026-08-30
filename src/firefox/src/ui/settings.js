@@ -5,6 +5,14 @@
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
+import {
+  UI_SCALE_LEVELS,
+  UI_SCALE_STORAGE_KEY,
+  loadUiScale,
+  nextUiScale,
+  normalizeUiScale,
+  saveUiScale,
+} from './ui-scale.js';
 import { renderSkillMarkdown } from './skill-markdown.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import {
@@ -189,6 +197,10 @@ const btnClearCaptcha = document.getElementById('btn-clear-captcha');
 const captchaTestResult = document.getElementById('test-captcha');
 const languageSelect = document.getElementById('select-language');
 const themeSelect = document.getElementById('select-theme');
+const settingsUiScaleDecrease = document.getElementById('settings-ui-scale-decrease');
+const settingsUiScaleValue = document.getElementById('settings-ui-scale-value');
+const settingsUiScaleIncrease = document.getElementById('settings-ui-scale-increase');
+const settingsUiScaleReset = document.getElementById('settings-ui-scale-reset');
 const downloadDirectoryInput = document.getElementById('input-download-directory');
 const subtitleEl = document.getElementById('subtitle');
 
@@ -224,6 +236,31 @@ if (themeSelect) {
     });
   }
 }
+
+let currentSettingsUiScale = 100;
+
+function renderSettingsUiScale(value) {
+  currentSettingsUiScale = normalizeUiScale(value);
+  if (settingsUiScaleValue) settingsUiScaleValue.textContent = `${currentSettingsUiScale}%`;
+  if (settingsUiScaleDecrease) settingsUiScaleDecrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[0];
+  if (settingsUiScaleIncrease) settingsUiScaleIncrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[UI_SCALE_LEVELS.length - 1];
+}
+
+async function changeSettingsUiScale(action) {
+  const next = nextUiScale(currentSettingsUiScale, action);
+  renderSettingsUiScale(next);
+  await saveUiScale(browser.storage.local, next);
+}
+
+loadUiScale(browser.storage.local).then(renderSettingsUiScale);
+settingsUiScaleDecrease?.addEventListener('click', () => changeSettingsUiScale('decrease'));
+settingsUiScaleIncrease?.addEventListener('click', () => changeSettingsUiScale('increase'));
+settingsUiScaleReset?.addEventListener('click', () => changeSettingsUiScale('reset'));
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[UI_SCALE_STORAGE_KEY]) {
+    renderSettingsUiScale(changes[UI_SCALE_STORAGE_KEY].newValue);
+  }
+});
 
 function renderSubtitle() {
   if (subtitleEl) subtitleEl.textContent = t('st.subtitle', { version: EXT_VERSION });

@@ -5,6 +5,12 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Extension UI zoom',
+  'sp.ui_scale.decrease': 'Zoom extension UI out',
+  'sp.ui_scale.increase': 'Zoom extension UI in',
+  'sp.ui_scale.reset': 'Reset',
+  'st.display.ui_scale.label': 'Extension UI zoom',
+  'st.display.ui_scale.desc': 'Resize the side panel and detached chat window without changing page zoom.',
   'tool.delegate_research': 'Badanie z ChatGPT',
   'st.display.research_escalation.label': 'Eskalacja badań',
   'st.display.research_escalation.desc': 'Po włączeniu WebBrain może poprosić o zgodę przed wysłaniem do ChatGPT wyjątkowo złożonego polecenia badawczego tylko do odczytu. Domyślnie wyłączone. Dokładne polecenie jest udostępniane wyłącznie po wyraźnej zgodzie użytkownika.',

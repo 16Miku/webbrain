@@ -5,6 +5,12 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Extension UI zoom',
+  'sp.ui_scale.decrease': 'Zoom extension UI out',
+  'sp.ui_scale.increase': 'Zoom extension UI in',
+  'sp.ui_scale.reset': 'Reset',
+  'st.display.ui_scale.label': 'Extension UI zoom',
+  'st.display.ui_scale.desc': 'Resize the side panel and detached chat window without changing page zoom.',
   'tool.delegate_research': 'ChatGPT로 조사 중',
   'st.display.research_escalation.label': '조사 에스컬레이션',
   'st.display.research_escalation.desc': '활성화하면 WebBrain이 매우 복잡한 읽기 전용 조사 프롬프트를 ChatGPT에 보내기 전에 허가를 요청할 수 있습니다. 기본값은 꺼짐입니다. 정확한 프롬프트는 명시적으로 승인한 후에만 공유됩니다.',

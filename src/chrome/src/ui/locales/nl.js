@@ -5,6 +5,12 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Extension UI zoom',
+  'sp.ui_scale.decrease': 'Zoom extension UI out',
+  'sp.ui_scale.increase': 'Zoom extension UI in',
+  'sp.ui_scale.reset': 'Reset',
+  'st.display.ui_scale.label': 'Extension UI zoom',
+  'st.display.ui_scale.desc': 'Resize the side panel and detached chat window without changing page zoom.',
   'tool.delegate_research': 'Onderzoeken met ChatGPT',
   'st.display.research_escalation.label': 'Onderzoeksescalatie',
   'st.display.research_escalation.desc': 'Indien ingeschakeld kan WebBrain toestemming vragen voordat een ongewoon complexe alleen-lezen onderzoeksprompt naar ChatGPT wordt gestuurd. Standaard uitgeschakeld. De exacte prompt wordt alleen gedeeld na uw uitdrukkelijke goedkeuring.',
