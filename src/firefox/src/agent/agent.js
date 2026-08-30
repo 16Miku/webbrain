@@ -10559,8 +10559,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       seen.add(id);
       // A control the page hides cannot receive a verified user action, so
       // inventorying it would make reconciliation impossible or push the agent
-      // to fill something the user was never shown.
-      if (/\bhidden=(?:"?)true(?:"?)/i.test(line)) continue;
+      // to fill something the user was never shown. File inputs are the
+      // exception: upload widgets routinely hide the real input behind a
+      // styled label, and upload_file finds and drives it on purpose, so it is
+      // the only row that can carry a requested attachment.
+      if (/\bhidden=(?:"?)true(?:"?)/i.test(line) && !/\btype="file"/i.test(line)) continue;
       const value = parseWorkflowAxQuotedValue(line);
       const checked = /\b(?:aria-checked|checked)=(?:"?)(true|false)(?:"?)/i.exec(line)?.[1];
       const type = /\btype="([^"]+)"/i.exec(line)?.[1]?.toLowerCase() || '';
@@ -10684,8 +10687,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!role || (role === 'button' && type !== 'file')) continue;
         // The broad inventory selector also matches conditional and honeypot
         // fields the page hides. They can never take a verified user action,
-        // so an exact ledger must not demand a row for them.
-        if (match?.hidden === true) continue;
+        // so an exact ledger must not demand a row for them. A hidden file
+        // input is different: upload widgets hide it behind a styled label and
+        // upload_file drives it directly.
+        if (match?.hidden === true && type !== 'file') continue;
         const label = [match?.label, match?.ariaLabel, match?.placeholder, match?.name, match?.id]
           .map(value => String(value || '').replace(/\s+/g, ' ').trim())
           .find(Boolean)?.slice(0, 160) || `${role} ${Number(match?.matchIndex) || 0}`;

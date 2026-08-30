@@ -123,19 +123,44 @@ export function normalizeWorkflowControlLabel(value) {
     .trim();
 }
 
+// Words that carry no field identity: the page's optionality decoration and
+// the verbs and pronouns a request wraps around the field it names.
+const WORKFLOW_LABEL_FILLER_WORDS = new Set([
+  'optional', 'required', 'opcional', 'obligatorio', 'facultatif', 'obligatoire',
+  'opzionale', 'obbligatorio', 'optionell', 'pflichtfeld', 'zorunlu', 'isteğe', 'bağlı',
+  'please', 'kindly', 'attach', 'attaching', 'upload', 'uploading', 'add', 'adding',
+  'provide', 'include', 'enter', 'fill', 'set', 'put', 'write', 'answer', 'select',
+  'my', 'me', 'i', 'the', 'a', 'an', 'your', 'our', 'this', 'that', 'and', 'or',
+  'to', 'in', 'on', 'at', 'of', 'for', 'with', 'as', 'is', 'be', 'field', 'question',
+  'box', 'section', 'form', 'file', 'document',
+]);
+
+export function workflowControlLabelTokens(value) {
+  return normalizeWorkflowControlLabel(value)
+    .split(' ')
+    .filter(token => token.length > 1 && !WORKFLOW_LABEL_FILLER_WORDS.has(token));
+}
+
 // A control the page marks optional can still be something the user asked for.
 // The request names it in its own words ("attach my cover letter") while the
-// page labels it ("Cover letter (optional)"), so either label containing the
-// other counts as a match.
+// page labels it ("Cover letter (optional)"), so neither string contains the
+// other. Compare the content words instead: one side's identity words being
+// fully covered by the other's is the match. Whole-string containment stays as
+// a fallback for scripts that do not separate words.
 export function workflowControlLabelIsRequested(label, requestedLabels = []) {
   const normalized = normalizeWorkflowControlLabel(label);
   if (!normalized) return false;
+  const labelTokens = workflowControlLabelTokens(label);
+  const labelSet = new Set(labelTokens);
   return (Array.isArray(requestedLabels) ? requestedLabels : []).some((requested) => {
     const wanted = normalizeWorkflowControlLabel(requested);
     if (wanted.length < 3) return false;
-    return normalized === wanted
-      || normalized.includes(wanted)
-      || wanted.includes(normalized);
+    if (normalized === wanted || normalized.includes(wanted) || wanted.includes(normalized)) return true;
+    const requestedTokens = workflowControlLabelTokens(requested);
+    if (!labelTokens.length || !requestedTokens.length) return false;
+    const requestedSet = new Set(requestedTokens);
+    return requestedTokens.every(token => labelSet.has(token))
+      || labelTokens.every(token => requestedSet.has(token));
   });
 }
 

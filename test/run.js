@@ -305,6 +305,7 @@ const {
   invalidateWorkflowInventoryCompleteness,
   parseWorkflowAxQuotedValue,
   shouldInvalidateFormInventoryAfterAction,
+  workflowControlLabelIsRequested,
   workflowRequiredRowsAreProcessed,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/adapter-workflow-evidence.js').replace(/\\/g, '/')
@@ -314,6 +315,7 @@ const {
   invalidateWorkflowInventoryCompleteness: invalidateWorkflowInventoryCompletenessFx,
   parseWorkflowAxQuotedValue: parseWorkflowAxQuotedValueFx,
   shouldInvalidateFormInventoryAfterAction: shouldInvalidateFormInventoryAfterActionFx,
+  workflowControlLabelIsRequested: workflowControlLabelIsRequestedFx,
   workflowRequiredRowsAreProcessed: workflowRequiredRowsAreProcessedFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/adapter-workflow-evidence.js').replace(/\\/g, '/')
@@ -83642,7 +83644,7 @@ test('optional controls the user asked for cannot be skipped', () => {
     const baseline = reconcile();
     assert.equal(baseline.ok, true,
       `${AgentClass.name}: genuinely optional rows could not be skipped before the request was classified (${baseline.error || ''})`);
-    guard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['cover letter']);
+    guard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['attach my cover letter']);
     const requested = reconcile();
     assert.equal(requested.ok, false,
       `${AgentClass.name}: an optional control the user explicitly asked for was skipped`);
@@ -83961,6 +83963,113 @@ test('completion page text keeps the line boundaries publication payloads match 
       false,
       `${label}: a value absent from the published page was accepted`,
     );
+  }
+});
+
+test('requested field matching survives the words a request wraps around a label', () => {
+  for (const [label, isRequested] of [
+    ['chrome', workflowControlLabelIsRequested],
+    ['firefox', workflowControlLabelIsRequestedFx],
+  ]) {
+    // The page decorates with "(optional)"; the request wraps with "attach my".
+    // Neither string contains the other, so only the content words match up.
+    assert.equal(isRequested('Cover letter (optional)', ['attach my cover letter']), true,
+      `${label}: the documented request wording did not match its page label`);
+    assert.equal(isRequested('Cover letter', ['please upload the cover letter']), true,
+      `${label}: request filler words defeated the label match`);
+    assert.equal(isRequested('Resume/CV (optional)', ['attach my resume']), true,
+      `${label}: a request naming part of the label did not match`);
+    assert.equal(isRequested('Referral code', ['attach my cover letter']), false,
+      `${label}: an unrelated optional control was treated as requested`);
+    assert.equal(isRequested('Cover letter (optional)', []), false,
+      `${label}: an optional control was requested with no request at all`);
+    assert.equal(isRequested('', ['cover letter']), false,
+      `${label}: an unlabelled control matched a request`);
+    // Scripts without word separators still rely on whole-string containment.
+    assert.equal(isRequested('カバーレター', ['カバーレター']), true,
+      `${label}: an exact non-spaced label stopped matching`);
+  }
+});
+
+test('a hidden file input stays in the inventory because upload_file drives it', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9400 + index;
+    const applyUrl = 'https://boards.greenhouse.io/acme/jobs/1';
+    const selected = agent._resolvePlannerSiteWorkflow(applyUrl, {
+      request_kind: 'execute',
+      site_job: 'submit-application',
+    });
+    assert.equal(selected?.job?.requiresLedger, true);
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Apply and attach my resume.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'greenhouse-apply-document', pageUrl: applyUrl });
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'textbox "Full name" [ref_name] required=true value=""',
+        // Upload widgets style a visible label over a hidden file input.
+        'button "Resume" [ref_resume] type="file" dom_id="resume" field_name="resume" hidden=true',
+        'textbox "Conditional follow-up" [ref_conditional] required=true value="" hidden=true',
+      ].join('\n'),
+      treeRevision: 'greenhouse-apply-tree',
+    });
+    assert.equal(inventory?.complete, true);
+    assert.equal(inventory.items.some(item => item.ref_id === 'ref_resume'), true,
+      `${AgentClass.name}: the hidden file input a requested upload targets was dropped`);
+    assert.equal(inventory.items.some(item => item.ref_id === 'ref_conditional'), false,
+      `${AgentClass.name}: an ordinary hidden control was kept in the inventory`);
+    assert.equal(inventory?.itemCount, 2);
+
+    const iframeTabId = 9402 + index;
+    agent.conversations.set(iframeTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Apply and attach my resume.' },
+    ]);
+    agent._startPlanExecutionGuard(iframeTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    const inventorySelector = [
+      'input', 'textarea', 'select', '[contenteditable="true"]',
+      '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="searchbox"]', '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+    ].join(',');
+    const iframeInventory = agent._rememberWorkflowInventoryObservation(iframeTabId, 'iframe_read', {
+      selector: inventorySelector,
+    }, {
+      success: true,
+      pageUrl: applyUrl,
+      frames: [{
+        frameId: 7,
+        ok: true,
+        url: 'https://boards.greenhouse.io/embed/job_app?token=1',
+        matchCount: 3,
+        offset: 0,
+        truncated: false,
+        matches: [
+          { tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: '', matchIndex: 0, required: true },
+          { tag: 'input', type: 'file', id: 'resume', name: 'resume', label: 'Resume', value: '', matchIndex: 1, hidden: true },
+          { tag: 'input', type: 'text', id: 'trap', name: 'trap', label: 'Leave blank', value: '', matchIndex: 2, hidden: true },
+        ],
+      }],
+    });
+    assert.equal(iframeInventory?.itemCount, 2,
+      `${AgentClass.name}: the iframe inventory lost the hidden file input or kept the honeypot`);
+    assert.deepEqual(iframeInventory.items.map(item => item.label).sort(), ['Email', 'Resume']);
   }
 });
 
