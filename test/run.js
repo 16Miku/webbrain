@@ -83180,16 +83180,30 @@ test('paged iframe reads accumulate one complete application inventory', () => {
       '[role="searchbox"]', '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
     ].join(',');
     const documentScope = `iframe:7:${frameUrl}`;
-    const radios = (start, end) => {
+    const shortFrameUrl = 'https://acme.wd1.myworkdayjobs.com/application/consent';
+    const shortScope = `iframe:9:${shortFrameUrl}`;
+    const rows = (prefix, start, end) => {
       const matches = [];
       for (let i = start; i < end; i += 1) {
         matches.push({
-          tag: 'input', type: 'radio', id: `screening-${i}`, name: `screening-${i}`,
-          label: `Screening question ${i}`, value: '', matchIndex: i,
+          tag: 'input', type: 'radio', id: `${prefix}-${i}`, name: `${prefix}-${i}`,
+          label: `${prefix} question ${i}`, value: '', matchIndex: i,
         });
       }
       return matches;
     };
+    // One read spans both frames. The long frame needs continuation pages the
+    // short frame has already exhausted.
+    const frame = (frameId, url, prefix, offset, size, matchCount) => ({
+      frameId,
+      ok: true,
+      url,
+      matchCount,
+      offset,
+      truncated: offset + size < matchCount,
+      ...(offset + size < matchCount ? { nextOffset: offset + size } : {}),
+      matches: rows(prefix, Math.min(offset, matchCount), Math.min(offset + size, matchCount)),
+    });
     const readPage = (offset, size, matchCount = 120) => agent._rememberWorkflowInventoryObservation(
       tabId,
       'iframe_read',
@@ -83197,24 +83211,20 @@ test('paged iframe reads accumulate one complete application inventory', () => {
       {
         success: true,
         pageUrl,
-        frames: [{
-          frameId: 7,
-          ok: true,
-          url: frameUrl,
-          matchCount,
-          offset,
-          truncated: offset + size < matchCount,
-          ...(offset + size < matchCount ? { nextOffset: offset + size } : {}),
-          matches: radios(offset, Math.min(offset + size, matchCount)),
-        }],
+        frames: [
+          frame(7, frameUrl, 'screening', offset, size, matchCount),
+          frame(9, shortFrameUrl, 'consent', offset, size, 10),
+        ],
       },
     );
 
     const firstPage = readPage(0, 50);
     assert.equal(firstPage?.complete, false,
       `${AgentClass.name}: a truncated first page claimed complete iframe coverage`);
-    assert.equal(firstPage?.itemCount, 50,
-      `${AgentClass.name}: the first iframe page did not inventory its own matches`);
+    assert.equal(firstPage?.itemCount, 60,
+      `${AgentClass.name}: the first iframe page did not inventory both frames' matches`);
+    assert.equal(guard.workflowInventoryEvidence.documents[shortScope]?.complete, true,
+      `${AgentClass.name}: a frame shorter than one page was not complete on its first read`);
 
     const skipAhead = readPage(60, 50);
     assert.equal(skipAhead?.complete, false,
@@ -83230,13 +83240,23 @@ test('paged iframe reads accumulate one complete application inventory', () => {
     const finalPage = readPage(100, 50);
     assert.equal(finalPage?.complete, true,
       `${AgentClass.name}: paged iframe reads could not accumulate a complete inventory`);
-    assert.equal(finalPage?.itemCount, 120,
+    assert.equal(finalPage?.itemCount, 130,
       `${AgentClass.name}: a continuation page truncated the accumulated iframe inventory`);
+    assert.equal(
+      finalPage.items.filter(item => item.documentScope === shortScope).length,
+      10,
+      `${AgentClass.name}: continuation offsets past a short frame erased its inventoried rows`,
+    );
+    assert.deepEqual(
+      guard.workflowInventoryEvidence.documents[shortScope]?.coverage,
+      { start: 0, end: 10, matchCount: 10 },
+      `${AgentClass.name}: a short frame lost its coverage to an out-of-range continuation page`,
+    );
     assert.equal(agent._trustedWorkflowInventory(tabId, [], guard)?.source, 'iframe_read',
       `${AgentClass.name}: an accumulated paged iframe inventory was not trusted`);
 
     const restarted = readPage(0, 50);
-    assert.equal(restarted?.itemCount, 50,
+    assert.equal(restarted?.itemCount, 60,
       `${AgentClass.name}: a restart at offset 0 kept rows from the superseded read`);
     assert.deepEqual(
       guard.workflowInventoryEvidence.documents[documentScope]?.coverage,
@@ -84361,6 +84381,62 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
       'draft_recipients_fields_and_saved_draft_state',
       `${AgentClass.name}: a page-level saved-draft status was ignored`,
     );
+
+    // "Save this draft" names no literal subject or body, so the classifier
+    // correctly returns no field requirements. The draft must then bind to
+    // what this run actually wrote into the composer.
+    const openTabId = 9220 + index;
+    agent.conversations.set(openTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Save this as a draft to alice@example.com.' },
+    ]);
+    const openGuard = agent._startPlanExecutionGuard(openTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      messaging: { target_kind: 'named', recipients: ['alice@example.com'] },
+      siteWorkflow: draftWorkflow,
+    });
+    openGuard.successfulConsequentialToolCalls = 1;
+    openGuard.evidenceTaskKey = openGuard.taskKey;
+    assert.deepEqual(openGuard.workflowMetadataRequirements, [],
+      `${AgentClass.name}: the open draft request invented field requirements`);
+    const openTerminal = (probe) => agent._workflowTerminalEvidenceFromDone(
+      openTabId, {}, gmailUrl, draftEvidence, probe,
+    );
+    assert.equal(openTerminal(draftProbe), null,
+      `${AgentClass.name}: an empty field requirement set vacuously accepted the composer contents`);
+
+    agent._beginCompletionInvariant(openTabId);
+    agent._recordCompletionToolResult(openTabId, 'set_field', {
+      ref_id: 'ref_body', text: 'Quarterly update', clear: true,
+    }, {
+      success: true,
+      verified: true,
+      ref_id: 'ref_body',
+      fieldMeta: { tag: 'div', contentEditable: true, name: null },
+    });
+    assert.equal(agent._workflowComposerFieldBindings(openTabId, openGuard).body?.value, 'Quarterly update',
+      `${AgentClass.name}: a full composer body write was not bound to the draft`);
+    assert.equal(openTerminal({ ...draftProbe, messageBody: 'Quarterly update and one more line' }), null,
+      `${AgentClass.name}: a body that drifted from the authorized write passed as the draft`);
+    assert.equal(openTerminal({ ...draftProbe, messageBody: 'Quarterly updat' }), null,
+      `${AgentClass.name}: a truncated body passed as the authorized draft`);
+    assert.equal(openTerminal(draftProbe)?.source, 'draft_recipients_fields_and_saved_draft_state',
+      `${AgentClass.name}: the exact authorized body could not satisfy the draft contract`);
+
+    agent._recordCompletionToolResult(openTabId, 'type_ax', {
+      ref_id: 'ref_body', text: ' PS: sent from my phone',
+    }, {
+      success: true,
+      verified: true,
+      ref_id: 'ref_body',
+      fieldMeta: { tag: 'div', contentEditable: true, name: null },
+    });
+    assert.equal(agent._workflowComposerFieldBindings(openTabId, openGuard).body?.unbound, true,
+      `${AgentClass.name}: an appending write claimed to authorize the whole body`);
+    assert.equal(openTerminal({ ...draftProbe, messageBody: 'Quarterly update PS: sent from my phone' }), null,
+      `${AgentClass.name}: an append this run cannot reconstruct still closed the draft contract`);
   }
 });
 

@@ -1078,6 +1078,16 @@ export class Agent extends LoopDetector {
     if (workflowControlEvidence && result && typeof result === 'object') {
       result.workflowControlEvidence = workflowControlEvidence;
     }
+    const workflowComposerFieldEvidence = this._rememberWorkflowComposerFieldEvidence(
+      tabId,
+      name,
+      args,
+      result,
+      next,
+    );
+    if (workflowComposerFieldEvidence && result && typeof result === 'object') {
+      result.workflowComposerFieldEvidence = workflowComposerFieldEvidence;
+    }
     const workflowReleaseAssetEvidence = this._rememberWorkflowReleaseAssetActionEvidence(
       tabId,
       name,
@@ -1758,15 +1768,30 @@ export class Agent extends LoopDetector {
       const recipientsVerified = messagingTarget?.target_kind === 'named'
         ? messageTargetMatchesObservedIdentities(messagingTarget, observedRecipients)
         : observedRecipients.length > 0;
+      const requirementByField = new Map(metadataDetails.items.map(item => [item.field, item]));
+      const authoredFields = this._workflowComposerFieldBindings(tabId, state);
+      // Every field the request named or this run wrote must read back exactly.
+      // An empty set means nothing authorizes the draft's contents, so it can
+      // never stand in for the requested draft.
+      const boundFields = new Set([...requirementByField.keys(), ...Object.keys(authoredFields)]);
       const fieldsVerified = state.workflowMetadataRequirementsIncomplete !== true
         && metadataDetails.incomplete !== true
-        && metadataDetails.items.every((requirement) => {
-          const want = this._workflowMetadataValue(requirement.value);
-          if (requirement.field === 'subject') {
-            return messageProbe?.composerSubjectAvailable === true && observedSubject === want;
+        && boundFields.size > 0
+        && [...boundFields].every((field) => {
+          // Recipients carry their own exact check against the authorized set.
+          if (field === 'recipients') return recipientsVerified;
+          if (field !== 'subject' && field !== 'body') return false;
+          if (field === 'subject' && messageProbe?.composerSubjectAvailable !== true) return false;
+          const observed = field === 'subject' ? observedSubject : observedBody;
+          const requirement = requirementByField.get(field);
+          if (requirement) {
+            return observed === (field === 'body'
+              ? this._workflowMessageBody(requirement.value)
+              : this._workflowMetadataValue(requirement.value));
           }
-          if (requirement.field === 'body') return observedBody === this._workflowMessageBody(want);
-          return false;
+          const authored = authoredFields[field];
+          if (!authored || authored.unbound === true) return false;
+          return observed === authored.value;
         });
       verified = messageProbe?.success === true
         && messageProbe?.conclusive === true
@@ -10277,6 +10302,59 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && this._workflowVerificationKind(siteWorkflow) === 'message_draft';
   }
 
+  // Compose fields are identifiable without reading localized labels: Gmail's
+  // subject keeps name="subjectbox", its recipient rows keep name="to"/"cc"/
+  // "bcc", and the body is the contenteditable.
+  _workflowComposerFieldKey(fieldMeta) {
+    if (!fieldMeta || typeof fieldMeta !== 'object') return '';
+    const name = String(fieldMeta.name || '').trim().toLowerCase();
+    if (name === 'subjectbox') return 'subject';
+    if (name === 'to' || name === 'cc' || name === 'bcc') return 'recipients';
+    if (fieldMeta.contentEditable === true) return 'body';
+    return '';
+  }
+
+  // Most draft requests name no literal subject or body, so the classifier
+  // correctly returns no field requirements. Record what this run wrote into
+  // the composer instead, so the terminal readback is bound to a value the run
+  // authorized rather than to whatever text happens to be sitting there.
+  _rememberWorkflowComposerFieldEvidence(tabId, name, args, result, completionState) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled
+        || guard.siteWorkflow?.job?.template !== 'message'
+        || (name !== 'set_field' && name !== 'type_ax')
+        || result?.verified !== true
+        || !this._isSuccessfulExecutionEvidence(result)) return null;
+    const field = this._workflowComposerFieldKey(result?.fieldMeta);
+    if (!field) return null;
+    const taskKey = this._progressTaskKeyHash(tabId);
+    const prior = guard.workflowComposerFieldEvidence?.taskKey === taskKey
+      ? guard.workflowComposerFieldEvidence.fields
+      : {};
+    const fields = { ...prior };
+    const observationSequence = Number(completionState?.lastAction?.sequence || 0);
+    // An append leaves the run unable to reconstruct the whole field, so the
+    // binding is recorded as unverifiable rather than as a value it never saw.
+    const replacesValue = name === 'set_field' ? args?.clear !== false : args?.clear === true;
+    fields[field] = replacesValue
+      ? {
+          field,
+          value: field === 'body'
+            ? this._workflowMessageBody(args?.text)
+            : this._workflowMetadataValue(args?.text),
+          observationSequence,
+        }
+      : { field, unbound: true, observationSequence };
+    guard.workflowComposerFieldEvidence = { taskKey, fields };
+    return { field, bound: replacesValue };
+  }
+
+  _workflowComposerFieldBindings(tabId, guard) {
+    const evidence = guard?.workflowComposerFieldEvidence;
+    if (!evidence || evidence.taskKey !== this._progressTaskKeyHash(tabId)) return {};
+    return evidence.fields && typeof evidence.fields === 'object' ? evidence.fields : {};
+  }
+
   _workflowAllowsEmptyCompleteInventory(siteWorkflow) {
     return siteWorkflow?.adapterName === 'github'
       && siteWorkflow?.job?.id === 'resolve-review-threads';
@@ -10522,10 +10600,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const prior = guard.workflowInventoryEvidence;
     const compatible = prior?.bindingKey === bindingKey && prior?.taskKey === taskKey;
     const observationSequence = Number(this.completionInvariants.get(tabId)?.sequence || 0) + 1;
-    // Only a page that restarts at offset 0 replaces a scope's prior items.
-    // A continuation page extends that inventory instead of truncating it.
+    // Only a page that read a scope from index 0 replaces its prior items.
+    // A continuation page extends that inventory instead of truncating it, and
+    // a scope with no readable coverage at all observed nothing: one read can
+    // span frames of different lengths, so an offset past a short frame's
+    // matchCount must not erase the rows an earlier page collected from it.
     const restartedScopes = new Set(Object.entries(observed.documents)
-      .filter(([, document]) => Number(document?.coverage?.start || 0) === 0)
+      .filter(([, document]) => document?.coverage?.start === 0)
       .map(([documentKey]) => documentKey));
     const priorItems = compatible && Array.isArray(prior.items) ? prior.items : [];
     const retainedItems = observed.selectorComplete
@@ -17629,6 +17710,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? Object.fromEntries(Object.entries(carried.workflowControlActionEvidence)
             .map(([itemId, proof]) => [itemId, { ...proof }]))
         : {},
+      workflowComposerFieldEvidence: carryMatches && carried.workflowComposerFieldEvidence
+        ? {
+            ...carried.workflowComposerFieldEvidence,
+            fields: Object.fromEntries(
+              Object.entries(carried.workflowComposerFieldEvidence.fields || {})
+                .map(([field, binding]) => [field, { ...binding }]),
+            ),
+          }
+        : null,
       workflowMetadataRequirements: carryMatches && Array.isArray(carried.workflowMetadataRequirements)
         ? carried.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
         : [],
@@ -17847,6 +17937,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || !!guard.workflowTerminalEvidence
       || !!guard.workflowLedgerReconciliation
       || !!guard.workflowInventoryEvidence
+      || !!guard.workflowComposerFieldEvidence
       || Object.keys(guard.workflowControlActionEvidence || {}).length > 0
     )) {
       const submit = this._completionSubmitStates.get(tabId);
@@ -17885,6 +17976,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           Object.entries(guard.workflowControlActionEvidence || {})
             .map(([itemId, proof]) => [itemId, { ...proof }]),
         ),
+        workflowComposerFieldEvidence: guard.workflowComposerFieldEvidence
+          ? {
+              ...guard.workflowComposerFieldEvidence,
+              fields: Object.fromEntries(
+                Object.entries(guard.workflowComposerFieldEvidence.fields || {})
+                  .map(([field, binding]) => [field, { ...binding }]),
+              ),
+            }
+          : null,
         workflowMetadataRequirements: Array.isArray(guard.workflowMetadataRequirements)
           ? guard.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
           : [],
