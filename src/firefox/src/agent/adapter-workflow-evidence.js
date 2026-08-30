@@ -76,13 +76,19 @@ export function shouldInvalidateFormInventoryAfterAction(name) {
 
 export function invalidateWorkflowInventoryCompleteness(evidence, currentDocumentScope = '') {
   if (!evidence || typeof evidence !== 'object') return evidence;
-  const scope = String(currentDocumentScope || '');
+  // One action can reshape more than one document: an iframe write without a
+  // resolvable frame identity may have changed any embedded document.
+  const scopes = new Set(
+    (Array.isArray(currentDocumentScope) ? currentDocumentScope : [currentDocumentScope])
+      .map(value => String(value || ''))
+      .filter(Boolean),
+  );
   const documents = {};
   for (const [key, document] of Object.entries(evidence.documents || {})) {
-    // A structural action only reshapes the document it ran in. Earlier wizard
+    // A structural action only reshapes the documents it ran in. Earlier wizard
     // steps are finished and usually unreachable, so invalidating them would
     // strand the cumulative inventory on a coverage nobody can restore.
-    if (scope && key !== scope) {
+    if (scopes.size && !scopes.has(key)) {
       documents[key] = { ...(document || {}) };
       continue;
     }

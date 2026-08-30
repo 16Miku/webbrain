@@ -81830,7 +81830,27 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     readGuard.successfulTaskToolCalls = 1;
     readGuard.evidenceTaskKey = readGuard.taskKey;
     assert.equal(readGuard.requiresStateChange, false);
-    assert.equal(agent._executionEvidenceSatisfied(readGuard), true);
+    // A collection job's contract is its reconciled rows, so one page read is
+    // not enough even though the job needs neither submission nor a ledger.
+    assert.equal(readGuard.workflowRequiredJobEvidence, 'reconciled_collection',
+      `${AgentClass.name}: a collection job declared no terminal evidence`);
+    assert.equal(agent._executionEvidenceSatisfied(readGuard), false,
+      `${AgentClass.name}: one page read stood in for a reconciled collection`);
+    const partialCollection = agent._progressUpdate(tabId + 10, {
+      items: [
+        { id: 'product-1', label: 'Product one', status: 'processed' },
+        { id: 'product-2', label: 'Product two', status: 'pending' },
+      ],
+    });
+    assert.equal(partialCollection.success, true, partialCollection.error || '');
+    assert.equal(agent._executionEvidenceSatisfied(readGuard), false,
+      `${AgentClass.name}: an unfinished row satisfied the collection contract`);
+    const collected = agent._progressUpdate(tabId + 10, {
+      items: [{ id: 'product-2', label: 'Product two', status: 'processed' }],
+    });
+    assert.equal(collected.success, true, collected.error || '');
+    assert.equal(agent._executionEvidenceSatisfied(readGuard), true,
+      `${AgentClass.name}: a reconciled collection could not satisfy its own job`);
   }
 });
 
@@ -83988,6 +84008,155 @@ test('requested field matching survives the words a request wraps around a label
     // Scripts without word separators still rely on whole-string containment.
     assert.equal(isRequested('カバーレター', ['カバーレター']), true,
       `${label}: an exact non-spaced label stopped matching`);
+  }
+});
+
+test('an iframe write invalidates the iframe document it changed', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9430 + index;
+    const pageUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
+    const frameUrl = 'https://acme.wd1.myworkdayjobs.com/application/frame';
+    const otherFrameUrl = 'https://acme.wd1.myworkdayjobs.com/application/consent';
+    const selected = agent._resolvePlannerSiteWorkflow(pageUrl, {
+      request_kind: 'execute',
+      site_job: 'prepare-application',
+    });
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Prepare every application field for review.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflow: selected,
+    });
+    // The outer page was read too, so _lastAxScopes holds an outer token that
+    // matches no iframe document key.
+    agent._lastAxScopes.set(tabId, { documentToken: 'apply-outer-document', pageUrl });
+    const inventorySelector = [
+      'input', 'textarea', 'select', '[contenteditable="true"]',
+      '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="searchbox"]', '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+    ].join(',');
+    const frame = (frameId, url, name) => ({
+      frameId,
+      ok: true,
+      url,
+      matchCount: 1,
+      offset: 0,
+      truncated: false,
+      matches: [{ tag: 'input', type: 'text', id: name, name, label: name, value: '', matchIndex: 0, required: true }],
+    });
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
+      selector: inventorySelector,
+    }, {
+      success: true,
+      pageUrl,
+      frames: [frame(7, frameUrl, 'employer'), frame(9, otherFrameUrl, 'consent')],
+    });
+    assert.equal(inventory?.complete, true);
+    const documents = () => guard.workflowInventoryEvidence.documents;
+
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'iframe_type', {
+      urlFilter: 'acme.wd1.myworkdayjobs.com', selector: inventorySelector, matchIndex: 0, text: 'Acme',
+    }, { success: true, dispatched: true, verified: true, frameId: 7 });
+    assert.equal(documents()[`iframe:7:${frameUrl}`]?.complete, false,
+      `${AgentClass.name}: an iframe write left its own frame marked complete`);
+    assert.equal(documents()[`iframe:9:${otherFrameUrl}`]?.complete, true,
+      `${AgentClass.name}: an iframe write invalidated an unrelated frame`);
+    assert.equal(guard.workflowInventoryEvidence.complete, false,
+      `${AgentClass.name}: the inventory stayed reconcilable after an iframe write`);
+
+    // Without a resolvable frame identity every embedded document may have
+    // changed, so none of them may stay complete.
+    agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
+      selector: inventorySelector,
+    }, {
+      success: true,
+      pageUrl,
+      frames: [frame(7, frameUrl, 'employer'), frame(9, otherFrameUrl, 'consent')],
+    });
+    assert.equal(guard.workflowInventoryEvidence.complete, true);
+    agent._recordCompletionToolResult(tabId, 'iframe_click', {
+      urlFilter: 'acme.wd1.myworkdayjobs.com', selector: '#next',
+    }, { success: true, dispatched: true });
+    assert.equal(documents()[`iframe:7:${frameUrl}`]?.complete, false,
+      `${AgentClass.name}: an unidentified iframe action left a frame complete`);
+    assert.equal(documents()[`iframe:9:${otherFrameUrl}`]?.complete, false,
+      `${AgentClass.name}: an unidentified iframe action left a sibling frame complete`);
+  }
+});
+
+test('every declared non-submit job carries its own evidence contract', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const cases = [
+      ['https://www.youtube.com/watch?v=abcdefghijk', 'read-transcript', 'transcript_segments'],
+      ['https://www.producthunt.com/', 'collect-ranked-products', 'reconciled_collection'],
+      ['https://github.com/esokullu/webbrain/pull/320', 'review-pull-request', 'scoped_content_read'],
+    ];
+    for (const [url, jobId, expectedKind] of cases) {
+      const selected = agent._resolvePlannerSiteWorkflow(url, { request_kind: 'execute', site_job: jobId });
+      assert.ok(selected?.job, `${AgentClass.name}: ${jobId} did not resolve on ${url}`);
+      assert.equal(agent._workflowJobRequiredEvidenceKind(selected), expectedKind,
+        `${AgentClass.name}: ${jobId} fell through without an evidence contract`);
+    }
+
+    // A YouTube transcript answer needs the transcript, not the description.
+    const videoUrl = 'https://www.youtube.com/watch?v=abcdefghijk';
+    const videoTabId = 9440 + index;
+    agent.conversations.set(videoTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'What does this video say about pricing?' },
+    ]);
+    const videoGuard = agent._startPlanExecutionGuard(videoTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      siteWorkflow: agent._resolvePlannerSiteWorkflow(videoUrl, {
+        request_kind: 'execute', site_job: 'read-transcript',
+      }),
+    });
+    videoGuard.evidenceTaskKey = videoGuard.taskKey;
+    agent._markPlanExecutionToolCall(videoTabId, 'read_page', { success: true, url: videoUrl });
+    assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
+      `${AgentClass.name}: a page read stood in for the video transcript`);
+    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', { success: true, segments: 12 });
+    assert.equal(agent._executionEvidenceSatisfied(videoGuard), true,
+      `${AgentClass.name}: the transcript tool could not satisfy its own job`);
+
+    // A reading job's evidence is a read of the resource the job selected.
+    const prUrl = 'https://github.com/esokullu/webbrain/pull/320';
+    const prTabId = 9444 + index;
+    agent.conversations.set(prTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Review this pull request.' },
+    ]);
+    const prGuard = agent._startPlanExecutionGuard(prTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      siteWorkflowUrl: prUrl,
+      siteWorkflow: agent._resolvePlannerSiteWorkflow(prUrl, {
+        request_kind: 'execute', site_job: 'review-pull-request',
+      }),
+    });
+    assert.equal(prGuard.workflowRequiredJobEvidence, 'scoped_content_read',
+      `${AgentClass.name}: the review job declared no evidence contract`);
+    prGuard.evidenceTaskKey = prGuard.taskKey;
+    agent._markPlanExecutionToolCall(prTabId, 'read_page', {
+      success: true, url: 'https://github.com/search?q=webbrain',
+    });
+    assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
+      `${AgentClass.name}: a read of an unrelated page satisfied the review job`);
+    agent._markPlanExecutionToolCall(prTabId, 'read_page', { success: true, url: prUrl });
+    assert.equal(agent._executionEvidenceSatisfied(prGuard), true,
+      `${AgentClass.name}: reading the selected pull request did not satisfy its job`);
   }
 });
 

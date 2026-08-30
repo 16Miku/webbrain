@@ -12615,15 +12615,81 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // that a conversation was read to its terminal page.
   _workflowJobRequiredEvidenceKind(siteWorkflow) {
     const job = siteWorkflow?.job;
-    if (!job?.id || job.requiresSubmission === true) return '';
+    if (!job?.id || job.requiresSubmission === true || job.requiresLedger === true) return '';
+    // Jobs with a deterministic tool behind their contract name it directly.
     if (job.id === 'count-results') return 'deterministic_count';
+    if (job.id === 'read-transcript') return 'transcript_segments';
     if (job.id === 'read-complete-thread') return 'terminal_read_coverage';
+    // A collection job's contract is its reconciled rows. A reading job's is
+    // weaker: the run must at least have read the resource the job selected,
+    // which rules out answering from a listing, a title, or another tab.
+    if (job.template === 'collection') return 'reconciled_collection';
+    if (job.template === 'reading') return 'scoped_content_read';
     return '';
+  }
+
+  // A reading job's evidence is the read itself, so it only counts while the
+  // observed page still resolves to the very job the planner selected.
+  _workflowObservationStaysInJobScope(tabId, state, result) {
+    const scopeIdentity = String(state?.workflowJobScopeIdentity || '');
+    if (!scopeIdentity) return false;
+    const url = [
+      result?.pageUrl,
+      result?.currentUrl,
+      result?.url,
+      result?.refScopeUrl,
+      this._lastAxScopes.get(tabId)?.pageUrl,
+    ].find(value => typeof value === 'string' && value.trim()) || '';
+    if (!url) return false;
+    // An adapter matches a whole host, so resolving the job is not enough: a
+    // search page on github.com resolves the same job as the pull request.
+    // The resource identity is what separates them.
+    return this._workflowFormOriginIdentity(url) === scopeIdentity
+      && this._sameAdapterWorkflowBinding(
+        state.siteWorkflow,
+        resolveAdapterWorkflowJob(url, state.siteWorkflow.job.id),
+      );
+  }
+
+  // A collection job is done when its rows are: at least one, all terminal,
+  // none failed, and matching the count the planner expected when it set one.
+  _refreshWorkflowCollectionEvidence(tabId, guard, rows) {
+    if (guard?.workflowRequiredJobEvidence !== 'reconciled_collection') return;
+    const expected = Number(this.progressExpectedItems.get(tabId)?.count);
+    const terminal = Array.isArray(rows) ? rows : [];
+    guard.workflowJobEvidenceSatisfied = terminal.length > 0
+      && terminal.every(row => isTerminalLedgerStatus(row?.status)
+        && String(row?.status || '').toLowerCase() !== 'failed')
+      && (!Number.isInteger(expected) || terminal.length === expected);
+  }
+
+  _workflowJobEvidenceInstruction(state) {
+    switch (state?.workflowRequiredJobEvidence) {
+      case 'deterministic_count':
+        return 'An exact count needs the deterministic count tool run against the verified query or label.';
+      case 'transcript_segments':
+        return 'A transcript-grounded answer needs the transcript tool, not the title or description.';
+      case 'terminal_read_coverage':
+        return 'A complete conversation needs trusted coverage through its terminal page with every message expanded.';
+      case 'reconciled_collection':
+        return 'A collected set needs one progress_update row per requested item, every row processed or skipped, and none failed.';
+      case 'scoped_content_read':
+        return 'A grounded answer needs a successful read of the exact resource this job selected, not a listing or another tab.';
+      default:
+        return 'Produce the terminal evidence this job declares.';
+    }
   }
 
   _armWorkflowJobRequiredEvidence(tabId, guard) {
     const kind = guard?.enabled ? this._workflowJobRequiredEvidenceKind(guard.siteWorkflow) : '';
     if (!kind) return;
+    if (kind === 'scoped_content_read') {
+      // Without the URL the job was selected on there is nothing to scope the
+      // read against. Do not impose a requirement that cannot be checked.
+      const identity = this._workflowFormOriginIdentity(guard.siteWorkflowUrl);
+      if (!identity) return;
+      guard.workflowJobScopeIdentity = identity;
+    }
     if (kind === 'terminal_read_coverage') {
       // Only require terminal coverage where the run can actually track it.
       const armed = this._armReadCompletenessFromPlan(tabId, {
@@ -13585,6 +13651,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return false;
   }
 
+  // An iframe write never happens in the outer document, and iframe inventory
+  // documents are keyed by frame. Passing the outer AX token would preserve
+  // every one of them as complete, so the changed frame is resolved from the
+  // action's own frame id, and an unresolvable one invalidates all frames.
+  _workflowMutatedDocumentScopes(tabId, name, result, guard) {
+    const documents = guard?.workflowInventoryEvidence?.documents || {};
+    if (!String(name || '').startsWith('iframe_')) {
+      return [this._workflowInventoryDocumentScope(tabId)];
+    }
+    const keys = Object.keys(documents);
+    const frameId = Number(result?.frameId);
+    if (Number.isInteger(frameId)) {
+      const scoped = keys.filter(key => key.startsWith(`iframe:${frameId}:`));
+      if (scoped.length) return scoped;
+    }
+    const iframeScopes = keys.filter(key => key.startsWith('iframe:'));
+    return iframeScopes.length ? iframeScopes : [this._workflowInventoryDocumentScope(tabId)];
+  }
+
   _invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result, args = {}, detectedSubmit = null) {
     const guard = this._planExecutionGuards.get(tabId);
     const siteWorkflow = guard?.siteWorkflow;
@@ -13601,7 +13686,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     guard.workflowInventoryEvidence = invalidateWorkflowInventoryCompleteness(
       guard.workflowInventoryEvidence,
-      this._workflowInventoryDocumentScope(tabId),
+      this._workflowMutatedDocumentScopes(tabId, name, result, guard),
     );
   }
 
@@ -14494,6 +14579,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? gate.requiresStateChange
         : null,
       requiresSubmission: typeof gate.requiresSubmission === 'boolean' ? gate.requiresSubmission : null,
+      siteWorkflowUrl: gate.siteWorkflowUrl || '',
       messaging: normalizeMessageTarget(gate.messaging),
       draftRecipients: normalizeMessageTarget(gate.draftRecipients),
       allowsPlannerShapedResult: gate.allowsPlannerShapedResult === true,
@@ -15340,6 +15426,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         responseLanguagePolicy: plan.response_language,
         requiresStateChange: plan.requires_state_change === true,
         requiresSubmission: plan.requires_submission,
+        siteWorkflowUrl: tabUrl,
         messaging: plan.messaging,
         draftRecipients: plan.draft_recipients,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
@@ -15625,6 +15712,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: plan.requires_state_change === true,
           requiresSubmission: plan.requires_submission,
+          siteWorkflowUrl: tabUrl,
           messaging: plan.messaging,
           draftRecipients: plan.draft_recipients,
           allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
@@ -15728,6 +15816,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...(approvedPlanEdited ? { responseLanguageApprovedPlanOverride: true } : {}),
         requiresStateChange: approvedRequiresStateChange,
         requiresSubmission: approvedRequiresSubmission,
+        siteWorkflowUrl: tabUrl,
         messaging: approvedPlanEdited ? null : plan.messaging,
         draftRecipients: approvedPlanEdited ? null : plan.draft_recipients,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
@@ -19461,6 +19550,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const ledgerRows = this.progressLedgers.get(tabId) || [];
     const visibleRows = sessionId ? this._rowsForProgressSession(tabId, sessionId, ledgerRows) : ledgerRows;
     const executionGuard = this._planExecutionGuards.get(tabId);
+    this._refreshWorkflowCollectionEvidence(tabId, executionGuard, visibleRows);
     if (executionGuard?.enabled && executionGuard.siteWorkflow?.job?.requiresLedger === true) {
       executionGuard.workflowLedgerReconciliation = null;
       const record = workflowReconciliationValidation?.record;
@@ -20425,6 +20515,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requestKind,
       requiresStateChange,
       requiresSubmission,
+      siteWorkflowUrl: String(gateOutcome?.siteWorkflowUrl || ''),
       messaging,
       draftRecipients,
       requiresDownload,
@@ -20653,6 +20744,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && name === 'gmail_count_results'
         && result?.countVerified === true
         && Number.isInteger(Number(result?.count))) {
+      state.workflowJobEvidenceSatisfied = true;
+    }
+    if (state.workflowRequiredJobEvidence === 'transcript_segments'
+        && name === 'read_youtube_transcript') {
+      state.workflowJobEvidenceSatisfied = true;
+    }
+    if (state.workflowRequiredJobEvidence === 'scoped_content_read'
+        && this.constructor.DELIVERY_OBSERVATION_TOOLS.has(name)
+        && this._workflowObservationStaysInJobScope(tabId, state, result)) {
       state.workflowJobEvidenceSatisfied = true;
     }
     if (requiredScheduleSucceeded) state.successfulRequiredSchedulingToolCalls += 1;
@@ -21024,7 +21124,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : forbiddenSubmission
           ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job prepares the form and leaves it unsubmitted, but a submit action was dispatched. Do not submit again or try to undo it by submitting anything else. Call done with outcome partial or failed, state plainly that the form was submitted without authorization, and report what the page shows now.]`
           : missingJobEvidence
-          ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job has its own success contract. A page read does not satisfy it: an exact count needs the deterministic count tool for the verified query, and a complete conversation needs trusted coverage through its terminal page with every message expanded. Produce that evidence, then call done. If it cannot be produced, call done with outcome partial or failed and report the exact blocker with whatever partial coverage you did verify.]`
+          ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job has its own success contract and an unrelated page read does not satisfy it. ${this._workflowJobEvidenceInstruction(state)} Produce that evidence, then call done. If it cannot be produced, call done with outcome partial or failed and report the exact blocker with whatever partial coverage you did verify.]`
           : missingDraftEvidence
           ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job finishes on the draft itself, not on a tool call. The intended recipients, the requested subject, and the complete body must all be readable in the open composer, and the provider must show its own saved-draft state. Re-read the composer once the app has saved the draft, then call done. If any field or the saved-draft state cannot be verified, call done with outcome partial or failed and report exactly what is unverified; do not send the message.]`
           : missingRequiredLedger
