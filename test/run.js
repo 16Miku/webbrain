@@ -82542,6 +82542,85 @@ test('accessibility-tree depthTruncated is only set for omitted includable desce
   }
 });
 
+test('release-asset uploads bind their saved release to the intended repository and tag', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9350 + index;
+    const editUrl = 'https://github.com/esokullu/webbrain/releases/edit/v33.5.0';
+    const tagUrl = 'https://github.com/esokullu/webbrain/releases/tag/v33.5.0';
+    const selected = agent._resolvePlannerSiteWorkflow(editUrl, {
+      request_kind: 'execute',
+      site_job: 'upload-release-assets',
+    });
+    assert.equal(selected?.job?.requiresLedger, true);
+    assert.equal(agent._workflowJobStoresMetadataRequirements(selected), true,
+      `${AgentClass.name}: the release-asset job collected no requested payload fields`);
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Upload dist/webbrain-chrome-33.5.0.zip to the v33.5.0 release and save it.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    guard.successfulConsequentialToolCalls = 1;
+    const terminal = (identity, observedUrl) => {
+      const workflowBinding = agent._workflowSubmitBindingForAttempt(tabId, editUrl);
+      workflowBinding.publishedResourceIdentity = identity;
+      return agent._workflowTerminalEvidenceFromDone(
+        tabId,
+        { workflowPageText: '', workflowResourceUrls: [observedUrl] },
+        observedUrl,
+        {
+          submit: {
+            dispatched: true,
+            observedAfterSubmit: true,
+            originatingUrl: editUrl,
+            workflowBinding,
+          },
+          verifiedFinalSubmit: true,
+          relevantForms: 0,
+        },
+        null,
+      );
+    };
+
+    assert.equal(terminal('github:github.com/esokullu/webbrain/releases/tag/v33.5.0', tagUrl)?.source,
+      'dispatch_bound_published_resource',
+      `${AgentClass.name}: assets saved on the release being edited were not verified`);
+    // The filename ledger is identical whichever release the assets land on.
+    assert.equal(
+      terminal(
+        'github:github.com/someone-else/fork/releases/tag/v33.5.0',
+        'https://github.com/someone-else/fork/releases/tag/v33.5.0',
+      ),
+      null,
+      `${AgentClass.name}: assets saved on another repository's release satisfied the job`,
+    );
+
+    guard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
+      { field: 'tag', value: 'v33.5.0' },
+    ]);
+    assert.equal(terminal('github:github.com/esokullu/webbrain/releases/tag/v33.5.0', tagUrl)?.source,
+      'dispatch_bound_published_resource',
+      `${AgentClass.name}: the exact requested release tag could not satisfy the job`);
+    assert.equal(
+      terminal(
+        'github:github.com/esokullu/webbrain/releases/tag/v33.6.0',
+        'https://github.com/esokullu/webbrain/releases/tag/v33.6.0',
+      ),
+      null,
+      `${AgentClass.name}: assets saved on a different tag in the same repository satisfied the job`,
+    );
+    guard.workflowMetadataRequirementsIncomplete = true;
+    assert.equal(terminal('github:github.com/esokullu/webbrain/releases/tag/v33.5.0', tagUrl), null,
+      `${AgentClass.name}: an unreadable release payload field set skipped tag verification`);
+  }
+});
+
 test('publication workflows classify and bind requested payload fields', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
@@ -84515,6 +84594,53 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
     sendGuard.workflowMetadataRequirementsIncomplete = true;
     assert.equal(sendTerminal('Q3 results'), null,
       `${AgentClass.name}: an unreadable message field set skipped subject verification`);
+
+    const bodyTabId = 9240 + index;
+    agent.conversations.set(bodyTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Email alice@example.com saying exactly "Quarterly update".' },
+    ]);
+    const bodyGuard = agent._startPlanExecutionGuard(bodyTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'named', recipients: ['alice@example.com'] },
+      siteWorkflow: resolveAdapterWorkflowJob(gmailUrl, 'send-email'),
+    });
+    bodyGuard.successfulConsequentialToolCalls = 1;
+    bodyGuard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
+      { field: 'body', value: 'Quarterly update' },
+    ]);
+    // The Gmail compose fallback accepts a dispatch-bound body without an
+    // inline Sent rendering, so the requested text is the only thing that can
+    // tell the reviewed message from a stale one.
+    const bodyTerminal = (composerBody) => agent._workflowTerminalEvidenceFromDone(
+      bodyTabId,
+      { workflowPageText: 'Message sent', liveRegionMessages: ['Message sent'] },
+      gmailUrl,
+      {
+        submit: {
+          dispatched: true,
+          observedAfterSubmit: true,
+          workflowBinding: agent._workflowSubmitBindingForAttempt(bodyTabId, gmailUrl, {
+            messageRecipientGuardRequired: true,
+            messageRecipientDispatchBinding: { token: `gmail-body-${composerBody}` },
+            messageRecipientBody: composerBody,
+            messageRecipientBodyBaselineCount: 0,
+            messageRecipientGmailComposeFlow: true,
+          }),
+        },
+        verifiedFinalSubmit: true,
+        relevantForms: 0,
+      },
+      { success: false, conclusive: false, matchingOutgoingMessageCount: 0 },
+    );
+    assert.equal(bodyTerminal('Stale draft text'), null,
+      `${AgentClass.name}: a Gmail compose send ignored the requested body text`);
+    assert.equal(bodyTerminal('Quarterly update and one more line'), null,
+      `${AgentClass.name}: a body that merely contains the requested text was accepted`);
+    assert.equal(bodyTerminal('Quarterly update')?.source, 'recipient_body_bound_gmail_compose_and_sent_confirmation',
+      `${AgentClass.name}: the exact requested body could not satisfy the send-email contract`);
 
     const draftTabId = 9210 + index;
     agent.conversations.set(draftTabId, [

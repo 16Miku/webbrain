@@ -1656,13 +1656,17 @@ export class Agent extends LoopDetector {
           && executionContext?.messageRecipientGmailComposeFlow === true
           ? { gmailComposeFlow: true }
           : {}),
-        ...(executionContext?.messageRecipientSubjectAvailable === true
-          ? {
-              messageSubject: this._workflowMetadataValue(executionContext.messageRecipientSubject),
-              messageSubjectAvailable: true,
-            }
-          : {}),
       } : {}),
+      // Verifying requested message fields needs the composer's own text
+      // whether or not a recipient binding exists, so it is recorded apart
+      // from the recipient-bound dispatch evidence.
+      ...(messageBody ? { composerBody: messageBody } : {}),
+      ...(executionContext?.messageRecipientSubjectAvailable === true
+        ? {
+            messageSubject: this._workflowMetadataValue(executionContext.messageRecipientSubject),
+            messageSubjectAvailable: true,
+          }
+        : {}),
       ...(metadataRequirements.length || metadataIncomplete ? {
         metadataRequirements: metadataRequirements.map(requirement => ({ ...requirement })),
         ...(metadataIncomplete ? { metadataRequirementsIncomplete: true } : {}),
@@ -1705,17 +1709,25 @@ export class Agent extends LoopDetector {
     return /\b(?:draft\s+saved|saved\s+draft|draft\s+auto[- ]?saved)\b|(?:草稿已保存|已保存草稿|已儲存草稿|下書きを保存しました|下書きとして保存しました|임시보관함에 저장되었습니다|임시저장되었습니다|brouillon enregistré|borrador guardado|rascunho salvo|entwurf gespeichert|bozza salvata|taslak kaydedildi)/i.test(text);
   }
 
-  // A reviewed subject is part of the message the user approved. When the task
-  // named one, the subject bound at dispatch must equal it exactly; an
+  // The reviewed subject and body are the message the user approved. When the
+  // task named either, the value bound at dispatch must equal it exactly; an
   // unreadable requirement set fails closed rather than skipping the check.
-  _workflowMessageSubjectVerified(binding) {
+  _workflowMessageFieldsVerified(binding) {
     if (binding?.metadataRequirementsIncomplete === true) return false;
-    const requirement = (Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [])
-      .find(entry => entry?.field === 'subject');
-    if (!requirement) return true;
-    return binding?.messageSubjectAvailable === true
-      && this._workflowMetadataValue(binding.messageSubject)
-        === this._workflowMetadataValue(requirement.value);
+    const requirements = Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [];
+    return requirements.every((requirement) => {
+      if (requirement?.field === 'subject') {
+        return binding?.messageSubjectAvailable === true
+          && this._workflowMetadataValue(binding.messageSubject)
+            === this._workflowMetadataValue(requirement.value);
+      }
+      if (requirement?.field === 'body') {
+        const want = this._workflowMessageBody(requirement.value);
+        return !!want && this._workflowMessageBody(binding?.composerBody) === want;
+      }
+      // Any other classified field cannot be proved from the composer.
+      return false;
+    });
   }
 
   _workflowSavedStateSignal(text) {
@@ -1896,7 +1908,46 @@ export class Agent extends LoopDetector {
     return false;
   }
 
+  _workflowGithubReleaseIdentityParts(identity) {
+    const match = /^github:github\.com\/([^/]+\/[^/]+)\/releases\/tag\/(.+)$/i.exec(String(identity || ''));
+    if (!match) return null;
+    let tag = match[2];
+    try { tag = decodeURIComponent(tag); } catch {}
+    return { repository: match[1].toLowerCase(), tag: this._workflowMetadataValue(tag) };
+  }
+
+  _workflowGithubRepositoryPath(url) {
+    try {
+      const parsed = new URL(String(url || ''));
+      if (parsed.hostname.toLowerCase().replace(/^www\./, '') !== 'github.com') return '';
+      const match = /^\/([^/]+\/[^/]+)(?:\/|$)/.exec(parsed.pathname);
+      return match ? match[1].toLowerCase() : '';
+    } catch {
+      return '';
+    }
+  }
+
+  // The filename ledger proves which assets were uploaded, not which release
+  // they landed on. Bind the saved release to the repository the dispatch came
+  // from, and to the tag the request named when it named one, so the same
+  // filenames saved on a different release cannot satisfy this job.
+  _workflowReleaseAssetResourceMatch(binding, pageUrl, submit) {
+    if (binding?.metadataRequirementsIncomplete === true) return false;
+    const release = this._workflowGithubReleaseIdentityParts(binding?.publishedResourceIdentity);
+    if (!release) return false;
+    const originRepository = this._workflowGithubRepositoryPath(submit?.originatingUrl)
+      || this._workflowGithubRepositoryPath(pageUrl);
+    if (!originRepository || originRepository !== release.repository) return false;
+    const tagRequirement = (Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [])
+      .find(entry => entry?.field === 'tag');
+    if (!tagRequirement) return true;
+    return this._workflowMetadataValue(tagRequirement.value) === release.tag;
+  }
+
   _workflowPublishedResourcePayloadMatch(binding, state, pageState, pageUrl, submit) {
+    if (this._workflowJobIsReleaseAssetUpload(state?.siteWorkflow)) {
+      return this._workflowReleaseAssetResourceMatch(binding, pageUrl, submit);
+    }
     if (!this._workflowJobBindsPublicationPayload(state?.siteWorkflow?.job)) return true;
     if (binding?.metadataRequirementsIncomplete === true) return false;
     const requirements = Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [];
@@ -2117,7 +2168,7 @@ export class Agent extends LoopDetector {
       verified = submit?.dispatched === true
         && submit?.observedAfterSubmit === true
         && submit?.formValidationFailed !== true
-        && this._workflowMessageSubjectVerified(binding)
+        && this._workflowMessageFieldsVerified(binding)
         && (requiresRecipientBinding
           ? (dispatchRecipientObserved && postDispatchRecipientObserved && sentStatusObserved && messageBodyObserved)
           : (recipientObserved || sentStatusObserved));
@@ -12490,6 +12541,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _workflowJobStoresMetadataRequirements(siteWorkflow) {
     return siteWorkflow?.job?.id === 'update-metadata'
       || siteWorkflow?.job?.template === 'message'
+      || this._workflowJobIsReleaseAssetUpload(siteWorkflow)
       || this._workflowJobBindsPublicationPayload(siteWorkflow?.job);
   }
 
@@ -12896,11 +12948,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return accounted;
   }
 
+  _workflowJobIsReleaseAssetUpload(siteWorkflow) {
+    return siteWorkflow?.adapterName === 'github'
+      && siteWorkflow?.job?.id === 'upload-release-assets'
+      && siteWorkflow.job.requiresLedger === true;
+  }
+
   _isWorkflowReleaseAssetJob(guard) {
     return guard?.enabled === true
-      && guard?.siteWorkflow?.adapterName === 'github'
-      && guard?.siteWorkflow?.job?.id === 'upload-release-assets'
-      && guard.siteWorkflow.job.requiresLedger === true;
+      && this._workflowJobIsReleaseAssetUpload(guard?.siteWorkflow);
   }
 
   _workflowReleaseAssetFileName(value) {
@@ -19411,7 +19467,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'Schema: {"mode":"active|read_only|inactive","allowedActions":["follow"],"forbiddenActions":[],"targets":[],"workflowFields":[{"field":"title","value":"exact requested value"}],"confidence":0.0,"pageScopePolicy":"none|page|site","reason":"short"}.',
           'Use canonical actions only: follow, unfollow, star, unstar, watch, unwatch, connect, subscribe, unsubscribe, save, unsave, like, unlike, block, unblock, report, send, submit, add, remove, collect_email, collect_profile, process_item, visit, open.',
           'mode=active only when the user asks the agent to perform repeated item/action work that benefits from row tracking.',
-          'Exception: for siteContext.workflow.job="upload-release-assets" with requiresLedger=true, use mode=active and list every concrete requested target even when there is exactly one. Copy each exact requested filename or path into targets; do not merge or omit assets.',
+          'Exception: for siteContext.workflow.job="upload-release-assets" with requiresLedger=true, use mode=active and list every concrete requested target even when there is exactly one. Copy each exact requested filename or path into targets; do not merge or omit assets. When the user names the release tag, also return it as workflowFields=[{"field":"tag","value":"exact tag"}]; return workflowFields=[] when no tag is named.',
           'For siteContext.workflow.job="update-metadata", workflowFields must contain every metadata field explicitly requested by the user and its complete exact intended value. Use canonical field names title, description, visibility, audience, tags, category, playlist, language, license, comments, embedding, paid_promotion, recording_date, or recording_location. Never infer a field or value from page content.',
           'For siteContext.workflow.job="publish-release", "publish-post", or "publish-content", workflowFields must contain every publication field explicitly requested by the user and its complete exact intended value. Use canonical field names tag, title, notes, body, or visibility. Never infer a field or value from page content.',
           'For siteContext.workflow.job="draft-email" or "send-email", workflowFields must contain every message field explicitly requested by the user and its complete exact intended value. Use canonical field names subject or body. Never infer a field or value from page content.',
