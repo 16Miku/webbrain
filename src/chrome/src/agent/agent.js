@@ -946,6 +946,12 @@ export class Agent extends LoopDetector {
     if (!state) return null;
     const next = recordReadCompleteness(state, toolName, args, result);
     this.readCompletenessStates.set(tabId, next);
+    if (next?.complete === true) {
+      const guard = this._planExecutionGuards.get(tabId);
+      if (guard?.enabled && guard.workflowRequiredJobEvidence === 'terminal_read_coverage') {
+        guard.workflowJobEvidenceSatisfied = true;
+      }
+    }
     return next;
   }
 
@@ -12604,6 +12610,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // A draft job never dispatches a submit, so its terminal contract is the
   // composer readback itself rather than a post-submit page transition.
+  // A non-submit job can still declare its own success contract. One
+  // accessibility-tree read is not a deterministic count, and it is not proof
+  // that a conversation was read to its terminal page.
+  _workflowJobRequiredEvidenceKind(siteWorkflow) {
+    const job = siteWorkflow?.job;
+    if (!job?.id || job.requiresSubmission === true) return '';
+    if (job.id === 'count-results') return 'deterministic_count';
+    if (job.id === 'read-complete-thread') return 'terminal_read_coverage';
+    return '';
+  }
+
+  _armWorkflowJobRequiredEvidence(tabId, guard) {
+    const kind = guard?.enabled ? this._workflowJobRequiredEvidenceKind(guard.siteWorkflow) : '';
+    if (!kind) return;
+    if (kind === 'terminal_read_coverage') {
+      // Only require terminal coverage where the run can actually track it.
+      const armed = this._armReadCompletenessFromPlan(tabId, {
+        request_kind: 'execute',
+        read_scope: 'complete_thread',
+      });
+      if (armed?.required !== true && this.readCompletenessStates.get(tabId)?.required !== true) return;
+    }
+    guard.workflowRequiredJobEvidence = kind;
+  }
+
   _workflowJobRequiresDraftEvidence(siteWorkflow) {
     return siteWorkflow?.job?.requiresSubmission !== true
       && this._workflowVerificationKind(siteWorkflow) === 'message_draft';
@@ -12680,6 +12711,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     text = text.toLowerCase().replace(/\s+/g, ' ').trim();
     if (!text) return false;
     return /^(?:resolve (?:conversation|thread)|resolver (?:la )?(?:conversaci[oó]n|conversa|conversação)|r[ée]soudre (?:la )?(?:conversation|discussion)|(?:unterhaltung|konversation|diskussion) aufl[öo]sen|risolvi (?:la )?conversazione|conversa(?:zione)? risolta|konuşmayı çöz|çözümle|解决对话|解決對話|解决此对话|会話を解決(?:する)?|スレッドを解決(?:する)?|대화 ?해결|스레드 ?해결|разрешить (?:обсуждение|беседу))$/u.test(text);
+  }
+
+  // prepare-form and prepare-application exist to leave the form unsubmitted.
+  // Submitting one is an externally consequential act the run was never
+  // authorized to take, so it can never be reported as success.
+  _workflowJobForbidsSubmission(siteWorkflow) {
+    return siteWorkflow?.job?.template === 'form'
+      && siteWorkflow.job.requiresSubmission !== true;
   }
 
   _workflowAllowsEmptyCompleteInventory(siteWorkflow) {
@@ -13554,7 +13593,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || siteWorkflow.job.template !== 'form'
         || !shouldInvalidateFormInventoryAfterAction(name)
         || !this._isSuccessfulExecutionEvidence(result)) return;
-    if (this._isWorkflowFormSubmitAction(name, args, result, detectedSubmit)) return;
+    if (this._isWorkflowFormSubmitAction(name, args, result, detectedSubmit)) {
+      // Preserving the inventory across a submit is right only where the
+      // submit is the job. For a prepare-only job it is a contract violation.
+      if (!this._workflowJobForbidsSubmission(siteWorkflow)) return;
+      guard.workflowForbiddenSubmission = true;
+    }
     guard.workflowInventoryEvidence = invalidateWorkflowInventoryCompleteness(
       guard.workflowInventoryEvidence,
       this._workflowInventoryDocumentScope(tabId),
@@ -20432,6 +20476,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             ),
           }
         : null,
+      workflowRequiredJobEvidence: '',
+      workflowJobEvidenceSatisfied: carryMatches && carried.workflowJobEvidenceSatisfied === true,
+      workflowForbiddenSubmission: carryMatches && carried.workflowForbiddenSubmission === true,
       workflowRequestedControlLabels: carryMatches && Array.isArray(carried.workflowRequestedControlLabels)
         ? [...carried.workflowRequestedControlLabels]
         : [],
@@ -20445,6 +20492,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       staleCancellationRecoveryAttempted: false,
     };
     this._planExecutionGuards.set(tabId, state);
+    this._armWorkflowJobRequiredEvidence(tabId, state);
     const messages = this.conversations.get(tabId);
     if (messages?.[0]?.role === 'system') {
       messages[0].content = this._buildSystemPrompt(mode, tabId);
@@ -20601,6 +20649,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || (!this._isSuccessfulExecutionEvidence(result) && !requiredScheduleSucceeded)) return;
     state.successfulTaskToolCalls += 1;
     if (state.taskKey) state.evidenceTaskKey = state.taskKey;
+    if (state.workflowRequiredJobEvidence === 'deterministic_count'
+        && name === 'gmail_count_results'
+        && result?.countVerified === true
+        && Number.isInteger(Number(result?.count))) {
+      state.workflowJobEvidenceSatisfied = true;
+    }
     if (requiredScheduleSucceeded) state.successfulRequiredSchedulingToolCalls += 1;
     if ((download && this._isSuccessfulDownloadEvidence(name, result)) || confirmedPendingDownload) {
       state.successfulDownloadToolCalls += 1;
@@ -20616,6 +20670,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _executionEvidenceSatisfied(state) {
     if (!state) return false;
     if (state.taskDrifted === true) return false;
+    if (state.workflowForbiddenSubmission === true) return false;
     if (state.taskKey && state.evidenceTaskKey !== state.taskKey) return false;
     // Unknown mutation intent is conservative: observational evidence may be
     // useful progress, but it cannot prove successful completion of a task the
@@ -20636,8 +20691,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // A job that requires no submission can still own terminal evidence. A
     // draft must prove its recipients, fields, and saved state; a mutated
     // composer plus a generic observation is not that proof.
-    const workflowJobEvidenceSatisfied = !this._workflowJobRequiresDraftEvidence(state.siteWorkflow)
-      || this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence);
+    const workflowJobEvidenceSatisfied = this._workflowJobRequiresDraftEvidence(state.siteWorkflow)
+      ? this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence)
+      : (!state.workflowRequiredJobEvidence || state.workflowJobEvidenceSatisfied === true);
     return taskEvidenceSatisfied
       && schedulingEvidenceSatisfied
       && downloadEvidenceSatisfied
@@ -20704,6 +20760,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               ),
             }
           : null,
+        workflowJobEvidenceSatisfied: guard.workflowJobEvidenceSatisfied === true,
+        workflowForbiddenSubmission: guard.workflowForbiddenSubmission === true,
         workflowRequestedControlLabels: Array.isArray(guard.workflowRequestedControlLabels)
           ? [...guard.workflowRequestedControlLabels]
           : [],
@@ -20915,6 +20973,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && (state.siteWorkflow?.job?.requiresSubmission === true
         ? !this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence)
         : state.verifiedSubmissionEvidence !== true);
+    const forbiddenSubmission = !terminalFailure && state.workflowForbiddenSubmission === true;
+    const missingJobEvidence = !terminalFailure
+      && !!state.workflowRequiredJobEvidence
+      && state.workflowJobEvidenceSatisfied !== true;
     const missingDraftEvidence = !terminalFailure
       && this._workflowJobRequiresDraftEvidence(state.siteWorkflow)
       && !this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence);
@@ -20959,6 +21021,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? '[PLAN EXECUTION BLOCK: This task requires a file to be downloaded before it can finish successfully. Finding a URL, link, button, or media source is only read evidence. Use an authorized tool call with the DOWNLOAD capability and verify that it returned successful download evidence. If permission is denied or no file can be saved, call done with outcome partial or failed and explain the limitation; do not claim the file was downloaded.]'
           : missingRequiredSubmission
           ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job requires terminal evidence for its own submit/send/publish/commit contract. Filling fields, another site's submit, or an unrelated success signal is not completion. Dispatch the intended action and observe the job-specific terminal state (for example recipient-bound sent state, saved/published resource, form confirmation, or paid/ticket-issued transaction) before calling done again. If that cannot be verified, use outcome partial or failed and report the exact blocker.]`
+          : forbiddenSubmission
+          ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job prepares the form and leaves it unsubmitted, but a submit action was dispatched. Do not submit again or try to undo it by submitting anything else. Call done with outcome partial or failed, state plainly that the form was submitted without authorization, and report what the page shows now.]`
+          : missingJobEvidence
+          ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job has its own success contract. A page read does not satisfy it: an exact count needs the deterministic count tool for the verified query, and a complete conversation needs trusted coverage through its terminal page with every message expanded. Produce that evidence, then call done. If it cannot be produced, call done with outcome partial or failed and report the exact blocker with whatever partial coverage you did verify.]`
           : missingDraftEvidence
           ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow?.job?.id || 'workflow'} job finishes on the draft itself, not on a tool call. The intended recipients, the requested subject, and the complete body must all be readable in the open composer, and the provider must show its own saved-draft state. Re-read the composer once the app has saved the draft, then call done. If any field or the saved-draft state cannot be verified, call done with outcome partial or failed and report exactly what is unverified; do not send the message.]`
           : missingRequiredLedger
@@ -20989,6 +21055,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (missingRequiredSubmission) {
       return {
         failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job required job-bound terminal evidence after its commit/submit dispatch, but that evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]`,
+        status: 'required_evidence_missing',
+      };
+    }
+    if (forbiddenSubmission) {
+      return {
+        failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job was authorized to prepare the form and leave it unsubmitted, but a submit action was dispatched. The submission may have gone through; inspect the page before doing anything else.]`,
+        status: 'required_evidence_missing',
+      };
+    }
+    if (missingJobEvidence) {
+      return {
+        failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job requires its own terminal evidence — a deterministic count for the verified query, or trusted conversation coverage through the terminal page — and that evidence was still missing after one recovery nudge. Any figure or summary produced so far is unverified.]`,
         status: 'required_evidence_missing',
       };
     }

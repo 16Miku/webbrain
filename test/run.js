@@ -83991,6 +83991,149 @@ test('requested field matching survives the words a request wraps around a label
   }
 });
 
+test('a prepare-only form job cannot report success after submitting', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9410 + index;
+    const applyUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
+    const selected = agent._resolvePlannerSiteWorkflow(applyUrl, {
+      request_kind: 'execute',
+      site_job: 'prepare-application',
+    });
+    assert.equal(selected?.job?.requiresSubmission, false);
+    assert.equal(agent._workflowJobForbidsSubmission(selected), true);
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Fill in the application and leave it for me to review.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflow: selected,
+    });
+    guard.successfulConsequentialToolCalls = 1;
+    guard.evidenceTaskKey = guard.taskKey;
+    agent._lastAxScopes.set(tabId, { documentToken: 'prepare-application-document', pageUrl: applyUrl });
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: 'textbox "Full name" [ref_name] required=true value="Ada"',
+      treeRevision: 'prepare-application-tree',
+    });
+    assert.equal(inventory?.complete, true);
+    assert.equal(agent._executionEvidenceSatisfied(guard), true,
+      `${AgentClass.name}: a prepared application could not finish before any submit`);
+
+    agent._beginCompletionInvariant(tabId);
+    // An accidental Submit is externally consequential and was never authorized.
+    agent._recordCompletionToolResult(tabId, 'click_ax', {
+      ref_id: 'ref_submit', text: 'Submit',
+    }, { success: true, dispatched: true, verified: true, isSubmitControl: true });
+    assert.equal(guard.workflowForbiddenSubmission, true,
+      `${AgentClass.name}: a submit in a prepare-only job was recorded as ordinary progress`);
+    assert.equal(guard.workflowInventoryEvidence.complete, false,
+      `${AgentClass.name}: the inventory survived an unauthorized submit`);
+    assert.equal(agent._executionEvidenceSatisfied(guard), false,
+      `${AgentClass.name}: a prepare-only job reported success after submitting the form`);
+    const blocked = agent._planOnlyTerminalDecision(tabId, 'Application prepared.', {
+      viaDone: true, outcome: 'success',
+    });
+    assert.match(blocked?.nudge || '', /leaves it unsubmitted/i,
+      `${AgentClass.name}: the unauthorized submit produced no specific recovery`);
+    // Reporting the truth is still allowed.
+    assert.equal(
+      agent._planOnlyTerminalDecision(tabId, 'The form was submitted without authorization.', {
+        viaDone: true, outcome: 'failed',
+      }),
+      null,
+      `${AgentClass.name}: an honest failure outcome was blocked`,
+    );
+  }
+});
+
+test('Gmail read and count jobs need their own terminal evidence', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const listUrl = 'https://mail.google.com/mail/u/0/#label/Invoices';
+    const countTabId = 9414 + index;
+    agent.conversations.set(countTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'How many conversations are in this label?' },
+    ]);
+    const countGuard = agent._startPlanExecutionGuard(countTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      siteWorkflow: resolveAdapterWorkflowJob(listUrl, 'count-results'),
+    });
+    assert.equal(countGuard.workflowRequiredJobEvidence, 'deterministic_count',
+      `${AgentClass.name}: the count job declared no terminal evidence`);
+    countGuard.evidenceTaskKey = countGuard.taskKey;
+    agent._markPlanExecutionToolCall(countTabId, 'get_accessibility_tree', { success: true });
+    assert.ok(countGuard.successfulTaskToolCalls > 0);
+    assert.equal(agent._executionEvidenceSatisfied(countGuard), false,
+      `${AgentClass.name}: a page read stood in for the deterministic Gmail count`);
+    agent._markPlanExecutionToolCall(countTabId, 'gmail_count_results', {
+      success: true, count: 128,
+    });
+    assert.equal(agent._executionEvidenceSatisfied(countGuard), false,
+      `${AgentClass.name}: an unverified count satisfied the count contract`);
+    agent._markPlanExecutionToolCall(countTabId, 'gmail_count_results', {
+      success: true, countVerified: true, count: 128,
+    });
+    assert.equal(agent._executionEvidenceSatisfied(countGuard), true,
+      `${AgentClass.name}: the deterministic count could not satisfy its own job`);
+
+    const threadUrl = 'https://mail.google.com/mail/u/0/#inbox/FMfcgzabcdef';
+    const threadTabId = 9418 + index;
+    agent.conversations.set(threadTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Read this whole conversation and summarize it.' },
+    ]);
+    agent._currentUrl = async () => threadUrl;
+    await agent._beginReadCompleteness(threadTabId, 'Summarize the latest message.', {});
+    assert.equal(agent.readCompletenessStates.get(threadTabId)?.required, false,
+      `${AgentClass.name}: the fixture already required complete coverage`);
+    const threadGuard = agent._startPlanExecutionGuard(threadTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+      siteWorkflow: resolveAdapterWorkflowJob(threadUrl, 'read-complete-thread'),
+    });
+    assert.equal(threadGuard.workflowRequiredJobEvidence, 'terminal_read_coverage',
+      `${AgentClass.name}: the complete-thread job declared no terminal evidence`);
+    assert.equal(agent.readCompletenessStates.get(threadTabId)?.required, true,
+      `${AgentClass.name}: selecting the complete-thread job did not arm coverage tracking`);
+    threadGuard.evidenceTaskKey = threadGuard.taskKey;
+    agent._markPlanExecutionToolCall(threadTabId, 'get_accessibility_tree', { success: true });
+    assert.equal(agent._executionEvidenceSatisfied(threadGuard), false,
+      `${AgentClass.name}: one tree read stood in for terminal conversation coverage`);
+    threadGuard.workflowJobEvidenceSatisfied = true;
+    assert.equal(agent._executionEvidenceSatisfied(threadGuard), true,
+      `${AgentClass.name}: verified terminal coverage could not satisfy its own job`);
+
+    // A job with no declared contract of its own is unaffected.
+    const draftTabId = 9422 + index;
+    agent.conversations.set(draftTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Search for invoices from Ada.' },
+    ]);
+    const plainGuard = agent._startPlanExecutionGuard(draftTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: false,
+      requiresSubmission: false,
+    });
+    plainGuard.evidenceTaskKey = plainGuard.taskKey;
+    agent._markPlanExecutionToolCall(draftTabId, 'get_accessibility_tree', { success: true });
+    assert.equal(agent._executionEvidenceSatisfied(plainGuard), true,
+      `${AgentClass.name}: an ordinary read task gained a terminal-evidence requirement`);
+  }
+});
+
 test('a hidden file input stays in the inventory because upload_file drives it', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
