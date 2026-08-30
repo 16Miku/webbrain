@@ -82608,10 +82608,10 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       ],
       selectedIndex: 1,
     }), 0);
-    assert.equal(nativeLine, 'combobox "Visibilité" [ref_choice_1] value="Public"',
-      `${label}: native select omitted its selected value`);
-    assert.doesNotMatch(nativeLine, /\brequired=/,
-      `${label}: a select without explicit optionality emitted required=`);
+    // HTML answers optionality for a native control, so the tree states it
+    // rather than leaving the inventory to guess.
+    assert.equal(nativeLine, 'combobox "Visibilité" [ref_choice_1] required=false value="Public"',
+      `${label}: native select omitted its selected value or its optionality`);
     const ariaLine = formatLine(control({
       tagName: 'DIV',
       role: 'combobox',
@@ -82620,6 +82620,8 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
     }), 0);
     assert.equal(ariaLine, 'combobox "公開設定" [ref_choice_2] value="Public"',
       `${label}: ARIA combobox omitted its current value`);
+    assert.doesNotMatch(ariaLine, /\brequired=/,
+      `${label}: a custom ARIA control claimed an optionality HTML never stated`);
     const titledLine = formatLine(control({
       tagName: 'INPUT',
       role: 'textbox',
@@ -82627,7 +82629,7 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       attributes: { type: 'text' },
       value: 'Launch Video',
     }), 0);
-    assert.equal(titledLine, 'textbox "Launch Video" [ref_choice_3] type="text" value="Launch Video"',
+    assert.equal(titledLine, 'textbox "Launch Video" [ref_choice_3] type="text" required=false value="Launch Video"',
       `${label}: text value equal to the accessible name was elided`);
 
     // filter=all keeps aria-hidden and invisible nodes on purpose, so the line
@@ -82731,7 +82733,8 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       name: 'Description',
       value: longDescription,
     }), 0);
-    assert.doesNotMatch(descriptionLine, /\brequired=/);
+    assert.match(descriptionLine, /\brequired=false/,
+      `${label}: an optional native textarea left its optionality unstated`);
     assert.match(descriptionLine, new RegExp(`value="${longDescription.slice(0, 60).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.\\.\\."`),
       `${label}: long description was not truncated at the AX value cap`);
     assert.match(descriptionLine, new RegExp(`value_len=${longDescription.length}`),
@@ -84185,6 +84188,151 @@ test('a control that remounts keeps one inventory identity', () => {
   }
 });
 
+test('a radio group is answered once and the alternatives may be skipped', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9480 + index;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=radios';
+    const selected = resolveAdapterWorkflowJob(formUrl, 'submit-form');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Answer and submit every form question.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'radio-form-document', pageUrl: formUrl });
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        // A required radio group marks every option required, but only one of
+        // them can ever be chosen.
+        'radio "Yes" [ref_yes] field_name="pets" required=true checked=true',
+        'radio "No" [ref_no] field_name="pets" required=true checked=false',
+        'textbox "Notes" [ref_notes] required=false value=""',
+      ].join('\n'),
+      treeRevision: 'radio-form-tree',
+    });
+    assert.equal(inventory?.itemCount, 3);
+    const yes = inventory.items.find(item => item.label === 'Yes');
+    const no = inventory.items.find(item => item.label === 'No');
+    const notes = inventory.items.find(item => item.label === 'Notes');
+    assert.equal(no.required, true,
+      `${AgentClass.name}: the fixture no longer models a required radio group`);
+
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_yes' },
+      { success: true, dispatched: true, verified: true });
+    agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
+      filter: 'all', maxDepth: 15,
+    }, {
+      success: true,
+      pageContent: [
+        'radio "Yes" [ref_yes] field_name="pets" required=true checked=true',
+        'radio "No" [ref_no] field_name="pets" required=true checked=false',
+        'textbox "Notes" [ref_notes] required=false value=""',
+      ].join('\n'),
+      treeRevision: 'radio-form-tree-after',
+    });
+
+    const answered = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'Chose Yes for the pets question; the other option and notes were skipped.',
+    }, [
+      { id: yes.id, label: 'Yes', status: 'processed', fields: { verified: true } },
+      { id: no.id, label: 'No', status: 'skipped' },
+      { id: notes.id, label: 'Notes', status: 'skipped' },
+    ], `radio-answered-${index}`);
+    assert.equal(answered.ok, true,
+      `${AgentClass.name}: the rejected option of an answered radio group blocked reconciliation (${answered.error || ''})`);
+
+    const unanswered = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'Skipped the pets question entirely.',
+    }, [
+      { id: yes.id, label: 'Yes', status: 'skipped' },
+      { id: no.id, label: 'No', status: 'skipped' },
+      { id: notes.id, label: 'Notes', status: 'skipped' },
+    ], `radio-unanswered-${index}`);
+    assert.equal(unanswered.ok, false,
+      `${AgentClass.name}: a required radio group nobody answered reconciled as complete`);
+  }
+});
+
+test('an iframe wizard step stays complete after the frame advances', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9484 + index;
+    const pageUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
+    const stepOneFrame = 'https://acme.wd1.myworkdayjobs.com/application/step-1';
+    const stepTwoFrame = 'https://acme.wd1.myworkdayjobs.com/application/step-2';
+    const selected = agent._resolvePlannerSiteWorkflow(pageUrl, {
+      request_kind: 'execute',
+      site_job: 'prepare-application',
+    });
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Prepare every application field for review.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'apply-outer-document', pageUrl });
+    const inventorySelector = [
+      'input', 'textarea', 'select', '[contenteditable="true"]',
+      '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="searchbox"]', '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+    ].join(',');
+    const readFrame = (frameUrl, name) => agent._rememberWorkflowInventoryObservation(
+      tabId,
+      'iframe_read',
+      { selector: inventorySelector },
+      {
+        success: true,
+        pageUrl,
+        frames: [{
+          frameId: 7,
+          ok: true,
+          url: frameUrl,
+          matchCount: 1,
+          offset: 0,
+          truncated: false,
+          matches: [{ tag: 'input', type: 'text', id: name, name, label: name, value: 'x', matchIndex: 0, required: true }],
+        }],
+      },
+    );
+
+    assert.equal(readFrame(stepOneFrame, 'employer')?.complete, true);
+    agent._beginCompletionInvariant(tabId);
+    // Next inside the frame reshapes the step and leaves it behind.
+    agent._recordCompletionToolResult(tabId, 'iframe_click', {
+      urlFilter: 'acme.wd1.myworkdayjobs.com', selector: '#next',
+    }, { success: true, dispatched: true, frameId: 7 });
+    assert.equal(guard.workflowInventoryEvidence.documents[`iframe:7:${stepOneFrame}`]?.complete, false,
+      `${AgentClass.name}: the mutated iframe step kept its coverage`);
+
+    const stepTwo = readFrame(stepTwoFrame, 'salary');
+    assert.equal(guard.workflowInventoryEvidence.documents[`iframe:7:${stepOneFrame}`]?.complete, true,
+      `${AgentClass.name}: a finished iframe wizard step stayed incomplete forever`);
+    assert.equal(stepTwo?.complete, true,
+      `${AgentClass.name}: the cumulative iframe wizard inventory could never complete again`);
+  }
+});
+
 test('a deferred reply stays bound to the thread the user authorized', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
@@ -84238,6 +84386,51 @@ test('a deferred reply stays bound to the thread the user authorized', async () 
       `${AgentClass.name}: the authorized thread's own composer was blocked (${allowed?.error || ''})`);
     assert.deepEqual(guard.messaging?.recipients, [{ identity: 'mallory@example.com', role: 'to' }],
       `${AgentClass.name}: the authorized thread's composer did not pin its recipients`);
+
+    // A draft of the same reply carries no messaging at all, so its thread
+    // identity has to come from the draft target instead.
+    const draftTabId = 9478 + index;
+    agent.conversations.set(draftTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Save a reply here as a draft.' },
+    ]);
+    const draftGuard = agent._startPlanExecutionGuard(draftTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflowUrl: threadUrl,
+      messaging: null,
+      draftRecipients: { target_kind: 'active_conversation', recipients: [] },
+      siteWorkflow: resolveAdapterWorkflowJob(threadUrl, 'draft-email'),
+    });
+    draftGuard.successfulConsequentialToolCalls = 1;
+    draftGuard.evidenceTaskKey = draftGuard.taskKey;
+    assert.equal(draftGuard.messaging, null,
+      `${AgentClass.name}: a draft plan gained send authorization`);
+    assert.ok(draftGuard.messagingConversationScope,
+      `${AgentClass.name}: a deferred draft kept no conversation identity`);
+    assert.equal(agent._workflowDraftAuthorizedTarget(draftGuard), null,
+      `${AgentClass.name}: an unpinned conversation draft produced a named target`);
+
+    agent._beginCompletionInvariant(draftTabId);
+    agent._recordCompletionToolResult(draftTabId, 'set_field', {
+      ref_id: 'ref_body', text: 'I will send it tomorrow.', clear: true,
+    }, { success: true, verified: true, ref_id: 'ref_body', fieldMeta: { tag: 'div', contentEditable: true, name: null } });
+    const draftProbeFor = () => ({
+      success: true,
+      conclusive: true,
+      composerAvailable: true,
+      messageBody: 'I will send it tomorrow.',
+      composerStatusMessages: ['Draft saved'],
+      strongRecipientCandidates: [{ identity: 'bob@example.com', role: 'to' }],
+    });
+    const draftTerminal = (url) => agent._workflowTerminalEvidenceFromDone(
+      draftTabId, {}, url, { submit: null, verifiedFinalSubmit: false, relevantForms: 0 }, draftProbeFor(),
+    );
+    assert.equal(draftTerminal(otherThreadUrl), null,
+      `${AgentClass.name}: a draft saved in another conversation was accepted`);
+    assert.equal(draftTerminal(threadUrl)?.source, 'draft_recipients_fields_and_saved_draft_state',
+      `${AgentClass.name}: a draft saved in the authorized conversation was rejected`);
   }
 });
 
@@ -84738,6 +84931,7 @@ test('Gmail read and count jobs need their own terminal evidence', async () => {
       requestKind: 'execute',
       requiresStateChange: false,
       requiresSubmission: false,
+      siteWorkflowUrl: threadUrl,
       siteWorkflow: resolveAdapterWorkflowJob(threadUrl, 'read-complete-thread'),
     });
     assert.equal(threadGuard.workflowRequiredJobEvidence, 'terminal_read_coverage',
@@ -84748,7 +84942,19 @@ test('Gmail read and count jobs need their own terminal evidence', async () => {
     agent._markPlanExecutionToolCall(threadTabId, 'get_accessibility_tree', { success: true });
     assert.equal(agent._executionEvidenceSatisfied(threadGuard), false,
       `${AgentClass.name}: one tree read stood in for terminal conversation coverage`);
-    threadGuard.workflowJobEvidenceSatisfied = true;
+    // Coverage completes against whatever root the tab is on. Only the
+    // conversation the job selected answers for that job.
+    agent.readCompletenessStates.set(threadTabId, {
+      ...agent.readCompletenessStates.get(threadTabId), complete: true,
+    });
+    agent._recordReadCompleteness(threadTabId, 'get_accessibility_tree', {}, {
+      success: true, pageUrl: 'https://mail.google.com/mail/u/0/#inbox/FMfcgzSomeoneElse',
+    });
+    assert.equal(agent._executionEvidenceSatisfied(threadGuard), false,
+      `${AgentClass.name}: a complete read of another conversation satisfied this job`);
+    agent._recordReadCompleteness(threadTabId, 'get_accessibility_tree', {}, {
+      success: true, pageUrl: threadUrl,
+    });
     assert.equal(agent._executionEvidenceSatisfied(threadGuard), true,
       `${AgentClass.name}: verified terminal coverage could not satisfy its own job`);
 

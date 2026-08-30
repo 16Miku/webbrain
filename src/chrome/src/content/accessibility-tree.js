@@ -718,8 +718,12 @@
     if (isInventoryFormControl) {
       try {
         const ariaRequired = String(el.getAttribute('aria-required') || '').trim().toLowerCase();
+        // HTML answers this for a native control: an optional input, textarea,
+        // or select reports required === false while carrying no attribute at
+        // all. Only a custom ARIA control can leave the answer unknown.
+        const nativeControl = tag === 'input' || tag === 'textarea' || tag === 'select';
         if (el.required === true || ariaRequired === 'true') line += ' required=true';
-        else if (ariaRequired === 'false') line += ' required=false';
+        else if (ariaRequired === 'false' || (nativeControl && el.required === false)) line += ' required=false';
       } catch {}
       // filter=all deliberately keeps aria-hidden and invisible nodes, which
       // pulls conditional and honeypot inputs into the tree. Mark them so a

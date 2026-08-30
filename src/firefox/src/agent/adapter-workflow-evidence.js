@@ -186,17 +186,36 @@ export function workflowRequiredRowsAreProcessed(
 ) {
   const requiredIds = new Set((inventory?.itemIds || []).map(id => String(id)));
   if (!requiredIds.size) return true;
+  const items = Array.isArray(inventoryItems) ? inventoryItems : [];
   const optionalIds = new Set(
-    (Array.isArray(inventoryItems) ? inventoryItems : [])
+    items
       .filter(item => item?.required === false
         && !workflowControlLabelIsRequested(item?.label, requestedLabels))
       .map(item => String(item.id || '')),
   );
+  // A radio group takes one answer. Its other options are the alternatives
+  // that answer rejects, so they can never carry action evidence of their own.
+  const radioGroupOf = new Map();
+  for (const item of items) {
+    if (String(item?.role || '').toLowerCase() !== 'radio') continue;
+    const name = String(item?.fieldName || '').trim();
+    if (!name) continue;
+    radioGroupOf.set(String(item.id || ''), `${String(item.documentScope || '')}|${name}`);
+  }
+  const answeredGroups = new Set();
+  for (const row of (Array.isArray(rows) ? rows : [])) {
+    if (String(row?.status || '').toLowerCase() !== 'processed') continue;
+    const group = radioGroupOf.get(String(row?.id || ''));
+    if (group) answeredGroups.add(group);
+  }
   return (Array.isArray(rows) ? rows : []).every((row) => {
     const id = String(row?.id || '');
     if (!requiredIds.has(id)) return true;
     const status = String(row?.status || '').toLowerCase();
     if (status === 'processed') return true;
-    return status === 'skipped' && optionalIds.has(id);
+    if (status !== 'skipped') return false;
+    if (optionalIds.has(id)) return true;
+    const group = radioGroupOf.get(id);
+    return !!group && answeredGroups.has(group);
   });
 }

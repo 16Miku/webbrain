@@ -734,7 +734,12 @@ export class Agent extends LoopDetector {
     this.readCompletenessStates.set(tabId, next);
     if (next?.complete === true) {
       const guard = this._planExecutionGuards.get(tabId);
-      if (guard?.enabled && guard.workflowRequiredJobEvidence === 'terminal_read_coverage') {
+      // Coverage completes against whatever conversation root the run is on.
+      // Only the conversation the job selected answers for that job.
+      if (guard?.enabled
+          && guard.workflowRequiredJobEvidence === 'terminal_read_coverage'
+          && this._workflowJobScopeIdentity(this._workflowObservationUrl(tabId, result))
+            === String(guard.workflowJobScopeIdentity || '')) {
         guard.workflowJobEvidenceSatisfied = true;
       }
     }
@@ -1935,9 +1940,13 @@ export class Agent extends LoopDetector {
       const authorizedTarget = this._workflowDraftAuthorizedTarget(state);
       // An authorized addressee set must match exactly. Without one, the draft
       // still has to name someone; an empty To line is not a finished draft.
+      // With no named target the draft still has to name someone, and when
+      // the request pointed at an open thread it has to be that thread.
+      const conversationScope = String(state.messagingConversationScope || '');
       const recipientsVerified = authorizedTarget
         ? messageTargetMatchesObservedIdentities(authorizedTarget, observedRecipients)
-        : observedRecipients.length > 0;
+        : (observedRecipients.length > 0
+          && (!conversationScope || this._workflowJobScopeIdentity(pageUrl) === conversationScope));
       const requirementByField = new Map(metadataDetails.items.map(item => [item.field, item]));
       const authoredFields = this._workflowComposerFieldBindings(tabId, state);
       // Every field the request named or this run wrote must read back exactly.
@@ -10680,7 +10689,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       guard.workflowJobScopeIdentity = identity;
       guard.workflowObservedScopeIdentities = [identity];
     }
-    if ((kind === 'scoped_content_read' || kind === 'pull_request_diff_read') && !identity) return;
+    if ((kind === 'scoped_content_read'
+      || kind === 'pull_request_diff_read'
+      || kind === 'terminal_read_coverage') && !identity) return;
     if (kind === 'terminal_read_coverage') {
       // Only require terminal coverage where the run can actually track it.
       const armed = this._armReadCompletenessFromPlan(tabId, {
@@ -11114,6 +11125,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     for (const item of observed.items) items.set(item.id, { ...item, observationSequence });
     const documents = { ...(compatible ? prior.documents : {}) };
     const formIdentity = this._workflowFormOriginIdentity(pageUrl);
+    const observedScopes = new Set(Object.keys(observed.documents));
+    // An iframe wizard advances by replacing the frame, so the step it left
+    // behind is history now and keeps the coverage it had, exactly as a
+    // document-root read archives a finished accessibility-tree step.
+    if ([...observedScopes].some(key => observed.documents[key]?.complete === true)) {
+      for (const [key, document] of Object.entries(documents)) {
+        if (observedScopes.has(key) || document?.completeBeforeMutation !== true) continue;
+        const { completeBeforeMutation, ...rest } = document;
+        documents[key] = { ...rest, complete: true };
+      }
+    }
     for (const [documentKey, document] of Object.entries(observed.documents)) {
       const priorDocument = documents[documentKey];
       const { coverage: observedCoverage, ...documentRest } = document;
@@ -18285,16 +18307,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? gateOutcome.requiresSubmission
       : null;
     const messaging = normalizeMessageTarget(gateOutcome?.messaging);
-    // "Reply here" names the thread that was open when the run was authorized.
-    // Gmail may defer pinning until the composer opens, so the thread's own
-    // identity has to survive that wait; a different thread is a different
-    // recipient set no matter what its composer shows.
-    const messagingConversationScope = messaging?.target_kind === 'active_conversation'
-      ? this._workflowJobScopeIdentity(gateOutcome?.siteWorkflowUrl)
-      : '';
     // Requested addressees for a plan that sends nothing. Held apart from
     // messaging so no send path can read them as authorization.
     const draftRecipients = normalizeMessageTarget(gateOutcome?.draftRecipients);
+    // "Reply here" names the thread that was open when the run was authorized,
+    // whether the run will send it or save it as a draft. Gmail may defer
+    // pinning until the composer opens, so the thread's own identity has to
+    // survive that wait; a different thread is a different recipient set no
+    // matter what its composer shows.
+    const messagingConversationScope = [messaging, draftRecipients]
+      .some(target => target?.target_kind === 'active_conversation')
+      ? this._workflowJobScopeIdentity(gateOutcome?.siteWorkflowUrl)
+      : '';
     const allowsAppStateToolEvidence = gateOutcome?.allowsAppStateToolEvidence === true;
     const requiredSchedulingTool = gateOutcome?.requiredSchedulingTool === 'schedule_task'
       || gateOutcome?.requiredSchedulingTool === 'schedule_resume'
