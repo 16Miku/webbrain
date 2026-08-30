@@ -516,8 +516,8 @@ function renderSidepanelUiScale(value) {
 
 async function setSidepanelUiScale(action) {
   const next = nextUiScale(currentUiScale, action);
-  renderSidepanelUiScale(next);
   await saveUiScale(browser.storage.local, next);
+  renderSidepanelUiScale(next);
 }
 
 loadUiScale(browser.storage.local).then(renderSidepanelUiScale);

@@ -253,8 +253,8 @@ function renderSettingsUiScale(value) {
 async function changeSettingsUiScale(action) {
   if (!settingsUiScaleReady) return;
   const next = nextUiScale(currentSettingsUiScale, action);
-  renderSettingsUiScale(next);
   await saveUiScale(browser.storage.local, next);
+  renderSettingsUiScale(next);
 }
 
 loadUiScale(browser.storage.local).then(renderSettingsUiScale);

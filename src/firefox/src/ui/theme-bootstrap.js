@@ -38,7 +38,7 @@
         var inverse = Number((10000 / scale).toFixed(4));
         root.setAttribute('data-ui-scale', String(scale));
         root.style.setProperty('--ui-scale-zoom', String(scale / 100));
-        root.style.setProperty('--ui-scale-width', '100%');
+        root.style.setProperty('--ui-scale-width', inverse + '%');
         root.style.setProperty('--ui-scale-height', inverse + 'vh');
       };
       var ready = false;

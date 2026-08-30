@@ -40032,7 +40032,7 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
   assert.deepEqual(scale.uiScaleLayout(125), {
     scale: 125,
     zoom: 1.25,
-    width: '100%',
+    width: '80%',
     height: '80vh',
   });
 
@@ -40054,6 +40054,7 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
   assert.equal(shortcut({ key: '-', code: 'NumpadSubtract' }), 'decrease');
   assert.equal(shortcut({ key: '+', code: 'Equal', ctrlKey: false }), '');
   assert.equal(shortcut({ key: '+', code: 'Equal', altKey: true }), '');
+  assert.equal(shortcut({ key: '+', code: 'Equal', shiftKey: true }), '');
   assert.equal(shortcut({ key: '+', code: 'Equal', isComposing: true }), '');
   assert.equal(shortcut({ key: '+', code: 'Equal', getModifierState: () => true }), '');
 
@@ -40076,7 +40077,7 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
   assert.equal(scale.applyUiScale(root, 125, { setItem: (key, value) => mirrored.set(key, value) }), 125);
   assert.equal(root.dataset.uiScale, '125');
   assert.equal(properties.get('--ui-scale-zoom'), '1.25');
-  assert.equal(properties.get('--ui-scale-width'), '100%');
+  assert.equal(properties.get('--ui-scale-width'), '80%');
   assert.equal(properties.get('--ui-scale-height'), '80vh');
   assert.equal(mirrored.get('wbUiScale'), '125');
 
@@ -40086,6 +40087,7 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
     const config = await import(pathToFileURL(path.join(ROOT, prefix, 'src/config-transfer.js')).href);
     assert.match(bootstrap, /endsWith\('\/sidepanel\.html'\)[\s\S]*?localStorage\.getItem\('wbUiScale'\)/, `${label}: saved scale should apply before sidepanel paint only`);
     assert.match(bootstrap, /applyScale[\s\S]*?--ui-scale-zoom/, `${label}: pre-paint scale should set the zoom variables`);
+    assert.match(bootstrap, /--ui-scale-width', inverse \+ '%'[\s\S]*?--ui-scale-height', inverse \+ 'vh'/, `${label}: pre-paint scale should inverse-compensate both width and height under zoom`);
     assert.match(bootstrap, /data-ui-scale-ready.*?false[\s\S]*?storage\.get\(\{ uiScale: 100 \}/, `${label}: canonical storage should settle the pre-paint scale before revealing the sidepanel`);
     assert.match(bootstrap, /data-ui-scale-ready.*?true/, `${label}: sidepanel should be revealed after scale initialization`);
     assert.match(css, /body\s*\{[\s\S]*?width:\s*var\(--ui-scale-width, 100%\);[\s\S]*?height:\s*var\(--ui-scale-height, 100vh\);[\s\S]*?zoom:\s*var\(--ui-scale-zoom, 1\);/, `${label}: sidepanel layout should compensate CSS zoom`);
@@ -40123,6 +40125,8 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
     assert.match(settingsJs, /loadUiScale\([\s\S]*?storage\.local[\s\S]*?renderSettingsUiScale/, `${label}: settings should hydrate persisted scale`);
     assert.match(settingsJs, /saveUiScale\([\s\S]*?storage\.local/, `${label}: settings controls should persist scale changes`);
     assert.match(settingsJs, /changeSettingsUiScale\('decrease'\)\.catch\(\(\) => \{\}\)/, `${label}: settings scale writes should handle storage failures`);
+    assert.match(settingsJs, /await saveUiScale\([\s\S]*?renderSettingsUiScale/, `${label}: settings should render scale only after it is persisted`);
+    assert.match(sidepanelJs, /await saveUiScale\([\s\S]*?renderSidepanelUiScale/, `${label}: sidepanel should render scale only after it is persisted`);
     assert.match(settingsJs, /settingsUiScaleReady = false[\s\S]*?if \(!settingsUiScaleReady\) return/, `${label}: settings controls should wait for canonical scale hydration`);
     assert.match(settingsJs, /storage\.onChanged\.addListener\([\s\S]*?changes\[UI_SCALE_STORAGE_KEY\][\s\S]*?renderSettingsUiScale/, `${label}: settings should reflect scale changes made elsewhere`);
     assert.match(settingsJs, /setLocale\([\s\S]*?refreshUiScaleShortcuts\(\)\.catch/, `${label}: settings should refresh the shortcut summary after locale changes`);

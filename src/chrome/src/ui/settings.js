@@ -266,8 +266,8 @@ function renderSettingsUiScale(value) {
 async function changeSettingsUiScale(action) {
   if (!settingsUiScaleReady) return;
   const next = nextUiScale(currentSettingsUiScale, action);
-  renderSettingsUiScale(next);
   await saveUiScale(chrome.storage.local, next);
+  renderSettingsUiScale(next);
 }
 
 loadUiScale(chrome.storage.local).then(renderSettingsUiScale);

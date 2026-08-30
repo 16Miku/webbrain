@@ -29,7 +29,7 @@ export function uiScaleLayout(value) {
   return {
     scale,
     zoom: scale / 100,
-    width: '100%',
+    width: `${inverse}%`,
     height: `${inverse}vh`,
   };
 }
@@ -38,6 +38,7 @@ export function uiScaleShortcutAction(event) {
   if (
     event?.isComposing
     || event?.altKey
+    || event?.shiftKey
     || event?.getModifierState?.('AltGraph')
     || (!event?.ctrlKey && !event?.metaKey)
   ) return '';
