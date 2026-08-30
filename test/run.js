@@ -81836,34 +81836,62 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       `${AgentClass.name}: a collection job declared no terminal evidence`);
     assert.equal(agent._executionEvidenceSatisfied(readGuard), false,
       `${AgentClass.name}: one page read stood in for a reconciled collection`);
-    const row = (n, status) => ({
-      id: `product-${n}`,
-      label: `Product ${n}`,
-      status,
-      fields: {
-        product_name: `Product ${n}`,
-        product_url: `https://www.producthunt.com/posts/product-${n}`,
-        rank_context: `#${n} today`,
-      },
+    // Nothing app-owned enumerates a ranking, so completeness is claimable
+    // only against the expected set the app seeded from the request. The app
+    // writes the ordered rows; the model fills them in.
+    const collectionTabId = tabId + 10;
+    const expectedItems = agent._normalizeExpectedItems({
+      count: 3,
+      item_type: 'product',
+      ordered: true,
+      required_fields: ['product_name'],
     });
-    const partialCollection = agent._progressUpdate(tabId + 10, {
-      items: [row(1, 'processed'), row(2, 'pending')],
-    });
-    assert.equal(partialCollection.success, true, partialCollection.error || '');
+    agent.progressExpectedItems.set(collectionTabId, expectedItems);
+    const collectionSession = agent._setProgressSession(collectionTabId, {
+      mode: 'active',
+      allowedActions: ['process_item'],
+      forbiddenActions: [],
+      targets: [],
+      confidence: 0.9,
+      reason: 'collection test',
+    }, { taskText: 'Collect the ranked products.', pageScope: 'https://www.producthunt.com/', source: 'classifier' });
+    agent._seedExpectedProgressItems(collectionTabId, collectionSession, expectedItems);
+    const fill = (n, status, fields = {}) => agent._progressUpdate(collectionTabId, {
+      items: [{
+        id: `expected:${n}`,
+        status,
+        fields: {
+          product_name: `Product ${n}`,
+          product_url: `https://www.producthunt.com/posts/product-${n}`,
+          rank_context: `#${n} today`,
+          ...fields,
+        },
+      }],
+    }, { sessionId: collectionSession.sessionId });
+
     assert.equal(agent._executionEvidenceSatisfied(readGuard), false,
-      `${AgentClass.name}: an unfinished row satisfied the collection contract`);
+      `${AgentClass.name}: seeded but unfilled rows satisfied the collection contract`);
+    fill(1, 'processed');
+    fill(2, 'processed');
+    assert.equal(agent._executionEvidenceSatisfied(readGuard), false,
+      `${AgentClass.name}: a partial ledger satisfied the expected collection`);
     // Rows the model wrote are not their own proof: the adapter's job contract
     // names the fields each collected row has to carry.
-    const barePayload = agent._progressUpdate(tabId + 10, {
-      items: [row(2, 'processed'), { id: 'product-3', label: 'Product three', status: 'processed' }],
-    });
-    assert.equal(barePayload.success, true, barePayload.error || '');
+    agent._progressUpdate(collectionTabId, {
+      items: [{ id: 'expected:3', status: 'processed', fields: { product_name: 'Product 3' } }],
+    }, { sessionId: collectionSession.sessionId });
     assert.equal(agent._executionEvidenceSatisfied(readGuard), false,
       `${AgentClass.name}: a row without the job's declared fields satisfied the collection`);
-    const collected = agent._progressUpdate(tabId + 10, { items: [row(3, 'processed')] });
-    assert.equal(collected.success, true, collected.error || '');
+    fill(3, 'processed');
     assert.equal(agent._executionEvidenceSatisfied(readGuard), true,
       `${AgentClass.name}: a reconciled collection could not satisfy its own job`);
+    // Without an app-seeded expected set nothing bounds the ranking.
+    agent.progressExpectedItems.delete(collectionTabId);
+    agent._refreshWorkflowCollectionEvidence(
+      collectionTabId, readGuard, agent._workflowCollectionRows(collectionTabId),
+    );
+    assert.equal(agent._executionEvidenceSatisfied(readGuard), false,
+      `${AgentClass.name}: an unbounded ranking claimed complete coverage from its own ledger`);
   }
 });
 
@@ -84157,9 +84185,18 @@ test('a job whose collection can be empty finishes on a verified empty result', 
     });
     emptyGuard.evidenceTaskKey = emptyGuard.taskKey;
     assert.equal(emptyGuard.workflowRequiredJobEvidence, 'reconciled_collection');
-    agent._markPlanExecutionToolCall(emptyTabId, 'read_page', { success: true, url: videoUrl });
+    agent._beginCompletionInvariant(emptyTabId);
+    const emptyRead = (result) => {
+      agent._recordCompletionToolResult(emptyTabId, 'read_page', {}, result);
+      agent._markPlanExecutionToolCall(emptyTabId, 'read_page', result);
+    };
+    // Reading the video page is not the same as the page saying it has none.
+    emptyRead({ success: true, url: videoUrl, pageContent: '视频标题\n点赞 1234' });
+    assert.equal(agent._executionEvidenceSatisfied(emptyGuard), false,
+      `${AgentClass.name}: reading the video reported zero comments on its own`);
+    emptyRead({ success: true, url: videoUrl, pageContent: '视频标题\n暂无评论' });
     assert.equal(agent._executionEvidenceSatisfied(emptyGuard), true,
-      `${AgentClass.name}: a video with no comments could never finish`);
+      `${AgentClass.name}: a video the page says has no comments could never finish`);
 
     // Not looking at the video is still not a verified empty result.
     const unseenTabId = 9454 + index;
@@ -84175,11 +84212,14 @@ test('a job whose collection can be empty finishes on a verified empty result', 
       siteWorkflow: selected,
     });
     unseenGuard.evidenceTaskKey = unseenGuard.taskKey;
-    agent._markPlanExecutionToolCall(unseenTabId, 'read_page', {
-      success: true, url: 'https://www.douyin.com/discover',
-    });
+    agent._beginCompletionInvariant(unseenTabId);
+    const unseenResult = {
+      success: true, url: 'https://www.douyin.com/discover', pageContent: '暂无评论',
+    };
+    agent._recordCompletionToolResult(unseenTabId, 'read_page', {}, unseenResult);
+    agent._markPlanExecutionToolCall(unseenTabId, 'read_page', unseenResult);
     assert.equal(agent._executionEvidenceSatisfied(unseenGuard), false,
-      `${AgentClass.name}: an empty collection passed without observing the video`);
+      `${AgentClass.name}: an empty signal from another page satisfied this video`);
 
     // A collection that can never legitimately be empty still needs rows.
     const phTabId = 9458 + index;
@@ -84237,35 +84277,63 @@ test('every declared non-submit job carries its own evidence contract', () => {
       }),
     });
     videoGuard.evidenceTaskKey = videoGuard.taskKey;
+    agent._beginCompletionInvariant(videoTabId);
+    // Mirror the real path: the completion recorder sees the arguments, the
+    // execution guard sees the result.
+    const transcriptCall = (args, result) => {
+      agent._recordCompletionToolResult(videoTabId, 'read_youtube_transcript', args, result);
+      agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', result);
+    };
     agent._markPlanExecutionToolCall(videoTabId, 'read_page', { success: true, url: videoUrl });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
       `${AgentClass.name}: a page read stood in for the video transcript`);
-    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', {
-      success: true, data: { text: '' },
-    });
+    transcriptCall({}, { success: true, url: videoUrl, data: { text: '' } });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
       `${AgentClass.name}: an empty transcript window satisfied the job`);
-    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', {
+    // The final window of a video nobody read the start of is not coverage.
+    transcriptCall({ text_offset: 8000 }, {
       success: true,
+      url: videoUrl,
+      data: { text: 'and that is the annual plan.', text_offset: 8000 },
+    });
+    assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
+      `${AgentClass.name}: a trailing transcript fragment satisfied a whole-video job`);
+    transcriptCall({}, {
+      success: true,
+      url: videoUrl,
       data: { text: 'Pricing starts at ten dollars.', has_more_text: true, next_text_offset: 4000 },
     });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
       `${AgentClass.name}: a partial transcript window with more text pending satisfied the job`);
+    // A window that skips the middle breaks the chain.
+    transcriptCall({ text_offset: 9000 }, {
+      success: true,
+      url: videoUrl,
+      data: { text: 'the annual plan is cheaper.', text_offset: 9000 },
+    });
+    assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
+      `${AgentClass.name}: a gap in the transcript chain satisfied the job`);
+    // Read it properly: from the start, then the continuation to the end.
+    transcriptCall({}, {
+      success: true,
+      url: videoUrl,
+      data: { text: 'Pricing starts at ten dollars.', has_more_text: true, next_text_offset: 4000 },
+    });
     // A complete transcript of a different video is not this video's answer.
-    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', {
+    transcriptCall({ text_offset: 4000 }, {
       success: true,
       url: 'https://www.youtube.com/watch?v=zzzzzzzzzzz',
-      data: { text: 'A complete transcript, but of another video.' },
+      data: { text: 'A complete transcript, but of another video.', text_offset: 4000 },
     });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
       `${AgentClass.name}: another video's transcript satisfied this job`);
-    agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', {
+    transcriptCall({ text_offset: 4000 }, {
       success: true,
       url: videoUrl,
-      data: { text: 'Pricing starts at ten dollars, and the annual plan is cheaper.' },
+      data: { text: 'and the annual plan is cheaper.', text_offset: 4000 },
     });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), true,
-      `${AgentClass.name}: a complete transcript could not satisfy its own job`);
+      `${AgentClass.name}: a contiguous transcript could not satisfy its own job`);
 
     // A reading job's evidence is a read of the resource the job selected.
     const prUrl = 'https://github.com/esokullu/webbrain/pull/320';

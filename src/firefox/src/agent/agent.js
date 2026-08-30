@@ -1103,6 +1103,8 @@ export class Agent extends LoopDetector {
     if (workflowReleaseAssetEvidence && result && typeof result === 'object') {
       result.workflowReleaseAssetEvidence = workflowReleaseAssetEvidence;
     }
+    this._rememberWorkflowTranscriptCoverage(tabId, name, args, result);
+    this._rememberWorkflowEmptyCollectionSignal(tabId, name, result);
     this._invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result, args, detectedSubmit);
     const submitState = this._completionSubmitStates.get(tabId);
     if (
@@ -1541,6 +1543,25 @@ export class Agent extends LoopDetector {
       // Any other classified field cannot be proved from the composer.
       return false;
     });
+  }
+
+  // "We read the video page" is not "the video has no comments". The page
+  // itself has to say so before an empty collection can stand as the result.
+  _workflowEmptyCollectionSignal(text) {
+    return /\b(?:no comments(?: yet)?|be the first to comment|there are no comments)\b|(?:暂无评论|暂时没有评论|还没有评论|尚無評論|暫無評論|快来发表第一条评论|抢首评|コメントはありません|댓글이 없습니다)/i.test(String(text || ''));
+  }
+
+  _rememberWorkflowEmptyCollectionSignal(tabId, name, result) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled
+        || guard.workflowRequiredJobEvidence !== 'reconciled_collection'
+        || !this._workflowAllowsEmptyCollection(guard.siteWorkflow)
+        || !this.constructor.WORKFLOW_CONTENT_READ_TOOLS.has(name)
+        || !this._isSuccessfulExecutionEvidence(result)
+        || !this._workflowObservationStaysInJobScope(tabId, guard, result)) return;
+    const text = [result?.pageContent, result?.text, result?.data?.text]
+      .find(value => typeof value === 'string' && value.trim()) || '';
+    if (this._workflowEmptyCollectionSignal(text)) guard.workflowEmptyCollectionObserved = true;
   }
 
   _workflowSavedStateSignal(text) {
@@ -10478,16 +10499,49 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // A transcript answer is grounded only when the run holds transcript content
   // and no further window is pending. Both the provider and the result trimmer
   // signal a pending window, so either one leaves coverage incomplete.
-  _workflowTranscriptCoverageComplete(result) {
+  _workflowTranscriptWindow(args, result) {
     const data = result?.data && typeof result.data === 'object' && !Array.isArray(result.data)
       ? result.data
       : null;
-    if (!data) return false;
+    if (!data) return null;
     const hasContent = !!String(data.text || '').trim()
       || (Array.isArray(data.segments) && data.segments.length > 0);
-    if (!hasContent) return false;
+    if (!hasContent) return null;
+    const requested = Number(args?.text_offset ?? args?.continuationArgs?.text_offset);
+    const reported = Number(data.text_offset);
+    const start = Number.isFinite(requested) && requested >= 0
+      ? requested
+      : (Number.isFinite(reported) && reported >= 0 ? reported : 0);
     const nextOffset = data.next_text_offset == null ? NaN : Number(data.next_text_offset);
-    return data.has_more_text !== true && !Number.isFinite(nextOffset);
+    const more = data.has_more_text === true || Number.isFinite(nextOffset);
+    return { start, next: Number.isFinite(nextOffset) ? nextOffset : NaN, more };
+  }
+
+  // A window can end the transcript while starting anywhere, so "no next
+  // offset" alone would accept the final fragment of a video nobody read the
+  // start of. Coverage has to begin at zero and advance without a gap.
+  _rememberWorkflowTranscriptCoverage(tabId, name, args, result) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled
+        || guard.workflowRequiredJobEvidence !== 'transcript_segments'
+        || name !== 'read_youtube_transcript'
+        || !this._isSuccessfulExecutionEvidence(result)) return;
+    const window = this._workflowTranscriptWindow(args, result);
+    if (!window) {
+      guard.workflowTranscriptCoverage = null;
+      return;
+    }
+    const prior = guard.workflowTranscriptCoverage;
+    const continues = window.start === 0
+      || (prior && Number(prior.coveredTo) === window.start);
+    if (!continues) {
+      guard.workflowTranscriptCoverage = null;
+      return;
+    }
+    guard.workflowTranscriptCoverage = {
+      coveredTo: Number.isFinite(window.next) ? window.next : window.start,
+      complete: !window.more,
+    };
   }
 
   // A reading job's evidence is the read itself, so it only counts while the
@@ -10580,17 +10634,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const allTerminal = terminal.every(row => isTerminalLedgerStatus(row?.status)
       && String(row?.status || '').toLowerCase() !== 'failed');
     const verifiedEmpty = terminal.length === 0
-      && guard.workflowJobScopeObserved === true
+      && guard.workflowEmptyCollectionObserved === true
       && this._workflowAllowsEmptyCollection(guard.siteWorkflow);
     if (verifiedEmpty) {
       guard.workflowJobEvidenceSatisfied = true;
       return;
     }
+    // Nothing app-owned enumerates an unbounded list, so a ledger the model
+    // wrote cannot prove it collected everything in it. Without an app-seeded
+    // expected set the run has rows worth reporting, not complete coverage.
     const expectedSet = this.progressExpectedItems.get(tabId);
-    const substantiated = expectedSet
-      ? this._expectedItemsDoneBlock(tabId) === null
-      : this._workflowCollectionRowsAreSubstantiated(guard, terminal);
-    guard.workflowJobEvidenceSatisfied = allTerminal && terminal.length > 0 && substantiated;
+    guard.workflowJobEvidenceSatisfied = allTerminal
+      && terminal.length > 0
+      && !!expectedSet
+      && this._expectedItemsDoneBlock(tabId) === null
+      && this._workflowCollectionRowsAreSubstantiated(guard, terminal);
   }
 
   _workflowJobEvidenceInstruction(state) {
@@ -10602,7 +10660,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       case 'terminal_read_coverage':
         return 'A complete conversation needs trusted coverage through its terminal page with every message expanded.';
       case 'reconciled_collection':
-        return `A collected set needs one processed progress_update row per item, each carrying ${(state?.siteWorkflow?.job?.requiredRowFields || []).join(', ') || 'the fields this job declares'}, with no duplicate entries. When the app seeded an expected set, every ordered row must be filled in.`;
+        return `A collected set is complete only against an app-seeded expected set: every ordered row processed and carrying ${(state?.siteWorkflow?.job?.requiredRowFields || []).join(', ') || 'the fields this job declares'}, with no duplicates. If the requested set was never bounded, nothing here can prove you collected all of it: call done with outcome partial and report the rows you did collect.`;
       case 'pull_request_diff_read':
         return 'A review needs the changed files of this exact pull request read, not a screenshot or the overview tab.';
       case 'scoped_content_read':
@@ -18303,6 +18361,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       workflowRequiredJobEvidence: '',
       workflowJobScopeIdentity: '',
       workflowObservedScopeIdentities: [],
+      workflowTranscriptCoverage: null,
+      workflowEmptyCollectionObserved: carryMatches && carried.workflowEmptyCollectionObserved === true,
       workflowJobScopeObserved: carryMatches && carried.workflowJobScopeObserved === true,
       workflowJobEvidenceSatisfied: carryMatches && carried.workflowJobEvidenceSatisfied === true,
       workflowForbiddenSubmission: carryMatches && carried.workflowForbiddenSubmission === true,
@@ -18502,10 +18562,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (state.workflowRequiredJobEvidence === 'transcript_segments'
         && name === 'read_youtube_transcript') {
-      // Calling the tool is not the evidence; a complete transcript of the
-      // video this job selected is. Re-evaluated per call so paging to the end
-      // satisfies it and stopping on a partial window does not.
-      state.workflowJobEvidenceSatisfied = this._workflowTranscriptCoverageComplete(result)
+      // Calling the tool is not the evidence; a gap-free transcript of the
+      // video this job selected, read from its start, is.
+      state.workflowJobEvidenceSatisfied = state.workflowTranscriptCoverage?.complete === true
         && this._workflowObservationStaysInJobScope(tabId, state, result);
     }
     if (contentRead && this._workflowObservationStaysInJobScope(tabId, state, result)) {
@@ -18629,6 +18688,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             }
           : null,
         workflowJobScopeObserved: guard.workflowJobScopeObserved === true,
+        workflowEmptyCollectionObserved: guard.workflowEmptyCollectionObserved === true,
         workflowJobEvidenceSatisfied: guard.workflowJobEvidenceSatisfied === true,
         workflowForbiddenSubmission: guard.workflowForbiddenSubmission === true,
         workflowRequestedControlLabels: Array.isArray(guard.workflowRequestedControlLabels)
