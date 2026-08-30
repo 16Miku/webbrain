@@ -83858,6 +83858,112 @@ test('a wizard Next keeps earlier completed steps in the cumulative inventory', 
   }
 });
 
+test('an iframe-only application inventory can still verify its submit confirmation', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9396 + index;
+    const applyUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
+    const frameUrl = 'https://acme.wd1.myworkdayjobs.com/application/frame';
+    const selected = agent._resolvePlannerSiteWorkflow(applyUrl, {
+      request_kind: 'execute',
+      site_job: 'submit-application',
+    });
+    assert.equal(selected?.job?.requiresSubmission, true);
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Complete and submit this application.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    guard.successfulConsequentialToolCalls = 1;
+    const inventorySelector = [
+      'input', 'textarea', 'select', '[contenteditable="true"]',
+      '[role="textbox"]', '[role="combobox"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="searchbox"]', '[role="switch"]', '[role="slider"]', '[role="spinbutton"]', '[role="listbox"]',
+    ].join(',');
+    // The whole form lives in the iframe, so every inventory document is keyed
+    // by frame and no AX document token ever describes it.
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'iframe_read', {
+      selector: inventorySelector,
+    }, {
+      success: true,
+      pageUrl: applyUrl,
+      frames: [{
+        frameId: 7,
+        ok: true,
+        url: frameUrl,
+        matchCount: 1,
+        offset: 0,
+        truncated: false,
+        matches: [
+          { tag: 'input', type: 'email', id: 'email', name: 'email', label: 'Email', value: 'ada@example.com', matchIndex: 0, required: true },
+        ],
+      }],
+    });
+    assert.equal(inventory?.complete, true);
+    assert.deepEqual(Object.keys(guard.workflowInventoryEvidence.documents), [`iframe:7:${frameUrl}`],
+      `${AgentClass.name}: the iframe-only inventory grew an AX document key`);
+
+    const terminal = (dispatchUrl) => {
+      const workflowBinding = agent._workflowSubmitBindingForAttempt(tabId, dispatchUrl);
+      return agent._workflowTerminalEvidenceFromDone(
+        tabId,
+        { workflowPageText: 'Your application was submitted.' },
+        dispatchUrl,
+        {
+          submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: dispatchUrl, workflowBinding },
+          verifiedFinalSubmit: true,
+          relevantForms: 0,
+        },
+        null,
+      );
+    };
+    assert.equal(terminal(applyUrl)?.source, 'form_confirmation_state',
+      `${AgentClass.name}: an iframe-backed application could never verify its confirmation`);
+    // The form identity still has to pin which application was inventoried.
+    assert.equal(terminal('https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/2/apply'), null,
+      `${AgentClass.name}: a different application on the same host satisfied the workflow`);
+  }
+});
+
+test('completion page text keeps the line boundaries publication payloads match on', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/agent/agent.js'],
+    ['firefox', 'src/firefox/src/agent/agent.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const start = source.indexOf('workflowPageText: String(');
+    assert.ok(start >= 0, `${label}: completion page text probe not found`);
+    const end = source.indexOf('.slice(0, 20000),', start);
+    assert.ok(end > start, `${label}: completion page text probe is unbounded`);
+    const expression = source.slice(start + 'workflowPageText: '.length, end)
+      .replace("String(document.body?.innerText || '')", 'String(innerText)');
+    const normalize = vm.runInNewContext(`(innerText) => (${expression})`);
+    const pageText = normalize('Release v9\n\n  Fixed   the parser\nShipped the CLI  \n');
+    assert.equal(pageText, 'Release v9\nFixed the parser\nShipped the CLI',
+      `${label}: the completion probe flattened the page into one line`);
+
+    // The matcher accepts a requested value only as a whole line, so probe
+    // output and matcher have to agree about where the lines are.
+    const agent = new (label === 'chrome' ? AgentCh : AgentFx)({});
+    assert.equal(
+      agent._workflowPublishedPayloadValueObserved({ field: 'notes', value: 'Fixed the parser' }, { pageText }),
+      true,
+      `${label}: a published value on its own line could not be verified from real page text`,
+    );
+    assert.equal(
+      agent._workflowPublishedPayloadValueObserved({ field: 'notes', value: 'Fixed the CLI' }, { pageText }),
+      false,
+      `${label}: a value absent from the published page was accepted`,
+    );
+  }
+});
+
 test('hidden iframe matches stay out of the exact form inventory', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});

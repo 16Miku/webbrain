@@ -1741,11 +1741,20 @@ export class Agent extends LoopDetector {
   // inventoried and reconciled. Otherwise a different form on the same
   // supported host produces the identical generic confirmation.
   _workflowFormSubmitMatchesInventoriedForm(binding, state) {
-    const scope = String(binding?.formDocumentScope || '');
     const identity = String(binding?.formIdentity || '');
-    if (!scope || !identity) return false;
-    const document = state?.workflowInventoryEvidence?.documents?.[scope];
-    return document?.complete === true && String(document.formIdentity || '') === identity;
+    if (!identity) return false;
+    const documents = state?.workflowInventoryEvidence?.documents;
+    if (!documents || !Object.keys(documents).length) return false;
+    const scope = String(binding?.formDocumentScope || '');
+    const scoped = scope ? documents[scope] : null;
+    if (scoped) return scoped.complete === true && String(scoped.formIdentity || '') === identity;
+    // A form inventoried only through iframe_read keys its documents by frame,
+    // while the dispatch is recorded against the outer document. The form
+    // identity still says which form was inventoried, so fall back to the
+    // frames of that same form, all of which must be complete.
+    const matching = Object.values(documents)
+      .filter(entry => String(entry?.formIdentity || '') === identity);
+    return matching.length > 0 && matching.every(entry => entry?.complete === true);
   }
 
   _workflowFormConfirmationSignal(text) {
@@ -25841,8 +25850,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   liveRegionMessages: toasts.slice(0, 6),
                   successMessages,
                   workflowResourceUrls,
+                  // Published payload verification matches a requested title,
+                  // notes, or body as a whole line, so line boundaries have to
+                  // survive here. Only horizontal whitespace collapses.
                   workflowPageText: String(document.body?.innerText || '')
-                    .replace(/\s+/g, ' ').trim().slice(0, 20000),
+                    .replace(/\r\n?/g, '\n')
+                    .split('\n')
+                    .map(line => line.replace(/[^\S\n]+/g, ' ').trim())
+                    .filter(Boolean)
+                    .join('\n')
+                    .slice(0, 20000),
                 };
               })()
             `);
