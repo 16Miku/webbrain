@@ -12807,27 +12807,61 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && observed.view === 'files';
   }
 
+  // Only a reader that walks the whole document can close a diff. A selection
+  // returns what the user highlighted and an extraction returns what a query
+  // asked for; neither says anything about the rest of the changed files.
+  // Each of the two that can paginates in its own coordinates: read_page walks
+  // a character offset, the accessibility tree walks numbered pages.
+  _workflowDiffReadWindow(name, args, result) {
+    if (name === 'read_page') {
+      const requested = Number(args?.offset ?? args?.continuationArgs?.offset);
+      const start = Number.isFinite(requested) && requested >= 0 ? requested : 0;
+      const next = Number(result?.nextOffset);
+      return {
+        origin: 0,
+        start,
+        next: Number.isFinite(next) && next > start ? next : start,
+        more: result?.hasMore === true
+          || result?.textTruncated === true
+          || (Number.isFinite(next) && next > start),
+      };
+    }
+    if (name === 'get_accessibility_tree') {
+      const requested = Number(args?.page ?? args?.continuationArgs?.page);
+      const start = Number.isInteger(requested) && requested > 0 ? requested : 1;
+      return {
+        origin: 1,
+        start,
+        next: start + 1,
+        more: isWorkflowInventoryContinuationPending(result),
+      };
+    }
+    return null;
+  }
+
   // Landing on the changed-files view is where a review starts, not where it
-  // ends. A large diff arrives in pages, so coverage runs the same way the
-  // transcript chain does: from the first page, without a gap, to the last.
+  // ends. A large diff arrives in windows, so coverage runs the way the
+  // transcript chain does: from the first window, without a gap, to the last.
   _rememberWorkflowDiffCoverage(tabId, name, args, result) {
     const guard = this._planExecutionGuards.get(tabId);
     if (!guard?.enabled
         || guard.workflowRequiredJobEvidence !== 'pull_request_diff_read'
-        || !this.constructor.WORKFLOW_CONTENT_READ_TOOLS.has(name)
         || !this._isSuccessfulExecutionEvidence(result)) return;
+    const window = this._workflowDiffReadWindow(name, args, result);
+    if (!window) return;
     if (!this._workflowPullRequestDiffRead(guard, this._workflowObservationUrl(tabId, result))) return;
-    const requested = Number(args?.page ?? args?.continuationArgs?.page);
-    const page = Number.isInteger(requested) && requested > 0 ? requested : 1;
     const prior = guard.workflowDiffCoverage;
-    const continues = page === 1 || (prior && Number(prior.coveredTo) === page);
+    // Two readers cannot share a chain: their coordinates mean different things.
+    const continues = window.start === window.origin
+      || (prior && prior.tool === name && Number(prior.coveredTo) === window.start);
     if (!continues) {
       guard.workflowDiffCoverage = null;
       return;
     }
     guard.workflowDiffCoverage = {
-      coveredTo: page + 1,
-      complete: !isWorkflowInventoryContinuationPending(result),
+      tool: name,
+      coveredTo: window.next,
+      complete: !window.more,
     };
   }
 

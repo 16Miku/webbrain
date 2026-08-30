@@ -84915,11 +84915,28 @@ test('every declared non-submit job carries its own evidence contract', () => {
       agent._recordCompletionToolResult(prTabId, 'read_page', args, result);
       agent._markPlanExecutionToolCall(prTabId, 'read_page', result);
     };
-    // A large diff arrives in pages; the first one is not the review.
-    diffRead({}, { success: true, url: `${prUrl}/files`, truncated: true, nextPage: 2 });
+    // A selection or a targeted extraction says nothing about the rest of the
+    // diff, however complete its own result looks.
+    agent._recordCompletionToolResult(prTabId, 'get_selection', {}, {
+      success: true, url: `${prUrl}/files`, text: 'one highlighted line',
+    });
+    agent._markPlanExecutionToolCall(prTabId, 'get_selection', {
+      success: true, url: `${prUrl}/files`, text: 'one highlighted line',
+    });
     assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
-      `${AgentClass.name}: a truncated first page of the diff satisfied the review job`);
-    diffRead({ page: 2 }, { success: true, url: `${prUrl}/files` });
+      `${AgentClass.name}: a selected line closed the diff contract`);
+    // read_page walks a character offset, so a window that starts mid-document
+    // is not the beginning of the diff.
+    diffRead({ offset: 4000 }, { success: true, url: `${prUrl}/files`, text: 'tail of the diff' });
+    assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
+      `${AgentClass.name}: a mid-document read_page window was treated as the whole diff`);
+    // A large diff arrives in windows; the first one is not the review.
+    diffRead({}, {
+      success: true, url: `${prUrl}/files`, hasMore: true, nextOffset: 4000,
+    });
+    assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
+      `${AgentClass.name}: a truncated first window of the diff satisfied the review job`);
+    diffRead({ offset: 4000 }, { success: true, url: `${prUrl}/files`, text: 'tail of the diff' });
     assert.equal(agent._executionEvidenceSatisfied(prGuard), true,
       `${AgentClass.name}: reading the changed files did not satisfy the review job`);
     // Another pull request's diff is not this one's.
