@@ -27,4 +27,17 @@
   } catch (_) {
     document.documentElement.setAttribute('data-theme', 'dark');
   }
+
+  try {
+    if (window.location.pathname.endsWith('/sidepanel.html')) {
+      var levels = [75, 80, 90, 100, 110, 125, 150, 175];
+      var scale = Number(localStorage.getItem('wbUiScale'));
+      if (levels.indexOf(scale) === -1) scale = 100;
+      var inverse = Number((10000 / scale).toFixed(4));
+      document.documentElement.setAttribute('data-ui-scale', String(scale));
+      document.documentElement.style.setProperty('--ui-scale-zoom', String(scale / 100));
+      document.documentElement.style.setProperty('--ui-scale-width', inverse + '%');
+      document.documentElement.style.setProperty('--ui-scale-height', inverse + 'vh');
+    }
+  } catch (_) { /* default CSS variables keep the panel at 100% */ }
 })();

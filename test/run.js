@@ -40052,6 +40052,43 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
   assert.equal(shortcut({ key: '+', code: 'Equal', altKey: true }), '');
   assert.equal(shortcut({ key: '+', code: 'Equal', isComposing: true }), '');
   assert.equal(shortcut({ key: '+', code: 'Equal', getModifierState: () => true }), '');
+
+  assert.equal(await scale.loadUiScale({ get: async () => ({ uiScale: 150 }) }), 150);
+  assert.equal(await scale.loadUiScale({ get: async () => ({ uiScale: 133 }) }), 100);
+  assert.equal(await scale.loadUiScale({ get: async () => { throw new Error('unavailable'); } }), 100);
+  const saved = [];
+  assert.equal(await scale.saveUiScale({ set: async (value) => saved.push(value) }, 125), 125);
+  assert.equal(await scale.saveUiScale({ set: async (value) => saved.push(value) }, 133), 100);
+  assert.deepEqual(saved, [{ uiScale: 125 }, { uiScale: 100 }]);
+
+  const properties = new Map();
+  const mirrored = new Map();
+  const root = {
+    dataset: {},
+    style: { setProperty: (name, value) => properties.set(name, value) },
+  };
+  assert.equal(scale.applyUiScale(root, 125, { setItem: (key, value) => mirrored.set(key, value) }), 125);
+  assert.equal(root.dataset.uiScale, '125');
+  assert.equal(properties.get('--ui-scale-zoom'), '1.25');
+  assert.equal(properties.get('--ui-scale-width'), '80%');
+  assert.equal(properties.get('--ui-scale-height'), '80vh');
+  assert.equal(mirrored.get('wbUiScale'), '125');
+
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const bootstrap = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/theme-bootstrap.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const config = await import(pathToFileURL(path.join(ROOT, prefix, 'src/config-transfer.js')).href);
+    assert.match(bootstrap, /endsWith\('\/sidepanel\.html'\)[\s\S]*?localStorage\.getItem\('wbUiScale'\)[\s\S]*?--ui-scale-zoom/, `${label}: saved scale should apply before sidepanel paint only`);
+    assert.match(css, /body\s*\{[\s\S]*?width:\s*var\(--ui-scale-width, 100%\);[\s\S]*?height:\s*var\(--ui-scale-height, 100vh\);[\s\S]*?zoom:\s*var\(--ui-scale-zoom, 1\);/, `${label}: sidepanel layout should compensate CSS zoom`);
+    assert.match(css, /#app\s*\{[\s\S]*?height:\s*100%;/, `${label}: app should fill the compensated body`);
+    assert.equal(config.DEFAULT_CONFIG_SETTINGS.uiScale, 100, `${label}: portable config should default scale to 100%`);
+    assert.ok(config.CONFIG_STORAGE_KEYS.includes('uiScale'), `${label}: portable config should include UI scale`);
+    const imported = config.parseConfigImport(JSON.stringify({
+      schema: config.CONFIG_SCHEMA,
+      settings: { uiScale: 133 },
+    }));
+    assert.equal(imported.settings.uiScale, 100, `${label}: invalid imported scales should fall back safely`);
+  }
 });
 
 test('Firefox browser shortcuts avoid reserved defaults and stay window-scoped', () => {

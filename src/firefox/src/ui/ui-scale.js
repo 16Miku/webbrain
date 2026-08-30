@@ -1,4 +1,5 @@
 export const UI_SCALE_STORAGE_KEY = 'uiScale';
+export const UI_SCALE_LOCAL_STORAGE_KEY = 'wbUiScale';
 export const UI_SCALE_DEFAULT = 100;
 export const UI_SCALE_LEVELS = Object.freeze([75, 80, 90, 100, 110, 125, 150, 175]);
 
@@ -44,4 +45,33 @@ export function uiScaleShortcutAction(event) {
     return 'reset';
   }
   return '';
+}
+
+export async function loadUiScale(storage) {
+  try {
+    const stored = await storage?.get?.(UI_SCALE_STORAGE_KEY);
+    return normalizeUiScale(stored?.[UI_SCALE_STORAGE_KEY]);
+  } catch {
+    return UI_SCALE_DEFAULT;
+  }
+}
+
+export async function saveUiScale(storage, value) {
+  const scale = normalizeUiScale(value);
+  await storage?.set?.({ [UI_SCALE_STORAGE_KEY]: scale });
+  return scale;
+}
+
+export function applyUiScale(root, value, localStore = globalThis.localStorage) {
+  const layout = uiScaleLayout(value);
+  root?.style?.setProperty?.('--ui-scale-zoom', String(layout.zoom));
+  root?.style?.setProperty?.('--ui-scale-width', layout.width);
+  root?.style?.setProperty?.('--ui-scale-height', layout.height);
+  if (root?.dataset) root.dataset.uiScale = String(layout.scale);
+  try {
+    localStore?.setItem?.(UI_SCALE_LOCAL_STORAGE_KEY, String(layout.scale));
+  } catch {
+    // Storage mirroring is only a pre-paint optimization.
+  }
+  return layout.scale;
 }
