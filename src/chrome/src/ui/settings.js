@@ -214,6 +214,8 @@ const settingsUiScaleDecrease = document.getElementById('settings-ui-scale-decre
 const settingsUiScaleValue = document.getElementById('settings-ui-scale-value');
 const settingsUiScaleIncrease = document.getElementById('settings-ui-scale-increase');
 const settingsUiScaleReset = document.getElementById('settings-ui-scale-reset');
+const settingsUiScaleShortcuts = document.getElementById('settings-ui-scale-shortcuts');
+const settingsUiScaleManageShortcuts = document.getElementById('settings-ui-scale-manage-shortcuts');
 const downloadDirectoryInput = document.getElementById('input-download-directory');
 const subtitleEl = document.getElementById('subtitle');
 
@@ -273,6 +275,23 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[UI_SCALE_STORAGE_KEY]) {
     renderSettingsUiScale(changes[UI_SCALE_STORAGE_KEY].newValue);
   }
+});
+
+const UI_SCALE_COMMAND_NAMES = ['decrease-ui-scale', 'increase-ui-scale', 'reset-ui-scale'];
+
+async function refreshUiScaleShortcuts() {
+  if (!settingsUiScaleShortcuts) return;
+  const commands = await chrome.commands.getAll();
+  const shortcuts = UI_SCALE_COMMAND_NAMES.map((name) => commands.find((command) => command.name === name)?.shortcut)
+    .filter(Boolean);
+  const summary = shortcuts.length ? shortcuts.join(' · ') : t('st.display.ui_scale.shortcuts_none');
+  settingsUiScaleShortcuts.textContent = t('st.display.ui_scale.shortcuts', { shortcuts: summary });
+}
+
+refreshUiScaleShortcuts().catch(() => {});
+window.addEventListener('focus', () => refreshUiScaleShortcuts().catch(() => {}));
+settingsUiScaleManageShortcuts?.addEventListener('click', () => {
+  chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
 });
 
 function renderSubtitle() {

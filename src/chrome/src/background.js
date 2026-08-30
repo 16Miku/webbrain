@@ -63,6 +63,12 @@ import {
 import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
 import { clearStagedScreenshots } from './ui/staged-screenshot-store.js';
 import {
+  loadUiScale,
+  nextUiScale,
+  saveUiScale,
+  uiScaleCommandAction,
+} from './ui/ui-scale.js';
+import {
   prepareRecordingHost,
   startTabRecording,
   startDisplayRecording,
@@ -3989,3 +3995,15 @@ async function loadProvidersForRecordingFinalize() {
     await providerManager.load();
   }
 }
+
+let uiScaleCommandQueue = Promise.resolve();
+chrome.commands.onCommand.addListener((command) => {
+  const action = uiScaleCommandAction(command);
+  if (!action) return;
+  uiScaleCommandQueue = uiScaleCommandQueue.then(async () => {
+    const current = await loadUiScale(chrome.storage.local);
+    await saveUiScale(chrome.storage.local, nextUiScale(current, action));
+  }).catch((error) => {
+    console.error('[WebBrain] failed to update UI scale:', command, error);
+  });
+});

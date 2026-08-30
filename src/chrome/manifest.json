@@ -104,6 +104,24 @@
         "default": "Alt+Shift+W"
       },
       "description": "Open WebBrain panel"
+    },
+    "decrease-ui-scale": {
+      "suggested_key": {
+        "default": "Alt+Shift+Comma"
+      },
+      "description": "Zoom WebBrain UI out"
+    },
+    "increase-ui-scale": {
+      "suggested_key": {
+        "default": "Alt+Shift+Period"
+      },
+      "description": "Zoom WebBrain UI in"
+    },
+    "reset-ui-scale": {
+      "suggested_key": {
+        "default": "Alt+Shift+0"
+      },
+      "description": "Reset WebBrain UI zoom"
     }
   },
   "web_accessible_resources": [

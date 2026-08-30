@@ -54,6 +54,13 @@ export function uiScaleShortcutAction(event) {
   return '';
 }
 
+export function uiScaleCommandAction(command) {
+  if (command === 'decrease-ui-scale') return 'decrease';
+  if (command === 'increase-ui-scale') return 'increase';
+  if (command === 'reset-ui-scale') return 'reset';
+  return '';
+}
+
 export async function loadUiScale(storage) {
   try {
     const stored = await storage?.get?.(UI_SCALE_STORAGE_KEY);

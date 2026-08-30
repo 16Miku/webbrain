@@ -40135,6 +40135,56 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
   }
 });
 
+test('dedicated UI scale commands are configurable and update the shared preference', async () => {
+  const scale = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/ui-scale.js')).href);
+  assert.equal(scale.uiScaleCommandAction('decrease-ui-scale'), 'decrease');
+  assert.equal(scale.uiScaleCommandAction('increase-ui-scale'), 'increase');
+  assert.equal(scale.uiScaleCommandAction('reset-ui-scale'), 'reset');
+  assert.equal(scale.uiScaleCommandAction('switch-to-ask'), '');
+
+  const expected = {
+    'decrease-ui-scale': 'Alt+Shift+Comma',
+    'increase-ui-scale': 'Alt+Shift+Period',
+    'reset-ui-scale': 'Alt+Shift+0',
+  };
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, prefix, 'manifest.json'), 'utf8'));
+    for (const [command, shortcut] of Object.entries(expected)) {
+      assert.equal(manifest.commands[command]?.suggested_key?.default, shortcut, `${label}: ${command} should have a dedicated default`);
+      assert.ok(manifest.commands[command]?.description?.trim(), `${label}: ${command} should be described in the native shortcut manager`);
+    }
+    if (label === 'chrome') {
+      const suggestedCount = Object.values(manifest.commands).filter((entry) => entry.suggested_key).length;
+      assert.ok(suggestedCount <= 4, 'Chrome supports at most four suggested extension shortcuts');
+    }
+
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    assert.match(background, /commands\.onCommand\.addListener\([\s\S]*?uiScaleCommandAction\(command\)[\s\S]*?loadUiScale\([\s\S]*?storage\.local[\s\S]*?saveUiScale\([\s\S]*?nextUiScale/, `${label}: background commands should serialize updates to the shared scale preference`);
+
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    assert.match(settingsHtml, /id="settings-ui-scale-shortcuts"[\s\S]*?id="settings-ui-scale-manage-shortcuts"/, `${label}: settings should show bindings and link to the native shortcut manager`);
+    assert.match(settingsJs, /commands\.getAll\(\)[\s\S]*?settingsUiScaleShortcuts/, `${label}: settings should read the active user-configured bindings`);
+    if (label === 'chrome') {
+      assert.match(settingsJs, /tabs\.create\(\{ url: 'chrome:\/\/extensions\/shortcuts' \}\)/, 'Chrome should open its shortcut manager');
+    } else {
+      assert.match(settingsJs, /commands\.openShortcutSettings\(\)/, 'Firefox should open its shortcut manager');
+    }
+
+    const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
+    for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      for (const key of [
+        'st.display.ui_scale.shortcuts',
+        'st.display.ui_scale.shortcuts_none',
+        'st.display.ui_scale.manage_shortcuts',
+      ]) {
+        assert.ok(locale[key]?.trim(), `${label}/${filename}: missing ${key}`);
+      }
+    }
+  }
+});
+
 test('Firefox browser shortcuts avoid reserved defaults and stay window-scoped', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'src/firefox/manifest.json'), 'utf8'));
   const expected = {
