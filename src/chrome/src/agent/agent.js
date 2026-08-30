@@ -2047,11 +2047,11 @@ export class Agent extends LoopDetector {
       const observedBody = this._workflowMessageBody(messageProbe?.messageBody);
       const observedSubject = this._workflowMetadataValue(messageProbe?.composerSubject);
       const observedRecipients = this._messageRecipientCandidates(messageProbe);
-      const messagingTarget = normalizeMessageTarget(state.messaging);
-      // An authorized recipient set must match exactly. Without one, the draft
+      const authorizedTarget = this._workflowDraftAuthorizedTarget(state);
+      // An authorized addressee set must match exactly. Without one, the draft
       // still has to name someone; an empty To line is not a finished draft.
-      const recipientsVerified = messagingTarget?.target_kind === 'named'
-        ? messageTargetMatchesObservedIdentities(messagingTarget, observedRecipients)
+      const recipientsVerified = authorizedTarget
+        ? messageTargetMatchesObservedIdentities(authorizedTarget, observedRecipients)
         : observedRecipients.length > 0;
       const requirementByField = new Map(metadataDetails.items.map(item => [item.field, item]));
       const authoredFields = this._workflowComposerFieldBindings(tabId, state);
@@ -12500,6 +12500,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && this._workflowVerificationKind(siteWorkflow) === 'message_draft';
   }
 
+  // messaging is send authorization, and a plan that submits nothing never
+  // carries it, so a draft's requested addressees arrive on their own field.
+  // Either one binds the composer's To line to what the user asked for.
+  _workflowDraftAuthorizedTarget(state) {
+    return [state?.messaging, state?.draftRecipients]
+      .map(value => normalizeMessageTarget(value))
+      .find(target => target?.target_kind === 'named') || null;
+  }
+
   // Compose fields are identifiable without reading localized labels: Gmail's
   // subject keeps name="subjectbox", its recipient rows keep name="to"/"cc"/
   // "bcc", and the body is the contenteditable.
@@ -12556,6 +12565,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _workflowAllowsEmptyCompleteInventory(siteWorkflow) {
     return siteWorkflow?.adapterName === 'github'
       && siteWorkflow?.job?.id === 'resolve-review-threads';
+  }
+
+  // An exhaustive read that finds nothing to act on is a legitimate no-op: no
+  // control exists to mutate, so no consequential action and no submit
+  // dispatch can happen. Reconciliation against the empty app-owned inventory
+  // is the terminal evidence, and the caller still verifies that separately
+  // through _workflowLedgerReconciliationSatisfied.
+  _workflowEmptyInventoryNoOp(state) {
+    const record = state?.workflowLedgerReconciliation;
+    return this._workflowAllowsEmptyCompleteInventory(state?.siteWorkflow)
+      && !!record
+      && record.job === state.siteWorkflow.job.id
+      && record.itemCount === 0
+      && !!state.taskKey
+      && record.taskKey === state.taskKey;
   }
 
   _workflowInventoryFingerprint(value) {
@@ -15028,6 +15052,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresStateChange: plan.requires_state_change === true,
         requiresSubmission: plan.requires_submission,
         messaging: plan.messaging,
+        draftRecipients: plan.draft_recipients,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: plan.scheduling?.tool || null,
@@ -15296,6 +15321,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requiresStateChange: plan.requires_state_change === true,
           requiresSubmission: plan.requires_submission,
           messaging: plan.messaging,
+          draftRecipients: plan.draft_recipients,
           allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
           allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
           requiredSchedulingTool: plan.scheduling?.tool || null,
@@ -15398,6 +15424,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresStateChange: approvedRequiresStateChange,
         requiresSubmission: approvedRequiresSubmission,
         messaging: approvedPlanEdited ? null : plan.messaging,
+        draftRecipients: approvedPlanEdited ? null : plan.draft_recipients,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
         requiredSchedulingTool: approvedSchedulingTool,
@@ -20034,6 +20061,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? gateOutcome.requiresSubmission
       : null;
     const messaging = normalizeMessageTarget(gateOutcome?.messaging);
+    // Requested addressees for a plan that sends nothing. Held apart from
+    // messaging so no send path can read them as authorization.
+    const draftRecipientTarget = normalizeMessageTarget(gateOutcome?.draftRecipients);
+    const draftRecipients = draftRecipientTarget?.target_kind === 'named' ? draftRecipientTarget : null;
     const allowsAppStateToolEvidence = gateOutcome?.allowsAppStateToolEvidence === true;
     const requiredSchedulingTool = gateOutcome?.requiredSchedulingTool === 'schedule_task'
       || gateOutcome?.requiredSchedulingTool === 'schedule_resume'
@@ -20053,6 +20084,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && carried.requiresStateChange === requiresStateChange
       && carried.requiresSubmission === requiresSubmission
       && JSON.stringify(carried.messaging || null) === JSON.stringify(messaging)
+      && JSON.stringify(carried.draftRecipients || null) === JSON.stringify(draftRecipients)
       && carried.requiresDownload === requiresDownload
       && carried.allowsAppStateToolEvidence === allowsAppStateToolEvidence
       && carried.requiredSchedulingTool === requiredSchedulingTool
@@ -20068,6 +20100,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requiresStateChange,
       requiresSubmission,
       messaging,
+      draftRecipients,
       requiresDownload,
       allowsPlannerShapedResult: gateOutcome?.allowsPlannerShapedResult === true,
       allowsAppStateToolEvidence,
@@ -20302,7 +20335,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Unknown mutation intent is conservative: observational evidence may be
     // useful progress, but it cannot prove successful completion of a task the
     // failed planner may have classified as state-changing.
-    const taskEvidenceSatisfied = state.requiresStateChange === false
+    const emptyInventoryNoOp = this._workflowEmptyInventoryNoOp(state);
+    const taskEvidenceSatisfied = state.requiresStateChange === false || emptyInventoryNoOp
       ? state.successfulTaskToolCalls > 0
       : state.successfulConsequentialToolCalls > 0;
     const schedulingEvidenceSatisfied = !state.requiredSchedulingTool
@@ -20310,6 +20344,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const downloadEvidenceSatisfied = !state.requiresDownload
       || state.successfulDownloadToolCalls > 0;
     const submissionEvidenceSatisfied = state.requiresSubmission !== true
+      || emptyInventoryNoOp
       || (state.siteWorkflow?.job?.requiresSubmission === true
         ? this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence)
         : state.verifiedSubmissionEvidence === true);
@@ -20344,6 +20379,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresStateChange: guard.requiresStateChange,
         requiresSubmission: guard.requiresSubmission,
         messaging: guard.messaging,
+        draftRecipients: guard.draftRecipients,
         requiresDownload: guard.requiresDownload,
         allowsAppStateToolEvidence: guard.allowsAppStateToolEvidence,
         requiredSchedulingTool: guard.requiredSchedulingTool,
@@ -20587,6 +20623,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && state.successfulDownloadToolCalls === 0;
     const missingRequiredSubmission = !terminalFailure
       && state.requiresSubmission === true
+      && !this._workflowEmptyInventoryNoOp(state)
       && (state.siteWorkflow?.job?.requiresSubmission === true
         ? !this._workflowTerminalEvidenceMatchesState(state, state.workflowTerminalEvidence)
         : state.verifiedSubmissionEvidence !== true);
@@ -25552,7 +25589,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               args: {},
               adapterName: executionGuard.siteWorkflow.adapterName,
               expectedMessageBody: submissionEvidence?.submit?.workflowBinding?.messageBody || '',
-              expectedRecipients: submissionEvidence?.submit?.workflowBinding?.recipientTargets || [],
+              expectedRecipients: submissionEvidence?.submit?.workflowBinding?.recipientTargets
+                || (workflowMessageKind === 'message_draft'
+                  ? (this._workflowDraftAuthorizedTarget(executionGuard)?.recipients || [])
+                  : []),
               supportsRecipientSets: executionGuard.siteWorkflow.adapterName === 'gmail',
             });
           }

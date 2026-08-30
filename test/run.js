@@ -82279,6 +82279,40 @@ test('GitHub review-thread workflow inventories only unresolved thread controls'
     assert.equal(emptyUpdate.workflowReconciled, true);
     assert.equal(agent._workflowLedgerReconciliationSatisfied(emptyTabId, emptyGuard), true,
       `${AgentClass.name}: the already-satisfied empty review-thread job could not finish`);
+    // With no unresolved thread on the page there is no control to resolve, so
+    // no consequential action and no submit dispatch can exist. Reconciliation
+    // against the empty app-owned inventory has to be able to end the run.
+    agent._markPlanExecutionToolCall(emptyTabId, 'get_accessibility_tree', { success: true });
+    assert.ok(emptyGuard.successfulTaskToolCalls > 0,
+      `${AgentClass.name}: the exhaustive review-thread read left no task evidence`);
+    assert.equal(emptyGuard.successfulConsequentialToolCalls, 0,
+      `${AgentClass.name}: an empty review-thread run recorded a mutation it never made`);
+    assert.equal(agent._executionEvidenceSatisfied(emptyGuard), true,
+      `${AgentClass.name}: a reconciled no-op review-thread run could not satisfy its contract`);
+    assert.equal(
+      agent._planOnlyTerminalDecision(
+        emptyTabId,
+        'No unresolved review threads remain on this pull request.',
+        { viaDone: true, outcome: 'success' },
+      ),
+      null,
+      `${AgentClass.name}: a reconciled no-op review-thread run was blocked from reporting success`,
+    );
+    const unreconciledTabId = 8965 + index;
+    agent.conversations.set(unreconciledTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Resolve all open review threads.' },
+    ]);
+    const unreconciledGuard = agent._startPlanExecutionGuard(unreconciledTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._markPlanExecutionToolCall(unreconciledTabId, 'get_accessibility_tree', { success: true });
+    assert.equal(agent._executionEvidenceSatisfied(unreconciledGuard), false,
+      `${AgentClass.name}: a review-thread run skipped its submission contract without reconciling`);
+    assert.equal(unreconciledGuard.successfulTaskToolCalls > 0, true);
 
     const formTabId = 8963 + index;
     const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=x';
@@ -84437,6 +84471,74 @@ test('Gmail message workflows bind the reviewed subject and prove a saved draft'
       `${AgentClass.name}: an appending write claimed to authorize the whole body`);
     assert.equal(openTerminal({ ...draftProbe, messageBody: 'Quarterly update PS: sent from my phone' }), null,
       `${AgentClass.name}: an append this run cannot reconstruct still closed the draft contract`);
+
+    // A draft plan submits nothing, so normalizePlan withholds messaging and
+    // the requested addressees arrive on draft_recipients instead.
+    const draftPlan = [normalizePlan, normalizePlanFx][index]({
+      request_kind: 'execute',
+      scope_relation: 'new',
+      deliverables: ['draft'],
+      site_job: 'draft-email',
+      requires_state_change: true,
+      requires_submission: false,
+      messaging: { target_kind: 'named', recipients: [{ identity: 'alice@example.com', role: 'to' }] },
+      completion_requirements: { download: false },
+      allows_planner_shaped_result: false,
+      allows_app_state_tool_evidence: false,
+      read_scope: 'visible_page',
+      summary: 'Save a draft to Alice.',
+      confidence: 0.9,
+      steps: [{ id: 's1', action: 'Open compose' }, { id: 's2', action: 'Write the body' }],
+      memory: { use_progress_ledger: false, progress_action: null },
+      risks: [],
+    });
+    assert.equal(draftPlan?.messaging, null,
+      `${AgentClass.name}: a non-submitting draft plan carried send authorization`);
+    assert.deepEqual(draftPlan?.draft_recipients?.recipients, [{ identity: 'alice@example.com', role: 'to' }],
+      `${AgentClass.name}: the requested draft addressees were discarded with messaging`);
+
+    const addressedTabId = 9230 + index;
+    agent.conversations.set(addressedTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Save a draft to alice@example.com.' },
+    ]);
+    const addressedGuard = agent._startPlanExecutionGuard(addressedTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      messaging: draftPlan.messaging,
+      draftRecipients: draftPlan.draft_recipients,
+      siteWorkflow: draftWorkflow,
+    });
+    addressedGuard.successfulConsequentialToolCalls = 1;
+    addressedGuard.evidenceTaskKey = addressedGuard.taskKey;
+    assert.equal(addressedGuard.messaging, null,
+      `${AgentClass.name}: draft addressees leaked into the send-authorization target`);
+    agent._beginCompletionInvariant(addressedTabId);
+    agent._recordCompletionToolResult(addressedTabId, 'set_field', {
+      ref_id: 'ref_body', text: 'Quarterly update', clear: true,
+    }, {
+      success: true,
+      verified: true,
+      ref_id: 'ref_body',
+      fieldMeta: { tag: 'div', contentEditable: true, name: null },
+    });
+    const addressedTerminal = (probe) => agent._workflowTerminalEvidenceFromDone(
+      addressedTabId, {}, gmailUrl, draftEvidence, probe,
+    );
+    assert.equal(addressedTerminal({
+      ...draftProbe,
+      strongRecipientCandidates: [{ identity: 'mallory@example.com', role: 'to' }],
+    }), null, `${AgentClass.name}: a draft addressed to someone else satisfied the requested target`);
+    assert.equal(addressedTerminal({
+      ...draftProbe,
+      strongRecipientCandidates: [
+        { identity: 'alice@example.com', role: 'to' },
+        { identity: 'mallory@example.com', role: 'to' },
+      ],
+    }), null, `${AgentClass.name}: an extra draft addressee passed the requested target`);
+    assert.equal(addressedTerminal(draftProbe)?.source, 'draft_recipients_fields_and_saved_draft_state',
+      `${AgentClass.name}: the exact requested draft addressee could not satisfy the contract`);
   }
 });
 
