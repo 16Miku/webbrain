@@ -84027,6 +84027,130 @@ test('completion page text keeps the line boundaries publication payloads match 
   }
 });
 
+test('a control that remounts keeps one inventory identity', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9470 + index;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=remount';
+    const selected = resolveAdapterWorkflowJob(formUrl, 'submit-form');
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Answer and submit every form question.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(tabId, { documentToken: 'remount-form-document', pageUrl: formUrl });
+    const read = (lines, treeRevision) => agent._rememberWorkflowInventoryObservation(
+      tabId,
+      'get_accessibility_tree',
+      { filter: 'all', maxDepth: 15 },
+      { success: true, pageContent: lines.join('\n'), treeRevision },
+    );
+
+    const initial = read([
+      'textbox "Full name" [ref_name_1] dom_id="fullName" field_name="fullName" required=true value=""',
+      'radio "Yes" [ref_pets_yes_1] field_name="pets" required=true checked=false',
+      'radio "No" [ref_pets_no_1] field_name="pets" required=true checked=false',
+      'textbox "Notes" [ref_notes_1] required=false value=""',
+    ], 'remount-initial');
+    assert.equal(initial?.itemCount, 4);
+    const nameItem = initial.items.find(item => item.label === 'Full name');
+    const yesItem = initial.items.find(item => item.label === 'Yes');
+    const noItem = initial.items.find(item => item.label === 'No');
+    const notesItem = initial.items.find(item => item.label === 'Notes');
+    assert.notEqual(yesItem.id, noItem.id,
+      `${AgentClass.name}: two radios in one group collapsed into a single row`);
+
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'type_ax', {
+      ref_id: 'ref_name_1', text: 'Ada',
+    }, { success: true, dispatched: true, verified: true });
+
+    // The form re-renders and every control comes back with a fresh ref.
+    const remounted = read([
+      'textbox "Full name" [ref_name_2] dom_id="fullName" field_name="fullName" required=true value="Ada"',
+      'radio "Yes" [ref_pets_yes_2] field_name="pets" required=true checked=false',
+      'radio "No" [ref_pets_no_2] field_name="pets" required=true checked=false',
+      'textbox "Notes" [ref_notes_2] required=false value=""',
+    ], 'remount-after');
+    assert.equal(remounted?.itemCount, 4,
+      `${AgentClass.name}: a remount duplicated every field in the exact inventory`);
+    assert.equal(remounted.items.find(item => item.label === 'Full name')?.id, nameItem.id,
+      `${AgentClass.name}: a field with a stable dom id changed identity on remount`);
+    assert.equal(remounted.items.find(item => item.label === 'Yes')?.id, yesItem.id,
+      `${AgentClass.name}: a named radio option changed identity on remount`);
+    assert.equal(remounted.items.find(item => item.label === 'No')?.id, noItem.id,
+      `${AgentClass.name}: the sibling radio option changed identity on remount`);
+    // Nothing app-owned identifies the Notes box, so it still falls back to
+    // the ref and a remount does replace it.
+    assert.notEqual(remounted.items.find(item => item.label === 'Notes')?.id, notesItem.id,
+      `${AgentClass.name}: an unidentifiable control claimed a stable identity`);
+    assert.ok(agent._trustedWorkflowInventory(tabId, [], guard),
+      `${AgentClass.name}: a remounting form could not produce a trusted inventory`);
+  }
+});
+
+test('a deferred reply stays bound to the thread the user authorized', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9474 + index;
+    const threadUrl = 'https://mail.google.com/mail/u/0/#inbox/FMfcgzAuthorized';
+    const otherThreadUrl = 'https://mail.google.com/mail/u/0/#inbox/FMfcgzSomeoneElse';
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Reply here saying I will send it tomorrow.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflowUrl: threadUrl,
+      messaging: { target_kind: 'active_conversation', recipients: [] },
+      siteWorkflow: resolveAdapterWorkflowJob(threadUrl, 'send-email'),
+    });
+    assert.equal(guard.messaging?.target_kind, 'active_conversation');
+    assert.ok(guard.messagingConversationScope,
+      `${AgentClass.name}: the authorized thread left no identity to defer against`);
+
+    // Gmail's composer opens with a recipient. On the authorized thread that
+    // pins the target; on another thread it must not.
+    agent._messageRecipientContentProbe = async () => ({
+      success: true,
+      conclusive: true,
+      messageSend: true,
+      composerAvailable: true,
+      messageBody: 'I will send it tomorrow.',
+      messageBodyBaselineCount: 0,
+      strongRecipientCandidates: [{ identity: 'mallory@example.com', role: 'to' }],
+      messageRecipientDispatchBinding: { token: 'deferred-token' },
+    });
+
+    const strayContext = {};
+    const strayBlock = await agent._messageRecipientGuardBlock(
+      tabId, 'click', { ref_id: 'ref_send' }, otherThreadUrl, strayContext,
+    );
+    assert.ok(strayBlock?.blocked,
+      `${AgentClass.name}: a send from a thread the user never selected was authorized`);
+    assert.equal(guard.messaging?.target_kind, 'active_conversation',
+      `${AgentClass.name}: another thread's composer replaced the authorized target`);
+
+    const context = {};
+    const allowed = await agent._messageRecipientGuardBlock(
+      tabId, 'click', { ref_id: 'ref_send' }, threadUrl, context,
+    );
+    assert.equal(allowed, null,
+      `${AgentClass.name}: the authorized thread's own composer was blocked (${allowed?.error || ''})`);
+    assert.deepEqual(guard.messaging?.recipients, [{ identity: 'mallory@example.com', role: 'to' }],
+      `${AgentClass.name}: the authorized thread's composer did not pin its recipients`);
+  }
+});
+
 test('requested field matching survives the words a request wraps around a label', () => {
   for (const [label, isRequested] of [
     ['chrome', workflowControlLabelIsRequested],
@@ -84042,6 +84166,12 @@ test('requested field matching survives the words a request wraps around a label
       `${label}: a request naming part of the label did not match`);
     assert.equal(isRequested('Referral code', ['attach my cover letter']), false,
       `${label}: an unrelated optional control was treated as requested`);
+    // One content word is a weak claim: "resume" also sits inside a consent
+    // checkbox nobody asked to tick.
+    assert.equal(isRequested('Consent to automated resume screening', ['attach my resume']), false,
+      `${label}: a lone request word claimed an unrelated consent control`);
+    assert.equal(isRequested('Upload your cover letter here please', ['cover letter']), true,
+      `${label}: a two-word request stopped matching a longer label`);
     assert.equal(isRequested('Cover letter (optional)', []), false,
       `${label}: an optional control was requested with no request at all`);
     assert.equal(isRequested('', ['cover letter']), false,

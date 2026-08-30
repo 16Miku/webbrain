@@ -13045,7 +13045,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // action buttons are not form questions and must not enter the ledger.
       if (!reviewThreadInventory && role === 'button' && !/\btype="file"/i.test(line)) continue;
       const refId = refMatch[1];
-      const identity = `${bindingKey}|${scope}|${role}|${refId}`;
+      // Prefer identity the app owns and keeps across a remount. A radio group
+      // shares one name, so its label separates the options; the ref is the
+      // last resort for a control with neither an id nor a name.
+      const lineDomId = /\bdom_id="((?:[^"\\]|\\.)*)"/i.exec(line)?.[1] || '';
+      const lineFieldName = /\bfield_name="((?:[^"\\]|\\.)*)"/i.exec(line)?.[1] || '';
+      const lineType = /\btype="([^"]+)"/i.exec(line)?.[1]?.toLowerCase() || '';
+      const stableKey = lineDomId
+        ? `dom:${lineDomId}`
+        : (lineFieldName ? `name:${lineFieldName}|${lineType}|${label}` : `ref:${refId}`);
+      const identity = `${bindingKey}|${scope}|${role}|${stableKey}`;
       const id = `workflow:${this._workflowInventoryFingerprint(identity)}`;
       if (seen.has(id)) continue;
       seen.add(id);
@@ -17278,14 +17287,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // content-verified Reply/Reply all/Forward control to open the editor;
     // every other unresolved click remains blocked. Recipient authorization
     // is still deferred: the eventual send must bind to the exact chip set.
+    const deferredConversationScope = String(guard?.messagingConversationScope || '');
+    // The authorized thread is the one that was open when the run started. If
+    // the tab moved to another one, its composer is not the user's target.
+    const inAuthorizedConversation = !deferredConversationScope
+      || this._workflowJobScopeIdentity(pageUrl) === deferredConversationScope;
     if (policy.deferActiveConversationUntilComposer === true
         && target?.target_kind === 'active_conversation'
+        && inAuthorizedConversation
         && probe?.composerAvailable === false
         && probe?.composerSetup === true
         && (name === 'click' || name === 'click_ax')) return null;
 
     if (policy.deferActiveConversationUntilComposer === true
         && target?.target_kind === 'active_conversation'
+        && inAuthorizedConversation
         && probe?.success === true
         && probe?.conclusive === true
         && probe?.messageSend === true) {
@@ -20667,6 +20683,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? gateOutcome.requiresSubmission
       : null;
     const messaging = normalizeMessageTarget(gateOutcome?.messaging);
+    // "Reply here" names the thread that was open when the run was authorized.
+    // Gmail may defer pinning until the composer opens, so the thread's own
+    // identity has to survive that wait; a different thread is a different
+    // recipient set no matter what its composer shows.
+    const messagingConversationScope = messaging?.target_kind === 'active_conversation'
+      ? this._workflowJobScopeIdentity(gateOutcome?.siteWorkflowUrl)
+      : '';
     // Requested addressees for a plan that sends nothing. Held apart from
     // messaging so no send path can read them as authorization.
     const draftRecipients = normalizeMessageTarget(gateOutcome?.draftRecipients);
@@ -20689,6 +20712,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && carried.requiresStateChange === requiresStateChange
       && carried.requiresSubmission === requiresSubmission
       && JSON.stringify(carried.messaging || null) === JSON.stringify(messaging)
+      && String(carried.messagingConversationScope || '') === messagingConversationScope
       && JSON.stringify(carried.draftRecipients || null) === JSON.stringify(draftRecipients)
       && carried.requiresDownload === requiresDownload
       && carried.allowsAppStateToolEvidence === allowsAppStateToolEvidence
@@ -20706,6 +20730,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requiresSubmission,
       siteWorkflowUrl: String(gateOutcome?.siteWorkflowUrl || ''),
       messaging,
+      messagingConversationScope,
       draftRecipients,
       requiresDownload,
       allowsPlannerShapedResult: gateOutcome?.allowsPlannerShapedResult === true,
@@ -21045,6 +21070,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresStateChange: guard.requiresStateChange,
         requiresSubmission: guard.requiresSubmission,
         messaging: guard.messaging,
+        messagingConversationScope: guard.messagingConversationScope,
         draftRecipients: guard.draftRecipients,
         requiresDownload: guard.requiresDownload,
         allowsAppStateToolEvidence: guard.allowsAppStateToolEvidence,

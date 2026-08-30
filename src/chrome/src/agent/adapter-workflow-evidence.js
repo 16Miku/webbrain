@@ -158,6 +158,14 @@ export function workflowControlLabelIsRequested(label, requestedLabels = []) {
   if (!normalized) return false;
   const labelTokens = workflowControlLabelTokens(label);
   const labelSet = new Set(labelTokens);
+  // A lone content word is a weak claim on a long label: "attach my resume"
+  // reduces to "resume", which also appears in "consent to automated resume
+  // screening". One token may only name a control the word actually heads.
+  const covers = (subset, superset, supersetTokens) => {
+    if (!subset.length || !subset.every(token => superset.has(token))) return false;
+    if (subset.length > 1) return true;
+    return supersetTokens.length <= 2 && supersetTokens[0] === subset[0];
+  };
   return (Array.isArray(requestedLabels) ? requestedLabels : []).some((requested) => {
     const wanted = normalizeWorkflowControlLabel(requested);
     if (wanted.length < 3) return false;
@@ -165,8 +173,8 @@ export function workflowControlLabelIsRequested(label, requestedLabels = []) {
     const requestedTokens = workflowControlLabelTokens(requested);
     if (!labelTokens.length || !requestedTokens.length) return false;
     const requestedSet = new Set(requestedTokens);
-    return requestedTokens.every(token => labelSet.has(token))
-      || labelTokens.every(token => requestedSet.has(token));
+    return covers(requestedTokens, labelSet, labelTokens)
+      || covers(labelTokens, requestedSet, requestedTokens);
   });
 }
 

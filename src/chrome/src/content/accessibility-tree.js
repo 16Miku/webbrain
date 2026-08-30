@@ -644,7 +644,10 @@
     if (href) line += ' href="' + href + '"';
     const type = el.getAttribute('type');
     if (type) line += ' type="' + type + '"';
-    if (String(type || '').toLowerCase() === 'file') {
+    // A React-style form can replace a control node on every change, which
+    // mints a new ref for the same logical field. The app-owned id and name
+    // survive that, so a form inventory can key on them instead of the ref.
+    {
       const encodeIdentity = value => String(value || '')
         .replace(/\s+/g, ' ').trim().substring(0, 160)
         .replace(/\\/g, '\\\\').replace(/"/g, '\\"');
