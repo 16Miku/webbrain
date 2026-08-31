@@ -37542,12 +37542,14 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
   assert.match(chromePanelJs, /event\.key === 'Escape'[\s\S]*?stopImmediatePropagation\(\)[\s\S]*?dismiss\(\)/, 'chrome: Escape should be consumed by the modal and use the same dismissal path');
   assert.match(
     chromePanelCss,
-    /\.pin-coachmark-arrow\s*\{[^}]*\bright:\s*28px;[^}]*\bleft:\s*auto;[^}]*\btransform:\s*none;/,
+    // The offset is divided by the zoom because the arrow points at the toolbar
+    // pin, which sits outside the panel and does not move with the UI scale.
+    /\.pin-coachmark-arrow\s*\{[^}]*\bright:\s*calc\(28px \/ var\(--ui-scale-zoom, 1\)\);[^}]*\bleft:\s*auto;[^}]*\btransform:\s*none;/,
     'chrome: the normal right-side panel should point the coachmark arrow at the upper-right pin',
   );
   assert.match(
     chromePanelCss,
-    /:root\[data-panel-side="left"\] \.pin-coachmark-arrow\s*\{[^}]*\bleft:\s*28px;[^}]*\bright:\s*auto;[^}]*\btransform:\s*scaleX\(-1\);/,
+    /:root\[data-panel-side="left"\] \.pin-coachmark-arrow\s*\{[^}]*\bleft:\s*calc\(28px \/ var\(--ui-scale-zoom, 1\)\);[^}]*\bright:\s*auto;[^}]*\btransform:\s*scaleX\(-1\);/,
     'chrome: left-side panels should mirror the coachmark arrow toward the upper-left pin',
   );
 
@@ -40032,7 +40034,6 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
   assert.deepEqual(scale.uiScaleLayout(125), {
     scale: 125,
     zoom: 1.25,
-    width: '80%',
     height: '80vh',
   });
 
@@ -40077,7 +40078,9 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
   assert.equal(scale.applyUiScale(root, 125, { setItem: (key, value) => mirrored.set(key, value) }), 125);
   assert.equal(root.dataset.uiScale, '125');
   assert.equal(properties.get('--ui-scale-zoom'), '1.25');
-  assert.equal(properties.get('--ui-scale-width'), '80%');
+  // Percentage widths already resolve inside the zoomed coordinate space, so
+  // only the viewport-unit height carries the inverse compensation.
+  assert.equal(properties.get('--ui-scale-width'), undefined);
   assert.equal(properties.get('--ui-scale-height'), '80vh');
   assert.equal(mirrored.get('wbUiScale'), '125');
 
@@ -40087,14 +40090,17 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
     const config = await import(pathToFileURL(path.join(ROOT, prefix, 'src/config-transfer.js')).href);
     assert.match(bootstrap, /endsWith\('\/sidepanel\.html'\)[\s\S]*?localStorage\.getItem\('wbUiScale'\)/, `${label}: saved scale should apply before sidepanel paint only`);
     assert.match(bootstrap, /applyScale[\s\S]*?--ui-scale-zoom/, `${label}: pre-paint scale should set the zoom variables`);
-    assert.match(bootstrap, /--ui-scale-width', inverse \+ '%'[\s\S]*?--ui-scale-height', inverse \+ 'vh'/, `${label}: pre-paint scale should inverse-compensate both width and height under zoom`);
+    assert.match(bootstrap, /--ui-scale-height', inverse \+ 'vh'/, `${label}: pre-paint scale should inverse-compensate the viewport-unit height under zoom`);
+    assert.doesNotMatch(bootstrap, /--ui-scale-width/, `${label}: percentage widths resolve in the zoomed space and must not be compensated`);
     assert.match(bootstrap, /data-ui-scale-ready.*?false[\s\S]*?storage\.get\(\{ uiScale: 100 \}/, `${label}: canonical storage should settle the pre-paint scale before revealing the sidepanel`);
     assert.match(bootstrap, /data-ui-scale-ready.*?true/, `${label}: sidepanel should be revealed after scale initialization`);
     assert.match(bootstrap, /levels\.indexOf\(Number\(mirrored\)\) === -1[\s\S]*?data-ui-scale-ready', 'false'/, `${label}: the panel should only be hidden when no mirrored scale can be painted pre-paint`);
     assert.match(bootstrap, /window\.setTimeout\(reveal, 1000\)[\s\S]*?storage\.get/, `${label}: the reveal fallback should be armed before the storage API can throw synchronously`);
     assert.match(bootstrap, /\} catch \(_\) \{\n\s*reveal\(\);/, `${label}: a throwing storage API should still reveal the sidepanel`);
-    assert.match(css, /body\s*\{[\s\S]*?width:\s*var\(--ui-scale-width, 100%\);[\s\S]*?height:\s*var\(--ui-scale-height, 100vh\);[\s\S]*?zoom:\s*var\(--ui-scale-zoom, 1\);/, `${label}: sidepanel layout should compensate CSS zoom`);
+    assert.match(css, /body\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*var\(--ui-scale-height, 100vh\);[\s\S]*?zoom:\s*var\(--ui-scale-zoom, 1\);/, `${label}: sidepanel layout should compensate CSS zoom`);
     assert.match(css, /#app\s*\{[\s\S]*?height:\s*100%;/, `${label}: app should fill the compensated body`);
+    // The two-id base rule outranks the generic `.header-right button:hover`.
+    assert.match(css, /#header #ui-scale-popover button:hover:not\(:disabled\) \{[^}]*background:/, `${label}: scale chips should keep a hover state under the two-id base rule`);
     assert.equal(config.DEFAULT_CONFIG_SETTINGS.uiScale, 100, `${label}: portable config should default scale to 100%`);
     assert.ok(config.CONFIG_STORAGE_KEYS.includes('uiScale'), `${label}: portable config should include UI scale`);
     const imported = config.parseConfigImport(JSON.stringify({
@@ -40118,7 +40124,15 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
     assert.match(sidepanelCss, /\.ui-scale-popover\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?z-index:/, `${label}: sidepanel scale menu should float above chat content`);
     assert.match(sidepanelJs, /uiScaleShortcutAction\(e\)[\s\S]*?e\.preventDefault\(\)[\s\S]*?setSidepanelUiScale/, `${label}: focused sidepanel zoom shortcuts should suppress browser zoom and update extension scale`);
     assert.match(sidepanelJs, /uiScalePopover\?\.addEventListener\('keydown'[\s\S]*?event\.key !== 'Escape'[\s\S]*?uiScaleBtn\?\.focus\(\)/, `${label}: Escape should close the scale menu and restore focus to its trigger`);
-    assert.match(sidepanelJs, /positionSelectionAskAction[\s\S]*?currentUiScale \/ 100[\s\S]*?style\.left = `\$\{left \/ zoom\}px`[\s\S]*?style\.top = `\$\{top \/ zoom\}px`/, `${label}: selection action coordinates should remain aligned under CSS zoom`);
+    assert.match(sidepanelJs, /function uiScaleZoom\(\) \{\s*return currentUiScale \/ 100 \|\| 1;/, `${label}: rect measurements should convert through a shared zoom factor`);
+    assert.match(sidepanelJs, /positionSelectionAskAction[\s\S]*?uiScaleZoom\(\)[\s\S]*?style\.left = `\$\{left \/ zoom\}px`[\s\S]*?style\.top = `\$\{top \/ zoom\}px`/, `${label}: selection action coordinates should remain aligned under CSS zoom`);
+    // getBoundingClientRect() is zoomed; scrollTop and clientHeight are not.
+    assert.match(sidepanelJs, /function scrollChatToQuestion[\s\S]*?\(questionRect\.top - containerRect\.top\) \/ uiScaleZoom\(\)/, `${label}: scrolling back to the question should convert the rect delta out of zoomed pixels`);
+    assert.match(sidepanelJs, /function chatTurnNeedsReadingNavigation[\s\S]*?\(assistantRect\.bottom - userRect\.top\) \/ uiScaleZoom\(\)[\s\S]*?chatContainerEl\.clientHeight/, `${label}: the reading-navigation threshold should compare like-for-like pixels`);
+    assert.match(sidepanelJs, /function scrollSlashCommandOptionIntoView[\s\S]*?scrollTop -= \(menuRect\.top - optionRect\.top\) \/ zoom[\s\S]*?scrollTop \+= \(optionRect\.bottom - menuRect\.bottom\) \/ zoom/, `${label}: slash-command scrolling should convert the rect delta out of zoomed pixels`);
+    // The pre-paint value comes from a mirror an MV3 worker cannot refresh, so
+    // a step queued before hydration must not read it.
+    assert.match(sidepanelJs, /uiScaleWriteQueue = loadUiScale\((?:chrome|browser)\.storage\.local\)\s*\n\s*\.then\(renderSidepanelUiScale\)/, `${label}: scale hydration should seed the write queue`);
     assert.match(sidepanelJs, /loadUiScale\([\s\S]*?storage\.local[\s\S]*?renderSidepanelUiScale/, `${label}: sidepanel should hydrate its persisted scale`);
     assert.match(sidepanelJs, /storage\.onChanged\.addListener\([\s\S]*?changes\[UI_SCALE_STORAGE_KEY\][\s\S]*?renderSidepanelUiScale/, `${label}: open sidepanels should react to scale changes`);
     assert.match(sidepanelJs, /uiScaleWriteQueue = write\.catch/, `${label}: sidepanel scale steps should be serialized so key repeat cannot collapse them`);

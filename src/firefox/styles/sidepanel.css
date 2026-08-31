@@ -92,7 +92,9 @@ body {
   font-size: 13px;
   background: var(--bg-primary);
   color: var(--text-primary);
-  width: var(--ui-scale-width, 100%);
+  width: 100%;
+  /* `vh` is not adjusted for `zoom`, so the height is pre-divided by the zoom
+     factor; the percentage width already resolves in the zoomed space. */
   height: var(--ui-scale-height, 100vh);
   zoom: var(--ui-scale-zoom, 1);
   overflow: hidden;
@@ -757,6 +759,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   font: inherit;
 }
 
+/* The base rule above (two ids) outranks the generic `.header-right
+   button:hover`, so these chips need their own hover to react at all. */
+#header #ui-scale-popover button:hover:not(:disabled) { background: var(--accent-dim); }
 #header #ui-scale-popover button:disabled { opacity: 0.45; cursor: default; }
 #header #ui-scale-popover .ui-scale-reset { min-width: auto; padding-inline: 9px; }
 .ui-scale-popover output { min-width: 40px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }

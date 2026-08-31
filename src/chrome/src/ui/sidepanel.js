@@ -628,6 +628,14 @@ let languagePickerTypeaheadTimer = null;
 
 let currentUiScale = normalizeUiScale(document.documentElement.dataset.uiScale);
 
+// `getBoundingClientRect()` reports zoomed viewport pixels, while `scrollTop`,
+// `clientHeight` and `offsetTop` stay in the body's own unzoomed CSS pixels.
+// A rect measurement has to be divided by this factor before it can be mixed
+// with either of those, or compared against a constant written in CSS pixels.
+function uiScaleZoom() {
+  return currentUiScale / 100 || 1;
+}
+
 function renderSidepanelUiScale(value) {
   currentUiScale = applyUiScale(document.documentElement, value);
   if (uiScaleValue) uiScaleValue.textContent = `${currentUiScale}%`;
@@ -662,7 +670,14 @@ function closeUiScalePopover() {
   return true;
 }
 
-loadUiScale(chrome.storage.local).then(renderSidepanelUiScale);
+// Seeded into the write queue so an early Ctrl+= cannot step off the
+// pre-paint value. That value comes from the localStorage mirror, which an
+// MV3 service worker cannot refresh when a global shortcut changes the
+// scale — stepping off a stale mirror would silently overwrite the real
+// scale in storage.
+uiScaleWriteQueue = loadUiScale(chrome.storage.local)
+  .then(renderSidepanelUiScale)
+  .catch(() => {});
 uiScaleBtn?.addEventListener('click', () => {
   const willOpen = uiScalePopover?.classList.contains('hidden');
   uiScalePopover?.classList.toggle('hidden', !willOpen);
@@ -7407,10 +7422,11 @@ function scrollSlashCommandOptionIntoView(option) {
 
   const menuRect = slashCommandMenuEl.getBoundingClientRect();
   const optionRect = option.getBoundingClientRect();
+  const zoom = uiScaleZoom();
   if (optionRect.top < menuRect.top) {
-    slashCommandMenuEl.scrollTop -= menuRect.top - optionRect.top;
+    slashCommandMenuEl.scrollTop -= (menuRect.top - optionRect.top) / zoom;
   } else if (optionRect.bottom > menuRect.bottom) {
-    slashCommandMenuEl.scrollTop += optionRect.bottom - menuRect.bottom;
+    slashCommandMenuEl.scrollTop += (optionRect.bottom - menuRect.bottom) / zoom;
   }
 }
 
@@ -11570,7 +11586,7 @@ function dismissSelectionAskAction() {
 
 function positionSelectionAskAction(range) {
   if (!selectionAskActionEl) return;
-  const zoom = currentUiScale / 100 || 1;
+  const zoom = uiScaleZoom();
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const actionRect = selectionAskActionEl.getBoundingClientRect();
@@ -12187,7 +12203,8 @@ function chatTurnNeedsReadingNavigation(turn = chatNavigationTurn) {
   if (!chatContainerEl || !chatTurnIsConnected(turn)) return false;
   const userRect = turn.userEl.getBoundingClientRect();
   const assistantRect = turn.assistantEl.getBoundingClientRect();
-  return assistantRect.bottom - userRect.top > chatContainerEl.clientHeight - CHAT_SCROLL_EDGE_PX;
+  const turnHeight = (assistantRect.bottom - userRect.top) / uiScaleZoom();
+  return turnHeight > chatContainerEl.clientHeight - CHAT_SCROLL_EDGE_PX;
 }
 
 function prefersReducedChatMotion() {
@@ -12200,9 +12217,10 @@ function scrollChatToQuestion({ smooth = true } = {}) {
   if (smooth) chatUserChoseReadingPosition = true;
   const containerRect = chatContainerEl.getBoundingClientRect();
   const questionRect = chatNavigationTurn.userEl.getBoundingClientRect();
+  const offsetFromTop = (questionRect.top - containerRect.top) / uiScaleZoom();
   const targetTop = Math.max(
     0,
-    chatContainerEl.scrollTop + questionRect.top - containerRect.top - CHAT_TURN_VISIBILITY_PX,
+    chatContainerEl.scrollTop + offsetFromTop - CHAT_TURN_VISIBILITY_PX,
   );
   chatContainerEl.scrollTo({
     top: targetTop,

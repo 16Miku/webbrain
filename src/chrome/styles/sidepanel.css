@@ -92,7 +92,9 @@ body {
   font-size: 13px;
   background: var(--bg-primary);
   color: var(--text-primary);
-  width: var(--ui-scale-width, 100%);
+  width: 100%;
+  /* `vh` is not adjusted for `zoom`, so the height is pre-divided by the zoom
+     factor; the percentage width already resolves in the zoomed space. */
   height: var(--ui-scale-height, 100vh);
   zoom: var(--ui-scale-zoom, 1);
   overflow: hidden;
@@ -287,7 +289,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 142px 22px 24px;
+  /* The arrow below is sized in unzoomed pixels so it keeps pointing at the
+     toolbar pin; the top padding that clears it has to match. */
+  padding: calc(142px / var(--ui-scale-zoom, 1)) 22px 24px;
   background: color-mix(in srgb, var(--bg-primary) 86%, transparent);
   backdrop-filter: blur(3px);
   animation: fadeIn 0.25s ease;
@@ -297,13 +301,16 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   display: none;
 }
 
+/* This arrow points at the extension's pin icon in the browser toolbar, which
+   sits outside the panel and does not move with the UI scale. Its geometry is
+   divided by the zoom so it lands on the same spot at every scale. */
 .pin-coachmark-arrow {
   position: absolute;
-  top: 2px;
-  right: 28px;
+  top: calc(2px / var(--ui-scale-zoom, 1));
+  right: calc(28px / var(--ui-scale-zoom, 1));
   left: auto;
-  width: min(190px, 54vw);
-  height: 150px;
+  width: calc(min(190px, 54vw) / var(--ui-scale-zoom, 1));
+  height: calc(150px / var(--ui-scale-zoom, 1));
   overflow: visible;
   fill: none;
   stroke: var(--accent);
@@ -318,7 +325,7 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 /* Chrome mirrors its side-panel toolbar controls with the panel. A panel on
    the left therefore needs the coachmark arrow mirrored to the left. */
 :root[data-panel-side="left"] .pin-coachmark-arrow {
-  left: 28px;
+  left: calc(28px / var(--ui-scale-zoom, 1));
   right: auto;
   transform: scaleX(-1);
 }
@@ -879,6 +886,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   font: inherit;
 }
 
+/* The base rule above (two ids) outranks the generic `.header-right
+   button:hover`, so these chips need their own hover to react at all. */
+#header #ui-scale-popover button:hover:not(:disabled) { background: var(--accent-dim); }
 #header #ui-scale-popover button:disabled { opacity: 0.45; cursor: default; }
 #header #ui-scale-popover .ui-scale-reset { min-width: auto; padding-inline: 9px; }
 .ui-scale-popover output { min-width: 40px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }

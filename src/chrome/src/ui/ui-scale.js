@@ -23,13 +23,17 @@ export function nextUiScale(value, action) {
   return normalizeUiScale(value);
 }
 
+// `zoom` shrinks the element's coordinate space, and a percentage width
+// resolves against the containing block *inside* that space, so `width: 100%`
+// already fills the panel and needs no compensation. Viewport units are the
+// exception: `vh`/`vw` stay in unzoomed viewport pixels, so a `vh` height has
+// to be divided by the zoom factor to cover exactly one viewport.
 export function uiScaleLayout(value) {
   const scale = normalizeUiScale(value);
   const inverse = Number((10_000 / scale).toFixed(4));
   return {
     scale,
     zoom: scale / 100,
-    width: `${inverse}%`,
     height: `${inverse}vh`,
   };
 }
@@ -85,7 +89,6 @@ export async function saveUiScale(storage, value, localStore = globalThis.localS
 export function applyUiScale(root, value, localStore = globalThis.localStorage) {
   const layout = uiScaleLayout(value);
   root?.style?.setProperty?.('--ui-scale-zoom', String(layout.zoom));
-  root?.style?.setProperty?.('--ui-scale-width', layout.width);
   root?.style?.setProperty?.('--ui-scale-height', layout.height);
   if (root?.dataset) root.dataset.uiScale = String(layout.scale);
   try {
