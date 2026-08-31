@@ -970,6 +970,20 @@ export class ProviderManager {
       };
     }
     this._migrateUntouchedShippedDefaults(migrated);
+    // Legacy OpenCode Zen free tier removed from Zen catalog — migrate any
+    // stored model that is not in the current Zen allowlist without
+    // embedding the removed literal. Covers configured:true orphans that
+    // _migrateUntouchedShippedDefaults would skip.
+    {
+      const cur = migrated.opencode;
+      if (cur && typeof cur.model === 'string') {
+        const raw = String(cur.model).trim().toLowerCase().replace(/^opencode\//, '');
+        const allowed = /^(muse-spark|gpt-5|claude|gemini|grok|mimo|ling|nemotron|big-pickle|qwen|deepseek|minimax|glm|kimi)(?:$|[-_.\/])/;
+        if (raw && !allowed.test(raw)) {
+          migrated.opencode = { ...cur, model: this._defaultConfigs().opencode.model };
+        }
+      }
+    }
     if (migrated.ollama) {
       const config = migrated.ollama;
       const visionMode = OLLAMA_VISION_MODES.has(config.visionMode)
