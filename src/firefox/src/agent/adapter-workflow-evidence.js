@@ -202,7 +202,9 @@ export function workflowRequiredRowsAreProcessed(
   const radioGroupOf = new Map();
   for (const item of items) {
     if (String(item?.role || '').toLowerCase() !== 'radio') continue;
-    const name = String(item?.fieldName || '').trim();
+    // A native group shares one control name; a custom one shares the
+    // radiogroup that encloses it. Either way the options are alternatives.
+    const name = String(item?.fieldName || '').trim() || String(item?.group || '').trim();
     if (!name) continue;
     radioGroupOf.set(String(item.id || ''), `${String(item.documentScope || '')}|${name}`);
   }

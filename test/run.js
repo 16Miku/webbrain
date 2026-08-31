@@ -84559,19 +84559,34 @@ test('a radio group is answered once and the alternatives may be skipped', () =>
         // them can ever be chosen.
         'radio "Yes" [ref_yes] field_name="pets" required=true checked=true',
         'radio "No" [ref_no] field_name="pets" required=true checked=false',
+        // A custom ARIA group carries no control name, only the group it sits in.
+        'radio "Daily" [ref_daily] required=true group="cadence" checked=true',
+        'radio "Weekly" [ref_weekly] required=true group="cadence" checked=false',
+        // A readonly identifier cannot take a mutation and is excluded from
+        // constraint validation, so it is no obligation either.
+        'textbox "Account id" [ref_account] required=true readonly=true value="AC-1"',
         'textbox "Notes" [ref_notes] required=false value=""',
       ].join('\n'),
       treeRevision: 'radio-form-tree',
     });
-    assert.equal(inventory?.itemCount, 3);
+    assert.equal(inventory?.itemCount, 6);
     const yes = inventory.items.find(item => item.label === 'Yes');
     const no = inventory.items.find(item => item.label === 'No');
+    const daily = inventory.items.find(item => item.label === 'Daily');
+    const weekly = inventory.items.find(item => item.label === 'Weekly');
+    const account = inventory.items.find(item => item.label === 'Account id');
     const notes = inventory.items.find(item => item.label === 'Notes');
+    assert.equal(weekly?.group, 'cadence',
+      `${AgentClass.name}: a custom radio option lost the group that holds its alternatives`);
+    assert.equal(account?.required, false,
+      `${AgentClass.name}: a readonly control stayed a submission obligation`);
     assert.equal(no.required, true,
       `${AgentClass.name}: the fixture no longer models a required radio group`);
 
     agent._beginCompletionInvariant(tabId);
     agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_yes' },
+      { success: true, dispatched: true, verified: true });
+    agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_daily' },
       { success: true, dispatched: true, verified: true });
     agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
       filter: 'all', maxDepth: 15,
@@ -84580,6 +84595,9 @@ test('a radio group is answered once and the alternatives may be skipped', () =>
       pageContent: [
         'radio "Yes" [ref_yes] field_name="pets" required=true checked=true',
         'radio "No" [ref_no] field_name="pets" required=true checked=false',
+        'radio "Daily" [ref_daily] required=true group="cadence" checked=true',
+        'radio "Weekly" [ref_weekly] required=true group="cadence" checked=false',
+        'textbox "Account id" [ref_account] required=true readonly=true value="AC-1"',
         'textbox "Notes" [ref_notes] required=false value=""',
       ].join('\n'),
       treeRevision: 'radio-form-tree-after',
@@ -84588,24 +84606,30 @@ test('a radio group is answered once and the alternatives may be skipped', () =>
     const answered = agent._validateWorkflowReconciliation(tabId, {
       job: 'submit-form',
       coverageComplete: true,
-      itemCount: 3,
-      basis: 'Chose Yes for the pets question; the other option and notes were skipped.',
+      itemCount: 6,
+      basis: 'Chose one option per group; the alternatives and optional rows were skipped.',
     }, [
       { id: yes.id, label: 'Yes', status: 'processed', fields: { verified: true } },
       { id: no.id, label: 'No', status: 'skipped' },
+      { id: daily.id, label: 'Daily', status: 'processed', fields: { verified: true } },
+      { id: weekly.id, label: 'Weekly', status: 'skipped' },
+      { id: account.id, label: 'Account id', status: 'skipped' },
       { id: notes.id, label: 'Notes', status: 'skipped' },
     ], `radio-answered-${index}`);
     assert.equal(answered.ok, true,
-      `${AgentClass.name}: the rejected option of an answered radio group blocked reconciliation (${answered.error || ''})`);
+      `${AgentClass.name}: an answered group's alternatives blocked reconciliation (${answered.error || ''})`);
 
     const unanswered = agent._validateWorkflowReconciliation(tabId, {
       job: 'submit-form',
       coverageComplete: true,
-      itemCount: 3,
+      itemCount: 6,
       basis: 'Skipped the pets question entirely.',
     }, [
       { id: yes.id, label: 'Yes', status: 'skipped' },
       { id: no.id, label: 'No', status: 'skipped' },
+      { id: daily.id, label: 'Daily', status: 'processed', fields: { verified: true } },
+      { id: weekly.id, label: 'Weekly', status: 'skipped' },
+      { id: account.id, label: 'Account id', status: 'skipped' },
       { id: notes.id, label: 'Notes', status: 'skipped' },
     ], `radio-unanswered-${index}`);
     assert.equal(unanswered.ok, false,

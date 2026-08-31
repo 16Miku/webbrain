@@ -13218,7 +13218,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const domId = /\bdom_id="([^"]*)"/i.exec(line)?.[1] || '';
       const fieldName = /\bfield_name="([^"]*)"/i.exec(line)?.[1] || '';
       const requiredMatch = /\brequired=(?:"?)(true|false)(?:"?)/i.exec(line);
-      const disabled = /\bdisabled=(?:"?)true(?:"?)/i.test(line);
+      // Disabled and readonly both mean the control constrains no submission
+      // and can take no action, so neither is an obligation.
+      const disabled = /\bdisabled=(?:"?)true(?:"?)/i.test(line)
+        || /\breadonly=(?:"?)true(?:"?)/i.test(line);
+      const groupMatch = /\bgroup="((?:[^"\\]|\\.)*)"/i.exec(line);
       const valueLenMatch = /\bvalue_len=(\d+)/i.exec(line);
       const valueFpMatch = /\bvalue_fp=([0-9a-f]{8})/i.exec(line);
       items.push({
@@ -13230,6 +13234,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...(type ? { type } : {}),
         ...(domId ? { domId } : {}),
         ...(fieldName ? { fieldName } : {}),
+        ...(groupMatch ? { group: groupMatch[1].replace(/\\([\\"])/g, '$1') } : {}),
         // A reply the request named must be provable per thread, but a
         // resolve-only request must not be forced to type one. Reply boxes
         // therefore enter as optional rows and a requested-label match
@@ -13359,7 +13364,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           role,
           documentScope,
           ...(type ? { type } : {}),
-          ...(match?.disabled === true
+          ...(match?.group ? { group: String(match.group).slice(0, 160) } : {}),
+          ...(match?.disabled === true || match?.readonly === true
             ? { required: false }
             : (typeof match?.required === 'boolean' ? { required: match.required } : {})),
           value: String(match?.value ?? '').slice(0, 10000),
@@ -27597,6 +27603,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 // A disabled control constrains no submission and cannot take
                 // the verified action a processed row needs.
                 if (el.disabled === true || el.getAttribute?.('aria-disabled') === 'true') match.disabled = true;
+                // Readonly is excluded from constraint validation and takes no
+                // mutation, so it is no more an obligation than disabled is.
+                if (el.readOnly === true || el.getAttribute?.('aria-readonly') === 'true') match.readonly = true;
+                if (String(el.getAttribute?.('role') || '').toLowerCase() === 'radio'
+                    || (tag === 'input' && type === 'radio')) {
+                  const group = el.closest?.('[role="radiogroup"]');
+                  const groupIdentity = group
+                    ? String(group.getAttribute?.('id') || group.getAttribute?.('aria-label') || '').trim()
+                    : '';
+                  if (groupIdentity) match.group = groupIdentity.slice(0, 160);
+                }
                 return match;
               });
               const el = all[0] || null;

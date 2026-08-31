@@ -470,6 +470,21 @@
   // clipped and driven through a visible label or wrapper. Such a control is
   // still operable by set_checked or by activating its label, so it is not
   // hidden in the sense a conditional or honeypot field is.
+  function _axGroupLabelledByText(el) {
+    try {
+      const ids = String(el.getAttribute('aria-labelledby') || '').trim();
+      if (!ids) return '';
+      const root = el.getRootNode && el.getRootNode() || document;
+      return ids.split(/\s+/)
+        .map(id => (root.getElementById && root.getElementById(id)) || document.getElementById(id))
+        .filter(Boolean)
+        .map(node => node.innerText || node.textContent || '')
+        .join(' ');
+    } catch (e) {
+      return '';
+    }
+  }
+
   function isLabelDrivenControl(el) {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     if (tag === 'select') return true;
@@ -738,6 +753,30 @@
         const nativeControl = tag === 'input' || tag === 'textarea' || tag === 'select';
         if (el.required === true || ariaRequired === 'true') line += ' required=true';
         else if (ariaRequired === 'false' || (nativeControl && el.required === false)) line += ' required=false';
+      } catch {}
+      // A readonly control is excluded from constraint validation and cannot
+      // take the mutation a processed row needs, so the inventory has to know.
+      try {
+        if (el.readOnly === true || el.getAttribute('aria-readonly') === 'true') {
+          line += ' readonly=true';
+        }
+      } catch {}
+      // A custom radio group carries no HTML name, so nothing else says which
+      // options are alternatives to each other.
+      try {
+        if (inventoryRole === 'radio' && !el.getAttribute('name')) {
+          const group = el.closest('[role="radiogroup"]');
+          const groupIdentity = group
+            ? String(
+              group.getAttribute('id')
+              || group.getAttribute('aria-label')
+              || _axGroupLabelledByText(group)
+              || '',
+            ).replace(/\s+/g, ' ').trim().substring(0, 160)
+              .replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+            : '';
+          if (groupIdentity) line += ' group="' + groupIdentity + '"';
+        }
       } catch {}
       // filter=all deliberately keeps aria-hidden and invisible nodes, which
       // pulls conditional and honeypot inputs into the tree. Mark them so a
