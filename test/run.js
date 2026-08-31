@@ -84584,6 +84584,50 @@ test('an iframe wizard step stays complete after the frame advances', () => {
       `${AgentClass.name}: a finished iframe wizard step stayed incomplete forever`);
     assert.equal(stepTwo?.complete, true,
       `${AgentClass.name}: the cumulative iframe wizard inventory could never complete again`);
+
+    // Some embedded wizards advance without navigating the frame at all, so
+    // the next read restarts the very same scope.
+    const inPlaceTabId = tabId + 100;
+    agent.conversations.set(inPlaceTabId, agent.conversations.get(tabId));
+    const inPlaceGuard = agent._startPlanExecutionGuard(inPlaceTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: false,
+      siteWorkflow: selected,
+    });
+    agent._lastAxScopes.set(inPlaceTabId, { documentToken: 'apply-outer-document', pageUrl });
+    const sameFrame = 'https://acme.wd1.myworkdayjobs.com/application/frame';
+    const readSameFrame = (name) => agent._rememberWorkflowInventoryObservation(
+      inPlaceTabId,
+      'iframe_read',
+      { selector: inventorySelector },
+      {
+        success: true,
+        pageUrl,
+        frames: [{
+          frameId: 7,
+          ok: true,
+          url: sameFrame,
+          matchCount: 1,
+          offset: 0,
+          truncated: false,
+          matches: [{ tag: 'input', type: 'text', id: name, name, label: name, value: 'x', matchIndex: 0, required: true }],
+        }],
+      },
+    );
+    const firstStep = readSameFrame('employer');
+    const employerItem = firstStep.items[0];
+    agent._beginCompletionInvariant(inPlaceTabId);
+    agent._recordCompletionToolResult(inPlaceTabId, 'iframe_type', {
+      urlFilter: 'acme.wd1.myworkdayjobs.com', selector: inventorySelector, matchIndex: 0, text: 'Acme',
+    }, { success: true, dispatched: true, verified: true, frameId: 7 });
+    assert.ok(inPlaceGuard.workflowControlActionEvidence[employerItem.id],
+      `${AgentClass.name}: the answered iframe control kept no action evidence`);
+    const secondStep = readSameFrame('salary');
+    assert.equal(secondStep.items.some(item => item.id === employerItem.id), true,
+      `${AgentClass.name}: an in-place wizard step erased the row it had already handled`);
+    assert.equal(secondStep?.itemCount, 2,
+      `${AgentClass.name}: the in-place wizard inventory did not accumulate`);
   }
 });
 
@@ -85054,15 +85098,34 @@ test('every declared non-submit job carries its own evidence contract', () => {
     diffRead({ offset: 4000 }, { success: true, url: `${prUrl}/files`, text: 'tail of the diff' });
     assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
       `${AgentClass.name}: a mid-document read_page window was treated as the whole diff`);
-    // A large diff arrives in windows; the first one is not the review.
-    diffRead({}, {
-      success: true, url: `${prUrl}/files`, hasMore: true, nextOffset: 4000,
+    // A large diff arrives in windows. Build them with the real read_page
+    // windowing so the coverage chain reads what the tool actually emits.
+    const readPageWindow = (index === 0 ? ReadPageWindowCh : ReadPageWindowFx).applyReadPageWindow;
+    const diffDocument = {
+      url: `${prUrl}/files`,
+      text: 'D'.repeat(9000),
+      includeChrome: false,
+    };
+    const diffWindow = (offset) => ({
+      success: true,
+      ...readPageWindow(diffDocument, { offset, limit: 4000 }),
     });
+    const firstWindow = diffWindow(0);
+    assert.equal(firstWindow.hasMore, true);
+    diffRead({}, firstWindow);
     assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
       `${AgentClass.name}: a truncated first window of the diff satisfied the review job`);
-    diffRead({ offset: 4000 }, { success: true, url: `${prUrl}/files`, text: 'tail of the diff' });
+    diffRead({ offset: firstWindow.nextOffset }, diffWindow(firstWindow.nextOffset));
+    assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
+      `${AgentClass.name}: a middle window of the diff satisfied the review job`);
+    const lastWindow = diffWindow(8000);
+    assert.equal(lastWindow.hasMore, false);
+    // The producer also sets textTruncated on every window past the start,
+    // because earlier text is missing from it. That is not pending coverage.
+    assert.equal(lastWindow.textTruncated, true);
+    diffRead({ offset: 8000 }, lastWindow);
     assert.equal(agent._executionEvidenceSatisfied(prGuard), true,
-      `${AgentClass.name}: reading the changed files did not satisfy the review job`);
+      `${AgentClass.name}: the final read_page window could not close the diff`);
 
     // An accessibility read closes the diff only when it covers the document
     // root exhaustively; a subtree or a narrow filter covers one file at best.

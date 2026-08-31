@@ -12816,14 +12816,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'read_page') {
       const requested = Number(args?.offset ?? args?.continuationArgs?.offset);
       const start = Number.isFinite(requested) && requested >= 0 ? requested : 0;
+      // textTruncated is also set for any window past the start, because
+      // earlier text was omitted from it. Only hasMore and a usable next
+      // offset say that something still lies ahead.
       const next = Number(result?.nextOffset);
+      const ahead = Number.isFinite(next) && next > start;
       return {
         origin: 0,
         start,
-        next: Number.isFinite(next) && next > start ? next : start,
-        more: result?.hasMore === true
-          || result?.textTruncated === true
-          || (Number.isFinite(next) && next > start),
+        next: ahead ? next : start,
+        more: result?.hasMore === true || ahead,
       };
     }
     if (name === 'get_accessibility_tree') {
@@ -13393,8 +13395,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .filter(([, document]) => document?.coverage?.start === 0)
       .map(([documentKey]) => documentKey));
     const priorItems = compatible && Array.isArray(prior.items) ? prior.items : [];
+    // An embedded wizard can advance without navigating the frame, so the next
+    // read restarts the same scope and would drop the rows already handled
+    // there while their ledger entries live on. Keep what the run accounted
+    // for, exactly as the accessibility-tree rebuild does.
+    const accountedItemIds = this._workflowAccountedInventoryItemIds(tabId, guard, taskKey);
     const retainedItems = observed.selectorComplete
-      ? priorItems.filter(item => !restartedScopes.has(String(item?.documentScope || '')))
+      ? priorItems.filter(item => (
+        !restartedScopes.has(String(item?.documentScope || ''))
+        || accountedItemIds.has(String(item?.id || ''))
+      ))
       : priorItems;
     const items = new Map(retainedItems
       .map(item => [item.id, item]));
