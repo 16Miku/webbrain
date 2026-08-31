@@ -18553,6 +18553,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? Object.fromEntries(Object.entries(carried.workflowPendingReleaseAssetEvidence)
             .map(([itemId, proof]) => [itemId, { ...proof }]))
         : {},
+      workflowPendingUploadEvidence: carryMatches && carried.workflowPendingUploadEvidence
+        ? Object.fromEntries(Object.entries(carried.workflowPendingUploadEvidence)
+            .map(([itemId, proof]) => [itemId, { ...proof }]))
+        : {},
       workflowComposerFieldEvidence: carryMatches && carried.workflowComposerFieldEvidence
         ? {
             ...carried.workflowComposerFieldEvidence,
@@ -18858,6 +18862,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || Object.keys(guard.workflowControlActionEvidence || {}).length > 0
       || Object.keys(guard.workflowReleaseAssetEvidence || {}).length > 0
       || Object.keys(guard.workflowPendingReleaseAssetEvidence || {}).length > 0
+      || Object.keys(guard.workflowPendingUploadEvidence || {}).length > 0
     )) {
       const submit = this._completionSubmitStates.get(tabId);
       this._continuationExecutionEvidence.set(tabId, {
@@ -18905,6 +18910,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ),
         workflowPendingReleaseAssetEvidence: Object.fromEntries(
           Object.entries(guard.workflowPendingReleaseAssetEvidence || {})
+            .map(([itemId, proof]) => [itemId, { ...proof }]),
+        ),
+        // A form upload the page has already consumed waits for its filename
+        // to appear in a later read. The input may be gone by then, so losing
+        // this would ask the run to attach the same file twice.
+        workflowPendingUploadEvidence: Object.fromEntries(
+          Object.entries(guard.workflowPendingUploadEvidence || {})
             .map(([itemId, proof]) => [itemId, { ...proof }]),
         ),
         // A paged transcript continues from the offset the last window

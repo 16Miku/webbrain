@@ -80156,6 +80156,50 @@ test('trusted continuation carries transcript and release-asset evidence', () =>
       releaseGuard.workflowPendingReleaseAssetEvidence,
       `${AgentClass.name}: Continue lost an upload waiting on its readback`,
     );
+
+    // An ordinary form upload the page has already consumed waits the same way,
+    // and by then the input it was attached to may be gone.
+    const formTabId = 8728 + index;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=upload';
+    agent.conversationIds.set(formTabId, `form_upload_continuation_${index}`);
+    agent.conversations.set(formTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Attach my resume and submit the form.' },
+    ]);
+    const formGate = {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflowUrl: formUrl,
+      siteWorkflow: agent._resolvePlannerSiteWorkflow(formUrl, {
+        request_kind: 'execute', site_job: 'submit-form',
+      }),
+    };
+    const formGuard = agent._startPlanExecutionGuard(formTabId, 'act', formGate);
+    formGuard.successfulTaskToolCalls = 1;
+    formGuard.evidenceTaskKey = formGuard.taskKey;
+    formGuard.workflowPendingUploadEvidence = {
+      'workflow:resume': {
+        itemId: 'workflow:resume',
+        tool: 'upload_file',
+        actionSequence: 7,
+        directVerified: false,
+        pendingObservation: true,
+        attachmentState: 'page_consumed',
+        fileName: 'resume.pdf',
+        item: { id: 'workflow:resume', ref_id: 'ref_resume', domId: 'resume', fieldName: 'resume', label: 'Resume', labelUnique: true },
+        baselineUiSignalCount: 0,
+      },
+    };
+    agent._storeContinuationExecutionEvidence(formTabId);
+    const continuedForm = agent._startPlanExecutionGuard(formTabId, 'act', formGate, {
+      trustedContinuation: true,
+    });
+    assert.deepEqual(
+      continuedForm.workflowPendingUploadEvidence,
+      formGuard.workflowPendingUploadEvidence,
+      `${AgentClass.name}: Continue lost a consumed form upload waiting on its readback`,
+    );
     assert.equal(
       agent._workflowProcessedRowsHaveControlEvidence(
         [{ id: 'requirement:1:dist/a.zip', label: 'dist/a.zip', status: 'processed' }],
@@ -82845,18 +82889,42 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
     }), 0);
     assert.match(transparentText, /\bhidden=true/,
       `${label}: a transparent text honeypot was treated as a custom control`);
+    const transparentTrapCheckbox = formatLine(control({
+      tagName: 'INPUT',
+      role: 'checkbox',
+      name: 'Leave unchecked',
+      attributes: { type: 'checkbox', id: 'trap-box' },
+      visible: false,
+      computedStyle: { display: '', visibility: '', opacity: '0' },
+    }), 0);
+    assert.match(transparentTrapCheckbox, /\bhidden=true/,
+      `${label}: a transparent checkbox with nothing to activate it entered the tree`);
     assert.equal(isLabelDrivenControl({
       tagName: 'INPUT', getAttribute: () => 'checkbox',
     }), true, `${label}: a checkbox was not recognized as label-driven`);
     assert.equal(isLabelDrivenControl({
       tagName: 'INPUT', getAttribute: () => 'text',
     }), false, `${label}: a text input was treated as label-driven`);
+    const wrapper = (attrs) => ({
+      visible: true,
+      parentElement: null,
+      tagName: attrs.tagName || 'DIV',
+      getAttribute: name => attrs[name] ?? null,
+    });
     assert.equal(hasVisibleControlActivator({
-      getAttribute: () => '', closest: () => null, parentElement: { visible: false, parentElement: null },
+      getAttribute: () => '', closest: () => null,
+      parentElement: { ...wrapper({ tagName: 'LABEL' }), visible: false },
     }), false, `${label}: an invisible wrapper counted as an activator`);
+    // An ordinary container drives nothing; a honeypot sits in one of those.
     assert.equal(hasVisibleControlActivator({
-      getAttribute: () => '', closest: () => null, parentElement: { visible: true, parentElement: null },
-    }), true, `${label}: a visible wrapper was not recognized as an activator`);
+      getAttribute: () => '', closest: () => null, parentElement: wrapper({}),
+    }), false, `${label}: a plain visible container counted as an activator`);
+    assert.equal(hasVisibleControlActivator({
+      getAttribute: () => '', closest: () => null, parentElement: wrapper({ tagName: 'LABEL' }),
+    }), true, `${label}: a wrapping label was not recognized as an activator`);
+    assert.equal(hasVisibleControlActivator({
+      getAttribute: () => '', closest: () => null, parentElement: wrapper({ role: 'switch' }),
+    }), true, `${label}: a custom control wrapper was not recognized as an activator`);
     const quotedTitle = 'Launch "Video" from C:\\Temp';
     const quotedLine = formatLine(control({
       tagName: 'INPUT',

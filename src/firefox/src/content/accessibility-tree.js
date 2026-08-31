@@ -490,9 +490,23 @@
       }
       const wrapping = el.closest && el.closest('label');
       if (wrapping && isVisible(wrapping)) return true;
+      // An ordinary container is not an activator. A custom control wraps its
+      // input in a label or in something that carries the control's own role,
+      // and that is what a click can actually drive.
+      const ACTIVATOR_ROLES = [
+        'checkbox', 'radio', 'switch', 'button', 'option',
+        'menuitemcheckbox', 'menuitemradio', 'combobox', 'listbox',
+      ];
       let parent = el.parentElement;
       for (let depth = 0; parent && depth < 3; depth += 1, parent = parent.parentElement) {
-        if (isVisible(parent)) return true;
+        const parentTag = parent.tagName ? parent.tagName.toLowerCase() : '';
+        const parentRole = String(
+          (parent.getAttribute && parent.getAttribute('role')) || '',
+        ).toLowerCase();
+        const activates = parentTag === 'label'
+          || parentTag === 'button'
+          || ACTIVATOR_ROLES.includes(parentRole);
+        if (activates && isVisible(parent)) return true;
       }
     } catch (e) { /* fall through */ }
     return false;
