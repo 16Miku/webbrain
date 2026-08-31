@@ -1112,6 +1112,7 @@ export class Agent extends LoopDetector {
     this._rememberWorkflowTranscriptCoverage(tabId, name, args, result);
     this._rememberWorkflowDiffCoverage(tabId, name, args, result);
     this._rememberWorkflowEmptyCollectionSignal(tabId, name, result);
+    this._refreshWorkflowWindowEvidence(tabId, name, result);
     this._invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result, args, detectedSubmit);
     const submitState = this._completionSubmitStates.get(tabId);
     if (
@@ -10565,6 +10566,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // A window can end the transcript while starting anywhere, so "no next
   // offset" alone would accept the final fragment of a video nobody read the
   // start of. Coverage has to begin at zero and advance without a gap.
+  // A transcript and a diff are proved by the window that closes them, and the
+  // execution guard sees the tool result before that window is recorded. So
+  // these contracts are settled here, once the window they rest on exists.
+  _refreshWorkflowWindowEvidence(tabId, name, result) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled || !this._isSuccessfulExecutionEvidence(result)) return;
+    if (guard.workflowRequiredJobEvidence === 'transcript_segments'
+        && name === 'read_youtube_transcript') {
+      // Calling the tool is not the evidence; a gap-free transcript of the
+      // video this job selected, read from its start, is.
+      guard.workflowJobEvidenceSatisfied = guard.workflowTranscriptCoverage?.complete === true
+        && this._workflowObservationStaysInJobScope(tabId, guard, result);
+    }
+    if (guard.workflowRequiredJobEvidence === 'pull_request_diff_read'
+        && this.constructor.WORKFLOW_CONTENT_READ_TOOLS.has(name)
+        && this._workflowPullRequestDiffRead(guard, this._workflowObservationUrl(tabId, result))) {
+      guard.workflowJobScopeObserved = true;
+      // The diff has to be read out, not merely opened.
+      guard.workflowJobEvidenceSatisfied = guard.workflowDiffCoverage?.complete === true;
+    }
+    // The page's own "no comments" line is read from this same result, so an
+    // empty collection is settled here too rather than a read too early.
+    if (guard.workflowRequiredJobEvidence === 'reconciled_collection') {
+      this._refreshWorkflowCollectionEvidence(tabId, guard, this._workflowCollectionRows(tabId));
+    }
+  }
+
   _rememberWorkflowTranscriptCoverage(tabId, name, args, result) {
     const guard = this._planExecutionGuards.get(tabId);
     if (!guard?.enabled
@@ -18777,13 +18805,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           .includes(this._workflowJobScopeIdentity(result?.countedUrl))) {
       state.workflowJobEvidenceSatisfied = true;
     }
-    if (state.workflowRequiredJobEvidence === 'transcript_segments'
-        && name === 'read_youtube_transcript') {
-      // Calling the tool is not the evidence; a gap-free transcript of the
-      // video this job selected, read from its start, is.
-      state.workflowJobEvidenceSatisfied = state.workflowTranscriptCoverage?.complete === true
-        && this._workflowObservationStaysInJobScope(tabId, state, result);
-    }
     if (contentRead && this._workflowObservationStaysInJobScope(tabId, state, result)) {
       state.workflowJobScopeObserved = true;
       if (state.workflowRequiredJobEvidence === 'scoped_content_read') {
@@ -18792,13 +18813,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (state.workflowRequiredJobEvidence === 'reconciled_collection') {
         this._refreshWorkflowCollectionEvidence(tabId, state, this._workflowCollectionRows(tabId));
       }
-    }
-    if (contentRead
-        && state.workflowRequiredJobEvidence === 'pull_request_diff_read'
-        && this._workflowPullRequestDiffRead(state, observationUrl)) {
-      state.workflowJobScopeObserved = true;
-      // The diff has to be read out, not merely opened.
-      state.workflowJobEvidenceSatisfied = state.workflowDiffCoverage?.complete === true;
     }
     if (requiredScheduleSucceeded) state.successfulRequiredSchedulingToolCalls += 1;
     if ((download && this._isSuccessfulDownloadEvidence(name, result)) || confirmedPendingDownload) {

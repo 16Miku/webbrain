@@ -84989,8 +84989,8 @@ test('a job whose collection can be empty finishes on a verified empty result', 
     assert.equal(emptyGuard.workflowRequiredJobEvidence, 'reconciled_collection');
     agent._beginCompletionInvariant(emptyTabId);
     const emptyRead = (result) => {
-      agent._recordCompletionToolResult(emptyTabId, 'read_page', {}, result);
       agent._markPlanExecutionToolCall(emptyTabId, 'read_page', result);
+      agent._recordCompletionToolResult(emptyTabId, 'read_page', {}, result);
     };
     // Reading the video page is not the same as the page saying it has none.
     emptyRead({ success: true, url: videoUrl, pageContent: '视频标题\n点赞 1234' });
@@ -85018,8 +85018,8 @@ test('a job whose collection can be empty finishes on a verified empty result', 
     const unseenResult = {
       success: true, url: 'https://www.douyin.com/discover', pageContent: '暂无评论',
     };
-    agent._recordCompletionToolResult(unseenTabId, 'read_page', {}, unseenResult);
     agent._markPlanExecutionToolCall(unseenTabId, 'read_page', unseenResult);
+    agent._recordCompletionToolResult(unseenTabId, 'read_page', {}, unseenResult);
     assert.equal(agent._executionEvidenceSatisfied(unseenGuard), false,
       `${AgentClass.name}: an empty signal from another page satisfied this video`);
 
@@ -85083,8 +85083,8 @@ test('every declared non-submit job carries its own evidence contract', () => {
     // Mirror the real path: the completion recorder sees the arguments, the
     // execution guard sees the result.
     const transcriptCall = (args, result) => {
-      agent._recordCompletionToolResult(videoTabId, 'read_youtube_transcript', args, result);
       agent._markPlanExecutionToolCall(videoTabId, 'read_youtube_transcript', result);
+      agent._recordCompletionToolResult(videoTabId, 'read_youtube_transcript', args, result);
     };
     agent._markPlanExecutionToolCall(videoTabId, 'read_page', { success: true, url: videoUrl });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
@@ -85213,17 +85213,14 @@ test('every declared non-submit job carries its own evidence contract', () => {
       `${AgentClass.name}: the overview tab satisfied a job whose contract is the changed files`);
     agent._beginCompletionInvariant(prTabId);
     const diffRead = (args, result) => {
-      agent._recordCompletionToolResult(prTabId, 'read_page', args, result);
       agent._markPlanExecutionToolCall(prTabId, 'read_page', result);
+      agent._recordCompletionToolResult(prTabId, 'read_page', args, result);
     };
     // A selection or a targeted extraction says nothing about the rest of the
     // diff, however complete its own result looks.
-    agent._recordCompletionToolResult(prTabId, 'get_selection', {}, {
-      success: true, url: `${prUrl}/files`, text: 'one highlighted line',
-    });
-    agent._markPlanExecutionToolCall(prTabId, 'get_selection', {
-      success: true, url: `${prUrl}/files`, text: 'one highlighted line',
-    });
+    const selectionResult = { success: true, url: `${prUrl}/files`, text: 'one highlighted line' };
+    agent._markPlanExecutionToolCall(prTabId, 'get_selection', selectionResult);
+    agent._recordCompletionToolResult(prTabId, 'get_selection', {}, selectionResult);
     assert.equal(agent._executionEvidenceSatisfied(prGuard), false,
       `${AgentClass.name}: a selected line closed the diff contract`);
     // read_page walks a character offset, so a window that starts mid-document
@@ -85275,8 +85272,8 @@ test('every declared non-submit job carries its own evidence contract', () => {
     axGuard.evidenceTaskKey = axGuard.taskKey;
     agent._beginCompletionInvariant(prTabId + 2);
     const axRead = (args, result) => {
-      agent._recordCompletionToolResult(prTabId + 2, 'get_accessibility_tree', args, result);
       agent._markPlanExecutionToolCall(prTabId + 2, 'get_accessibility_tree', result);
+      agent._recordCompletionToolResult(prTabId + 2, 'get_accessibility_tree', args, result);
     };
     axRead({ ref_id: 'ref_first_file', filter: 'all', maxDepth: 15 },
       { success: true, pageUrl: `${prUrl}/files` });
