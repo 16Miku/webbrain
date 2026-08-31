@@ -84060,6 +84060,32 @@ test('optional controls the user asked for cannot be skipped', () => {
     ], `optional-request-session-c-${index}`);
     assert.equal(answered.ok, true,
       `${AgentClass.name}: answering the requested optional control still failed reconciliation (${answered.error || ''})`);
+
+    // Verified action evidence proves a control was touched, not that it holds
+    // the value the user gave. A typo has to fail.
+    guard.workflowRequestedControlValues = agent._normalizeWorkflowRequestedControlValues([
+      { label: 'cover letter', value: 'Dear hiring manager' },
+    ]);
+    guard.workflowRequestedControlValuesResolved = true;
+    assert.equal(agent._workflowRequestedControlValuesMatchInventory(guard), true,
+      `${AgentClass.name}: the exact requested value did not read back from the inventory`);
+    guard.workflowRequestedControlValues = agent._normalizeWorkflowRequestedControlValues([
+      { label: 'cover letter', value: 'Dear hiring managr' },
+    ]);
+    assert.equal(agent._workflowRequestedControlValuesMatchInventory(guard), false,
+      `${AgentClass.name}: a typo in the requested value still reconciled`);
+    const typo = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'Name and cover letter answered; referral code skipped.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: coverItem.id, label: 'Cover letter (optional)', status: 'processed', fields: { verified: true } },
+      { id: referralItem.id, label: 'Referral code', status: 'skipped' },
+    ], `requested-value-typo-${index}`);
+    assert.equal(typo.ok, false,
+      `${AgentClass.name}: a form whose field holds the wrong value reconciled as complete`);
   }
 });
 
@@ -86229,6 +86255,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       siteWorkflow: railWorkflow,
     });
     railGuard.successfulConsequentialToolCalls = 1;
+    railGuard.workflowMetadataRequirementsResolved = true;
     const unboundRailSubmit = {
       dispatched: true,
       observedAfterSubmit: true,
@@ -86281,6 +86308,69 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
     );
     assert.equal(railTerminal?.verificationKind, 'transaction_fulfilled');
     assert.equal(railTerminal?.source, 'dispatch_bound_paid_or_ticket_issued_state');
+    // Paying successfully is not booking what was asked for, so the itinerary
+    // has to read back from the paid order's own block.
+    railGuard.workflowMetadataRequirements = agent._normalizeWorkflowMetadataRequirements([
+      { field: 'train', value: 'G1234' },
+      { field: 'travel_date', value: '2026-09-01' },
+    ]);
+    // A copy, so the shared submit binding stays as the later cases expect it.
+    const railBinding = {
+      ...railSubmit.workflowBinding,
+      metadataRequirements: railGuard.workflowMetadataRequirements,
+    };
+    assert.equal(
+      agent._workflowTransactionItineraryMatches(
+        railBinding,
+        'Order number E123456. Payment successful. Ticket issued.',
+      ),
+      false,
+      `${AgentClass.name}: a paid order was accepted without the requested itinerary`,
+    );
+    assert.equal(
+      agent._workflowTransactionItineraryMatches(
+        railBinding,
+        'Order number E123456. Payment successful. Ticket issued. 车次 G1234 出发日期 2026-09-01',
+      ),
+      true,
+      `${AgentClass.name}: the requested itinerary in the paid order was not recognized`,
+    );
+    assert.equal(
+      agent._workflowTransactionItineraryMatches(
+        { ...railBinding, metadataRequirementsIncomplete: true },
+        'Order number E123456. Payment successful. Ticket issued. 车次 G1234 出发日期 2026-09-01',
+      ),
+      false,
+      `${AgentClass.name}: an unreadable booking field set skipped itinerary verification`,
+    );
+    // The terminal path itself has to apply that binding, not just the helper.
+    const railBoundSubmit = {
+      ...unboundRailSubmit,
+      workflowBinding: agent._workflowSubmitBindingForAttempt(railTabId, railUrl, {}, {
+        transactionOrderIds: ['E123456'],
+        transactionOrderIdsComplete: true,
+        transactionPageOrderIds: ['OLD9999', 'E123456'],
+        transactionPageOrderIdsComplete: true,
+      }),
+    };
+    assert.deepEqual(
+      railBoundSubmit.workflowBinding?.metadataRequirements,
+      railGuard.workflowMetadataRequirements,
+      `${AgentClass.name}: the booking binding dropped the requested itinerary`,
+    );
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      railTabId,
+      { workflowPageText: 'Order number E123456. Payment successful. Ticket issued.' },
+      railUrl,
+      { submit: railBoundSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    ), null, `${AgentClass.name}: a paid order without the requested itinerary was reported successful`);
+    assert.equal(agent._workflowTerminalEvidenceFromDone(
+      railTabId,
+      { workflowPageText: 'Order number E123456. Payment successful. Ticket issued. 车次 G1234 出发日期 2026-09-01' },
+      railUrl,
+      { submit: railBoundSubmit, verifiedFinalSubmit: true, relevantForms: 0 },
+    )?.source, 'dispatch_bound_paid_or_ticket_issued_state',
+    `${AgentClass.name}: the requested booking could not satisfy its own job`);
     railGuard.workflowTerminalEvidence = railTerminal;
     assert.equal(agent._executionEvidenceSatisfied(railGuard), true,
       `${AgentClass.name}: paid/ticket-issued 12306 state did not satisfy its job contract`);

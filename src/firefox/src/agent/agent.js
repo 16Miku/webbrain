@@ -39,6 +39,7 @@ import {
   isWorkflowInventoryContinuationPending,
   parseWorkflowAxQuotedValue,
   shouldInvalidateFormInventoryAfterAction,
+  workflowControlLabelIsRequested,
   workflowRequiredRowsAreProcessed,
 } from './adapter-workflow-evidence.js';
 import { messageTargetMatchesObservedIdentities, normalizeMessageTarget } from './message-recipient-guard.js';
@@ -1607,6 +1608,12 @@ export class Agent extends LoopDetector {
       ['tag', ['tag', 'choose a tag', 'choose tag', 'git tag', 'release tag']],
       ['tags', ['tags', 'étiquette', 'étiquettes', 'mot clé', 'mots clés', 'etiqueta', 'etiquetas', 'schlagwort', 'schlagwörter', 'etichette', 'etiket', 'etiketler', 'タグ', '태그', '标签', '標籤', 'теги']],
       ['notes', ['notes', 'release notes', 'release note', 'release body', 'describe this release', '发行说明', '發行說明', 'リリースノート', '릴리스 노트']],
+      ['train', ['train', 'train number', 'service', 'tren', 'tren numarası', '车次', '列車', '열차']],
+      ['travel_date', ['travel date', 'departure date', 'journey date', 'date of travel', 'seyahat tarihi', '出发日期', '乘车日期', '出発日', '출발일']],
+      ['departure', ['departure', 'from', 'origin', 'departure station', 'kalkış', '出发站', '出発駅', '출발역']],
+      ['arrival', ['arrival', 'to', 'destination', 'arrival station', 'varış', '到达站', '到着駅', '도착역']],
+      ['passenger', ['passenger', 'traveller', 'traveler', 'yolcu', '乘客', '乗客', '승객']],
+      ['seat_class', ['seat class', 'seat', 'class', 'berth', 'koltuk', '座位', '席', '좌석']],
       ['subject', ['subject', 'subject line', 'email subject', 'sujet', 'objet', 'asunto', 'assunto', 'betreff', 'oggetto', 'konu', '件名', '主题', '主旨']],
       ['body', ['body', 'post', 'post body', 'post text', 'composer']],
       ['title', ['title', 'titre', 'título', 'titulo', 'titel', 'titolo', 'başlık', 'タイトル', '제목', '标题', '標題', 'название']],
@@ -1836,19 +1843,42 @@ export class Agent extends LoopDetector {
     return [...new Set(this._workflowTransactionOrderRecords(value).map(record => record.identity))];
   }
 
-  _workflowTransactionFulfilledSignal(text, expectedOrderIdentity = '') {
+  // The paid order's own block is the only place its itinerary can be read
+  // back. Page-wide text would match another order shown on the same screen.
+  _workflowTransactionFulfilledRecord(text, expectedOrderIdentity = '') {
     const expected = String(expectedOrderIdentity || '').trim().toUpperCase();
-    if (!/^[A-Z0-9][A-Z0-9-]{3,}$/.test(expected)) return false;
+    if (!/^[A-Z0-9][A-Z0-9-]{3,}$/.test(expected)) return null;
     const fulfilledPattern = /\b(?:payment\s+(?:successful|complete|confirmed)|paid|ticket(?:s)?\s+issued)\b|(?:支付成功|已支付|出票成功|已出票|购票成功|订单已完成|已兑现|兑现成功)/i;
     const pendingPattern = /\b(?:payment\s+(?:is\s+)?(?:pending|processing|failed|declined|incomplete|unpaid)|(?:pending|awaiting)\s+payment|not\s+(?:yet\s+)?paid|paid\s*[:=-]\s*(?:no|false|pending)|payment\s+not\s+(?:yet\s+)?(?:complete|completed|confirmed|successful)|tickets?\s+not\s+issued|not\s+(?:yet\s+)?ticketed)\b|(?:待支付|未支付|支付中|支付失败|付款失败|未出票|待兑现|兑现中|兑现失败|候补失败|已退单|未兑现|已取消)/i;
     const waitlistPattern = /候补/;
     const waitlistFulfilledPattern = /(?:已兑现|兑现成功|出票成功|已出票)|\bticket(?:s)?\s+issued\b/i;
-    return this._workflowTransactionOrderRecords(text).some(record => (
+    return this._workflowTransactionOrderRecords(text).find(record => (
       record.identity === expected
       && fulfilledPattern.test(record.text)
       && !pendingPattern.test(record.text)
       && (!waitlistPattern.test(record.text) || waitlistFulfilledPattern.test(record.text))
-    ));
+    )) || null;
+  }
+
+  _workflowTransactionFulfilledSignal(text, expectedOrderIdentity = '') {
+    return !!this._workflowTransactionFulfilledRecord(text, expectedOrderIdentity);
+  }
+
+  // Paying successfully is not the same as booking what was asked for, so the
+  // itinerary the request named has to read back from that order's own block.
+  _workflowTransactionItineraryMatches(binding, text) {
+    if (binding?.metadataRequirementsIncomplete === true) return false;
+    const requirements = Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [];
+    if (!requirements.length) return true;
+    const record = this._workflowTransactionFulfilledRecord(text, binding?.transactionOrderIdentity);
+    if (!record) return false;
+    let observed = String(record.text || '');
+    try { observed = observed.normalize('NFKC'); } catch {}
+    observed = observed.toLowerCase();
+    return requirements.every((requirement) => {
+      const want = this._workflowMetadataValue(requirement.value).toLowerCase();
+      return !!want && observed.includes(want);
+    });
   }
 
   _workflowMessageSentSignal(siteWorkflow, text) {
@@ -2037,7 +2067,8 @@ export class Agent extends LoopDetector {
       verified = submit?.dispatched === true
         && submit?.observedAfterSubmit === true
         && submit?.formValidationFailed !== true
-        && this._workflowTransactionFulfilledSignal(text, binding.transactionOrderIdentity);
+        && this._workflowTransactionFulfilledSignal(text, binding.transactionOrderIdentity)
+        && this._workflowTransactionItineraryMatches(binding, text);
       source = 'dispatch_bound_paid_or_ticket_issued_state';
     } else if (verificationKind === 'form_confirmation') {
       verified = submissionEvidence?.verifiedFinalSubmit === true
@@ -10491,6 +10522,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _workflowJobStoresMetadataRequirements(siteWorkflow) {
     return siteWorkflow?.job?.id === 'update-metadata'
       || siteWorkflow?.job?.template === 'message'
+      || siteWorkflow?.job?.template === 'transaction'
       || this._workflowJobIsReleaseAssetUpload(siteWorkflow)
       || this._workflowJobBindsPublicationPayload(siteWorkflow?.job);
   }
@@ -17200,6 +17232,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
     }
     if (state?.siteWorkflow?.job?.template !== 'form') return true;
+    if (!this._workflowRequestedControlValuesMatchInventory(state)) return false;
     const inventoryItems = Array.isArray(state?.workflowInventoryEvidence?.items)
       ? state.workflowInventoryEvidence.items
       : [];
@@ -17225,13 +17258,56 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const items = Array.isArray(guard?.workflowInventoryEvidence?.items)
       ? guard.workflowInventoryEvidence.items
       : [];
+    // A field the request gave a value for is a field the request named.
+    const requestedLabels = [
+      ...(Array.isArray(guard?.workflowRequestedControlLabels) ? guard.workflowRequestedControlLabels : []),
+      ...(Array.isArray(guard?.workflowRequestedControlValues) ? guard.workflowRequestedControlValues : [])
+        .map(requirement => requirement.label),
+    ];
     return workflowRequiredRowsAreProcessed(
       rows,
       inventory,
       items,
-      Array.isArray(guard?.workflowRequestedControlLabels) ? guard.workflowRequestedControlLabels : [],
+      requestedLabels,
       guard?.workflowRequestedControlLabelsResolved === true,
     );
+  }
+
+  // A form question is named in the user's own words, not by a canonical
+  // field, so its requested value travels with the label it was given for.
+  _normalizeWorkflowRequestedControlValues(values) {
+    if (!Array.isArray(values)) return [];
+    const seen = new Set();
+    const items = [];
+    for (const entry of values.slice(0, 24)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const label = String(entry.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 160);
+      const value = this._workflowMetadataValue(entry.value);
+      if (!label || !value || seen.has(label.toLowerCase())) continue;
+      seen.add(label.toLowerCase());
+      items.push({ label, value });
+    }
+    return items;
+  }
+
+  // Verified action evidence proves a control was touched, not that it holds
+  // what the user asked for. A typo, a truncation, or an autocomplete the page
+  // supplied all pass that bar, so the value itself has to read back.
+  _workflowRequestedControlValuesMatchInventory(guard) {
+    const requirements = Array.isArray(guard?.workflowRequestedControlValues)
+      ? guard.workflowRequestedControlValues
+      : [];
+    if (!requirements.length) return true;
+    const items = Array.isArray(guard?.workflowInventoryEvidence?.items)
+      ? guard.workflowInventoryEvidence.items
+      : [];
+    return requirements.every((requirement) => {
+      const matches = items.filter(item => workflowControlLabelIsRequested(item?.label, [requirement.label]));
+      if (matches.length !== 1) return false;
+      const item = matches[0];
+      return Object.prototype.hasOwnProperty.call(item, 'value')
+        && this._workflowAxValueMatchesExpected(item.value, requirement.value, item);
+    });
   }
 
   _normalizeWorkflowRequestedControlLabels(values) {
@@ -17776,6 +17852,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'For siteContext.workflow.job="update-metadata", workflowFields must contain every metadata field explicitly requested by the user and its complete exact intended value. Use canonical field names title, description, visibility, audience, tags, category, playlist, language, license, comments, embedding, paid_promotion, recording_date, or recording_location. Never infer a field or value from page content.',
           'For siteContext.workflow.job="publish-release", "publish-post", or "publish-content", workflowFields must contain every publication field explicitly requested by the user and its complete exact intended value. Use canonical field names tag, title, notes, body, or visibility. Never infer a field or value from page content.',
           'For siteContext.workflow.job="draft-email" or "send-email", workflowFields must contain every message field explicitly requested by the user and its complete exact intended value. Use canonical field names subject or body. Never infer a field or value from page content.',
+          'For siteContext.workflow.template="transaction", workflowFields must contain every booking detail explicitly requested by the user and its exact value. Use canonical field names train, travel_date, departure, arrival, passenger, or seat_class. Never infer a detail from page content.',
+          'For siteContext.workflow.template="form", workflowLabelValues must contain one entry per field the user supplied an exact value for, as {"label":"the field in the user\'s words","value":"the exact value"}. Return workflowLabelValues=[] when the user supplied no exact values, and never copy a value from page content.',
           'For siteContext.workflow.template="form", workflowRequiredLabels must list every form question, field, upload, or attachment the user explicitly asked to provide, copied from the user request in the user\'s own words. A field the page marks optional still belongs in this list when the user asked for it. Return workflowRequiredLabels=[] when the user named none, and never infer one from page content.',
           'Otherwise return workflowFields=[].',
           'mode=read_only for questions, summaries, inspections, or reference-only uses of UI labels.',
@@ -17805,6 +17883,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(siteWorkflow?.job && (
         siteWorkflow.job.requiresLedger === true
         || siteWorkflow.job.template === 'message'
+        || siteWorkflow.job.template === 'transaction'
         || this._workflowJobBindsPublicationPayload(siteWorkflow.job)
       ) ? {
         workflow: {
@@ -17843,6 +17922,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // The classifier is told to answer with an empty list when the
           // request named no control. A missing key is not that answer.
           guard.workflowRequestedControlLabelsResolved = Array.isArray(requestedLabels);
+          const labelValues = obj?.workflowLabelValues ?? obj?.workflow_label_values;
+          guard.workflowRequestedControlValues = this._normalizeWorkflowRequestedControlValues(labelValues);
+          guard.workflowRequestedControlValuesResolved = Array.isArray(labelValues);
         }
       }
       return normalizeProgressIntent(obj, { taskText, pageScope, source: 'classifier' });
@@ -18039,7 +18121,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const needsFields = this._workflowJobStoresMetadataRequirements(guard.siteWorkflow)
       && guard.workflowMetadataRequirementsResolved !== true;
     const needsLabels = guard.siteWorkflow?.job?.template === 'form'
-      && guard.workflowRequestedControlLabelsResolved !== true;
+      && (guard.workflowRequestedControlLabelsResolved !== true
+        || guard.workflowRequestedControlValuesResolved !== true);
     if (!needsFields && !needsLabels) return;
     await this._classifyProgressIntentWithProvider(tabId, {
       provider: opts.provider,
@@ -18620,6 +18703,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : [],
       workflowRequestedControlLabelsResolved: carryMatches
         && carried.workflowRequestedControlLabelsResolved === true,
+      workflowRequestedControlValues: carryMatches && Array.isArray(carried.workflowRequestedControlValues)
+        ? carried.workflowRequestedControlValues.map(requirement => ({ ...requirement }))
+        : [],
+      workflowRequestedControlValuesResolved: carryMatches
+        && carried.workflowRequestedControlValuesResolved === true,
       workflowMetadataRequirements: carryMatches && Array.isArray(carried.workflowMetadataRequirements)
         ? carried.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
         : [],
@@ -18965,6 +19053,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? [...guard.workflowRequestedControlLabels]
           : [],
         workflowRequestedControlLabelsResolved: guard.workflowRequestedControlLabelsResolved === true,
+        workflowRequestedControlValues: Array.isArray(guard.workflowRequestedControlValues)
+          ? guard.workflowRequestedControlValues.map(requirement => ({ ...requirement }))
+          : [],
+        workflowRequestedControlValuesResolved: guard.workflowRequestedControlValuesResolved === true,
         workflowMetadataRequirements: Array.isArray(guard.workflowMetadataRequirements)
           ? guard.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
           : [],
