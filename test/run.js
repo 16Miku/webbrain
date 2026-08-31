@@ -40090,6 +40090,9 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
     assert.match(bootstrap, /--ui-scale-width', inverse \+ '%'[\s\S]*?--ui-scale-height', inverse \+ 'vh'/, `${label}: pre-paint scale should inverse-compensate both width and height under zoom`);
     assert.match(bootstrap, /data-ui-scale-ready.*?false[\s\S]*?storage\.get\(\{ uiScale: 100 \}/, `${label}: canonical storage should settle the pre-paint scale before revealing the sidepanel`);
     assert.match(bootstrap, /data-ui-scale-ready.*?true/, `${label}: sidepanel should be revealed after scale initialization`);
+    assert.match(bootstrap, /levels\.indexOf\(Number\(mirrored\)\) === -1[\s\S]*?data-ui-scale-ready', 'false'/, `${label}: the panel should only be hidden when no mirrored scale can be painted pre-paint`);
+    assert.match(bootstrap, /window\.setTimeout\(reveal, 1000\)[\s\S]*?storage\.get/, `${label}: the reveal fallback should be armed before the storage API can throw synchronously`);
+    assert.match(bootstrap, /\} catch \(_\) \{\n\s*reveal\(\);/, `${label}: a throwing storage API should still reveal the sidepanel`);
     assert.match(css, /body\s*\{[\s\S]*?width:\s*var\(--ui-scale-width, 100%\);[\s\S]*?height:\s*var\(--ui-scale-height, 100vh\);[\s\S]*?zoom:\s*var\(--ui-scale-zoom, 1\);/, `${label}: sidepanel layout should compensate CSS zoom`);
     assert.match(css, /#app\s*\{[\s\S]*?height:\s*100%;/, `${label}: app should fill the compensated body`);
     assert.equal(config.DEFAULT_CONFIG_SETTINGS.uiScale, 100, `${label}: portable config should default scale to 100%`);
@@ -40118,6 +40121,17 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
     assert.match(sidepanelJs, /positionSelectionAskAction[\s\S]*?currentUiScale \/ 100[\s\S]*?style\.left = `\$\{left \/ zoom\}px`[\s\S]*?style\.top = `\$\{top \/ zoom\}px`/, `${label}: selection action coordinates should remain aligned under CSS zoom`);
     assert.match(sidepanelJs, /loadUiScale\([\s\S]*?storage\.local[\s\S]*?renderSidepanelUiScale/, `${label}: sidepanel should hydrate its persisted scale`);
     assert.match(sidepanelJs, /storage\.onChanged\.addListener\([\s\S]*?changes\[UI_SCALE_STORAGE_KEY\][\s\S]*?renderSidepanelUiScale/, `${label}: open sidepanels should react to scale changes`);
+    assert.match(sidepanelJs, /uiScaleWriteQueue = write\.catch/, `${label}: sidepanel scale steps should be serialized so key repeat cannot collapse them`);
+    assert.match(sidepanelJs, /uiScaleWriteQueue\.then\(async \(\) => \{\s*const next = nextUiScale\(currentUiScale, action\)/, `${label}: each queued scale step should read the scale rendered by the step before it`);
+    assert.match(sidepanelJs, /if \(closeUiScalePopover\(\)\) \{[\s\S]*?return;[\s\S]*?if \(isProcessing\)[\s\S]*?abortRun\(\)/, `${label}: Escape should close the scale popover instead of aborting the active run`);
+    assert.match(sidepanelJs, /await setSidepanelUiScale\(scaleAction\)\.catch\(\(\) => \{\}\)/, `${label}: keyboard scale steps should not reject unhandled when the write fails`);
+    assert.match(sidepanelCss, /#header #ui-scale-popover button \{/, `${label}: popover chips should outrank the generic header icon button rule`);
+    assert.match(sidepanelCss, /\.ui-scale-popover \{[\s\S]*?inset-inline-end: 0;/, `${label}: the scale popover should be offset logically so RTL locales open it inward`);
+    assert.ok(
+      sidepanelCss.indexOf('@media (max-width: 380px)') > sidepanelCss.lastIndexOf('#header .header-right button:not(.language-picker-btn):not(.language-picker-option).active'),
+      `${label}: the narrow-panel header overrides must follow the header button rules they override`,
+    );
+    assert.doesNotMatch(sidepanelCss, /max-height: min\(320px, 50vh\)/, `${label}: viewport clamps inside the zoomed body should divide the zoom back out`);
 
     assert.match(settingsHtml, /data-i18n="st\.display\.ui_scale\.label"[\s\S]*?data-i18n="st\.display\.ui_scale\.desc"/, `${label}: settings should explain UI scale`);
     assert.match(settingsHtml, /id="settings-ui-scale-decrease"[\s\S]*?id="settings-ui-scale-value"[\s\S]*?id="settings-ui-scale-increase"[\s\S]*?id="settings-ui-scale-reset"/, `${label}: settings should expose all scale controls`);
@@ -40128,6 +40142,7 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
     assert.match(settingsJs, /await saveUiScale\([\s\S]*?renderSettingsUiScale/, `${label}: settings should render scale only after it is persisted`);
     assert.match(sidepanelJs, /await saveUiScale\([\s\S]*?renderSidepanelUiScale/, `${label}: sidepanel should render scale only after it is persisted`);
     assert.match(settingsJs, /settingsUiScaleReady = false[\s\S]*?if \(!settingsUiScaleReady\) return/, `${label}: settings controls should wait for canonical scale hydration`);
+    assert.match(settingsJs, /settingsUiScaleWriteQueue = write\.catch/, `${label}: settings scale steps should be serialized so held buttons cannot collapse them`);
     assert.match(settingsJs, /storage\.onChanged\.addListener\([\s\S]*?changes\[UI_SCALE_STORAGE_KEY\][\s\S]*?renderSettingsUiScale/, `${label}: settings should reflect scale changes made elsewhere`);
     assert.match(settingsJs, /setLocale\([\s\S]*?refreshUiScaleShortcuts\(\)\.catch/, `${label}: settings should refresh the shortcut summary after locale changes`);
 

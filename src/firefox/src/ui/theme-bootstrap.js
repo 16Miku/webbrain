@@ -51,24 +51,49 @@
       // localStorage is synchronous and avoids a flash on normal page opens.
       // The canonical storage API is checked below because MV3 service workers
       // cannot update this mirror when a global command changes the scale.
-      applyScale(localStorage.getItem('wbUiScale'));
-      root.setAttribute('data-ui-scale-ready', 'false');
-      var storage = globalThis.browser?.storage?.local || globalThis.chrome?.storage?.local;
-      if (!storage?.get) {
-        reveal();
-      } else if (globalThis.browser?.storage?.local?.get) {
-        Promise.resolve(storage.get({ uiScale: 100 })).then(function (stored) {
-          applyScale(stored?.uiScale);
-          reveal();
-        }).catch(reveal);
+      var mirrored = null;
+      try {
+        mirrored = localStorage.getItem('wbUiScale');
+      } catch (_) { /* private mode and blocked site data both land here */ }
+      applyScale(mirrored);
+      if (levels.indexOf(Number(mirrored)) === -1) {
+        // Only blank the panel when there is no usable mirror to paint from.
+        // With one, the pre-paint scale is already right and the reconcile
+        // below can adjust it in place instead of costing every open a
+        // storage round-trip behind a hidden panel.
+        root.setAttribute('data-ui-scale-ready', 'false');
+        // Register the escape hatch BEFORE touching the browser API: a
+        // synchronous throw (an invalidated extension context after a
+        // reload) would otherwise skip it and hide the panel forever.
+        window.setTimeout(reveal, 1000);
       } else {
-        storage.get({ uiScale: 100 }, function (stored) {
-          applyScale(stored?.uiScale);
-          reveal();
-        });
+        ready = true;
       }
-      // Do not leave the panel hidden if a browser API never resolves.
-      window.setTimeout(reveal, 1000);
+      try {
+        var storage = globalThis.browser?.storage?.local || globalThis.chrome?.storage?.local;
+        if (!storage?.get) {
+          reveal();
+        } else if (globalThis.browser?.storage?.local?.get) {
+          Promise.resolve(storage.get({ uiScale: 100 })).then(function (stored) {
+            applyScale(stored?.uiScale);
+            reveal();
+          }).catch(reveal);
+        } else {
+          storage.get({ uiScale: 100 }, function (stored) {
+            applyScale(stored?.uiScale);
+            reveal();
+          });
+        }
+      } catch (_) {
+        reveal();
+      }
     }
-  } catch (_) { /* default CSS variables keep the panel at 100% */ }
+  } catch (_) {
+    // Default CSS variables keep the panel at 100%, but the reveal gate above
+    // may already be set — clear it so a failed scale init can never leave the
+    // panel hidden.
+    try {
+      document.documentElement.setAttribute('data-ui-scale-ready', 'true');
+    } catch (_e) { /* ignore */ }
+  }
 })();

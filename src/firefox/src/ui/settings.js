@@ -250,11 +250,22 @@ function renderSettingsUiScale(value) {
   if (settingsUiScaleIncrease) settingsUiScaleIncrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[UI_SCALE_LEVELS.length - 1];
 }
 
-async function changeSettingsUiScale(action) {
-  if (!settingsUiScaleReady) return;
-  const next = nextUiScale(currentSettingsUiScale, action);
-  await saveUiScale(browser.storage.local, next);
-  renderSettingsUiScale(next);
+// Serialized so each step reads the scale rendered by the step before it:
+// holding Enter on a focused +/- button repeats faster than the storage write
+// resolves, and an unqueued step would keep re-reading the same stale scale.
+let settingsUiScaleWriteQueue = Promise.resolve();
+
+function changeSettingsUiScale(action) {
+  if (!settingsUiScaleReady) return Promise.resolve();
+  const write = settingsUiScaleWriteQueue.then(async () => {
+    const next = nextUiScale(currentSettingsUiScale, action);
+    await saveUiScale(browser.storage.local, next);
+    renderSettingsUiScale(next);
+  });
+  // Keep the chain alive after a rejected write while still handing the
+  // failure to this caller.
+  settingsUiScaleWriteQueue = write.catch(() => {});
+  return write;
 }
 
 loadUiScale(browser.storage.local).then(renderSettingsUiScale);

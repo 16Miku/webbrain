@@ -514,10 +514,29 @@ function renderSidepanelUiScale(value) {
   uiScalePopover?.querySelector('[data-ui-scale-action="increase"]')?.toggleAttribute('disabled', currentUiScale === max);
 }
 
-async function setSidepanelUiScale(action) {
-  const next = nextUiScale(currentUiScale, action);
-  await saveUiScale(browser.storage.local, next);
-  renderSidepanelUiScale(next);
+// Steps are serialized because each one reads the scale rendered by the step
+// before it. Key auto-repeat can fire dozens of times before a storage write
+// resolves, and without the queue every repeat would read the same stale
+// scale — a held Ctrl+= would advance exactly one level.
+let uiScaleWriteQueue = Promise.resolve();
+
+function setSidepanelUiScale(action) {
+  const write = uiScaleWriteQueue.then(async () => {
+    const next = nextUiScale(currentUiScale, action);
+    await saveUiScale(browser.storage.local, next);
+    renderSidepanelUiScale(next);
+  });
+  // Keep the chain alive after a rejected write while still handing the
+  // failure to this caller.
+  uiScaleWriteQueue = write.catch(() => {});
+  return write;
+}
+
+function closeUiScalePopover() {
+  if (!uiScalePopover || uiScalePopover.classList.contains('hidden')) return false;
+  uiScalePopover.classList.add('hidden');
+  uiScaleBtn?.setAttribute('aria-expanded', 'false');
+  return true;
 }
 
 loadUiScale(browser.storage.local).then(renderSidepanelUiScale);
@@ -533,14 +552,12 @@ uiScalePopover?.addEventListener('click', (event) => {
 uiScalePopover?.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   event.preventDefault();
-  uiScalePopover.classList.add('hidden');
-  uiScaleBtn?.setAttribute('aria-expanded', 'false');
+  closeUiScalePopover();
   uiScaleBtn?.focus();
 });
 document.addEventListener('click', (event) => {
   if (uiScaleMenu?.contains(event.target)) return;
-  uiScalePopover?.classList.add('hidden');
-  uiScaleBtn?.setAttribute('aria-expanded', 'false');
+  closeUiScalePopover();
 });
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[UI_SCALE_STORAGE_KEY]) {
@@ -12346,7 +12363,7 @@ async function handleGlobalKeydown(e) {
   if (scaleAction) {
     e.preventDefault();
     e.stopPropagation();
-    await setSidepanelUiScale(scaleAction);
+    await setSidepanelUiScale(scaleAction).catch(() => {});
     return;
   }
 
@@ -12357,6 +12374,15 @@ async function handleGlobalKeydown(e) {
   if (e.key === 'Escape') {
     // IME Escape cancels a composition candidate — never abort the run for that.
     if (e.isComposing) return;
+    // The popover's own Escape handler only fires while focus is inside it —
+    // clicking the trigger leaves focus on a sibling. This listener is on the
+    // capture phase either way, so without closing the popover here Escape
+    // would fall through to abortRun() and cancel a running agent.
+    if (closeUiScalePopover()) {
+      e.preventDefault();
+      uiScaleBtn?.focus();
+      return;
+    }
     const slashMenuOpen = !!slashCommandMenuEl && !slashCommandMenuEl.classList.contains('hidden');
     if (slashMenuOpen) return;
     if (selectionAskActionEl && !selectionAskActionEl.classList.contains('hidden')) {

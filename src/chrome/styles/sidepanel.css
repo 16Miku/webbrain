@@ -849,7 +849,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   position: absolute;
   z-index: 30;
   top: calc(100% + 7px);
-  right: 0;
+  /* Logical, so the popover opens inward from the trigger in RTL locales
+     instead of off the panel edge. */
+  inset-inline-end: 0;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -863,7 +865,10 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 
 .ui-scale-popover.hidden { display: none; }
 
-#header .ui-scale-popover button {
+/* Two ids: the generic `#header .header-right button:not(...)` rule below is
+   more specific than a class-based selector, and these chips live inside
+   .header-right. */
+#header #ui-scale-popover button {
   min-width: 28px;
   min-height: 28px;
   justify-content: center;
@@ -874,16 +879,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   font: inherit;
 }
 
-#header .ui-scale-popover button:disabled { opacity: 0.45; cursor: default; }
-#header .ui-scale-popover .ui-scale-reset { min-width: auto; padding-inline: 9px; }
+#header #ui-scale-popover button:disabled { opacity: 0.45; cursor: default; }
+#header #ui-scale-popover .ui-scale-reset { min-width: auto; padding-inline: 9px; }
 .ui-scale-popover output { min-width: 40px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
-
-@media (max-width: 380px) {
-  #header { padding-inline: 8px; }
-  .header-right { gap: 0; }
-  #header .header-right button:not(.language-picker-btn):not(.language-picker-option) { padding-inline: 2px; }
-  .language-picker-btn { padding-inline: 2px; }
-}
 
 .status-dot {
   width: 8px;
@@ -1040,8 +1038,8 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   left: 0;
   z-index: 40;
   min-width: max(100%, 200px);
-  max-width: min(280px, 90vw);
-  max-height: min(320px, 50vh);
+  max-width: min(280px, calc(90vw / var(--ui-scale-zoom, 1)));
+  max-height: min(320px, calc(50vh / var(--ui-scale-zoom, 1)));
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--bg-secondary, var(--bg-input));
@@ -1214,8 +1212,8 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   right: 0;
   left: auto;
   min-width: 224px;
-  max-width: min(272px, calc(100vw - 16px));
-  max-height: min(352px, 60vh);
+  max-width: min(272px, calc(100vw / var(--ui-scale-zoom, 1) - 16px));
+  max-height: min(352px, calc(60vh / var(--ui-scale-zoom, 1)));
   direction: ltr;
 }
 
@@ -1310,6 +1308,17 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 #header .header-right button:not(.language-picker-btn):not(.language-picker-option).active {
   color: var(--accent);
   background: var(--accent-dim);
+}
+
+/* Narrow panels: claws back the horizontal room the header cluster needs.
+   Must stay below the header button and language picker rules above — a media
+   query adds no specificity, so an earlier copy of these selectors would lose
+   to them. */
+@media (max-width: 380px) {
+  #header { padding-inline: 8px; }
+  .header-right { gap: 0; }
+  #header .header-right button:not(.language-picker-btn):not(.language-picker-option) { padding-inline: 2px; }
+  .language-picker-btn { padding-inline: 2px; }
 }
 
 .composer-toast {
@@ -1635,7 +1644,7 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   display: none;
   align-items: center;
   width: max-content;
-  max-width: calc(100vw - 24px);
+  max-width: calc(100vw / var(--ui-scale-zoom, 1) - 24px);
   min-width: 0;
   margin-top: 3px;
 }
@@ -1748,7 +1757,7 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 }
 
 .screenshot-result-image-full-page {
-  max-height: 70vh;
+  max-height: calc(70vh / var(--ui-scale-zoom, 1));
 }
 
 .screenshot-warning {
@@ -2630,7 +2639,7 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   z-index: 10000;
   display: block;
   opacity: 1;
-  max-width: calc(100vw - 16px);
+  max-width: calc(100vw / var(--ui-scale-zoom, 1) - 16px);
   padding: 6px 10px;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
   border-radius: 999px;
