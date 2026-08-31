@@ -7591,6 +7591,10 @@ test('adapter workflow evidence kernel is bounded and mirrored', () => {
   assert.equal(shouldInvalidateFormInventoryAfterAction('type_ax'), true);
   assert.equal(shouldInvalidateFormInventoryAfterAction('set_field'), true);
   assert.equal(shouldInvalidateFormInventoryAfterActionFx('iframe_type'), true);
+  // An upload can reveal attachment-dependent questions, so the inventory it
+  // was taken against is no longer the form.
+  assert.equal(shouldInvalidateFormInventoryAfterAction('upload_file'), true);
+  assert.equal(shouldInvalidateFormInventoryAfterActionFx('upload_file'), true);
   assert.equal(shouldInvalidateFormInventoryAfterAction('screenshot'), false);
   assert.equal(shouldInvalidateFormInventoryAfterAction('get_accessibility_tree'), false);
 
@@ -85065,6 +85069,35 @@ test('every declared non-submit job carries its own evidence contract', () => {
     });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
       `${AgentClass.name}: a window naming another video satisfied this job`);
+    // The adapter accepts routes that carry the video in the path, where a
+    // ?v= lookup would have found nothing and accepted any reported id.
+    for (const [routeUrl, expected] of [
+      ['https://www.youtube.com/watch?v=abcdefghijk', 'abcdefghijk'],
+      ['https://youtu.be/abcdefghijk', 'abcdefghijk'],
+      ['https://www.youtube.com/shorts/abcdefghijk', 'abcdefghijk'],
+      ['https://www.youtube.com/embed/abcdefghijk?start=30', 'abcdefghijk'],
+      ['https://www.youtube.com/live/abcdefghijk', 'abcdefghijk'],
+      ['https://www.youtube.com/feed/subscriptions', ''],
+    ]) {
+      assert.equal(agent._workflowYouTubeVideoId(routeUrl), expected,
+        `${AgentClass.name}: ${routeUrl} did not resolve to its video id`);
+    }
+    assert.equal(
+      agent._workflowTranscriptWindowVideoMatches(
+        { siteWorkflowUrl: 'https://youtu.be/abcdefghijk' },
+        { data: { video_id: 'zzzzzzzzzzz' } },
+      ),
+      false,
+      `${AgentClass.name}: a short-link route accepted another video's transcript`,
+    );
+    assert.equal(
+      agent._workflowTranscriptWindowVideoMatches(
+        { siteWorkflowUrl: 'https://www.youtube.com/shorts/abcdefghijk' },
+        { data: { video_id: 'abcdefghijk' } },
+      ),
+      true,
+      `${AgentClass.name}: a shorts route rejected its own video`,
+    );
     // Read it properly: from the start, then the continuation to the end.
     transcriptCall({}, {
       success: true,

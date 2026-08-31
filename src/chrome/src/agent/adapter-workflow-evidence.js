@@ -37,6 +37,9 @@ export const WORKFLOW_FORM_STRUCTURE_TOOLS = Object.freeze([
   'type_ax',
   'set_field',
   'iframe_type',
+  // An application that parses an uploaded resume, or reveals questions that
+  // depend on the attachment, changes the form the moment the file lands.
+  'upload_file',
 ]);
 
 export function isWorkflowInventoryContinuationPending(result = {}) {

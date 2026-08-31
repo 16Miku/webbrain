@@ -10517,15 +10517,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // Some transcript providers name the video directly. When they do, that name
   // has to be the one the job selected, whatever URL the tab is showing.
+  // youtu.be/<id> and /shorts/<id> carry the video in the path, not in a
+  // query parameter, so reading only ?v= would accept any reported id there.
+  _workflowYouTubeVideoId(url) {
+    try {
+      const parsed = new URL(String(url || ''));
+      const host = parsed.hostname.toLowerCase().replace(/^(?:www|m|studio)\./, '');
+      const path = parsed.pathname.replace(/\/+$/, '');
+      if (host === 'youtu.be') return path.replace(/^\//, '').split('/')[0] || '';
+      if (host !== 'youtube.com') return '';
+      const routed = /^\/(?:shorts|embed|live|v)\/([^/]+)/.exec(path);
+      if (routed) return routed[1];
+      return parsed.searchParams.get('v') || '';
+    } catch {
+      return '';
+    }
+  }
+
   _workflowTranscriptWindowVideoMatches(guard, result) {
     const reported = String(result?.data?.video_id || result?.video_id || '').trim();
     if (!reported) return true;
-    try {
-      const requested = new URL(String(guard?.siteWorkflowUrl || '')).searchParams.get('v');
-      return !requested || requested === reported;
-    } catch {
-      return true;
-    }
+    const requested = this._workflowYouTubeVideoId(guard?.siteWorkflowUrl);
+    return !requested || requested === reported;
   }
 
   // A transcript answer is grounded only when the run holds transcript content
