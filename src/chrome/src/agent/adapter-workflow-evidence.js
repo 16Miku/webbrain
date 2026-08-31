@@ -183,6 +183,7 @@ export function workflowRequiredRowsAreProcessed(
   inventory = null,
   inventoryItems = [],
   requestedLabels = [],
+  requestedLabelsResolved = false,
 ) {
   const requiredIds = new Set((inventory?.itemIds || []).map(id => String(id)));
   if (!requiredIds.size) return true;
@@ -214,7 +215,10 @@ export function workflowRequiredRowsAreProcessed(
     const status = String(row?.status || '').toLowerCase();
     if (status === 'processed') return true;
     if (status !== 'skipped') return false;
-    if (optionalIds.has(id)) return true;
+    // Skipping is only safe once it is known which controls the request named.
+    // A row every answer filled needs no such knowledge, so this only bites
+    // where something was actually left out.
+    if (optionalIds.has(id)) return requestedLabelsResolved;
     const group = radioGroupOf.get(id);
     return !!group && answeredGroups.has(group);
   });

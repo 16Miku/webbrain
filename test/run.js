@@ -7616,13 +7616,24 @@ test('adapter workflow evidence kernel is bounded and mirrored', () => {
     { id: 'required-field' },
     { id: 'optional-field', required: false },
   ]), false);
-  assert.equal(workflowRequiredRowsAreProcessed([
+  const optionalRows = [
     { id: 'required-field', status: 'processed' },
     { id: 'optional-field', status: 'skipped' },
-  ], inventory, [
+  ];
+  const optionalItems = [
     { id: 'required-field' },
     { id: 'optional-field', required: false },
-  ]), true);
+  ];
+  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, [], true), true);
+  // Skipping an optional row is only safe once it is known which controls the
+  // request named; an unanswered classifier is not "the user named none".
+  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, [], false), false,
+    'an unresolved requested-label set allowed an optional row to be skipped');
+  assert.equal(workflowRequiredRowsAreProcessed([
+    { id: 'required-field', status: 'processed' },
+    { id: 'optional-field', status: 'processed' },
+  ], inventory, optionalItems, [], false), true,
+    'a ledger that skipped nothing needed the requested-label set');
   assert.equal(workflowRequiredRowsAreProcessedFx(rows, inventory), false);
   const quotedAx = 'textbox "Title" [ref_title] value="Launch \\"Video\\" from C:\\\\Temp"';
   assert.equal(parseWorkflowAxQuotedValue(quotedAx), 'Launch "Video" from C:\\Temp');
@@ -82453,6 +82464,7 @@ test('GitHub review-thread workflow inventories only unresolved thread controls'
     // Once the request names a reply, those optional rows can no longer be skipped.
     const replyGuard = agent._planExecutionGuards.get(tabId);
     replyGuard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['reply']);
+    replyGuard.workflowRequestedControlLabelsResolved = true;
     const skippedReplies = agent._validateWorkflowReconciliation(tabId, {
       job: 'resolve-review-threads',
       coverageComplete: true,
@@ -83418,6 +83430,7 @@ test('optional inventory rows may skip and noisy frames do not block iframe comp
       requiresSubmission: true,
       siteWorkflow: selected,
     });
+    guard.workflowRequestedControlLabelsResolved = true;
     agent._lastAxScopes.set(tabId, { documentToken: 'optional-form-document', pageUrl: formUrl });
     const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
       filter: 'all',
@@ -83877,6 +83890,7 @@ test('optional controls the user asked for cannot be skipped', () => {
       requiresSubmission: true,
       siteWorkflow: selected,
     });
+    guard.workflowRequestedControlLabelsResolved = true;
     agent._lastAxScopes.set(tabId, { documentToken: 'optional-request-document', pageUrl: formUrl });
     const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
       filter: 'all', maxDepth: 15,
@@ -83930,6 +83944,7 @@ test('optional controls the user asked for cannot be skipped', () => {
     assert.equal(baseline.ok, true,
       `${AgentClass.name}: genuinely optional rows could not be skipped before the request was classified (${baseline.error || ''})`);
     guard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['attach my cover letter']);
+    guard.workflowRequestedControlLabelsResolved = true;
     const requested = reconcile();
     assert.equal(requested.ok, false,
       `${AgentClass.name}: an optional control the user explicitly asked for was skipped`);
@@ -84336,6 +84351,7 @@ test('a disabled control is not an obligation, and iframe optionality is stated'
       requiresSubmission: true,
       siteWorkflow: selected,
     });
+    guard.workflowRequestedControlLabelsResolved = true;
     agent._lastAxScopes.set(tabId, { documentToken: 'disabled-form-document', pageUrl: formUrl });
     const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
       filter: 'all', maxDepth: 15,
@@ -84383,6 +84399,7 @@ test('a disabled control is not an obligation, and iframe optionality is stated'
     // A request that names the disabled field still promotes it, and the run
     // then has to report what blocked it rather than claim success.
     guard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['employer name']);
+    guard.workflowRequestedControlLabelsResolved = true;
     const requested = agent._validateWorkflowReconciliation(tabId, {
       job: 'submit-form',
       coverageComplete: true,
@@ -84459,6 +84476,7 @@ test('a radio group is answered once and the alternatives may be skipped', () =>
       requiresSubmission: true,
       siteWorkflow: selected,
     });
+    guard.workflowRequestedControlLabelsResolved = true;
     agent._lastAxScopes.set(tabId, { documentToken: 'radio-form-document', pageUrl: formUrl });
     const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {
       filter: 'all', maxDepth: 15,
@@ -85025,24 +85043,38 @@ test('every declared non-submit job carries its own evidence contract', () => {
     });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
       `${AgentClass.name}: a gap in the transcript chain satisfied the job`);
+    // Offsets alone do not say which video they index: a chain that opens on
+    // another video and ends on this one is not this video's transcript.
+    transcriptCall({}, {
+      success: true,
+      url: 'https://www.youtube.com/watch?v=zzzzzzzzzzz',
+      data: { text: 'Another video, from its start.', has_more_text: true, next_text_offset: 4000 },
+    });
+    transcriptCall({ text_offset: 4000 }, {
+      success: true,
+      url: videoUrl,
+      data: { text: 'and the annual plan is cheaper.', text_offset: 4000 },
+    });
+    assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
+      `${AgentClass.name}: a chain opened on another video satisfied this job`);
+    // A provider that names the video is held to the same binding.
+    transcriptCall({}, {
+      success: true,
+      url: videoUrl,
+      data: { text: 'Pricing starts at ten dollars.', video_id: 'zzzzzzzzzzz' },
+    });
+    assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
+      `${AgentClass.name}: a window naming another video satisfied this job`);
     // Read it properly: from the start, then the continuation to the end.
     transcriptCall({}, {
       success: true,
       url: videoUrl,
       data: { text: 'Pricing starts at ten dollars.', has_more_text: true, next_text_offset: 4000 },
     });
-    // A complete transcript of a different video is not this video's answer.
-    transcriptCall({ text_offset: 4000 }, {
-      success: true,
-      url: 'https://www.youtube.com/watch?v=zzzzzzzzzzz',
-      data: { text: 'A complete transcript, but of another video.', text_offset: 4000 },
-    });
-    assert.equal(agent._executionEvidenceSatisfied(videoGuard), false,
-      `${AgentClass.name}: another video's transcript satisfied this job`);
     transcriptCall({ text_offset: 4000 }, {
       success: true,
       url: videoUrl,
-      data: { text: 'and the annual plan is cheaper.', text_offset: 4000 },
+      data: { text: 'and the annual plan is cheaper.', text_offset: 4000, video_id: 'abcdefghijk' },
     });
     assert.equal(agent._executionEvidenceSatisfied(videoGuard), true,
       `${AgentClass.name}: a contiguous transcript could not satisfy its own job`);

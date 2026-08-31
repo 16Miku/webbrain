@@ -10515,6 +10515,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return '';
   }
 
+  // Some transcript providers name the video directly. When they do, that name
+  // has to be the one the job selected, whatever URL the tab is showing.
+  _workflowTranscriptWindowVideoMatches(guard, result) {
+    const reported = String(result?.data?.video_id || result?.video_id || '').trim();
+    if (!reported) return true;
+    try {
+      const requested = new URL(String(guard?.siteWorkflowUrl || '')).searchParams.get('v');
+      return !requested || requested === reported;
+    } catch {
+      return true;
+    }
+  }
+
   // A transcript answer is grounded only when the run holds transcript content
   // and no further window is pending. Both the provider and the result trimmer
   // signal a pending window, so either one leaves coverage incomplete.
@@ -10546,18 +10559,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || name !== 'read_youtube_transcript'
         || !this._isSuccessfulExecutionEvidence(result)) return;
     const window = this._workflowTranscriptWindow(args, result);
-    if (!window) {
+    // Offsets alone say nothing about which video they index. A chain that
+    // begins on one video and ends on another is not that video's transcript,
+    // so every window has to belong to the one the job selected.
+    const scope = String(guard.workflowJobScopeIdentity || '');
+    const inScope = !!scope
+      && this._workflowJobScopeIdentity(this._workflowObservationUrl(tabId, result)) === scope
+      && this._workflowTranscriptWindowVideoMatches(guard, result);
+    if (!window || !inScope) {
       guard.workflowTranscriptCoverage = null;
       return;
     }
     const prior = guard.workflowTranscriptCoverage;
     const continues = window.start === 0
-      || (prior && Number(prior.coveredTo) === window.start);
+      || (prior && prior.scope === scope && Number(prior.coveredTo) === window.start);
     if (!continues) {
       guard.workflowTranscriptCoverage = null;
       return;
     }
     guard.workflowTranscriptCoverage = {
+      scope,
       coveredTo: Number.isFinite(window.next) ? window.next : window.start,
       complete: !window.more,
     };
@@ -17162,6 +17183,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       inventory,
       items,
       Array.isArray(guard?.workflowRequestedControlLabels) ? guard.workflowRequestedControlLabels : [],
+      guard?.workflowRequestedControlLabelsResolved === true,
     );
   }
 
@@ -17767,9 +17789,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (siteWorkflow?.job?.template === 'form') {
         const guard = this._planExecutionGuards.get(tabId);
         if (guard) {
+          const requestedLabels = obj?.workflowRequiredLabels ?? obj?.workflow_required_labels;
           guard.workflowRequestedControlLabels = this._normalizeWorkflowRequestedControlLabels(
-            obj?.workflowRequiredLabels ?? obj?.workflow_required_labels,
+            requestedLabels,
           );
+          // The classifier is told to answer with an empty list when the
+          // request named no control. A missing key is not that answer.
+          guard.workflowRequestedControlLabelsResolved = Array.isArray(requestedLabels);
         }
       }
       return normalizeProgressIntent(obj, { taskText, pageScope, source: 'classifier' });
@@ -17962,9 +17988,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _ensureWorkflowMetadataRequirements(tabId, opts, taskText, pageScope) {
     const guard = this._planExecutionGuards.get(tabId);
-    if (!guard?.enabled
-        || guard.workflowMetadataRequirementsResolved === true
-        || !this._workflowJobStoresMetadataRequirements(guard.siteWorkflow)) return;
+    if (!guard?.enabled) return;
+    const needsFields = this._workflowJobStoresMetadataRequirements(guard.siteWorkflow)
+      && guard.workflowMetadataRequirementsResolved !== true;
+    const needsLabels = guard.siteWorkflow?.job?.template === 'form'
+      && guard.workflowRequestedControlLabelsResolved !== true;
+    if (!needsFields && !needsLabels) return;
     await this._classifyProgressIntentWithProvider(tabId, {
       provider: opts.provider,
       costState: opts.costState,
@@ -18538,6 +18567,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       workflowRequestedControlLabels: carryMatches && Array.isArray(carried.workflowRequestedControlLabels)
         ? [...carried.workflowRequestedControlLabels]
         : [],
+      workflowRequestedControlLabelsResolved: carryMatches
+        && carried.workflowRequestedControlLabelsResolved === true,
       workflowMetadataRequirements: carryMatches && Array.isArray(carried.workflowMetadataRequirements)
         ? carried.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
         : [],
@@ -18888,6 +18919,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         workflowRequestedControlLabels: Array.isArray(guard.workflowRequestedControlLabels)
           ? [...guard.workflowRequestedControlLabels]
           : [],
+        workflowRequestedControlLabelsResolved: guard.workflowRequestedControlLabelsResolved === true,
         workflowMetadataRequirements: Array.isArray(guard.workflowMetadataRequirements)
           ? guard.workflowMetadataRequirements.map(requirement => ({ ...requirement }))
           : [],
