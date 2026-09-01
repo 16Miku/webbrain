@@ -19050,7 +19050,7 @@ test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go 
   ]) {
     const exactPost = translate('sp.recommended.tweet.text');
     for (const pageInfo of pages) {
-      const tweetActions = buildRecommendedActions(pageInfo, { max: 1, webbrainPromotionVariant: 'x' });
+      const tweetActions = buildRecommendedActions(pageInfo, { max: 4, webbrainPromotionVariant: 'x' });
       const tweet = tweetActions.find((action) => action.id === 'tweet-webbrain');
       assert.equal(tweet?.label, translate('sp.recommended.tweet.label'));
       assert.equal(tweet?.mode, 'act');
@@ -19061,7 +19061,7 @@ test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go 
       assert.equal(tweet?.runOptions?.summary, 'Publish the reviewed localized WebBrain post exactly as supplied.');
       assert.deepEqual(tweet?.runOptions?.steps, expectedTweetSteps(exactPost));
 
-      const linkedinActions = buildRecommendedActions(pageInfo, { max: 1, webbrainPromotionVariant: 'linkedin' });
+      const linkedinActions = buildRecommendedActions(pageInfo, { max: 4, webbrainPromotionVariant: 'linkedin' });
       const linkedin = linkedinActions.find((action) => action.id === 'post-webbrain-linkedin');
       assert.equal(linkedin?.label, translate('sp.recommended.linkedin.label'));
       assert.equal(linkedin?.mode, 'act');
@@ -19080,7 +19080,44 @@ test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go 
         { webbrainPromotionVariant },
       );
       assert.equal(fallbackActions.some((action) => action.id === 'explain-page'), true, 'promotion should not suppress the generic page action');
+      assert.equal(
+        ['tweet-webbrain', 'post-webbrain-linkedin'].includes(fallbackActions.at(-1)?.id),
+        true,
+        'promotion should fill the final slot after the generic page action',
+      );
     }
+  }
+});
+
+test('WebBrain promotion fills only the last slot left by contextual actions', () => {
+  const threadPage = {
+    url: 'https://mail.google.com/mail/u/0/#inbox/FMfc123',
+    title: 'Gmail - Project update',
+    text: 'From Ada Subject Project update Reply',
+  };
+  for (const buildRecommendedActions of [buildRecommendedActionsCh, buildRecommendedActionsFx]) {
+    assert.deepEqual(
+      buildRecommendedActions(threadPage, { webbrainPromotionVariant: 'linkedin' }).map((action) => action.id),
+      ['draft-reply', 'summarize-thread', 'find-followups', 'post-webbrain-linkedin'],
+      'thread context should lead and the promotion fallback should remain last',
+    );
+    const saturated = buildRecommendedActions({
+      url: 'https://www.youtube.com/watch?v=abc123',
+      title: 'Launch update video',
+      media: { videoCount: 1, imageCount: 0 },
+      activeElement: {
+        tag: 'div',
+        role: 'textbox',
+        editable: true,
+        ariaLabel: 'Add a comment',
+        textPreview: 'This is a draft comment.',
+      },
+    }, { webbrainPromotionVariant: 'x' });
+    assert.equal(
+      saturated.some((action) => ['tweet-webbrain', 'post-webbrain-linkedin'].includes(action.id)),
+      false,
+      'a full set of contextual actions should not be displaced by promotion',
+    );
   }
 });
 
@@ -19340,7 +19377,7 @@ test('YouTube video recommendations start with transcript skill and keep media d
     });
     assert.deepEqual(
       focusedCommentActions.map((action) => action.id),
-      ['tweet-webbrain', 'rewrite-focused-draft', 'summarize-youtube-video', 'download-media'],
+      ['rewrite-focused-draft', 'summarize-youtube-video', 'download-media', 'loop-youtube-video'],
       'focused YouTube comments should keep the existing download shortcut ahead of the loop action',
     );
   }
@@ -19651,6 +19688,58 @@ test('suggested actions live in chat body not input area', () => {
     assert.notEqual(inputStart, -1, `${label}: input area missing`);
     assert.notEqual(actionsIdx, -1, `${label}: recommended actions missing`);
     assert.equal(actionsIdx > chatStart && actionsIdx < inputStart, true, `${label}: suggested actions should live inside the chat container, not the input area`);
+  }
+});
+
+test('sidepanel presents first-turn suggestions as an optically centered empty state', () => {
+  for (const [label, htmlRel, cssRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.html', 'src/chrome/styles/sidepanel.css'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.html', 'src/firefox/styles/sidepanel.css'],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, cssRel), 'utf8');
+    const chat = html.match(/<div id="chat-container">[\s\S]*?<div id="chat-navigation"/)?.[0] || '';
+
+    assert.match(
+      chat,
+      /<div id="messages"><\/div>[\s\S]*?<section id="chat-empty-state" class="chat-empty-state"[\s\S]*?<h2 id="chat-empty-state-heading" class="chat-empty-state-heading" data-i18n="sp\.help_message">How can I help with this page\?<\/h2>[\s\S]*?id="recommended-actions"/,
+      `${label}: empty conversations should use a flat localized heading followed by suggested actions outside the transcript`,
+    );
+    assert.doesNotMatch(chat, /class="message system"[\s\S]*?sp\.greeting\.html/, `${label}: first-turn guidance should not look like a message bubble`);
+    assert.match(css, /\.chat-empty-state \{[\s\S]*?min-height: 100%;[\s\S]*?justify-content: center;[\s\S]*?padding: 24px 0 clamp\(72px, 14vh, 112px\);/, `${label}: empty-state content should sit at an upper optical center`);
+    assert.match(css, /#messages:not\(:empty\) \+ \.chat-empty-state \{[\s\S]*?display: none;/, `${label}: the first transcript message should remove the entire empty state`);
+    const headingRule = css.match(/\.chat-empty-state-heading \{([\s\S]*?)\n\}/)?.[1] || '';
+    assert.match(headingRule, /font-size: 18px;/, `${label}: empty-state heading should have clear hierarchy`);
+    assert.equal(/background\s*:|border\s*:/.test(headingRule), false, `${label}: empty-state heading should stay flat rather than imitate an input or bubble`);
+    assert.match(css, /\.recommended-actions-list \{[\s\S]*?flex-direction: column;[\s\S]*?width: 100%;/, `${label}: suggested actions should read as a compact vertical list`);
+    assert.match(css, /\.recommended-action-chip \{[\s\S]*?width: 100%;[\s\S]*?min-height: 36px;[\s\S]*?border-radius: 10px;/, `${label}: each suggestion should be a clearly clickable row`);
+  }
+});
+
+test('sidepanel removes legacy greeting bubbles while restoring saved chats', async () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const i18n = await import(pathToFileURL(path.join(ROOT, prefix, 'src/ui/i18n.js')).href);
+    const legacyHelpMessages = i18n.translationsForKey('sp.help_message');
+    assert.equal(legacyHelpMessages.includes('How can I help with this page?'), true, `${label}: legacy English help text missing`);
+    assert.equal(legacyHelpMessages.includes('Comment puis-je vous aider avec cette page ?'), true, `${label}: legacy localized help text missing`);
+
+    assert.match(panel, /import \{[^}]*translationsForKey[^}]*\} from '\.\/i18n\.js';/, `${label}: migration should recognize help text from every shipped locale`);
+    const migrationStart = panel.indexOf('function migrateLegacyEmptyStateFromRestoredChat(tabId, root = messagesEl) {');
+    const migrationEnd = panel.indexOf('\n}\n\nfunction roleFromMessageElement', migrationStart);
+    assert.notEqual(migrationStart, -1, `${label}: legacy empty-state migration helper missing`);
+    assert.notEqual(migrationEnd, -1, `${label}: legacy empty-state migration helper boundary missing`);
+    const migration = panel.slice(migrationStart, migrationEnd);
+    assert.match(migration, /root\?\.firstElementChild[\s\S]*?classList\.contains\('system'\)/, `${label}: migration should only inspect the leading system bubble`);
+    assert.match(migration, /data-i18n-html="sp\.greeting\.html"/, `${label}: migration should remove the old static greeting`);
+    assert.match(migration, /LEGACY_EMPTY_STATE_MESSAGES\.has\(normalizeHistoryText\(textEl\.textContent\)\)/, `${label}: migration should remove old localized help bubbles`);
+    assert.match(migration, /firstMessage\.remove\(\)[\s\S]*?persistTabChat\(numericTabId, migratedHtml, \{ allowHidden: true \}\)/, `${label}: migrated chat HTML should be persisted so the greeting does not return`);
+
+    const migrationCalls = [...panel.matchAll(/migrateLegacyEmptyStateFromRestoredChat\(/g)].length - 1;
+    assert.equal(migrationCalls, 3, `${label}: startup, tab-switch, and visibility restores should all migrate legacy greetings`);
   }
 });
 
@@ -40836,7 +40925,8 @@ test('sidepanel deletes durable history when clearing conversations', () => {
     assert.notEqual(helperStart, -1, `${label}: clear helper should be async`);
     const helperBody = panel.slice(helperStart, panel.indexOf('refreshRecommendedActions();', helperStart) + 'refreshRecommendedActions();'.length);
     assert.match(helperBody, /await clearCachedTabChat\(tabId\);[\s\S]*?await resetChatHistoryStateForTab\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;/, `${label}: clear helper should durably clear tab chat before deleting history and checking visibility`);
-    assert.match(helperBody, /addMessage\('system', t\('sp\.cleared_message'\)\);[\s\S]*?lastVisibleTabChatSnapshot = \{ tabId: Number\(tabId\), html: clearedHtml \};[\s\S]*?await persistTabChat\(tabId, clearedHtml, \{ allowHidden: true \}\)/, `${label}: a cleared handoff snapshot should replace the invalidated transcript only after the durable clear`);
+    assert.match(helperBody, /messagesEl\.innerHTML = '';[\s\S]*?const clearedHtml = messagesEl\.innerHTML;[\s\S]*?lastVisibleTabChatSnapshot = \{ tabId: Number\(tabId\), html: clearedHtml \};[\s\S]*?await persistTabChat\(tabId, clearedHtml, \{ allowHidden: true \}\)/, `${label}: a cleared handoff snapshot should persist an actually empty transcript so the empty state can return`);
+    assert.doesNotMatch(helperBody, /addMessage\('system'/, `${label}: clearing should not turn empty-state guidance back into a message bubble`);
 
     const resetIdx = panel.indexOf("if (command.value === '/reset')");
     const resetSlashBody = panel.slice(resetIdx, panel.indexOf("if (command.value === '/screenshot'", resetIdx));

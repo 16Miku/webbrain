@@ -223,32 +223,29 @@
     <!-- Chat Messages -->
     <div id="chat-shell">
       <div id="chat-container">
-        <div id="messages">
-          <div class="message system">
-            <div class="message-content">
-              <p data-i18n-html="sp.greeting.html"></p>
+        <div id="messages"></div>
+        <section id="chat-empty-state" class="chat-empty-state" aria-labelledby="chat-empty-state-heading">
+          <h2 id="chat-empty-state-heading" class="chat-empty-state-heading" data-i18n="sp.help_message">How can I help with this page?</h2>
+          <div id="recommended-actions" class="recommended-actions hidden" aria-live="polite">
+            <div class="recommended-actions-header">
+              <div class="recommended-actions-title" data-i18n="sp.recommended.title">Suggested actions</div>
+              <button
+                id="recommended-actions-toggle"
+                class="recommended-actions-toggle"
+                type="button"
+                aria-controls="recommended-actions-list"
+                aria-expanded="true"
+                data-i18n-title="sp.recommended.collapse"
+                data-i18n-aria-label="sp.recommended.collapse"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 9l6 6 6-6"/>
+                </svg>
+              </button>
             </div>
+            <div id="recommended-actions-list" class="recommended-actions-list"></div>
           </div>
-        </div>
-        <div id="recommended-actions" class="recommended-actions hidden" aria-live="polite">
-          <div class="recommended-actions-header">
-            <div class="recommended-actions-title" data-i18n="sp.recommended.title">Suggested actions</div>
-            <button
-              id="recommended-actions-toggle"
-              class="recommended-actions-toggle"
-              type="button"
-              aria-controls="recommended-actions-list"
-              aria-expanded="true"
-              data-i18n-title="sp.recommended.collapse"
-              data-i18n-aria-label="sp.recommended.collapse"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M6 9l6 6 6-6"/>
-              </svg>
-            </button>
-          </div>
-          <div id="recommended-actions-list" class="recommended-actions-list"></div>
-        </div>
+        </section>
         <div id="store-review-prompt" class="store-review-prompt hidden" role="dialog" aria-live="polite" aria-labelledby="store-review-title">
           <div class="store-review-card">
             <button type="button" id="store-review-close" class="store-review-close" data-i18n-aria-label="sp.review.close" aria-label="Dismiss">×</button>

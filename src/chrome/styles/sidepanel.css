@@ -2678,19 +2678,49 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 
 
 
-/* Context-aware recommendations — inline centered pill row in the chat body */
+/* First-turn empty state — optically centered a little above the mathematical
+   midpoint so the composer still feels connected to the invitation. */
+.chat-empty-state {
+  box-sizing: border-box;
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 0 clamp(72px, 14vh, 112px);
+}
+
+/* The empty state is deliberately outside #messages, so it never becomes
+   transcript history. Its adjacent position lets the first message remove it
+   without a second source of conversation state. */
+#messages:not(:empty) + .chat-empty-state {
+  display: none;
+}
+
+.chat-empty-state-heading {
+  width: min(100%, 340px);
+  margin: 0 0 18px;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  text-align: center;
+}
+
+/* Context-aware recommendations — a compact action list within the empty state. */
 .recommended-actions {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 0 4px;
-  padding: 0 4px;
+  align-items: stretch;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
   border: none;
   border-radius: 0;
   background: transparent;
   box-sizing: border-box;
-  width: 100%;
+  width: min(100%, 320px);
 }
 
 .recommended-actions.collapsed {
@@ -2704,9 +2734,10 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 .recommended-actions-header {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 6px;
   margin-bottom: 0;
+  padding-inline: 2px;
 }
 
 .recommended-actions.collapsed .recommended-actions-header {
@@ -2761,10 +2792,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 
 .recommended-actions-list {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
-  justify-content: center;
-  max-width: min(100%, 340px);
+  width: 100%;
 }
 
 .recommended-actions.collapsed .recommended-actions-list {
@@ -2772,18 +2802,24 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 }
 
 .recommended-action-chip {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 36px;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);
   backdrop-filter: blur(6px);
   color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
-  line-height: 1.2;
-  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.25;
+  padding: 8px 11px;
+  text-align: start;
   transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.1s;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--border) 40%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--border) 28%, transparent);
 }
 
 .recommended-action-chip:hover {

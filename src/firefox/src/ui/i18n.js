@@ -122,6 +122,13 @@ export function t(key, params) {
   return s;
 }
 
+export function translationsForKey(key) {
+  const fallback = DICTS.en[key];
+  return [...new Set(Object.values(DICTS)
+    .map((dict) => dict[key] ?? fallback)
+    .filter((value) => typeof value === 'string'))];
+}
+
 export function applyDOMTranslations(root) {
   root = root || document;
   root.querySelectorAll('[data-i18n]').forEach((el) => {
