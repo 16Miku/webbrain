@@ -145,6 +145,8 @@ export default {
   'sp.btn.language': 'اللغة',
   'sp.btn.settings': 'الإعدادات',
   "sp.btn.clear": "محادثة جديدة",
+  "sp.btn.clear_short": "محادثة جديدة",
+  "sp.btn.history_short": "السجل",
   'sp.btn.expand': 'فتح في نافذة جديدة',
   'sp.btn.send': 'إرسال',
   'sp.chat.follow_response': 'متابعة الإجابة',

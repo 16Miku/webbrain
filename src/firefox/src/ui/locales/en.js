@@ -94,6 +94,8 @@ export default {
   'sp.btn.history': 'Chat history',
   'sp.btn.settings': 'Settings',
   'sp.btn.clear': 'New conversation',
+  "sp.btn.clear_short": "New chat",
+  "sp.btn.history_short": "History",
   'sp.btn.expand': 'Open in new window',
   'sp.btn.send': 'Send',
   'sp.chat.follow_response': 'Follow response',

@@ -837,13 +837,14 @@ const SLASH_COMMANDS = [
   },
   {
     value: '/record',
-    usage: '/record [--full-screen] [--hide-recording-indicator] [--transcribe]',
+    usage: '/record [--stop | --full-screen] [--hide-recording-indicator] [--transcribe]',
     descriptionKey: 'sp.slash.record',
     action: 'tab',
     options: [
-      { value: '--full-screen', descriptionKey: 'sp.slash.record_full_screen', action: 'full-screen', outOfBand: false },
-      { value: '--hide-recording-indicator', descriptionKey: 'sp.slash.record_hide_indicator', requires: '--full-screen' },
-      { value: '--transcribe', descriptionKey: 'sp.slash.record_transcribe' },
+      { value: '--stop', descriptionKey: 'sp.record.stop', action: 'stop', outOfBand: true, disallowPayload: true, conflicts: ['--full-screen', '--hide-recording-indicator', '--transcribe'] },
+      { value: '--full-screen', descriptionKey: 'sp.slash.record_full_screen', action: 'full-screen', outOfBand: false, conflicts: ['--stop'] },
+      { value: '--hide-recording-indicator', descriptionKey: 'sp.slash.record_hide_indicator', requires: '--full-screen', conflicts: ['--stop'] },
+      { value: '--transcribe', descriptionKey: 'sp.slash.record_transcribe', conflicts: ['--stop'] },
     ],
   },
   {
@@ -899,6 +900,7 @@ function slashOptionIsAvailable(option, selectedValues, selectedGroups) {
     && !selectedValues.has(option.value)
     && !selectedValues.has(SLASH_HELP_OPTION.value)
     && (option.value !== SLASH_HELP_OPTION.value || selectedValues.size === 0)
+    && !(option.conflicts || []).some((value) => selectedValues.has(value))
     && (!option.exclusiveGroup || !selectedGroups.has(option.exclusiveGroup));
 }
 
@@ -980,6 +982,9 @@ function parseSlashInvocation(value) {
     return { error: 'invalid-usage', command, commandToken };
   }
   if (selectedOptions.some((option) => option.requires && !selectedValues.has(option.requires))) {
+    return { error: 'invalid-usage', command, commandToken };
+  }
+  if (selectedOptions.some((option) => (option.conflicts || []).some((value) => selectedValues.has(value)))) {
     return { error: 'invalid-usage', command, commandToken };
   }
 
@@ -7985,7 +7990,9 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return '';
   }
 
-  if ((command.value === '/screenshot' || command.value === '/record' || command.value === '/print')
+  if ((command.value === '/screenshot'
+      || (command.value === '/record' && action !== 'stop')
+      || command.value === '/print')
       && isSelectionGroundedForTab(tabId)) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return '';
@@ -8238,6 +8245,15 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     } catch (e) {
       if (currentTabId !== tabId) return '';
       addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: e.message })));
+    }
+    return '';
+  }
+
+  if (command.value === '/record' && action === 'stop') {
+    const res = await stopRecording({ showAlert: false });
+    if (currentTabId !== tabId) return '';
+    if (!res?.ok) {
+      addPersistentSlashMessage(systemHtml(tSystemHtml('sp.record.error', { error: res?.error || 'unknown' })));
     }
     return '';
   }
@@ -8639,7 +8655,9 @@ async function sendMessage(extraChatParams = {}) {
   }
   let runCaptureDirective = null;
   if (!retryOptions) {
-    if (sourceGrounding && /^\s*\/(?:screenshot|record|print)(?:\s|$)/i.test(text)) {
+    if (sourceGrounding
+        && !/^\s*\/record\s+--stop(?:\s|$)/i.test(text)
+        && /^\s*\/(?:screenshot|record|print)(?:\s|$)/i.test(text)) {
       showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
       return false;
     }
@@ -9135,7 +9153,8 @@ async function hydrateRecordingFromBackground() {
   } catch { /* background not ready yet, ignore */ }
 }
 
-async function stopRecording() {
+async function stopRecording(options = {}) {
+  const showAlert = options?.showAlert !== false;
   if (recordingStopBtn) recordingStopBtn.disabled = true;
   try {
     const res = await sendToBackground('stop_tab_recording');
@@ -9145,11 +9164,13 @@ async function stopRecording() {
     // report). Errors are surfaced but no longer block the UI from clearing.
     setRecordingUI(false);
     if (!res?.ok) {
-      alert(t('sp.record.error', { error: res?.error || 'unknown' }));
+      if (showAlert) alert(t('sp.record.error', { error: res?.error || 'unknown' }));
     }
+    return res;
   } catch (e) {
     setRecordingUI(false);
-    alert(t('sp.record.error', { error: e?.message || 'unknown' }));
+    if (showAlert) alert(t('sp.record.error', { error: e?.message || 'unknown' }));
+    return { ok: false, error: e?.message || 'unknown' };
   } finally {
     if (recordingStopBtn) recordingStopBtn.disabled = false;
   }

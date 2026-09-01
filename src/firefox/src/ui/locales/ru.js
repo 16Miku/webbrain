@@ -145,6 +145,8 @@ export default {
   'sp.btn.language': 'Язык',
   'sp.btn.settings': 'Настройки',
   "sp.btn.clear": "Новый диалог",
+  "sp.btn.clear_short": "Новый диалог",
+  "sp.btn.history_short": "История",
   'sp.btn.expand': 'Открыть в новом окне',
   'sp.btn.send': 'Отправить',
   'sp.chat.follow_response': 'Следить за ответом',

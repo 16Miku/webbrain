@@ -91,6 +91,8 @@ export default {
   'sp.btn.language': 'Język',
   'sp.btn.settings': 'Ustawienia',
   "sp.btn.clear": "Nowa rozmowa",
+  "sp.btn.clear_short": "Nowa rozmowa",
+  "sp.btn.history_short": "Historia",
   'sp.btn.expand': 'Otwórz w nowym oknie',
   'sp.btn.send': 'Wyślij',
   'sp.chat.follow_response': 'Śledź odpowiedź',

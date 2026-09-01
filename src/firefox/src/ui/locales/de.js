@@ -94,6 +94,8 @@ export default {
   'sp.btn.history': 'Chat-Verlauf',
   'sp.btn.settings': 'Einstellungen',
   "sp.btn.clear": "Neues Gespräch",
+  "sp.btn.clear_short": "Neues Gespräch",
+  "sp.btn.history_short": "Verlauf",
   'sp.btn.expand': 'In neuem Fenster öffnen',
   'sp.btn.send': 'Senden',
   'sp.chat.follow_response': 'Antwort folgen',
