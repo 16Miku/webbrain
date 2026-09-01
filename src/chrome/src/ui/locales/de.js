@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Erweiterungsoberfläche zoomen',
+  'sp.ui_scale.decrease': 'Erweiterungsoberfläche verkleinern',
+  'sp.ui_scale.increase': 'Erweiterungsoberfläche vergrößern',
+  'sp.ui_scale.reset': 'Zurücksetzen',
+  'st.display.ui_scale.label': 'Erweiterungsoberfläche zoomen',
+  'st.display.ui_scale.decrease': 'Erweiterungsoberfläche verkleinern',
+  'st.display.ui_scale.increase': 'Erweiterungsoberfläche vergrößern',
+  'st.display.ui_scale.reset': 'Zurücksetzen',
+  'st.display.ui_scale.desc': 'Seitenleiste und separates Chatfenster vergrößern oder verkleinern, ohne den Seitenzoom zu ändern.',
+  'st.display.ui_scale.shortcuts': 'Eigene Tastenkürzel: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'Nicht zugewiesen',
+  'st.display.ui_scale.manage_shortcuts': 'Tastenkürzel anpassen',
   'tool.delegate_research': 'Recherche mit ChatGPT',
   'st.display.research_escalation.label': 'Recherche-Eskalation',
   'st.display.research_escalation.desc': 'Wenn aktiviert, kann WebBrain vor dem Senden einer ungewöhnlich komplexen, schreibgeschützten Rechercheanfrage an ChatGPT um Zustimmung bitten. Standardmäßig deaktiviert. Die genaue Anfrage wird nur nach Ihrer ausdrücklichen Zustimmung geteilt.',

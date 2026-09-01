@@ -3,6 +3,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Zoom da interface da extensão',
+  'sp.ui_scale.decrease': 'Reduzir o zoom da interface',
+  'sp.ui_scale.increase': 'Aumentar o zoom da interface',
+  'sp.ui_scale.reset': 'Redefinir',
+  'st.display.ui_scale.label': 'Zoom da interface da extensão',
+  'st.display.ui_scale.decrease': 'Reduzir o zoom da interface',
+  'st.display.ui_scale.increase': 'Aumentar o zoom da interface',
+  'st.display.ui_scale.reset': 'Redefinir',
+  'st.display.ui_scale.desc': 'Redimensiona o painel lateral e a janela de chat independente sem alterar o zoom da página.',
+  'st.display.ui_scale.shortcuts': 'Atalhos dedicados: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'Não atribuído',
+  'st.display.ui_scale.manage_shortcuts': 'Personalizar atalhos',
   'tool.delegate_research': 'Pesquisando com ChatGPT',
   'st.display.research_escalation.label': 'Escalonamento de pesquisa',
   'st.display.research_escalation.desc': 'Quando ativado, o WebBrain pode pedir permissão antes de enviar ao ChatGPT uma solicitação de pesquisa somente leitura incomumente complexa. Desativado por padrão. A solicitação exata só é compartilhada após sua aprovação explícita.',

@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'تكبير واجهة الإضافة',
+  'sp.ui_scale.decrease': 'تصغير واجهة الإضافة',
+  'sp.ui_scale.increase': 'تكبير واجهة الإضافة',
+  'sp.ui_scale.reset': 'إعادة الضبط',
+  'st.display.ui_scale.label': 'تكبير واجهة الإضافة',
+  'st.display.ui_scale.decrease': 'تصغير واجهة الإضافة',
+  'st.display.ui_scale.increase': 'تكبير واجهة الإضافة',
+  'st.display.ui_scale.reset': 'إعادة الضبط',
+  'st.display.ui_scale.desc': 'غيّر حجم الشريط الجانبي ونافذة الدردشة المنفصلة دون تغيير تكبير صفحات الويب.',
+  'st.display.ui_scale.shortcuts': 'اختصارات مخصصة: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'غير معيّنة',
+  'st.display.ui_scale.manage_shortcuts': 'تخصيص الاختصارات',
   'tool.delegate_research': 'جارٍ البحث باستخدام ChatGPT',
   'st.display.research_escalation.label': 'تصعيد البحث',
   'st.display.research_escalation.desc': 'عند التفعيل، قد يطلب WebBrain موافقتك قبل إرسال مطالبة بحثية معقدة للقراءة فقط إلى ChatGPT. معطّل افتراضيًا. لا تتم مشاركة المطالبة الدقيقة إلا بعد موافقتك الصريحة.',

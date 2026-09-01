@@ -37620,12 +37620,14 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
   assert.match(chromePanelJs, /event\.key === 'Escape'[\s\S]*?stopImmediatePropagation\(\)[\s\S]*?dismiss\(\)/, 'chrome: Escape should be consumed by the modal and use the same dismissal path');
   assert.match(
     chromePanelCss,
-    /\.pin-coachmark-arrow\s*\{[^}]*\bright:\s*28px;[^}]*\bleft:\s*auto;[^}]*\btransform:\s*none;/,
+    // The offset is divided by the zoom because the arrow points at the toolbar
+    // pin, which sits outside the panel and does not move with the UI scale.
+    /\.pin-coachmark-arrow\s*\{[^}]*\bright:\s*calc\(28px \/ var\(--ui-scale-zoom, 1\)\);[^}]*\bleft:\s*auto;[^}]*\btransform:\s*none;/,
     'chrome: the normal right-side panel should point the coachmark arrow at the upper-right pin',
   );
   assert.match(
     chromePanelCss,
-    /:root\[data-panel-side="left"\] \.pin-coachmark-arrow\s*\{[^}]*\bleft:\s*28px;[^}]*\bright:\s*auto;[^}]*\btransform:\s*scaleX\(-1\);/,
+    /:root\[data-panel-side="left"\] \.pin-coachmark-arrow\s*\{[^}]*\bleft:\s*calc\(28px \/ var\(--ui-scale-zoom, 1\)\);[^}]*\bright:\s*auto;[^}]*\btransform:\s*scaleX\(-1\);/,
     'chrome: left-side panels should mirror the coachmark arrow toward the upper-left pin',
   );
 
@@ -40083,6 +40085,235 @@ test('automatic WebBrain tab grouping has a portable user opt-out', async () => 
       const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
       assert.ok(locale['st.display.auto_group_tabs.label']?.trim(), `${label}/${filename}: missing tab-group label`);
       assert.ok(locale['st.display.auto_group_tabs.desc']?.trim(), `${label}/${filename}: missing tab-group description`);
+    }
+  }
+});
+
+test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts', async () => {
+  const chromeScalePath = path.join(ROOT, 'src/chrome/src/ui/ui-scale.js');
+  const firefoxScalePath = path.join(ROOT, 'src/firefox/src/ui/ui-scale.js');
+  const chromeScaleSource = fs.readFileSync(chromeScalePath, 'utf8');
+  const firefoxScaleSource = fs.readFileSync(firefoxScalePath, 'utf8');
+  assert.equal(firefoxScaleSource, chromeScaleSource, 'UI scale helpers should stay byte-identical');
+
+  const scale = await import(pathToFileURL(chromeScalePath).href);
+  assert.deepEqual(scale.UI_SCALE_LEVELS, [75, 80, 90, 100, 110, 125, 150, 175]);
+  assert.equal(scale.normalizeUiScale(undefined), 100);
+  assert.equal(scale.normalizeUiScale('125'), 125);
+  assert.equal(scale.normalizeUiScale(124), 100);
+  assert.equal(scale.stepUiScale(75, -1), 75);
+  assert.equal(scale.stepUiScale(100, -1), 90);
+  assert.equal(scale.stepUiScale(100, 1), 110);
+  assert.equal(scale.stepUiScale(175, 1), 175);
+  assert.equal(scale.nextUiScale(100, 'decrease'), 90);
+  assert.equal(scale.nextUiScale(100, 'increase'), 110);
+  assert.equal(scale.nextUiScale(125, 'reset'), 100);
+  assert.equal(scale.nextUiScale(125, 'unknown'), 125);
+  assert.deepEqual(scale.uiScaleLayout(125), {
+    scale: 125,
+    zoom: 1.25,
+    height: '80vh',
+  });
+
+  const shortcut = (overrides = {}) => scale.uiScaleShortcutAction({
+    key: '',
+    code: '',
+    ctrlKey: true,
+    metaKey: false,
+    altKey: false,
+    isComposing: false,
+    getModifierState: () => false,
+    ...overrides,
+  });
+  assert.equal(shortcut({ key: '+', code: 'Equal' }), 'increase');
+  assert.equal(shortcut({ key: '=', code: 'Equal' }), 'increase');
+  assert.equal(shortcut({ key: '-', code: 'Minus' }), 'decrease');
+  assert.equal(shortcut({ key: '0', code: 'Digit0' }), 'reset');
+  assert.equal(shortcut({ key: '+', code: 'NumpadAdd' }), 'increase');
+  assert.equal(shortcut({ key: '-', code: 'NumpadSubtract' }), 'decrease');
+  assert.equal(shortcut({ key: '+', code: 'Equal', ctrlKey: false }), '');
+  assert.equal(shortcut({ key: '+', code: 'Equal', altKey: true }), '');
+  assert.equal(shortcut({ key: '+', code: 'Equal', shiftKey: true }), '');
+  assert.equal(shortcut({ key: '+', code: 'Equal', isComposing: true }), '');
+  assert.equal(shortcut({ key: '+', code: 'Equal', getModifierState: () => true }), '');
+
+  assert.equal(await scale.loadUiScale({ get: async () => ({ uiScale: 150 }) }), 150);
+  assert.equal(await scale.loadUiScale({ get: async () => ({ uiScale: 133 }) }), 100);
+  assert.equal(await scale.loadUiScale({ get: async () => { throw new Error('unavailable'); } }), 100);
+  const saved = [];
+  const savedMirror = new Map();
+  assert.equal(await scale.saveUiScale({ set: async (value) => saved.push(value) }, 125, { setItem: (key, value) => savedMirror.set(key, value) }), 125);
+  assert.equal(await scale.saveUiScale({ set: async (value) => saved.push(value) }, 133, { setItem: (key, value) => savedMirror.set(key, value) }), 100);
+  assert.deepEqual(saved, [{ uiScale: 125 }, { uiScale: 100 }]);
+  assert.equal(savedMirror.get('wbUiScale'), '100');
+
+  const properties = new Map();
+  const mirrored = new Map();
+  const root = {
+    dataset: {},
+    style: { setProperty: (name, value) => properties.set(name, value) },
+  };
+  assert.equal(scale.applyUiScale(root, 125, { setItem: (key, value) => mirrored.set(key, value) }), 125);
+  assert.equal(root.dataset.uiScale, '125');
+  assert.equal(properties.get('--ui-scale-zoom'), '1.25');
+  // Percentage widths already resolve inside the zoomed coordinate space, so
+  // only the viewport-unit height carries the inverse compensation.
+  assert.equal(properties.get('--ui-scale-width'), undefined);
+  assert.equal(properties.get('--ui-scale-height'), '80vh');
+  assert.equal(mirrored.get('wbUiScale'), '125');
+
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const bootstrap = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/theme-bootstrap.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const config = await import(pathToFileURL(path.join(ROOT, prefix, 'src/config-transfer.js')).href);
+    assert.match(bootstrap, /endsWith\('\/sidepanel\.html'\)[\s\S]*?localStorage\.getItem\('wbUiScale'\)/, `${label}: saved scale should apply before sidepanel paint only`);
+    assert.match(bootstrap, /applyScale[\s\S]*?--ui-scale-zoom/, `${label}: pre-paint scale should set the zoom variables`);
+    assert.match(bootstrap, /--ui-scale-height', inverse \+ 'vh'/, `${label}: pre-paint scale should inverse-compensate the viewport-unit height under zoom`);
+    assert.doesNotMatch(bootstrap, /--ui-scale-width/, `${label}: percentage widths resolve in the zoomed space and must not be compensated`);
+    assert.match(bootstrap, /data-ui-scale-ready.*?false[\s\S]*?storage\.get\(\{ uiScale: 100 \}/, `${label}: canonical storage should settle the pre-paint scale before revealing the sidepanel`);
+    assert.match(bootstrap, /data-ui-scale-ready.*?true/, `${label}: sidepanel should be revealed after scale initialization`);
+    assert.match(bootstrap, /levels\.indexOf\(Number\(mirrored\)\) === -1[\s\S]*?data-ui-scale-ready', 'false'/, `${label}: the panel should only be hidden when no mirrored scale can be painted pre-paint`);
+    assert.match(bootstrap, /window\.setTimeout\(reveal, 1000\)[\s\S]*?storage\.get/, `${label}: the reveal fallback should be armed before the storage API can throw synchronously`);
+    assert.match(bootstrap, /\} catch \(_\) \{\n\s*reveal\(\);/, `${label}: a throwing storage API should still reveal the sidepanel`);
+    assert.match(css, /body\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*var\(--ui-scale-height, 100vh\);[\s\S]*?zoom:\s*var\(--ui-scale-zoom, 1\);/, `${label}: sidepanel layout should compensate CSS zoom`);
+    assert.match(css, /#app\s*\{[\s\S]*?height:\s*100%;/, `${label}: app should fill the compensated body`);
+    // The two-id base rule outranks the generic `.header-right button:hover`.
+    assert.match(css, /#header #ui-scale-popover button:hover:not\(:disabled\) \{[^}]*background:/, `${label}: scale chips should keep a hover state under the two-id base rule`);
+    assert.equal(config.DEFAULT_CONFIG_SETTINGS.uiScale, 100, `${label}: portable config should default scale to 100%`);
+    assert.ok(config.CONFIG_STORAGE_KEYS.includes('uiScale'), `${label}: portable config should include UI scale`);
+    const imported = config.parseConfigImport(JSON.stringify({
+      schema: config.CONFIG_SCHEMA,
+      settings: { uiScale: 133 },
+    }));
+    assert.equal(imported.settings.uiScale, 100, `${label}: invalid imported scales should fall back safely`);
+  }
+});
+
+test('sidepanel UI scale controls are available, persistent, and localized', async () => {
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const sidepanelHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
+    const sidepanelJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const sidepanelCss = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+
+    assert.match(sidepanelHtml, /id="btn-ui-scale"[\s\S]*?aria-controls="ui-scale-popover"/, `${label}: sidepanel should expose a scale menu button`);
+    assert.match(sidepanelHtml, /id="ui-scale-popover"[\s\S]*?data-ui-scale-action="decrease"[\s\S]*?id="ui-scale-value"[\s\S]*?data-ui-scale-action="increase"[\s\S]*?data-ui-scale-action="reset"/, `${label}: sidepanel scale menu should expose decrease, increase, value, and reset controls`);
+    assert.match(sidepanelCss, /\.ui-scale-popover\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?z-index:/, `${label}: sidepanel scale menu should float above chat content`);
+    assert.match(sidepanelJs, /uiScaleShortcutAction\(e\)[\s\S]*?e\.preventDefault\(\)[\s\S]*?setSidepanelUiScale/, `${label}: focused sidepanel zoom shortcuts should suppress browser zoom and update extension scale`);
+    assert.match(sidepanelJs, /uiScalePopover\?\.addEventListener\('keydown'[\s\S]*?event\.key !== 'Escape'[\s\S]*?uiScaleBtn\?\.focus\(\)/, `${label}: Escape should close the scale menu and restore focus to its trigger`);
+    assert.match(sidepanelJs, /function uiScaleZoom\(\) \{\s*return currentUiScale \/ 100 \|\| 1;/, `${label}: rect measurements should convert through a shared zoom factor`);
+    assert.match(sidepanelJs, /positionSelectionAskAction[\s\S]*?uiScaleZoom\(\)[\s\S]*?style\.left = `\$\{left \/ zoom\}px`[\s\S]*?style\.top = `\$\{top \/ zoom\}px`/, `${label}: selection action coordinates should remain aligned under CSS zoom`);
+    // getBoundingClientRect() is zoomed; scrollTop and clientHeight are not.
+    assert.match(sidepanelJs, /function scrollChatToQuestion[\s\S]*?\(questionRect\.top - containerRect\.top\) \/ uiScaleZoom\(\)/, `${label}: scrolling back to the question should convert the rect delta out of zoomed pixels`);
+    assert.match(sidepanelJs, /function chatTurnNeedsReadingNavigation[\s\S]*?\(assistantRect\.bottom - userRect\.top\) \/ uiScaleZoom\(\)[\s\S]*?chatContainerEl\.clientHeight/, `${label}: the reading-navigation threshold should compare like-for-like pixels`);
+    assert.match(sidepanelJs, /function scrollSlashCommandOptionIntoView[\s\S]*?scrollTop -= \(menuRect\.top - optionRect\.top\) \/ zoom[\s\S]*?scrollTop \+= \(optionRect\.bottom - menuRect\.bottom\) \/ zoom/, `${label}: slash-command scrolling should convert the rect delta out of zoomed pixels`);
+    // The pre-paint value comes from a mirror an MV3 worker cannot refresh, so
+    // a step queued before hydration must not read it.
+    assert.match(sidepanelJs, /uiScaleWriteQueue = loadUiScale\((?:chrome|browser)\.storage\.local\)\s*\n\s*\.then\(renderSidepanelUiScale\)/, `${label}: scale hydration should seed the write queue`);
+    assert.match(sidepanelJs, /loadUiScale\([\s\S]*?storage\.local[\s\S]*?renderSidepanelUiScale/, `${label}: sidepanel should hydrate its persisted scale`);
+    assert.match(sidepanelJs, /storage\.onChanged\.addListener\([\s\S]*?changes\[UI_SCALE_STORAGE_KEY\][\s\S]*?renderSidepanelUiScale/, `${label}: open sidepanels should react to scale changes`);
+    assert.match(sidepanelJs, /uiScaleWriteQueue = write\.catch/, `${label}: sidepanel scale steps should be serialized so key repeat cannot collapse them`);
+    assert.match(sidepanelJs, /uiScaleWriteQueue\.then\(async \(\) => \{\s*const next = nextUiScale\(currentUiScale, action\)/, `${label}: each queued scale step should read the scale rendered by the step before it`);
+    assert.match(sidepanelJs, /if \(closeUiScalePopover\(\)\) \{[\s\S]*?return;[\s\S]*?if \(isProcessing\)[\s\S]*?abortRun\(\)/, `${label}: Escape should close the scale popover instead of aborting the active run`);
+    assert.match(sidepanelJs, /await setSidepanelUiScale\(scaleAction\)\.catch\(\(\) => \{\}\)/, `${label}: keyboard scale steps should not reject unhandled when the write fails`);
+    assert.match(sidepanelCss, /#header #ui-scale-popover button \{/, `${label}: popover chips should outrank the generic header icon button rule`);
+    assert.match(sidepanelCss, /\.ui-scale-popover \{[\s\S]*?inset-inline-end: 0;/, `${label}: the scale popover should be offset logically so RTL locales open it inward`);
+    assert.ok(
+      sidepanelCss.indexOf('@media (max-width: 380px)') > sidepanelCss.lastIndexOf('#header .header-right button:not(.language-picker-btn):not(.language-picker-option).active'),
+      `${label}: the narrow-panel header overrides must follow the header button rules they override`,
+    );
+    assert.doesNotMatch(sidepanelCss, /max-height: min\(320px, 50vh\)/, `${label}: viewport clamps inside the zoomed body should divide the zoom back out`);
+
+    assert.match(settingsHtml, /data-i18n="st\.display\.ui_scale\.label"[\s\S]*?data-i18n="st\.display\.ui_scale\.desc"/, `${label}: settings should explain UI scale`);
+    assert.match(settingsHtml, /id="settings-ui-scale-decrease"[\s\S]*?id="settings-ui-scale-value"[\s\S]*?id="settings-ui-scale-increase"[\s\S]*?id="settings-ui-scale-reset"/, `${label}: settings should expose all scale controls`);
+    assert.doesNotMatch(settingsHtml, /data-i18n(?:-title|-aria-label)?="sp\.ui_scale\./, `${label}: settings should use settings-scoped localization keys`);
+    assert.match(settingsJs, /loadUiScale\([\s\S]*?storage\.local[\s\S]*?renderSettingsUiScale/, `${label}: settings should hydrate persisted scale`);
+    assert.match(settingsJs, /saveUiScale\([\s\S]*?storage\.local/, `${label}: settings controls should persist scale changes`);
+    assert.match(settingsJs, /changeSettingsUiScale\('decrease'\)\.catch\(\(\) => \{\}\)/, `${label}: settings scale writes should handle storage failures`);
+    assert.match(settingsJs, /await saveUiScale\([\s\S]*?renderSettingsUiScale/, `${label}: settings should render scale only after it is persisted`);
+    assert.match(sidepanelJs, /await saveUiScale\([\s\S]*?renderSidepanelUiScale/, `${label}: sidepanel should render scale only after it is persisted`);
+    assert.match(settingsJs, /settingsUiScaleReady = false[\s\S]*?if \(!settingsUiScaleReady\) return/, `${label}: settings controls should wait for canonical scale hydration`);
+    assert.match(settingsJs, /settingsUiScaleWriteQueue = write\.catch/, `${label}: settings scale steps should be serialized so held buttons cannot collapse them`);
+    assert.match(settingsJs, /storage\.onChanged\.addListener\([\s\S]*?changes\[UI_SCALE_STORAGE_KEY\][\s\S]*?renderSettingsUiScale/, `${label}: settings should reflect scale changes made elsewhere`);
+    assert.match(settingsJs, /setLocale\([\s\S]*?refreshUiScaleShortcuts\(\)\.catch/, `${label}: settings should refresh the shortcut summary after locale changes`);
+
+    const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
+    for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      for (const key of [
+        'sp.ui_scale.label',
+        'sp.ui_scale.decrease',
+        'sp.ui_scale.increase',
+        'sp.ui_scale.reset',
+        'st.display.ui_scale.label',
+        'st.display.ui_scale.desc',
+      ]) {
+        assert.ok(locale[key]?.trim(), `${label}/${filename}: missing ${key}`);
+      }
+    }
+  }
+});
+
+test('dedicated UI scale commands are configurable and update the shared preference', async () => {
+  const scale = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/ui-scale.js')).href);
+  assert.equal(scale.uiScaleCommandAction('decrease-ui-scale'), 'decrease');
+  assert.equal(scale.uiScaleCommandAction('increase-ui-scale'), 'increase');
+  assert.equal(scale.uiScaleCommandAction('reset-ui-scale'), 'reset');
+  assert.equal(scale.uiScaleCommandAction('switch-to-ask'), '');
+
+  const expected = {
+    'decrease-ui-scale': 'Alt+Shift+Comma',
+    'increase-ui-scale': 'Alt+Shift+Period',
+    'reset-ui-scale': 'Alt+Shift+0',
+  };
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, prefix, 'manifest.json'), 'utf8'));
+    for (const [command, shortcut] of Object.entries(expected)) {
+      assert.equal(manifest.commands[command]?.suggested_key?.default, shortcut, `${label}: ${command} should have a dedicated default`);
+      assert.ok(manifest.commands[command]?.description?.trim(), `${label}: ${command} should be described in the native shortcut manager`);
+    }
+    if (label === 'chrome') {
+      const suggestedCount = Object.values(manifest.commands).filter((entry) => entry.suggested_key).length;
+      assert.ok(suggestedCount <= 4, 'Chrome supports at most four suggested extension shortcuts');
+    }
+
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    assert.match(background, /commands\.onCommand\.addListener\(async \(command[\s\S]*?uiScaleCommandAction\(command\)[\s\S]*?loadUiScale\([\s\S]*?storage\.local[\s\S]*?saveUiScale\([\s\S]*?nextUiScale/, `${label}: background commands should serialize updates to the shared scale preference`);
+
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    assert.match(settingsHtml, /id="settings-ui-scale-shortcuts"[\s\S]*?id="settings-ui-scale-manage-shortcuts"/, `${label}: settings should show bindings and link to the native shortcut manager`);
+    assert.match(settingsJs, /commands\.getAll\(\)[\s\S]*?settingsUiScaleShortcuts/, `${label}: settings should read the active user-configured bindings`);
+    if (label === 'chrome') {
+      assert.match(settingsJs, /tabs\.create\(\{ url: 'chrome:\/\/extensions\/shortcuts' \}\)/, 'Chrome should open its shortcut manager');
+    } else {
+      assert.match(settingsJs, /commands\.openShortcutSettings\(\)/, 'Firefox should open its shortcut manager');
+    }
+
+    const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
+    const englishLocale = (await import(pathToFileURL(path.join(localeDir, 'en.js')).href)).default;
+    for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      for (const key of [
+        'sp.ui_scale.label',
+        'sp.ui_scale.decrease',
+        'sp.ui_scale.increase',
+        'sp.ui_scale.reset',
+        'st.display.ui_scale.label',
+        'st.display.ui_scale.desc',
+        'st.display.ui_scale.decrease',
+        'st.display.ui_scale.increase',
+        'st.display.ui_scale.reset',
+        'st.display.ui_scale.shortcuts',
+        'st.display.ui_scale.shortcuts_none',
+        'st.display.ui_scale.manage_shortcuts',
+      ]) {
+        assert.ok(locale[key]?.trim(), `${label}/${filename}: missing ${key}`);
+        if (filename !== 'en.js') {
+          assert.notEqual(locale[key], englishLocale[key], `${label}/${filename}: ${key} should be translated`);
+        }
+      }
     }
   }
 });

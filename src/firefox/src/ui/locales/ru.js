@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Масштаб интерфейса расширения',
+  'sp.ui_scale.decrease': 'Уменьшить интерфейс расширения',
+  'sp.ui_scale.increase': 'Увеличить интерфейс расширения',
+  'sp.ui_scale.reset': 'Сбросить',
+  'st.display.ui_scale.label': 'Масштаб интерфейса расширения',
+  'st.display.ui_scale.decrease': 'Уменьшить интерфейс расширения',
+  'st.display.ui_scale.increase': 'Увеличить интерфейс расширения',
+  'st.display.ui_scale.reset': 'Сбросить',
+  'st.display.ui_scale.desc': 'Изменяет размер боковой панели и отдельного окна чата, не меняя масштаб страницы.',
+  'st.display.ui_scale.shortcuts': 'Специальные сочетания клавиш: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'Не назначено',
+  'st.display.ui_scale.manage_shortcuts': 'Настроить сочетания клавиш',
   'tool.delegate_research': 'Исследование в ChatGPT',
   'st.display.research_escalation.label': 'Эскалация исследований',
   'st.display.research_escalation.desc': 'Если функция включена, WebBrain может запросить разрешение перед отправкой в ChatGPT необычно сложного исследовательского запроса только для чтения. По умолчанию выключено. Точный запрос передаётся только после вашего явного согласия.',

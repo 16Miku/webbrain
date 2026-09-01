@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Zum UI sambungan',
+  'sp.ui_scale.decrease': 'Kecilkan UI sambungan',
+  'sp.ui_scale.increase': 'Besarkan UI sambungan',
+  'sp.ui_scale.reset': 'Tetapkan semula',
+  'st.display.ui_scale.label': 'Zum UI sambungan',
+  'st.display.ui_scale.decrease': 'Kecilkan UI sambungan',
+  'st.display.ui_scale.increase': 'Besarkan UI sambungan',
+  'st.display.ui_scale.reset': 'Tetapkan semula',
+  'st.display.ui_scale.desc': 'Ubah saiz panel sisi dan tetingkap sembang berasingan tanpa mengubah zum halaman.',
+  'st.display.ui_scale.shortcuts': 'Pintasan khusus: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'Tidak ditetapkan',
+  'st.display.ui_scale.manage_shortcuts': 'Sesuaikan pintasan',
   'tool.delegate_research': 'Menyelidik dengan ChatGPT',
   'st.display.research_escalation.label': 'Eskalasi penyelidikan',
   'st.display.research_escalation.desc': 'Apabila diaktifkan, WebBrain mungkin meminta izin sebelum menghantar gesaan penyelidikan baca sahaja yang luar biasa kompleks kepada ChatGPT. Dimatikan secara lalai. Gesaan tepat hanya dikongsi selepas kelulusan jelas anda.',

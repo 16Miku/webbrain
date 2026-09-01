@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Масштаб інтерфейсу розширення',
+  'sp.ui_scale.decrease': 'Зменшити інтерфейс розширення',
+  'sp.ui_scale.increase': 'Збільшити інтерфейс розширення',
+  'sp.ui_scale.reset': 'Скинути',
+  'st.display.ui_scale.label': 'Масштаб інтерфейсу розширення',
+  'st.display.ui_scale.decrease': 'Зменшити інтерфейс розширення',
+  'st.display.ui_scale.increase': 'Збільшити інтерфейс розширення',
+  'st.display.ui_scale.reset': 'Скинути',
+  'st.display.ui_scale.desc': 'Змінює розмір бічної панелі й окремого вікна чату, не змінюючи масштаб сторінки.',
+  'st.display.ui_scale.shortcuts': 'Спеціальні комбінації клавіш: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'Не призначено',
+  'st.display.ui_scale.manage_shortcuts': 'Налаштувати комбінації клавіш',
   'tool.delegate_research': 'Дослідження за допомогою ChatGPT',
   'st.display.research_escalation.label': 'Ескалація досліджень',
   'st.display.research_escalation.desc': 'Якщо функцію ввімкнено, WebBrain може попросити дозвіл перед надсиланням до ChatGPT надзвичайно складного дослідницького запиту лише для читання. За замовчуванням вимкнено. Точний запит передається лише після вашої явної згоди.',

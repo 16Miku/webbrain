@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Zoom van extensie-interface',
+  'sp.ui_scale.decrease': 'Extensie-interface uitzoomen',
+  'sp.ui_scale.increase': 'Extensie-interface inzoomen',
+  'sp.ui_scale.reset': 'Resetten',
+  'st.display.ui_scale.label': 'Zoom van extensie-interface',
+  'st.display.ui_scale.decrease': 'Extensie-interface uitzoomen',
+  'st.display.ui_scale.increase': 'Extensie-interface inzoomen',
+  'st.display.ui_scale.reset': 'Resetten',
+  'st.display.ui_scale.desc': 'Pas het formaat van het zijpaneel en het losse chatvenster aan zonder de paginazoom te wijzigen.',
+  'st.display.ui_scale.shortcuts': 'Speciale sneltoetsen: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'Niet toegewezen',
+  'st.display.ui_scale.manage_shortcuts': 'Sneltoetsen aanpassen',
   'tool.delegate_research': 'Onderzoeken met ChatGPT',
   'st.display.research_escalation.label': 'Onderzoeksescalatie',
   'st.display.research_escalation.desc': 'Indien ingeschakeld kan WebBrain toestemming vragen voordat een ongewoon complexe alleen-lezen onderzoeksprompt naar ChatGPT wordt gestuurd. Standaard uitgeschakeld. De exacte prompt wordt alleen gedeeld na uw uitdrukkelijke goedkeuring.',

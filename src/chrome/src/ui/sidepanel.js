@@ -9,6 +9,16 @@ import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
 import { codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables } from './markdown-render.js';
 import { applyMode, loadMode, watch } from './theme.js';
+import {
+  UI_SCALE_LEVELS,
+  UI_SCALE_STORAGE_KEY,
+  applyUiScale,
+  loadUiScale,
+  nextUiScale,
+  normalizeUiScale,
+  saveUiScale,
+  uiScaleShortcutAction,
+} from './ui-scale.js';
 import { buildRecommendedActions, shouldShowRecommendedActions } from './recommended-actions.js';
 import { createContextMenuPromptHandler } from './context-menu-prompts.js';
 import {
@@ -594,6 +604,10 @@ let selectionAskActionEl = document.getElementById('selection-ask-action');
 const historyBtn = document.getElementById('btn-history');
 const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
+const uiScaleMenu = document.getElementById('ui-scale-menu');
+const uiScaleBtn = document.getElementById('btn-ui-scale');
+const uiScalePopover = document.getElementById('ui-scale-popover');
+const uiScaleValue = document.getElementById('ui-scale-value');
 const verboseBtn = document.getElementById('btn-verbose');
 const providerSelect = document.getElementById('provider-select');
 const providerPicker = document.getElementById('provider-picker');
@@ -611,6 +625,83 @@ const statusDot = document.getElementById('status-dot');
 const providerPickerLabelById = new Map();
 let languagePickerTypeahead = '';
 let languagePickerTypeaheadTimer = null;
+
+let currentUiScale = normalizeUiScale(document.documentElement.dataset.uiScale);
+
+// `getBoundingClientRect()` reports zoomed viewport pixels, while `scrollTop`,
+// `clientHeight` and `offsetTop` stay in the body's own unzoomed CSS pixels.
+// A rect measurement has to be divided by this factor before it can be mixed
+// with either of those, or compared against a constant written in CSS pixels.
+function uiScaleZoom() {
+  return currentUiScale / 100 || 1;
+}
+
+function renderSidepanelUiScale(value) {
+  currentUiScale = applyUiScale(document.documentElement, value);
+  if (uiScaleValue) uiScaleValue.textContent = `${currentUiScale}%`;
+  const min = UI_SCALE_LEVELS[0];
+  const max = UI_SCALE_LEVELS[UI_SCALE_LEVELS.length - 1];
+  uiScalePopover?.querySelector('[data-ui-scale-action="decrease"]')?.toggleAttribute('disabled', currentUiScale === min);
+  uiScalePopover?.querySelector('[data-ui-scale-action="increase"]')?.toggleAttribute('disabled', currentUiScale === max);
+}
+
+// Steps are serialized because each one reads the scale rendered by the step
+// before it. Key auto-repeat can fire dozens of times before a storage write
+// resolves, and without the queue every repeat would read the same stale
+// scale — a held Ctrl+= would advance exactly one level.
+let uiScaleWriteQueue = Promise.resolve();
+
+function setSidepanelUiScale(action) {
+  const write = uiScaleWriteQueue.then(async () => {
+    const next = nextUiScale(currentUiScale, action);
+    await saveUiScale(chrome.storage.local, next);
+    renderSidepanelUiScale(next);
+  });
+  // Keep the chain alive after a rejected write while still handing the
+  // failure to this caller.
+  uiScaleWriteQueue = write.catch(() => {});
+  return write;
+}
+
+function closeUiScalePopover() {
+  if (!uiScalePopover || uiScalePopover.classList.contains('hidden')) return false;
+  uiScalePopover.classList.add('hidden');
+  uiScaleBtn?.setAttribute('aria-expanded', 'false');
+  return true;
+}
+
+// Seeded into the write queue so an early Ctrl+= cannot step off the
+// pre-paint value. That value comes from the localStorage mirror, which an
+// MV3 service worker cannot refresh when a global shortcut changes the
+// scale — stepping off a stale mirror would silently overwrite the real
+// scale in storage.
+uiScaleWriteQueue = loadUiScale(chrome.storage.local)
+  .then(renderSidepanelUiScale)
+  .catch(() => {});
+uiScaleBtn?.addEventListener('click', () => {
+  const willOpen = uiScalePopover?.classList.contains('hidden');
+  uiScalePopover?.classList.toggle('hidden', !willOpen);
+  uiScaleBtn.setAttribute('aria-expanded', String(willOpen));
+});
+uiScalePopover?.addEventListener('click', (event) => {
+  const action = event.target.closest('[data-ui-scale-action]')?.dataset.uiScaleAction;
+  if (action) setSidepanelUiScale(action).catch(() => {});
+});
+uiScalePopover?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  closeUiScalePopover();
+  uiScaleBtn?.focus();
+});
+document.addEventListener('click', (event) => {
+  if (uiScaleMenu?.contains(event.target)) return;
+  closeUiScalePopover();
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[UI_SCALE_STORAGE_KEY]) {
+    renderSidepanelUiScale(changes[UI_SCALE_STORAGE_KEY].newValue);
+  }
+});
 const agentActivity = document.getElementById('agent-activity');
 const activityProgressToggle = document.getElementById('activity-progress-toggle');
 const activityText = document.getElementById('activity-text');
@@ -7331,10 +7422,11 @@ function scrollSlashCommandOptionIntoView(option) {
 
   const menuRect = slashCommandMenuEl.getBoundingClientRect();
   const optionRect = option.getBoundingClientRect();
+  const zoom = uiScaleZoom();
   if (optionRect.top < menuRect.top) {
-    slashCommandMenuEl.scrollTop -= menuRect.top - optionRect.top;
+    slashCommandMenuEl.scrollTop -= (menuRect.top - optionRect.top) / zoom;
   } else if (optionRect.bottom > menuRect.bottom) {
-    slashCommandMenuEl.scrollTop += optionRect.bottom - menuRect.bottom;
+    slashCommandMenuEl.scrollTop += (optionRect.bottom - menuRect.bottom) / zoom;
   }
 }
 
@@ -11494,6 +11586,7 @@ function dismissSelectionAskAction() {
 
 function positionSelectionAskAction(range) {
   if (!selectionAskActionEl) return;
+  const zoom = uiScaleZoom();
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const actionRect = selectionAskActionEl.getBoundingClientRect();
@@ -11513,8 +11606,10 @@ function positionSelectionAskAction(range) {
   const belowTop = usable ? rect.bottom + gap : maxTop;
   const preferredTop = usable && aboveTop >= 8 ? aboveTop : belowTop;
   const top = Math.min(maxTop, Math.max(8, preferredTop));
-  selectionAskActionEl.style.left = `${left}px`;
-  selectionAskActionEl.style.top = `${top}px`;
+  // The button is inside the zoomed body, while these measurements are in
+  // viewport pixels. Convert them back to the body's CSS coordinate space.
+  selectionAskActionEl.style.left = `${left / zoom}px`;
+  selectionAskActionEl.style.top = `${top / zoom}px`;
 }
 
 function applySelectionAskActionLabel() {
@@ -12108,7 +12203,8 @@ function chatTurnNeedsReadingNavigation(turn = chatNavigationTurn) {
   if (!chatContainerEl || !chatTurnIsConnected(turn)) return false;
   const userRect = turn.userEl.getBoundingClientRect();
   const assistantRect = turn.assistantEl.getBoundingClientRect();
-  return assistantRect.bottom - userRect.top > chatContainerEl.clientHeight - CHAT_SCROLL_EDGE_PX;
+  const turnHeight = (assistantRect.bottom - userRect.top) / uiScaleZoom();
+  return turnHeight > chatContainerEl.clientHeight - CHAT_SCROLL_EDGE_PX;
 }
 
 function prefersReducedChatMotion() {
@@ -12121,9 +12217,10 @@ function scrollChatToQuestion({ smooth = true } = {}) {
   if (smooth) chatUserChoseReadingPosition = true;
   const containerRect = chatContainerEl.getBoundingClientRect();
   const questionRect = chatNavigationTurn.userEl.getBoundingClientRect();
+  const offsetFromTop = (questionRect.top - containerRect.top) / uiScaleZoom();
   const targetTop = Math.max(
     0,
-    chatContainerEl.scrollTop + questionRect.top - containerRect.top - CHAT_TURN_VISIBILITY_PX,
+    chatContainerEl.scrollTop + offsetFromTop - CHAT_TURN_VISIBILITY_PX,
   );
   chatContainerEl.scrollTo({
     top: targetTop,
@@ -12701,11 +12798,28 @@ function handleRecordingEscapeKey(e) {
 async function handleGlobalKeydown(e) {
   if (e.defaultPrevented) return;
 
+  const scaleAction = uiScaleShortcutAction(e);
+  if (scaleAction) {
+    e.preventDefault();
+    e.stopPropagation();
+    await setSidepanelUiScale(scaleAction).catch(() => {});
+    return;
+  }
+
   // Don't steal shortcuts from other input elements (e.g. schedule form fields)
   const tag = e.target?.tagName;
   const isOtherFormField = e.target !== inputEl && (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
 
   if (e.key === 'Escape') {
+    // The popover's own Escape handler only fires while focus is inside it —
+    // clicking the trigger leaves focus on a sibling. This listener is on the
+    // capture phase either way, so without closing the popover here Escape
+    // would fall through to abortRun() and cancel a running agent.
+    if (closeUiScalePopover()) {
+      e.preventDefault();
+      uiScaleBtn?.focus();
+      return;
+    }
     const slashMenuOpen = !!slashCommandMenuEl && !slashCommandMenuEl.classList.contains('hidden');
     if (slashMenuOpen) return;
     if (selectionAskActionEl && !selectionAskActionEl.classList.contains('hidden')) {

@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Uzantı arayüzü yakınlaştırması',
+  'sp.ui_scale.decrease': 'Uzantı arayüzünü uzaklaştır',
+  'sp.ui_scale.increase': 'Uzantı arayüzünü yakınlaştır',
+  'sp.ui_scale.reset': 'Sıfırla',
+  'st.display.ui_scale.label': 'Uzantı arayüzü yakınlaştırması',
+  'st.display.ui_scale.decrease': 'Uzantı arayüzünü uzaklaştır',
+  'st.display.ui_scale.increase': 'Uzantı arayüzünü yakınlaştır',
+  'st.display.ui_scale.reset': 'Sıfırla',
+  'st.display.ui_scale.desc': 'Sayfa yakınlaştırmasını değiştirmeden yan paneli ve ayrı sohbet penceresini yeniden boyutlandırın.',
+  'st.display.ui_scale.shortcuts': 'Özel kısayollar: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'Atanmamış',
+  'st.display.ui_scale.manage_shortcuts': 'Kısayolları özelleştir',
   'tool.delegate_research': 'ChatGPT ile araştırılıyor',
   'st.display.research_escalation.label': 'Araştırmayı devretme',
   'st.display.research_escalation.desc': 'Etkinleştirildiğinde WebBrain, olağandışı derecede karmaşık salt okunur bir araştırma istemini ChatGPT’ye göndermeden önce izin isteyebilir. Varsayılan olarak kapalıdır. İstemin tam metni yalnızca açık onayınızdan sonra paylaşılır.',

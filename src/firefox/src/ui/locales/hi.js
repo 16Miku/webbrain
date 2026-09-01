@@ -3,6 +3,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'एक्सटेंशन UI ज़ूम',
+  'sp.ui_scale.decrease': 'एक्सटेंशन UI को छोटा करें',
+  'sp.ui_scale.increase': 'एक्सटेंशन UI को बड़ा करें',
+  'sp.ui_scale.reset': 'रीसेट',
+  'st.display.ui_scale.label': 'एक्सटेंशन UI ज़ूम',
+  'st.display.ui_scale.decrease': 'एक्सटेंशन UI को छोटा करें',
+  'st.display.ui_scale.increase': 'एक्सटेंशन UI को बड़ा करें',
+  'st.display.ui_scale.reset': 'रीसेट',
+  'st.display.ui_scale.desc': 'पेज का ज़ूम बदले बिना साइड पैनल और अलग चैट विंडो का आकार बदलें।',
+  'st.display.ui_scale.shortcuts': 'समर्पित शॉर्टकट: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'निर्धारित नहीं',
+  'st.display.ui_scale.manage_shortcuts': 'शॉर्टकट कस्टमाइज़ करें',
   'tool.delegate_research': 'ChatGPT से शोध हो रहा है',
   'st.display.research_escalation.label': 'शोध एस्केलेशन',
   'st.display.research_escalation.desc': 'सक्षम होने पर, WebBrain असामान्य रूप से जटिल केवल-पढ़ने योग्य शोध प्रॉम्प्ट को ChatGPT पर भेजने से पहले अनुमति मांग सकता है। डिफ़ॉल्ट रूप से बंद। सटीक प्रॉम्प्ट केवल आपकी स्पष्ट स्वीकृति के बाद साझा किया जाता है।',

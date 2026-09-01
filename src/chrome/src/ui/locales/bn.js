@@ -3,6 +3,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'এক্সটেনশনের UI জুম',
+  'sp.ui_scale.decrease': 'এক্সটেনশনের UI ছোট করুন',
+  'sp.ui_scale.increase': 'এক্সটেনশনের UI বড় করুন',
+  'sp.ui_scale.reset': 'রিসেট',
+  'st.display.ui_scale.label': 'এক্সটেনশনের UI জুম',
+  'st.display.ui_scale.decrease': 'এক্সটেনশনের UI ছোট করুন',
+  'st.display.ui_scale.increase': 'এক্সটেনশনের UI বড় করুন',
+  'st.display.ui_scale.reset': 'রিসেট',
+  'st.display.ui_scale.desc': 'পেজের জুম পরিবর্তন না করে সাইড প্যানেল এবং আলাদা চ্যাট উইন্ডোর আকার পরিবর্তন করুন।',
+  'st.display.ui_scale.shortcuts': 'নির্দিষ্ট শর্টকাট: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'নির্ধারিত নয়',
+  'st.display.ui_scale.manage_shortcuts': 'শর্টকাট কাস্টমাইজ করুন',
   'tool.delegate_research': 'ChatGPT দিয়ে গবেষণা চলছে',
   'st.display.research_escalation.label': 'গবেষণা এসকেলেশন',
   'st.display.research_escalation.desc': 'সক্রিয় থাকলে, WebBrain একটি অস্বাভাবিক জটিল শুধু-পঠন গবেষণা প্রম্পট ChatGPT-তে পাঠানোর আগে অনুমতি চাইতে পারে। ডিফল্টভাবে বন্ধ। আপনার স্পষ্ট অনুমোদনের পরেই সঠিক প্রম্পটটি শেয়ার করা হয়।',

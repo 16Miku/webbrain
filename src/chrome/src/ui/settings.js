@@ -5,6 +5,14 @@
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
+import {
+  UI_SCALE_LEVELS,
+  UI_SCALE_STORAGE_KEY,
+  loadUiScale,
+  nextUiScale,
+  normalizeUiScale,
+  saveUiScale,
+} from './ui-scale.js';
 import { renderSkillMarkdown } from './skill-markdown.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import {
@@ -202,6 +210,12 @@ const btnClearCaptcha = document.getElementById('btn-clear-captcha');
 const captchaTestResult = document.getElementById('test-captcha');
 const languageSelect = document.getElementById('select-language');
 const themeSelect = document.getElementById('select-theme');
+const settingsUiScaleDecrease = document.getElementById('settings-ui-scale-decrease');
+const settingsUiScaleValue = document.getElementById('settings-ui-scale-value');
+const settingsUiScaleIncrease = document.getElementById('settings-ui-scale-increase');
+const settingsUiScaleReset = document.getElementById('settings-ui-scale-reset');
+const settingsUiScaleShortcuts = document.getElementById('settings-ui-scale-shortcuts');
+const settingsUiScaleManageShortcuts = document.getElementById('settings-ui-scale-manage-shortcuts');
 const downloadDirectoryInput = document.getElementById('input-download-directory');
 const subtitleEl = document.getElementById('subtitle');
 
@@ -237,6 +251,64 @@ if (themeSelect) {
     });
   }
 }
+
+let currentSettingsUiScale = 100;
+let settingsUiScaleReady = false;
+
+function renderSettingsUiScale(value) {
+  currentSettingsUiScale = normalizeUiScale(value);
+  settingsUiScaleReady = true;
+  if (settingsUiScaleValue) settingsUiScaleValue.textContent = `${currentSettingsUiScale}%`;
+  if (settingsUiScaleDecrease) settingsUiScaleDecrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[0];
+  if (settingsUiScaleIncrease) settingsUiScaleIncrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[UI_SCALE_LEVELS.length - 1];
+}
+
+// Serialized so each step reads the scale rendered by the step before it:
+// holding Enter on a focused +/- button repeats faster than the storage write
+// resolves, and an unqueued step would keep re-reading the same stale scale.
+let settingsUiScaleWriteQueue = Promise.resolve();
+
+function changeSettingsUiScale(action) {
+  if (!settingsUiScaleReady) return Promise.resolve();
+  const write = settingsUiScaleWriteQueue.then(async () => {
+    const next = nextUiScale(currentSettingsUiScale, action);
+    await saveUiScale(chrome.storage.local, next);
+    renderSettingsUiScale(next);
+  });
+  // Keep the chain alive after a rejected write while still handing the
+  // failure to this caller.
+  settingsUiScaleWriteQueue = write.catch(() => {});
+  return write;
+}
+
+loadUiScale(chrome.storage.local).then(renderSettingsUiScale);
+if (settingsUiScaleDecrease) settingsUiScaleDecrease.disabled = true;
+if (settingsUiScaleIncrease) settingsUiScaleIncrease.disabled = true;
+settingsUiScaleDecrease?.addEventListener('click', () => changeSettingsUiScale('decrease').catch(() => {}));
+settingsUiScaleIncrease?.addEventListener('click', () => changeSettingsUiScale('increase').catch(() => {}));
+settingsUiScaleReset?.addEventListener('click', () => changeSettingsUiScale('reset').catch(() => {}));
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[UI_SCALE_STORAGE_KEY]) {
+    renderSettingsUiScale(changes[UI_SCALE_STORAGE_KEY].newValue);
+  }
+});
+
+const UI_SCALE_COMMAND_NAMES = ['decrease-ui-scale', 'increase-ui-scale', 'reset-ui-scale'];
+
+async function refreshUiScaleShortcuts() {
+  if (!settingsUiScaleShortcuts) return;
+  const commands = await chrome.commands.getAll();
+  const shortcuts = UI_SCALE_COMMAND_NAMES.map((name) => commands.find((command) => command.name === name)?.shortcut)
+    .filter(Boolean);
+  const summary = shortcuts.length ? shortcuts.join(' · ') : t('st.display.ui_scale.shortcuts_none');
+  settingsUiScaleShortcuts.textContent = t('st.display.ui_scale.shortcuts', { shortcuts: summary });
+}
+
+refreshUiScaleShortcuts().catch(() => {});
+window.addEventListener('focus', () => refreshUiScaleShortcuts().catch(() => {}));
+settingsUiScaleManageShortcuts?.addEventListener('click', () => {
+  chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+});
 
 function renderSubtitle() {
   if (subtitleEl) subtitleEl.textContent = t('st.subtitle', { version: EXT_VERSION });
@@ -317,12 +389,14 @@ if (languageSelect) {
     await setLocale(languageSelect.value);
     // Re-render dynamic bits whose text comes from JS.
     renderSubtitle();
+    refreshUiScaleShortcuts().catch(() => {});
     filterGeneralSettings();
     renderProviders();
   });
   document.addEventListener('wb-locale-changed', () => {
     languageSelect.value = getLocale();
     renderSubtitle();
+    refreshUiScaleShortcuts().catch(() => {});
     filterGeneralSettings();
     if (providersContainer) renderProviders();
     renderSkills();

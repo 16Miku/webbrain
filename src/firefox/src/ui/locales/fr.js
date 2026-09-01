@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Zoom de l’interface de l’extension',
+  'sp.ui_scale.decrease': 'Réduire le zoom de l’interface',
+  'sp.ui_scale.increase': 'Augmenter le zoom de l’interface',
+  'sp.ui_scale.reset': 'Réinitialiser',
+  'st.display.ui_scale.label': 'Zoom de l’interface de l’extension',
+  'st.display.ui_scale.decrease': 'Réduire le zoom de l’interface',
+  'st.display.ui_scale.increase': 'Augmenter le zoom de l’interface',
+  'st.display.ui_scale.reset': 'Réinitialiser',
+  'st.display.ui_scale.desc': 'Redimensionne le panneau latéral et la fenêtre de chat détachée sans modifier le zoom de la page.',
+  'st.display.ui_scale.shortcuts': 'Raccourcis dédiés : {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'Non attribué',
+  'st.display.ui_scale.manage_shortcuts': 'Personnaliser les raccourcis',
   'tool.delegate_research': 'Recherche avec ChatGPT',
   'st.display.research_escalation.label': 'Escalade de recherche',
   'st.display.research_escalation.desc': 'Lorsque cette option est activée, WebBrain peut demander votre accord avant d’envoyer à ChatGPT une requête de recherche en lecture seule particulièrement complexe. Désactivé par défaut. La requête exacte n’est partagée qu’après votre accord explicite.',

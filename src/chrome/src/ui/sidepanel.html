@@ -223,6 +223,17 @@
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
           </svg>
         </button>
+        <div id="ui-scale-menu" class="ui-scale-menu">
+          <button type="button" id="btn-ui-scale" aria-haspopup="true" aria-expanded="false" aria-controls="ui-scale-popover" data-i18n-title="sp.ui_scale.label" data-i18n-aria-label="sp.ui_scale.label">
+            <span class="ui-scale-trigger-label" aria-hidden="true">Aa</span>
+          </button>
+          <div id="ui-scale-popover" class="ui-scale-popover hidden" role="group" data-i18n-aria-label="sp.ui_scale.label">
+            <button type="button" data-ui-scale-action="decrease" data-i18n-title="sp.ui_scale.decrease" data-i18n-aria-label="sp.ui_scale.decrease">−</button>
+            <output id="ui-scale-value" aria-live="polite">100%</output>
+            <button type="button" data-ui-scale-action="increase" data-i18n-title="sp.ui_scale.increase" data-i18n-aria-label="sp.ui_scale.increase">+</button>
+            <button type="button" class="ui-scale-reset" data-ui-scale-action="reset" data-i18n="sp.ui_scale.reset"></button>
+          </div>
+        </div>
         <button id="btn-settings" data-i18n-title="sp.btn.settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>

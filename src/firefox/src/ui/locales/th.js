@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'ซูม UI ของส่วนขยาย',
+  'sp.ui_scale.decrease': 'ย่อ UI ของส่วนขยาย',
+  'sp.ui_scale.increase': 'ขยาย UI ของส่วนขยาย',
+  'sp.ui_scale.reset': 'รีเซ็ต',
+  'st.display.ui_scale.label': 'ซูม UI ของส่วนขยาย',
+  'st.display.ui_scale.decrease': 'ย่อ UI ของส่วนขยาย',
+  'st.display.ui_scale.increase': 'ขยาย UI ของส่วนขยาย',
+  'st.display.ui_scale.reset': 'รีเซ็ต',
+  'st.display.ui_scale.desc': 'ปรับขนาดแผงด้านข้างและหน้าต่างแชตแบบแยก โดยไม่เปลี่ยนการซูมหน้าเว็บ',
+  'st.display.ui_scale.shortcuts': 'แป้นพิมพ์ลัดเฉพาะ: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'ยังไม่ได้กำหนด',
+  'st.display.ui_scale.manage_shortcuts': 'ปรับแต่งแป้นพิมพ์ลัด',
   'tool.delegate_research': 'กำลังค้นคว้าด้วย ChatGPT',
   'st.display.research_escalation.label': 'การส่งต่อการค้นคว้า',
   'st.display.research_escalation.desc': 'เมื่อเปิดใช้ WebBrain อาจขออนุญาตก่อนส่งพรอมต์ค้นคว้าแบบอ่านอย่างเดียวที่ซับซ้อนเป็นพิเศษไปยัง ChatGPT ปิดไว้ตามค่าเริ่มต้น พรอมต์ที่ตรงกันจะถูกแชร์หลังจากคุณอนุมัติอย่างชัดเจนเท่านั้น',

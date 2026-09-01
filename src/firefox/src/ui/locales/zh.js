@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': '插件界面缩放',
+  'sp.ui_scale.decrease': '缩小插件界面',
+  'sp.ui_scale.increase': '放大插件界面',
+  'sp.ui_scale.reset': '重置',
+  'st.display.ui_scale.label': '插件界面缩放',
+  'st.display.ui_scale.decrease': '缩小插件界面',
+  'st.display.ui_scale.increase': '放大插件界面',
+  'st.display.ui_scale.reset': '重置',
+  'st.display.ui_scale.desc': '调整侧栏和独立聊天窗口的大小，不影响网页缩放。',
+  'st.display.ui_scale.shortcuts': '专用快捷键：{shortcuts}',
+  'st.display.ui_scale.shortcuts_none': '未设置',
+  'st.display.ui_scale.manage_shortcuts': '自定义快捷键',
   'tool.delegate_research': '正在使用 ChatGPT 进行研究',
   'st.display.research_escalation.label': '研究升级',
   'st.display.research_escalation.desc': '启用后，WebBrain 可能会在向 ChatGPT 发送异常复杂的只读研究提示词前征求许可。默认关闭。只有在您明确批准后，才会共享提示词原文。',

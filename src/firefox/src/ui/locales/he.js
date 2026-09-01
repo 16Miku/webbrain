@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'הגדלת ממשק התוסף',
+  'sp.ui_scale.decrease': 'הקטנת תצוגת ממשק התוסף',
+  'sp.ui_scale.increase': 'הגדלת תצוגת ממשק התוסף',
+  'sp.ui_scale.reset': 'איפוס',
+  'st.display.ui_scale.label': 'הגדלת ממשק התוסף',
+  'st.display.ui_scale.decrease': 'הקטנת תצוגת ממשק התוסף',
+  'st.display.ui_scale.increase': 'הגדלת תצוגת ממשק התוסף',
+  'st.display.ui_scale.reset': 'איפוס',
+  'st.display.ui_scale.desc': 'שינוי גודל הסרגל הצדדי וחלון הצ׳אט הנפרד בלי לשנות את תצוגת הדף.',
+  'st.display.ui_scale.shortcuts': 'קיצורי דרך ייעודיים: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'לא הוקצה',
+  'st.display.ui_scale.manage_shortcuts': 'התאמת קיצורי דרך',
   'tool.delegate_research': 'חוקר עם ChatGPT',
   'st.display.research_escalation.label': 'הסלמת מחקר',
   'st.display.research_escalation.desc': 'כאשר האפשרות מופעלת, WebBrain עשוי לבקש אישור לפני שליחת בקשת מחקר מורכבת לקריאה בלבד אל ChatGPT. כבוי כברירת מחדל. הבקשה המדויקת משותפת רק לאחר אישור מפורש שלך.',

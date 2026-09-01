@@ -5,6 +5,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'Pag-zoom ng UI ng extension',
+  'sp.ui_scale.decrease': 'Bawasan ang zoom ng UI ng extension',
+  'sp.ui_scale.increase': 'Dagdagan ang zoom ng UI ng extension',
+  'sp.ui_scale.reset': 'I-reset',
+  'st.display.ui_scale.label': 'Pag-zoom ng UI ng extension',
+  'st.display.ui_scale.decrease': 'Bawasan ang zoom ng UI ng extension',
+  'st.display.ui_scale.increase': 'Dagdagan ang zoom ng UI ng extension',
+  'st.display.ui_scale.reset': 'I-reset',
+  'st.display.ui_scale.desc': 'Baguhin ang laki ng side panel at hiwalay na chat window nang hindi binabago ang page zoom.',
+  'st.display.ui_scale.shortcuts': 'Mga nakatalagang shortcut: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'Hindi nakatalaga',
+  'st.display.ui_scale.manage_shortcuts': 'I-customize ang mga shortcut',
   'tool.delegate_research': 'Nagsasaliksik gamit ang ChatGPT',
   'st.display.research_escalation.label': 'Pag-escalate ng pananaliksik',
   'st.display.research_escalation.desc': 'Kapag pinagana, maaaring humingi ng pahintulot ang WebBrain bago magpadala ng napakakomplikadong read-only na prompt sa pananaliksik sa ChatGPT. Naka-off bilang default. Ibinabahagi lamang ang eksaktong prompt pagkatapos ng iyong tahasang pag-apruba.',

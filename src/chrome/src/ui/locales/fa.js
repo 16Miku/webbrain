@@ -3,6 +3,18 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  'sp.ui_scale.label': 'بزرگ‌نمایی رابط کاربری افزونه',
+  'sp.ui_scale.decrease': 'کاهش بزرگ‌نمایی رابط افزونه',
+  'sp.ui_scale.increase': 'افزایش بزرگ‌نمایی رابط افزونه',
+  'sp.ui_scale.reset': 'بازنشانی',
+  'st.display.ui_scale.label': 'بزرگ‌نمایی رابط کاربری افزونه',
+  'st.display.ui_scale.decrease': 'کاهش بزرگ‌نمایی رابط افزونه',
+  'st.display.ui_scale.increase': 'افزایش بزرگ‌نمایی رابط افزونه',
+  'st.display.ui_scale.reset': 'بازنشانی',
+  'st.display.ui_scale.desc': 'اندازهٔ پنل کناری و پنجرهٔ گفت‌وگوی جداگانه را بدون تغییر بزرگ‌نمایی صفحه تغییر دهید.',
+  'st.display.ui_scale.shortcuts': 'میانبرهای اختصاصی: {shortcuts}',
+  'st.display.ui_scale.shortcuts_none': 'تنظیم نشده',
+  'st.display.ui_scale.manage_shortcuts': 'سفارشی‌سازی میانبرها',
   'tool.delegate_research': 'در حال پژوهش با ChatGPT',
   'st.display.research_escalation.label': 'ارتقای پژوهش',
   'st.display.research_escalation.desc': 'در صورت فعال بودن، WebBrain ممکن است پیش از ارسال یک درخواست پژوهشی فقط‌خواندنی و بسیار پیچیده به ChatGPT اجازه بخواهد. به‌صورت پیش‌فرض خاموش است. متن دقیق فقط پس از تأیید صریح شما به اشتراک گذاشته می‌شود.',
