@@ -258,7 +258,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (status === 402 && providerName === 'webbrain-cloud') {
       let actionUrl = this._webbrainSubscribeUrl();
       let actionLabel = 'Subscribe for more usage';
-      let message = 'Daily free WebBrain Cloud allowance used.';
+      let message = 'Daily free WebBrain Compass allowance used.';
       try {
         const parsed = JSON.parse(body || '{}');
         if (parsed.upgrade_url) {

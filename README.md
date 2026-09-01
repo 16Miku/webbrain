@@ -74,7 +74,7 @@ Three modes control what the agent is allowed to do:
 
 ## Pick a model
 
-**WebBrain Cloud 1.0** is the default and needs no API key or local setup.
+**WebBrain Compass 1.0** is the default and needs no API key or local setup.
 
 **Local models** need no API key either. Point WebBrain at any OpenAI-compatible
 server:
