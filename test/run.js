@@ -41885,6 +41885,26 @@ test('settings page drops stale provider activation completions', () => {
 });
 
 test('WebBrain Compass branding stays distinct from the webbrain.cloud service', () => {
+  const compassLocaleKeys = [
+    'sp.subscribe.allowance_used',
+    'ob.cloud.body',
+    'ob.cloud.using',
+    'st.account.provider_name',
+    'st.display.help_improve.desc_html',
+    'st.providers.webbrain_data_use.body',
+    'st.providers.webbrain_note.body',
+    'st.display.cost_allowance_scope',
+    'st.sync.lede_html',
+    'st.sync.email.label',
+    'st.sync.status.subscription',
+    'st.sync.status.auth_required',
+    'st.sync.validation.email_required',
+    'st.sync.auth.check_email',
+    'st.sync.consent.legacy',
+  ];
+  const providerCopyKeys = new Set(compassLocaleKeys.filter((key) => key !== 'st.display.cost_allowance_scope' && key !== 'st.sync.lede_html'));
+  const localizedCloudAlias = /\bCloud\b|ক্লাউড|মেঘ|क्लाउड|nuvem|đám mây|ابر|ענן|السحابي|en la nube|クラウド|w chmurze|do chmury|Bulut|云/iu;
+
   for (const browser of ['chrome', 'firefox']) {
     const extensionFacingFiles = [
       `src/${browser}/src/providers/manager.js`,
@@ -41903,10 +41923,14 @@ test('WebBrain Compass branding stays distinct from the webbrain.cloud service',
     for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const locale = fs.readFileSync(path.join(localeDir, filename), 'utf8');
       assert.doesNotMatch(locale, /WebBrain Cloud/, `${browser}/${filename}: extension-facing provider copy should not use the separate service name`);
-      for (const key of ['ob.cloud.body', 'st.providers.webbrain_data_use.body']) {
+      for (const key of compassLocaleKeys) {
         const brandedLine = locale.split('\n').find((line) => line.includes(`'${key}'`) || line.includes(`"${key}"`));
         assert.ok(brandedLine, `${browser}/${filename}: missing ${key}`);
-        assert.doesNotMatch(brandedLine, /\bCloud\b/, `${browser}/${filename}: ${key} should call Compass interactions by their current name`);
+        const brandedValue = brandedLine.slice(brandedLine.indexOf(':') + 1);
+        assert.match(brandedValue, /WebBrain Compass/, `${browser}/${filename}: ${key} should keep the Compass product name unlocalized`);
+        if (providerCopyKeys.has(key)) {
+          assert.doesNotMatch(brandedValue, localizedCloudAlias, `${browser}/${filename}: ${key} should not use a legacy Cloud alias for Compass`);
+        }
       }
     }
   }
