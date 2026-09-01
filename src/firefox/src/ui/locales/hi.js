@@ -94,6 +94,8 @@ export default {
   'sp.btn.history': "चैट इतिहास",
   'sp.btn.settings': "सेटिंग्स",
   "sp.btn.clear": "नई बातचीत",
+  "sp.btn.clear_short": "नई बातचीत",
+  "sp.btn.history_short": "इतिहास",
   'sp.btn.expand': 'नई विंडो में खोलें',
   'sp.btn.send': "भेजें",
   'sp.chat.follow_response': 'जवाब का अनुसरण करें',

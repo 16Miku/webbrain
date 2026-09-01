@@ -19050,7 +19050,7 @@ test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go 
   ]) {
     const exactPost = translate('sp.recommended.tweet.text');
     for (const pageInfo of pages) {
-      const tweetActions = buildRecommendedActions(pageInfo, { max: 1, webbrainPromotionVariant: 'x' });
+      const tweetActions = buildRecommendedActions(pageInfo, { max: 4, webbrainPromotionVariant: 'x' });
       const tweet = tweetActions.find((action) => action.id === 'tweet-webbrain');
       assert.equal(tweet?.label, translate('sp.recommended.tweet.label'));
       assert.equal(tweet?.mode, 'act');
@@ -19061,7 +19061,7 @@ test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go 
       assert.equal(tweet?.runOptions?.summary, 'Publish the reviewed localized WebBrain post exactly as supplied.');
       assert.deepEqual(tweet?.runOptions?.steps, expectedTweetSteps(exactPost));
 
-      const linkedinActions = buildRecommendedActions(pageInfo, { max: 1, webbrainPromotionVariant: 'linkedin' });
+      const linkedinActions = buildRecommendedActions(pageInfo, { max: 4, webbrainPromotionVariant: 'linkedin' });
       const linkedin = linkedinActions.find((action) => action.id === 'post-webbrain-linkedin');
       assert.equal(linkedin?.label, translate('sp.recommended.linkedin.label'));
       assert.equal(linkedin?.mode, 'act');
@@ -19080,7 +19080,44 @@ test('WebBrain promotion has localized X and LinkedIn variants with ready-to-go 
         { webbrainPromotionVariant },
       );
       assert.equal(fallbackActions.some((action) => action.id === 'explain-page'), true, 'promotion should not suppress the generic page action');
+      assert.equal(
+        ['tweet-webbrain', 'post-webbrain-linkedin'].includes(fallbackActions.at(-1)?.id),
+        true,
+        'promotion should fill the final slot after the generic page action',
+      );
     }
+  }
+});
+
+test('WebBrain promotion fills only the last slot left by contextual actions', () => {
+  const threadPage = {
+    url: 'https://mail.google.com/mail/u/0/#inbox/FMfc123',
+    title: 'Gmail - Project update',
+    text: 'From Ada Subject Project update Reply',
+  };
+  for (const buildRecommendedActions of [buildRecommendedActionsCh, buildRecommendedActionsFx]) {
+    assert.deepEqual(
+      buildRecommendedActions(threadPage, { webbrainPromotionVariant: 'linkedin' }).map((action) => action.id),
+      ['draft-reply', 'summarize-thread', 'find-followups', 'post-webbrain-linkedin'],
+      'thread context should lead and the promotion fallback should remain last',
+    );
+    const saturated = buildRecommendedActions({
+      url: 'https://www.youtube.com/watch?v=abc123',
+      title: 'Launch update video',
+      media: { videoCount: 1, imageCount: 0 },
+      activeElement: {
+        tag: 'div',
+        role: 'textbox',
+        editable: true,
+        ariaLabel: 'Add a comment',
+        textPreview: 'This is a draft comment.',
+      },
+    }, { webbrainPromotionVariant: 'x' });
+    assert.equal(
+      saturated.some((action) => ['tweet-webbrain', 'post-webbrain-linkedin'].includes(action.id)),
+      false,
+      'a full set of contextual actions should not be displaced by promotion',
+    );
   }
 });
 
@@ -19340,7 +19377,7 @@ test('YouTube video recommendations start with transcript skill and keep media d
     });
     assert.deepEqual(
       focusedCommentActions.map((action) => action.id),
-      ['tweet-webbrain', 'rewrite-focused-draft', 'summarize-youtube-video', 'download-media'],
+      ['rewrite-focused-draft', 'summarize-youtube-video', 'download-media', 'loop-youtube-video'],
       'focused YouTube comments should keep the existing download shortcut ahead of the loop action',
     );
   }
@@ -19651,6 +19688,58 @@ test('suggested actions live in chat body not input area', () => {
     assert.notEqual(inputStart, -1, `${label}: input area missing`);
     assert.notEqual(actionsIdx, -1, `${label}: recommended actions missing`);
     assert.equal(actionsIdx > chatStart && actionsIdx < inputStart, true, `${label}: suggested actions should live inside the chat container, not the input area`);
+  }
+});
+
+test('sidepanel presents first-turn suggestions as an optically centered empty state', () => {
+  for (const [label, htmlRel, cssRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.html', 'src/chrome/styles/sidepanel.css'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.html', 'src/firefox/styles/sidepanel.css'],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, cssRel), 'utf8');
+    const chat = html.match(/<div id="chat-container">[\s\S]*?<div id="chat-navigation"/)?.[0] || '';
+
+    assert.match(
+      chat,
+      /<div id="messages"><\/div>[\s\S]*?<section id="chat-empty-state" class="chat-empty-state"[\s\S]*?<h2 id="chat-empty-state-heading" class="chat-empty-state-heading" data-i18n="sp\.help_message">How can I help with this page\?<\/h2>[\s\S]*?id="recommended-actions"/,
+      `${label}: empty conversations should use a flat localized heading followed by suggested actions outside the transcript`,
+    );
+    assert.doesNotMatch(chat, /class="message system"[\s\S]*?sp\.greeting\.html/, `${label}: first-turn guidance should not look like a message bubble`);
+    assert.match(css, /\.chat-empty-state \{[\s\S]*?min-height: 100%;[\s\S]*?justify-content: center;[\s\S]*?padding: 24px 0 clamp\(72px, 14vh, 112px\);/, `${label}: empty-state content should sit at an upper optical center`);
+    assert.match(css, /#messages:not\(:empty\) \+ \.chat-empty-state \{[\s\S]*?display: none;/, `${label}: the first transcript message should remove the entire empty state`);
+    const headingRule = css.match(/\.chat-empty-state-heading \{([\s\S]*?)\n\}/)?.[1] || '';
+    assert.match(headingRule, /font-size: 18px;/, `${label}: empty-state heading should have clear hierarchy`);
+    assert.equal(/background\s*:|border\s*:/.test(headingRule), false, `${label}: empty-state heading should stay flat rather than imitate an input or bubble`);
+    assert.match(css, /\.recommended-actions-list \{[\s\S]*?flex-direction: column;[\s\S]*?width: 100%;/, `${label}: suggested actions should read as a compact vertical list`);
+    assert.match(css, /\.recommended-action-chip \{[\s\S]*?width: 100%;[\s\S]*?min-height: 36px;[\s\S]*?border-radius: 10px;/, `${label}: each suggestion should be a clearly clickable row`);
+  }
+});
+
+test('sidepanel removes legacy greeting bubbles while restoring saved chats', async () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const i18n = await import(pathToFileURL(path.join(ROOT, prefix, 'src/ui/i18n.js')).href);
+    const legacyHelpMessages = i18n.translationsForKey('sp.help_message');
+    assert.equal(legacyHelpMessages.includes('How can I help with this page?'), true, `${label}: legacy English help text missing`);
+    assert.equal(legacyHelpMessages.includes('Comment puis-je vous aider avec cette page ?'), true, `${label}: legacy localized help text missing`);
+
+    assert.match(panel, /import \{[^}]*translationsForKey[^}]*\} from '\.\/i18n\.js';/, `${label}: migration should recognize help text from every shipped locale`);
+    const migrationStart = panel.indexOf('function migrateLegacyEmptyStateFromRestoredChat(tabId, root = messagesEl) {');
+    const migrationEnd = panel.indexOf('\n}\n\nfunction roleFromMessageElement', migrationStart);
+    assert.notEqual(migrationStart, -1, `${label}: legacy empty-state migration helper missing`);
+    assert.notEqual(migrationEnd, -1, `${label}: legacy empty-state migration helper boundary missing`);
+    const migration = panel.slice(migrationStart, migrationEnd);
+    assert.match(migration, /root\?\.firstElementChild[\s\S]*?classList\.contains\('system'\)/, `${label}: migration should only inspect the leading system bubble`);
+    assert.match(migration, /data-i18n-html="sp\.greeting\.html"/, `${label}: migration should remove the old static greeting`);
+    assert.match(migration, /LEGACY_EMPTY_STATE_MESSAGES\.has\(normalizeHistoryText\(textEl\.textContent\)\)/, `${label}: migration should remove old localized help bubbles`);
+    assert.match(migration, /firstMessage\.remove\(\)[\s\S]*?persistTabChat\(numericTabId, migratedHtml, \{ allowHidden: true \}\)/, `${label}: migrated chat HTML should be persisted so the greeting does not return`);
+
+    const migrationCalls = [...panel.matchAll(/migrateLegacyEmptyStateFromRestoredChat\(/g)].length - 1;
+    assert.equal(migrationCalls, 3, `${label}: startup, tab-switch, and visibility restores should all migrate legacy greetings`);
   }
 });
 
@@ -35651,6 +35740,8 @@ test('all locales translate the new-conversation and selected-text scope UI', as
       const locale = (await import('file://' + path.join(ROOT, localeDir, filename).replace(/\\/g, '/'))).default;
       for (const key of [
         'sp.btn.clear',
+        'sp.btn.clear_short',
+        'sp.btn.history_short',
         'sp.clear.title',
         'sp.clear.description',
         'sp.clear.action_warning',
@@ -35666,6 +35757,8 @@ test('all locales translate the new-conversation and selected-text scope UI', as
         assert.ok(locale[key].trim().length > 0, `${label}/${filename}: empty ${key}`);
       }
       if (filename === 'en.js') {
+        assert.equal(locale['sp.btn.clear_short'], 'New chat', `${label}/${filename}: compact new-conversation label should stay concise`);
+        assert.equal(locale['sp.btn.history_short'], 'History', `${label}/${filename}: compact history label should stay concise`);
         assert.equal(
           locale['sp.selection_scope.restore'],
           'Use broader conversation',
@@ -36673,6 +36766,45 @@ test('sidepanel language picker uses the provider-style accessible listbox with 
   }
 });
 
+test('sidepanel separates mode navigation from compact composer conversation actions', () => {
+  for (const [label, prefix] of [
+    ['chrome', 'src/chrome'],
+    ['firefox', 'src/firefox'],
+  ]) {
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const header = html.match(/<header id="header">[\s\S]*?<\/header>/)?.[0] || '';
+    const inputStart = html.indexOf('<div id="input-area">');
+    const inputEnd = html.indexOf('<div id="queued-messages"', inputStart);
+    const controls = html.slice(inputStart, inputEnd);
+
+    for (const id of ['btn-expand', 'btn-ui-scale', 'btn-settings']) {
+      assert.match(header, new RegExp(`id="${id}"`), `${label}: ${id} should remain in the primary header`);
+    }
+    assert.match(header, /id="btn-settings"[\s\S]*?id="btn-ui-scale"[\s\S]*?id="btn-expand"/, `${label}: primary actions should run Settings, text size, then pop-out`);
+    assert.doesNotMatch(header, /id="btn-(?:clear|history)"/, `${label}: conversation actions should leave the primary header`);
+    assert.doesNotMatch(html, /class="conversation-actions"/, `${label}: conversation actions should no longer float over chat content`);
+    assert.match(controls, /class="composer-control-row"[\s\S]*?id="mode-toggle"[\s\S]*?id="btn-mode-ask"[\s\S]*?id="btn-mode-act"[\s\S]*?id="btn-mode-dev"[\s\S]*?class="conversation-action-group"[\s\S]*?id="btn-history"[\s\S]*?id="btn-clear"/, `${label}: segmented modes should precede distinct History and New chat buttons, with the creation action at the row edge`);
+    assert.match(controls, /id="btn-clear"[\s\S]*?data-i18n-title="sp\.btn\.clear_short"[\s\S]*?data-i18n-aria-label="sp\.btn\.clear_short"[\s\S]*?data-icon="plus"[\s\S]*?sp\.btn\.clear_short/, `${label}: New chat should have a plus icon, short tooltip, accessible name, and localized wide label`);
+    assert.match(controls, /id="btn-history"[\s\S]*?data-i18n-title="sp\.btn\.history_short"[\s\S]*?data-i18n-aria-label="sp\.btn\.history_short"[\s\S]*?data-icon="history"[\s\S]*?sp\.btn\.history_short/, `${label}: History should have a native-theme icon, short tooltip, accessible name, and localized wide label`);
+    assert.match(css, /\.composer-control-row \{[\s\S]*?display: flex;[\s\S]*?gap: 6px;[\s\S]*?margin-bottom: 8px;/, `${label}: modes and conversation actions should share one compact row with visible group separation`);
+    assert.match(css, /#mode-toggle \{[\s\S]*?flex: 1 1 auto;[\s\S]*?min-width: 0;[\s\S]*?background: var\(--bg-input\);[\s\S]*?border: 1px solid var\(--border\);/, `${label}: Ask, Act, and Dev should remain one segmented control`);
+    assert.match(css, /\.conversation-action-group \{[\s\S]*?gap: 4px;[\s\S]*?flex: 0 0 auto;/, `${label}: History and New chat should remain separate utility buttons`);
+    assert.match(css, /\.conversation-action \{[\s\S]*?height: 30px;[\s\S]*?border: 1px solid var\(--border\);[\s\S]*?background: var\(--bg-input\);/, `${label}: utility actions should use standalone button chrome rather than segmented navigation styling`);
+    assert.match(css, /@media \(max-width: 430px\) \{[\s\S]*?\.conversation-action \{[\s\S]*?width: 30px;[\s\S]*?\.conversation-action-label \{[\s\S]*?display: none;/, `${label}: narrow sidebars should reduce New chat and History to tooltip-backed icon buttons`);
+    assert.match(css, /html\[data-ui-scale="150"\] \.conversation-action,[\s\S]*?html\[data-ui-scale="175"\] \.conversation-action[\s\S]*?width: 30px;[\s\S]*?html\[data-ui-scale="175"\] \.conversation-action-label[\s\S]*?display: none;/, `${label}: high supported UI scales should keep localized utility labels from clipping the composer row`);
+    assert.doesNotMatch(css, /@media \(max-width: 380px\) \{[\s\S]*?\.header-right \{ gap: 0; \}/, `${label}: narrow panels should preserve the normal spacing between the three primary icons`);
+    assert.doesNotMatch(css, /@media \(max-width: 380px\) \{[\s\S]*?#header \.header-right button[^\n]*padding-inline: 2px;/, `${label}: narrow panels should preserve the normal primary-icon padding`);
+
+    if (label === 'chrome') {
+      assert.match(html, /id="inspection-banner"[\s\S]*?id="recording-banner"[\s\S]*?class="recording-label"[\s\S]*?id="recording-timer"[\s\S]*?id="btn-recording-stop"[\s\S]*?id="scheduled-jobs"/, 'chrome: recording should return to its independent in-flow status bar');
+      assert.match(css, /#recording-banner \{[\s\S]*?padding: 8px 12px;[\s\S]*?border-bottom: 1px solid rgba\(255, 65, 54, 0\.3\);/, 'chrome: recording should keep its established full-width red status treatment');
+    } else {
+      assert.doesNotMatch(html, /id="recording-banner"/, 'firefox: Chrome-only recording controls should stay absent');
+    }
+  }
+});
+
 test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialog', () => {
   for (const [label, prefix] of [
     ['chrome', 'src/chrome'],
@@ -36686,12 +36818,9 @@ test('sidepanel New conversation uses a Vivaldi-safe in-panel confirmation dialo
     const confirmEnd = html.indexOf('\n\n  <div id="app">', confirmStart);
     const confirmation = html.slice(confirmStart, confirmEnd);
 
-    assert.match(clearButton, /data-i18n-title="sp\.btn\.clear"/, `${label}: New conversation tooltip should remain localized`);
-    assert.match(clearButton, /data-i18n-aria-label="sp\.btn\.clear"/, `${label}: New conversation icon button should expose an accessible name`);
-    assert.match(clearButton, /data-icon="message-square-plus"/, `${label}: New conversation should use the message-plus icon`);
-    assert.match(clearButton, /d="M20 15a4 4 0 0 1-4 4H8l-5 3V7/, `${label}: New conversation icon should include the chat bubble`);
-    assert.match(clearButton, /d="M11\.5 8v6"[\s\S]*?d="M8\.5 11h6"/, `${label}: New conversation icon should include the plus`);
-    assert.doesNotMatch(clearButton, /points="23 4 23 10 17 10"|M20\.49 15a9/, `${label}: legacy refresh icon should be removed`);
+    assert.match(clearButton, /class="conversation-action"/, `${label}: New conversation should use the secondary action treatment`);
+    assert.match(clearButton, /data-i18n-title="sp\.btn\.clear_short"/, `${label}: New chat tooltip should remain concise and localized`);
+    assert.match(clearButton, /data-icon="plus"[\s\S]*?<span class="conversation-action-label" data-i18n="sp\.btn\.clear_short">/, `${label}: New conversation should expose a plus icon and compact localized wide label`);
 
     assert.ok(confirmStart >= 0 && confirmEnd > confirmStart, `${label}: custom New conversation confirmation should exist outside the inert app`);
     assert.match(confirmation, /role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby="new-conversation-confirm-title"[\s\S]*?aria-describedby="new-conversation-confirm-description"/, `${label}: custom confirmation should expose labelled and described modal semantics`);
@@ -36819,8 +36948,8 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /const modeForSend = retryOptions\?\.mode \|\| modeOverride \|\| modeForMessageText\(text\);\s*if \(rejectSelectionScopedMode\(modeForSend, tabId, sourceGrounding\)\) return false;/, `${label}: chat start should enforce the selected-scope mode boundary centrally`);
     assert.match(panel, /async function continueAgent\(options = \{\}\) \{[\s\S]*?const modeForSend =[\s\S]*?if \(rejectSelectionScopedMode\(modeForSend, tabId\)\) return false;[\s\S]*?sendRunWithReconnect\('continue_start'/, `${label}: Continue should enforce the selected-scope mode boundary centrally`);
     assert.match(panel, /async function startSavedWorkflowRun\(workflow, parameters, tabId = currentTabId\) \{[\s\S]*?if \(!\(await ensureActMode\(\)\)\) return false;[\s\S]*?return sendMessage\(/, `${label}: saved workflows should stop when selected-text scope rejects Act mode`);
-    assert.match(panel, /if \(\(command\.value === '\/screenshot' \|\| command\.value === '\/record' \|\| command\.value === '\/print'\)[\s\S]*?isSelectionGroundedForTab\(tabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page and screen slash commands should stop before dispatch in selected-text conversations`);
-    assert.match(panel, /if \(!retryOptions\) \{\s*if \(sourceGrounding && \/\^\\s\*\\\/\(\?:screenshot\|record\|print\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject standalone page and screen commands before slash dispatch`);
+    assert.match(panel, /command\.value === '\/screenshot'[\s\S]*?command\.value === '\/record' && action !== 'stop'[\s\S]*?command\.value === '\/print'[\s\S]*?isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page and screen slash commands should stop before dispatch while /record --stop remains available`);
+    assert.match(panel, /if \(!retryOptions\) \{[\s\S]*?sourceGrounding[\s\S]*?!\/\^\\s\*\\\/record\\s\+--stop[\s\S]*?\/\^\\s\*\\\/\(\?:screenshot\|record\|print\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject page commands without blocking /record --stop`);
     assert.match(panel, /runCaptureDirective = parseTrailingRunCaptureDirective\(text\);[\s\S]*?if \(runCaptureDirective[\s\S]*?sourceGrounding \|\| isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?text = runCaptureDirective\.prompt;/, `${label}: trailing page-capture directives should stop before prompt dispatch in selected-text conversations`);
     assert.match(panel, /function reconcileFailedSelectionGroundedStart\(tabId, \{[\s\S]*?sourceGrounding,[\s\S]*?selectionGroundedBeforeSend,[\s\S]*?accepted,[\s\S]*?if \(accepted \|\| \(!sourceGrounding && !selectionGroundedBeforeSend\)\) return;[\s\S]*?restoreActiveRunState\(tabId\);/, `${label}: failed explicit and inherited selected-text starts should reconcile while preserving local scope until the authoritative probe succeeds`);
     assert.doesNotMatch(panel.slice(
@@ -37052,7 +37181,7 @@ test('new locale dictionaries contain translated copy and preserve functional to
     bn: /[\u0980-\u09ff]/,
     fa: /[\u0600-\u06ff]/,
   };
-  const slashCommand = /(?<![A-Za-z0-9])\/(?:help|schedule|progress|scratchpad|memory|workflow|allow-api|dangerously-skip-permissions|compact|verbose|reset|screenshot|record|export|import|profile|vision|ask|act|dev|plan)(?:\s+--(?:help|list|append|clear|add|forget|save|run|delete|full-page|full-screen|hide-recording-indicator|transcribe|traces|config|file))?/g;
+  const slashCommand = /(?<![A-Za-z0-9])\/(?:help|schedule|progress|scratchpad|memory|workflow|allow-api|dangerously-skip-permissions|compact|verbose|reset|screenshot|record|export|import|profile|vision|ask|act|dev|plan)(?:\s+--(?:help|list|append|clear|add|forget|save|run|delete|full-page|full-screen|hide-recording-indicator|transcribe|stop|traces|config|file))?/g;
   const extract = (value, pattern) => [...String(value).matchAll(pattern)].map((match) => match[0]).sort();
   // A standalone `&amp;` is the word "and", which locales render with their own
   // conjunction. Every other entity still has to survive translation intact.
@@ -37678,7 +37807,8 @@ test('chrome /record --full-screen shows the recording banner unless explicitly 
   const locale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
 
   const slashList = panel.slice(panel.indexOf('const SLASH_COMMANDS = ['), panel.indexOf('function slashCommandIsDiscoverable'));
-  assert.match(slashList, /usage: '\/record \[--full-screen\] \[--hide-recording-indicator\] \[--transcribe\]'/, 'chrome: slash metadata should advertise /record flags');
+  assert.match(slashList, /usage: '\/record \[--stop \| --full-screen\] \[--hide-recording-indicator\] \[--transcribe\]'/, 'chrome: slash metadata should advertise /record flags');
+  assert.match(slashList, /value: '--stop'[\s\S]*?action: 'stop'[\s\S]*?outOfBand: true/, 'chrome: --stop should remain available while another run is busy');
   assert.match(slashList, /value: '--full-screen'[\s\S]*?action: 'full-screen'/, 'chrome: slash metadata should advertise --full-screen');
   assert.match(slashList, /value: '--hide-recording-indicator'[\s\S]*?requires: '--full-screen'/, 'chrome: hidden indicator should require full-screen capture');
   assert.match(locale, /sp\.slash\.record_full_screen/, 'chrome: missing --full-screen description');
@@ -37692,8 +37822,10 @@ test('chrome /record --full-screen shows the recording banner unless explicitly 
   assert.doesNotMatch(manifest, /"desktopCapture"/, 'chrome: full-screen recording should use getDisplayMedia without desktopCapture permission');
 
   const fullScreenIdx = panel.indexOf("if (command.value === '/record' && action === 'full-screen')");
+  const stopIdx = panel.indexOf("if (command.value === '/record' && action === 'stop')");
   const recordIdx = panel.indexOf("if (command.value === '/record' && action === 'tab')");
-  assert.ok(fullScreenIdx >= 0 && recordIdx >= 0 && fullScreenIdx < recordIdx, 'chrome: full-screen route must run before tab recording');
+  assert.ok(stopIdx >= 0 && fullScreenIdx >= 0 && recordIdx >= 0 && stopIdx < fullScreenIdx && fullScreenIdx < recordIdx, 'chrome: stop and full-screen routes must run before tab recording');
+  const stopBody = panel.slice(stopIdx, fullScreenIdx);
   const fullScreenBody = panel.slice(fullScreenIdx, recordIdx);
   const helperStart = panel.indexOf('async function startFullScreenRecording');
   assert.notEqual(helperStart, -1, 'chrome: startFullScreenRecording helper should exist');
@@ -37701,12 +37833,15 @@ test('chrome /record --full-screen shows the recording banner unless explicitly 
   assert.notEqual(helperEnd, -1, 'chrome: sendMessage should follow the full-screen recording helper');
   const helperBody = panel.slice(helperStart, helperEnd);
   assert.match(fullScreenBody, /startFullScreenRecording\(tabId/, 'chrome: parser should route /record --full-screen through helper');
+  assert.match(stopBody, /stopRecording\(\{ showAlert: false \}\)[\s\S]*?sp\.record\.error/, 'chrome: /record --stop should reuse the visible Stop path and report errors in chat');
   assert.match(helperBody, /prepare_recording_host/, 'chrome: full-screen route should prepare offscreen before recording');
   assert.match(fullScreenBody, /showBanner:\s*!optionValues\.has\('--hide-recording-indicator'\)/, 'chrome: full-screen route should hide the banner only when explicitly requested');
   assert.match(helperBody, /start_display_recording[\s\S]*?showBanner:\s*recordOptions\.showBanner !== false/, 'chrome: full-screen route should show the recording banner by default');
   assert.match(helperBody, /recordOptions\.showBanner === false\s*\?\s*'sp\.record\.full_screen_started_hidden_html'\s*:\s*'sp\.record\.full_screen_started_html'/, 'chrome: the start message should match whether the banner is actually shown');
   assert.doesNotMatch(helperBody, /streamId/, 'chrome: sidepanel must not ferry a desktopCapture stream id to the recorder');
   assert.match(panel, /function shouldShowRecordingBanner\(state\)[\s\S]*?state\?\.showBanner !== false/, 'chrome: banner visibility should be state-driven');
+  assert.match(panel, /async function stopRecording\(options = \{\}\)[\s\S]*?sendToBackground\('stop_tab_recording'\)[\s\S]*?return res;/, 'chrome: button and slash Stop should share one stopping helper');
+  assert.match(panel, /const banner = document\.getElementById\('recording-banner'\);[\s\S]*?banner\.parentNode\.insertBefore\(el, banner\.nextSibling\);/, 'chrome: post-recording status should stay beside the independent recording bar');
   assert.match(panel, /optionValues\.has\('--transcribe'\)/, 'chrome: recording slash commands should support transcript opt-in');
 
   assert.match(background, /prepare_recording_host[\s\S]*?start_display_recording/, 'chrome: background should keep recorder routes for slash commands');
@@ -37756,6 +37891,10 @@ test('canonical slash parser handles flags, values, casing, termination, and har
   const hiddenIndicator = chrome.parseSlashInvocation('/record --hide-recording-indicator --full-screen');
   assert.equal(hiddenIndicator.action, 'full-screen', 'hidden indicator should allow flags in either order');
   assert.equal(hiddenIndicator.optionValues.has('--hide-recording-indicator'), true, 'hidden indicator flag missing');
+  const stopRecording = chrome.parseSlashInvocation('/ReCoRd --STOP');
+  assert.equal(stopRecording.action, 'stop', '/record --stop should select the stop action case-insensitively');
+  assert.equal(stopRecording.optionValues.has('--stop'), true, '/record --stop flag missing');
+  assert.equal(chrome.slashInvocationIsOutOfBand(stopRecording), true, '/record --stop should remain available while busy');
 
   const scheduleList = chrome.parseSlashInvocation('  /SCHEDULE   --LIST  ');
   assert.equal(scheduleList.action, 'list');
@@ -37783,6 +37922,9 @@ test('canonical slash parser handles flags, values, casing, termination, and har
     '/record --unknown',
     '/record --transcribe --transcribe',
     '/record --hide-recording-indicator',
+    '/record --stop --full-screen',
+    '/record --transcribe --stop',
+    '/record --stop --hide-recording-indicator --full-screen',
     '/scratchpad --append',
     '/memory --forget',
     '/scratchpad --append --clear',
@@ -38210,7 +38352,7 @@ test('slash autocomplete progressively suggests only available unused flags', ()
 
   const initial = chrome.getContext('/record ');
   assert.equal(initial.kind, 'option');
-  assert.deepEqual(optionMatches(chrome, initial), ['--full-screen', '--hide-recording-indicator', '--transcribe', '--help']);
+  assert.deepEqual(optionMatches(chrome, initial), ['--stop', '--full-screen', '--hide-recording-indicator', '--transcribe', '--help']);
   assert.deepEqual(
     chrome.getMatches(chrome.getContext('/scratchpad ')).map(({ kind, value, label, descriptionKey }) => ({ kind, value, label, descriptionKey })),
     [
@@ -38242,6 +38384,13 @@ test('slash autocomplete progressively suggests only available unused flags', ()
 
   const afterTranscribe = chrome.getContext('/record --transcribe ');
   assert.deepEqual(optionMatches(chrome, afterTranscribe), ['--full-screen', '--hide-recording-indicator']);
+  const afterStop = chrome.getContext('/record --stop ');
+  assert.deepEqual(optionMatches(chrome, afterStop), [], 'stop should exclude every recording-start flag');
+  assert.deepEqual(
+    chrome.getMatches(afterStop).map(({ kind, value, label, descriptionKey }) => ({ kind, value, label, descriptionKey })),
+    [{ kind: 'base-action', value: '/record', label: '↵ Enter', descriptionKey: 'sp.record.stop' }],
+    'the completed stop flag should keep an executable Enter action',
+  );
   const beforeRequiredFullScreen = chrome.getContext('/record --hide-recording-indicator ');
   assert.deepEqual(optionMatches(chrome, beforeRequiredFullScreen), ['--full-screen', '--transcribe']);
   assert.equal(
@@ -40197,7 +40346,10 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
     const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
     const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
 
-    assert.match(sidepanelHtml, /id="btn-ui-scale"[\s\S]*?aria-controls="ui-scale-popover"/, `${label}: sidepanel should expose a scale menu button`);
+    const scaleButton = sidepanelHtml.match(/<button[^>]*id="btn-ui-scale"[\s\S]*?<\/button>/)?.[0] || '';
+    assert.match(scaleButton, /aria-controls="ui-scale-popover"/, `${label}: sidepanel should expose a scale menu button`);
+    assert.match(scaleButton, /data-icon="a-large-small"[\s\S]*?stroke-width="2"[\s\S]*?stroke-linecap="round"[\s\S]*?stroke-linejoin="round"/, `${label}: sidepanel scale control should use the native Lucide-style size icon`);
+    assert.doesNotMatch(scaleButton, /ui-scale-trigger-label|>Aa</, `${label}: sidepanel scale control should not use a text glyph as an icon`);
     assert.match(sidepanelHtml, /id="ui-scale-popover"[\s\S]*?data-ui-scale-action="decrease"[\s\S]*?id="ui-scale-value"[\s\S]*?data-ui-scale-action="increase"[\s\S]*?data-ui-scale-action="reset"/, `${label}: sidepanel scale menu should expose decrease, increase, value, and reset controls`);
     assert.match(sidepanelCss, /\.ui-scale-popover\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?z-index:/, `${label}: sidepanel scale menu should float above chat content`);
     assert.match(sidepanelJs, /uiScaleShortcutAction\(e\)[\s\S]*?e\.preventDefault\(\)[\s\S]*?setSidepanelUiScale/, `${label}: focused sidepanel zoom shortcuts should suppress browser zoom and update extension scale`);
@@ -40773,7 +40925,8 @@ test('sidepanel deletes durable history when clearing conversations', () => {
     assert.notEqual(helperStart, -1, `${label}: clear helper should be async`);
     const helperBody = panel.slice(helperStart, panel.indexOf('refreshRecommendedActions();', helperStart) + 'refreshRecommendedActions();'.length);
     assert.match(helperBody, /await clearCachedTabChat\(tabId\);[\s\S]*?await resetChatHistoryStateForTab\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;/, `${label}: clear helper should durably clear tab chat before deleting history and checking visibility`);
-    assert.match(helperBody, /addMessage\('system', t\('sp\.cleared_message'\)\);[\s\S]*?lastVisibleTabChatSnapshot = \{ tabId: Number\(tabId\), html: clearedHtml \};[\s\S]*?await persistTabChat\(tabId, clearedHtml, \{ allowHidden: true \}\)/, `${label}: a cleared handoff snapshot should replace the invalidated transcript only after the durable clear`);
+    assert.match(helperBody, /messagesEl\.innerHTML = '';[\s\S]*?const clearedHtml = messagesEl\.innerHTML;[\s\S]*?lastVisibleTabChatSnapshot = \{ tabId: Number\(tabId\), html: clearedHtml \};[\s\S]*?await persistTabChat\(tabId, clearedHtml, \{ allowHidden: true \}\)/, `${label}: a cleared handoff snapshot should persist an actually empty transcript so the empty state can return`);
+    assert.doesNotMatch(helperBody, /addMessage\('system'/, `${label}: clearing should not turn empty-state guidance back into a message bubble`);
 
     const resetIdx = panel.indexOf("if (command.value === '/reset')");
     const resetSlashBody = panel.slice(resetIdx, panel.indexOf("if (command.value === '/screenshot'", resetIdx));
@@ -43841,6 +43994,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     if (label === 'chrome') {
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/screenshot --full-page')), false, `${label}: full-page capture should stay gated while busy`);
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/record --full-screen')), false, `${label}: recording should stay gated while busy`);
+      assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/record --stop')), true, `${label}: recording Stop should stay available while busy`);
     }
     assert.match(
       panel,

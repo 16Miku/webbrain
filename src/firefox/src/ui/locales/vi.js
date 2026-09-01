@@ -94,6 +94,8 @@ export default {
   'sp.btn.history': "Lịch sử trò chuyện",
   'sp.btn.settings': "Cài đặt",
   "sp.btn.clear": "Cuộc trò chuyện mới",
+  "sp.btn.clear_short": "Cuộc trò chuyện mới",
+  "sp.btn.history_short": "Lịch sử",
   'sp.btn.expand': 'Mở trong cửa sổ mới',
   'sp.btn.send': "Gửi",
   'sp.chat.follow_response': 'Theo dõi câu trả lời',

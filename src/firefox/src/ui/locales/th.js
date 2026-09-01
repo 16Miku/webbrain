@@ -145,6 +145,8 @@ export default {
   'sp.btn.language': 'ภาษา',
   'sp.btn.settings': 'การตั้งค่า',
   "sp.btn.clear": "การสนทนาใหม่",
+  "sp.btn.clear_short": "การสนทนาใหม่",
+  "sp.btn.history_short": "ประวัติ",
   'sp.btn.expand': 'เปิดในหน้าต่างใหม่',
   'sp.btn.send': 'ส่ง',
   'sp.chat.follow_response': 'ติดตามคำตอบ',

@@ -145,6 +145,8 @@ export default {
   'sp.btn.language': 'Bahasa',
   'sp.btn.settings': 'Tetapan',
   "sp.btn.clear": "Perbualan baharu",
+  "sp.btn.clear_short": "Perbualan baharu",
+  "sp.btn.history_short": "Sejarah",
   'sp.btn.expand': 'Buka dalam tetingkap baharu',
   'sp.btn.send': 'Hantar',
   'sp.chat.follow_response': 'Ikuti jawapan',

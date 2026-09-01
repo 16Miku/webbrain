@@ -181,6 +181,8 @@ export default {
   'sp.btn.history': 'Sohbet geçmişi',
   'sp.btn.settings': 'Ayarlar',
   "sp.btn.clear": "Yeni konuşma",
+  "sp.btn.clear_short": "Yeni konuşma",
+  "sp.btn.history_short": "Geçmiş",
   'sp.btn.expand': 'Yeni pencerede aç',
   'sp.btn.send': 'Gönder',
   'sp.chat.follow_response': 'Yanıtı takip et',

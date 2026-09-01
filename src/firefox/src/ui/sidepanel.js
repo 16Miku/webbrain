@@ -4,7 +4,7 @@
  * Verbose mode: always-open tool calls with arguments and results.
  */
 
-import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations } from './i18n.js';
+import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
 import { codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables } from './markdown-render.js';
@@ -775,6 +775,7 @@ function slashOptionIsAvailable(option, selectedValues, selectedGroups) {
     && !selectedValues.has(option.value)
     && !selectedValues.has(SLASH_HELP_OPTION.value)
     && (option.value !== SLASH_HELP_OPTION.value || selectedValues.size === 0)
+    && !(option.conflicts || []).some((value) => selectedValues.has(value))
     && (!option.exclusiveGroup || !selectedGroups.has(option.exclusiveGroup));
 }
 
@@ -856,6 +857,9 @@ function parseSlashInvocation(value) {
     return { error: 'invalid-usage', command, commandToken };
   }
   if (selectedOptions.some((option) => option.requires && !selectedValues.has(option.requires))) {
+    return { error: 'invalid-usage', command, commandToken };
+  }
+  if (selectedOptions.some((option) => (option.conflicts || []).some((value) => selectedValues.has(value)))) {
     return { error: 'invalid-usage', command, commandToken };
   }
 
@@ -2038,6 +2042,34 @@ function normalizeHistoryText(value) {
     .trim();
 }
 
+const LEGACY_EMPTY_STATE_MESSAGES = new Set(
+  translationsForKey('sp.help_message').map(normalizeHistoryText),
+);
+
+function migrateLegacyEmptyStateFromRestoredChat(tabId, root = messagesEl) {
+  const firstMessage = root?.firstElementChild;
+  if (!firstMessage?.classList?.contains('message')
+      || !firstMessage.classList.contains('system')) return false;
+
+  const staticGreeting = firstMessage.querySelector('[data-i18n-html="sp.greeting.html"]');
+  const textEl = firstMessage.querySelector(':scope > .message-content > .message-text');
+  const dynamicHelpMessage = textEl
+    && firstMessage.querySelectorAll(':scope > .message-content > *').length === 1
+    && LEGACY_EMPTY_STATE_MESSAGES.has(normalizeHistoryText(textEl.textContent));
+  if (!staticGreeting && !dynamicHelpMessage) return false;
+
+  firstMessage.remove();
+  const migratedHtml = root.innerHTML;
+  const numericTabId = Number(tabId);
+  if (Number.isFinite(numericTabId)) {
+    tabChats.set(numericTabId, migratedHtml);
+    void persistTabChat(numericTabId, migratedHtml, { allowHidden: true }).catch((error) => {
+      console.warn('[WebBrain] failed to persist restored empty-state migration:', error);
+    });
+  }
+  return true;
+}
+
 function roleFromMessageElement(el) {
   if (el.classList.contains('user')) return 'user';
   if (el.classList.contains('assistant')) return 'assistant';
@@ -2709,7 +2741,6 @@ async function renderClearedConversationForTab(tabId, { allowCacheClearFailure =
   inputEl.value = '';
   autoResizeInput();
   syncSendButtonState();
-  addMessage('system', t('sp.cleared_message'));
   const clearedHtml = messagesEl.innerHTML;
   lastVisibleTabChatSnapshot = { tabId: Number(tabId), html: clearedHtml };
   tabChats.set(Number(tabId), clearedHtml);
@@ -4370,6 +4401,7 @@ async function init() {
         await hydrateRestoredChatHistory(restoreTabId, html);
         if (currentTabId === restoreTabId) {
           messagesEl.innerHTML = html;
+          migrateLegacyEmptyStateFromRestoredChat(restoreTabId);
           messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
           rebindRestoredMessageControls();
         }
@@ -4534,12 +4566,12 @@ async function switchToTab(newTabId) {
     renderedTabId = newTabId;
     if (html) {
       messagesEl.innerHTML = html;
+      migrateLegacyEmptyStateFromRestoredChat(newTabId);
       messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
       rebindRestoredMessageControls();
     } else {
       messagesEl.innerHTML = '';
       syncProgressDisplayMode();
-      addMessage('system', t('sp.help_message'));
     }
     restoreInputDraftForTab(newTabId);
     renderAttachmentPreviews();
@@ -4582,8 +4614,8 @@ async function refreshVisibleSidePanelState() {
   } else if (!html) {
     messagesEl.innerHTML = '';
     syncProgressDisplayMode();
-    addMessage('system', t('sp.help_message'));
   }
+  if (html) migrateLegacyEmptyStateFromRestoredChat(tabId);
   await restoreActiveRunState(tabId);
   return document.visibilityState !== 'hidden' && sameTabId(currentTabId, tabId);
 }
@@ -7763,7 +7795,9 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return '';
   }
 
-  if ((command.value === '/screenshot' || command.value === '/record' || command.value === '/print')
+  if ((command.value === '/screenshot'
+      || (command.value === '/record' && action !== 'stop')
+      || command.value === '/print')
       && isSelectionGroundedForTab(tabId)) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return '';
@@ -8308,7 +8342,9 @@ async function sendMessage(extraChatParams = {}) {
   }
   let runCaptureDirective = null;
   if (!retryOptions) {
-    if (sourceGrounding && /^\s*\/(?:screenshot|record|print)(?:\s|$)/i.test(text)) {
+    if (sourceGrounding
+        && !/^\s*\/record\s+--stop(?:\s|$)/i.test(text)
+        && /^\s*\/(?:screenshot|record|print)(?:\s|$)/i.test(text)) {
       showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
       return false;
     }

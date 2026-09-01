@@ -94,6 +94,8 @@ export default {
   'sp.btn.history': "تاریخچه چت",
   'sp.btn.settings': "تنظیمات",
   "sp.btn.clear": "مکالمه جدید",
+  "sp.btn.clear_short": "مکالمه جدید",
+  "sp.btn.history_short": "تاریخچه",
   'sp.btn.expand': 'باز کردن در پنجره جدید',
   'sp.btn.send': "ارسال کنید",
   'sp.chat.follow_response': 'دنبال کردن پاسخ',
