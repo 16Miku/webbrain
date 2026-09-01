@@ -194,6 +194,17 @@ export function isOfficialOpenAIConfig(config = {}) {
   }
 }
 
+export function isOpenCodeZenConfig(config = {}) {
+  try {
+    const url = new URL(config.baseUrl || '');
+    return url.protocol === 'https:'
+      && url.hostname.toLowerCase() === 'opencode.ai'
+      && url.pathname.replace(/\/+$/, '') === '/zen/v1';
+  } catch {
+    return false;
+  }
+}
+
 export function shouldUseOpenAIResponsesApi(config = {}) {
   if (config.apiFormat === 'responses') return true;
   if (config.apiFormat === 'chat') return false;
@@ -201,19 +212,7 @@ export function shouldUseOpenAIResponsesApi(config = {}) {
   // WebBrain's OpenCode Zen provider previously forced Chat Completions for all Zen models (404 for Responses models).
   const rawModel = String(config.model || '');
   const model = rawModel.replace(/^opencode\//i, '').trim().toLowerCase();
-  const providerName = clean(config.providerName);
-  let isOpenCodeZen = providerName === 'opencode';
-  if (!isOpenCodeZen) {
-    try {
-      const url = new URL(config.baseUrl || '');
-      if (url.hostname.toLowerCase() === 'opencode.ai'
-        && url.pathname.startsWith('/zen/v1')
-        && !url.pathname.startsWith('/zen/go')) {
-        isOpenCodeZen = true;
-      }
-    } catch {}
-  }
-  if (isOpenCodeZen) {
+  if (isOpenCodeZenConfig(config)) {
     return /^(muse-spark|gpt-5|claude|gemini|grok)(?:$|[-_.\/])/.test(model);
   }
   if (!isOfficialOpenAIConfig(config)) return false;

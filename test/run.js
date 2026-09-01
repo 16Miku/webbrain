@@ -63141,6 +63141,58 @@ test('_defaultConfigs: OpenRouter defaults to openrouter/free and migrates legac
   }
 });
 
+test('_defaultConfigs: OpenCode Zen migration preserves custom models and endpoints', () => {
+  for (const [label, PM] of [
+    ['chrome', ProviderManagerCh],
+    ['firefox', ProviderManagerFx],
+  ]) {
+    const mgr = new PM();
+    const defaults = mgr._defaultConfigs();
+    assert.equal(defaults.opencode.model, 'muse-spark-1.2-contributor-free');
+
+    const retiredDefault = mgr._migrateStoredProviderConfigs({
+      opencode: {
+        baseUrl: 'https://opencode.ai/zen/v1/',
+        model: 'opencode/ring-2.6-1t-free',
+        configured: true,
+        apiKey: 'kept',
+      },
+    }).opencode;
+    assert.equal(retiredDefault.model, defaults.opencode.model, `${label}: retired official Zen default should migrate`);
+    assert.equal(retiredDefault.apiKey, 'kept', `${label}: migration should preserve the Zen API key`);
+
+    const futureOfficialModel = {
+      baseUrl: 'https://opencode.ai/zen/v1',
+      model: 'future-model-not-in-a-static-allowlist',
+      configured: true,
+    };
+    assert.deepEqual(
+      mgr._migrateStoredProviderConfigs({ opencode: futureOfficialModel }).opencode,
+      futureOfficialModel,
+      `${label}: user-selected Zen models should not be classified by an allowlist`,
+    );
+
+    for (const customEndpoint of [
+      {
+        baseUrl: 'https://custom.example.test/v1',
+        model: 'private-org/custom-model',
+        configured: true,
+      },
+      {
+        baseUrl: 'https://custom.example.test/v1',
+        model: 'ring-2.6-1t-free',
+        configured: true,
+      },
+    ]) {
+      assert.deepEqual(
+        mgr._migrateStoredProviderConfigs({ opencode: customEndpoint }).opencode,
+        customEndpoint,
+        `${label}: repointed OpenCode configuration should remain untouched`,
+      );
+    }
+  }
+});
+
 test('_defaultConfigs: OpenAI defaults to GPT-5.6 Terra and safely migrates the prior shipped default', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
     const mgr = new PM();
@@ -63787,6 +63839,46 @@ test('official OpenAI GPT-5.6 and Responses-only GPT-5 Pro variants route to Res
     ]) {
       assert.equal(new Provider(config)._usesResponsesApi(), false, `${config.providerName}/${config.model} should keep Chat Completions`);
     }
+  }
+});
+
+test('OpenCode model prefixes and automatic Responses routing are scoped to the official Zen endpoint', () => {
+  for (const [label, Provider] of [
+    ['chrome', OpenAIProviderCh],
+    ['firefox', OpenAIProviderFx],
+  ]) {
+    const zen = new Provider({
+      providerName: 'opencode',
+      baseUrl: 'https://opencode.ai/zen/v1/',
+      model: 'opencode/muse-spark-1.2-contributor-free',
+    });
+    assert.equal(zen.model, 'muse-spark-1.2-contributor-free', `${label}: official Zen should remove its namespace`);
+    assert.equal(zen._usesResponsesApi(), true, `${label}: official Zen Responses model should use Responses`);
+    assert.equal(
+      zen._buildResponsesBody([{ role: 'user', content: 'hello' }], {}, false).model,
+      'muse-spark-1.2-contributor-free',
+      `${label}: official Zen request should send the normalized model id`,
+    );
+
+    const huggingFace = new Provider({
+      providerName: 'huggingface',
+      baseUrl: 'https://router.huggingface.co/v1',
+      model: 'opencode/llama-2-7b-instruct-dolly',
+    });
+    assert.equal(huggingFace.model, 'opencode/llama-2-7b-instruct-dolly', `${label}: unrelated namespace should be preserved`);
+    assert.equal(
+      huggingFace._buildChatCompletionsBody([{ role: 'user', content: 'hello' }], {}).model,
+      'opencode/llama-2-7b-instruct-dolly',
+      `${label}: unrelated provider request should send the model id verbatim`,
+    );
+
+    const repointedOpenCode = new Provider({
+      providerName: 'opencode',
+      baseUrl: 'https://custom.example.test/v1',
+      model: 'opencode/muse-spark-1.2-contributor-free',
+    });
+    assert.equal(repointedOpenCode.model, 'opencode/muse-spark-1.2-contributor-free', `${label}: custom endpoint namespace should be preserved`);
+    assert.equal(repointedOpenCode._usesResponsesApi(), false, `${label}: custom endpoint should not inherit Zen routing`);
   }
 });
 
