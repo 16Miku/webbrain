@@ -54,6 +54,7 @@ const OPENAI_LEGACY_DEFAULT_MODEL = 'gpt-5.5';
 const DEEPSEEK_DEFAULT_BASE_URL = 'https://api.deepseek.com';
 const DEEPSEEK_LEGACY_DEFAULT_BASE_URL = 'https://api.deepseek.com/v1';
 const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-flash';
+const OPENCODE_LEGACY_DEFAULT_MODEL = 'ring-2.6-1t-free';
 const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'openai', 'azure_openai', 'aws_bedrock', 'anthropic', 'anthropic_oauth', 'vertex_anthropic']);
 const SAFE_PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const ROUTER_PROVIDER_IDS = ['openrouter', 'cloudflare', 'nvidia', 'groq', 'huggingface', 'fireworks', 'together'];
@@ -867,6 +868,20 @@ export class ProviderManager {
       };
     }
     this._migrateUntouchedShippedDefaults(migrated);
+    // The OpenCode entry is editable, so only replace the retired shipped
+    // model while it still points at the official Zen endpoint. In particular,
+    // preserve model ids selected for custom endpoints even when configured.
+    {
+      const cur = migrated.opencode;
+      if (cur && typeof cur.model === 'string') {
+        const defaults = this._defaultConfigs().opencode;
+        const baseUrl = String(cur.baseUrl || defaults.baseUrl).replace(/\/+$/, '');
+        const model = String(cur.model).trim().toLowerCase().replace(/^opencode\//, '');
+        if (baseUrl === defaults.baseUrl && model === OPENCODE_LEGACY_DEFAULT_MODEL) {
+          migrated.opencode = { ...cur, model: defaults.model };
+        }
+      }
+    }
     if (migrated.ollama) {
       const config = migrated.ollama;
       const visionMode = OLLAMA_VISION_MODES.has(config.visionMode)
