@@ -393,6 +393,20 @@ Those rates are editable in the provider card so custom model pricing can be adj
 
 The user can configure a separate vision provider for screenshot description. The agent sub-calls this provider to get a text description of the viewport, then feeds only the description (not the raw image) to the main planning provider. This reduces token costs when the main provider is text-only:
 
+| Aspect | Separate vision model + text planner | Single multimodal planner |
+|---|---|---|
+| Processing flow | The vision model describes the screenshot, then the text planner reasons over that description and chooses tools. | One model sees the screenshot, reasons about the task, and chooses tools in the same call. |
+| Access to raw pixels | Only the vision model sees the image; the planner receives text. | The planner retains direct access to the image while deciding what to do. |
+| Visual information loss | The description is a lossy handoff and may omit small text, spatial relationships, colors, icons, or state cues. | No intermediate description is required, so the model can revisit visual details during reasoning. |
+| Planning and tool calls | The vision model is observation-only; the text planner owns all action and tool decisions. | The same model performs visual interpretation and tool planning. |
+| Specialist-model advantage | Perception and planning can use models selected independently for their strongest capability. | One model must be strong at both multimodal perception and browser-tool use. |
+| Visual grounding and coordinates | Text descriptions can weaken the relationship between an element and its exact visual position; accessibility-tree `ref_id` targets remain preferable. | Image and coordinate context stay together, although semantic `ref_id` targets are still safer than coordinate clicks. |
+| Latency | Usually requires two sequential inference calls. | Usually requires one inference call. |
+| Cost | Pays for the vision call plus the planner call, but can keep expensive image tokens away from the planner. | Pays for one multimodal call, whose image-token cost depends on the provider and image detail. |
+| Prompt-injection boundary | The observation model receives no agent tools, creating a stronger separation between screenshot content and actions. | The model that sees screenshot content can also choose tools, so multimodal prompt-injection defenses carry more responsibility. |
+| Failure characteristics | Adds a sidecar timeout or transcription-failure point; a text-only planner may have to continue without visual enrichment. | Removes the handoff failure, but the entire turn depends on one multimodal endpoint and its combined capabilities. |
+| Best fit | Strong text/tool planner paired with a specialist vision model, especially when most actions use DOM or accessibility evidence. | A model that is already strong at both vision and tool use, especially for tasks requiring fine visual detail or tight visual reasoning. |
+
 ```js
 const vision = await providerManager.getVisionProvider();
 // Returns the explicit dedicated OpenAI-compatible vision provider, or null.
