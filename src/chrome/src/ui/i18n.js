@@ -72,7 +72,27 @@ function detect() {
   return DICTS[nav] ? nav : 'en';
 }
 
+function persistDetectedLocaleIfUnset(code) {
+  if (!code || !DICTS[code]) return;
+  try {
+    const saved = localStorage.getItem(LS_KEY);
+    if (!saved || !DICTS[saved]) localStorage.setItem(LS_KEY, code);
+  } catch { /* ignore */ }
+  try {
+    const api = (typeof browser !== 'undefined' && browser?.storage) ? browser : (typeof chrome !== 'undefined' ? chrome : null);
+    const get = api?.storage?.local?.get;
+    const set = api?.storage?.local?.set;
+    if (typeof get !== 'function' || typeof set !== 'function') return;
+    Promise.resolve(get.call(api.storage.local, { wbLocale: '' })).then((stored) => {
+      const existing = String(stored?.wbLocale || '').trim();
+      if (existing) return;
+      return set.call(api.storage.local, { wbLocale: code });
+    }).catch(() => {});
+  } catch { /* ignore */ }
+}
+
 let currentLocale = detect();
+persistDetectedLocaleIfUnset(currentLocale);
 
 export function getLocale() {
   return currentLocale;

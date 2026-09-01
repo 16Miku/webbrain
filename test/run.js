@@ -12944,9 +12944,82 @@ test('active response-language policy reaches the normal system prompt without b
     agent._setResponseLanguagePolicy(tabId, null, 'tr');
     const fallbackPrompt = agent.conversations.get(tabId)?.[0]?.content || '';
     assert.match(fallbackPrompt, /Match the language of the latest genuine user request/i, `${label}: planner bypass stopped deriving framing from the user request`);
+    assert.match(fallbackPrompt, /if that request explicitly specifies a response language, use it/i, `${label}: Ask-mode fallback ignored an explicit Respond-in instruction in the user request`);
     assert.match(fallbackPrompt, /if unclear, use Turkish \(tr\)/i, `${label}: UI locale was not retained as a soft fallback`);
     assert.doesNotMatch(fallbackPrompt, /Respond in Turkish \(tr\)/i, `${label}: Ask-mode fallback became a hard UI-locale requirement`);
     assert.doesNotMatch(fallbackPrompt, /authored deliverable itself in/i, `${label}: planner fallback became a blanket Turkish deliverable constraint`);
+  }
+});
+
+test('selected-text Ask runs use the interface locale as a fallback without overriding explicit targets', async () => {
+  for (const [buildIndex, [label, AgentClass, buildSelectionPrompt, sourceGrounding]] of [
+    ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
+    ['firefox', AgentFx, buildSelectionPromptFx, SELECTION_ONLY_SOURCE_GROUNDING_FX],
+  ].entries()) {
+    const requests = [];
+    const provider = {
+      supportsTools: true,
+      supportsVision: false,
+      promptTier: 'full',
+      contextWindow: 128000,
+      model: 'test-model',
+      name: 'test-provider',
+      chat: async (messages) => {
+        requests.push(messages);
+        return { content: '中文解释。', toolCalls: null };
+      },
+    };
+    const agent = new AgentClass({
+      getActive: () => provider,
+      getVisionProvider: async () => null,
+    });
+    const tabId = 29540 + buildIndex;
+    agent.conversationModes.set(tabId, 'ask');
+    agent.conversations.set(tabId, [{ role: 'system', content: 'stale prompt' }]);
+    agent.maxSteps = 2;
+    agent._hydrate = async () => {};
+    agent._manageContext = async () => {};
+    agent._enrichUserMessageWithCurrentPage = async (_tabId, _history, content) => ({ role: 'user', content });
+    agent._maybeRunPlannerGate = async (_tabId, messages, enriched) => {
+      messages.push(enriched);
+      return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+    };
+    agent._maybeReinjectAdapter = async () => {};
+    agent._preactivateNyTimesSkillForRun = () => {};
+    agent._startTraceRun = async () => null;
+    agent._endTraceRun = () => {};
+    agent._persist = () => {};
+    agent._checkCostAllowance = async () => null;
+    agent._recordCostUsage = async () => null;
+
+    const prompt = buildSelectionPrompt('Electron 和 Tauri', 'explain', '', 'zh');
+    const final = await agent.processMessage(tabId, prompt, () => {}, 'ask', [], {
+      sourceGrounding,
+      selectionAction: 'explain',
+      locale: 'zh',
+    });
+    assert.equal(final, '中文解释。', `${label}: selected-text Chinese explain final mismatch`);
+    assert.equal(requests.length, 1, `${label}: expected one model request`);
+    const systemPrompt = String(requests[0][0]?.content || '');
+    assert.match(systemPrompt, /Match the language of the latest genuine user request/, `${label}: selected-text locale should remain a soft fallback`);
+    assert.match(systemPrompt, /if that request explicitly specifies a response language, use it/i, `${label}: selected-text policy ignored an explicit response language`);
+    assert.doesNotMatch(systemPrompt, /\[Response language\] Respond in Chinese \(zh\)/, `${label}: selected-text locale became a hard system requirement`);
+    assert.match(JSON.stringify(requests[0]), /Respond in Chinese/, `${label}: fixed selection action lost its trusted interface-language instruction`);
+
+    const translationTabId = tabId + 100;
+    agent.conversationModes.set(translationTabId, 'ask');
+    agent.conversations.set(translationTabId, [{ role: 'system', content: 'stale prompt' }]);
+    const translationPrompt = buildSelectionPrompt('Hello world', 'translate', '', 'fr');
+    await agent.processMessage(translationTabId, translationPrompt, () => {}, 'ask', [], {
+      sourceGrounding,
+      selectionAction: 'translate',
+      locale: 'en',
+    });
+    assert.equal(requests.length, 2, `${label}: expected a translation model request`);
+    const translationSystemPrompt = String(requests[1][0]?.content || '');
+    assert.match(translationSystemPrompt, /if that request explicitly specifies a response language, use it/i, `${label}: translation target cannot override the UI-locale fallback`);
+    assert.doesNotMatch(translationSystemPrompt, /\[Response language\] Respond in English \(en\)/, `${label}: English UI locale became a hard translation requirement`);
+    assert.match(JSON.stringify(requests[1]), /Translate this selected text into French/, `${label}: selected translation target was not preserved in the trusted prompt`);
   }
 });
 
@@ -35901,6 +35974,11 @@ test('locale helpers apply RTL direction for Arabic, Hebrew, and Persian', () =>
       /document\.documentElement\.dir = RTL_LOCALES\.has\(currentLocale\) \? 'rtl' : 'ltr';/,
       `${label}: locale application should use RTL for registered locales and reset others to LTR`,
     );
+    assert.match(
+      i18n,
+      /function persistDetectedLocaleIfUnset\(code\)/,
+      `${label}: detected browser locale should be persisted when wbLocale is unset`,
+    );
   }
 });
 
@@ -44000,6 +44078,7 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
       assert.ok(prompt.startsWith(instruction), `${label}: ${action} should use its fixed instruction`);
       assert.match(prompt, /Use only the text inside the selection block as source material/, `${label}: ${action} should ground the response in the selection`);
       assert.match(prompt, /Do not substitute the screenshot, page title, surrounding page content, or earlier conversation/, `${label}: ${action} should reject unrelated visual and conversational context`);
+      assert.match(prompt, /You may use your intrinsic model knowledge to explain terms, names, or concepts that appear in the selection/, `${label}: ${action} should allow explaining named concepts from model knowledge`);
       assert.match(prompt, /If the selection is insufficient, say so and ask the user to select more text/, `${label}: ${action} should surface an insufficient selection`);
       assert.ok(prompt.indexOf('Use only the text inside the selection block') < prompt.indexOf('<untrusted_page_content'), `${label}: source grounding must remain outside the page-data boundary`);
       assert.match(prompt, /<untrusted_page_content id="ctx-[^"]+">\nselected page words\n<\/untrusted_page_content>/, `${label}: ${action} should wrap only the page selection`);
@@ -44007,6 +44086,7 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
 
     const localizedPreset = buildSelectionPrompt('这里有 Electron 和 Tauri', 'explain', '', 'zh');
     assert.match(localizedPreset, /^Explain this selected text in plain language\. Respond in Chinese\./, `${label}: fixed selection actions should request the interface language`);
+    assert.match(localizedPreset, /This English template does not set the reply language/, `${label}: English explain/quiz templates should not override the interface language`);
     assert.ok(localizedPreset.indexOf('Respond in Chinese.') < localizedPreset.indexOf('<untrusted_page_content'), `${label}: trusted response-language guidance must stay outside the page-data boundary`);
 
     const custom = buildSelectionPrompt('page data', 'custom', 'What does this imply?');
@@ -44518,6 +44598,7 @@ test('selection-only model requests exclude prior conversation context', async (
       assert.match(serialized, /authoritative selected words/, `${label}: selected source missing from model request`);
       assert.doesNotMatch(serialized, /PRIOR ATTACHMENT SECRET|PRIOR SCRATCHPAD SECRET|PRIOR PAGE TITLE|Prior page answer|UFJJT1I=/, `${label}: prior context leaked into selection-only model request`);
       assert.match(String(requests[0][0]?.content), /only covers their selected text/, `${label}: scoped system prompt should explain the selection boundary`);
+      assert.match(String(requests[0][0]?.content), /You may use your intrinsic model knowledge to explain terms/, `${label}: strict scope should still allow explaining named concepts`);
       assert.match(String(requests[0][0]?.content), /broader-conversation control[\s\S]*remove the selected-text boundary[\s\S]*current page[\s\S]*browser tools[\s\S]*files[\s\S]*attachments[\s\S]*complete earlier conversation[\s\S]*page context/, `${label}: strict scope should accurately disclose the recovery control's full effect`);
       assert.equal(
         agent.conversations.get(tabId).some(message => JSON.stringify(message).includes('PRIOR ATTACHMENT SECRET')),
@@ -45520,6 +45601,7 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /function containSurfaceKeyboardEvent\(event\)[\s\S]*?event\.stopImmediatePropagation\(\);/, `${label}: selection dialog keyboard events should stop page capture listeners`);
     assert.match(content, /window\.addEventListener\('keydown', containSurfaceKeyboardEvent, true\);\s*window\.addEventListener\('keypress', containSurfaceKeyboardEvent, true\);\s*window\.addEventListener\('keyup', containSurfaceKeyboardEvent, true\);/, `${label}: keyboard containment should run during window capture`);
     assert.match(content, /function dismissSurface\(\) \{\s*clearSelectionHighlight\(\);/, `${label}: dismissing the selection surface should clear the sticky highlight`);
+    assert.match(content, /async function openPopup\(\) \{\s*if \(!snapshot \|\| submitting\) return;\s*if \(!localization\) await refreshLocalization\(interfaceLanguage\);/, `${label}: opening the popup should wait for localized labels when they have not loaded yet`);
     assert.match(content, /message\?\.type === 'WB_HIDE_FOR_TOOL_USE'[\s\S]*?suppressed = true;[\s\S]*?message\?\.type === 'WB_SHOW_AFTER_TOOL_USE'[\s\S]*?suppressed = false;/, `${label}: screenshot capture should suppress and restore future shortcut detection`);
     assert.match(content, /submitting = true;\s*dismissSurface\(\);\s*try \{\s*const response = await api\.runtime\.sendMessage\(request\);/, `${label}: submission should dismiss before sending to prevent duplicates`);
 
@@ -45547,6 +45629,8 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(background, /\.\.\.\(normalizeSelectionSourceGrounding\(msg\.sourceGrounding\)[\s\S]*?sourceGrounding: normalizeSelectionSourceGrounding\(msg\.sourceGrounding\),/, `${label}: only allowlisted grounding should reach agent run options`);
     assert.match(background, /parentId: CONTEXT_MENU_ASK_SELECTION_ID[\s\S]*?\['humanize', 'humanize'\]/, `${label}: native submenu should include localized Humanize`);
     assert.match(background, /changes\.wbLocale[\s\S]*?selectionShortcutLocale = normalizeSelectionShortcutLocale\(changes\.wbLocale\.newValue\);[\s\S]*?createContextMenus\(\)\.catch/, `${label}: changing the interface locale should rebuild native context menus`);
+    assert.match(background, /storage\.local\.get\(\{ wbLocale: '' \}\)/, `${label}: missing wbLocale should not default the native menus to English`);
+    assert.match(background, /function resolveStoredSelectionShortcutLocale\(value\) \{\s*return normalizeSelectionShortcutLocale\(\s*value \|\| \(typeof navigator !== 'undefined' \? navigator\.language : 'en'\),/, `${label}: missing wbLocale should follow the browser language`);
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, selectionAction, '', selectionShortcutLocale\)/, `${label}: native fixed actions should request the interface response language`);
     assert.match(background, /msg\?\.type !== 'WB_SELECTION_SHORTCUT_LOCALIZATION'[\s\S]*?getSelectionShortcutLocalization\(msg\.locale\)/, `${label}: the background should serve a validated localization bundle to the classic content script`);
     assert.match(background, /selectionAction = normalizeSelectionAction\(menuItemId\.slice\(CONTEXT_MENU_ACTION_PREFIX\.length\)\)/, `${label}: native action ids should be normalized before travelling with the prompt`);
@@ -78094,6 +78178,46 @@ test('Compact Act accepts structured failed done for a real blocker', async () =
   }
 });
 
+test('plan execution block distinguishes rejected done from plain text', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    const tabId = 29541 + index;
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Set passengers to 1 adult.' },
+    ]);
+    agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+    });
+    agent._markPlanExecutionToolCall(tabId, 'get_accessibility_tree', {
+      pageContent: '1 Adult, Economy',
+    });
+    const doneDecision = agent._planOnlyTerminalDecision(
+      tabId,
+      'Passenger count is already 1 adult.',
+      { viaDone: true, outcome: 'success' },
+    );
+    assert.equal(doneDecision?.retry, true, `${AgentClass.name}: idempotent done(success) should recover once`);
+    assert.match(doneDecision?.nudge || '', /done\(success\) call was rejected/i, `${AgentClass.name}: rejected done should name the done call`);
+    assert.match(doneDecision?.nudge || '', /outcome partial/i, `${AgentClass.name}: already-desired-state should point to done outcome partial`);
+    assert.doesNotMatch(doneDecision?.nudge || '', /plain text cannot end it/i, `${AgentClass.name}: rejected done should not claim the model used plain text`);
+
+    const plainTabId = 29551 + index;
+    agent.conversations.set(plainTabId, [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'Set passengers to 1 adult.' },
+    ]);
+    agent._startPlanExecutionGuard(plainTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+    });
+    const plainDecision = agent._planOnlyTerminalDecision(plainTabId, 'Passenger count is already 1 adult.');
+    assert.equal(plainDecision?.retry, true, `${AgentClass.name}: plain-text terminal should still recover`);
+    assert.match(plainDecision?.nudge || '', /plain text cannot end it/i, `${AgentClass.name}: plain-text recovery should keep the protocol instruction`);
+  }
+});
+
 test('structured blockers may describe future requirements without becoming plans', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
@@ -103779,6 +103903,53 @@ test('run UI persistence compaction preserves acknowledged versus discarded boun
     assert.ok(compact.discardedBeforeSeq > compact.ackedSeq, `${build}: genuine persisted eviction did not create a replay-gap boundary`);
     const acknowledgedOnly = { ackedSeq: 42, discardedBeforeSeq: 0, truncatedBeforeSeq: 42 };
     assert.equal(journal.runUiDiscardedBeforeSeq(acknowledgedOnly), 0, `${build}: acknowledged events became a false replay gap`);
+  }
+});
+
+test('run UI tool-result compaction keeps accessibility tree previews', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const journal = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/run-ui-journal.js`)).href);
+    const tree = journal.compactRunUiData('tool_result', {
+      name: 'get_accessibility_tree',
+      result: {
+        pageContent: 'Role: combobox, name: Adults, value: 1 Adult',
+        viewport: { width: 1280, height: 800 },
+        treeRevision: 4,
+      },
+    });
+    assert.equal(tree.name, 'get_accessibility_tree', `${build}: compacted tree result dropped the tool name`);
+    assert.match(tree.result?.pageContent || '', /1 Adult/, `${build}: compacted tree result dropped pageContent`);
+    assert.notEqual(JSON.stringify(tree.result), '{}', `${build}: compacted tree result collapsed to empty JSON`);
+
+    const longText = 'x'.repeat(800);
+    const truncated = journal.compactRunUiData('tool_result', {
+      name: 'get_accessibility_tree',
+      result: { pageContent: longText },
+    });
+    assert.equal(truncated.result.pageContent.length, 500, `${build}: long tree pageContent should be truncated`);
+    assert.equal(truncated.result.pageContentTruncated, true, `${build}: truncated tree pageContent should be marked`);
+    const persistedTree = journal.compactRunUiSnapshotForPersist({
+      events: [{ seq: 1, type: 'tool_result', data: truncated }],
+    });
+    assert.equal(persistedTree.events[0].data.result.pageContentTruncated, true, `${build}: persisted tree preview lost its truncation marker on a second compaction pass`);
+
+    const truncatedText = journal.compactRunUiData('tool_result', {
+      name: 'read_page',
+      result: { text: longText },
+    });
+    assert.equal(truncatedText.result.text.length, 500, `${build}: long text preview should be truncated`);
+    assert.equal(truncatedText.result.textTruncated, true, `${build}: truncated text preview should be marked`);
+    const persistedText = journal.compactRunUiSnapshotForPersist({
+      events: [{ seq: 1, type: 'tool_result', data: truncatedText }],
+    });
+    assert.equal(persistedText.events[0].data.result.textTruncated, true, `${build}: persisted text preview lost its truncation marker on a second compaction pass`);
+
+    const empty = journal.compactRunUiData('tool_result', {
+      name: 'get_accessibility_tree',
+      result: { viewport: { width: 1 } },
+    });
+    assert.ok(empty.result?.preview, `${build}: metadata-only results should keep a JSON preview`);
+    assert.notEqual(JSON.stringify(empty.result), '{}', `${build}: metadata-only results collapsed to empty JSON`);
   }
 });
 

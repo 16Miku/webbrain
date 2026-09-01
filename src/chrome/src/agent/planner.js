@@ -512,7 +512,7 @@ function formatBriefResponseLanguagePolicy(policy, opts) {
   const framingRule = opts.trustedContinuationFallback
     ? `The synthetic Continue control is not a user request — match the language of the most recent genuine user request; if unclear, use ${framing}.`
     : policy._framing_locale_is_fallback === true
-      ? `Match the language of the latest genuine user request; if unclear, use ${framing}.`
+      ? `Match the language of the latest genuine user request; if that request explicitly specifies a response language, use it; if unclear, use ${framing}.`
       : `Respond in ${framing}.`;
   const nonFramingDeliverables = deliverables.length === 1
     && policy.deliverable_locales[0] === policy.framing_locale
