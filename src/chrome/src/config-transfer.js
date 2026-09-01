@@ -287,7 +287,7 @@ export function mergeConfigPatchSettings(current = {}, patch = {}) {
   const patchProviders = isPlainObject(merged.providers) ? merged.providers : {};
   // Cloud provisioning owns this provider's credentials, endpoint and device
   // identity. A portable export may contain a stale copy, so never let it
-  // replace the runtime's current WebBrain Cloud configuration.
+  // replace the runtime's current WebBrain Compass configuration.
   delete patchProviders.webbrain_cloud;
   merged.providers = { ...currentProviders, ...patchProviders };
   return merged;

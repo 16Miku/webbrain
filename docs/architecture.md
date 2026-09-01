@@ -245,7 +245,7 @@ Official OpenAI GPT-5.6 and streaming-capable Responses-only GPT-5 Pro variants
 use Responses streaming. Other supported official OpenAI models use Chat
 Completions streaming. Anthropic uses its native Messages event parser, Azure
 OpenAI uses its deployment-based parser, and Gemini, DeepSeek, xAI, Mistral,
-Nvidia NIM, Groq, Together AI, Fireworks, z.ai, OpenRouter, WebBrain Cloud,
+Nvidia NIM, Groq, Together AI, Fireworks, z.ai, OpenRouter, WebBrain Compass,
 Ollama, LM Studio, Jan, vLLM, SGLang, LocalAI, and Unsloth Studio use the OpenAI-compatible
 Chat Completions parser. z.ai streaming tool calls add its documented
 `tool_stream` request flag. llama.cpp uses its dedicated OpenAI-compatible
@@ -586,10 +586,10 @@ copied nor fingerprinted in request events. Policy revisions are bumped when
 controlled prompt templates or tool-exposure rules change; private request
 content does not affect them.
 
-WebBrain Cloud runs also have a separate consent-gated terminal-runtime path.
+WebBrain Compass runs also have a separate consent-gated terminal-runtime path.
 After an executed tool result is made durable in `chrome.storage.local`, a
-bounded `terminal_runtime` envelope is sent to the Cloud improvement endpoint.
-Transient failures remain in the outbox for the next Cloud run; acknowledged or
+bounded `terminal_runtime` envelope is sent to the Compass improvement endpoint.
+Transient failures remain in the outbox for the next Compass run; acknowledged or
 non-retryable records are removed. This path does not depend on optional local
 IndexedDB tracing, is disabled for local/bring-your-own providers, and never
 blocks the visible answer on the network request. Chrome and Firefox use the

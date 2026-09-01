@@ -194,7 +194,7 @@ const CLARIFICATION_ANSWER_LIMIT = 8;
 const COST_ALLOWANCE_SESSION_KEY = 'costAllowanceSessionUsd';
 const COST_ALLOWANCE_TOTAL_KEY = 'costAllowanceTotalUsd';
 // Do not inherit the legacy cloudCostSpentUsd bucket: it also contains
-// historical WebBrain Cloud estimates, which are exempt from user spend caps.
+// historical WebBrain Compass estimates, which are exempt from user spend caps.
 const CLOUD_COST_SPENT_KEY = 'meteredProviderCostSpentUsd';
 const COST_EPSILON = 1e-9;
 const TOKENS_PER_MILLION = 1_000_000;
@@ -2367,7 +2367,7 @@ export class Agent extends LoopDetector {
 
   _isCostMeteredProvider(provider) {
     const config = provider?.config || {};
-    // WebBrain Cloud is billed and allowance-controlled by the managed
+    // WebBrain Compass is billed and allowance-controlled by the managed
     // service, not by the user's per-provider API account. Its upstream token
     // cost must not consume the extension's user-configured spend allowance.
     if (config.providerName === 'webbrain-cloud') return false;
@@ -2575,7 +2575,7 @@ export class Agent extends LoopDetector {
   }
 
   _isCostAllowanceError(err) {
-    // WebBrain Cloud's quota 402s are also allowance terminals, but they
+    // WebBrain Compass's quota 402s are also allowance terminals, but they
     // originate in the provider rather than _costAllowanceError(). Treat them
     // like the local cost cap so the agent does not retry it and then emit a
     // second generic error card beside the actionable Subscribe prompt.
@@ -8304,7 +8304,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requiredReadProgress,
           // Ask research can lose a useful deliverable to the same observation
           // drift as Act/Dev. Eligible interactive modes that advertise `done`
-          // get terminal recovery; managed WebBrain Cloud stays advisory.
+          // get terminal recovery; managed WebBrain Compass stays advisory.
           enforceTerminal: runOptions?.cloudRun !== true
             && !this._isWebBrainCloudProvider(provider)
             && allowedToolNames.has('done'),
@@ -11805,8 +11805,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * End local tracing and durably queue any opted-in Cloud terminal outcome.
-   * Cloud delivery remains active when optional local tracing is disabled.
+   * End local tracing and durably queue any opted-in Compass terminal outcome.
+   * Compass delivery remains active when optional local tracing is disabled.
    * Shared by the streaming and non-streaming message paths. (#9)
    */
   async _endTraceRun(tabId, runId, status, finalContent, { provider = null, messages = null, mode = '' } = {}) {
@@ -11829,7 +11829,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (item) await enqueueCloudRuntimeEvent(sessionId, item);
         }
         // The durable write above is awaited; network delivery is deliberately
-        // detached from UI completion and retried by the next Cloud run.
+        // detached from UI completion and retried by the next Compass run.
         void flushCloudRuntimeOutbox(provider);
       } catch {}
     }
@@ -29206,7 +29206,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const provider = this._activeProvider(tabId);
     // Give previously queued terminal outcomes the whole duration of this run
     // to upload; the current run is enqueued at finalization and may complete
-    // in the background or on the next Cloud run.
+    // in the background or on the next Compass run.
     void flushCloudRuntimeOutbox(provider);
 
     if (typeof runOptions?.isDetachedStartCancelled === 'function'

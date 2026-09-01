@@ -65,6 +65,7 @@ import {
 } from './connection-test-assets.js';
 
 const WEBBRAIN_CLOUD_PROVIDER_ID = 'webbrain_cloud';
+const WEBBRAIN_CLOUD_PROVIDER_LABEL = 'WebBrain Compass';
 const DUPLICATE_PROVIDER_SUFFIX = '__duplicate';
 const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
 const WEBBRAIN_CLOUD_CONTEXT_WINDOW = 1000000;
@@ -464,7 +465,7 @@ export class ProviderManager {
       webbrain_cloud: {
         type: 'openai',
         category: 'cloud',
-        label: 'WebBrain Cloud',
+        label: WEBBRAIN_CLOUD_PROVIDER_LABEL,
         providerName: 'webbrain-cloud',
         baseUrl: 'https://api.webbrain.one/v1',
         model: 'webbrain-cloud 1.0',
@@ -474,7 +475,7 @@ export class ProviderManager {
         supportsStreamUsageOptions: true,
         supportsAskStreaming: true,
         supportsVision: true,
-        // WebBrain Cloud proxies to OpenRouter, whose upstream models
+        // WebBrain Compass proxies to OpenRouter, whose upstream models
         // (minimax, stepfun, …) handle tools + images together fine. Dropping
         // tools on image turns forced the model into prompt-based tool calling,
         // which leaks raw tool-call template tokens (e.g. `]<]minimax[>[`) into
@@ -1025,8 +1026,19 @@ export class ProviderManager {
         delete migrated[id].supportsVision;
       }
     }
+    // The managed provider name is shipped UI, not a user customization. Older
+    // releases persisted the complete config, so migrate their stored label.
+    if (
+      migrated[WEBBRAIN_CLOUD_PROVIDER_ID]
+      && migrated[WEBBRAIN_CLOUD_PROVIDER_ID].label !== WEBBRAIN_CLOUD_PROVIDER_LABEL
+    ) {
+      migrated[WEBBRAIN_CLOUD_PROVIDER_ID] = {
+        ...migrated[WEBBRAIN_CLOUD_PROVIDER_ID],
+        label: WEBBRAIN_CLOUD_PROVIDER_LABEL,
+      };
+    }
     // Existing installs stored omitToolsWhenImagesPresent:true for WebBrain
-    // Cloud, which suppressed native tools on every screenshot turn and broke
+    // Compass, which suppressed native tools on every screenshot turn and broke
     // tool calling. Force it off so the saved config picks up the new default.
     if (migrated.webbrain_cloud?.omitToolsWhenImagesPresent) {
       migrated.webbrain_cloud = {

@@ -345,7 +345,7 @@ await pm.testProvider('openai');    // Test connection
 Each non-WebBrain provider config includes a persisted `configured` flag. An
 explicit configuration update sets it to `true`; this is the UI's **Active**
 state and is separate from `activeProvider`, which is the provider currently
-**Selected** for chat. WebBrain Cloud is always selectable without being marked
+**Selected** for chat. WebBrain Compass is always selectable without being marked
 configured. Connection tests report reachability but do not control the Active
 flag.
 
@@ -355,7 +355,7 @@ provider. A duplicate is stored as a normal provider entry with the stable ID
 so credentials, models, endpoint URLs, compatibility options, export/import,
 and active-provider selection continue to use the existing provider schema.
 The manager rejects duplicate-of-duplicate, second, orphaned, type-mismatched,
-and forged duplicate entries when loading storage. WebBrain Cloud and the
+and forged duplicate entries when loading storage. WebBrain Compass and the
 Chromium-only WebGPU runtime are not duplicable because they do not represent
 independent user-managed API credentials or endpoints; their cards keep the
 Duplicate affordance disabled with an explanatory tooltip.

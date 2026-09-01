@@ -1,6 +1,6 @@
 # WebBrain Chrome/Edge Extension — Architecture
 
-> Version 33.6.0 · Manifest V3 · Service Worker background
+> Version 34.0.0 · Manifest V3 · Service Worker background
 
 ## High-Level Overview
 
@@ -558,7 +558,7 @@ class BaseProvider {
 | `WebGPUProvider` | Chrome offscreen worker; no endpoint | Text-only selectable Hugging Face ONNX model |
 | `WebGPUVisionProvider` | Chrome offscreen worker; no endpoint | Always; dedicated screenshot-description sidecar only |
 
-`ProviderManager` seeds WebBrain Cloud, one Chromium in-browser WebGPU provider,
+`ProviderManager` seeds WebBrain Compass, one Chromium in-browser WebGPU provider,
 nine local endpoints, Azure OpenAI, AWS Bedrock, direct cloud providers, and router providers. The canonical current ID
 and default-model table is maintained in
 [`docs/providers-and-models.md`](../../docs/providers-and-models.md).

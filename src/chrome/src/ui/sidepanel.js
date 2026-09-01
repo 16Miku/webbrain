@@ -7175,8 +7175,8 @@ async function loadProviders() {
     providerPickerMenu?.replaceChildren();
     providerPickerLabelById.clear();
 
-    const cloudConfig = res.providers.webbrain_cloud || { label: 'WebBrain Cloud' };
-    const cloudLabel = cloudConfig.label || 'WebBrain Cloud';
+    const cloudConfig = res.providers.webbrain_cloud || { label: 'WebBrain Compass' };
+    const cloudLabel = cloudConfig.label || 'WebBrain Compass';
     const cloudGroup = document.createElement('optgroup');
     cloudGroup.label = t('sp.providers.no_setup_group');
     const cloudOption = document.createElement('option');
@@ -11048,7 +11048,7 @@ function clearTransientAssistantTextForToolCall() {
 // UI Helpers
 // ==========================================================================
 
-// WebBrain Cloud returns a 402 with one trailing billing action. Keep the
+// WebBrain Compass returns a 402 with one trailing billing action. Keep the
 // matcher narrow so ordinary subscription text is not converted into billing UI.
 const SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain Plus):\s*(https?:\/\/\S+)/i;
 const COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
