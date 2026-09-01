@@ -10247,7 +10247,7 @@ test('config transfer exports and restores Settings values including provider ke
   assert.deepEqual(
     mergedPatch.providers.webbrain_cloud,
     currentSettings.providers.webbrain_cloud,
-    'sparse import must preserve the complete platform-managed WebBrain Cloud provider',
+    'sparse import must preserve the complete platform-managed WebBrain Compass provider',
   );
   assert.equal(mergedPatch.providers.anthropic.apiKey, 'existing-secret');
   assert.equal(mergedPatch.providers.openai.apiKey, 'provider-secret');
@@ -10255,7 +10255,7 @@ test('config transfer exports and restores Settings values including provider ke
   assert.equal(
     ConfigTransferCh.mergeConfigPatchSettings({}, chromePatch.settings).providers.webbrain_cloud,
     undefined,
-    'a portable WebBrain Cloud provider must not be introduced without platform state',
+    'a portable WebBrain Compass provider must not be introduced without platform state',
   );
 });
 
@@ -11420,7 +11420,7 @@ test('import_config_patch background handler merges against live provider storag
     assert.deepEqual(
       stored.providers.webbrain_cloud,
       { type: 'openai', baseUrl: 'https://platform.example/v1', apiKey: 'platform-secret', deviceGuid: 'platform-device' },
-      `${label}: the handler's storage read must preserve the platform-managed WebBrain Cloud provider`,
+      `${label}: the handler's storage read must preserve the platform-managed WebBrain Compass provider`,
     );
     assert.equal(stored.providers.anthropic.apiKey, 'existing-secret', `${label}: existing providers must survive a sparse import`);
     assert.equal(stored.providers.openai.apiKey, 'provider-secret', `${label}: imported providers must be added`);
@@ -12659,7 +12659,7 @@ test('delivery checkpoint enforcement is wired into both agent loops', () => {
   }
 });
 
-test('active WebBrain Cloud provider keeps delivery checkpoints advisory', async () => {
+test('active WebBrain Compass provider keeps delivery checkpoints advisory', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     for (const mode of ['ask', 'act']) {
       const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -12701,15 +12701,15 @@ test('active WebBrain Cloud provider keeps delivery checkpoints advisory', async
         8,
       );
 
-      assert.equal(result.action, 'continue', `${label}/${mode}: active WebBrain Cloud was forced into terminal delivery`);
-      assert.equal(executed.length, 9, `${label}/${mode}: active WebBrain Cloud stopped after the eighth observation`);
+      assert.equal(result.action, 'continue', `${label}/${mode}: active WebBrain Compass was forced into terminal delivery`);
+      assert.equal(executed.length, 9, `${label}/${mode}: active WebBrain Compass stopped after the eighth observation`);
       const eighthResult = messages.find(message => message.tool_call_id === `${mode}_cloud_research_8`);
       assert.match(eighthResult?.content || '', /DELIVERY CHECKPOINT/, `${label}/${mode}: advisory checkpoint was removed`);
       assert.doesNotMatch(eighthResult?.content || '', /DELIVERY REQUIRED/, `${label}/${mode}: advisory checkpoint became terminal`);
       assert.equal(
         updates.some(update => /Observation limit reached/i.test(update.data?.message || '')),
         false,
-        `${label}/${mode}: active WebBrain Cloud displayed terminal observation-limit recovery`,
+        `${label}/${mode}: active WebBrain Compass displayed terminal observation-limit recovery`,
       );
     }
   }
@@ -36029,7 +36029,7 @@ test('Cloud Sync settings localize security-sensitive copy in every browser loca
     for (const key of requiredKeys.slice(0, 13)) {
       assert.ok(card.includes(`data-i18n="${key}"`) || card.includes(`data-i18n-html="${key}"`), `${browser}: Cloud Sync markup bypasses ${key}`);
     }
-    assert.doesNotMatch(card, />\s*(?:Encrypted Cloud Sync|WebBrain Cloud email|Sync password|Send sign-in link|Replace cloud copy)[^<]*</, `${browser}: Cloud Sync markup retains hard-coded English copy`);
+    assert.doesNotMatch(card, />\s*(?:Encrypted Cloud Sync|WebBrain Compass email|Sync password|Send sign-in link|Replace cloud copy)[^<]*</, `${browser}: Cloud Sync markup retains hard-coded English copy`);
     assert.match(script, /function describeProfileSyncState\(state\)[\s\S]*?t\('st\.sync\.status\./, `${browser}: runtime sync status should use i18n`);
     assert.match(script, /document\.addEventListener\('wb-locale-changed',[\s\S]*?refreshProfileSyncState\(\);[\s\S]*?\}\);/, `${browser}: language changes should redraw the dynamic sync status`);
     assert.match(script, /window\.confirm\(t\('st\.sync\.confirm\.disable'\)\)/, `${browser}: disable confirmation should use i18n`);
@@ -37476,7 +37476,7 @@ test('sidepanel onboarding makes Cloud improvement use an explicit persisted cho
     assert.match(panel, /await sendToBackground\('set_help_improve_preference', \{ enabled: requestedValue \}\);\s*persistedHelpImprove = requestedValue;\s*if \(cloudReady\) showCloudReady\(\);/, `${label}: a successful privacy retry should restore Cloud status instead of leaving the error visible`);
     assert.match(background, new RegExp(`case 'set_help_improve_preference':[\\s\\S]*?typeof msg\\.enabled !== 'boolean'[\\s\\S]*?await ${runtime}\\.storage\\.local\\.get\\('helpImproveWebBrain'\\)[\\s\\S]*?await ${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: msg\\.enabled \\}\\);[\\s\\S]*?await providerManager\\.load\\(\\);[\\s\\S]*?await ${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: previousEnabled \\}\\)\\.catch\\(\\(\\) => \\{\\}\\)[\\s\\S]*?return \\{ ok: true, enabled: msg\\.enabled \\};`), `${label}: a failed provider reload should roll back the stored privacy preference before the write is treated as failed`);
     assert.match(panel, /catch \(error\) \{[\s\S]*?helpImproveCheckbox\.checked = persistedHelpImprove[\s\S]*?return false;/, `${label}: failed privacy persistence should restore the last saved choice`);
-    assert.match(panel, /function showCloudReady\(\) \{[\s\S]*?setHelpImproveVisible\(true\)/, `${label}: the choice should appear when WebBrain Cloud is active`);
+    assert.match(panel, /function showCloudReady\(\) \{[\s\S]*?setHelpImproveVisible\(true\)/, `${label}: the choice should appear when WebBrain Compass is active`);
     assert.match(panel, /function showLocalChoices\(choices\) \{[\s\S]*?setHelpImproveVisible\(false\)/, `${label}: the Cloud-only choice should stay out of local-model setup`);
     assert.match(panel, /function showProviderFallback\([^)]*\) \{[\s\S]*?providerUnknown = statusKey === 'ob\.tokens\.detect_failed'[\s\S]*?setHelpImproveVisible\(providerUnknown\)[\s\S]*?skipBtn\.disabled = !providerUnknown/, `${label}: a failed provider scan should keep Skip gated and show the Cloud disclosure until the active provider is known`);
     assert.match(panel, /async function scanLocalModels\(\) \{[\s\S]*?settingsBtn\.disabled = true;\s*skipBtn\.disabled = true;/, `${label}: Skip should stay disabled until provider detection decides whether the Cloud disclosure applies`);
@@ -40103,7 +40103,7 @@ test('all locales explain CapSolver auto-enablement and key validation', async (
   }
 });
 
-test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Cloud request config', async () => {
+test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Compass request config', async () => {
   for (const [label, prefix, runtime] of [
     ['chrome', 'src/chrome', 'chrome'],
     ['firefox', 'src/firefox', 'browser'],
@@ -40124,7 +40124,7 @@ test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Cl
     assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: helpImproveToggle\\.checked \\}\\)`), `${label}: setting should persist`);
     assert.match(locale, /'st\.display\.help_improve\.label': 'Help Improve WebBrain'/, `${label}: setting label missing`);
     assert.match(locale, /On by default[^']*<u>Local-model and bring-your-own API requests are never collected by WebBrain\.<\/u>/, `${label}: setting disclosure should explain and emphasize its default and scope`);
-    assert.match(locale, /Turn it off in General → Advanced to exclude future Cloud interactions/, `${label}: provider disclosure should point to General > Advanced`);
+    assert.match(locale, /Turn it off in General → Advanced to exclude future Compass interactions/, `${label}: provider disclosure should point to General > Advanced`);
     for (const localeFile of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const translatedLocale = fs.readFileSync(path.join(localeDir, localeFile), 'utf8');
       const translatedMessages = (await import(pathToFileURL(path.join(localeDir, localeFile)).href)).default;
@@ -40134,8 +40134,8 @@ test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Cl
       assert.match(providerDisclosure, /<u>[^<]+<\/u>/, `${label}/${localeFile}: provider local/BYO exclusion should also be underlined`);
     }
     assert.match(manager, /const HELP_IMPROVE_WEBBRAIN_KEY = 'helpImproveWebBrain';/, `${label}: provider manager setting key missing`);
-    assert.match(manager, /helpImproveWebBrain = data\[HELP_IMPROVE_WEBBRAIN_KEY\] !== false/, `${label}: Cloud provider config should default improvement use on`);
-    assert.match(background, /changes\.providers \|\| changes\.activeProvider \|\| changes\.helpImproveWebBrain/, `${label}: Cloud provider config should reload after opt-out changes`);
+    assert.match(manager, /helpImproveWebBrain = data\[HELP_IMPROVE_WEBBRAIN_KEY\] !== false/, `${label}: Compass provider config should default improvement use on`);
+    assert.match(background, /changes\.providers \|\| changes\.activeProvider \|\| changes\.helpImproveWebBrain/, `${label}: Compass provider config should reload after opt-out changes`);
   }
 });
 
@@ -41884,7 +41884,40 @@ test('settings page drops stale provider activation completions', () => {
   }
 });
 
-test('provider picker exposes only WebBrain Cloud, configured providers, and More', () => {
+test('WebBrain Compass branding stays distinct from the webbrain.cloud service', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const extensionFacingFiles = [
+      `src/${browser}/src/providers/manager.js`,
+      `src/${browser}/src/providers/openai.js`,
+      `src/${browser}/src/ui/provider-icons.js`,
+      `src/${browser}/src/ui/sidepanel.js`,
+    ];
+    const manager = fs.readFileSync(path.join(ROOT, extensionFacingFiles[0]), 'utf8');
+    assert.match(manager, /label: 'WebBrain Compass'/, `${browser}: the managed LLM provider should use the Compass name`);
+    for (const relativePath of extensionFacingFiles) {
+      const source = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+      assert.doesNotMatch(source, /WebBrain Cloud/, `${relativePath}: extension-facing provider copy should not use the separate service name`);
+    }
+
+    const localeDir = path.join(ROOT, `src/${browser}/src/ui/locales`);
+    for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
+      const locale = fs.readFileSync(path.join(localeDir, filename), 'utf8');
+      assert.doesNotMatch(locale, /WebBrain Cloud/, `${browser}/${filename}: extension-facing provider copy should not use the separate service name`);
+      for (const key of ['ob.cloud.body', 'st.providers.webbrain_data_use.body']) {
+        const brandedLine = locale.split('\n').find((line) => line.includes(`'${key}'`) || line.includes(`"${key}"`));
+        assert.ok(brandedLine, `${browser}/${filename}: missing ${key}`);
+        assert.doesNotMatch(brandedLine, /\bCloud\b/, `${browser}/${filename}: ${key} should call Compass interactions by their current name`);
+      }
+    }
+  }
+
+  const cloudClient = fs.readFileSync(path.join(ROOT, 'ci/lib/webbrain-client.mjs'), 'utf8');
+  assert.match(cloudClient, /https:\/\/webbrain\.cloud/, 'the E2E client should keep targeting the separate webbrain.cloud service');
+  assert.match(cloudClient, /WebBrain Cloud returned HTTP/, 'the webbrain.cloud service should retain its own display name');
+  assert.doesNotMatch(cloudClient, /WebBrain Compass/, 'the webbrain.cloud E2E client must not be renamed to Compass');
+});
+
+test('provider picker exposes only WebBrain Compass, configured providers, and More', () => {
   for (const [label, panelRel, settingsRel, settingsHtmlRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html'],
     ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.html'],
@@ -41894,7 +41927,7 @@ test('provider picker exposes only WebBrain Cloud, configured providers, and Mor
     const settingsHtml = fs.readFileSync(path.join(ROOT, settingsHtmlRel), 'utf8');
 
     assert.match(panel, /id !== 'webbrain_cloud' && config\?\.configured === true/, `${label}: picker should filter to configured non-cloud providers`);
-    assert.match(panel, /cloudOption\.value = 'webbrain_cloud'/, `${label}: WebBrain Cloud should always be offered`);
+    assert.match(panel, /cloudOption\.value = 'webbrain_cloud'/, `${label}: WebBrain Compass should always be offered`);
     assert.match(panel, /MORE_PROVIDERS_OPTION_VALUE = '__more_providers__'/, `${label}: More sentinel missing`);
     assert.match(panel, /providerSelect\.value = selectedProviderId;[\s\S]*?await openProvidersSettingsPage\(\);[\s\S]*?return;/, `${label}: More should restore the selection and stop before activation`);
     assert.match(panel, /settings\.html#providers/, `${label}: More should deep-link to Providers settings`);
@@ -42211,7 +42244,7 @@ test('settings exposes compatibility controls and native Anthropic custom reques
   }
 });
 
-test('settings scopes WebBrain Cloud billing button to provider card only', () => {
+test('settings scopes WebBrain Compass billing button to provider card only', () => {
   for (const [label, settingsRel, htmlRel] of [
     ['chrome', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html'],
     ['firefox', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.html'],
@@ -42220,7 +42253,7 @@ test('settings scopes WebBrain Cloud billing button to provider card only', () =
     const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
     assert.doesNotMatch(html, /account-section/, `${label}: top-level account section should be removed`);
     assert.doesNotMatch(settings, /renderAuthSection/, `${label}: top-level billing renderer should be removed`);
-    assert.match(settings, /id === 'webbrain_cloud'[\s\S]*btn-manage-billing/, `${label}: billing button should be created only for WebBrain Cloud`);
+    assert.match(settings, /id === 'webbrain_cloud'[\s\S]*btn-manage-billing/, `${label}: billing button should be created only for WebBrain Compass`);
     assert.match(settings, /document\.querySelectorAll\('\.btn-manage-billing'\)[\s\S]*window\.open\(href, '_blank', 'noopener,noreferrer'\)/, `${label}: billing button should open the account portal`);
   }
 });
@@ -55563,12 +55596,12 @@ test('MCP bridge settings are Chromium-only, live under Advanced, and keep setup
   assert.match(chromeSettings, /url\.protocol !== 'ws:'[\s\S]*127\.0\.0\.1[\s\S]*localhost[\s\S]*\[::1\]/, 'settings should reject non-loopback bridge URLs before saving');
   assert.match(chromeLocale, /'st\.display\.cloud_bridge\.label': 'MCP'/, 'Chrome English MCP label missing');
   assert.match(chromeLocale, /Connect one local controller to this Chromium profile using port 17374\./, 'MCP copy should explain the local listener');
-  assert.doesNotMatch(chromeLocale, /'st\.display\.cloud_bridge\.desc':[^\n]*WebBrain Cloud/, 'MCP description should not mention WebBrain Cloud');
+  assert.doesNotMatch(chromeLocale, /'st\.display\.cloud_bridge\.desc':[^\n]*(?:WebBrain Cloud|WebBrain Compass)/, 'MCP description should not mention WebBrain Cloud or Compass');
   for (const filename of fs.readdirSync(path.join(ROOT, 'src/chrome/src/ui/locales')).filter((name) => name.endsWith('.js'))) {
     const locale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales', filename), 'utf8');
     assert.match(locale, /'st\.display\.cloud_bridge\.label': 'MCP'/, `${filename}: MCP title should stay language-neutral`);
     assert.match(locale, /'st\.display\.cloud_bridge\.url_placeholder': 'ws:\/\/127\.0\.0\.1:17374\/extension'/, `${filename}: MCP placeholder should use the MCP listener`);
-    assert.doesNotMatch(locale, /'st\.display\.cloud_bridge\.desc':[^\n]*(?:WebBrain Cloud|LM Studio|17373|17375)/, `${filename}: MCP description should mention only the MCP destination`);
+    assert.doesNotMatch(locale, /'st\.display\.cloud_bridge\.desc':[^\n]*(?:WebBrain Cloud|WebBrain Compass|LM Studio|17373|17375)/, `${filename}: MCP description should mention only the MCP destination`);
   }
 
   for (const rel of ['README.md', 'mcp-server/README.md', 'lmstudio-plugin/README.md']) {
@@ -61681,9 +61714,9 @@ test('ProviderManager load ignores unsupported stored provider configs', async (
       assert.equal(mgr.providers.get('groq')?.config.apiKey, `${label}-groq-key`, `${label}: Groq API key should survive migration`);
       assert.equal(mgr.providers.get('fireworks')?.config.apiKey, `${label}-fireworks-key`, `${label}: Fireworks API key should survive migration`);
       assert.equal(mgr.providers.get('together')?.config.apiKey, `${label}-together-key`, `${label}: Together API key should survive migration`);
-      assert.equal(mgr.providers.get('webbrain_cloud')?.config.contextWindow, 1000000, `${label}: legacy WebBrain Cloud context window should migrate`);
-      assert.equal(mgr.providers.get('webbrain_cloud')?.config.apiKey, `${label}-cloud-key`, `${label}: WebBrain Cloud API key should survive migration`);
-      assert.equal(mgr.providers.get('webbrain_cloud')?.config.configured, false, `${label}: WebBrain Cloud should stay available without being configured`);
+      assert.equal(mgr.providers.get('webbrain_cloud')?.config.contextWindow, 1000000, `${label}: legacy WebBrain Compass context window should migrate`);
+      assert.equal(mgr.providers.get('webbrain_cloud')?.config.apiKey, `${label}-cloud-key`, `${label}: WebBrain Compass API key should survive migration`);
+      assert.equal(mgr.providers.get('webbrain_cloud')?.config.configured, false, `${label}: WebBrain Compass should stay available without being configured`);
       assert.equal(mgr.providers.get('custom_proxy')?.config.type, 'openai', `${label}: supported custom provider should load`);
       assert.equal(mgr.providers.get('custom_proxy')?.config.model, 'custom-model', `${label}: custom provider config should survive`);
       assert.equal(mgr.providers.get('custom_proxy')?.config.configured, true, `${label}: legacy stored-only provider should migrate to configured`);
@@ -61775,7 +61808,7 @@ test('ProviderManager load ignores unsupported stored provider configs', async (
       globalThis[runtimeKey] = makeRuntime(fallbackStorage);
       const fallbackManager = new PM();
       await fallbackManager.load();
-      assert.equal(fallbackManager.activeProviderId, 'webbrain_cloud', `${label}: legacy unconfigured selection should fall back to WebBrain Cloud`);
+      assert.equal(fallbackManager.activeProviderId, 'webbrain_cloud', `${label}: legacy unconfigured selection should fall back to WebBrain Compass`);
     }
   } finally {
     globalThis.chrome = originalChrome;
@@ -62155,7 +62188,7 @@ test('ProviderManager reloads one valid duplicate and purges forged duplicate en
           webbrain_cloud__duplicate: {
             ...structuredClone(defaults.webbrain_cloud),
             duplicateOf: 'webbrain_cloud',
-            label: 'WebBrain Cloud 2',
+            label: 'WebBrain Compass 2',
           },
           kimi__duplicate: {
             ...structuredClone(defaults.kimi),
@@ -62426,7 +62459,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   );
 });
 
-test('WebBrain Cloud 402 formatting and localized billing actions distinguish every quota tier', async () => {
+test('WebBrain Compass 402 formatting and localized billing actions distinguish every quota tier', async () => {
   for (const [label, Provider, AgentClass] of [
     ['chrome', OpenAIProviderCh, AgentCh],
     ['firefox', OpenAIProviderFx, AgentFx],
@@ -62475,7 +62508,7 @@ test('WebBrain Cloud 402 formatting and localized billing actions distinguish ev
   }
 });
 
-test('WebBrain Cloud quota errors stay terminal in the main streaming agent loop', async () => {
+test('WebBrain Compass quota errors stay terminal in the main streaming agent loop', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const quotaMessage = 'Votre quota Plus quotidien est épuisé.';
     const provider = {
@@ -63258,11 +63291,11 @@ test('transcribeAudio excludes Kimi and its duplicate from Whisper auto-pick', a
   }
 });
 
-test('_defaultConfigs: WebBrain Cloud has a 1M context window by default', () => {
+test('_defaultConfigs: WebBrain Compass has a 1M context window by default', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
     const defaults = new PM()._defaultConfigs();
-    assert.equal(defaults.webbrain_cloud.contextWindow, 1000000, `${PM.name}: WebBrain Cloud context window should be 1M`);
-    assert.equal(defaults.webbrain_cloud.enabled, true, `${PM.name}: WebBrain Cloud should stay enabled by default`);
+    assert.equal(defaults.webbrain_cloud.contextWindow, 1000000, `${PM.name}: WebBrain Compass context window should be 1M`);
+    assert.equal(defaults.webbrain_cloud.enabled, true, `${PM.name}: WebBrain Compass should stay enabled by default`);
   }
 });
 
@@ -64255,7 +64288,7 @@ test('_defaultConfigs: chrome and firefox differ only by the Chromium WebGPU pro
   }
 });
 
-test('WebBrain Cloud sends the Help Improve preference without leaking it to BYO providers', () => {
+test('WebBrain Compass sends the Help Improve preference without leaking it to BYO providers', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
     const defaultOn = new Provider({ providerName: 'webbrain-cloud', deviceGuid: 'device-123' });
     assert.equal(defaultOn._headers()['X-WebBrain-Help-Improve'], '1');
@@ -66192,7 +66225,7 @@ test('Agent tool loops preserve provider reasoning state on both execution paths
   }
 });
 
-test('WebBrain Cloud groups every generation in a stable conversation session without touching local or BYO calls', () => {
+test('WebBrain Compass groups every generation in a stable conversation session without touching local or BYO calls', () => {
   for (const [label, AgentClass, Provider, prefix] of [
     ['chrome', AgentCh, OpenAIProviderCh, 'src/chrome'],
     ['firefox', AgentFx, OpenAIProviderFx, 'src/firefox'],
@@ -67556,14 +67589,14 @@ test('Agent cost metering treats bracketed local IPv6 URLs as local', () => {
   }
 });
 
-test('Agent cost metering is limited to cloud and router categories and excludes WebBrain Cloud', () => {
+test('Agent cost metering is limited to cloud and router categories and excludes WebBrain Compass', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({});
     const cases = [
       {
         config: { category: 'cloud', providerName: 'webbrain-cloud', baseUrl: 'https://api.webbrain.one/v1' },
         expected: false,
-        label: 'WebBrain Cloud',
+        label: 'WebBrain Compass',
       },
       {
         config: { category: 'cloud', providerName: 'openai', baseUrl: 'https://api.openai.com/v1' },
@@ -67634,7 +67667,7 @@ test('dedicated vision providers are cost-metered when remote and exempt when lo
   }
 });
 
-test('cost accounting starts a fresh aggregate after the WebBrain Cloud exemption', () => {
+test('cost accounting starts a fresh aggregate after the WebBrain Compass exemption', () => {
   for (const [label, prefix] of [
     ['chrome', 'src/chrome'],
     ['firefox', 'src/firefox'],
@@ -67649,7 +67682,7 @@ test('cost accounting starts a fresh aggregate after the WebBrain Cloud exemptio
     assert.doesNotMatch(
       agentSource,
       /const CLOUD_COST_SPENT_KEY = 'cloudCostSpentUsd';/,
-      `${label}: legacy spend that included WebBrain Cloud must not be inherited`,
+      `${label}: legacy spend that included WebBrain Compass must not be inherited`,
     );
     assert.match(
       settingsSource,
@@ -90500,13 +90533,13 @@ test('settings exposes custom skills tab and packaged skills resource directory'
   const privacyDataFlow = fs.readFileSync(path.join(ROOT, 'docs/privacy-and-data-flow.md'), 'utf8');
   assert.match(privacyPolicy, /Last updated: July 16, 2026/, 'privacy policy date should cover legacy default-on Cloud capture');
   assert.match(privacyPolicy, /Local models and bring-your-own API:[\s\S]*never collected by WebBrain/i, 'privacy TL;DR should exclude local and BYO requests');
-  assert.match(privacyPolicy, /WebBrain Cloud:[\s\S]*evaluation, improvement, fine-tuning, and training/i, 'privacy TL;DR should disclose Cloud improvement use');
+  assert.match(privacyPolicy, /WebBrain Compass:[\s\S]*evaluation, improvement, fine-tuning, and training/i, 'privacy TL;DR should disclose Cloud improvement use');
   assert.match(privacyPolicy, /Help Improve WebBrain[\s\S]*on by default/i, 'privacy policy should disclose the default-on setting');
   assert.match(privacyPolicy, /Settings → General/, 'privacy policy should identify the opt-out path');
   assert.doesNotMatch(privacyPolicy, /Help Improve WebBrain[^<\n]*Settings → General → Advanced|Settings → General → Advanced[^<\n]*Help Improve WebBrain/, 'privacy policy should not use the old Help Improve opt-out path');
   assert.match(privacyDataFlow, /Help Improve WebBrain is available under Settings -> General and is/, 'data-flow documentation should identify the visible Help Improve location');
   assert.doesNotMatch(privacyDataFlow, /Settings -> General -> Advanced/, 'data-flow documentation should not use the old Help Improve opt-out path');
-  assert.match(privacyPolicy, /Older WebBrain Cloud clients[\s\S]*default-on setting[\s\S]*install the latest WebBrain client/i, 'privacy policy should disclose legacy default-on capture and the opt-out upgrade path');
+  assert.match(privacyPolicy, /Older WebBrain Compass clients[\s\S]*default-on setting[\s\S]*install the latest WebBrain client/i, 'privacy policy should disclose legacy default-on capture and the opt-out upgrade path');
   assert.match(privacyPolicy, /next new conversation[\s\S]*cannot make the current conversation eligible again/i, 'privacy policy should explain permanent conversation tainting');
   assert.match(privacyPolicy, /Screenshots and uploaded images may be processed for inference[\s\S]*strips image URLs, base64 media, and image bytes/i, 'privacy policy should distinguish inference processing from improvement storage');
   assert.match(privacyPolicy, /OpenRouter documents[\s\S]*minimum retention of three months[\s\S]*may be retained longer/i, 'privacy policy should disclose OpenRouter logging retention');
@@ -90521,7 +90554,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
   assert.match(privacyPolicy, /full instructions and compatible tools are sent only after/i, 'privacy policy should disclose on-demand full skill loading');
 
   const privacyDocs = fs.readFileSync(path.join(ROOT, 'docs/privacy-and-data-flow.md'), 'utf8');
-  assert.match(privacyDocs, /WebBrain Cloud improvement data/, 'developer privacy docs should cover Cloud improvement data');
+  assert.match(privacyDocs, /WebBrain Compass improvement data/, 'developer privacy docs should cover Cloud improvement data');
   assert.match(privacyDocs, /MySQL is WebBrain's canonical store/, 'developer privacy docs should name the canonical improvement store');
   assert.match(privacyDocs, /AES-256-GCM/, 'developer privacy docs should disclose encrypted payload storage');
   assert.match(privacyDocs, /Older[\s\S]*clients[\s\S]*default-on setting[\s\S]*explicit `0` is always opted out/i, 'developer privacy docs should define legacy default-on capture and explicit opt-out');
@@ -96085,9 +96118,9 @@ test('sidepanel routes every run-error path through request-scoped deduplication
   }
 });
 
-test('WebBrain Cloud subscription 402 renders as one terminal assistant prompt', async () => {
+test('WebBrain Compass subscription 402 renders as one terminal assistant prompt', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
-    const subscriptionMessage = 'webbrain-cloud error 402: Daily free WebBrain Cloud allowance used.\n'
+    const subscriptionMessage = 'webbrain-cloud error 402: Daily free WebBrain Compass allowance used.\n'
       + 'Subscribe for more usage: https://webbrain.one/subscribe?client_reference_id=device-guid';
     let providerCalls = 0;
     const provider = {

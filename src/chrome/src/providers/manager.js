@@ -464,7 +464,7 @@ export class ProviderManager {
       webbrain_cloud: {
         type: 'openai',
         category: 'cloud',
-        label: 'WebBrain Cloud',
+        label: 'WebBrain Compass',
         providerName: 'webbrain-cloud',
         baseUrl: 'https://api.webbrain.one/v1',
         model: 'webbrain-cloud 1.0',
@@ -474,7 +474,7 @@ export class ProviderManager {
         supportsStreamUsageOptions: true,
         supportsAskStreaming: true,
         supportsVision: true,
-        // WebBrain Cloud proxies to OpenRouter, whose upstream models
+        // WebBrain Compass proxies to OpenRouter, whose upstream models
         // (minimax, stepfun, …) handle tools + images together fine. Dropping
         // tools on image turns forced the model into prompt-based tool calling,
         // which leaks raw tool-call template tokens (e.g. `]<]minimax[>[`) into

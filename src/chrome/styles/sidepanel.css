@@ -3892,7 +3892,7 @@ html[data-ui-scale="175"] .conversation-action-label {
   color: var(--text-primary);
 }
 
-/* WebBrain Cloud quota / subscribe prompt — bare URL upgraded to a button */
+/* WebBrain Compass quota / subscribe prompt — bare URL upgraded to a button */
 .message-text.subscribe-error {
   display: flex;
   flex-direction: column;
