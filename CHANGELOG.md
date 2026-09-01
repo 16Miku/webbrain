@@ -4,6 +4,23 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [34.1.0] - 2026-09-01
+
+### Added
+- Refined the sidepanel empty conversation state and consolidated conversation controls.
+
+### Changed
+- Renamed the managed provider to **WebBrain Compass** (branding update).
+- Updated Compass provider label migration to match the new Compass naming.
+- Kept Compass name unlocalized to preserve consistent display across locales.
+
+### Fixed
+- Scoped Zen migrations and model normalization to avoid unintended side effects.
+- Improved selected-text localization and run details.
+
+### Tests
+- Updated/added LLM/vision benchmark fixtures and snapshots used by the test suite (including OpenRouter-related scenarios).
+
 ## [33.6.0] - 2026-08-28
 
 ### Added
