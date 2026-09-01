@@ -198,10 +198,16 @@ const CONTEXT_MENU_ACTION_PREFIX = 'webbrain-selection-action-';
 const CONTEXT_MENU_TRANSLATE_ID = 'webbrain-selection-translate';
 const CONTEXT_MENU_TRANSLATE_PREFIX = 'webbrain-selection-translate-';
 const CONTEXT_MENU_GENERIC_ASK_ID = 'webbrain-selection-generic-ask';
-let selectionShortcutLocale = 'en';
-const selectionShortcutLocaleReady = browser.storage.local.get({ wbLocale: 'en' })
+function resolveStoredSelectionShortcutLocale(value) {
+  return normalizeSelectionShortcutLocale(
+    value || (typeof navigator !== 'undefined' ? navigator.language : 'en'),
+  );
+}
+
+let selectionShortcutLocale = resolveStoredSelectionShortcutLocale('');
+const selectionShortcutLocaleReady = browser.storage.local.get({ wbLocale: '' })
   .then((stored) => {
-    selectionShortcutLocale = normalizeSelectionShortcutLocale(stored?.wbLocale);
+    selectionShortcutLocale = resolveStoredSelectionShortcutLocale(stored?.wbLocale);
   })
   .catch(() => {});
 

@@ -10257,7 +10257,7 @@ function markLastStepDone(toolName, result) {
     if (details && details.classList.contains('step-details')) {
       const resultDiv = document.createElement('div');
       resultDiv.className = 'detail-result';
-      resultDiv.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.result_label'))}</div>${escapeHtml(truncate(JSON.stringify(result), 300))}`;
+      resultDiv.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.result_label'))}</div>${escapeHtml(truncate(JSON.stringify(result), 1200))}`;
       const expandAll = details.querySelector?.('.step-expand-all') || null;
       if (expandAll && typeof details.insertBefore === 'function') details.insertBefore(resultDiv, expandAll);
       else details.appendChild(resultDiv);
