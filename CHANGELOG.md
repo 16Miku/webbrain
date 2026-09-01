@@ -26,9 +26,31 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [33.5.0] - 2026-08-27
 
+### Added
+- Added versioned site-workflow contracts for high-evidence GitHub, Product Hunt, Microsoft Forms, Gmail, LinkedIn, YouTube, 12306, Douyin, NaukriGulf, Greenhouse, and Workday tasks (Chrome + Firefox)
+- Added semantic planner routing through app-owned `site_job` IDs and content-free adapter/job/revision trace metadata
+- Added content-free `adapter_match` trace metadata for notes-only and structured adapters, plus live-UI-verified AdSense and SofaScore guidance without promoting either to a workflow contract
+
 ### Changed
 - Redesigned the sidebar loading and thinking UI with clearer live activity updates and a toggleable compact activity history (Chrome + Firefox)
 - Localized the new activity statuses and improved screen-reader announcements across all supported languages
+- Tightened selected site-workflow completion: live-URL binding survives trusted continuation only on the same adapter/job, the executor receives the app-owned stages/evidence contract, submission success needs job-bound terminal evidence (including paid/ticket-issued transaction state and recipient-bound sent confirmation), and ledger-backed workflows need exact reconciliation against an app-owned inventory rather than model-created rows
+- Bounded form-workflow inventory v1: exhaustive root reads must not be depth-truncated on includable descendants, skipped required rows cannot prove success (optional `required: false` rows may skip), and checkbox/Next actions stale completeness until a fresh root read
+
+### Fixed
+- Compact selected-workflow prompts now inject a brief execution contract and a shorter `progress_update.workflowReconciliation` schema; Mid/Full keep the full contract
+- YouTube `update-metadata` verification matches AX-truncated values via prefix plus `value_len`/`value_fp` after the same NFKC normalization used by verification, and values that equal the accessible name
+- AX inventory `value=` tokens escape backslash then quote, and inventory readback restores the app-owned string
+- Unknown metadata field names no longer discard the rest of the requirement list, but discarded classifier fields keep saved-state verification incomplete; playlist plural aliases are recognized
+- Form inventory emits `required=` only for explicit native/`aria-required` state, ignores decorative DOM depth, and omits erroring/empty third-party frames only when another frame already inventoried form controls; a lone failed cross-origin application frame stays incomplete
+- Reviewed plan wording edits re-resolve the live site-workflow contract instead of dropping it, and ARIA `searchbox` controls enter the form inventory
+- GitHub, LinkedIn, and Douyin publish success now requires the classifier-bound tag, title, notes, body, or visibility on the published resource, not only a re-observed URL
+- A complete empty GitHub `resolve-review-threads` inventory can reconcile as a no-op when no unresolved threads exist
+- Gmail inline thread replies resolve To/Cc/Bcc chips from the enclosing reply container when the composer is not inside a dialog or form
+- Successful `type_ax`, `set_field`, and `iframe_type` mutations stale a complete form inventory so value-driven branching cannot reconcile against the prior snapshot
+- Form workflow reconciliation completeness is preserved across final submit actions so post-submit confirmation navigation can complete successfully
+- Publication workflow field verification checks exact resource lines and blocks instead of unanchored substrings
+- The Gmail recipient probe returns up to 16 candidates to match the schema and guard capacity
 
 ## [33.4.1] - 2026-08-27
 
