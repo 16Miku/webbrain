@@ -41913,7 +41913,8 @@ test('WebBrain Compass branding stays distinct from the webbrain.cloud service',
       `src/${browser}/src/ui/sidepanel.js`,
     ];
     const manager = fs.readFileSync(path.join(ROOT, extensionFacingFiles[0]), 'utf8');
-    assert.match(manager, /label: 'WebBrain Compass'/, `${browser}: the managed LLM provider should use the Compass name`);
+    assert.match(manager, /const WEBBRAIN_CLOUD_PROVIDER_LABEL = 'WebBrain Compass';/, `${browser}: the managed LLM provider should define the Compass name`);
+    assert.match(manager, /label: WEBBRAIN_CLOUD_PROVIDER_LABEL,/, `${browser}: the managed LLM provider should use the canonical Compass name`);
     for (const relativePath of extensionFacingFiles) {
       const source = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
       assert.doesNotMatch(source, /WebBrain Cloud/, `${relativePath}: extension-facing provider copy should not use the separate service name`);
@@ -61756,6 +61757,23 @@ test('ProviderManager load ignores unsupported stored provider configs', async (
       assert.equal(mgr._hasStoredProviderCredentials(defaults.ollama, { ...defaults.ollama, model: 'historical-default-model' }), false, `${label}: model drift is not a credential signal`);
       assert.equal(mgr._hasStoredProviderCredentials(defaults.lmstudio, { ...defaults.lmstudio, apiKey: 'historical-local-placeholder' }), false, `${label}: changed local dummy keys are not credential signals`);
       assert.equal(mgr._hasStoredProviderCredentials(defaults.openai, { ...defaults.openai, apiKey: `${label}-user-key` }), true, `${label}: a non-default credential is a strong configuration signal`);
+
+      const legacyCloudLabelStorage = {
+        webbrainDeviceGuid: validGuid,
+        activeProvider: 'webbrain_cloud',
+        providers: {
+          webbrain_cloud: {
+            ...defaults.webbrain_cloud,
+            label: 'WebBrain Cloud',
+            configured: false,
+          },
+        },
+      };
+      globalThis[runtimeKey] = makeRuntime(legacyCloudLabelStorage);
+      const legacyCloudLabelManager = new PM();
+      await legacyCloudLabelManager.load();
+      assert.equal(legacyCloudLabelManager.providers.get('webbrain_cloud')?.config.label, 'WebBrain Compass', `${label}: the managed provider should migrate its legacy stored label`);
+      assert.equal(legacyCloudLabelStorage.providers.webbrain_cloud.label, 'WebBrain Compass', `${label}: the migrated managed-provider label should be persisted`);
 
       const historicalSnapshotStorage = {
         webbrainDeviceGuid: validGuid,
