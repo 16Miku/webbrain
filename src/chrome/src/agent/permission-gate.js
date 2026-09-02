@@ -22,7 +22,7 @@
  */
 
 export const Capability = {
-  NAVIGATE: 'navigate',          // navigate / new_tab / promote_iframe / go_back / go_forward to a host
+  NAVIGATE: 'navigate',          // navigate / promote_iframe / go_back / go_forward to a host
   CLICK: 'click',                // click / click_ax / iframe_click / drag_drop / Enter / submit
   TYPE: 'type',                  // type_text / type_ax / iframe_type / set_field (no submit)
   EXECUTE_JS: 'execute_js',      // execute_js
@@ -154,7 +154,6 @@ const TOOL_CAPABILITY = {
   // exact starting URL, so it needs the same site-scoped navigation grant.
   gmail_count_results: Capability.NAVIGATE,
   promote_iframe: Capability.NAVIGATE,
-  new_tab: Capability.NAVIGATE,
   go_back: Capability.NAVIGATE,
   go_forward: Capability.NAVIGATE,
   click: Capability.CLICK,

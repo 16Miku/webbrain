@@ -1255,10 +1255,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // an already-open panel — it only prevents future opens. With a per-tab Set
 // the panel was visible on every tab the user had ever clicked the action
 // on, which mounted up across a session. Group membership is observable to
-// the user (they see the colored group label) and matches the agent's own
-// `_addToWebBrainGroup` behaviour for `new_tab` calls — so a sidebar
-// session, an explicitly-opened new_tab, and a target=_blank redirect all
-// land in the same group.
+// the user (they see the colored group label) and matches the agent's grouping
+// of internal helper tabs and target=_blank redirects.
 //
 // `panelTabs` survives as a fallback for old Chromes without `tabGroups`
 // (pre-89, very rare). On modern Chrome the group map is the source of truth.
@@ -1323,16 +1321,12 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() =>
 // would re-enable the panel on every tab and recreate the "Cmd+T opens a
 // new tab and the running agent's progress paints into it" bug.
 //
-// Enablement happens only on explicit user/agent intent:
+// Enablement happens only on explicit user intent:
 //
 //   * `chrome.action.onClicked`  — user clicked the toolbar icon on tab X.
 //     The handler fires a fire-and-forget `setOptions({tabId:X, enabled:true})`
 //     and `sidePanel.open({tabId:X})` back-to-back to keep the user gesture
 //     alive for `open()`.
-//   * `agent.new_tab`            — agent created tab Y. The tool handler
-//     also calls `setOptions({tabId:Y, enabled:true})` so if the user
-//     switches to Y manually, the panel is there.
-//
 // We do NOT have a "tab left the WebBrain group → disable panel" path,
 // even though the WB group is still maintained for visual cohesion. That
 // path is exactly what raced with `action.onClicked` in the original

@@ -2365,10 +2365,7 @@ export class Agent extends LoopDetector {
     };
     if (verification && (state?.verificationDebt || state?.iframeFormVerificationDebt)) {
       let candidates = [];
-      if (state.verificationDebt && state?.lastAction?.name === 'new_tab') {
-        candidates = available.filter(tool => ['fetch_url', 'research_url'].includes(tool?.function?.name));
-        if (!candidates.length) return unavailableVerification();
-      } else if (state.verificationDebt && state?.lastAction?.downloadAction === true) {
+      if (state.verificationDebt && state?.lastAction?.downloadAction === true) {
         candidates = available.filter(tool => ['list_downloads', 'read_downloaded_file'].includes(tool?.function?.name));
         if (!candidates.length) return unavailableVerification();
       } else if (state.iframeFormVerificationDebt) {
@@ -5022,7 +5019,7 @@ export class Agent extends LoopDetector {
     ].filter(Boolean).join('\n\n');
   }
 
-  static NAV_TOOLS = new Set(['navigate', 'new_tab', 'promote_iframe', 'go_back', 'go_forward']);
+  static NAV_TOOLS = new Set(['navigate', 'promote_iframe', 'go_back', 'go_forward']);
   static STATE_CHANGE_TOOLS = SHARED_STATE_CHANGE_TOOLS;
   static EXECUTION_META_TOOLS = new Set(['clarify', 'scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_TOOLS = new Set(['scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
@@ -20468,10 +20465,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (parsed.attached) return `attached ${this._truncate(parsed.attached.name || '', 60)} (${parsed.attached.size} bytes)`;
         return parsed.verified === false ? `upload sent (unverified)` : `uploaded ${this._truncate(parsed.file || '', 70)}`;
       }
-      case 'new_tab': {
-        if (parsed.url) return `opened tab ${this._truncate(parsed.url, 100)}`;
-        break;
-      }
       case 'extract_data': {
         if (Array.isArray(parsed)) {
           const rows = parsed.reduce((s, t) => s + (Array.isArray(t?.rows) ? t.rows.length : 0), 0);
@@ -22189,8 +22182,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
 
-    // Promote a child frame into the run's current tab. Unlike new_tab, this
-    // deliberately retargets subsequent tools while preserving a Back entry.
+    // Promote a child frame into the run's current tab while preserving a Back entry.
     // Resolve from the browser's frame inventory and fail closed when the
     // filter is not unique so page-authored frame URLs cannot choose a target
     // by accident.
@@ -22842,40 +22834,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } finally {
         removeNavigationListeners();
       }
-    }
-
-    if (name === 'new_tab') {
-      // Runs stay pinned to their source tab. Keep reference/helper tabs in
-      // the background so the browser does not switch the user to a tab the
-      // agent cannot subsequently control.
-      const createProps = { url: args.url, active: false };
-      let sourceTab = null;
-      try {
-        sourceTab = await browser.tabs.get(tabId);
-      } catch (_) {}
-      if (sourceTab?.windowId != null) {
-        createProps.windowId = sourceTab.windowId;
-      }
-      if (typeof sourceTab?.index === 'number') {
-        createProps.index = sourceTab.index + 1;
-      }
-      if (sourceTab?.id != null) {
-        createProps.openerTabId = sourceTab.id;
-      }
-      const tab = await browser.tabs.create(createProps);
-      // Drop the new tab into the per-window WebBrain group so research
-      // chains stay visually together. Best-effort — graceful skip on
-      // Firefox <142 (no tabGroups API) via the helper's internal guard.
-      const groupId = await this._addToWebBrainGroup(sourceTab, tab.id);
-      return {
-        success: true,
-        tabId: tab.id,
-        url: args.url,
-        active: false,
-        retargeted: false,
-        note: 'Opened in the background. The current run remains on its original tab; new_tab does not grant site access or retarget later tools.',
-        groupId: groupId >= 0 ? groupId : null,
-      };
     }
 
     if (name === 'screenshot' || name === 'inspect_viewport') {
