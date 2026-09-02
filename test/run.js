@@ -24634,6 +24634,73 @@ test('test/llm payload builders support Dev mode and preserve Ask cleanup', () =
   assert.equal(scenarioNames.has('shadow_dom_query'), true, 'scenario dev payload should include Chrome shadow_dom_query');
 });
 
+test('test/llm goldens only name tools the model is actually offered', () => {
+  // The benchmark is only meaningful while its goldens match the shipped
+  // schemas: an ideal call or a seeded assistant turn naming a tool we no
+  // longer expose is unanswerable, so every model scores wrong on it and the
+  // whole comparison skews. Retiring a tool must therefore land with a golden
+  // update in the same change.
+  const offered = new Set();
+  const probe = { tab: { url: 'https://example.com', title: 'Example' }, user: 'probe' };
+  for (const browser of ['chrome', 'firefox']) {
+    for (const mode of ['ask', 'act', 'dev']) {
+      for (const tier of ['full', 'mid', 'compact']) {
+        if (mode === 'dev' && tier === 'compact') continue; // rejected by design
+        for (const researchEscalationEnabled of [false, true]) {
+          const payload = buildLlmPayload({ ...probe, mode }, {
+            browser,
+            tier,
+            useSiteAdapters: false,
+            researchEscalationEnabled,
+          });
+          for (const tool of payload.tools) offered.add(tool.function.name);
+        }
+      }
+    }
+  }
+  assert.equal(offered.size > 0, true, 'probe payloads should expose a non-empty tool union');
+
+  const llmDir = path.join(ROOT, 'test/llm');
+  const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return walk(full);
+    return /^\d{3}\.json$/.test(entry.name) ? [full] : [];
+  });
+
+  const expectedDir = path.join(llmDir, 'expected');
+  const expectedFiles = walk(expectedDir);
+  assert.equal(expectedFiles.length, 100, 'expected/ should hold 100 step-1 goldens');
+  for (const file of expectedFiles) {
+    const name = readJson(file)?.idealFirstToolCall?.name;
+    if (!name) continue;
+    assert.equal(offered.has(name), true, `${path.relative(ROOT, file)} idealFirstToolCall names unavailable tool ${name}`);
+  }
+
+  const scenarioFiles = walk(path.join(llmDir, 'scenarios'));
+  assert.equal(scenarioFiles.length, 100, 'scenarios/ should hold 100 multi-turn cases');
+  for (const file of scenarioFiles) {
+    const scenario = readJson(file);
+    const rel = path.relative(ROOT, file);
+    const idealNext = scenario?.expected?.idealNextToolCall?.name;
+    if (idealNext) {
+      assert.equal(offered.has(idealNext), true, `${rel} idealNextToolCall names unavailable tool ${idealNext}`);
+    }
+    // Seeds are replayed verbatim as history, so a seeded call to a tool that
+    // is no longer in the schema shows the model an action it cannot take.
+    for (const message of scenario?.seed || []) {
+      for (const call of message?.tool_calls || []) {
+        const called = call?.function?.name;
+        if (!called) continue;
+        assert.equal(offered.has(called), true, `${rel} seeds a tool_call to unavailable tool ${called}`);
+      }
+      if (message?.role === 'tool' && message?.name) {
+        assert.equal(offered.has(message.name), true, `${rel} seeds a tool result from unavailable tool ${message.name}`);
+      }
+    }
+  }
+});
+
 test('getToolsForMode: retired tools are not model-callable', () => {
   for (const [label, getTools, agentToolNames, reservedNames, retiredNames, compactNames, prompts] of [
     ['chrome', getToolsForModeCh, AGENT_TOOL_NAMES_CH, RESERVED_AGENT_TOOL_NAMES_CH, RETIRED_AGENT_TOOL_NAMES_CH, COMPACT_TOOL_NAMES_CH, [

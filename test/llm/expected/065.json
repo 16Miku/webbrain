@@ -1,8 +1,8 @@
 {
   "id": "065",
   "idealFirstToolCall": {
-    "name": "screenshot",
+    "name": "inspect_viewport",
     "args": {}
   },
-  "successRubric": "Single screenshot call. The agent may then call done with a brief description."
+  "successRubric": "The standalone screenshot tool is retired; inspect_viewport is the read-only visual capture. A single inspect_viewport call, optionally followed by done with a brief description, is correct."
 }

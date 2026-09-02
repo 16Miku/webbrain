@@ -24,13 +24,12 @@ const HOME = { url: 'about:home', title: 'New Tab' };
 
 // Convenience constructors
 const nav = (url) => ({ name: 'navigate', args: { url } });
-const newTab = (url) => ({ name: 'new_tab', args: { url } });
 const click = (args) => ({ name: 'click', args });
 const type = (args) => ({ name: 'type_text', args });
 const read = (args = {}) => ({ name: 'read_page', args });
 const ax = (args = {}) => ({ name: 'get_accessibility_tree', args });
 const ie = (args = {}) => ({ name: 'get_interactive_elements', args });
-const screenshot = (args = {}) => ({ name: 'screenshot', args });
+const inspectViewport = (args = {}) => ({ name: 'inspect_viewport', args });
 const scroll = (args) => ({ name: 'scroll', args });
 const verify = (args = {}) => ({ name: 'verify_form', args });
 const extract = (type) => ({ name: 'extract_data', args: { type } });
@@ -100,13 +99,13 @@ const CASES = [
     user: 'open gmail',
     tab: HOME,
     ideal: nav('https://mail.google.com/'),
-    rubric: 'Navigates to mail.google.com (with or without trailing slash, with or without /mail/u/0/). new_tab is also acceptable.',
+    rubric: 'Navigates to mail.google.com (with or without trailing slash, with or without /mail/u/0/).',
   },
   {
     user: 'take me to youtube',
     tab: HOME,
     ideal: nav('https://www.youtube.com/'),
-    rubric: 'Navigates to youtube.com. www subdomain optional; new_tab is also acceptable.',
+    rubric: 'Navigates to youtube.com. www subdomain optional.',
   },
   {
     user: 'open my github',
@@ -130,7 +129,7 @@ const CASES = [
     user: 'open linkedin in this tab',
     tab: HOME,
     ideal: nav('https://www.linkedin.com/'),
-    rubric: 'Navigates the CURRENT tab (not new_tab — "in this tab" is explicit). URL: linkedin.com.',
+    rubric: 'Navigates the CURRENT tab — the only tab the agent controls, and "in this tab" is explicit anyway. URL: linkedin.com.',
   },
   {
     user: 'wikipedia please',
@@ -141,8 +140,8 @@ const CASES = [
   {
     user: 'open chatgpt in a new tab',
     tab: HOME,
-    ideal: newTab('https://chatgpt.com/'),
-    rubric: 'Opens chatgpt.com in a NEW tab (the phrase "in a new tab" is explicit). chat.openai.com is also acceptable.',
+    ideal: clarify('I can\'t open new tabs — I only work in the tab we\'re on. Want me to open chatgpt.com here instead?'),
+    rubric: 'There is no new-tab tool, so "in a new tab" cannot be honored. Correct: say so and offer chatgpt.com in the CURRENT tab (clarify), or done with the same explanation plus the Cmd/Ctrl+T fallback. Silently navigating without flagging the limitation is wrong, and so is fabricating a tab-opening call.',
   },
   {
     user: 'go to amazon',
@@ -495,8 +494,8 @@ const CASES = [
   {
     user: 'take a screenshot',
     tab: cnn,
-    ideal: screenshot(),
-    rubric: 'Single screenshot call. The agent may then call done with a brief description.',
+    ideal: inspectViewport(),
+    rubric: 'The standalone screenshot tool is retired; inspect_viewport is the read-only visual capture. A single inspect_viewport call, optionally followed by done with a brief description, is correct.',
   },
   {
     user: 'what did i highlight',
@@ -631,12 +630,12 @@ const CASES = [
     rubric: 'done with the expansion and a one-line definition. Browsing is unnecessary.',
   },
 
-  // ── Tab management (87-90) ─────────────────────────────────────────
+  // ── Tab management (87-90) — no tab tool exists ────────────────────
   {
     user: 'open this link in a new tab',
     tab: cnn,
-    ideal: clarify('Which link on the page should I open in a new tab?'),
-    rubric: 'No specific link identified. clarify is correct. Acceptable: get_interactive_elements first to enumerate links, then ask which.',
+    ideal: clarify('I can\'t open new tabs — I only control the tab we\'re on. Which link should I open here instead?'),
+    rubric: 'Two problems: there is no new-tab tool, and no specific link was named. Correct: surface the limitation and ask which link to open in the CURRENT tab. Acceptable: get_interactive_elements first to enumerate links, then ask. Fabricating a tab-opening call is wrong.',
   },
   {
     user: 'close this tab',
@@ -647,8 +646,8 @@ const CASES = [
   {
     user: 'open youtube, twitter, and gmail in new tabs',
     tab: HOME,
-    ideal: newTab('https://www.youtube.com/'),
-    rubric: 'Opens three new tabs sequentially: youtube.com, x.com (or twitter.com), mail.google.com. First call must be new_tab to one of them. Doing them all in one batched message is fine.',
+    ideal: clarify('I can\'t open new tabs, so I can\'t line up YouTube, X, and Gmail side by side — I only control the tab we\'re on. Which one should I open here? You can open the other two with Cmd/Ctrl+T.'),
+    rubric: 'No new-tab tool, and three sites cannot collapse into one current-tab navigation. Correct: explain the limitation and offer to open ONE of them in the current tab (clarify or done are both fine). Navigating to youtube.com without saying the other two are out of reach is wrong; fabricating tab-opening calls is wrong.',
   },
   {
     user: 'switch to my netflix tab',

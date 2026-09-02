@@ -124,7 +124,7 @@ Flags:
 | 068–075   | Ambiguous → clarify                     |
 | 076–081   | Destructive / refusal-worthy            |
 | 082–086   | Knowledge questions (done with text)    |
-| 087–090   | Tab management (mostly tools-don't-exist)|
+| 087–090   | Tab management (no tab tools exist)     |
 | 091–094   | UI mutations                            |
 | 095–097   | Translation / accessibility             |
 | 098–100   | Multi-page / listing                    |

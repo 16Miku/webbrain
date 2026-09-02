@@ -9,6 +9,9 @@ This changelog was generated from the repository Git history and release tags. V
 ### Removed
 - Removed model-callable browser tab creation, listing, and activation from every prompt tier. URL readers and current-tab navigation remain available; internal research/helper tabs and normal `target=_blank` behavior are unchanged.
 
+### Fixed
+- Retuned the LLM benchmark goldens that still expected retired tools, so a model running against the current schemas is no longer scored wrong for answers it cannot give. `test/run.js` now fails when any golden or seeded turn names a tool the schemas do not offer.
+
 ## [34.1.1] - 2026-09-02
 
 ### Changed
