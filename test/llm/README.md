@@ -70,7 +70,7 @@ Outputs a JSON object:
     { "role": "system", "content": "<SYSTEM_PROMPT_ACT + UNIVERSAL_PREAMBLE>" },
     { "role": "user",   "content": "[Current page context — …]\n[Site guidance for github]\n…\n\n<user message>" }
   ],
-  "tools": [ /* 35 OpenAI function schemas */ ]
+  "tools": [ /* OpenAI function schemas for the requested browser/mode/tier */ ]
 }
 ```
 
