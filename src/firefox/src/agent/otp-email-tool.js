@@ -62,11 +62,23 @@ export function otpServiceKey(value) {
   return normalizedText(value).slice(0, 120);
 }
 
-function serviceNeedles(value) {
+function serviceMatchSpec(value) {
   const key = otpServiceKey(value);
   const ignored = new Set(['www', 'com', 'net', 'org', 'app', 'mail', 'email', 'code', 'verification']);
-  const tokens = key.split(' ').filter(token => token.length >= 2 && !ignored.has(token));
-  return [...new Set([key, ...tokens].filter(Boolean))];
+  const tokens = [...new Set(key.split(' ').filter(token => token.length >= 4 && !ignored.has(token)))];
+  return { key, tokens };
+}
+
+function containsNormalizedPhrase(text, phrase) {
+  return phrase.length > 0 && ` ${text} `.includes(` ${phrase} `);
+}
+
+export function otpTextMatchesService(value, service) {
+  const text = normalizedText(value);
+  const spec = serviceMatchSpec(service);
+  if (!text || !spec.key) return false;
+  if (containsNormalizedPhrase(text, spec.key)) return true;
+  return spec.tokens.length > 0 && spec.tokens.every(token => containsNormalizedPhrase(text, token));
 }
 
 export function otpEmailProviderForUrl(value) {
@@ -75,6 +87,25 @@ export function otpEmailProviderForUrl(value) {
   if (url.protocol !== 'https:') return '';
   const host = url.hostname.toLowerCase();
   return EMAIL_PROVIDERS.find(provider => provider.matches(host, url))?.id || '';
+}
+
+export function otpEmailUrlLooksLikeMessage(provider, value) {
+  let url;
+  try { url = new URL(String(value || '')); } catch { return false; }
+  if (otpEmailProviderForUrl(url.href) !== provider) return false;
+  const path = url.pathname;
+  const hash = url.hash;
+  switch (provider) {
+    case 'gmail': return /(?:^#|\/)(?:inbox|all|sent|starred|important|trash|spam|search|label\/[^/]+)\/[A-Za-z0-9_-]+/i.test(hash);
+    case 'outlook': return /\/mail\/(?:\d+\/)?(?:[^/]+\/)*id\/[A-Za-z0-9%_-]+/i.test(path) || /\/mail\/(?:\d+\/)?deeplink\/read\//i.test(path);
+    case 'yahoo': return /\/d\/(?:folders|search)\/[^/]+\/messages\/[A-Za-z0-9%_-]+/i.test(path);
+    case 'proton': return /\/u\/\d+\/(?:inbox|all-mail|sent|archive|trash|spam|starred|search)\/[A-Za-z0-9%_-]+/i.test(path);
+    case 'fastmail': return /\/mail\/[^/]+\/[A-Za-z0-9%_-]+/i.test(path);
+    case 'zoho': return /(?:#|\/)mail\/(?:folder|search)\/[^#?]*\/p\/[A-Za-z0-9%_-]+/i.test(`${path}${hash}`);
+    case 'yandex': return /(?:#|\/)message\/[A-Za-z0-9%_-]+/i.test(`${path}${hash}`);
+    case 'icloud': return /\/mail(?:\/[^/]+)*\/message\/[A-Za-z0-9%_-]+/i.test(path) || /(?:^#|[?&])message(?:Id)?=/i.test(`${hash}${url.search}`);
+    default: return false;
+  }
 }
 
 export function selectOtpMailboxTab(tabs, sourceTab, requestedProvider = 'auto') {
@@ -149,15 +180,13 @@ function stripInternalRefs(value) {
 
 export function otpEmailCandidates(pageContent, service, opts = {}) {
   const lines = String(pageContent || '').split(/\r?\n/);
-  const needles = serviceNeedles(service);
-  if (needles.length === 0) return [];
+  if (!otpServiceKey(service)) return [];
   const maxCandidates = Math.max(1, Math.min(5, Math.floor(Number(opts.maxCandidates) || 4)));
   const maxPreviewChars = Math.max(200, Math.min(1200, Math.floor(Number(opts.maxPreviewChars) || 700)));
   const candidates = [];
   const seenRefs = new Set();
   for (let index = 0; index < lines.length && candidates.length < maxCandidates; index += 1) {
-    const normalized = normalizedText(lines[index]);
-    if (!normalized || !needles.some(needle => normalized.includes(needle))) continue;
+    if (!otpTextMatchesService(lines[index], service)) continue;
     const clickRef = candidateClickRef(lines, index);
     if (!clickRef || seenRefs.has(clickRef)) continue;
     seenRefs.add(clickRef);
@@ -183,14 +212,32 @@ export function selectUniqueOtpCandidateByPreview(candidates, preview) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+export function otpOpenMessageRootRef(pageContent, service) {
+  const lines = String(pageContent || '').split(/\r?\n/);
+  const matches = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^\s*(?:article|document)\b/i.test(lines[index])) continue;
+    const ref = refsInLine(lines[index])[0];
+    if (!ref) continue;
+    const indent = lineIndent(lines[index]);
+    let end = index + 1;
+    while (end < lines.length && lineIndent(lines[end]) > indent) end += 1;
+    if (otpTextMatchesService(lines.slice(index, end).join('\n'), service)) {
+      matches.push({ ref, indent });
+    }
+  }
+  if (matches.length === 0) return '';
+  const shallowest = Math.min(...matches.map(match => match.indent));
+  const roots = matches.filter(match => match.indent === shallowest);
+  return roots.length === 1 ? roots[0].ref : '';
+}
+
 export function otpVerificationMessageExcerpt(pageContent, service, maxChars = 5000) {
   const text = String(pageContent || '');
   const lines = text.split(/\r?\n/);
-  const needles = serviceNeedles(service);
   const matched = [];
   for (let index = 0; index < lines.length; index += 1) {
-    const normalized = normalizedText(lines[index]);
-    if (normalized && needles.some(needle => normalized.includes(needle))) matched.push(index);
+    if (otpTextMatchesService(lines[index], service)) matched.push(index);
   }
   if (matched.length === 0) return { matched: false, ...boundedText('', maxChars) };
 

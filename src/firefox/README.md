@@ -143,7 +143,7 @@ Key difference: Chrome uses Manifest V3 (service worker, `chrome.scripting`, `si
 | `execute_js` | No | Dev only | Run one JavaScript function body through the MV2 content-script evaluator |
 | `done` | Yes | Yes | Signal task completion |
 
-Browser-tab creation, enumeration, activation, and run retargeting are not general model-callable capabilities. Use a URL reader for another page or navigate the current run tab for interaction; an explicit separate-tab request is not silently converted into current-tab navigation. After the bundled OTP skill is active, Mid/Full expose one narrow exception: `read_email_verification_message` can inspect an already-open signed-in supported webmail tab and open one opaque inspected message in a temporary inactive duplicate that it closes. It does not expose a tab catalog, mailbox URL, or internal accessibility refs; Compact never receives it.
+Browser-tab creation, enumeration, activation, and run retargeting are not general model-callable capabilities. Use a URL reader for another page or navigate the current run tab for interaction; an explicit separate-tab request is not silently converted into current-tab navigation. After the bundled OTP skill is active, Mid/Full expose one narrow exception: `read_email_verification_message` can inspect an already-open signed-in supported webmail tab, directly read a verified already-open message route, or open one opaque inspected inbox item in a temporary inactive duplicate that it closes. Candidate disclosure requires the full normalized service identity or all sufficiently discriminative service tokens. It does not expose a tab catalog, mailbox URL, or internal accessibility refs; Compact never receives it.
 
 ### Dev-mode difference
 

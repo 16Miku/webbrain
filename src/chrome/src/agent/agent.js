@@ -117,7 +117,7 @@ import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
 import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
-import { OTP_EMAIL_PROVIDER_IDS, OTP_EMAIL_SKILL_ID, OTP_EMAIL_TOOL_NAME, otpEmailCandidates, otpEmailProviderForUrl, otpServiceKey, otpVerificationMessageExcerpt, selectOtpMailboxTab, selectUniqueOtpCandidateByPreview } from './otp-email-tool.js';
+import { OTP_EMAIL_PROVIDER_IDS, OTP_EMAIL_SKILL_ID, OTP_EMAIL_TOOL_NAME, otpEmailCandidates, otpEmailProviderForUrl, otpEmailUrlLooksLikeMessage, otpOpenMessageRootRef, otpServiceKey, otpVerificationMessageExcerpt, selectOtpMailboxTab, selectUniqueOtpCandidateByPreview } from './otp-email-tool.js';
 import { publicMediaUrlNeedsExplicitTarget } from './public-media-url.js';
 import { USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS, formatUserMemoryPrompt, normalizeUserMemoryMaxPromptChars, normalizeUserMemoryStore } from './user-memory.js';
 import {
@@ -18612,9 +18612,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { success: false, timedOut: true, error: lastError || 'The mailbox did not expose readable content before the helper timeout.' };
   }
 
-  async _otpEmailMessageTree(targetTabId, tree) {
-    const rootRef = String(tree?.conversationRootRefId || '').trim();
-    if (!rootRef) return tree;
+  async _otpEmailMessageTree(targetTabId, tree, provider, service, url) {
+    const messageRoute = otpEmailUrlLooksLikeMessage(provider, url);
+    const rootRef = String(tree?.conversationRootRefId || '').trim()
+      || (messageRoute ? otpOpenMessageRootRef(tree?.pageContent, service) : '');
+    if (!rootRef) return { tree, detected: messageRoute, detection: messageRoute ? 'provider_route' : '' };
     try {
       const subtree = await this.executeTool(targetTabId, 'get_accessibility_tree', {
         ref_id: rootRef,
@@ -18622,9 +18624,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         maxDepth: 15,
         maxChars: 6000,
       });
-      return typeof subtree?.pageContent === 'string' && subtree.pageContent.trim() ? subtree : tree;
+      return {
+        tree: typeof subtree?.pageContent === 'string' && subtree.pageContent.trim() ? subtree : tree,
+        detected: true,
+        detection: tree?.conversationRootRefId ? 'trusted_conversation_root' : 'provider_route_semantic_root',
+      };
     } catch {
-      return tree;
+      return { tree, detected: true, detection: tree?.conversationRootRefId ? 'trusted_conversation_root' : 'provider_route' };
     }
   }
 
@@ -18684,9 +18690,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const observed = await this._otpEmailTree(sourceTabId, mailboxTab.id, provider);
       if (!observed.success) return observed;
 
-      const directTree = await this._otpEmailMessageTree(mailboxTab.id, observed.tree);
-      if (observed.tree?.conversationRootRefId) {
-        const excerpt = otpVerificationMessageExcerpt(directTree?.pageContent, service, 5000);
+      const directMessage = await this._otpEmailMessageTree(mailboxTab.id, observed.tree, provider, service, observed.liveUrl);
+      if (directMessage.detected) {
+        const excerpt = otpVerificationMessageExcerpt(directMessage.tree?.pageContent, service, 5000);
         if (!excerpt.matched) {
           return { success: false, provider, noMatchingMessage: true, error: `The open ${provider} message does not visibly match ${service}.` };
         }
@@ -18828,7 +18834,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { success: false, timedOut: true, error: 'The selected mailbox message did not visibly open before the helper timeout.' };
       }
 
-      const messageTree = await this._otpEmailMessageTree(helperTab.id, opened.tree);
+      const messageRead = await this._otpEmailMessageTree(helperTab.id, opened.tree, session.provider, session.service, opened.liveUrl);
+      if (!messageRead.detected) {
+        return { success: false, wrongMessage: true, error: 'The selected mailbox item changed, but a trusted open-message view could not be verified. Call inspect again.' };
+      }
+      const messageTree = messageRead.tree;
       const excerpt = otpVerificationMessageExcerpt(messageTree?.pageContent, session.service, 5000);
       if (!excerpt.matched) {
         return { success: false, wrongMessage: true, error: `The opened message did not visibly match ${session.service}. Call inspect again instead of extracting a code from it.` };

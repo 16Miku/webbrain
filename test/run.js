@@ -27784,6 +27784,40 @@ test('OTP mailbox candidate filtering returns only service-matching bounded exce
       { ...candidates[0], clickRef: 'ref_duplicate' },
     ], candidates[0].preview), null, `${label}: duplicate previews must fail closed instead of choosing by ordinal`);
     assert.equal(helper.otpEmailCandidates('row "腾讯" [ref_tencent]\n  text "验证码 246810"', '腾讯').length, 1, `${label}: non-Latin service names should remain matchable`);
+    assert.equal(helper.otpTextMatchesService('row "Bank security code" [ref_bank]', 'Bank of America'), false, `${label}: one common issuer token must not disclose another message`);
+    assert.equal(helper.otpTextMatchesService('row "America travel offer" [ref_travel]', 'Bank of America'), false, `${label}: every meaningful issuer token should be required`);
+    assert.equal(helper.otpTextMatchesService('row "Bank of America security code" [ref_bofa]', 'Bank of America'), true, `${label}: complete multiword issuer identity should match`);
+    assert.equal(helper.otpTextMatchesService('row "Call me about your account" [ref_call]', 'ID.me'), false, `${label}: short connector tokens must not match independently`);
+    assert.equal(helper.otpTextMatchesService('row "ID.me verification code" [ref_idme]', 'ID.me'), true, `${label}: short service identities should require their complete normalized phrase`);
+    const issuerCandidates = helper.otpEmailCandidates([
+      'row "Bank security code" [ref_bank]',
+      '  text "Code 111111"',
+      'row "America travel offer" [ref_travel]',
+      '  text "Booking 222222"',
+      'row "Bank of America security code" [ref_bofa]',
+      '  text "Verification code 333333"',
+    ].join('\n'), 'Bank of America');
+    assert.equal(issuerCandidates.length, 1, `${label}: partial issuer tokens must not create candidate previews`);
+    assert.match(issuerCandidates[0].preview, /333333/);
+    assert.doesNotMatch(issuerCandidates[0].preview, /111111|222222/, `${label}: unrelated numeric content must not leak through a partial service match`);
+
+    const messageRoutes = [
+      ['gmail', 'https://mail.google.com/mail/u/0/#inbox/FMfcgzQXmessage'],
+      ['outlook', 'https://outlook.live.com/mail/0/inbox/id/AQMk-message'],
+      ['yahoo', 'https://mail.yahoo.com/d/folders/1/messages/12345'],
+      ['proton', 'https://mail.proton.me/u/0/inbox/abcDEF123'],
+      ['fastmail', 'https://app.fastmail.com/mail/Inbox/abc123'],
+      ['zoho', 'https://mail.zoho.com/zm/#mail/folder/inbox/p/12345'],
+      ['yandex', 'https://mail.yandex.com/#message/12345'],
+      ['icloud', 'https://www.icloud.com/mail/0/message/12345'],
+    ];
+    for (const [provider, url] of messageRoutes) {
+      assert.equal(helper.otpEmailUrlLooksLikeMessage(provider, url), true, `${label}: ${provider} open-message route was not recognized`);
+    }
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('outlook', 'https://outlook.live.com/mail/0/inbox'), false, `${label}: an inbox route must not be treated as an open message`);
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('outlook', 'https://outlook.live.com.evil.example/mail/0/inbox/id/123'), false, `${label}: a lookalike message route must fail closed`);
+    assert.equal(helper.otpOpenMessageRootRef('article "Bank of America" [ref_message]\n  text "Security code 123456"', 'Bank of America'), 'ref_message', `${label}: a single service-matching semantic message root should be scoped`);
+    assert.equal(helper.otpOpenMessageRootRef('article "Bank of America" [ref_one]\n  text "Code 111111"\narticle "Bank of America" [ref_two]\n  text "Code 222222"', 'Bank of America'), '', `${label}: multiple matching message roots must fail closed`);
 
     const excerpt = helper.otpVerificationMessageExcerpt(
       `article "GitHub" [ref_message]\n${'x'.repeat(6000)}\ntext "Verification code 123456"`,
@@ -27886,7 +27920,6 @@ test('OTP cross-tab tool preserves the verification tab and closes its temporary
           ? { success: true, tree: inboxTree, liveUrl: mailboxTab.url }
           : { success: true, tree: messageTree, liveUrl: messageTree.refScopeUrl };
       };
-      agent._otpEmailMessageTree = async (_targetId, tree) => tree;
       const dispatched = [];
       agent.executeTool = async (targetId, name, args) => {
         dispatched.push({ targetId, name, args });
@@ -27932,6 +27965,35 @@ test('OTP cross-tab tool preserves the verification tab and closes its temporary
       assert.equal(tabs.get(sourceTab.id)?.url, sourceTab.url, `${label}: verification tab must not navigate`);
       assert.equal(agent._otpEmailSessions.has(sourceTab.id), false, `${label}: opaque refs must expire after the message read`);
       assert.equal(helper.otpEmailProviderForUrl(created[0].url), 'gmail');
+
+      const outlookTab = {
+        id: 2504,
+        windowId: 4,
+        index: 6,
+        active: false,
+        status: 'complete',
+        url: 'https://outlook.live.com/mail/0/inbox/id/AQMk-message',
+      };
+      const outlookTree = {
+        pageContent: 'main "Mail" [ref_main]\n  article "Bank of America" [ref_outlook_message]\n    text "Your verification code is 867530"',
+        documentToken: 'doc_outlook_message',
+        refScopeUrl: outlookTab.url,
+      };
+      tabs.set(outlookTab.id, outlookTab);
+      agent._otpEmailTree = async (_sourceId, targetId) => {
+        if (targetId === outlookTab.id) return { success: true, tree: outlookTree, liveUrl: outlookTab.url };
+        throw new Error(`Unexpected OTP read for tab ${targetId}`);
+      };
+      const directOutlook = await agent._executeOtpEmailTool(sourceTab.id, {
+        action: 'inspect',
+        service: 'Bank of America',
+        mailbox_provider: 'outlook',
+      });
+      assert.equal(directOutlook.success, true, `${label}: an already-open Outlook message should be read directly`);
+      assert.equal(directOutlook.stage, 'message');
+      assert.match(directOutlook.messageText, /867530/);
+      assert.doesNotMatch(directOutlook.messageText, /ref_outlook_message/);
+      assert.equal(created.length, 1, `${label}: direct non-Gmail message reads must not create another helper tab`);
     } finally {
       if (originalApi === undefined) delete globalThis[apiName];
       else globalThis[apiName] = originalApi;

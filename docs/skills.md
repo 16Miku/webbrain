@@ -83,13 +83,15 @@ fallback.
 
 Loads only for relevant requests and declares no external network tool. On Mid
 and Full it adds one narrow internal reader for an already open, signed-in
-supported webmail tab. Candidate discovery leaves that mailbox untouched; a
-selected message opens only in a temporary inactive duplicate that is closed
-after the read. The model receives opaque message references, not a tab catalog,
-mailbox URLs, or accessibility references. Compact keeps no skill or cross-tab
-tool surface. On the active run tab the skill still prefers selected text or a
-bounded accessibility-tree subtree, excludes SMS/native-app access, and honors
-Strict secret handling.
+supported webmail tab. A provider-verified already-open message is read directly.
+Candidate discovery otherwise leaves the mailbox untouched; candidate disclosure
+requires the full normalized service identity or all sufficiently discriminative
+service tokens, and a selected inbox item opens only in a temporary inactive
+duplicate that is closed after the read. The model receives opaque message
+references, not a tab catalog, mailbox URLs, or accessibility references. Compact
+keeps no skill or cross-tab tool surface. On the active run tab the skill still
+prefers selected text or a bounded accessibility-tree subtree, excludes
+SMS/native-app access, and honors Strict secret handling.
 
 When used, the scoped page content and the code are included in the normal
 request to your configured LLM provider. If **Record traces** is enabled, raw
