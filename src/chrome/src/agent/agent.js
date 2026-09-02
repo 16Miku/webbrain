@@ -18598,12 +18598,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const hint = result?.cancelled || /inspect again/i.test(error)
       ? ''
       : 'The temporary mailbox view was closed; call inspect again before retrying.';
-    return {
-      ...result,
+    const failure = {
       success: false,
       sessionEnded: true,
       error: [error, hint].filter(Boolean).join(' '),
     };
+    // Copy only the fields the model is meant to act on. Helper results also
+    // carry a tree, a tab record, and the live mailbox URL, none of which may
+    // reach the model, so this never spreads the result it was handed.
+    for (const field of ['cancelled', 'stale', 'timedOut', 'wrongMailbox', 'wrongMessage', 'incompleteMessage', 'requiresLogin', 'provider']) {
+      if (result?.[field] !== undefined) failure[field] = result[field];
+    }
+    return failure;
   }
 
   _prepareOtpEmailToolCall(tabId, name, args = {}) {

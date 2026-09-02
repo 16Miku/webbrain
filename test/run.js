@@ -27908,6 +27908,20 @@ test('OTP cross-tab tool appears only after skill activation on Mid/Full and sta
       'https://mail.google.com/mail/u/0/#inbox',
       `${label}: the gate and the handler must resolve the same session for every accepted service argument`,
     );
+    const leakyFailure = agent._otpEmailOpenFailure({
+      success: true,
+      tree: { pageContent: 'article "GitHub" [ref_leak]' },
+      liveUrl: 'https://mail.google.com/mail/u/0/#inbox/FMfcgzQXmessage',
+      timedOut: true,
+      error: 'open failed at [ref_leak]',
+    });
+    assert.deepEqual(
+      Object.keys(leakyFailure).sort(),
+      ['error', 'sessionEnded', 'success', 'timedOut'],
+      `${label}: a failed open must return only known fields, never a tree, tab, or live mailbox URL`,
+    );
+    assert.equal(leakyFailure.success, false, `${label}: a failed open must not report success`);
+    assert.doesNotMatch(leakyFailure.error, /ref_leak/, `${label}: a failed open must not carry accessibility refs`);
     agent.abortFlags.set(tabId, true);
     const stoppedRead = await agent._otpEmailTree(tabId, tabId, 'gmail');
     assert.equal(stoppedRead.cancelled, true, `${label}: a stop during a mailbox read should end the read`);
