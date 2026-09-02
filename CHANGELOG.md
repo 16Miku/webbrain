@@ -7,7 +7,7 @@ This changelog was generated from the repository Git history and release tags. V
 ## [Unreleased]
 
 ### Added
-- Added one Mid/Full-only, OTP-skill-gated email verification reader. It can inspect an already open signed-in supported webmail tab, directly scope an already-open message across all supported providers, and, when needed, open one opaque inspected inbox item in a temporary inactive duplicate that is always closed. Candidate disclosure requires the full normalized service identity or all sufficiently discriminative service tokens; the model receives no general tab catalog, tab switch, mailbox URL, or internal accessibility reference.
+- Added one Mid/Full-only, OTP-skill-gated email verification reader. It can inspect an already open signed-in supported webmail tab, directly scope an already-open message across all supported providers, and, when needed, open one opaque inspected inbox item in a temporary inactive duplicate that is always closed. Candidate disclosure requires the full normalized service identity or all sufficiently discriminative service tokens. Ask remains read-only; opening requires Act/Dev plus mailbox-host click permission because it may mark mail read. Message continuations are consumed within hard bounds or fail closed, and the model receives no general tab catalog, tab switch, mailbox URL, or internal accessibility reference.
 
 ### Removed
 - Removed model-callable browser tab creation, listing, and activation from every prompt tier. URL readers and current-tab navigation remain available; internal research/helper tabs and normal `target=_blank` behavior are unchanged.

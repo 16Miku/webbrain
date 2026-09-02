@@ -86,8 +86,11 @@ and Full it adds one narrow internal reader for an already open, signed-in
 supported webmail tab. A provider-verified already-open message is read directly.
 Candidate discovery otherwise leaves the mailbox untouched; candidate disclosure
 requires the full normalized service identity or all sufficiently discriminative
-service tokens, and a selected inbox item opens only in a temporary inactive
-duplicate that is closed after the read. The model receives opaque message
+service tokens. `inspect` remains read-only in Ask. Because opening can mark an
+email read, `open_message` requires Act/Dev and normal click permission for the
+mailbox host; the selected inbox item opens only in a temporary inactive duplicate
+that is closed after every bounded message-scoped continuation is consumed.
+Incomplete, changed, or unscoped continuations fail closed. The model receives opaque message
 references, not a tab catalog, mailbox URLs, or accessibility references. Compact
 keeps no skill or cross-tab tool surface. On the active run tab the skill still
 prefers selected text or a bounded accessibility-tree subtree, excludes

@@ -8185,6 +8185,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       fnArgs = webMcpPreparation.args;
 
+      const otpEmailPreparation = protectedPageFailure
+        ? { permissionArgs: null }
+        : this._prepareOtpEmailToolCall(tabId, fnName, fnArgs);
+      if (otpEmailPreparation.error) {
+        messages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: JSON.stringify(otpEmailPreparation.error),
+        });
+        onUpdate('warning', { message: otpEmailPreparation.error.error });
+        continue;
+      }
+      const otpEmailPermissionArgs = otpEmailPreparation.permissionArgs;
+
       const mediaTargetGuard = await this._downloadPublicMediaExplicitUrlGuard(tabId, fnName, fnArgs);
       if (mediaTargetGuard) {
         messages.push({
@@ -8205,6 +8219,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // both types AND submits, so it needs a TYPE grant and a CLICK grant.
       const skillCallTool = this._activeSkillToolForName(tabId, fnName);
       let capabilities = protectedPageFailure ? [] : capabilitiesFor(fnName, fnArgs);
+      if (fnName === OTP_EMAIL_TOOL_NAME && fnArgs?.action === 'open_message' && !otpEmailPermissionArgs) {
+        // Invalid/stale opaque refs cannot dispatch; let the handler return its
+        // precise stale-session error without asking for an unrelated grant.
+        capabilities = [];
+      }
       if (fnName === 'delegate_research') {
         // This tool has a stricter gate than generic per-host prompts: its
         // handler requires and consumes a one-use token bound to the exact
@@ -8508,7 +8527,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && apiMutationsAllowedForRun()) continue;
           // Every distinct host the call touches must be granted. Usually one,
           // but download_files takes a urls[] array that can span many hosts.
-          const gateArgs = this._skillPermissionArgsForCapability(skillCallTool, capability, fnArgs);
+          const gateArgs = fnName === OTP_EMAIL_TOOL_NAME && otpEmailPermissionArgs
+            ? otpEmailPermissionArgs
+            : this._skillPermissionArgsForCapability(skillCallTool, capability, fnArgs);
           const hosts = requiredHosts(capability, gateArgs, curUrl, fnName);
           if (hosts.length === 0) { failClosed = true; break; }
           for (const host of hosts) {
@@ -18563,6 +18584,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return this._activeSkillRecords(tabId, mode, tier).some(skill => skill.id === OTP_EMAIL_SKILL_ID);
   }
 
+  _prepareOtpEmailToolCall(tabId, name, args = {}) {
+    if (name !== OTP_EMAIL_TOOL_NAME || args?.action !== 'open_message' || !this._otpEmailSkillActive(tabId)) {
+      return { permissionArgs: null };
+    }
+    if (!this._isActionMode(this._effectiveRunMode(tabId))) {
+      return {
+        error: {
+          success: false,
+          denied: true,
+          dispatched: false,
+          noDispatch: true,
+          requiresActMode: true,
+          error: 'Opening a mailbox message can mark it read. Switch to Act or Dev mode before calling open_message; inspect remains available in Ask mode.',
+        },
+      };
+    }
+    const session = this._otpEmailSessions.get(tabId);
+    const serviceKey = otpServiceKey(args?.service);
+    const messageRef = String(args?.message_ref || '').trim();
+    const matchesSession = session
+      && session.serviceKey === serviceKey
+      && messageRef
+      && session.candidates.some(candidate => candidate.messageRef === messageRef);
+    return {
+      permissionArgs: matchesSession && session.mailboxUrl
+        ? { ...(args || {}), _otpMailboxUrl: session.mailboxUrl }
+        : null,
+    };
+  }
+
   _clearOtpEmailSession(sourceTabId) {
     const session = this._otpEmailSessions.get(sourceTabId);
     this._otpEmailSessions.delete(sourceTabId);
@@ -18612,26 +18663,109 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { success: false, timedOut: true, error: lastError || 'The mailbox did not expose readable content before the helper timeout.' };
   }
 
-  async _otpEmailMessageTree(targetTabId, tree, provider, service, url) {
+  async _otpEmailCompleteMessageTree(targetTabId, firstTree, sourceTabId = targetTabId) {
+    const maxPages = 8;
+    const maxTotalChars = 48000;
+    if (typeof firstTree?.pageContent !== 'string' || !firstTree.pageContent.trim()) {
+      return { success: false, error: 'The verification message returned no readable content.' };
+    }
+    const pages = [firstTree.pageContent];
+    let totalChars = firstTree.pageContent.length;
+    let current = firstTree;
+    const seenContinuations = new Set();
+    while (current?.hasMore === true || current?.truncated === true) {
+      if (current?.depthTruncated === true) {
+        return { success: false, error: 'The verification message exceeded the safe accessibility depth and was not used. Open it manually or try again.' };
+      }
+      const continuationArgs = current?.continuationArgs;
+      if (!continuationArgs || typeof continuationArgs !== 'object' || current?.hasMore !== true) {
+        return { success: false, error: 'The verification message was truncated without a safe continuation and was not used.' };
+      }
+      let continuationKey;
+      try { continuationKey = JSON.stringify(continuationArgs); } catch { continuationKey = ''; }
+      if (!continuationKey || seenContinuations.has(continuationKey)) {
+        return { success: false, error: 'The verification message continuation repeated or was invalid and was not used.' };
+      }
+      if (pages.length >= maxPages || totalChars >= maxTotalChars) {
+        return { success: false, error: `The verification message exceeds the safe ${maxPages}-page/${maxTotalChars}-character read limit and was not used.` };
+      }
+      seenContinuations.add(continuationKey);
+      if (this._checkAbort(sourceTabId)) {
+        return { success: false, cancelled: true, error: 'The verification message read was stopped by the user.' };
+      }
+      let next;
+      try {
+        next = await this.executeTool(targetTabId, 'get_accessibility_tree', { continuationArgs });
+      } catch (error) {
+        return { success: false, error: `The verification message continuation failed: ${error?.message || error}` };
+      }
+      const expectedPage = Math.floor(Number(continuationArgs.page));
+      if (next?.error || next?.treeRevisionMismatch === true
+          || typeof next?.pageContent !== 'string' || !next.pageContent.trim()
+          || !Number.isFinite(expectedPage) || Number(next?.page) !== expectedPage) {
+        return { success: false, error: next?.error || 'The verification message continuation changed, expired, or returned an unexpected page and was not used.' };
+      }
+      if (next?.depthTruncated === true || totalChars + next.pageContent.length > maxTotalChars) {
+        return { success: false, error: `The verification message exceeds the safe ${maxPages}-page/${maxTotalChars}-character read limit and was not used.` };
+      }
+      pages.push(next.pageContent);
+      totalChars += next.pageContent.length;
+      current = next;
+    }
+    if (current?.depthTruncated === true) {
+      return { success: false, error: 'The verification message exceeded the safe accessibility depth and was not used.' };
+    }
+    return {
+      success: true,
+      tree: {
+        ...firstTree,
+        ...current,
+        pageContent: pages.join('\n'),
+        truncated: false,
+        hasMore: false,
+        continuationArgs: null,
+        otpMessagePages: pages.length,
+      },
+    };
+  }
+
+  async _otpEmailMessageTree(targetTabId, tree, provider, service, url, sourceTabId = targetTabId) {
     const messageRoute = otpEmailUrlLooksLikeMessage(provider, url);
     const rootRef = String(tree?.conversationRootRefId || '').trim()
       || (messageRoute ? otpOpenMessageRootRef(tree?.pageContent, service) : '');
-    if (!rootRef) return { tree, detected: messageRoute, detection: messageRoute ? 'provider_route' : '' };
+    if (!rootRef) {
+      if (!messageRoute) return { success: true, tree, detected: false, detection: '' };
+      if (tree?.hasMore === true || tree?.truncated === true || tree?.depthTruncated === true) {
+        return {
+          success: false,
+          detected: true,
+          incompleteMessage: true,
+          detection: 'provider_route',
+          error: 'The verification message is truncated but no message-scoped accessibility root is available, so the wider mailbox was not paginated.',
+        };
+      }
+      return { success: true, tree, detected: true, detection: 'provider_route' };
+    }
+    let subtree;
     try {
-      const subtree = await this.executeTool(targetTabId, 'get_accessibility_tree', {
+      subtree = await this.executeTool(targetTabId, 'get_accessibility_tree', {
         ref_id: rootRef,
         filter: 'all',
         maxDepth: 15,
         maxChars: 6000,
       });
-      return {
-        tree: typeof subtree?.pageContent === 'string' && subtree.pageContent.trim() ? subtree : tree,
-        detected: true,
-        detection: tree?.conversationRootRefId ? 'trusted_conversation_root' : 'provider_route_semantic_root',
-      };
-    } catch {
-      return { tree, detected: true, detection: tree?.conversationRootRefId ? 'trusted_conversation_root' : 'provider_route' };
+    } catch (error) {
+      return { success: false, detected: true, incompleteMessage: true, error: `The verification message could not be read safely: ${error?.message || error}` };
     }
+    const completed = await this._otpEmailCompleteMessageTree(targetTabId, subtree, sourceTabId);
+    return completed.success
+      ? {
+          success: true,
+          tree: completed.tree,
+          detected: true,
+          detection: tree?.conversationRootRefId ? 'trusted_conversation_root' : 'provider_route_semantic_root',
+        }
+      : { ...completed, detected: true, incompleteMessage: true };
   }
 
   async _executeOtpEmailTool(sourceTabId, args = {}) {
@@ -18655,6 +18789,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (!OTP_EMAIL_PROVIDER_IDS.includes(mailboxProvider)) {
       return { success: false, invalidArguments: true, error: `mailbox_provider must be one of: ${OTP_EMAIL_PROVIDER_IDS.join(', ')}.` };
+    }
+    if (action === 'open_message' && !this._isActionMode(this._effectiveRunMode(sourceTabId))) {
+      return {
+        success: false,
+        denied: true,
+        dispatched: false,
+        noDispatch: true,
+        requiresActMode: true,
+        error: 'Opening a mailbox message can mark it read. Switch to Act or Dev mode before calling open_message; inspect remains available in Ask mode.',
+      };
     }
 
     if (action === 'inspect') {
@@ -18690,7 +18834,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const observed = await this._otpEmailTree(sourceTabId, mailboxTab.id, provider);
       if (!observed.success) return observed;
 
-      const directMessage = await this._otpEmailMessageTree(mailboxTab.id, observed.tree, provider, service, observed.liveUrl);
+      const directMessage = await this._otpEmailMessageTree(mailboxTab.id, observed.tree, provider, service, observed.liveUrl, sourceTabId);
+      if (directMessage.success === false) {
+        return { success: false, provider, incompleteMessage: true, error: directMessage.error };
+      }
       if (directMessage.detected) {
         const excerpt = otpVerificationMessageExcerpt(directMessage.tree?.pageContent, service, 5000);
         if (!excerpt.matched) {
@@ -18834,7 +18981,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { success: false, timedOut: true, error: 'The selected mailbox message did not visibly open before the helper timeout.' };
       }
 
-      const messageRead = await this._otpEmailMessageTree(helperTab.id, opened.tree, session.provider, session.service, opened.liveUrl);
+      const messageRead = await this._otpEmailMessageTree(helperTab.id, opened.tree, session.provider, session.service, opened.liveUrl, sourceTabId);
+      if (messageRead.success === false) {
+        return { success: false, provider: session.provider, incompleteMessage: true, error: messageRead.error };
+      }
       if (!messageRead.detected) {
         return { success: false, wrongMessage: true, error: 'The selected mailbox item changed, but a trusted open-message view could not be verified. Call inspect again.' };
       }

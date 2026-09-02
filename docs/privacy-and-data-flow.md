@@ -439,8 +439,11 @@ requires the full normalized service identity or all sufficiently discriminative
 service tokens. It does not send the tab catalog, mailbox URL, or accessibility
 references to the model. A provider-verified already-open message is scoped and
 read directly across the supported providers. If an inbox candidate must be
-opened, the runtime clones the mailbox URL into a temporary inactive tab, reads
-the bounded message content, and closes the clone.
+opened, the operation is unavailable in Ask because opening can mark the email
+read. In Act/Dev it receives the normal click permission for the mailbox host,
+clones the mailbox URL into a temporary inactive tab, consumes every exact bounded
+message-scoped continuation or fails closed without paginating the wider mailbox,
+and closes the clone.
 That clone can make ordinary authenticated requests to the same webmail origin;
 the helper does not call a mailbox API or external skill endpoint. Compact has
 no such tool. The skill cannot read SMS, phone notifications, native apps, or

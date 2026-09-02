@@ -95,9 +95,12 @@ d'article sans identifiants.
 
 Ne se charge que pour les demandes pertinentes et ne déclare aucun outil réseau
 externe. En Mid et Full, il ajoute un lecteur interne limité pour un onglet de
-webmail compatible, déjà ouvert et connecté. La découverte ne modifie pas la
-boîte ; si un message doit être ouvert, une copie temporaire inactive est créée
-puis fermée. Le modèle reçoit des références de message opaques, jamais le
+webmail compatible, déjà ouvert et connecté. `inspect` ne modifie pas la boîte
+et reste disponible dans Ask. Comme l'ouverture peut marquer le message comme
+lu, `open_message` exige Act/Dev ainsi que l'autorisation de clic pour l'hôte de
+la boîte ; une copie temporaire inactive est alors créée, toutes les
+continuations bornées du message sont lues (sinon l'opération échoue de manière
+fermée), puis la copie est fermée. Le modèle reçoit des références de message opaques, jamais le
 catalogue des onglets, l'URL de la boîte ni les références d'accessibilité.
 Compact ne reçoit aucun outil de compétence ou inter-onglets. Sur l'onglet de
 l'exécution active, il privilégie toujours le texte sélectionné ou un sous-arbre

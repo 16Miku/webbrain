@@ -186,6 +186,11 @@ const TOOL_CAPABILITY = {
  */
 export function capabilityFor(name, args) {
   args = args || {};
+  if (name === 'read_email_verification_message') {
+    // inspect is read-only. open_message clicks a mailbox row in a disposable
+    // tab and can still mark that message read on the provider's server.
+    return args.action === 'open_message' ? Capability.CLICK : null;
+  }
   if (name === 'execute_webmcp_tool') {
     // readOnly is only a page-authored annotation in the current WebMCP
     // protocol. Never let that hint bypass a human capability grant.
@@ -302,6 +307,11 @@ function resolveHostAgainst(url, base) {
  */
 export function hostForCapability(capability, args, currentUrlOrHost, toolName) {
   args = args || {};
+  if (toolName === 'read_email_verification_message' && capability === Capability.CLICK) {
+    // agent.js supplies this from its opaque inspected-mailbox session only to
+    // the permission check; it never comes from model arguments.
+    return normalizeHost(args._otpMailboxUrl);
+  }
   if (toolName === 'delegate_research') return 'chatgpt.com';
   if (toolName === 'execute_webmcp_tool') {
     // A tool can belong to a cross-origin frame. Charge mutations to that
