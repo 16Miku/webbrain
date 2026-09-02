@@ -81,9 +81,14 @@ fallback.
 
 #### OTP / verification-code helper
 
-Loads only for relevant requests and declares no network tool. On the active run
-tab it prefers selected text or a bounded accessibility-tree subtree, matches
-the newest relevant service code, excludes SMS/native-app access, and honors
+Loads only for relevant requests and declares no external network tool. On Mid
+and Full it adds one narrow internal reader for an already open, signed-in
+supported webmail tab. Candidate discovery leaves that mailbox untouched; a
+selected message opens only in a temporary inactive duplicate that is closed
+after the read. The model receives opaque message references, not a tab catalog,
+mailbox URLs, or accessibility references. Compact keeps no skill or cross-tab
+tool surface. On the active run tab the skill still prefers selected text or a
+bounded accessibility-tree subtree, excludes SMS/native-app access, and honors
 Strict secret handling.
 
 When used, the scoped page content and the code are included in the normal

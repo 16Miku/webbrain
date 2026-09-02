@@ -58,6 +58,9 @@ export const CAPABILITY_LABEL = {
 export const UNTRUSTED_CONTENT_TOOLS = new Set([
   'read_page',
   'get_accessibility_tree',
+  // Skill-gated cross-tab reads return bounded, attacker-controlled email
+  // previews/message text. They never expose the tab catalog itself.
+  'read_email_verification_message',
   'get_interactive_elements',
   // The count and probe ranges come from Gmail's rendered pagination UI.
   'gmail_count_results',

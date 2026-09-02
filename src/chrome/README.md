@@ -165,7 +165,7 @@ Key difference: Chrome and Edge use Manifest V3 (service worker, `chrome.scripti
 | `highlight_element` | No | Dev only | Show a temporary target overlay |
 | `done` | Yes | Yes | Signal task completion |
 
-Browser-tab creation, enumeration, activation, and run retargeting are not model-callable capabilities. Use a URL reader for another page or navigate the current run tab for interaction; an explicit separate-tab request is not silently converted into current-tab navigation.
+Browser-tab creation, enumeration, activation, and run retargeting are not general model-callable capabilities. Use a URL reader for another page or navigate the current run tab for interaction; an explicit separate-tab request is not silently converted into current-tab navigation. After the bundled OTP skill is active, Mid/Full expose one narrow exception: `read_email_verification_message` can inspect an already-open signed-in supported webmail tab and open one opaque inspected message in a temporary inactive duplicate that it closes. It does not expose a tab catalog, mailbox URL, or internal accessibility refs; Compact never receives it.
 
 ### Dev-mode page tools
 

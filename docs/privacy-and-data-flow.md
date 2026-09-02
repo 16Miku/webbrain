@@ -429,14 +429,20 @@ stop this data flow entirely.
 
 The "OTP / verification-code helper (email)" skill
 (`skills/otp-verification-code-helper.md`) is explicitly Ask/Act compatible,
-is prompt-only, and declares no external tool or endpoint. It guides WebBrain's
-existing page-reading tools to
-prefer selected text or a bounded, message-scoped accessibility-tree subtree on
-the active run tab when finding a recent, service-matching code. It cannot list
-or switch to background tabs, read SMS, phone notifications, native apps, or
-another device, and it forbids private mailbox APIs or sign-in bypasses. The
-skill itself creates no additional network request. When the user asks WebBrain
-to read a code, however, the scoped page content and extracted code are included
+and declares no external endpoint. It guides WebBrain's existing page-reading
+tools to prefer selected text or a bounded, message-scoped accessibility-tree
+subtree on the active run tab. On Mid/Full, and only after that exact skill is
+active, one fixed internal tool may inspect an already-open signed-in supported
+webmail tab. The runtime enumerates tabs locally but returns only a provider and
+bounded service-matching previews with opaque message references; it does not
+send the tab catalog, mailbox URL, or accessibility references to the model. If
+a chosen message must be opened, the runtime clones the mailbox URL into a
+temporary inactive tab, reads the bounded message content, and closes the clone.
+That clone can make ordinary authenticated requests to the same webmail origin;
+the helper does not call a mailbox API or external skill endpoint. Compact has
+no such tool. The skill cannot read SMS, phone notifications, native apps, or
+another device, and it forbids sign-in bypasses. When the user asks WebBrain to
+read a code, the scoped page content and extracted code are included
 in the normal request to the user's configured LLM provider as part of the
 current conversation. When Record traces is enabled, the raw page-reading tool
 result and model response are also retained locally in the `webbrain_traces`

@@ -6,6 +6,9 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+### Added
+- Added one Mid/Full-only, OTP-skill-gated email verification reader. It can inspect an already open signed-in supported webmail tab and, when needed, open one opaque inspected message in a temporary inactive duplicate that is always closed; the model receives no general tab catalog, tab switch, mailbox URL, or internal accessibility reference.
+
 ### Removed
 - Removed model-callable browser tab creation, listing, and activation from every prompt tier. URL readers and current-tab navigation remain available; internal research/helper tabs and normal `target=_blank` behavior are unchanged.
 
