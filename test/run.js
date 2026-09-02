@@ -27814,6 +27814,10 @@ test('OTP mailbox candidate filtering returns only service-matching bounded exce
     for (const [provider, url] of messageRoutes) {
       assert.equal(helper.otpEmailUrlLooksLikeMessage(provider, url), true, `${label}: ${provider} open-message route was not recognized`);
     }
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#search/github/FMfcgzQXmessage'), true, `${label}: a Gmail search result with an explicit thread ID should be recognized`);
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#label/security/FMfcgzQXmessage'), true, `${label}: a Gmail label result with an explicit thread ID should be recognized`);
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#search/github'), false, `${label}: a Gmail search-results route must not treat the query as a thread ID`);
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#label/security'), false, `${label}: a Gmail label listing must not treat the label name as a thread ID`);
     assert.equal(helper.otpEmailUrlLooksLikeMessage('outlook', 'https://outlook.live.com/mail/0/inbox'), false, `${label}: an inbox route must not be treated as an open message`);
     assert.equal(helper.otpEmailUrlLooksLikeMessage('outlook', 'https://outlook.live.com.evil.example/mail/0/inbox/id/123'), false, `${label}: a lookalike message route must fail closed`);
     assert.equal(helper.otpOpenMessageRootRef('article "Bank of America" [ref_message]\n  text "Security code 123456"', 'Bank of America'), 'ref_message', `${label}: a single service-matching semantic message root should be scoped`);

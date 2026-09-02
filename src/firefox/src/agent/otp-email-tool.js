@@ -96,7 +96,7 @@ export function otpEmailUrlLooksLikeMessage(provider, value) {
   const path = url.pathname;
   const hash = url.hash;
   switch (provider) {
-    case 'gmail': return /(?:^#|\/)(?:inbox|all|sent|starred|important|trash|spam|search|label\/[^/]+)\/[A-Za-z0-9_-]+/i.test(hash);
+    case 'gmail': return /^#(?:(?:inbox|all|sent|starred|important|trash|spam)\/[A-Za-z0-9_-]+|(?:search|label)\/[^/]+\/[A-Za-z0-9_-]+)(?:[/?]|$)/i.test(hash);
     case 'outlook': return /\/mail\/(?:\d+\/)?(?:[^/]+\/)*id\/[A-Za-z0-9%_-]+/i.test(path) || /\/mail\/(?:\d+\/)?deeplink\/read\//i.test(path);
     case 'yahoo': return /\/d\/(?:folders|search)\/[^/]+\/messages\/[A-Za-z0-9%_-]+/i.test(path);
     case 'proton': return /\/u\/\d+\/(?:inbox|all-mail|sent|archive|trash|spam|starred|search)\/[A-Za-z0-9%_-]+/i.test(path);
