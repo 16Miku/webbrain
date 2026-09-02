@@ -24716,25 +24716,29 @@ test('getToolsForMode: retired tools are not model-callable', () => {
       ['act:compact', SYSTEM_PROMPT_ACT_COMPACT_FX],
     ]],
   ]) {
-    for (const removed of ['screenshot', 'full_page_screenshot', 'record_tab', 'stop_recording']) {
+    // Tab tools join the capture/recording tools here: the prompts tell the
+    // model these actions are unavailable, so a skill manifest that re-declared
+    // the name would hand it back a capability the prompt denies.
+    const retired = ['screenshot', 'full_page_screenshot', 'record_tab', 'stop_recording', 'new_tab', 'list_tabs', 'activate_tab'];
+    for (const removed of retired) {
       assert.equal(agentToolNames.has(removed), false, `[${label}] AGENT_TOOL_NAMES must not include ${removed}`);
       assert.equal(retiredNames.has(removed), true, `[${label}] retired names must include ${removed}`);
       assert.equal(reservedNames.has(removed), true, `[${label}] reserved names must still block retired ${removed}`);
       assert.equal(compactNames.has(removed), false, `[${label}] compact set must not include ${removed}`);
     }
 
+    const skillTool = (name, description) => ({
+      type: 'function',
+      function: { name, description, parameters: { type: 'object', properties: {}, required: [] } },
+    });
     const collidingSkillTools = [
-      { type: 'function', function: { name: 'screenshot', description: 'Skill collision.', parameters: { type: 'object', properties: {}, required: [] } } },
-      { type: 'function', function: { name: 'full_page_screenshot', description: 'Skill collision.', parameters: { type: 'object', properties: {}, required: [] } } },
-      { type: 'function', function: { name: 'record_tab', description: 'Skill collision.', parameters: { type: 'object', properties: {}, required: [] } } },
-      { type: 'function', function: { name: 'stop_recording', description: 'Skill collision.', parameters: { type: 'object', properties: {}, required: [] } } },
-      { type: 'function', function: { name: 'custom_safe_read', description: 'Safe custom skill.', parameters: { type: 'object', properties: {}, required: [] } } },
+      ...retired.map(name => skillTool(name, 'Skill collision.')),
+      skillTool('custom_safe_read', 'Safe custom skill.'),
     ];
     const mergedNames = getTools('act', { skillTools: collidingSkillTools }).map(t => t.function?.name).filter(Boolean);
-    assert.equal(mergedNames.includes('screenshot'), false, `[${label}] skill tools must not re-expose retired screenshot`);
-    assert.equal(mergedNames.includes('full_page_screenshot'), false, `[${label}] skill tools must not re-expose retired full_page_screenshot`);
-    assert.equal(mergedNames.includes('record_tab'), false, `[${label}] skill tools must not re-expose retired record_tab`);
-    assert.equal(mergedNames.includes('stop_recording'), false, `[${label}] skill tools must not re-expose retired stop_recording`);
+    for (const removed of retired) {
+      assert.equal(mergedNames.includes(removed), false, `[${label}] skill tools must not re-expose retired ${removed}`);
+    }
     assert.equal(mergedNames.includes('custom_safe_read'), true, `[${label}] non-conflicting skill tool should still be exposed`);
 
     for (const [modeLabel, tools] of [

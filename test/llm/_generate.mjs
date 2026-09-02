@@ -29,7 +29,6 @@ const type = (args) => ({ name: 'type_text', args });
 const read = (args = {}) => ({ name: 'read_page', args });
 const ax = (args = {}) => ({ name: 'get_accessibility_tree', args });
 const ie = (args = {}) => ({ name: 'get_interactive_elements', args });
-const inspectViewport = (args = {}) => ({ name: 'inspect_viewport', args });
 const scroll = (args) => ({ name: 'scroll', args });
 const verify = (args = {}) => ({ name: 'verify_form', args });
 const extract = (type) => ({ name: 'extract_data', args: { type } });
@@ -494,8 +493,8 @@ const CASES = [
   {
     user: 'take a screenshot',
     tab: cnn,
-    ideal: inspectViewport(),
-    rubric: 'The standalone screenshot tool is retired; inspect_viewport is the read-only visual capture. A single inspect_viewport call, optionally followed by done with a brief description, is correct.',
+    ideal: done('Screenshots are user-driven: type /screenshot for the visible viewport, or /screenshot --full-page for the whole page. The capture is staged for your next message.'),
+    rubric: 'Capturing an image for the USER is a slash command, not a tool. Correct: done pointing at /screenshot (and /screenshot --full-page for the whole page). inspect_viewport is wrong here — it only feeds the model a read-only view and saves or attaches nothing for the user — as is claiming a screenshot was taken.',
   },
   {
     user: 'what did i highlight',

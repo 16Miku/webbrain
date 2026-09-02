@@ -1085,7 +1085,14 @@ export const ASK_ONLY_TOOLS = [
  * tool calls extracted from raw LLM output.
  */
 export const AGENT_TOOL_NAMES = new Set(AGENT_TOOLS.map(t => t.function.name));
-export const RETIRED_AGENT_TOOL_NAMES = new Set(['screenshot', 'full_page_screenshot', 'record_tab', 'stop_recording']);
+// Names that were model-callable in an earlier release. They stay reserved so a
+// custom skill manifest cannot re-expose a capability we deliberately removed —
+// the prompts now tell the model these actions are unavailable, and a skill that
+// reintroduced the name would contradict them.
+export const RETIRED_AGENT_TOOL_NAMES = new Set([
+  'screenshot', 'full_page_screenshot', 'record_tab', 'stop_recording',
+  'new_tab', 'list_tabs', 'activate_tab',
+]);
 export const RESERVED_AGENT_TOOL_NAMES = new Set([...AGENT_TOOL_NAMES, ...RETIRED_AGENT_TOOL_NAMES, 'done_json', 'load_skill', 'beep']);
 export const DEV_ONLY_TOOL_NAMES = new Set(['read_page_source', 'inspect_element_styles', 'execute_js']);
 export const DEV_EXTENDED_TOOL_NAMES = new Set([

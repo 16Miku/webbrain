@@ -10,6 +10,7 @@ This changelog was generated from the repository Git history and release tags. V
 - Removed model-callable browser tab creation, listing, and activation from every prompt tier. URL readers and current-tab navigation remain available; internal research/helper tabs and normal `target=_blank` behavior are unchanged.
 
 ### Fixed
+- Reserved the retired tab-tool names, so an enabled custom skill can no longer re-declare `new_tab`, `list_tabs`, or `activate_tab` and hand the model back a capability the prompts say it does not have.
 - Retuned the LLM benchmark goldens that still expected retired tools, so a model running against the current schemas is no longer scored wrong for answers it cannot give. `test/run.js` now fails when any golden or seeded turn names a tool the schemas do not offer.
 
 ## [34.1.1] - 2026-09-02
