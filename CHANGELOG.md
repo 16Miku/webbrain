@@ -11,6 +11,7 @@ This changelog was generated from the repository Git history and release tags. V
 
 ### Fixed
 - Reserved the retired tab-tool names, so an enabled custom skill can no longer re-declare `new_tab`, `list_tabs`, or `activate_tab` and hand the model back a capability the prompts say it does not have.
+- Gave Ask mode its own wording for the browser-tab limitation. The shared text offered current-tab navigation, which read-only Ask cannot perform; it now offers to read the URL or to switch to Act.
 - Retuned the LLM benchmark goldens that still expected retired tools, so a model running against the current schemas is no longer scored wrong for answers it cannot give. `test/run.js` now fails when any golden or seeded turn names a tool its own mode does not offer.
 - Relabelled the `csp-blocked-eval` scenarios (and scenario 020) as Dev. They replay a CSP-rejected `execute_js`, which ships only in Dev, so an Act history was showing the model a tool that surface never gave it.
 - Added a `skipped` verdict to the scenario harness. A scenario whose mode has no payload at the tier under test is reported as skipped instead of erroring, sends no request, and stays out of the safety and regrade denominators.

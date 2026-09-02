@@ -24446,9 +24446,9 @@ test('getToolsForMode: mode/tier redesign exposes the intended normal and Dev to
 });
 
 test('browser tab tools are absent from catalogs, runtime handlers, and prompts', () => {
-  for (const [label, prompts, plannerPrompt] of [
-    ['chrome', [SYSTEM_PROMPT_ASK_CH, SYSTEM_PROMPT_ACT_CH, SYSTEM_PROMPT_ACT_MID_CH, SYSTEM_PROMPT_ACT_COMPACT_CH], PLANNER_SYSTEM_PROMPT],
-    ['firefox', [SYSTEM_PROMPT_ASK_FX, SYSTEM_PROMPT_ACT_FX, SYSTEM_PROMPT_ACT_MID_FX, SYSTEM_PROMPT_ACT_COMPACT_FX], PLANNER_SYSTEM_PROMPT_FX],
+  for (const [label, prompts, plannerPrompt, askPrompt, actPrompts] of [
+    ['chrome', [SYSTEM_PROMPT_ASK_CH, SYSTEM_PROMPT_ACT_CH, SYSTEM_PROMPT_ACT_MID_CH, SYSTEM_PROMPT_ACT_COMPACT_CH], PLANNER_SYSTEM_PROMPT, SYSTEM_PROMPT_ASK_CH, [SYSTEM_PROMPT_ACT_CH, SYSTEM_PROMPT_ACT_MID_CH, SYSTEM_PROMPT_ACT_COMPACT_CH]],
+    ['firefox', [SYSTEM_PROMPT_ASK_FX, SYSTEM_PROMPT_ACT_FX, SYSTEM_PROMPT_ACT_MID_FX, SYSTEM_PROMPT_ACT_COMPACT_FX], PLANNER_SYSTEM_PROMPT_FX, SYSTEM_PROMPT_ASK_FX, [SYSTEM_PROMPT_ACT_FX, SYSTEM_PROMPT_ACT_MID_FX, SYSTEM_PROMPT_ACT_COMPACT_FX]],
   ]) {
     const agentSource = fs.readFileSync(path.join(ROOT, `src/${label}/src/agent/agent.js`), 'utf8');
     const permissionSource = fs.readFileSync(path.join(ROOT, `src/${label}/src/agent/permission-gate.js`), 'utf8');
@@ -24468,8 +24468,25 @@ test('browser tab tools are absent from catalogs, runtime handlers, and prompts'
     }
     for (const prompt of prompts) {
       assert.match(prompt, /cannot create, enumerate, activate, or retarget browser tabs/i, `[${label}] tab limitation missing`);
-      assert.match(prompt, /explicitly asks for a separate tab[\s\S]*instead of silently navigating/i, `[${label}] separate-tab requests could be silently retargeted`);
+      assert.match(prompt, /explicitly asks for a separate tab/i, `[${label}] separate-tab requests have no stated handling`);
     }
+
+    // Act and Dev can reach another URL through the run tab, so they promise
+    // current-tab navigation rather than silently retargeting.
+    for (const prompt of actPrompts) {
+      assert.match(prompt, /explicitly asks for a separate tab[\s\S]*instead of silently navigating/i, `[${label}] separate-tab requests could be silently retargeted`);
+      assert.match(prompt, /offer current-tab navigation/i, `[${label}] action prompt should offer the current-tab fallback`);
+    }
+
+    // Ask is read-only and has no navigate, so the same offer would be a promise
+    // the mode cannot keep.
+    assert.doesNotMatch(askPrompt, /offer current-tab navigation/i, `[${label}] ask prompt offers navigation it cannot perform`);
+    assert.doesNotMatch(askPrompt, /navigating the current run tab/i, `[${label}] ask prompt points at navigation it cannot perform`);
+    assert.match(askPrompt, /Ask mode cannot navigate the current one either/i, `[${label}] ask prompt should state that navigation is unavailable too`);
+    assert.match(askPrompt, /offer to read that URL here, or to switch to Act mode/i, `[${label}] ask prompt should offer a read-only fallback and the Act handoff`);
+    const askTools = new Set((label === 'chrome' ? getToolsForModeCh : getToolsForModeFx)('ask').map(t => t.function?.name));
+    assert.equal(askTools.has('navigate'), false, `[${label}] ask exposing navigate would make the read-only wording wrong`);
+    assert.equal(askTools.has('fetch_url'), true, `[${label}] ask needs a URL-reading tool for the fallback it offers`);
   }
 });
 
