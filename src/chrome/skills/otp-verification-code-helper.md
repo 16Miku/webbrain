@@ -12,7 +12,7 @@ Use this skill when the user explicitly asks WebBrain to find, read, copy, or en
 
 ## Capability and privacy boundary
 
-- Operate only on the current run's active tab. WebBrain cannot list, activate, or switch to an already open background tab, and `new_tab` does not retarget the current run. If webmail is open elsewhere, ask the user to open or activate the relevant inbox/message in the run tab and invoke the request again.
+- Operate only on the current run's active tab. WebBrain cannot create, list, activate, or switch browser tabs. If webmail is open elsewhere, ask the user to open or activate the relevant inbox/message in the run tab and invoke the request again.
 - Read only content available in that browser tab: an open message, a signed-in webmail page, or text the user selected or supplied on the page.
 - Do **not** claim to read SMS, phone notifications, native Mail or Messages apps, the operating system clipboard, another device, or any content that is not visible in the active browser tab. If the code was delivered only by SMS, ask the user to read or paste it themselves.
 - Do not use `fetch_url`, provider APIs, cookies, session tokens, developer tools, or hidden background pages to bypass a mailbox sign-in or obtain private messages.

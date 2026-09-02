@@ -1099,9 +1099,8 @@ browser.alarms.onAlarm.addListener((alarm) => {
 // Same UX shape as the Chrome build (see src/chrome/src/background.js):
 // when automatic grouping is enabled and the user clicks the browser
 // action, the source tab joins (or seeds) a colored "WebBrain" tab group
-// for that window. Agent-spawned tabs (new_tab tool, target=_blank
-// redirects) auto-join the same group via agent.js's
-// `_addToWebBrainGroup`.
+// for that window. Internal helper tabs and target=_blank redirects auto-join
+// the same group via agent.js's `_addToWebBrainGroup`.
 //
 // What we DON'T do on Firefox: scope the sidebar's visibility to group
 // membership. browser.sidebarAction is window-level, not per-tab —

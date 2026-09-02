@@ -141,8 +141,9 @@ Key difference: Chrome uses Manifest V3 (service worker, `chrome.scripting`, `si
 | `navigate` | No | Yes | Go to a URL |
 | `wait_for_element` | No | Yes | Wait for a selector to appear |
 | `execute_js` | No | Dev only | Run one JavaScript function body through the MV2 content-script evaluator |
-| `new_tab` | No | Yes | Open a new tab |
 | `done` | Yes | Yes | Signal task completion |
+
+Browser-tab creation, enumeration, activation, and run retargeting are not model-callable capabilities. Use a URL reader for another page or navigate the current run tab for interaction; an explicit separate-tab request is not silently converted into current-tab navigation.
 
 ### Dev-mode difference
 

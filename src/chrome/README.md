@@ -163,8 +163,9 @@ Key difference: Chrome and Edge use Manifest V3 (service worker, `chrome.scripti
 | `inspect_network_requests` | No | Dev only | Inspect redacted request/status/timing data |
 | `inspect_event_listeners` | No | Dev only | Inspect listeners on a ref/selector and ancestors |
 | `highlight_element` | No | Dev only | Show a temporary target overlay |
-| `new_tab` | No | Yes | Open a new tab |
 | `done` | Yes | Yes | Signal task completion |
+
+Browser-tab creation, enumeration, activation, and run retargeting are not model-callable capabilities. Use a URL reader for another page or navigate the current run tab for interaction; an explicit separate-tab request is not silently converted into current-tab navigation.
 
 ### Dev-mode page tools
 
