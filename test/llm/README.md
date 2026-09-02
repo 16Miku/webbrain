@@ -267,6 +267,13 @@ Each category has 10 scenarios. Many are modeled on real failures
 observed in production traces (gpt-4o, gpt-5.5, gemma-31b, xiaomi-mimo)
 but the data is fully synthetic — no PII enters the repo.
 
+A scenario's `mode` has to match the tools its seed replays. `execute_js`
+ships only in Dev, so `csp-blocked-eval` (and scenario 020, which replays the
+same rejection) declare `mode: "dev"`; seeding a Dev tool into an Act history
+would show the model an action that surface never offered it. Because Compact
+Dev is blocked, those scenarios error out under `--tier compact` unless you
+also pass `--mode act`.
+
 ## Running scenarios
 
 ```

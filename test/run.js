@@ -24636,30 +24636,21 @@ test('test/llm payload builders support Dev mode and preserve Ask cleanup', () =
 
 test('test/llm goldens only name tools the model is actually offered', () => {
   // The benchmark is only meaningful while its goldens match the shipped
-  // schemas: an ideal call or a seeded assistant turn naming a tool we no
-  // longer expose is unanswerable, so every model scores wrong on it and the
-  // whole comparison skews. Retiring a tool must therefore land with a golden
-  // update in the same change.
-  const offered = new Set();
-  const probe = { tab: { url: 'https://example.com', title: 'Example' }, user: 'probe' };
-  for (const browser of ['chrome', 'firefox']) {
-    for (const mode of ['ask', 'act', 'dev']) {
-      for (const tier of ['full', 'mid', 'compact']) {
-        if (mode === 'dev' && tier === 'compact') continue; // rejected by design
-        for (const researchEscalationEnabled of [false, true]) {
-          const payload = buildLlmPayload({ ...probe, mode }, {
-            browser,
-            tier,
-            useSiteAdapters: false,
-            researchEscalationEnabled,
-          });
-          for (const tool of payload.tools) offered.add(tool.function.name);
-        }
-      }
-    }
-  }
-  assert.equal(offered.size > 0, true, 'probe payloads should expose a non-empty tool union');
-
+  // schemas: an ideal call or a seeded assistant turn naming a tool the run
+  // cannot offer is unanswerable, so every model scores wrong on it and the
+  // whole comparison skews.
+  //
+  // Each fixture is checked against ITS OWN declared mode at full tier, on both
+  // browsers — not a union across every surface, which would let a Dev-only
+  // tool pass inside an Act fixture. Mid and Compact deliberately expose fewer
+  // tools, so a golden naming something those tiers drop is the prompt-size
+  // tradeoff the corpus exists to measure, not drift; requiring the tool at
+  // full tier is what separates "this smaller tier omits it" from "we retired
+  // it and nothing can call it".
+  const surfaceFor = (build) => {
+    const payload = build();
+    return new Set(payload.tools.map(t => t.function.name));
+  };
   const llmDir = path.join(ROOT, 'test/llm');
   const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
@@ -24668,13 +24659,22 @@ test('test/llm goldens only name tools the model is actually offered', () => {
     return /^\d{3}\.json$/.test(entry.name) ? [full] : [];
   });
 
-  const expectedDir = path.join(llmDir, 'expected');
-  const expectedFiles = walk(expectedDir);
+  const expectedFiles = walk(path.join(llmDir, 'expected'));
   assert.equal(expectedFiles.length, 100, 'expected/ should hold 100 step-1 goldens');
   for (const file of expectedFiles) {
+    const id = path.basename(file, '.json');
+    const question = readJson(path.join(llmDir, 'questions', `${id}.json`));
     const name = readJson(file)?.idealFirstToolCall?.name;
     if (!name) continue;
-    assert.equal(offered.has(name), true, `${path.relative(ROOT, file)} idealFirstToolCall names unavailable tool ${name}`);
+    for (const browser of ['chrome', 'firefox']) {
+      const offered = surfaceFor(() => buildLlmPayload(question, {
+        browser,
+        tier: 'full',
+        useSiteAdapters: false,
+        researchEscalationEnabled: true,
+      }));
+      assert.equal(offered.has(name), true, `expected/${id}.json idealFirstToolCall names ${name}, absent from ${browser} ${question.mode || 'act'}/full`);
+    }
   }
 
   const scenarioFiles = walk(path.join(llmDir, 'scenarios'));
@@ -24682,20 +24682,29 @@ test('test/llm goldens only name tools the model is actually offered', () => {
   for (const file of scenarioFiles) {
     const scenario = readJson(file);
     const rel = path.relative(ROOT, file);
-    const idealNext = scenario?.expected?.idealNextToolCall?.name;
-    if (idealNext) {
-      assert.equal(offered.has(idealNext), true, `${rel} idealNextToolCall names unavailable tool ${idealNext}`);
-    }
-    // Seeds are replayed verbatim as history, so a seeded call to a tool that
-    // is no longer in the schema shows the model an action it cannot take.
-    for (const message of scenario?.seed || []) {
-      for (const call of message?.tool_calls || []) {
-        const called = call?.function?.name;
-        if (!called) continue;
-        assert.equal(offered.has(called), true, `${rel} seeds a tool_call to unavailable tool ${called}`);
+    for (const browser of ['chrome', 'firefox']) {
+      const offered = surfaceFor(() => buildLlmScenarioPayload({ ...scenario, browser }, {
+        tier: 'full',
+        useSiteAdapters: false,
+        researchEscalationEnabled: true,
+      }));
+      const where = `${browser} ${scenario.mode || 'act'}/full`;
+      const idealNext = scenario?.expected?.idealNextToolCall?.name;
+      if (idealNext) {
+        assert.equal(offered.has(idealNext), true, `${rel} idealNextToolCall names ${idealNext}, absent from ${where}`);
       }
-      if (message?.role === 'tool' && message?.name) {
-        assert.equal(offered.has(message.name), true, `${rel} seeds a tool result from unavailable tool ${message.name}`);
+      // Seeds are replayed verbatim as history, so a seeded call to a tool the
+      // scenario's own surface never offers shows the model an action it could
+      // not have taken.
+      for (const message of scenario?.seed || []) {
+        for (const toolCall of message?.tool_calls || []) {
+          const called = toolCall?.function?.name;
+          if (!called) continue;
+          assert.equal(offered.has(called), true, `${rel} seeds a tool_call to ${called}, absent from ${where}`);
+        }
+        if (message?.role === 'tool' && message?.name) {
+          assert.equal(offered.has(message.name), true, `${rel} seeds a tool result from ${message.name}, absent from ${where}`);
+        }
       }
     }
   }
