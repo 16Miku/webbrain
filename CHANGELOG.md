@@ -19,6 +19,27 @@ This changelog was generated from the repository Git history and release tags. V
 - Relabelled the `csp-blocked-eval` scenarios (and scenario 020) as Dev. They replay a CSP-rejected `execute_js`, which ships only in Dev, so an Act history was showing the model a tool that surface never gave it.
 - Added a `skipped` verdict to the scenario harness. A scenario whose mode has no payload at the tier under test is reported as skipped instead of erroring, sends no request, and stays out of the safety and regrade denominators.
 
+## [34.1.2] - 2026-09-02
+
+### Changed
+- Return only known fields from a failed OTP open
+- Fail closed on ungated OTP opens and Gmail list routes
+- fix: abort source-bound helper tabs when sidebar Stop is pressed
+- Gate OTP message opens and complete reads
+- Reject Gmail search listings as messages
+- Harden OTP mailbox message matching
+- Add skill-gated OTP mailbox reader
+- fix: give Ask mode a read-only fallback for tab requests
+- test/llm: report inapplicable scenarios as skipped, not errors
+- test/llm: validate goldens per declared surface, not a union
+- fix: reserve retired tab-tool names; score /screenshot for case 065
+- docs(test/llm): stop hardcoding a tool count that rots
+- test/llm: update benchmark goldens for removed tab tools
+- Remove browser tab management tools
+- dist: rebuild submission zips for v34.1.1
+- chore: release v34.1.1
+- docs: added
+
 ## [34.1.1] - 2026-09-02
 
 ### Changed
