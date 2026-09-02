@@ -1,6 +1,7 @@
 import { closeToolDefinitions } from './tool-arguments.js';
 import { hasJsonSchemaMarker, isJsonSchemaSpec } from './cloud-output.js';
 import { EXPANDED_TREE_PAGE_CHARS, STANDARD_TREE_PAGE_CHARS } from './read-completeness.js';
+import { OTP_EMAIL_TOOL, OTP_EMAIL_TOOL_NAME } from './otp-email-tool.js';
 
 /**
  * Tool definitions for the WebBrain agent.
@@ -1243,7 +1244,7 @@ export const RETIRED_AGENT_TOOL_NAMES = new Set([
   'screenshot', 'full_page_screenshot', 'record_tab', 'stop_recording',
   'new_tab', 'list_tabs', 'activate_tab',
 ]);
-export const RESERVED_AGENT_TOOL_NAMES = new Set([...AGENT_TOOL_NAMES, ...RETIRED_AGENT_TOOL_NAMES, 'done_json', 'load_skill', 'beep']);
+export const RESERVED_AGENT_TOOL_NAMES = new Set([...AGENT_TOOL_NAMES, ...RETIRED_AGENT_TOOL_NAMES, OTP_EMAIL_TOOL_NAME, 'done_json', 'load_skill', 'beep']);
 export const DEV_ONLY_TOOL_NAMES = new Set([
   'read_page_source',
   'inspect_element_styles',
@@ -1715,6 +1716,9 @@ export function getToolsForMode(mode, opts = {}) {
   }
   if (!devCompactBlocked && tier !== 'compact' && opts.skillLoaderTool?.function?.name === 'load_skill') {
     base = [...base, opts.skillLoaderTool];
+  }
+  if (!devCompactBlocked && tier !== 'compact' && opts.otpEmailSkillActive === true) {
+    base = [...base, OTP_EMAIL_TOOL];
   }
   if (!devCompactBlocked && Array.isArray(opts.skillTools) && opts.skillTools.length) {
     const seen = new Set([...RESERVED_AGENT_TOOL_NAMES, ...base.map(t => t.function?.name).filter(Boolean)]);
