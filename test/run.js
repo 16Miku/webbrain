@@ -102869,7 +102869,11 @@ test('reconnect protocol is wired through both sidepanels and backgrounds', () =
     assert.match(background, /const requestedRunUi = runUiSnapshotForRequest\(runUiSnapshot, requestedRequestId\)[\s\S]*?runUi: requestedRunUi,/, `${label}: reconnect probes should not receive another request's journal`);
     assert.match(background, /const entry = \{ requestId, promise: null, cancelled: false \}/, `${label}: detached starts should retain request-scoped cancellation`);
     assert.match(background, /assertDetachedRunStartNotCancelled\(tabId, detachedMessage\)/, `${label}: cancelled reservations should not launch queued runs`);
-    assert.match(background, /case 'abort':[\s\S]*?cancelDetachedRunStart\(tabId\)[\s\S]*?agent\.abort\(tabId\)/, `${label}: sidebar Stop should cancel both reserved and active runs`);
+    assert.match(
+      background,
+      /case 'abort':[\s\S]*?const sourceTabId = agent\.researchEscalationSourceTab\(tabId\);[\s\S]*?cancelDetachedRunStart\(tabId\)[\s\S]*?if \(sourceTabId\) cancelDetachedRunStart\(sourceTabId\);[\s\S]*?agent\.abort\(sourceTabId \|\| tabId\)/,
+      `${label}: sidebar Stop should cancel both reserved and active runs, including source-bound helper tabs`,
+    );
     assert.match(background, /isDetachedStartCancelled: \(\) => isDetachedRunStartCancelled\(tabId, msg\)/, `${label}: cancellation should remain visible through async run setup`);
     assert.match(background, /detachedRunFailures/, `${label}: detached task failures should remain queryable by request ID`);
     assert.match(background, /detachedError,/, `${label}: run probes should return the original detached task failure`);

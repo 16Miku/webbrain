@@ -2930,7 +2930,7 @@ async function handleMessage(msg, sender) {
         const sourceTabId = agent.researchEscalationSourceTab(tabId);
         cancelDetachedRunStart(tabId);
         if (sourceTabId) cancelDetachedRunStart(sourceTabId);
-        agent.abort(tabId);
+        agent.abort(sourceTabId || tabId);
       }
       return { ok: true };
     }
