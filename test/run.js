@@ -27818,6 +27818,18 @@ test('OTP mailbox candidate filtering returns only service-matching bounded exce
     assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#label/security/FMfcgzQXmessage'), true, `${label}: a Gmail label result with an explicit thread ID should be recognized`);
     assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#search/github'), false, `${label}: a Gmail search-results route must not treat the query as a thread ID`);
     assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#label/security'), false, `${label}: a Gmail label listing must not treat the label name as a thread ID`);
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#inbox/p2'), false, `${label}: a Gmail pagination route must not be treated as an open message`);
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#search/github/p2'), false, `${label}: a paged Gmail search listing must not be treated as an open message`);
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#label/security/p3'), false, `${label}: a paged Gmail label listing must not be treated as an open message`);
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#inbox/p2/FMfcgzQXmessage'), true, `${label}: a thread opened from a later inbox page is still an open message`);
+    assert.equal(helper.otpEmailUrlLooksLikeMessage('gmail', 'https://mail.google.com/mail/u/0/#search/github/p3/FMfcgzQXmessage'), true, `${label}: a thread opened from a later search page is still an open message`);
+    const astralService = `${'\u{1F600}'.repeat(58)}github`;
+    assert.equal(
+      helper.otpServiceKey(astralService),
+      helper.otpServiceKey(helper.otpServiceDisplay(astralService)),
+      `${label}: the session key must not depend on UTF-16 truncation of the service argument`,
+    );
+    assert.equal(helper.otpRedactRefs('open failed at [ref_abc123] near ref_def456'), 'open failed at [ref] near [ref]', `${label}: model-visible errors must not carry accessibility refs`);
     assert.equal(helper.otpEmailUrlLooksLikeMessage('outlook', 'https://outlook.live.com/mail/0/inbox'), false, `${label}: an inbox route must not be treated as an open message`);
     assert.equal(helper.otpEmailUrlLooksLikeMessage('outlook', 'https://outlook.live.com.evil.example/mail/0/inbox/id/123'), false, `${label}: a lookalike message route must fail closed`);
     assert.equal(helper.otpOpenMessageRootRef('article "Bank of America" [ref_message]\n  text "Security code 123456"', 'Bank of America'), 'ref_message', `${label}: a single service-matching semantic message root should be scoped`);
@@ -27888,6 +27900,19 @@ test('OTP cross-tab tool appears only after skill activation on Mid/Full and sta
       action: 'open_message', service: 'GitHub', message_ref: 'otp_mail_exact_1',
     });
     assert.equal(actPreparation.permissionArgs?._otpMailboxUrl, 'https://mail.google.com/mail/u/0/#inbox', `${label}: Act must bind permission to the opaque session's mailbox URL`);
+    const astralPreparation = agent._prepareOtpEmailToolCall(tabId, toolName, {
+      action: 'open_message', service: `${'\u{1F600}'.repeat(58)}GitHub`, message_ref: 'otp_mail_exact_1',
+    });
+    assert.equal(
+      astralPreparation.permissionArgs?._otpMailboxUrl,
+      'https://mail.google.com/mail/u/0/#inbox',
+      `${label}: the gate and the handler must resolve the same session for every accepted service argument`,
+    );
+    agent.abortFlags.set(tabId, true);
+    const stoppedRead = await agent._otpEmailTree(tabId, tabId, 'gmail');
+    assert.equal(stoppedRead.cancelled, true, `${label}: a stop during a mailbox read should end the read`);
+    assert.equal(agent.abortFlags.get(tabId), true, `${label}: the OTP read must not swallow the stop the run loops still have to see`);
+    agent.abortFlags.delete(tabId);
   }
 });
 
@@ -27982,11 +28007,13 @@ test('OTP cross-tab tool preserves the verification tab and closes its temporary
       agent.conversationModes.set(sourceTab.id, 'act');
 
       tabs.set(sourceTab.id, { ...sourceTab, url: 'https://evil.example/verification' });
-      const staleDestination = await agent._executeOtpEmailTool(sourceTab.id, {
+      const staleArgs = {
         action: 'open_message',
         service: 'GitHub',
         message_ref: inspected.candidates[0].message_ref,
-      });
+      };
+      agent._prepareOtpEmailToolCall(sourceTab.id, helper.OTP_EMAIL_TOOL_NAME, staleArgs);
+      const staleDestination = await agent._executeOtpEmailTool(sourceTab.id, staleArgs);
       assert.equal(staleDestination.success, false, `${label}: a changed destination must invalidate the inspected message`);
       assert.equal(staleDestination.stale, true);
       assert.equal(created.length, 0, `${label}: destination churn must fail before creating a helper`);
@@ -27995,10 +28022,27 @@ test('OTP cross-tab tool preserves the verification tab and closes its temporary
       const reinspected = await agent._executeOtpEmailTool(sourceTab.id, { action: 'inspect', service: 'GitHub' });
       assert.equal(reinspected.success, true, `${label}: a fresh inspect should recover after returning to the destination`);
 
+      const grantedRef = reinspected.candidates[0].message_ref;
+      const ungatedOpen = await agent._executeOtpEmailTool(sourceTab.id, {
+        action: 'open_message',
+        service: 'GitHub',
+        message_ref: grantedRef,
+      });
+      assert.equal(ungatedOpen.success, false, `${label}: an open that never passed the permission gate must not dispatch`);
+      assert.equal(ungatedOpen.denied, true, `${label}: an ungated open should report the missing click grant`);
+      assert.equal(created.length, 0, `${label}: an ungated open must not create a helper tab`);
+      assert.equal(agent._otpEmailSessions.has(sourceTab.id), true, `${label}: an ungated open should leave the inspect result usable`);
+
+      const preparedOpen = agent._prepareOtpEmailToolCall(sourceTab.id, helper.OTP_EMAIL_TOOL_NAME, {
+        action: 'open_message',
+        service: 'GitHub',
+        message_ref: grantedRef,
+      });
+      assert.equal(preparedOpen.permissionArgs?._otpMailboxUrl, mailboxTab.url, `${label}: the gate should charge the open to the mailbox host`);
       const opened = await agent._executeOtpEmailTool(sourceTab.id, {
         action: 'open_message',
         service: 'GitHub',
-        message_ref: reinspected.candidates[0].message_ref,
+        message_ref: grantedRef,
       });
       assert.equal(opened.success, true, `${label}: selected message should be read`);
       assert.equal(opened.stage, 'message');
@@ -28042,6 +28086,17 @@ test('OTP cross-tab tool preserves the verification tab and closes its temporary
       assert.match(directOutlook.messageText, /867530/);
       assert.doesNotMatch(directOutlook.messageText, /ref_outlook_message/);
       assert.equal(created.length, 1, `${label}: direct non-Gmail message reads must not create another helper tab`);
+
+      const navigatingAgent = new AgentClass({});
+      let navigatingReads = 0;
+      navigatingAgent.executeTool = async () => {
+        navigatingReads += 1;
+        return { pageContent: 'main "Attacker" [ref_main]\n  text "GitHub code 999999"' };
+      };
+      tabs.set(2599, { id: 2599, windowId: 4, status: 'loading', url: 'https://evil.example/inbox' });
+      const navigatingRead = await navigatingAgent._otpEmailTree(sourceTab.id, 2599, 'gmail', { timeoutMs: 1000 });
+      assert.equal(navigatingRead.success, false, `${label}: a tab navigating off the mailbox must not be read`);
+      assert.equal(navigatingReads, 0, `${label}: no accessibility read may target a page that is not the expected mailbox`);
     } finally {
       if (originalApi === undefined) delete globalThis[apiName];
       else globalThis[apiName] = originalApi;

@@ -62,6 +62,21 @@ export function otpServiceKey(value) {
   return normalizedText(value).slice(0, 120);
 }
 
+// Display form of the caller's service string, bounded by CODE POINTS so it
+// matches the argument validator's own limit. Callers must derive the session
+// key from the raw value (otpServiceKey) rather than from this string: slicing
+// UTF-16 units first can cut a surrogate pair and make the permission gate and
+// the tool handler disagree about which session a call belongs to.
+export function otpServiceDisplay(value) {
+  return [...String(value || '').trim()].slice(0, 120).join('');
+}
+
+// Provider and tool error strings can carry accessibility ref ids. Nothing
+// returned to the model may expose them (docs/privacy-and-data-flow.md).
+export function otpRedactRefs(value) {
+  return String(value || '').replace(/\[?\bref_[A-Za-z0-9_-]+\]?/g, '[ref]');
+}
+
 function serviceMatchSpec(value) {
   const key = otpServiceKey(value);
   const ignored = new Set(['www', 'com', 'net', 'org', 'app', 'mail', 'email', 'code', 'verification']);
@@ -89,6 +104,27 @@ export function otpEmailProviderForUrl(value) {
   return EMAIL_PROVIDERS.find(provider => provider.matches(host, url))?.id || '';
 }
 
+const GMAIL_MESSAGE_FOLDERS = new Set(['inbox', 'all', 'sent', 'starred', 'important', 'trash', 'spam']);
+const GMAIL_SCOPED_FOLDERS = new Set(['search', 'label']);
+// Gmail thread ids are long opaque tokens (modern `FMfc…`, legacy hex/base36).
+// Requiring that shape keeps list routes — above all the `pN` pagination
+// segment of `#inbox/p2` or `#search/github/p2` — out of the message branch,
+// where a whole listing would otherwise be read as one message.
+const GMAIL_THREAD_ID = /^(?:FMfc[A-Za-z0-9_-]{6,}|[A-Za-z0-9_-]{16,})$/;
+
+function gmailHashLooksLikeMessage(hash) {
+  const route = String(hash || '').replace(/^#/, '').split('?')[0].replace(/\/+$/, '');
+  const segments = route.split('/').filter(Boolean);
+  const threadId = segments[segments.length - 1] || '';
+  if (/^p\d+$/i.test(threadId) || !GMAIL_THREAD_ID.test(threadId)) return false;
+  // An opened thread keeps the list route it was opened from, including that
+  // route's page segment: #inbox/p2/FMfc…, #search/query/p3/FMfc….
+  const folders = segments.slice(0, -1).filter(segment => !/^p\d+$/i.test(segment));
+  const root = String(folders[0] || '').toLowerCase();
+  if (GMAIL_SCOPED_FOLDERS.has(root)) return folders.length === 2;
+  return GMAIL_MESSAGE_FOLDERS.has(root) && folders.length === 1;
+}
+
 export function otpEmailUrlLooksLikeMessage(provider, value) {
   let url;
   try { url = new URL(String(value || '')); } catch { return false; }
@@ -96,7 +132,7 @@ export function otpEmailUrlLooksLikeMessage(provider, value) {
   const path = url.pathname;
   const hash = url.hash;
   switch (provider) {
-    case 'gmail': return /^#(?:(?:inbox|all|sent|starred|important|trash|spam)\/[A-Za-z0-9_-]+|(?:search|label)\/[^/]+\/[A-Za-z0-9_-]+)(?:[/?]|$)/i.test(hash);
+    case 'gmail': return gmailHashLooksLikeMessage(hash);
     case 'outlook': return /\/mail\/(?:\d+\/)?(?:[^/]+\/)*id\/[A-Za-z0-9%_-]+/i.test(path) || /\/mail\/(?:\d+\/)?deeplink\/read\//i.test(path);
     case 'yahoo': return /\/d\/(?:folders|search)\/[^/]+\/messages\/[A-Za-z0-9%_-]+/i.test(path);
     case 'proton': return /\/u\/\d+\/(?:inbox|all-mail|sent|archive|trash|spam|starred|search)\/[A-Za-z0-9%_-]+/i.test(path);
