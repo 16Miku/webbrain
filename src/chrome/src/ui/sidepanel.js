@@ -2913,7 +2913,6 @@ const TOOL_KEYS = {
   highlight_element: 'tool.highlight_element',
   wait_for_element: 'tool.wait_for_element',
   get_selection: 'tool.get_selection',
-  new_tab: 'tool.new_tab',
   delegate_research: 'tool.delegate_research',
   promote_iframe: 'tool.navigate',
   schedule_resume: 'tool.schedule_resume',
@@ -2927,7 +2926,6 @@ function friendlyToolLabel(name, args) {
   if (name === 'click' && args?.index != null) return t('tool.click.index', { index: args.index });
   if (name === 'type_text' && args?.text) return t('tool.type_text.text', { text: truncate(args.text, 25) });
   if (name === 'navigate' && args?.url) return t('tool.navigate.url', { url: truncate(args.url, 35) });
-  if (name === 'new_tab' && args?.url) return t('tool.new_tab.url', { url: truncate(args.url, 35) });
   if (name === 'promote_iframe' && args?.urlFilter) return t('tool.navigate.url', { url: truncate(args.urlFilter, 35) });
   if (name === 'scroll') return t('tool.scroll.direction', { direction: args?.direction || 'down' });
   if (name === 'extract_data') return t('tool.extract_data.type', { type: args?.type || 'data' });

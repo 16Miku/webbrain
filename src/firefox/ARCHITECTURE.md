@@ -1,6 +1,6 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 34.1.0 · Manifest V2 · Background Page
+> Version 34.1.1 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
@@ -335,7 +335,7 @@ Legacy tier (kept for compatibility with older prompts and for non-AX flows):
 |---|---|
 | `read_page`, `screenshot`, `get_interactive_elements` | Page content / image / indexed elements |
 | `click`, `type_text`, `press_keys` | Text/selector/index-based interaction |
-| `scroll`, `navigate`, `go_back`, `go_forward`, `new_tab`, `promote_iframe`, `wait_for_element`, `wait_for_stable` | Page control. `promote_iframe` resolves one child frame and navigates the current run tab to its standalone URL. `wait_for_stable` polls MutationObserver + in-flight fetch/XHR — works identically to Chrome. |
+| `scroll`, `navigate`, `go_back`, `go_forward`, `promote_iframe`, `wait_for_element`, `wait_for_stable` | Page control. `promote_iframe` resolves one child frame and navigates the current run tab to its standalone URL. `wait_for_stable` polls MutationObserver + in-flight fetch/XHR — works identically to Chrome. |
 | `extract_data`, `get_selection` | Data extraction / selected text |
 | `get_shadow_dom`, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type` | Frame / shadow DOM. Iframe reads enumerate labels, values, and per-selector `matchIndex` values; mutations fail before dispatch on ambiguity. An iframe type must be followed by same-scope `verify_form({urlFilter})` before successful completion. `get_shadow_dom` and `get_frames` are Full Act and Dev-extended for Mid Dev. |
 | `fetch_url`, `research_url` | HTTP / open-and-read |
