@@ -11350,15 +11350,21 @@ function askAboutSelectedAnswer() {
   const tabId = normalizeAttachmentTabId(renderedTabId ?? currentTabId);
   if (tabId == null) {
     dismissSelectionAskAction();
-    showComposerToast(t('sp.persistence.unavailable'));
+    showComposerToast(t('sp.attach.read_failed', { name: attachment.name }));
     return;
   }
   const pending = getPendingAttachmentsForTab(tabId);
-  const existingIndex = pending.findIndex(att => att?.kind === 'text' && att?.name === attachment.name);
-  if (existingIndex >= 0) {
-    pending[existingIndex] = attachment;
-  } else {
-    pending.push(attachment);
+  // Re-adding the same snippet is a no-op, so repeated clicks cannot pile up
+  // identical chips. A *different* snippet gets its own chip instead of
+  // overwriting the previous one: replacing by filename would silently drop an
+  // earlier selection the user still expects to send, and would clobber an
+  // uploaded file that happens to share the name.
+  const alreadyStaged = pending.some(att => att?.kind === 'text' && att?.textContent === attachment.textContent);
+  if (!alreadyStaged) {
+    const takenNames = new Set(pending.map(att => att?.name));
+    let name = attachment.name;
+    for (let suffix = 2; takenNames.has(name); suffix += 1) name = `selected-text-${suffix}.txt`;
+    pending.push({ ...attachment, name });
   }
   renderAttachmentPreviews();
   dismissSelectionAskAction();

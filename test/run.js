@@ -1462,7 +1462,7 @@ test('selected answer attachments keep the full text outside the composer draft'
   }
 });
 
-test('selected answer attachments deduplicate repeated actions for the same tab', () => {
+test('selected answer attachments deduplicate repeated actions without dropping distinct snippets', () => {
   for (const [label, buildAttachment] of [
     ['chrome', buildSelectionTextAttachment],
     ['firefox', buildSelectionTextAttachmentFx],
@@ -1470,27 +1470,35 @@ test('selected answer attachments deduplicate repeated actions for the same tab'
     const pending = [];
     const stage = (text) => {
       const attachment = buildAttachment(text);
-      const existingIndex = pending.findIndex(att => att?.kind === 'text' && att?.name === attachment.name);
-      if (existingIndex >= 0) {
-        pending[existingIndex] = attachment;
-      } else {
-        pending.push(attachment);
+      const alreadyStaged = pending.some(att => att?.kind === 'text' && att?.textContent === attachment.textContent);
+      if (!alreadyStaged) {
+        const takenNames = new Set(pending.map(att => att?.name));
+        let name = attachment.name;
+        for (let suffix = 2; takenNames.has(name); suffix += 1) name = `selected-text-${suffix}.txt`;
+        pending.push({ ...attachment, name });
       }
     };
 
     stage('First selected snippet');
     assert.equal(pending.length, 1, `${label}: first selection should add an attachment`);
     assert.equal(pending[0].textContent, 'First selected snippet');
+    assert.equal(pending[0].name, 'selected-text.txt');
+
+    stage('First selected snippet');
+    assert.equal(pending.length, 1, `${label}: re-adding the same snippet must not pile up identical chips`);
 
     stage('Second selected snippet');
-    assert.equal(pending.length, 1, `${label}: second selection should replace existing selected-text.txt`);
-    assert.equal(pending[0].textContent, 'Second selected snippet');
+    assert.equal(pending.length, 2, `${label}: a different snippet must not overwrite the earlier selection`);
+    assert.equal(pending[0].textContent, 'First selected snippet');
+    assert.equal(pending[1].textContent, 'Second selected snippet');
+    assert.equal(pending[1].name, 'selected-text-2.txt');
 
     pending.unshift({ kind: 'image', name: 'screenshot.png', source: 'slash_screenshot' });
-    pending.push({ kind: 'text', name: 'uploaded-file.txt', textContent: 'file data', source: 'user_upload' });
+    pending.push({ kind: 'text', name: 'selected-text-3.txt', textContent: 'file data', source: 'user_upload' });
     stage('Third selected snippet');
-    assert.equal(pending.length, 3, `${label}: unrelated attachments must not be overwritten`);
-    assert.equal(pending[1].textContent, 'Third selected snippet');
+    assert.equal(pending.length, 5, `${label}: unrelated attachments must not be overwritten`);
+    assert.equal(pending[4].textContent, 'Third selected snippet');
+    assert.equal(pending[4].name, 'selected-text-4.txt', `${label}: a name already taken by an upload must not be reused`);
   }
 });
 
@@ -1566,11 +1574,14 @@ test('selection answer action stages a visual attachment in both sidepanels', ()
     assert.match(source, /selectionAskActionEl && !selectionAskActionEl\.classList\.contains\('hidden'\)[\s\S]*?dismissSelectionAskAction\(\);/);
     assert.match(selectionActionSource, /buildSelectionTextAttachment\(selection\.text\)/);
     assert.match(selectionActionSource, /normalizeAttachmentTabId\(renderedTabId \?\? currentTabId\)/);
-    assert.match(selectionActionSource, /showComposerToast\(t\('sp\.persistence\.unavailable'\)\)/);
+    assert.match(selectionActionSource, /showComposerToast\(t\('sp\.attach\.read_failed', \{ name: attachment\.name \}\)\)/);
+    assert.doesNotMatch(selectionActionSource, /sp\.persistence\.unavailable/);
     assert.match(selectionActionSource, /const pending = getPendingAttachmentsForTab\(tabId\)/);
-    assert.match(selectionActionSource, /const existingIndex = pending\.findIndex\(att => att\?\.kind === 'text' && att\?\.name === attachment\.name\)/);
-    assert.match(selectionActionSource, /pending\[existingIndex\] = attachment/);
-    assert.match(selectionActionSource, /pending\.push\(attachment\)/);
+    assert.match(selectionActionSource, /const alreadyStaged = pending\.some\(att => att\?\.kind === 'text' && att\?\.textContent === attachment\.textContent\)/);
+    assert.match(selectionActionSource, /const takenNames = new Set\(pending\.map\(att => att\?\.name\)\)/);
+    assert.match(selectionActionSource, /for \(let suffix = 2; takenNames\.has\(name\); suffix \+= 1\) name = `selected-text-\$\{suffix\}\.txt`/);
+    assert.match(selectionActionSource, /pending\.push\(\{ \.\.\.attachment, name \}\)/);
+    assert.doesNotMatch(selectionActionSource, /pending\[existingIndex\] = attachment/);
     assert.match(selectionActionSource, /renderAttachmentPreviews\(\);/);
     assert.doesNotMatch(selectionActionSource, /buildSelectionComposerDraft/);
     assert.match(switchToTabSource, /dismissSelectionAskAction\(\);/);
