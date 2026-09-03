@@ -293,10 +293,31 @@ test("awaitSettled stops on needs_user_input and surfaces clarify_id", async () 
   const text = describeSnapshot(snapshot);
   assert.match(text, /clarify_id: c_42/);
   assert.match(text, /Which account should I use\?/);
+  assert.match(text, /free-text answer verbatim/);
   assert.match(text, /Do not invent an answer/);
 
   ext.close();
   await bridge.stop();
+});
+
+test("describeSnapshot surfaces stable permission decision values", () => {
+  const text = describeSnapshot({
+    runId: "r",
+    status: "needs_user_input",
+    pendingInput: {
+      clarifyId: "perm_42",
+      question: "WebBrain wants to navigate to example.com. Allow it?",
+      permission: { capability: "navigate", host: "example.com" },
+      options: ["once", "always", "deny"],
+    },
+  });
+
+  assert.match(text, /permission_decisions: once \| always \| deny/);
+  assert.match(text, /`once` for an explicit one-time approval/);
+  assert.match(text, /`always` only when they explicitly request a persistent grant/);
+  assert.match(text, /Do not pass localized labels or other free text/);
+  assert.match(text, /do not decide on the user's behalf/i);
+  assert.doesNotMatch(text, /free-text answer verbatim/);
 });
 
 test("awaitSettled reports a timeout without aborting the run", async () => {

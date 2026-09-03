@@ -145,14 +145,26 @@ export function describeSnapshot(snapshot: CloudSnapshot, timedOut = false): str
   if (snapshot.status === "needs_user_input" && snapshot.pendingInput) {
     const clarifyId = snapshot.pendingInput.clarifyId || snapshot.pendingInput.clarify_id || "";
     const question = snapshot.pendingInput.question || "(no question text supplied)";
+    const permission = snapshot.pendingInput.permission;
+    const isPermissionPrompt = permission != null && typeof permission === "object";
     lines.push("");
     lines.push("WebBrain is waiting on a human decision before it continues.");
     lines.push(`question: ${question}`);
     lines.push(`clarify_id: ${clarifyId}`);
-    lines.push(
-      "Relay this to the user and send their answer with webbrain_respond. " +
-        "Do not invent an answer on their behalf.",
-    );
+    if (isPermissionPrompt) {
+      lines.push("permission_decisions: once | always | deny");
+      lines.push(
+        "Relay this permission request to the user. After they decide, send the exact stable value " +
+          "`once` for an explicit one-time approval, `always` only when they explicitly request a " +
+          "persistent grant, or `deny` for a refusal. Do not pass localized labels or other free text, " +
+          "and do not decide on the user's behalf.",
+      );
+    } else {
+      lines.push(
+        "Relay this to the user and send their free-text answer verbatim with webbrain_respond. " +
+          "Do not invent an answer on their behalf.",
+      );
+    }
   }
 
   if (snapshot.error) {
