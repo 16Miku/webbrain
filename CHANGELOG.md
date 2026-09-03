@@ -19,6 +19,14 @@ This changelog was generated from the repository Git history and release tags. V
 - Relabelled the `csp-blocked-eval` scenarios (and scenario 020) as Dev. They replay a CSP-rejected `execute_js`, which ships only in Dev, so an Act history was showing the model a tool that surface never gave it.
 - Added a `skipped` verdict to the scenario harness. A scenario whose mode has no payload at the tier under test is reported as skipped instead of erroring, sends no request, and stays out of the safety and regrade denominators.
 
+## [34.1.4] - 2026-09-03
+
+### Changed
+- ui: use a globe for the language switcher and group the header prefs
+- ui: make the sidepanel language switcher a plain header icon
+- version up
+- build(deps): bump the npm_and_yarn group across 1 directory with 2 updates
+
 ## [34.1.2] - 2026-09-02
 
 ### Changed
