@@ -1299,6 +1299,7 @@ const {
 const {
   buildSelectionQuote,
   buildSelectionComposerDraft,
+  buildSelectionTextAttachment,
   selectionIsQuoteable,
   selectionRangeIsVisible,
   selectionRangeRect,
@@ -1310,6 +1311,7 @@ const {
 const {
   buildSelectionQuote: buildSelectionQuoteFx,
   buildSelectionComposerDraft: buildSelectionComposerDraftFx,
+  buildSelectionTextAttachment: buildSelectionTextAttachmentFx,
   selectionIsQuoteable: selectionIsQuoteableFx,
   selectionRangeIsVisible: selectionRangeIsVisibleFx,
   selectionRangeRect: selectionRangeRectFx,
@@ -1428,6 +1430,38 @@ test('selection quote helper stays byte-identical across browser builds', () => 
   assert.equal(selectionQuoteSources[0], selectionQuoteSources[1]);
 });
 
+test('selected answer attachments keep the full text outside the composer draft', () => {
+  const expectedText = '第一行\nSecond line — with UTF-8';
+  const expectedBytes = new TextEncoder().encode(expectedText).byteLength;
+  for (const [label, buildAttachment] of [
+    ['chrome', buildSelectionTextAttachment],
+    ['firefox', buildSelectionTextAttachmentFx],
+  ]) {
+    const attachment = buildAttachment(`  ${expectedText}\n`);
+    assert.deepEqual(
+      {
+        kind: attachment.kind,
+        name: attachment.name,
+        textContent: attachment.textContent,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      },
+      {
+        kind: 'text',
+        name: 'selected-text.txt',
+        textContent: expectedText,
+        mimeType: 'text/plain;charset=utf-8',
+        size: expectedBytes,
+      },
+      `${label}: selected answer should become a compact text attachment`,
+    );
+    assert.match(attachment.dataUrl, /^data:text\/plain;charset=utf-8;base64,/);
+    const bytes = Uint8Array.from(atob(attachment.dataUrl.split(',', 2)[1]), char => char.charCodeAt(0));
+    assert.equal(new TextDecoder().decode(bytes), expectedText, `${label}: attachment bytes should preserve selected text`);
+    assert.equal(buildAttachment(''), null, `${label}: empty selections should not create an attachment`);
+  }
+});
+
 test('selectionTextFromContents skips in-bubble chrome and keeps answer text', () => {
   const textNode = (value) => ({ nodeType: 3, nodeValue: value });
   const element = (tagName, className, ...childNodes) => ({
@@ -1459,11 +1493,12 @@ test('selectionTextFromContents skips in-bubble chrome and keeps answer text', (
   assert.equal(isSelectionQuoteChrome(element('CODE', '', textNode('const x = 1;'))), false);
 });
 
-test('selection answer action wiring covers show, dismiss, and tab/conversation changes in both sidepanels', () => {
+test('selection answer action stages a visual attachment in both sidepanels', () => {
   for (const [index, source] of sidepanelSources.entries()) {
     const switchToTabSource = sourceBetween(source, 'async function switchToTab', '\n}\n\nasync function refreshVisibleSidePanelState');
     const clearConversationSource = sourceBetween(source, 'async function renderClearedConversationForTab', '\nconst TOOL_KEYS =');
     const sendMessageSource = sourceBetween(source, 'async function sendMessage', '\nasync function continueAgent');
+    const selectionActionSource = sourceBetween(source, 'function askAboutSelectedAnswer()', '\nfunction addMessage');
     assert.match(source, /document\.addEventListener\('selectionchange', scheduleSelectionAskActionRefresh\)/);
     assert.match(source, /document\.addEventListener\('pointerdown', handleSelectionAskPointerDown/);
     assert.match(source, /function showSelectionAskAction\(selected\)/);
@@ -1497,6 +1532,10 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.match(source, /if \(!range\.startContainer\.isConnected \|\| !range\.endContainer\.isConnected\) return null;/);
     assert.match(source, /const liveSelection = selectedAssistantAnswer\(\);/);
     assert.match(source, /selectionAskActionEl && !selectionAskActionEl\.classList\.contains\('hidden'\)[\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(selectionActionSource, /buildSelectionTextAttachment\(selection\.text\)/);
+    assert.match(selectionActionSource, /getPendingAttachmentsForTab\(tabId\)\.push\(attachment\)/);
+    assert.match(selectionActionSource, /renderAttachmentPreviews\(\);/);
+    assert.doesNotMatch(selectionActionSource, /buildSelectionComposerDraft/);
     assert.match(switchToTabSource, /dismissSelectionAskAction\(\);/);
     assert.match(clearConversationSource, /dismissSelectionAskAction\(\);/);
     assert.match(sendMessageSource, /dismissSelectionAskAction\(\);/);
@@ -47959,7 +47998,7 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /let text = inputEl\.value\.trim\(\);\s*const submittedText = text;\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;/,
+      /let text = inputEl\.value\.trim\(\);\s*const submittedText = text;\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;\s*\}\s*return;/,
       `${label}: an empty refreshed composer should release and retry an owned prompt`,
     );
     assert.match(

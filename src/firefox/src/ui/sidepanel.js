@@ -42,7 +42,7 @@ import { buildMessageInfoPills } from '../message-info.js';
 import { escapeHtml } from './utils.js';
 import { createOfflineRagReadinessController } from './offline-rag-readiness.js';
 import {
-  buildSelectionComposerDraft,
+  buildSelectionTextAttachment,
   selectionIsQuoteable,
   selectionRangeIsVisible,
   selectionRangeRect,
@@ -11336,12 +11336,24 @@ function askAboutSelectedAnswer() {
     dismissSelectionAskAction();
     return;
   }
-  const nextDraft = buildSelectionComposerDraft(selection.text, inputEl.value);
-  if (nextDraft === inputEl.value) {
+  const attachment = buildSelectionTextAttachment(selection.text);
+  if (!attachment || attachment.size > MAX_TEXT_ATTACHMENT_BYTES) {
+    dismissSelectionAskAction();
+    if (attachment) {
+      addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', {
+        name: attachment.name,
+        max: '5MB',
+      })));
+    }
+    return;
+  }
+  const tabId = normalizeAttachmentTabId(currentTabId);
+  if (tabId == null) {
     dismissSelectionAskAction();
     return;
   }
-  inputEl.value = nextDraft;
+  getPendingAttachmentsForTab(tabId).push(attachment);
+  renderAttachmentPreviews();
   dismissSelectionAskAction();
   window.getSelection?.()?.removeAllRanges();
   handleInput();
