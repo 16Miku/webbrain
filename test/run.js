@@ -1574,8 +1574,14 @@ test('selection answer action stages a visual attachment in both sidepanels', ()
     assert.match(source, /selectionAskActionEl && !selectionAskActionEl\.classList\.contains\('hidden'\)[\s\S]*?dismissSelectionAskAction\(\);/);
     assert.match(selectionActionSource, /buildSelectionTextAttachment\(selection\.text\)/);
     assert.match(selectionActionSource, /normalizeAttachmentTabId\(renderedTabId \?\? currentTabId\)/);
-    assert.match(selectionActionSource, /showComposerToast\(t\('sp\.attach\.read_failed', \{ name: attachment\.name \}\)\)/);
+    assert.match(selectionActionSource, /showComposerToast\(t\('sp\.attach\.no_tab'\)\)/);
     assert.doesNotMatch(selectionActionSource, /sp\.persistence\.unavailable/);
+    assert.doesNotMatch(selectionActionSource, /sp\.attach\.read_failed/);
+    assert.match(
+      sendMessageSource,
+      /if \(getPendingAttachmentsForTab\(undefined, \{ create: false \}\)\.length\) \{\s*showComposerToast\(t\('sp\.attach\.needs_prompt'\)\);/,
+      'a staged attachment with an empty composer should explain why Send did nothing',
+    );
     assert.match(selectionActionSource, /const pending = getPendingAttachmentsForTab\(tabId\)/);
     assert.match(selectionActionSource, /const alreadyStaged = pending\.some\(att => att\?\.kind === 'text' && att\?\.textContent === attachment\.textContent\)/);
     assert.match(selectionActionSource, /const takenNames = new Set\(pending\.map\(att => att\?\.name\)\)/);
@@ -48046,7 +48052,7 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /let text = inputEl\.value\.trim\(\);\s*const submittedText = text;\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;\s*\}\s*return;/,
+      /let text = inputEl\.value\.trim\(\);\s*const submittedText = text;\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;\s*\}[\s\S]*?return;\s*\}/,
       `${label}: an empty refreshed composer should release and retry an owned prompt`,
     );
     assert.match(

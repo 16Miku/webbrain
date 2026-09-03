@@ -8625,6 +8625,11 @@ async function sendMessage(extraChatParams = {}) {
       await releaseOwnedContextMenuClaim({ reason: 'preflight-empty', retryAfterMs: 1_000 });
       return false;
     }
+    // Attachments alone cannot start a run and Send stays enabled while idle, so
+    // a staged chip with an empty composer would otherwise fail silently.
+    if (getPendingAttachmentsForTab(undefined, { create: false }).length) {
+      showComposerToast(t('sp.attach.needs_prompt'));
+    }
     return;
   }
   if (agentPrompt) text = agentPrompt;
@@ -11748,7 +11753,7 @@ function askAboutSelectedAnswer() {
   const tabId = normalizeAttachmentTabId(renderedTabId ?? currentTabId);
   if (tabId == null) {
     dismissSelectionAskAction();
-    showComposerToast(t('sp.attach.read_failed', { name: attachment.name }));
+    showComposerToast(t('sp.attach.no_tab'));
     return;
   }
   const pending = getPendingAttachmentsForTab(tabId);

@@ -73,6 +73,9 @@ export function buildSelectionTextAttachment(text) {
     dataUrl: `data:text/plain;charset=utf-8;base64,${btoa(binary)}`,
     mimeType: 'text/plain;charset=utf-8',
     size: bytes.byteLength,
+    // A two-value flag, not a trust level: everything that is not a slash
+    // screenshot normalizes to 'user_upload' before it reaches storage or the
+    // model, and every attachment is wrapped as untrusted regardless of it.
     source: 'user_upload',
   };
 }
