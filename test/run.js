@@ -38003,8 +38003,8 @@ test('sidepanel language picker uses the provider-style accessible listbox with 
     assert.match(html, /id="language-select" class="language-select-native" tabindex="-1" aria-hidden="true"/, `${label}: native language select should remain as the hidden value source`);
     assert.match(html, /id="language-picker-btn"[^>]+aria-haspopup="listbox"[^>]+aria-controls="language-picker-menu"/, `${label}: language picker trigger should expose listbox semantics`);
     assert.match(html, /id="language-picker-menu" role="listbox"/, `${label}: language picker menu should be an accessible listbox`);
-    assert.match(html, /id="language-picker-flag" src="\.\.\/\.\.\/icons\/flags\/us\.svg"[^>]+aria-hidden="true"/, `${label}: English should show the bundled US flag in the closed picker`);
-    assert.doesNotMatch(html, /id="language-picker-code"/, `${label}: closed picker should stay flag-only to preserve header space`);
+    assert.match(html, /id="language-picker-btn"[\s\S]*?<svg data-icon="languages"[^>]*width="16"[^>]*height="16"[^>]*stroke="currentColor"/, `${label}: closed picker should be a 16px header icon matching the other header buttons`);
+    assert.doesNotMatch(html, /id="language-picker-code"|id="language-picker-flag"|language-picker-caret/, `${label}: closed picker should stay icon-only to preserve header space`);
     assert.match(panel, /function initializeLanguagePicker\(\)[\s\S]*?if \(index === 2\) appendLanguagePickerSeparator\(\)/, `${label}: pinned languages should be separated from the alphabetical list`);
     assert.match(panel, /function focusLanguagePickerByPrefix\(key\)/, `${label}: language picker should support typeahead`);
     assert.match(panel, /moveLanguagePickerFocus\(1\)[\s\S]*?moveLanguagePickerFocus\(-1\)[\s\S]*?activateFocusedLanguagePickerOption\(\)[\s\S]*?event\.key === 'Escape'/, `${label}: language picker should support arrow, activation, and Escape keys`);
@@ -41643,9 +41643,10 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
     assert.match(sidepanelJs, /if \(closeUiScalePopover\(\)\) \{[\s\S]*?return;[\s\S]*?if \(isProcessing\)[\s\S]*?abortRun\(\)/, `${label}: Escape should close the scale popover instead of aborting the active run`);
     assert.match(sidepanelJs, /await setSidepanelUiScale\(scaleAction\)\.catch\(\(\) => \{\}\)/, `${label}: keyboard scale steps should not reject unhandled when the write fails`);
     assert.match(sidepanelCss, /#header #ui-scale-popover button \{/, `${label}: popover chips should outrank the generic header icon button rule`);
+    assert.match(sidepanelCss, /#header \.header-right button\.language-picker-btn\[aria-expanded="true"\] \{/, `${label}: the open language trigger should outrank the generic header icon button rule`);
     assert.match(sidepanelCss, /\.ui-scale-popover \{[\s\S]*?inset-inline-end: 0;/, `${label}: the scale popover should be offset logically so RTL locales open it inward`);
     assert.ok(
-      sidepanelCss.indexOf('@media (max-width: 380px)') > sidepanelCss.lastIndexOf('#header .header-right button:not(.language-picker-btn):not(.language-picker-option).active'),
+      sidepanelCss.indexOf('@media (max-width: 380px)') > sidepanelCss.lastIndexOf('#header .header-right button:not(.language-picker-option).active'),
       `${label}: the narrow-panel header overrides must follow the header button rules they override`,
     );
     assert.doesNotMatch(sidepanelCss, /max-height: min\(320px, 50vh\)/, `${label}: viewport clamps inside the zoomed body should divide the zoom back out`);
