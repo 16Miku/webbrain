@@ -38003,7 +38003,7 @@ test('sidepanel language picker uses the provider-style accessible listbox with 
     assert.match(html, /id="language-select" class="language-select-native" tabindex="-1" aria-hidden="true"/, `${label}: native language select should remain as the hidden value source`);
     assert.match(html, /id="language-picker-btn"[^>]+aria-haspopup="listbox"[^>]+aria-controls="language-picker-menu"/, `${label}: language picker trigger should expose listbox semantics`);
     assert.match(html, /id="language-picker-menu" role="listbox"/, `${label}: language picker menu should be an accessible listbox`);
-    assert.match(html, /id="language-picker-btn"[\s\S]*?<svg data-icon="languages"[^>]*width="16"[^>]*height="16"[^>]*stroke="currentColor"/, `${label}: closed picker should be a 16px header icon matching the other header buttons`);
+    assert.match(html, /id="language-picker-btn"[\s\S]*?<svg data-icon="globe"[^>]*width="16"[^>]*height="16"[^>]*stroke="currentColor"/, `${label}: closed picker should be a 16px globe matching the other header icons without colliding with the text-size glyph`);
     assert.doesNotMatch(html, /id="language-picker-code"|id="language-picker-flag"|language-picker-caret/, `${label}: closed picker should stay icon-only to preserve header space`);
     assert.match(panel, /function initializeLanguagePicker\(\)[\s\S]*?if \(index === 2\) appendLanguagePickerSeparator\(\)/, `${label}: pinned languages should be separated from the alphabetical list`);
     assert.match(panel, /function focusLanguagePickerByPrefix\(key\)/, `${label}: language picker should support typeahead`);
@@ -38054,7 +38054,7 @@ test('sidepanel separates mode navigation from compact composer conversation act
     for (const id of ['btn-expand', 'btn-ui-scale', 'btn-settings']) {
       assert.match(header, new RegExp(`id="${id}"`), `${label}: ${id} should remain in the primary header`);
     }
-    assert.match(header, /id="btn-settings"[\s\S]*?id="btn-ui-scale"[\s\S]*?id="btn-expand"/, `${label}: primary actions should run Settings, text size, then pop-out`);
+    assert.match(header, /id="language-picker"[\s\S]*?id="btn-ui-scale"[\s\S]*?id="btn-settings"[\s\S]*?id="btn-expand"/, `${label}: primary actions should run the display preferences, then Settings, then pop-out`);
     assert.doesNotMatch(header, /id="btn-(?:clear|history)"/, `${label}: conversation actions should leave the primary header`);
     assert.doesNotMatch(html, /class="conversation-actions"/, `${label}: conversation actions should no longer float over chat content`);
     assert.match(controls, /class="composer-control-row"[\s\S]*?id="mode-toggle"[\s\S]*?id="btn-mode-ask"[\s\S]*?id="btn-mode-act"[\s\S]*?id="btn-mode-dev"[\s\S]*?class="conversation-action-group"[\s\S]*?id="btn-history"[\s\S]*?id="btn-clear"/, `${label}: segmented modes should precede distinct History and New chat buttons, with the creation action at the row edge`);
