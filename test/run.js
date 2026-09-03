@@ -1462,6 +1462,38 @@ test('selected answer attachments keep the full text outside the composer draft'
   }
 });
 
+test('selected answer attachments deduplicate repeated actions for the same tab', () => {
+  for (const [label, buildAttachment] of [
+    ['chrome', buildSelectionTextAttachment],
+    ['firefox', buildSelectionTextAttachmentFx],
+  ]) {
+    const pending = [];
+    const stage = (text) => {
+      const attachment = buildAttachment(text);
+      const existingIndex = pending.findIndex(att => att?.kind === 'text' && att?.name === attachment.name);
+      if (existingIndex >= 0) {
+        pending[existingIndex] = attachment;
+      } else {
+        pending.push(attachment);
+      }
+    };
+
+    stage('First selected snippet');
+    assert.equal(pending.length, 1, `${label}: first selection should add an attachment`);
+    assert.equal(pending[0].textContent, 'First selected snippet');
+
+    stage('Second selected snippet');
+    assert.equal(pending.length, 1, `${label}: second selection should replace existing selected-text.txt`);
+    assert.equal(pending[0].textContent, 'Second selected snippet');
+
+    pending.unshift({ kind: 'image', name: 'screenshot.png', source: 'slash_screenshot' });
+    pending.push({ kind: 'text', name: 'uploaded-file.txt', textContent: 'file data', source: 'user_upload' });
+    stage('Third selected snippet');
+    assert.equal(pending.length, 3, `${label}: unrelated attachments must not be overwritten`);
+    assert.equal(pending[1].textContent, 'Third selected snippet');
+  }
+});
+
 test('selectionTextFromContents skips in-bubble chrome and keeps answer text', () => {
   const textNode = (value) => ({ nodeType: 3, nodeValue: value });
   const element = (tagName, className, ...childNodes) => ({
@@ -1533,7 +1565,12 @@ test('selection answer action stages a visual attachment in both sidepanels', ()
     assert.match(source, /const liveSelection = selectedAssistantAnswer\(\);/);
     assert.match(source, /selectionAskActionEl && !selectionAskActionEl\.classList\.contains\('hidden'\)[\s\S]*?dismissSelectionAskAction\(\);/);
     assert.match(selectionActionSource, /buildSelectionTextAttachment\(selection\.text\)/);
-    assert.match(selectionActionSource, /getPendingAttachmentsForTab\(tabId\)\.push\(attachment\)/);
+    assert.match(selectionActionSource, /normalizeAttachmentTabId\(renderedTabId \?\? currentTabId\)/);
+    assert.match(selectionActionSource, /showComposerToast\(t\('sp\.persistence\.unavailable'\)\)/);
+    assert.match(selectionActionSource, /const pending = getPendingAttachmentsForTab\(tabId\)/);
+    assert.match(selectionActionSource, /const existingIndex = pending\.findIndex\(att => att\?\.kind === 'text' && att\?\.name === attachment\.name\)/);
+    assert.match(selectionActionSource, /pending\[existingIndex\] = attachment/);
+    assert.match(selectionActionSource, /pending\.push\(attachment\)/);
     assert.match(selectionActionSource, /renderAttachmentPreviews\(\);/);
     assert.doesNotMatch(selectionActionSource, /buildSelectionComposerDraft/);
     assert.match(switchToTabSource, /dismissSelectionAskAction\(\);/);

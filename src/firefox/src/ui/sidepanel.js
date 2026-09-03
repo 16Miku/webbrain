@@ -11347,12 +11347,19 @@ function askAboutSelectedAnswer() {
     }
     return;
   }
-  const tabId = normalizeAttachmentTabId(currentTabId);
+  const tabId = normalizeAttachmentTabId(renderedTabId ?? currentTabId);
   if (tabId == null) {
     dismissSelectionAskAction();
+    showComposerToast(t('sp.persistence.unavailable'));
     return;
   }
-  getPendingAttachmentsForTab(tabId).push(attachment);
+  const pending = getPendingAttachmentsForTab(tabId);
+  const existingIndex = pending.findIndex(att => att?.kind === 'text' && att?.name === attachment.name);
+  if (existingIndex >= 0) {
+    pending[existingIndex] = attachment;
+  } else {
+    pending.push(attachment);
+  }
   renderAttachmentPreviews();
   dismissSelectionAskAction();
   window.getSelection?.()?.removeAllRanges();
