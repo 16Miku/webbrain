@@ -47712,18 +47712,22 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
   const chromeBg = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   const chromeStart = chromeBg.indexOf("if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;");
   const chromeEnd = chromeBg.indexOf('// (See the panel visibility comment', chromeStart);
-  const chromeHandler = chromeBg.slice(chromeStart, chromeEnd);
+  const chromePromptStart = chromeBg.indexOf('function queueSelectionShortcutPrompt(');
+  const chromeHandler = chromeBg.slice(chromePromptStart, chromeEnd);
   const chromeOpen = chromeHandler.indexOf('openSidePanelForContextMenu(tab);');
   const chromeSave = chromeHandler.indexOf('await contextMenuStorage.save(tab.id, payload);');
   assert.notEqual(chromeStart, -1, 'chrome: selection shortcut listener missing');
+  assert.notEqual(chromePromptStart, -1, 'chrome: shared selection prompt handler missing');
   assert.equal(chromeOpen !== -1 && chromeSave !== -1 && chromeOpen < chromeSave, true, 'chrome: side panel must open before prompt storage awaits');
   assert.match(chromeHandler, /requiresManualOpen: false/, 'chrome: successful shortcut response should not require manual opening');
 
   const firefoxBg = fs.readFileSync(path.join(ROOT, 'src/firefox/src/background.js'), 'utf8');
   const firefoxStart = firefoxBg.indexOf("if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;");
   const firefoxEnd = firefoxBg.indexOf('// Forget the per-window mapping', firefoxStart);
-  const firefoxHandler = firefoxBg.slice(firefoxStart, firefoxEnd);
+  const firefoxPromptStart = firefoxBg.indexOf('function queueFirefoxSelectionShortcutPrompt(');
+  const firefoxHandler = firefoxBg.slice(firefoxPromptStart, firefoxEnd);
   assert.notEqual(firefoxStart, -1, 'firefox: selection shortcut listener missing');
+  assert.notEqual(firefoxPromptStart, -1, 'firefox: shared selection prompt handler missing');
   assert.doesNotMatch(firefoxHandler, /openSidebarForContextMenu\(/, 'firefox: injected page click must not attempt restricted sidebar opening');
   assert.match(firefoxHandler, /requiresManualOpen: true/, 'firefox: shortcut response should request the manual-open hint');
   assert.match(firefoxHandler, /await contextMenuStorage\.save\(tab\.id, payload\);[\s\S]*?notifySidePanelOfContextMenuPrompt\(payload\);/, 'firefox: shortcut should persist before notifying the sidebar');
