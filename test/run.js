@@ -1601,6 +1601,34 @@ test('selection answer action stages a visual attachment in both sidepanels', ()
   }
 });
 
+test('attachment source stays a slash-screenshot flag, not a claim about who chose the file', () => {
+  // Selected assistant text ships as source 'user_upload' because that is the
+  // only other value the field has, and every attachment is wrapped untrusted
+  // regardless of it. That stays honest only while nothing reads 'user_upload'
+  // as a positive claim that a human picked a file off their disk.
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return walk(full);
+    return entry.name.endsWith('.js') ? [full] : [];
+  });
+  const branchesOnValue = /(?:[=!]==?)\s*['"]user_upload['"]|['"]user_upload['"]\s*(?:[=!]==?)|case\s+['"]user_upload['"]|includes\(\s*['"]user_upload['"]/;
+
+  let normalizers = 0;
+  for (const build of ['chrome', 'firefox']) {
+    for (const file of walk(path.join(ROOT, 'src', build, 'src'))) {
+      const source = fs.readFileSync(file, 'utf8');
+      if (!source.includes('user_upload')) continue;
+      normalizers += (source.match(/\? 'slash_screenshot' : 'user_upload'/g) || []).length;
+      assert.doesNotMatch(
+        source,
+        branchesOnValue,
+        `${path.relative(ROOT, file)}: 'user_upload' only means "not a slash screenshot", so branching on it would mislabel selected assistant text`,
+      );
+    }
+  }
+  assert.equal(normalizers, 8, 'both builds should keep normalizing source through the same two-value ternary');
+});
+
 console.log('\nscreenshot redaction');
 
 test('selectRedactionRegions blurs password fields always', () => {
