@@ -29,6 +29,8 @@ export interface BrowserTaskResult {
   needsUserInput?: boolean;
   question?: string;
   clarifyId?: string;
+  /** Stable values a structured gate accepts. Absent for free-text clarifications. */
+  decisions?: string[];
   stillRunning?: boolean;
   finalUrl?: string;
   text?: string;
@@ -65,9 +67,38 @@ function bodyOf(snapshot: CloudSnapshot): string {
   return snapshot.content || snapshot.summary || "";
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value != null && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * Permission, form-submission and workflow-repair pauses are structured gates,
+ * not questions: the extension accepts only the stable values it offers in
+ * `options` and fails closed on anything else, so a localized approval relayed
+ * verbatim ("允许") silently denies the action. Only the plain `clarify` tool
+ * takes free text.
+ */
+function decisionsOf(pending: Record<string, unknown>): string[] {
+  if (!isRecord(pending.permission) && !isRecord(pending.submitConfirmation)
+    && !isRecord(pending.workflowHealing)) {
+    return [];
+  }
+  const candidateIds = isRecord(pending.workflowHealing) && Array.isArray(pending.workflowHealing.candidates)
+    ? pending.workflowHealing.candidates
+      .map((candidate) => (isRecord(candidate) ? String(candidate.id ?? "").trim() : ""))
+      .filter((id) => id !== "")
+    : [];
+  const options = Array.isArray(pending.options)
+    ? pending.options
+      .filter((option): option is string => typeof option === "string" && option.trim() !== "")
+      .map((option) => option.trim())
+    : [];
+  return [...candidateIds, ...options];
+}
+
 function resultOf(snapshot: CloudSnapshot, timedOut = false): BrowserTaskResult {
   if (snapshot.status === "needs_user_input") {
     const pending = snapshot.pendingInput ?? {};
+    const decisions = decisionsOf(pending);
     return {
       ok: false,
       runId: snapshot.runId,
@@ -75,10 +106,15 @@ function resultOf(snapshot: CloudSnapshot, timedOut = false): BrowserTaskResult 
       needsUserInput: true,
       question: String(pending.question ?? "(no question text supplied)"),
       clarifyId: String(pending.clarifyId ?? pending.clarify_id ?? ""),
-      hint:
-        "WebBrain paused because a human decision is required. Ask the user this " +
-        "question, then call browser_respond with this runId and clarifyId. Do not " +
-        "guess on their behalf.",
+      ...(decisions.length ? { decisions } : {}),
+      hint: decisions.length
+        ? "WebBrain paused on a structured decision. Ask the user this question, then call " +
+          `browser_respond with this runId, clarifyId, and exactly one of: ${decisions.join(", ")}. ` +
+          "Do not send a localized label or other free text — the extension fails closed on an " +
+          "unknown value — and do not decide on their behalf."
+        : "WebBrain paused because a human decision is required. Ask the user this " +
+          "question, then call browser_respond with this runId and clarifyId. Do not " +
+          "guess on their behalf.",
     };
   }
 

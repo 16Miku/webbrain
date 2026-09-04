@@ -134,6 +134,29 @@ export async function awaitSettled(
   return { snapshot: last, timedOut: true };
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value != null && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * The stable decision values a structured prompt accepts, in the order the
+ * extension offers them. `pendingInput.options` is authoritative — hardcoding
+ * the list here would silently advertise a choice the gate no longer takes —
+ * but a snapshot that predates it still has to render something usable.
+ */
+function promptChoices(pendingInput: Record<string, unknown>, fallback: string[]): string[] {
+  const options = pendingInput.options;
+  if (!Array.isArray(options)) return fallback;
+  const choices = options
+    .filter((option): option is string => typeof option === "string" && option.trim() !== "")
+    .map((option) => option.trim());
+  return choices.length ? choices : fallback;
+}
+
+function renderTarget(value: unknown): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+}
+
 /** Render a snapshot as the text an calling agent actually needs to read. */
 export function describeSnapshot(snapshot: CloudSnapshot, timedOut = false): string {
   const lines: string[] = [];
@@ -143,16 +166,60 @@ export function describeSnapshot(snapshot: CloudSnapshot, timedOut = false): str
   if (snapshot.finalUrl) lines.push(`final_url: ${snapshot.finalUrl}`);
 
   if (snapshot.status === "needs_user_input" && snapshot.pendingInput) {
-    const clarifyId = snapshot.pendingInput.clarifyId || snapshot.pendingInput.clarify_id || "";
-    const question = snapshot.pendingInput.question || "(no question text supplied)";
+    // Three of the pauses the extension raises are structured gates, not
+    // questions: each accepts a fixed set of stable values and fails closed on
+    // anything else. Only the plain `clarify` tool takes free text — its
+    // `options` are suggestions the model reads back, so forcing exact values
+    // there would throw away a perfectly good answer.
+    const pending = snapshot.pendingInput;
+    const clarifyId = pending.clarifyId || pending.clarify_id || "";
+    const question = pending.question || "(no question text supplied)";
+    const permission = pending.permission;
+    const submitConfirmation = pending.submitConfirmation;
+    const workflowHealing = pending.workflowHealing;
     lines.push("");
     lines.push("WebBrain is waiting on a human decision before it continues.");
     lines.push(`question: ${question}`);
     lines.push(`clarify_id: ${clarifyId}`);
-    lines.push(
-      "Relay this to the user and send their answer with webbrain_respond. " +
-        "Do not invent an answer on their behalf.",
-    );
+    if (isRecord(permission)) {
+      lines.push(
+        `permission_decisions: ${promptChoices(pending, ["once", "always", "deny"]).join(" | ")}`,
+      );
+      lines.push(
+        "Relay this permission request to the user. After they decide, send the exact stable value " +
+          "`once` for an explicit one-time approval, `always` only when they explicitly request a " +
+          "persistent grant, or `deny` for a refusal. Do not pass localized labels or other free text, " +
+          "and do not decide on the user's behalf.",
+      );
+    } else if (isRecord(submitConfirmation)) {
+      lines.push(`decisions: ${promptChoices(pending, ["once", "deny"]).join(" | ")}`);
+      lines.push(
+        "Relay this form-submission confirmation to the user. After they decide, send the exact stable " +
+          "value `once` for an explicit confirmation or `deny` for a refusal. Do not pass localized " +
+          "labels or other free text, and do not decide on the user's behalf.",
+      );
+    } else if (isRecord(workflowHealing)) {
+      const candidates = Array.isArray(workflowHealing.candidates) ? workflowHealing.candidates : [];
+      const candidateIds: string[] = [];
+      for (const candidate of candidates) {
+        if (!isRecord(candidate)) continue;
+        const id = String(candidate.id ?? "").trim();
+        if (!id) continue;
+        candidateIds.push(id);
+        lines.push(`${id}: ${renderTarget(candidate.target)}`);
+      }
+      lines.push(`decisions: ${[...candidateIds, ...promptChoices(pending, ["deny"])].join(" | ")}`);
+      lines.push(
+        "Relay this saved-workflow repair choice to the user. After they decide, send the exact " +
+          "candidate id they picked, or `deny` to leave the workflow untouched. Do not pass localized " +
+          "labels or other free text, and do not decide on the user's behalf.",
+      );
+    } else {
+      lines.push(
+        "Relay this to the user and send their free-text answer verbatim with webbrain_respond. " +
+          "Do not invent an answer on their behalf.",
+      );
+    }
   }
 
   if (snapshot.error) {
