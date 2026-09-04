@@ -1,186 +1,310 @@
-# Emergency Box arama katmanı: zvec değerlendirmesi ve gerçek iyileştirme planı
+# Emergency Box search layer: zvec assessment and practical improvement plan
 
 ## Context
 
-Soru şuydu: apocalypse mode'daki Wikipedia ve Emergency Box aramasında mevcut yöntemler yerine
-[alibaba/zvec](https://github.com/alibaba/zvec) veya [zvec-ai/zvec-grep](https://github.com/zvec-ai/zvec-grep)
-kullanılabilir mi, komplikasyonlar ne olur.
+The question was whether [alibaba/zvec](https://github.com/alibaba/zvec) or
+[zvec-ai/zvec-grep](https://github.com/zvec-ai/zvec-grep) could replace the current methods used for
+Wikipedia and Emergency Box search in apocalypse mode, and what complications that would introduce.
 
-Araştırma iki şeyi ortaya çıkardı ve ikisi de planın yönünü değiştiriyor:
+The research revealed two things, both of which change the direction of the plan:
 
-1. **zvec bu ürüne giremez.** Ne runtime'da ne de build-time'da anlamlı bir rol üstlenemiyor (gerekçe aşağıda).
-2. **Emergency Box'ta zaten semantik arama var.** Sorularda "anlamsal arama yok" şıkkını işaretlemiştin;
-   kod öyle demiyor. E5 embedding + int8 vektör indeksi + BM25 ile RRF füzyonu hâlihazırda çalışıyor.
-   Yani eksik olan semantik arama değil, **ANN indeksi ve boyut disiplini**.
+1. **zvec cannot be integrated into this product.** It cannot play a meaningful role either at runtime or at build time (rationale below).
+2. **Emergency Box already has semantic search.** You selected the "no semantic search" option in the questions,
+   but the code says otherwise. E5 embeddings + an int8 vector index + BM25 with RRF fusion are already running.
+   What is missing is not semantic search, but **an ANN index and size discipline**.
 
-Bu yüzden plan, zvec'i benimsemek yerine, işaretlediğin dört derdi (alaka, hız, boyut, bakım) mevcut
-mimarinin üstünde ölçülebilir adımlarla çözmeye odaklanıyor. Kapsam senin seçimine uygun olarak
-**önce Emergency Box**; Wikipedia/Xapian tarafına dokunulmuyor.
+Therefore, instead of adopting zvec, the plan focuses on solving the four concerns you identified
+(relevance, speed, size, and maintenance) through measurable steps on top of the existing architecture.
+In line with your chosen scope, it addresses **Emergency Box first**; the Wikipedia/Xapian side is left untouched.
 
 ---
 
-## 1. zvec neden elenmeli
+## 1. Why zvec should be ruled out
 
-| Bulgu | Kaynak |
+| Finding | Source |
 |---|---|
-| zvec C++ ile yazılmış, in-process bir vektör DB'si; Proxima motorunu sarmalıyor | README |
-| Node SDK'sı saf JS değil: `@zvec/zvec` 72 KB'lık ince bir sarmalayıcı, iş `@zvec/bindings-{linux-x64,linux-arm64,win32-x64,darwin-arm64,+musl}` prebuilt native paketlerinde | npm registry |
-| **wasm binding talebi upstream'de "not planned" olarak kapatılmış** — ve talep tam da bizim senaryomuzdu: "sunucuda indeks üret, tarayıcıda yükleyip ara" | [issue #25](https://github.com/alibaba/zvec/issues/25) |
-| AVX2/AVX512 runtime dispatch, io_uring, WAL, mmap gibi wasm'a taşınması zor bağımlılıklar | README |
-| `zvec-grep` bir Node ≥22 CLI/MCP aracı; `@vscode/ripgrep` native binary'sine ve `node-llama-cpp`'ye dayanıyor | npm registry |
-| darwin-x64 binding'i yok (Intel Mac desteklenmiyor) | npm registry |
+| zvec is an in-process vector DB written in C++; it wraps the Proxima engine | README |
+| Its Node SDK is not pure JS: `@zvec/zvec` is a thin 72 KB wrapper, while the actual work is done by prebuilt native `@zvec/bindings-{linux-x64,linux-arm64,win32-x64,darwin-arm64,+musl}` packages | npm registry |
+| **The upstream request for wasm bindings was closed as "not planned"** — and the request described our exact scenario: "build the index on the server, then load and search it in the browser" | [issue #25](https://github.com/alibaba/zvec/issues/25) |
+| AVX2/AVX512 runtime dispatch, io_uring, WAL, mmap, and similar dependencies are difficult to port to wasm | README |
+| `zvec-grep` is a Node ≥22 CLI/MCP tool; it depends on the native `@vscode/ripgrep` binary and `node-llama-cpp` | npm registry |
+| There is no darwin-x64 binding (Intel Macs are unsupported) | npm registry |
 
-Kritik nokta: **build-time kullanım da kurtarmıyor.** zvec'in değeri native sorgu motoru ve kendi indeks
-formatlarında (HNSW, IVF-RaBitQ). Tarayıcıya taşınabilen bir artifact üretmiyor. Build makinesinde zvec
-indeksi üretsek bile onu okuyacak tarafı sıfırdan JS'te yazmamız gerekir — ki o zaman zvec'in katkısı
-sıfıra iner.
+The critical point is that **build-time use does not solve the problem either.** zvec's value lies in its native query engine
+and its own index formats (HNSW, IVF-RaBitQ). It does not produce a browser-portable artifact. Even if we generated a zvec
+index on the build machine, we would have to write its reader from scratch in JS — at which point zvec's contribution
+would drop to zero.
 
-**Tek savunulabilir zvec kullanımı:** korpus üreticisi (`build_emergency_pack.py`, ayrı repo
-`webbrain-one/emergency-box-corpus`) Python ve zvec'in birincil SDK'sı Python. Oraya zvec'i bir
-**değerlendirme oracle'ı** olarak koyabiliriz: aynı 251k E5 vektörünü yükleyip exact-KNN ground truth
-üretmek, ANN'e geçtiğimizde recall kaybını ölçmek için. Dürüst olmak gerekirse bunu numpy ile ~20 satırda
-da yaparız; zvec'in buradaki katkısı marjinal. Bağımlılık eklemeye değmez, ama istersen Aşama 0'da
-ölçüm aracı olarak denenebilir.
 
-`zvec-grep`'ten alınabilecek şey kod değil, **fikir**: hibrit BM25+vektör füzyonu (bizde RRF olarak zaten var)
-ve yapı-farkında chunking. Yeni bir şey getirmiyor.
+## Context
+
+The question was whether [alibaba/zvec](https://github.com/alibaba/zvec) or [zvec-ai/zvec-grep](https://github.com/zvec-ai/zvec-grep) could replace the current methods used for Wikipedia and Emergency Box search in apocalypse mode, and what complications that would introduce.
+
+The research revealed two things, both of which change the direction of the plan:
+
+1. **zvec cannot be integrated into this product.** It cannot play a meaningful role either at runtime or at build time (rationale below).
+2. **Emergency Box already has semantic search.** You selected the "no semantic search" option in the questions, but the code says otherwise. E5 embeddings + an int8 vector index + BM25 with RRF fusion are already running. What is missing is not semantic search, but **an ANN index and size discipline**.
+
+Therefore, instead of adopting zvec, the plan focuses on solving the four concerns you identified (relevance, speed, size, and maintenance) through measurable steps on top of the existing architecture. In line with your chosen scope, it addresses **Emergency Box first**; the Wikipedia/Xapian side is left untouched.
 
 ---
 
-## 2. Bugün gerçekte ne var
+## 1. Why zvec should be ruled out
 
-Emergency Box retrieval hattı (hepsi `src/chrome/src/agent/` altında):
+| Finding | Source |
+|---|---|
+| zvec is an in-process vector DB written in C++; it wraps the Proxima engine | README |
+| Its Node SDK is not pure JS: `@zvec/zvec` is a thin 72 KB wrapper, while the actual work is done by prebuilt native `@zvec/bindings-{linux-x64,linux-arm64,win32-x64,darwin-arm64,+musl}` packages | npm registry |
+| **The upstream request for wasm bindings was closed as "not planned"** — and the request described our exact scenario: "build the index on the server, then load and search it in the browser" | [issue #25](https://github.com/alibaba/zvec/issues/25) |
+| AVX2/AVX512 runtime dispatch, io_uring, WAL, mmap, and similar dependencies are difficult to port to wasm | README |
+| `zvec-grep` is a Node ≥22 CLI/MCP tool; it depends on the native `@vscode/ripgrep` binary and `node-llama-cpp` | npm registry |
+| There is no darwin-x64 binding (Intel Macs are unsupported) | npm registry |
 
-- **Leksikal:** SQLite FTS5, ağırlıklı BM25 — `offline-rag-index.js:20` (şema), `:60` (`bm25(passages, 0,0,0,7,0,2,0,0,4,1,0.6,...)`).
-  İki geçişli: exact, sonuç < `RELAXED_RETRY_THRESHOLD` (5) ise prefix'li relaxed geçiş — `offline-retrieval.js:132,145-168`.
-- **Semantik:** `Xenova/multilingual-e5-small`, 384 boyut, q8 — `offline-reranker.js:6-10`. Passage vektörleri
-  **cihazda hesaplanmıyor**, korpus ZIP'inde hazır geliyor (`indexes/emergency-box-e5-q8.bin`, `WBVE5Q8` formatı,
-  parser `offline-rag-index.js:404-451`). Sadece sorgu vektörü cihazda çıkarılıyor.
-- **Arama döngüsü:** `searchEmergencyVector()` — `offline-rag-worker.js:281-330`. **Brute force, exact, ANN yok:**
-  251.144 × 384 int8 dot product, her 4096 satırda iptal kontrolü.
-- **Füzyon:** RRF k=60 — `offline-rag.js:630-665`, ardından çeşitlendirme `:705-737`.
+The critical point is that **build-time use does not solve the problem either.** zvec's value lies in its native query engine and its own index formats (HNSW, IVF-RaBitQ). It does not produce a browser-portable artifact. Even if we generated a zvec index on the build machine, we would have to write its reader from scratch in JS — at which point zvec's contribution would drop to zero.
 
-Ölçülen sayılar:
+**The only defensible use of zvec:** the corpus producer (`build_emergency_pack.py`, in the separate `webbrain-one/emergency-box-corpus` repository) is written in Python, and zvec's primary SDK is Python. We could use zvec there as an **evaluation oracle**: load the same 251k E5 vectors and generate exact-KNN ground truth to measure recall loss when moving to ANN. To be honest, we could also do this with about 20 lines of numpy; zvec's contribution here would be marginal. It is not worth adding the dependency, but it could be tried as a measurement tool in Phase 0 if desired.
 
-| Metrik | Değer | Kaynak |
+What can be taken from `zvec-grep` is not code, but an **idea**: hybrid BM25+vector fusion (which we already have through RRF) and structure-aware chunking. It introduces nothing new.
+
+---
+
+## 2. What actually exists today
+
+The Emergency Box retrieval pipeline (all under `src/chrome/src/agent/`):
+
+- **Lexical:** SQLite FTS5 with weighted BM25 — `offline-rag-index.js:20` (schema), `:60` (`bm25(passages, 0,0,0,7,0,2,0,0,4,1,0.6,...)`). It uses two passes: exact, followed by a prefix-based relaxed pass if results are below `RELAXED_RETRY_THRESHOLD` (5) — `offline-retrieval.js:132,145-168`.
+- **Semantic:** `Xenova/multilingual-e5-small`, 384 dimensions, q8 — `offline-reranker.js:6-10`. Passage vectors are **not computed on-device**; they arrive prebuilt in the corpus ZIP (`indexes/emergency-box-e5-q8.bin`, `WBVE5Q8` format, parser in `offline-rag-index.js:404-451`). Only the query vector is generated on-device.
+- **Search loop:** `searchEmergencyVector()` — `offline-rag-worker.js:281-330`. **Brute force, exact, no ANN:** 251,144 × 384 int8 dot products, with a cancellation check every 4,096 rows.
+- **Fusion:** RRF k=60 — `offline-rag.js:630-665`, followed by diversification at `:705-737`.
+
+Measured figures:
+
+| Metric | Value | Source |
 |---|---|---|
-| Kurulu indeks toplamı | **1.149.755.424 B (~1,15 GB)** | `emergency-corpus-release.js:20-33` |
-| — FTS5 db | **1.052.307.456 B (~1,05 GB)** | `docs/offline-rag-release-checklist.md:19-24` |
-| — Vektör indeksi | 97.447.968 B (~97 MB) | aynı |
-| Kurulu düz metin | 301.370.399 B | `emergency-corpus-release.js` |
-| E5 model indirmesi | 140.461.908 B | `offline-reranker.js` |
-| Passage sayısı | 251.144 | `emergency-corpus-release.js` |
-| recall@1 / recall@5 / MRR | 0,554 / 0,875 / 0,685 | `scripts/benchmark-offline-relevance.mjs:33-39` |
-| — zayıf kategoriler | **typo 0,357**, **inflection 0,393** | aynı |
+| Total installed index | **1,149,755,424 B (~1.15 GB)** | `emergency-corpus-release.js:20-33` |
+| — FTS5 db | **1,052,307,456 B (~1.05 GB)** | `docs/offline-rag-release-checklist.md:19-24` |
+| — Vector index | 97,447,968 B (~97 MB) | same source |
+| Installed plain text | 301,370,399 B | `emergency-corpus-release.js` |
+| E5 model download | 140,461,908 B | `offline-reranker.js` |
+| Passage count | 251,144 | `emergency-corpus-release.js` |
+| recall@1 / recall@5 / MRR | 0.554 / 0.875 / 0.685 | `scripts/benchmark-offline-relevance.mjs:33-39` |
+| — weak categories | **typo 0.357**, **inflection 0.393** | same source |
 
-**Dört derdin gerçek karşılığı:**
+**What the four concerns actually correspond to:**
 
-- **Boyut** — en büyük ve en somut kazanç burada. 1,05 GB'lık FTS5 db fil. Şema
-  (`offline-rag-index.js:11-35`) ne `detail=` ne `content=` belirtiyor; yani FTS5 varsayılan
-  `detail=full` ile **tam pozisyon indeksi** tutuyor *ve* `passages_content` gölge tablosunda
-  **tüm metnin ikinci bir kopyasını** saklıyor — metin zaten ayrıca 301 MB olarak kurulduğu hâlde.
-- **Hız** — sorgu başına ~96M int8 çarpma-toplama. Semantik timeout 30 s (`offline-retrieval.js:17`).
-- **Alaka** — typo/inflection düşüklüğü leksikal bir zayıflık, vektör motoru sorunu değil.
-- **Bakım** — el yazması ve testlerle çivilenmiş parçalar: `preferMatchingAgeCohort`, `AGE_COHORT_SYNONYMS`,
-  `relaxedFts5Prefix`, `insertVectorWinner`, `cjkNgrams`.
+- **Size** — this is where the largest and most concrete gain is available. The 1.05 GB FTS5 db is enormous. The schema (`offline-rag-index.js:11-35`) specifies neither `detail=` nor `content=`, which means FTS5 uses the default `detail=full`, keeps a **full positional index**, and stores **a second copy of all text** in the `passages_content` shadow table — even though the text is already installed separately as 301 MB.
+- **Speed** — about 96M int8 multiply-add operations per query. The semantic timeout is 30 s (`offline-retrieval.js:17`).
+- **Relevance** — poor typo/inflection performance is a lexical weakness, not a vector-engine problem.
+- **Maintenance** — handwritten, test-pinned components: `preferMatchingAgeCohort`, `AGE_COHORT_SYNONYMS`, `relaxedFts5Prefix`, `insertVectorWinner`, and `cjkNgrams`.
 
 ---
 
-## 3. Önerilen yaklaşım
+## 3. Proposed approach
 
-### Aşama 0 — Ölçüm iskelesi (önce bu, kod değişikliği yok)
+### Phase 0 — Measurement harness (do this first, no code changes)
 
-Hiçbir boyut iddiasına sayı üretmeden dokunma. Mevcut `scripts/benchmark-offline-relevance.mjs`
-harness'ını ve vendor'daki SQLite'ı kullanarak bir varyant matrisi çıkar: her varyant için
-**db boyutu + recall@1/@5 + MRR (kategori kırılımıyla) + sorgu p50/p95**.
+Do not act on any size claim without producing numbers. Using the existing `scripts/benchmark-offline-relevance.mjs` harness and the vendored SQLite, build a variant matrix. For every variant, measure **db size + recall@1/@5 + MRR (broken down by category) + query p50/p95**.
 
-Varyantlar: mevcut · `detail=column` · `detail=none` · contentless (`content=''`) + metin dışarıdan ·
-`search_terms` kolonu çıkarılmış.
+Variants: current · `detail=column` · `detail=none` · contentless (`content=''`) + external text · `search_terms` column removed.
 
-Bu aşama çıktısı olmadan Aşama 1'e geçilmez.
+Do not proceed to Phase 1 without the output of this phase.
 
-### Aşama 1 — Boyut: FTS5 db (hedef: 1,05 GB'ı belirgin şekilde aşağı çekmek)
+### Phase 1 — Size: FTS5 db (goal: reduce 1.05 GB substantially)
 
-İki bağımsız kaldıraç:
+Two independent levers:
 
-1. **`detail=` düşür.** Pozisyon verisi phrase ve NEAR sorguları için gerekli. `buildFts5Query()`
-   (`offline-rag-index.js:330-353`) terimleri `OR` ile birleştiriyor ve tek token'ları tırnaklıyor
-   (`'tourniquet bleeding'` → `'"tourniquet" OR "bleeding"'`), yani **çok kelimeli phrase üretmiyor** —
-   `detail=none` uyumlu görünüyor. Prefix sorguları (`blee*`) `detail=none` ile çalışır. Aşama 0'da
-   doğrula, çünkü `bm25()` skorlarının kayması recall'ı oynatabilir.
-2. **Metin kopyasını kaldır.** Metin zaten `emergency-box-text/` altında kurulu. FTS5'i contentless
-   veya external-content yapıp `body`/`title`'ı sorgu sonrası locator üzerinden okumak, gölge tablodaki
-   duplikasyonu siler. Bu, `EMERGENCY_FTS_SEARCH_SQL`'in (`:44-64`) metin kolonlarını döndürme
-   biçimini değiştirir — dokunulacak asıl yer burası.
+1. **Reduce `detail=`.** Positional data is required for phrase and NEAR queries. `buildFts5Query()` (`offline-rag-index.js:330-353`) joins terms with `OR` and quotes individual tokens (`'tourniquet bleeding'` → `'"tourniquet" OR "bleeding"'`), so it **does not generate multiword phrases** — `detail=none` appears compatible. Prefix queries (`blee*`) work with `detail=none`. Verify this in Phase 0, because shifts in `bm25()` scores may affect recall.
+2. **Remove the duplicate text.** The text is already installed under `emergency-box-text/`. Make FTS5 contentless or use external content, then read `body`/`title` through the locator after the query, eliminating duplication in the shadow table. This changes how `EMERGENCY_FTS_SEARCH_SQL` (`:44-64`) returns text columns — that is the main place to modify.
 
-### Aşama 2 — Hız + boyut: vektörler (97 MB, brute force)
+### Phase 2 — Speed + size: vectors (97 MB, brute force)
 
-İki aşamalı arama getir:
+Introduce a two-stage search:
 
-- Build-time'da her passage için **1 bit/boyut binary kod** üret: 384 bit = **48 B/passage** →
-  ~12 MB (bugünkü 97 MB'ın ~1/8'i).
-- Runtime'da önce popcount/Hamming ile kaba bir top-N (~2000) süz, sonra **sadece o N için** mevcut
-  exact int8 dot product'ı çalıştır. Nihai sıralama exact kalır, tarama maliyeti ~100× düşer.
-- Dokunulacak yer: `searchEmergencyVector()` (`offline-rag-worker.js:281-330`) ve `WBVE5Q8` formatının
-  bir sonraki sürümü (`offline-rag-index.js:404-451`, `EMERGENCY_VECTOR_INDEX_FORMAT_VERSION`).
+- At build time, generate a **1 bit/dimension binary code** for every passage: 384 bits = **48 B/passage** → ~12 MB (about 1/8 of today's 97 MB).
+- At runtime, first use popcount/Hamming to produce a coarse top-N (~2,000), then run the existing exact int8 dot product **only for those N candidates**. The final ranking remains exact while scan cost falls by ~100×.
+- Places to modify: `searchEmergencyVector()` (`offline-rag-worker.js:281-330`) and the next version of the `WBVE5Q8` format (`offline-rag-index.js:404-451`, `EMERGENCY_VECTOR_INDEX_FORMAT_VERSION`).
 
-Bunu kendimiz yazıyoruz; zvec'in RaBitQ'sı burada referans olabilir ama bağımlılık gerekmiyor.
+We would implement this ourselves; zvec's RaBitQ can serve as a reference, but no dependency is required.
 
-### Aşama 3 — Alaka: typo 0,357 ve inflection 0,393
+### Phase 3 — Relevance: typo 0.357 and inflection 0.393
 
-Leksikal tarafın işi:
+This belongs on the lexical side:
 
-- **Typo:** yardımcı bir FTS5 `trigram` indeksi, yalnızca relaxed geçişte devreye giren.
-- **Inflection:** korpus çok dilli; agresif stemming riskli. Önce ucuz olanı ölç — kısa sorgularda
-  RRF'te leksikal ağırlığı düşürüp semantik tarafa yaslanmak (`offline-rag.js:630-665`).
+- **Typo:** add an auxiliary FTS5 `trigram` index used only during the relaxed pass.
+- **Inflection:** the corpus is multilingual, so aggressive stemming is risky. Measure the inexpensive option first — lower the lexical weight in RRF for short queries and lean more heavily on the semantic side (`offline-rag.js:630-665`).
 
-Her iki değişiklik de Aşama 0 matrisindeki kategori kırılımıyla ölçülür; floor'ların altına düşen kabul edilmez.
+Measure both changes using the category breakdown in the Phase 0 matrix; no category may fall below its floor.
 
-### Aşama 4 — Bakım
+### Phase 4 — Maintenance
 
-`sqlite-vec` tek gerçekçi kütüphane adayı: saf C, bağımlılıksız, SQLite WASM'a **statik** derleniyor
-(dinamik extension yüklenemiyor) ve `vec0` sanal tablolarıyla `insertVectorWinner` + `WBVE5Q8`'i emekli edebilir.
-**Ama şimdi önerilmiyor:** hâlâ 0.1.7-alpha, kendisi de brute-force (yani Aşama 2'nin hız kazancını vermiyor),
-ve testler `vendor/sqlite/index.mjs` ile `sqlite3.wasm`'ın SHA-256'sını çiviliyor (`test/run.js:33182`) —
-wasm'ı yeniden derlemeyi gerektirir. Başka bir sebeple SQLite wasm yeniden derlenirse tekrar bakılır.
+`sqlite-vec` is the only realistic library candidate: pure C, dependency-free, statically compiled into SQLite WASM (dynamic extension loading is unavailable), and its `vec0` virtual tables could retire `insertVectorWinner` + `WBVE5Q8`. **However, it is not recommended now:** it is still 0.1.7-alpha, it also uses brute force (so it does not provide the Phase 2 speedup), and tests pin the SHA-256 of `vendor/sqlite/index.mjs` and `sqlite3.wasm` (`test/run.js:33182`) — adopting it would require rebuilding the wasm. Revisit it if SQLite wasm is rebuilt for another reason.
 
 ---
 
-## 4. Dokunulacak dosyalar
+## 4. Files to modify
 
-| Dosya | Ne için |
+| File | Purpose |
 |---|---|
-| `src/chrome/src/agent/offline-rag-index.js` | FTS5 şeması (`:11-35`), arama SQL'i (`:44-64`), vektör format parser'ı (`:404-451`) |
-| `src/chrome/src/agent/offline-rag-worker.js` | `searchEmergencyVector()` iki aşamalı hâle (`:281-330`), db import (`:201-239`) |
-| `src/chrome/src/agent/offline-rag.js` | RRF ağırlıkları (`:630-665`), metin contentless'a geçerse hit birleştirme |
-| `src/chrome/src/agent/offline-retrieval.js` | İki geçişli leksikal akış (`:132,145-168`) |
-| `scripts/benchmark-offline-relevance.mjs` | Aşama 0 varyant matrisi; floor'lar (`:40`) |
-| `src/firefox/src/agent/…` | Aynı dosyaların Firefox kopyaları — testler byte-identical olmalarını şart koşuyor |
+| `src/chrome/src/agent/offline-rag-index.js` | FTS5 schema (`:11-35`), search SQL (`:44-64`), vector format parser (`:404-451`) |
+| `src/chrome/src/agent/offline-rag-worker.js` | Make `searchEmergencyVector()` two-stage (`:281-330`), db import (`:201-239`) |
+| `src/chrome/src/agent/offline-rag.js` | RRF weights (`:630-665`), hit merging if text becomes contentless |
+| `src/chrome/src/agent/offline-retrieval.js` | Two-pass lexical flow (`:132,145-168`) |
+| `scripts/benchmark-offline-relevance.mjs` | Phase 0 variant matrix; floors (`:40`) |
+| `src/firefox/src/agent/…` | Firefox copies of the same files — tests require them to be byte-identical |
 
-**Repo dışı, en büyük komplikasyon:** indeks formatı `webbrain-one/emergency-box-corpus` reposundaki
-`build_emergency_pack.py` tarafından üretiliyor. Aşama 1 ve 2 **koordineli bir korpus release'i** gerektirir
-(501 MB ZIP) ve eski formatta kalmış kullanıcılar için `OFFLINE_RAG_INDEX_PROTOCOL_VERSION` (şu an 2)
-bump'ı + manifest geçiş yolu ister. Bu, planın en pahalı kalemi ve zamanlamayı o repo belirler.
+**The largest complication outside this repository:** the index format is produced by `build_emergency_pack.py` in the `webbrain-one/emergency-box-corpus` repository. Phases 1 and 2 require **a coordinated corpus release** (501 MB ZIP), plus an `OFFLINE_RAG_INDEX_PROTOCOL_VERSION` bump (currently 2) and a manifest migration path for users still on the old format. This is the most expensive item in the plan, and its timing is determined by that repository.
 
 ---
 
-## 5. Doğrulama
+## 5. Verification
 
-Her aşama sonunda, sırayla:
+At the end of each phase, in order:
 
-1. `node scripts/benchmark-offline-relevance.mjs --verbose` — recall@1 ≥ 0,53 · recall@5 ≥ 0,85 · MRR ≥ 0,66
-   floor'ları geçmeli (`:40`); kategori kırılımında typo/inflection **gerilememeli**.
-2. `node scripts/benchmark-offline-rag.mjs` — indeks kurma ve sorgu gecikmesi regresyonu.
-3. `node test/run.js` — özellikle `:33182` (FTS5 sorgu şekli + sqlite wasm SHA), `:33236` (`WBVE5Q8` düzeni),
-   `:33271` (gerçek FTS5 bütünlüğü), `:34876` (iki geçişli akış). Format değişiyorsa bu assertion'lar
-   bilerek güncellenecek — sessizce gevşetilmeyecek.
-4. Gerçek korpusla kurulum dumanı: Emergency Box'ı kur, `docs/offline-rag-release-checklist.md`'deki
-   sorguları (`airway breathing`, `急救 呼吸道`) çalıştır, kurulu indeks boyutunu ölç ve tabloya işle.
-5. Chrome + Firefox'ta ayrı ayrı; MV3 tarafında offscreen yolunun (`offline-rag-host.js`) bozulmadığı görülecek.
+1. `node scripts/benchmark-offline-relevance.mjs --verbose` — must pass the recall@1 ≥ 0.53 · recall@5 ≥ 0.85 · MRR ≥ 0.66 floors (`:40`); typo/inflection **must not regress** in the category breakdown.
+2. `node scripts/benchmark-offline-rag.mjs` — index installation and query latency regression.
+3. `node test/run.js` — especially `:33182` (FTS5 query shape + sqlite wasm SHA), `:33236` (`WBVE5Q8` layout), `:33271` (actual FTS5 integrity), and `:34876` (two-pass flow). If the format changes, update these assertions deliberately — never weaken them silently.
+4. Installation smoke test with the real corpus: install Emergency Box, run the queries from `docs/offline-rag-release-checklist.md` (`airway breathing`, `急救 呼吸道`), measure the installed index size, and record it in the table.
+5. Test separately in Chrome and Firefox; verify that the offscreen path (`offline-rag-host.js`) remains intact on the MV3 side.
 
-## 6. Kapsam dışı
+## 6. Out of scope
 
-- Wikipedia/ZIM/Xapian tarafı (senin sıralamana göre sonraya).
-- `emergency-pdf-search.js` ve `emergency-box.js:218-230`'daki substring taramaları — bunlar RAG değil,
-  ayrı ve küçük yüzeyler; istenirse ayrı bir iş olarak ele alınır.
-- zvec / zvec-grep bağımlılığı — yukarıdaki gerekçeyle benimsenmiyor.
+- The Wikipedia/ZIM/Xapian side (later, according to your prioritization).
+- The substring scans in `emergency-pdf-search.js` and `emergency-box.js:218-230` — these are not RAG; they are separate, small surfaces and can be handled as a separate task if desired.
+- The zvec / zvec-grep dependency — not adopted for the reasons above.
+# Emergency Box search layer: zvec assessment and practical improvement plan
+
+## Context
+
+The question was whether [alibaba/zvec](https://github.com/alibaba/zvec) or [zvec-ai/zvec-grep](https://github.com/zvec-ai/zvec-grep) could replace the current methods used for Wikipedia and Emergency Box search in apocalypse mode, and what complications that would introduce.
+
+The research revealed two things, both of which change the direction of the plan:
+
+1. **zvec cannot be integrated into this product.** It cannot play a meaningful role either at runtime or at build time (rationale below).
+2. **Emergency Box already has semantic search.** You selected the "no semantic search" option in the questions, but the code says otherwise. E5 embeddings + an int8 vector index + BM25 with RRF fusion are already running. What is missing is not semantic search, but **an ANN index and size discipline**.
+
+Therefore, instead of adopting zvec, the plan focuses on solving the four concerns you identified (relevance, speed, size, and maintenance) through measurable steps on top of the existing architecture. In line with your chosen scope, it addresses **Emergency Box first**; the Wikipedia/Xapian side is left untouched.
+
+---
+
+## 1. Why zvec should be ruled out
+
+| Finding | Source |
+|---|---|
+| zvec is an in-process vector DB written in C++; it wraps the Proxima engine | README |
+| Its Node SDK is not pure JS: `@zvec/zvec` is a thin 72 KB wrapper, while the actual work is done by prebuilt native `@zvec/bindings-{linux-x64,linux-arm64,win32-x64,darwin-arm64,+musl}` packages | npm registry |
+| **The upstream request for wasm bindings was closed as "not planned"** — and the request described our exact scenario: "build the index on the server, then load and search it in the browser" | [issue #25](https://github.com/alibaba/zvec/issues/25) |
+| AVX2/AVX512 runtime dispatch, io_uring, WAL, mmap, and similar dependencies are difficult to port to wasm | README |
+| `zvec-grep` is a Node ≥22 CLI/MCP tool; it depends on the native `@vscode/ripgrep` binary and `node-llama-cpp` | npm registry |
+| There is no darwin-x64 binding (Intel Macs are unsupported) | npm registry |
+
+The critical point is that **build-time use does not solve the problem either.** zvec's value lies in its native query engine and its own index formats (HNSW, IVF-RaBitQ). It does not produce a browser-portable artifact. Even if we generated a zvec index on the build machine, we would have to write its reader from scratch in JS — at which point zvec's contribution would drop to zero.
+
+**The only defensible use of zvec:** the corpus producer (`build_emergency_pack.py`, in the separate `webbrain-one/emergency-box-corpus` repository) is written in Python, and zvec's primary SDK is Python. We could use zvec there as an **evaluation oracle**: load the same 251k E5 vectors and generate exact-KNN ground truth to measure recall loss when moving to ANN. To be honest, we could also do this with about 20 lines of numpy; zvec's contribution here would be marginal. It is not worth adding the dependency, but it could be tried as a measurement tool in Phase 0 if desired.
+
+What can be taken from `zvec-grep` is not code, but an **idea**: hybrid BM25+vector fusion (which we already have through RRF) and structure-aware chunking. It introduces nothing new.
+
+---
+
+## 2. What actually exists today
+
+The Emergency Box retrieval pipeline (all under `src/chrome/src/agent/`):
+
+- **Lexical:** SQLite FTS5 with weighted BM25 — `offline-rag-index.js:20` (schema), `:60` (`bm25(passages, 0,0,0,7,0,2,0,0,4,1,0.6,...)`). It uses two passes: exact, followed by a prefix-based relaxed pass if results are below `RELAXED_RETRY_THRESHOLD` (5) — `offline-retrieval.js:132,145-168`.
+- **Semantic:** `Xenova/multilingual-e5-small`, 384 dimensions, q8 — `offline-reranker.js:6-10`. Passage vectors are **not computed on-device**; they arrive prebuilt in the corpus ZIP (`indexes/emergency-box-e5-q8.bin`, `WBVE5Q8` format, parser in `offline-rag-index.js:404-451`). Only the query vector is generated on-device.
+- **Search loop:** `searchEmergencyVector()` — `offline-rag-worker.js:281-330`. **Brute force, exact, no ANN:** 251,144 × 384 int8 dot products, with a cancellation check every 4,096 rows.
+- **Fusion:** RRF k=60 — `offline-rag.js:630-665`, followed by diversification at `:705-737`.
+
+Measured figures:
+
+| Metric | Value | Source |
+|---|---|---|
+| Total installed index | **1,149,755,424 B (~1.15 GB)** | `emergency-corpus-release.js:20-33` |
+| — FTS5 db | **1,052,307,456 B (~1.05 GB)** | `docs/offline-rag-release-checklist.md:19-24` |
+| — Vector index | 97,447,968 B (~97 MB) | same source |
+| Installed plain text | 301,370,399 B | `emergency-corpus-release.js` |
+| E5 model download | 140,461,908 B | `offline-reranker.js` |
+| Passage count | 251,144 | `emergency-corpus-release.js` |
+| recall@1 / recall@5 / MRR | 0.554 / 0.875 / 0.685 | `scripts/benchmark-offline-relevance.mjs:33-39` |
+| — weak categories | **typo 0.357**, **inflection 0.393** | same source |
+
+**What the four concerns actually correspond to:**
+
+- **Size** — this is where the largest and most concrete gain is available. The 1.05 GB FTS5 db is enormous. The schema (`offline-rag-index.js:11-35`) specifies neither `detail=` nor `content=`, which means FTS5 uses the default `detail=full`, keeps a **full positional index**, and stores **a second copy of all text** in the `passages_content` shadow table — even though the text is already installed separately as 301 MB.
+- **Speed** — about 96M int8 multiply-add operations per query. The semantic timeout is 30 s (`offline-retrieval.js:17`).
+- **Relevance** — poor typo/inflection performance is a lexical weakness, not a vector-engine problem.
+- **Maintenance** — handwritten, test-pinned components: `preferMatchingAgeCohort`, `AGE_COHORT_SYNONYMS`, `relaxedFts5Prefix`, `insertVectorWinner`, and `cjkNgrams`.
+
+---
+
+## 3. Proposed approach
+
+### Phase 0 — Measurement harness (do this first, no code changes)
+
+Do not act on any size claim without producing numbers. Using the existing `scripts/benchmark-offline-relevance.mjs` harness and the vendored SQLite, build a variant matrix. For every variant, measure **db size + recall@1/@5 + MRR (broken down by category) + query p50/p95**.
+
+Variants: current · `detail=column` · `detail=none` · contentless (`content=''`) + external text · `search_terms` column removed.
+
+Do not proceed to Phase 1 without the output of this phase.
+
+### Phase 1 — Size: FTS5 db (goal: reduce 1.05 GB substantially)
+
+Two independent levers:
+
+1. **Reduce `detail=`.** Positional data is required for phrase and NEAR queries. `buildFts5Query()` (`offline-rag-index.js:330-353`) joins terms with `OR` and quotes individual tokens (`'tourniquet bleeding'` → `'"tourniquet" OR "bleeding"'`), so it **does not generate multiword phrases** — `detail=none` appears compatible. Prefix queries (`blee*`) work with `detail=none`. Verify this in Phase 0, because shifts in `bm25()` scores may affect recall.
+2. **Remove the duplicate text.** The text is already installed under `emergency-box-text/`. Make FTS5 contentless or use external content, then read `body`/`title` through the locator after the query, eliminating duplication in the shadow table. This changes how `EMERGENCY_FTS_SEARCH_SQL` (`:44-64`) returns text columns — that is the main place to modify.
+
+### Phase 2 — Speed + size: vectors (97 MB, brute force)
+
+Introduce a two-stage search:
+
+- At build time, generate a **1 bit/dimension binary code** for every passage: 384 bits = **48 B/passage** → ~12 MB (about 1/8 of today's 97 MB).
+- At runtime, first use popcount/Hamming to produce a coarse top-N (~2,000), then run the existing exact int8 dot product **only for those N candidates**. The final ranking remains exact while scan cost falls by ~100×.
+- Places to modify: `searchEmergencyVector()` (`offline-rag-worker.js:281-330`) and the next version of the `WBVE5Q8` format (`offline-rag-index.js:404-451`, `EMERGENCY_VECTOR_INDEX_FORMAT_VERSION`).
+
+We would implement this ourselves; zvec's RaBitQ can serve as a reference, but no dependency is required.
+
+### Phase 3 — Relevance: typo 0.357 and inflection 0.393
+
+This belongs on the lexical side:
+
+- **Typo:** add an auxiliary FTS5 `trigram` index used only during the relaxed pass.
+- **Inflection:** the corpus is multilingual, so aggressive stemming is risky. Measure the inexpensive option first — lower the lexical weight in RRF for short queries and lean more heavily on the semantic side (`offline-rag.js:630-665`).
+
+Measure both changes using the category breakdown in the Phase 0 matrix; no category may fall below its floor.
+
+### Phase 4 — Maintenance
+
+`sqlite-vec` is the only realistic library candidate: pure C, dependency-free, statically compiled into SQLite WASM (dynamic extension loading is unavailable), and its `vec0` virtual tables could retire `insertVectorWinner` + `WBVE5Q8`. **However, it is not recommended now:** it is still 0.1.7-alpha, it also uses brute force (so it does not provide the Phase 2 speedup), and tests pin the SHA-256 of `vendor/sqlite/index.mjs` and `sqlite3.wasm` (`test/run.js:33182`) — adopting it would require rebuilding the wasm. Revisit it if SQLite wasm is rebuilt for another reason.
+
+---
+
+## 4. Files to modify
+
+| File | Purpose |
+|---|---|
+| `src/chrome/src/agent/offline-rag-index.js` | FTS5 schema (`:11-35`), search SQL (`:44-64`), vector format parser (`:404-451`) |
+| `src/chrome/src/agent/offline-rag-worker.js` | Make `searchEmergencyVector()` two-stage (`:281-330`), db import (`:201-239`) |
+| `src/chrome/src/agent/offline-rag.js` | RRF weights (`:630-665`), hit merging if text becomes contentless |
+| `src/chrome/src/agent/offline-retrieval.js` | Two-pass lexical flow (`:132,145-168`) |
+| `scripts/benchmark-offline-relevance.mjs` | Phase 0 variant matrix; floors (`:40`) |
+| `src/firefox/src/agent/…` | Firefox copies of the same files — tests require them to be byte-identical |
+
+**The largest complication outside this repository:** the index format is produced by `build_emergency_pack.py` in the `webbrain-one/emergency-box-corpus` repository. Phases 1 and 2 require **a coordinated corpus release** (501 MB ZIP), plus an `OFFLINE_RAG_INDEX_PROTOCOL_VERSION` bump (currently 2) and a manifest migration path for users still on the old format. This is the most expensive item in the plan, and its timing is determined by that repository.
+
+---
+
+## 5. Verification
+
+At the end of each phase, in order:
+
+1. `node scripts/benchmark-offline-relevance.mjs --verbose` — must pass the recall@1 ≥ 0.53 · recall@5 ≥ 0.85 · MRR ≥ 0.66 floors (`:40`); typo/inflection **must not regress** in the category breakdown.
+2. `node scripts/benchmark-offline-rag.mjs` — index installation and query latency regression.
+3. `node test/run.js` — especially `:33182` (FTS5 query shape + sqlite wasm SHA), `:33236` (`WBVE5Q8` layout), `:33271` (actual FTS5 integrity), and `:34876` (two-pass flow). If the format changes, update these assertions deliberately — never weaken them silently.
+4. Installation smoke test with the real corpus: install Emergency Box, run the queries from `docs/offline-rag-release-checklist.md` (`airway breathing`, `急救 呼吸道`), measure the installed index size, and record it in the table.
+5. Test separately in Chrome and Firefox; verify that the offscreen path (`offline-rag-host.js`) remains intact on the MV3 side.
+
+## 6. Out of scope
+
+- The Wikipedia/ZIM/Xapian side (later, according to your prioritization).
+- The substring scans in `emergency-pdf-search.js` and `emergency-box.js:218-230` — these are not RAG; they are separate, small surfaces and can be handled as a separate task if desired.
+- The zvec / zvec-grep dependency — not adopted for the reasons above.
