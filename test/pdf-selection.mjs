@@ -16,7 +16,7 @@ async function testManifestRegistration() {
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
   assert.deepEqual(manifest.mime_types_handler?.['application/pdf'], {
     handler_url: 'src/ui/pdf-handler.html',
-    can_embed: false,
+    can_embed: true,
   });
 }
 
@@ -30,6 +30,7 @@ async function testHandlerUsesChromeStreamAndTextLayer() {
   assert.match(source, /new (?:state\.)?(?:pdfjs\.)?TextLayer\(/);
   assert.match(source, /__webbrainSelectionShortcutConfig/);
   assert.match(source, /allowNestedFrame: true/);
+  assert.match(source, /streamInfo\.embedded/);
 }
 
 async function testPdfHandlerProvidesCompleteViewerControls() {

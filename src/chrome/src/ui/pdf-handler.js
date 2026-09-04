@@ -314,6 +314,7 @@ async function initialize() {
     throw new Error('Chrome did not provide a readable PDF stream.');
   }
   state.streamInfo = streamInfo;
+  if (streamInfo.embedded === true) document.body.dataset.embedded = 'true';
   elements['pdf-title'].textContent = String(streamInfo.originalUrl || 'WebBrain PDF');
   globalThis.__webbrainSelectionShortcutConfig = {
     submitMessage: 'WB_PDF_SELECTION_SHORTCUT_SUBMIT',
