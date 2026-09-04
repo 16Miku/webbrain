@@ -67,10 +67,31 @@ function bodyOf(snapshot: CloudSnapshot): string {
   return snapshot.content || snapshot.summary || "";
 }
 
+const STRUCTURED_PROMPT_KINDS = ["permission", "submitConfirmation", "workflowHealing"] as const;
+
+/**
+ * An extension older than the `promptKind` protocol sends no discriminator at
+ * all, and this plugin updates independently of the browser store listing, so
+ * that skew is routine. Refusing those prompts would break every
+ * human-in-the-loop gate until the extension caught up, so a *missing* kind
+ * falls back to the payload shape the kind used to be inferred from. A kind
+ * that is present but unrecognized is a genuinely newer gate this client cannot
+ * render, and is still refused.
+ */
+function resolvePromptKind(pending: NonNullable<CloudSnapshot["pendingInput"]>): string {
+  const declared = typeof pending.promptKind === "string" ? pending.promptKind.trim() : "";
+  if (declared) return declared;
+  for (const kind of STRUCTURED_PROMPT_KINDS) {
+    const details = pending[kind];
+    if (details && typeof details === "object") return kind;
+  }
+  return "clarify";
+}
+
 function resultOf(snapshot: CloudSnapshot, timedOut = false): BrowserTaskResult {
   if (snapshot.status === "needs_user_input") {
     const pending = snapshot.pendingInput ?? {};
-    const promptKind = typeof pending.promptKind === "string" ? pending.promptKind : "";
+    const promptKind = resolvePromptKind(pending);
     switch (promptKind) {
       case "clarify":
       case "permission":
@@ -83,9 +104,9 @@ function resultOf(snapshot: CloudSnapshot, timedOut = false): BrowserTaskResult 
           runId: snapshot.runId,
           status: snapshot.status,
           needsUserInput: true,
-          promptKind: promptKind || undefined,
+          promptKind,
           clarifyId: String(pending.clarifyId ?? pending.clarify_id ?? ""),
-          error: `WebBrain returned unsupported prompt kind '${promptKind || "unknown"}'.`,
+          error: `WebBrain returned unsupported prompt kind '${promptKind}'.`,
           hint: "Do not send a free-form answer. Update the client before calling browser_respond.",
         };
     }
