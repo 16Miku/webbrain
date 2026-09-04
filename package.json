@@ -1,11 +1,11 @@
 {
   "name": "webbrain",
-  "version": "34.1.5",
+  "version": "34.1.6",
   "description": "Open-source AI browser agent \u2014 chat with pages, automate tasks, multi-provider LLM support.",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run test:provider-limits && npm run test:toolbar-guard && node test/run.js && node scripts/benchmark-offline-relevance.mjs && npm run test:security",
+    "test": "npm run test:provider-limits && npm run test:toolbar-guard && node test/run.js && node test/selection-scope-restoration.mjs && node scripts/benchmark-offline-relevance.mjs && npm run test:security",
     "test:provider-limits": "node test/provider-model-limits.mjs",
     "test:security": "node test/security/injection-corpus.mjs",
     "test:toolbar-guard": "node test/rich-text-toolbar-guard.mjs",
