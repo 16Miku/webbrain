@@ -184,6 +184,16 @@ npm run build && node --test test/bridge.test.mjs
 
 The suite stands up the real listener and connects a fake extension speaking the exact frames `src/chrome/src/offscreen/cloud-bridge.js` emits — handshake, id correlation under concurrency, error propagation, disconnect mid-command, and the poll/timeout/clarify paths. If the extension's wire format changes, these fail. That is intentional.
 
+For manual poking, [`scripts/fake-extension.mjs`](scripts/fake-extension.mjs) is
+the same fake as a standalone process — run the server, then:
+
+```bash
+node scripts/fake-extension.mjs
+```
+
+It logs every frame in both directions, so you can watch what your MCP client
+actually sends without Chrome in the loop.
+
 ## License
 
 This independently published package remains MIT-licensed. See [`LICENSE`](LICENSE).
