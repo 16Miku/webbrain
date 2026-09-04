@@ -131,6 +131,7 @@ button:focus-visible, input:focus-visible {
 
 .pdf-status[data-kind="error"] { background: #7f1d1d; }
 .pdf-status[data-kind="warning"] { background: #704d11; }
+.pdf-status[data-kind="success"] { background: #14532d; }
 
 .pdf-pages { display: grid; justify-items: center; gap: 24px; }
 
@@ -139,6 +140,11 @@ button:focus-visible, input:focus-visible {
   flex: 0 0 auto;
   background: #fff;
   box-shadow: var(--page-shadow);
+  /* PDF.js sizes the text layer with round(down, <calc>, var(--scale-round-*)).
+     Leaving these undefined makes that declaration invalid at computed-value
+     time, which silently drops the rotation-aware sizing it depends on. */
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
 }
 
 .pdf-canvas, .pdf-text-layer { position: absolute; inset: 0; }
@@ -161,6 +167,33 @@ button:focus-visible, input:focus-visible {
   color: transparent;
   white-space: pre;
   transform-origin: 0 0;
+}
+
+/* PDF.js publishes each span's geometry as custom properties and expects the
+   embedding stylesheet to turn them into a real font size and horizontal
+   stretch. Without these rules every span inherits the body font, so the
+   invisible selectable boxes drift away from the glyphs on the canvas. */
+.pdf-text-layer span:not([data-webbrain-ocr]), .pdf-text-layer br {
+  font-size: calc(var(--total-scale-factor, 1) * var(--font-height, 1px));
+  transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1));
+}
+
+/* PDF.js stamps the layer with the page's total rotation and leaves the
+   counter-rotation to CSS. */
+.pdf-text-layer[data-main-rotation="90"] { transform: rotate(90deg) translateY(-100%); }
+.pdf-text-layer[data-main-rotation="180"] { transform: rotate(180deg) translate(-100%, -100%); }
+.pdf-text-layer[data-main-rotation="270"] { transform: rotate(270deg) translateX(-100%); }
+
+.pdf-text-layer span.markedContent { top: 0; height: 0; }
+
+/* PDF.js appends a scratch measuring canvas to <body>; keep it out of layout. */
+.hiddenCanvasElement {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .pdf-text-layer ::selection { background: rgba(92, 91, 242, .45); }

@@ -29,7 +29,6 @@ const state = {
   fitWidth: true,
   rotation: 0,
   pageViews: new Map(),
-  pageSizes: new Map(),
   renderedPages: new Set(),
   textCache: new Map(),
   ocrCache: new Map(),
@@ -119,8 +118,7 @@ function currentPageHasNativeText() {
   // Unrendered shells have no text layer yet; assume text exists so the OCR
   // button does not flash on before the window render completes.
   if (!state.renderedPages.has(state.currentPage)) return true;
-  return !!state.pageViews.get(state.currentPage)
-    ?.querySelector('.pdf-text-layer span:not([data-webbrain-ocr])');
+  return hasNativeTextSpans(state.pageViews.get(state.currentPage));
 }
 
 function updateOcrControl() {
@@ -162,9 +160,38 @@ function isCurrentWindowRender(sequence, windowSequence) {
     && (windowSequence == null || windowSequence === state.windowRenderSequence);
 }
 
+// PDF.js treats an explicit `rotation` as the page's *total* rotation and
+// drops its intrinsic /Rotate entry, so a landscape scan stored as /Rotate 90
+// would render sideways. Compose the viewer rotation on top of the page's own.
+function pageRotation(page) {
+  const intrinsic = Number(page?.rotate) || 0;
+  return (((intrinsic + state.rotation) % 360) + 360) % 360;
+}
+
+// PDF.js only sets `--font-height`/`--scale-x` on each text-layer span; the
+// span's real font size comes from `--total-scale-factor`, which the embedding
+// page owns. Without it every span falls back to the body font and the
+// selectable boxes stop lining up with the glyphs painted on the canvas.
+function applyTextLayerScale(element, viewport) {
+  element?.style?.setProperty(
+    '--total-scale-factor',
+    String((Number(viewport?.scale) || 1) * (Number(viewport?.userUnit) || 1)),
+  );
+}
+
+// `span.markedContent` wrappers are emitted for tagged PDFs even when the page
+// carries no glyphs, so an element check alone would hide the OCR button on a
+// scanned page. Require a span that actually contains text.
+function hasNativeTextSpans(container) {
+  for (const span of container?.querySelectorAll?.('span:not([data-webbrain-ocr])') || []) {
+    if (span.textContent?.trim()) return true;
+  }
+  return false;
+}
+
 function renderScaleFor(page) {
   if (!state.fitWidth) return clampScale(state.scale);
-  const naturalViewport = page.getViewport({ scale: 1, rotation: state.rotation });
+  const naturalViewport = page.getViewport({ scale: 1, rotation: pageRotation(page) });
   const availableWidth = Math.max(240, elements['pdf-stage'].clientWidth - 48);
   return clampScale(availableWidth / naturalViewport.width);
 }
@@ -178,7 +205,6 @@ function createPageShell(pageNumber, width, height) {
   pageView.setAttribute('aria-label', `PDF page ${pageNumber} of ${state.pdf.numPages}`);
   elements['pdf-pages'].append(pageView);
   state.pageViews.set(pageNumber, pageView);
-  state.pageSizes.set(pageNumber, { width, height });
   return pageView;
 }
 
@@ -190,7 +216,6 @@ function createPageView(pageNumber, viewport) {
     pageView.style.width = `${Math.ceil(viewport.width)}px`;
     pageView.style.height = `${Math.ceil(viewport.height)}px`;
     pageView.replaceChildren();
-    state.pageSizes.set(pageNumber, { width: viewport.width, height: viewport.height });
   }
 
   const canvas = document.createElement('canvas');
@@ -232,9 +257,11 @@ async function renderPage(pageNumber, sequence, windowSequence = null) {
   if (!isCurrentWindowRender(sequence, windowSequence)) return false;
   const renderScale = renderScaleFor(page);
   const pixelRatio = Math.min(2, globalThis.devicePixelRatio || 1);
-  const viewport = page.getViewport({ scale: renderScale, rotation: state.rotation });
-  const renderViewport = page.getViewport({ scale: renderScale * pixelRatio, rotation: state.rotation });
+  const rotation = pageRotation(page);
+  const viewport = page.getViewport({ scale: renderScale, rotation });
+  const renderViewport = page.getViewport({ scale: renderScale * pixelRatio, rotation });
   const { pageView, canvas, textLayer } = createPageView(pageNumber, viewport);
+  applyTextLayerScale(pageView, viewport);
   const dimensions = pageCanvasDimensions(viewport, pixelRatio);
   canvas.width = dimensions.width;
   canvas.height = dimensions.height;
@@ -260,7 +287,7 @@ async function renderPage(pageNumber, sequence, windowSequence = null) {
   });
   await layer.render();
   if (!isCurrentWindowRender(sequence, windowSequence)) return false;
-  if (textLayer.querySelector('span')) {
+  if (hasNativeTextSpans(textLayer)) {
     state.textLayerCount += 1;
   } else {
     const ocrLines = state.ocrCache.get(pageNumber);
@@ -315,7 +342,6 @@ async function renderAllPages() {
   state.textLayerCount = 0;
   state.ocrTextLayerCount = 0;
   state.pageViews.clear();
-  state.pageSizes.clear();
   state.renderedPages.clear();
   elements['pdf-pages'].replaceChildren();
   const total = state.pdf.numPages;
@@ -347,7 +373,7 @@ async function renderAllPages() {
   try {
     const firstPage = await state.pdf.getPage(1);
     if (!isCurrentRender(sequence)) return false;
-    const firstViewport = firstPage.getViewport({ scale: renderScaleFor(firstPage), rotation: state.rotation });
+    const firstViewport = firstPage.getViewport({ scale: renderScaleFor(firstPage), rotation: pageRotation(firstPage) });
     shellWidth = firstViewport.width;
     shellHeight = firstViewport.height;
   } catch {
@@ -398,18 +424,31 @@ function updateCurrentPageFromScroll() {
   state.scrollFrame = requestAnimationFrame(() => {
     state.scrollFrame = null;
     if (!state.pageViews.size) return;
-    const stageTop = elements['pdf-stage'].getBoundingClientRect().top;
+    const stageRect = elements['pdf-stage'].getBoundingClientRect();
+    let mostVisiblePage = state.currentPage;
+    let mostVisible = 0;
     let closestPage = state.currentPage;
     let closestDistance = Number.POSITIVE_INFINITY;
     for (const [pageNumber, pageView] of state.pageViews) {
-      const distance = Math.abs(pageView.getBoundingClientRect().top - stageTop - 12);
+      const rect = pageView.getBoundingClientRect();
+      // Track the page that occupies most of the viewport. A nearest-top scan
+      // hands over to the next page as soon as its top edge gets closer, so on
+      // a page taller than the stage the counter — and "OCR page" — would jump
+      // ahead while the user is still reading the current page.
+      const visible = Math.min(rect.bottom, stageRect.bottom) - Math.max(rect.top, stageRect.top);
+      if (visible > mostVisible) {
+        mostVisible = visible;
+        mostVisiblePage = pageNumber;
+      }
+      const distance = Math.abs(rect.top - stageRect.top - 12);
       if (distance < closestDistance) {
         closestDistance = distance;
         closestPage = pageNumber;
       }
     }
-    if (closestPage !== state.currentPage) {
-      setCurrentPage(closestPage);
+    const nextPage = mostVisible > 0 ? mostVisiblePage : closestPage;
+    if (nextPage !== state.currentPage) {
+      setCurrentPage(nextPage);
       state.requestedPage = state.currentPage;
       setPageStatus();
       scheduleWindowRender();

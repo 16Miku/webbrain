@@ -1768,7 +1768,11 @@ function reassertIndicatorIfActive(tabId) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo?.url) pdfResponseTabs.delete(tabId);
+  // Do not clear pdfResponseTabs here: onHeadersReceived records the PDF
+  // content type while the response is still in flight and the tab's URL only
+  // changes once that navigation commits, so deleting on changeInfo.url would
+  // discard the entry it just recorded. trackPdfResponse() already replaces
+  // the entry on the next main-frame response, and onRemoved clears it.
   if (changeInfo?.url || changeInfo?.status) {
     syncPdfContextMenuForActiveTab().catch(() => {});
   }

@@ -251,7 +251,6 @@ function trackPdfResponse(details) {
   if (!Number.isInteger(details?.tabId) || details.tabId < 0) return;
   const contentType = (details.responseHeaders || [])
     .find(header => String(header?.name || '').toLowerCase() === 'content-type')?.value;
-  if (!contentType) return;
   if (/^application\/pdf(?:\s*;|$)/i.test(String(contentType))) pdfResponseTabs.add(details.tabId);
   else pdfResponseTabs.delete(details.tabId);
 }

@@ -135,6 +135,10 @@ export function renderPdfOcrTextLayer(container, lines, width, height) {
     span.style.top = `${Math.round(box.y * layerHeight)}px`;
     span.style.width = `${Math.max(1, Math.round(box.width * layerWidth))}px`;
     span.style.height = `${Math.max(1, Math.round(box.height * layerHeight))}px`;
+    // Match the glyph height to the box the model reported. Without this the
+    // span inherits the viewer's 14px body font, so on a scanned page only a
+    // thin band at the top of each line is actually selectable.
+    span.style.fontSize = `${Math.max(6, Math.round(box.height * layerHeight))}px`;
     fragment.appendChild(span);
     rendered += 1;
   }
