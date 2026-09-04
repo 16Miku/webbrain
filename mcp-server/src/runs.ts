@@ -134,27 +134,48 @@ export async function awaitSettled(
   return { snapshot: last, timedOut: true };
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value != null && typeof value === "object" && !Array.isArray(value);
+type PendingInput = NonNullable<CloudSnapshot["pendingInput"]>;
+
+const STRUCTURED_PROMPT_KINDS = ["permission", "submitConfirmation", "workflowHealing"] as const;
 
 /**
- * The stable decision values a structured prompt accepts, in the order the
- * extension offers them. `pendingInput.options` is authoritative — hardcoding
- * the list here would silently advertise a choice the gate no longer takes —
- * but a snapshot that predates it still has to render something usable.
+ * An extension older than the `promptKind` protocol sends no discriminator at
+ * all, and the npm package updates independently of the browser store listing,
+ * so that skew is routine. Refusing those prompts would break every
+ * human-in-the-loop gate until the extension caught up, so a *missing* kind
+ * falls back to the payload shape the kind used to be inferred from. A kind
+ * that is present but unrecognized is a genuinely newer gate this client cannot
+ * render, and is still refused.
  */
-function promptChoices(pendingInput: Record<string, unknown>, fallback: string[]): string[] {
-  const options = pendingInput.options;
-  if (!Array.isArray(options)) return fallback;
-  const choices = options
-    .filter((option): option is string => typeof option === "string" && option.trim() !== "")
-    .map((option) => option.trim());
-  return choices.length ? choices : fallback;
+function resolvePromptKind(pending: PendingInput): string {
+  const declared = typeof pending.promptKind === "string" ? pending.promptKind.trim() : "";
+  if (declared) return declared;
+  for (const kind of STRUCTURED_PROMPT_KINDS) {
+    const details = pending[kind];
+    if (details && typeof details === "object") return kind;
+  }
+  return "clarify";
 }
 
-function renderTarget(value: unknown): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
-  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+/**
+ * `options` carries the choices a generic renderer can show, which is not the
+ * same as the set the extension accepts. A workflow healing prompt's real
+ * answers are the candidate ids inside its payload — `options` lists only the
+ * `deny` escape hatch, and relaying that alone would make every heal a refusal.
+ */
+function allowedAnswers(kind: string, pending: PendingInput): string[] {
+  const options = Array.isArray(pending.options) ? pending.options.map(String).filter(Boolean) : [];
+  if (kind !== "workflowHealing") return options;
+  const details = pending.workflowHealing as { candidates?: unknown } | undefined;
+  const candidates = Array.isArray(details?.candidates) ? details.candidates : [];
+  const ids = candidates
+    .map((candidate) => (
+      candidate && typeof candidate === "object"
+        ? String((candidate as { id?: unknown }).id ?? "")
+        : ""
+    ))
+    .filter(Boolean);
+  return [...ids, ...options.filter((option) => !ids.includes(option))];
 }
 
 /** Render a snapshot as the text an calling agent actually needs to read. */
@@ -166,57 +187,46 @@ export function describeSnapshot(snapshot: CloudSnapshot, timedOut = false): str
   if (snapshot.finalUrl) lines.push(`final_url: ${snapshot.finalUrl}`);
 
   if (snapshot.status === "needs_user_input" && snapshot.pendingInput) {
-    // Three of the pauses the extension raises are structured gates, not
-    // questions: each accepts a fixed set of stable values and fails closed on
-    // anything else. Only the plain `clarify` tool takes free text — its
-    // `options` are suggestions the model reads back, so forcing exact values
-    // there would throw away a perfectly good answer.
     const pending = snapshot.pendingInput;
+    const promptKind = resolvePromptKind(pending);
     const clarifyId = pending.clarifyId || pending.clarify_id || "";
     const question = pending.question || "(no question text supplied)";
-    const permission = pending.permission;
-    const submitConfirmation = pending.submitConfirmation;
-    const workflowHealing = pending.workflowHealing;
     lines.push("");
     lines.push("WebBrain is waiting on a human decision before it continues.");
-    lines.push(`question: ${question}`);
+    lines.push(`prompt_kind: ${promptKind}`);
     lines.push(`clarify_id: ${clarifyId}`);
-    if (isRecord(permission)) {
-      lines.push(
-        `permission_decisions: ${promptChoices(pending, ["once", "always", "deny"]).join(" | ")}`,
-      );
-      lines.push(
-        "Relay this permission request to the user. After they decide, send the exact stable value " +
-          "`once` for an explicit one-time approval, `always` only when they explicitly request a " +
-          "persistent grant, or `deny` for a refusal. Do not pass localized labels or other free text, " +
-          "and do not decide on the user's behalf.",
-      );
-    } else if (isRecord(submitConfirmation)) {
-      lines.push(`decisions: ${promptChoices(pending, ["once", "deny"]).join(" | ")}`);
-      lines.push(
-        "Relay this form-submission confirmation to the user. After they decide, send the exact stable " +
-          "value `once` for an explicit confirmation or `deny` for a refusal. Do not pass localized " +
-          "labels or other free text, and do not decide on the user's behalf.",
-      );
-    } else if (isRecord(workflowHealing)) {
-      const candidates = Array.isArray(workflowHealing.candidates) ? workflowHealing.candidates : [];
-      const candidateIds: string[] = [];
-      for (const candidate of candidates) {
-        if (!isRecord(candidate)) continue;
-        const id = String(candidate.id ?? "").trim();
-        if (!id) continue;
-        candidateIds.push(id);
-        lines.push(`${id}: ${renderTarget(candidate.target)}`);
+    let supported = true;
+    switch (promptKind) {
+      case "permission":
+      case "submitConfirmation":
+      case "workflowHealing": {
+        const options = allowedAnswers(promptKind, pending);
+        if (options.length) lines.push(`allowed_answers: ${options.join(", ")}`);
+        const details = pending[promptKind];
+        if (details && typeof details === "object") {
+          lines.push(`structured_prompt: ${JSON.stringify(details)}`);
+        }
+        break;
       }
-      lines.push(`decisions: ${[...candidateIds, ...promptChoices(pending, ["deny"])].join(" | ")}`);
+      case "clarify": {
+        const options = allowedAnswers(promptKind, pending);
+        if (options.length) lines.push(`suggested_answers: ${options.join(", ")}`);
+        break;
+      }
+      default:
+        supported = false;
+        // The question text is withheld on purpose: printing it invites the
+        // model to answer an unrecognized gate as if it were free-form text,
+        // which is exactly what the discriminator exists to prevent.
+        lines.push(
+          "This prompt kind is unsupported by this client. Do not send a free-form answer; " +
+            "update the client before calling webbrain_respond.",
+        );
+    }
+    if (supported) {
+      lines.push(`question: ${question}`);
       lines.push(
-        "Relay this saved-workflow repair choice to the user. After they decide, send the exact " +
-          "candidate id they picked, or `deny` to leave the workflow untouched. Do not pass localized " +
-          "labels or other free text, and do not decide on the user's behalf.",
-      );
-    } else {
-      lines.push(
-        "Relay this to the user and send their free-text answer verbatim with webbrain_respond. " +
+        "Relay this to the user and send their answer with webbrain_respond. " +
           "Do not invent an answer on their behalf.",
       );
     }

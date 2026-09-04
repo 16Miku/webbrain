@@ -281,7 +281,13 @@ test("awaitSettled stops on needs_user_input and surfaces clarify_id", async () 
       result: {
         runId: "r",
         status: "needs_user_input",
-        pendingInput: { clarifyId: "c_42", question: "Which account should I use?" },
+        pendingInput: {
+          promptKind: "permission",
+          permission: { capability: "send_message", host: "example.com" },
+          clarifyId: "c_42",
+          question: "Which account should I use?",
+          options: ["once", "always", "deny"],
+        },
       },
     };
   });
@@ -292,74 +298,68 @@ test("awaitSettled stops on needs_user_input and surfaces clarify_id", async () 
 
   const text = describeSnapshot(snapshot);
   assert.match(text, /clarify_id: c_42/);
+  assert.match(text, /prompt_kind: permission/);
+  assert.match(text, /allowed_answers: once, always, deny/);
   assert.match(text, /Which account should I use\?/);
-  assert.match(text, /free-text answer verbatim/);
   assert.match(text, /Do not invent an answer/);
 
   ext.close();
   await bridge.stop();
 });
 
-test("describeSnapshot surfaces stable permission decision values", () => {
+test("describeSnapshot refuses unknown prompt kinds instead of presenting free text", () => {
   const text = describeSnapshot({
     runId: "r",
     status: "needs_user_input",
+    pendingInput: { promptKind: "futureGate", clarifyId: "c", question: "Choose." },
+  });
+  assert.match(text, /prompt_kind: futureGate/);
+  assert.match(text, /unsupported by this client/);
+  assert.doesNotMatch(text, /Relay this to the user/);
+  assert.doesNotMatch(text, /Choose\./);
+});
+
+test("describeSnapshot still relays prompts from an extension older than promptKind", () => {
+  const clarify = describeSnapshot({
+    runId: "r",
+    status: "needs_user_input",
+    pendingInput: { clarifyId: "c", question: "Which account?", options: ["work", "personal"] },
+  });
+  assert.match(clarify, /prompt_kind: clarify/);
+  assert.match(clarify, /suggested_answers: work, personal/);
+  assert.match(clarify, /Which account\?/);
+  assert.match(clarify, /Relay this to the user/);
+
+  const permission = describeSnapshot({
+    runId: "r",
+    status: "needs_user_input",
     pendingInput: {
-      clarifyId: "perm_42",
-      question: "WebBrain wants to navigate to example.com. Allow it?",
-      permission: { capability: "navigate", host: "example.com" },
+      clarifyId: "c",
+      permission: { capability: "send_message", host: "example.com" },
+      question: "Allow it?",
       options: ["once", "always", "deny"],
     },
   });
-
-  assert.match(text, /permission_decisions: once \| always \| deny/);
-  assert.match(text, /`once` for an explicit one-time approval/);
-  assert.match(text, /`always` only when they explicitly request a persistent grant/);
-  assert.match(text, /Do not pass localized labels or other free text/);
-  assert.match(text, /do not decide on the user's behalf/i);
-  assert.doesNotMatch(text, /free-text answer verbatim/);
+  assert.match(permission, /prompt_kind: permission/);
+  assert.match(permission, /allowed_answers: once, always, deny/);
+  assert.match(permission, /Relay this to the user/);
 });
 
-test("describeSnapshot surfaces stable submit-confirmation decision values", () => {
+test("describeSnapshot lists workflow healing candidates as answerable", () => {
   const text = describeSnapshot({
     runId: "r",
     status: "needs_user_input",
     pendingInput: {
-      clarifyId: "submit_42",
-      question: "WebBrain wants to submit this form on example.com.",
-      submitConfirmation: { host: "example.com", tool: "click" },
-      options: ["once", "deny"],
-    },
-  });
-
-  assert.match(text, /decisions: once \| deny/);
-  assert.match(text, /`once` for an explicit confirmation or `deny` for a refusal/);
-  assert.match(text, /Do not pass localized labels or other free text/);
-  assert.doesNotMatch(text, /free-text answer verbatim/);
-});
-
-test("describeSnapshot surfaces workflow-healing candidate ids", () => {
-  const text = describeSnapshot({
-    runId: "r",
-    status: "needs_user_input",
-    pendingInput: {
-      clarifyId: "workflow_heal_42",
-      question: "Choose a replacement target for saved workflow step 2.",
+      promptKind: "workflowHealing",
+      clarifyId: "c",
       workflowHealing: {
-        candidates: [
-          { id: "candidate_0", target: "#submit" },
-          { id: "candidate_1", target: { selector: ".send" } },
-        ],
+        candidates: [{ id: "candidate_0", target: "#a" }, { id: "candidate_1", target: "#b" }],
       },
+      question: "Choose a replacement target.",
       options: ["deny"],
     },
   });
-
-  assert.match(text, /candidate_0: #submit/);
-  assert.match(text, /candidate_1: \{"selector":"\.send"\}/);
-  assert.match(text, /decisions: candidate_0 \| candidate_1 \| deny/);
-  assert.match(text, /send the exact candidate id they picked/);
-  assert.doesNotMatch(text, /free-text answer verbatim/);
+  assert.match(text, /allowed_answers: candidate_0, candidate_1, deny/);
 });
 
 test("awaitSettled reports a timeout without aborting the run", async () => {

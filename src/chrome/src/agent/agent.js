@@ -16875,6 +16875,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // English/locale dependency. `question` is an English fallback for any
         // generic renderer that doesn't understand `permission`.
         onUpdate('clarify', {
+          promptKind: 'permission',
           clarifyId,
           permission: { capability, host },
           question: `WebBrain wants to ${CAPABILITY_LABEL[capability] || 'act on'} ${host}. Allow it?`,
@@ -18383,6 +18384,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (typeof onUpdate === 'function') {
       try {
         onUpdate('clarify', {
+          promptKind: 'submitConfirmation',
           clarifyId,
           submitConfirmation: {
             host,
@@ -18419,6 +18421,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
     try {
       onUpdate('clarify', {
+        promptKind: 'workflowHealing',
         clarifyId,
         workflowHealing: {
           workflowId: workflow.id,
@@ -25978,6 +25981,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (typeof onUpdate === 'function') {
         try {
           onUpdate('clarify', {
+            promptKind: 'clarify',
             clarifyId,
             question,
             options,

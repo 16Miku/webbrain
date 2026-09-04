@@ -27,10 +27,10 @@ export interface BrowserTaskResult {
   runId?: string;
   status?: string;
   needsUserInput?: boolean;
+  promptKind?: string;
+  options?: string[];
   question?: string;
   clarifyId?: string;
-  /** Stable values a structured gate accepts. Absent for free-text clarifications. */
-  decisions?: string[];
   stillRunning?: boolean;
   finalUrl?: string;
   text?: string;
@@ -67,54 +67,65 @@ function bodyOf(snapshot: CloudSnapshot): string {
   return snapshot.content || snapshot.summary || "";
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value != null && typeof value === "object" && !Array.isArray(value);
+const STRUCTURED_PROMPT_KINDS = ["permission", "submitConfirmation", "workflowHealing"] as const;
 
 /**
- * Permission, form-submission and workflow-repair pauses are structured gates,
- * not questions: the extension accepts only the stable values it offers in
- * `options` and fails closed on anything else, so a localized approval relayed
- * verbatim ("允许") silently denies the action. Only the plain `clarify` tool
- * takes free text.
+ * An extension older than the `promptKind` protocol sends no discriminator at
+ * all, and this plugin updates independently of the browser store listing, so
+ * that skew is routine. Refusing those prompts would break every
+ * human-in-the-loop gate until the extension caught up, so a *missing* kind
+ * falls back to the payload shape the kind used to be inferred from. A kind
+ * that is present but unrecognized is a genuinely newer gate this client cannot
+ * render, and is still refused.
  */
-function decisionsOf(pending: Record<string, unknown>): string[] {
-  if (!isRecord(pending.permission) && !isRecord(pending.submitConfirmation)
-    && !isRecord(pending.workflowHealing)) {
-    return [];
+function resolvePromptKind(pending: NonNullable<CloudSnapshot["pendingInput"]>): string {
+  const declared = typeof pending.promptKind === "string" ? pending.promptKind.trim() : "";
+  if (declared) return declared;
+  for (const kind of STRUCTURED_PROMPT_KINDS) {
+    const details = pending[kind];
+    if (details && typeof details === "object") return kind;
   }
-  const candidateIds = isRecord(pending.workflowHealing) && Array.isArray(pending.workflowHealing.candidates)
-    ? pending.workflowHealing.candidates
-      .map((candidate) => (isRecord(candidate) ? String(candidate.id ?? "").trim() : ""))
-      .filter((id) => id !== "")
-    : [];
-  const options = Array.isArray(pending.options)
-    ? pending.options
-      .filter((option): option is string => typeof option === "string" && option.trim() !== "")
-      .map((option) => option.trim())
-    : [];
-  return [...candidateIds, ...options];
+  return "clarify";
 }
 
 function resultOf(snapshot: CloudSnapshot, timedOut = false): BrowserTaskResult {
   if (snapshot.status === "needs_user_input") {
     const pending = snapshot.pendingInput ?? {};
-    const decisions = decisionsOf(pending);
+    const promptKind = resolvePromptKind(pending);
+    switch (promptKind) {
+      case "clarify":
+      case "permission":
+      case "submitConfirmation":
+      case "workflowHealing":
+        break;
+      default:
+        return {
+          ok: false,
+          runId: snapshot.runId,
+          status: snapshot.status,
+          needsUserInput: true,
+          promptKind,
+          clarifyId: String(pending.clarifyId ?? pending.clarify_id ?? ""),
+          error: `WebBrain returned unsupported prompt kind '${promptKind}'.`,
+          hint: "Do not send a free-form answer. Update the client before calling browser_respond.",
+        };
+    }
+    const options = Array.isArray(pending.options)
+      ? pending.options.map(String).filter(Boolean)
+      : undefined;
     return {
       ok: false,
       runId: snapshot.runId,
       status: snapshot.status,
       needsUserInput: true,
+      promptKind,
+      options,
       question: String(pending.question ?? "(no question text supplied)"),
       clarifyId: String(pending.clarifyId ?? pending.clarify_id ?? ""),
-      ...(decisions.length ? { decisions } : {}),
-      hint: decisions.length
-        ? "WebBrain paused on a structured decision. Ask the user this question, then call " +
-          `browser_respond with this runId, clarifyId, and exactly one of: ${decisions.join(", ")}. ` +
-          "Do not send a localized label or other free text — the extension fails closed on an " +
-          "unknown value — and do not decide on their behalf."
-        : "WebBrain paused because a human decision is required. Ask the user this " +
-          "question, then call browser_respond with this runId and clarifyId. Do not " +
-          "guess on their behalf.",
+      hint:
+        "WebBrain paused because a human decision is required. Ask the user this " +
+        "question, then call browser_respond with this runId and clarifyId. Do not " +
+        "guess on their behalf.",
     };
   }
 
