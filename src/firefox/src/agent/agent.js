@@ -3314,7 +3314,7 @@ export class Agent extends LoopDetector {
       : { ok: false, code: 'EMPTY_RESPONSE', ...extra };
   }
 
-  _traceTurnEndPayload(status, failureCode = null) {
+  _traceTurnEndPayload(status, failureCode = null, extra = {}) {
     const reason = String(status || 'done');
     const inferredCode = reason === 'cost_limit'
       ? 'COST_LIMIT'
@@ -3322,7 +3322,8 @@ export class Agent extends LoopDetector {
           ? 'EMPTY_RESPONSE'
           : (reason === 'error' ? 'UNKNOWN' : null));
     const code = failureCode || inferredCode;
-    return { status: reason, reason, ...(code ? { code } : {}) };
+    const detail = extra && typeof extra === 'object' ? extra : {};
+    return { status: reason, reason, ...(code ? { code } : {}), ...detail };
   }
 
   async _chatWithCostAllowance(provider, messages, options, costState, requestContext = null) {
@@ -26465,6 +26466,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let messageCompletion = null;
     let _traceStatus = 'done';
     let traceFailureCode = null;
+    let traceTurnEndExtra = {}; // step-limit handoff outcome; trace status keeps max_steps
     let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
     let askStreamingTraceWrite = Promise.resolve();
     let shouldOrderInteractiveAskTrace = false;
@@ -27354,8 +27356,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             { phase: 'step_limit_recovery' },
           );
           finalResponse = recovery.content;
-          _traceStatus = recovery.status;
-          handoffCancelled = recovery.status === 'cancelled';
+          if (recovery.status === 'cancelled') {
+            _traceStatus = 'cancelled';
+            handoffCancelled = true;
+          } else {
+            // Keep the max_steps trace signal so Compass improvement traces
+            // still see the step-limit stop; the delivered handoff outcome
+            // travels separately in the turn_end payload (see finally).
+            traceTurnEndExtra = { handoffOutcome: recovery.status };
+          }
         } else {
           finalResponse = fallback;
           messages.push({ role: 'assistant', content: finalResponse });
@@ -27389,7 +27398,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (runId) await trace.recordTurnEnd(
         runId,
         lastTraceStep,
-        this._traceTurnEndPayload(_traceStatus, traceFailureCode),
+        this._traceTurnEndPayload(_traceStatus, traceFailureCode, traceTurnEndExtra),
       );
       await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode });
     }
@@ -27567,6 +27576,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
     let _traceStatus = 'done';
     let traceFailureCode = null;
+    let traceTurnEndExtra = {}; // step-limit handoff outcome; trace status keeps max_steps
     const finish = (response, status = _traceStatus) => {
       finalResponse = response || '';
       _traceStatus = status;
@@ -28227,7 +28237,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // re-arming Continue there would also relabel the cancellation as a
     // step-limit error in the run journal.
     if (recovery.status !== 'cancelled') onUpdate('max_steps_reached', { steps: this.maxSteps });
-    return finish(recovery.content, recovery.status);
+    if (recovery.status === 'cancelled') return finish(recovery.content, 'cancelled');
+    // Keep the max_steps trace signal so Compass improvement traces still see
+    // the step-limit stop; finish() carries the delivered outcome to the UI
+    // while the trace close below re-asserts max_steps with handoffOutcome.
+    traceTurnEndExtra = { handoffOutcome: recovery.status };
+    const handoffResponse = finish(recovery.content, recovery.status);
+    _traceStatus = 'max_steps';
+    return handoffResponse;
     } catch (error) {
       const message = formatErrorMessage(error);
       _traceStatus = 'error';
@@ -28241,7 +28258,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (runId) await trace.recordTurnEnd(
         runId,
         lastTraceStep,
-        this._traceTurnEndPayload(_traceStatus, traceFailureCode),
+        this._traceTurnEndPayload(_traceStatus, traceFailureCode, traceTurnEndExtra),
       );
       await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode });
     }

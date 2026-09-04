@@ -12194,6 +12194,11 @@ test('agent trace error classification: _traceErrorCodeFor maps failures to stab
     assert.deepEqual(agent._traceStepEndForResult({ content: '', toolCalls: [{ id: 'call_1' }] }, { retried: true }), { ok: true, retried: true }, `${label}: retried tool output must close as successful`);
     assert.deepEqual(agent._traceTurnEndPayload('error', 'TRANSPORT'), { status: 'error', reason: 'error', code: 'TRANSPORT' }, `${label}: failed turn must carry reason and code`);
     assert.deepEqual(agent._traceTurnEndPayload('done'), { status: 'done', reason: 'done' }, `${label}: successful turn must not invent a failure code`);
+    assert.deepEqual(
+      agent._traceTurnEndPayload('max_steps', null, { handoffOutcome: 'partial' }),
+      { status: 'max_steps', reason: 'max_steps', handoffOutcome: 'partial' },
+      `${label}: step-limit handoff must keep max_steps with the delivered outcome attached`,
+    );
   }
 });
 
@@ -13944,6 +13949,132 @@ test('step-limit recovery keeps Cloud observation checkpoints advisory but force
     assert.equal(invalidRecovery.status, 'delivery_recovery_failed', `${label}: invalid recovery was not visibly failed`);
     assert.equal(invalidMessages.at(-1)?.content, fallback, `${label}: deterministic fallback was not persisted`);
     assert.equal(invalidUpdates.some(update => update.type === 'error' && update.data?.message === fallback), true, `${label}: deterministic blocker was not shown`);
+  }
+});
+
+test('step-limit handoff keeps max_steps in traces with the delivered outcome attached', async () => {
+  for (const streaming of [false, true]) {
+    for (const [AgentClass, trajectory, privacy] of [
+      [AgentCh, TRACE_TRAJECTORY_CH, TRACE_PRIVACY_CH],
+      [AgentFx, TRACE_TRAJECTORY_FX, TRACE_PRIVACY_FX],
+    ]) {
+      const handoffSummary = 'One item was verified before the step limit.';
+      const responses = [
+        {
+          content: null,
+          toolCalls: [{
+            id: 'step_limit_trace_read',
+            function: { name: 'read_page', arguments: JSON.stringify({}) },
+          }],
+        },
+        {
+          content: null,
+          toolCalls: [{
+            id: 'step_limit_trace_done',
+            function: {
+              name: 'done',
+              arguments: JSON.stringify({ summary: handoffSummary, outcome: 'partial' }),
+            },
+          }],
+        },
+      ];
+      const provider = {
+        supportsTools: true,
+        supportsVision: false,
+        promptTier: 'full',
+        contextWindow: 128000,
+        model: 'test-model',
+        name: 'test-provider',
+        calls: 0,
+      };
+      if (streaming) {
+        provider.chatStream = async function* (_messages, _options) {
+          this.calls++;
+          const next = responses.shift();
+          assert.ok(next, `${AgentClass.name}: streamed model was called too many times`);
+          if (next.toolCalls?.length) {
+            yield {
+              type: 'tool_call',
+              content: next.toolCalls.map((call, index) => ({ index, id: call.id, function: call.function })),
+            };
+          }
+          yield { type: 'done' };
+        };
+        provider.chat = async () => {
+          provider.calls++;
+          const next = responses.shift();
+          assert.ok(next, `${AgentClass.name}: streamed recovery model was called too many times`);
+          return next;
+        };
+      } else {
+        provider.chat = async () => {
+          provider.calls++;
+          const next = responses.shift();
+          assert.ok(next, `${AgentClass.name}: model was called too many times`);
+          return next;
+        };
+      }
+
+      const agent = new AgentClass({
+        getActive: () => provider,
+        getVisionProvider: async () => null,
+      });
+      const tabId = (streaming ? 24914 : 24904) + (AgentClass === AgentFx ? 1 : 0);
+      agent.planBeforeAct = false;
+      agent._maybeRunPlannerGate = async () => ({
+        proceed: true,
+        requestKind: 'execute',
+        requiresStateChange: true,
+      });
+      agent.maxSteps = 1;
+      agent.autoScreenshot = 'off';
+      agent._skipPermissionGate = true;
+      agent._manageContext = async () => {};
+      agent._enrichUserMessageWithCurrentPage = async (_tabId, _messages, content) => ({ role: 'user', content });
+      agent._maybeReinjectAdapter = async () => {};
+      agent._ensureProgressSessionForCurrentTask = async () => ({ mode: 'inactive' });
+      agent._currentTaskLedgerRows = () => [];
+      agent._persist = () => {};
+      agent.executeTool = async (_toolTabId, name, args) => {
+        if (name === 'read_page') return { success: true, content: 'The action result is visible.' };
+        if (name === 'done') return { done: true, summary: args.summary, outcome: args.outcome };
+        throw new Error(`unexpected tool ${name}`);
+      };
+      const turnEndPayloads = [];
+      const realTurnEndPayload = agent._traceTurnEndPayload.bind(agent);
+      agent._traceTurnEndPayload = (...args) => {
+        const payload = realTurnEndPayload(...args);
+        turnEndPayloads.push(payload);
+        return payload;
+      };
+      let endTraceStatus = null;
+      agent._startTraceRun = async () => `step_limit_trace_${tabId}`;
+      agent._endTraceRun = (_endTabId, _runId, status) => { endTraceStatus = status; };
+
+      const updates = [];
+      const run = streaming ? agent.processMessageStream.bind(agent) : agent.processMessage.bind(agent);
+      const final = await run(tabId, 'collect every result', (type, data) => updates.push({ type, data }), 'act');
+
+      assert.equal(provider.calls, 2, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: step-limit run used the wrong number of turns`);
+      assert.match(final || '', /One item was verified/i, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: handoff summary did not reach the user`);
+      assert.ok(updates.some(update => update.type === 'max_steps_reached'), `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: Continue was not enabled`);
+      assert.equal(endTraceStatus, 'max_steps', `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: trace run did not preserve max_steps`);
+      const handoffPayload = turnEndPayloads.at(-1) || {};
+      assert.equal(handoffPayload.status, 'max_steps', `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: turn_end lost the step-limit signal`);
+      assert.equal(handoffPayload.handoffOutcome, 'partial', `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: turn_end lost the delivered handoff outcome`);
+
+      const rows = trajectory.buildTraceTrajectory([
+        { seq: 1, ts: 1000, kind: 'turn_start', data: { step: 0 } },
+        { seq: 2, ts: 1001, kind: 'turn_end', data: handoffPayload },
+      ]);
+      assert.equal(rows.length, 1, `${AgentClass.name}: trajectory did not collapse the turn to one row`);
+      assert.equal(rows[0]?.status, 'error', `${AgentClass.name}: step-limit handoff trajectory did not close as failed`);
+      assert.equal(rows[0]?.handoffOutcome, 'partial', `${AgentClass.name}: trajectory dropped the handoff outcome`);
+
+      const projected = privacy.projectTraceEventData('turn_end', handoffPayload);
+      assert.equal(projected.status, 'max_steps', `${AgentClass.name}: projected turn_end lost the step-limit signal`);
+      assert.equal(projected.handoffOutcome, 'partial', `${AgentClass.name}: projected turn_end stripped the handoff outcome`);
+    }
   }
 });
 
