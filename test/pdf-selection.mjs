@@ -42,6 +42,7 @@ async function testPdfViewerIsOptInWithExplicitAndCapabilityFallbacks() {
   const html = await readFile(settingsHtmlPath, 'utf8');
   const settings = await readFile(settingsJsPath, 'utf8');
   const source = await readFile(handlerJsPath, 'utf8');
+  const background = await readFile(path.join(root, 'src', 'chrome', 'src', 'background.js'), 'utf8');
   assert.match(html, /id="toggle-pdf-viewer"/);
   assert.match(settings, /pdfViewerEnabled/);
   assert.match(settings, /stored\.pdfViewerEnabled === true/);
@@ -53,6 +54,9 @@ async function testPdfViewerIsOptInWithExplicitAndCapabilityFallbacks() {
   assert.match(source, /fallbackToNative\(\);/);
   assert.match(source, /MAX_PDF_BYTES/);
   assert.match(source, /MAX_PDF_PAGES/);
+  assert.match(background, /mimeHandler\?\.setMimeHandlerOptions/);
+  assert.match(background, /syncNativePdfMimeHandlerFromStorage/);
+  assert.match(background, /changes\[PDF_VIEWER_ENABLED_KEY\]\.newValue === true/);
 }
 
 async function testPdfHandlerProvidesCompleteViewerControls() {

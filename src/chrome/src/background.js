@@ -294,6 +294,9 @@ const CONTEXT_MENU_ACTION_PREFIX = 'webbrain-selection-action-';
 const CONTEXT_MENU_TRANSLATE_ID = 'webbrain-selection-translate';
 const CONTEXT_MENU_TRANSLATE_PREFIX = 'webbrain-selection-translate-';
 const CONTEXT_MENU_GENERIC_ASK_ID = 'webbrain-selection-generic-ask';
+const PDF_VIEWER_ENABLED_KEY = 'pdfViewerEnabled';
+const PDF_MIME_TYPE = 'application/pdf';
+const PDF_MIME_HANDLER_INSTALL_SYNC_DELAY_MS = 500;
 const pdfResponseTabs = new Set();
 const pdfOcrRequests = new Map();
 
@@ -321,6 +324,29 @@ function trackPdfResponse(details) {
     .find(header => String(header?.name || '').toLowerCase() === 'content-type')?.value;
   if (/^application\/pdf(?:\s*;|$)/i.test(String(contentType))) pdfResponseTabs.add(details.tabId);
   else pdfResponseTabs.delete(details.tabId);
+}
+
+async function setNativePdfMimeHandlerEnabled(enabled) {
+  if (typeof chrome.mimeHandler?.setMimeHandlerOptions !== 'function') return false;
+  await chrome.mimeHandler.setMimeHandlerOptions(PDF_MIME_TYPE, {
+    enabled: enabled === true,
+  });
+  return true;
+}
+
+async function syncNativePdfMimeHandlerFromStorage() {
+  const stored = await chrome.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: false });
+  return setNativePdfMimeHandlerEnabled(stored?.[PDF_VIEWER_ENABLED_KEY] === true);
+}
+
+function reportPdfMimeHandlerSyncFailure(error) {
+  console.warn('[WebBrain] Could not synchronize the native PDF MIME handler option:', error);
+}
+
+function scheduleNativePdfMimeHandlerSync(delayMs = 0) {
+  setTimeout(() => {
+    syncNativePdfMimeHandlerFromStorage().catch(reportPdfMimeHandlerSyncFailure);
+  }, delayMs);
 }
 
 function setPdfContextMenuVisibility(visible) {
@@ -1127,12 +1153,19 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   await loadClarifyTimeout();
   await syncAgentUserMemoryFromStorage().catch(() => {});
   await cloudRunController.syncBridge().catch(() => {});
+  // Chrome registers the manifest handler with enabled=true after install.
+  // Reconcile now and once more after registration settles so the native
+  // default cannot overwrite the extension's opt-in default. The in-handler
+  // storage guard covers the short installation window between these calls.
+  await syncNativePdfMimeHandlerFromStorage().catch(reportPdfMimeHandlerSyncFailure);
+  scheduleNativePdfMimeHandlerSync(PDF_MIME_HANDLER_INSTALL_SYNC_DELAY_MS);
   scheduleUserMemoryExtractionDrain(5000);
   console.log('[WebBrain] Extension installed, providers loaded.');
 });
 
 // Also load on startup
 chrome.runtime.onStartup?.addListener(async () => {
+  await syncNativePdfMimeHandlerFromStorage().catch(reportPdfMimeHandlerSyncFailure);
   await createContextMenus();
   await providerManager.load();
   await loadMaxSteps();
@@ -1143,7 +1176,11 @@ chrome.runtime.onStartup?.addListener(async () => {
 });
 
 // Listen for setting changes
-chrome.storage.onChanged.addListener((changes) => {
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && changes[PDF_VIEWER_ENABLED_KEY]) {
+    setNativePdfMimeHandlerEnabled(changes[PDF_VIEWER_ENABLED_KEY].newValue === true)
+      .catch(reportPdfMimeHandlerSyncFailure);
+  }
   if (changes.wbLocale) {
     selectionShortcutLocale = normalizeSelectionShortcutLocale(changes.wbLocale.newValue);
     createContextMenus().catch(() => {});
