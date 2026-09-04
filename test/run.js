@@ -46252,7 +46252,11 @@ test('standalone window transport, sizing, and translations are mirrored', async
     assert.match(markup, /id="btn-expand"[\s\S]*?<svg data-icon="external-link"[\s\S]*?M10 14 21 3[\s\S]*?M18 13v6/, `${label}: standalone launcher does not use the external-window icon`);
     assert.doesNotMatch(markup, /id="btn-expand"[\s\S]*?M9 21H3v-6[\s\S]*?M3 21l7-7/, `${label}: standalone launcher still uses the maximize icon`);
     assert.match(bootstrap, /params\.get\('standalone'\) === 'true'[\s\S]*?setAttribute\('data-standalone', 'true'\)/, `${label}: standalone mode is not marked before first paint`);
-    assert.match(css, /html\[data-standalone="true"\] #mode-toggle \{\s*display: none;/, `${label}: standalone window still shows the mode selector`);
+    assert.match(css, /html\[data-standalone="true"\] \.composer-control-row \{\s*display: none;/, `${label}: standalone window still shows the History control bar`);
+    assert.match(bootstrap, /params\.get\('standalone'\) === 'true'[\s\S]*?window\.addEventListener\('DOMContentLoaded'[\s\S]*?document\.querySelector\('#header \.header-right'\)[\s\S]*?document\.getElementById\('btn-clear'\)[\s\S]*?headerActions\.insertBefore\(newChat, expand\);/, `${label}: standalone New chat control is not moved to the header before interaction`);
+    assert.match(css, /html\[data-standalone="true"\] #header #btn-expand \{\s*display: none;/, `${label}: standalone header still reserves the far-right position for its redundant launcher`);
+    assert.match(css, /html\[data-standalone="true"\] #header #btn-clear \{[\s\S]*?width: 26px;[\s\S]*?height: 26px;[\s\S]*?justify-content: center;/, `${label}: standalone New chat should be a compact header icon`);
+    assert.match(css, /html\[data-standalone="true"\] #header #btn-clear \.conversation-action-label \{\s*display: none;/, `${label}: standalone New chat should not retain its wide text label`);
     assert.match(panel, /function normalizeAgentMode\(mode\) \{\s*if \(isStandaloneWindow\) return 'ask';/, `${label}: standalone mode is not pinned to Ask`);
     assert.match(panel, /function setMode\(mode\) \{\s*mode = normalizeAgentMode\(mode\);/, `${label}: visible mode changes bypass the standalone Ask boundary`);
     assert.match(panel, /function modeForMessageText\(text\) \{\s*if \(isStandaloneWindow\) return 'ask';/, `${label}: slash commands can change standalone mode`);
