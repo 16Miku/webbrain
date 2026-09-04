@@ -200,6 +200,7 @@ const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
 const CONTEXT_MENU_ASK_SELECTION_ID = 'webbrain-ask-selection';
 const CONTEXT_MENU_OPEN_CHAT_ID = 'webbrain-selection-open-chat';
+const CONTEXT_MENU_OPEN_PDF_VIEWER_ID = 'webbrain-open-pdf-viewer';
 const CONTEXT_MENU_ACTION_PREFIX = 'webbrain-selection-action-';
 const CONTEXT_MENU_TRANSLATE_ID = 'webbrain-selection-translate';
 const CONTEXT_MENU_TRANSLATE_PREFIX = 'webbrain-selection-translate-';
@@ -223,6 +224,15 @@ function getContextMenuApi() {
 
 function getContextMenuPromptStore() {
   return browser.storage?.session || browser.storage?.local || null;
+}
+
+function safeOnlinePdfUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
 }
 
 const contextMenuStorage = createContextMenuStorage(getContextMenuPromptStore);
@@ -292,6 +302,12 @@ async function createContextMenus() {
     }
     createItem({ id: 'webbrain-selection-separator-2', parentId: CONTEXT_MENU_ASK_SELECTION_ID, type: 'separator', contexts: ['selection'] });
     createItem({ id: CONTEXT_MENU_GENERIC_ASK_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.askAbout, contexts: ['selection'] });
+    createItem({
+      id: CONTEXT_MENU_OPEN_PDF_VIEWER_ID,
+      title: 'Open PDF with WebBrain',
+      contexts: ['page'],
+      documentUrlPatterns: ['*://*/*.pdf*'],
+    });
   };
 
   try {
@@ -1240,6 +1256,15 @@ function openSidebarForContextMenu(tab) {
 async function handleContextMenuAsk(info, tab) {
   if (!tab?.id) return;
   const menuItemId = String(info?.menuItemId || '');
+  if (menuItemId === CONTEXT_MENU_OPEN_PDF_VIEWER_ID) {
+    const pdfUrl = safeOnlinePdfUrl(tab.url);
+    if (!pdfUrl) return;
+    const viewerUrl = browser.runtime.getURL(
+      `src/ui/pdf-handler.html?url=${encodeURIComponent(pdfUrl)}&tabId=${encodeURIComponent(tab.id)}`,
+    );
+    await browser.tabs.update(tab.id, { url: viewerUrl });
+    return;
+  }
   if (menuItemId === CONTEXT_MENU_OPEN_CHAT_ID) {
     openSidebarForContextMenu(tab);
     return;
@@ -1343,6 +1368,63 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })().then(sendResponse).catch((error) => {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: error?.message || String(error) });
   });
+  return true;
+});
+
+// The explicit Firefox viewer is an extension page, so sender.tab is not a
+// reliable source of scope. Resolve the live tab from the handler-provided id
+// before handing the selected OCR/PDF text to the normal prompt storage path.
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_PDF_SELECTION_SHORTCUT_SUBMIT') return;
+  const tabId = Number(msg.tabId);
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid PDF selection tab.' });
+    return;
+  }
+  browser.tabs.get(tabId)
+    .then(tab => {
+      const selectionAction = normalizeSelectionAction(msg.action);
+      const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
+      const sourceGrounding = includePageContext
+        ? ''
+        : selectionAction === 'custom'
+          ? SELECTION_CONTEXT_SOURCE_GROUNDING
+          : SELECTION_ONLY_SOURCE_GROUNDING;
+      const text = includePageContext
+        ? buildFullContextSelectionPrompt(msg.selectionText, msg.question)
+        : buildSelectionPrompt(
+          msg.selectionText,
+          msg.action,
+          msg.question,
+          msg.language,
+          sourceGrounding,
+        );
+      if (!tab?.id || !text) throw new Error('Invalid PDF selection shortcut request.');
+      const payload = {
+        id: `selection-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        tabId: tab.id,
+        text,
+        ...(sourceGrounding ? {
+          sourceGrounding,
+          ...(selectionAction ? { selectionAction } : {}),
+        } : {}),
+        ...(includePageContext ? { restoreSelectionScope: true } : {}),
+        createdAt: Date.now(),
+      };
+      return contextMenuStorage.save(tab.id, payload)
+        .catch(() => {})
+        .then(() => {
+          notifySidePanelOfContextMenuPrompt(payload);
+          return { ok: true, queued: true, requiresManualOpen: true };
+        });
+    })
+    .then(sendResponse)
+    .catch(error => sendResponse({
+      ok: false,
+      queued: false,
+      requiresManualOpen: true,
+      error: error?.message || 'The PDF tab is no longer available.',
+    }));
   return true;
 });
 
@@ -3395,6 +3477,15 @@ async function handleMessage(msg, sender) {
     case 'capture_viewport_screenshot': {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureViewportScreenshotForUser(tabId);
+    }
+    case 'ocr_pdf_page': {
+      const tabId = Number(msg.tabId);
+      if (!Number.isInteger(tabId) || tabId < 0) {
+        return { success: false, error: 'Invalid PDF OCR tab.' };
+      }
+      const tab = await browser.tabs.get(tabId).catch(() => null);
+      if (!tab) return { success: false, error: 'The PDF tab is no longer available.' };
+      return await agent.ocrPdfPageWithVision(tabId, msg.imageDataUrl, msg.pageNumber);
     }
     case 'capture_screenshot_redaction_snapshot': {
       const tabId = msg.tabId || sender.tab?.id;

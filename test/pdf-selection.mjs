@@ -84,6 +84,22 @@ async function testOcrNormalizationKeepsOnlyBoundedNormalizedLines() {
   assert.equal(normalizePdfOcrResult({ lines: [] }).success, false);
 }
 
+async function testFirefoxProvidesAnExplicitOnlinePdfViewerFallback() {
+  const firefoxManifest = JSON.parse(await readFile(path.join(root, 'src', 'firefox', 'manifest.json'), 'utf8'));
+  const firefoxBackground = await readFile(path.join(root, 'src', 'firefox', 'src', 'background.js'), 'utf8');
+  const firefoxHandlerHtml = await readFile(path.join(root, 'src', 'firefox', 'src', 'ui', 'pdf-handler.html'), 'utf8');
+  const firefoxHandlerSource = await readFile(path.join(root, 'src', 'firefox', 'src', 'ui', 'pdf-handler.js'), 'utf8');
+  const chromeHandlerSource = await readFile(handlerJsPath, 'utf8');
+  assert.ok(firefoxManifest.permissions.includes('<all_urls>'));
+  assert.match(firefoxBackground, /CONTEXT_MENU_OPEN_PDF_VIEWER_ID/);
+  assert.match(firefoxBackground, /pdf-handler\.html\?url=/);
+  assert.match(firefoxBackground, /WB_PDF_SELECTION_SHORTCUT_SUBMIT/);
+  assert.match(firefoxHandlerHtml, /pdf-handler\.js/);
+  assert.match(firefoxHandlerSource, /URLSearchParams\(globalThis\.location\.search\)/);
+  assert.match(firefoxHandlerSource, /fetch\(streamInfo\.streamUrl/);
+  assert.match(chromeHandlerSource, /URLSearchParams\(globalThis\.location\.search\)/);
+}
+
 async function testPdfSelectionCarriesItsTabScope() {
   const browser = await chromium.launch();
   try {
@@ -224,6 +240,7 @@ const tests = [
   ['PDF handler provides complete viewer controls', testPdfHandlerProvidesCompleteViewerControls],
   ['scanned PDF OCR has a bounded handler/background contract', testScannedPdfOcrContract],
   ['OCR normalization keeps bounded normalized text lines', testOcrNormalizationKeepsOnlyBoundedNormalizedLines],
+  ['Firefox provides an explicit online PDF viewer fallback', testFirefoxProvidesAnExplicitOnlinePdfViewerFallback],
   ['PDF selection submission carries tab scope and original URL', testPdfSelectionCarriesItsTabScope],
   ['PDF selection shortcut runs in the handler frame', testPdfSelectionShortcutRunsInHandlerFrame],
 ];

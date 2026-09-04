@@ -289,10 +289,21 @@ const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
 const CONTEXT_MENU_ASK_SELECTION_ID = 'webbrain-ask-selection';
 const CONTEXT_MENU_OPEN_CHAT_ID = 'webbrain-selection-open-chat';
+const CONTEXT_MENU_OPEN_PDF_VIEWER_ID = 'webbrain-open-pdf-viewer';
 const CONTEXT_MENU_ACTION_PREFIX = 'webbrain-selection-action-';
 const CONTEXT_MENU_TRANSLATE_ID = 'webbrain-selection-translate';
 const CONTEXT_MENU_TRANSLATE_PREFIX = 'webbrain-selection-translate-';
 const CONTEXT_MENU_GENERIC_ASK_ID = 'webbrain-selection-generic-ask';
+
+function safeOnlinePdfUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
 function resolveStoredSelectionShortcutLocale(value) {
   return normalizeSelectionShortcutLocale(
     value || (typeof navigator !== 'undefined' ? navigator.language : 'en'),
@@ -371,6 +382,12 @@ async function createContextMenus() {
     }
     create({ id: 'webbrain-selection-separator-2', parentId: CONTEXT_MENU_ASK_SELECTION_ID, type: 'separator', contexts: ['selection'] });
     create({ id: CONTEXT_MENU_GENERIC_ASK_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.askAbout, contexts: ['selection'] });
+    create({
+      id: CONTEXT_MENU_OPEN_PDF_VIEWER_ID,
+      title: 'Open PDF with WebBrain',
+      contexts: ['page'],
+      documentUrlPatterns: ['*://*/*.pdf*'],
+    });
   });
 }
 
@@ -1459,6 +1476,15 @@ function openSidePanelForContextMenu(tab) {
 async function handleContextMenuAsk(info, tab) {
   if (!tab?.id) return;
   const menuItemId = String(info?.menuItemId || '');
+  if (menuItemId === CONTEXT_MENU_OPEN_PDF_VIEWER_ID) {
+    const pdfUrl = safeOnlinePdfUrl(tab.url);
+    if (!pdfUrl) return;
+    const viewerUrl = chrome.runtime.getURL(
+      `src/ui/pdf-handler.html?url=${encodeURIComponent(pdfUrl)}&tabId=${encodeURIComponent(tab.id)}`,
+    );
+    await chrome.tabs.update(tab.id, { url: viewerUrl });
+    return;
+  }
   if (menuItemId === CONTEXT_MENU_OPEN_CHAT_ID) {
     openSidePanelForContextMenu(tab);
     return;
