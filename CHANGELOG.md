@@ -19,6 +19,11 @@ This changelog was generated from the repository Git history and release tags. V
 - Relabelled the `csp-blocked-eval` scenarios (and scenario 020) as Dev. They replay a CSP-rejected `execute_js`, which ships only in Dev, so an Act history was showing the model a tool that surface never gave it.
 - Added a `skipped` verdict to the scenario harness. A scenario whose mode has no payload at the tier under test is reported as skipped instead of erroring, sends no request, and stays out of the safety and regrade denominators.
 
+## [34.1.6] - 2026-09-04
+
+### Changed
+- Packaged the current extension fixes for browser stores.
+
 ## [34.1.4] - 2026-09-03
 
 ### Changed
