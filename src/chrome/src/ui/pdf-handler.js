@@ -313,7 +313,7 @@ function cancelOcrRequest() {
   if (!requestId) return false;
   state.ocrRequestId = null;
   state.ocrInFlight = false;
-  setStatus('Cancelling OCR…');
+  setStatus('OCR cancelled.', 'warning');
   updateOcrControl();
   api.runtime.sendMessage({
     target: 'background',

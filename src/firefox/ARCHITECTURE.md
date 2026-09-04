@@ -21,6 +21,13 @@ uses an explicit WebBrain PDF viewer context-menu entry when the user chooses
 it. The Chrome-only automatic PDF viewer opt-in setting does not apply to
 Firefox; the explicit Firefox entry remains available independently.
 
+The explicit Firefox route is URL/GET based. It cannot replay an arbitrary
+POST navigation because the context-menu event does not expose the original
+request body; those documents remain in the native viewer unless a stable PDF
+URL is available. Chrome's MIME-handler route receives the browser's one-time
+stream and therefore also covers PDF responses that originated from POST
+navigations.
+
 ---
 
 ## High-Level Overview

@@ -42,29 +42,22 @@ function setStatus(message, kind = '') {
 }
 
 async function loadPdfBytes(streamInfo) {
-  if (typeof globalThis.browser !== 'undefined') {
-    const result = await api.runtime.sendMessage({
-      target: 'background',
-      action: 'fetch_pdf_document',
-      tabId: streamInfo.tabId,
-      url: streamInfo.streamUrl,
-    });
-    if (!result?.ok) throw new Error(result?.error || 'Firefox PDF fetch failed.');
-    if (result.bytes instanceof ArrayBuffer) {
-      if (result.bytes.byteLength > MAX_PDF_BYTES) throw new Error('This PDF is larger than the WebBrain viewer limit.');
-      return new Uint8Array(result.bytes);
-    }
-    if (ArrayBuffer.isView(result.bytes)) {
-      if (result.bytes.byteLength > MAX_PDF_BYTES) throw new Error('This PDF is larger than the WebBrain viewer limit.');
-      return new Uint8Array(result.bytes.buffer);
-    }
-    throw new Error('Firefox returned no PDF bytes.');
+  const result = await api.runtime.sendMessage({
+    target: 'background',
+    action: 'fetch_pdf_document',
+    tabId: streamInfo.tabId,
+    url: streamInfo.streamUrl,
+  });
+  if (!result?.ok) throw new Error(result?.error || 'Firefox PDF fetch failed.');
+  if (result.bytes instanceof ArrayBuffer) {
+    if (result.bytes.byteLength > MAX_PDF_BYTES) throw new Error('This PDF is larger than the WebBrain viewer limit.');
+    return new Uint8Array(result.bytes);
   }
-  const response = await fetch(streamInfo.streamUrl, { credentials: 'include' });
-  if (!response.ok) throw new Error(`Chrome PDF stream returned HTTP ${response.status}.`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > MAX_PDF_BYTES) throw new Error('This PDF is larger than the WebBrain viewer limit.');
-  return bytes;
+  if (ArrayBuffer.isView(result.bytes)) {
+    if (result.bytes.byteLength > MAX_PDF_BYTES) throw new Error('This PDF is larger than the WebBrain viewer limit.');
+    return new Uint8Array(result.bytes.buffer, result.bytes.byteOffset, result.bytes.byteLength);
+  }
+  throw new Error('Firefox returned no PDF bytes.');
 }
 
 async function fallbackToNative(message = '') {
@@ -338,7 +331,7 @@ function cancelOcrRequest() {
   if (!requestId) return false;
   state.ocrRequestId = null;
   state.ocrInFlight = false;
-  setStatus('Cancelling OCR…');
+  setStatus('OCR cancelled.', 'warning');
   updateOcrControl();
   api.runtime.sendMessage({
     target: 'background',

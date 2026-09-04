@@ -78,6 +78,7 @@ async function testScannedPdfOcrContract() {
   const ocrSource = await readFile(ocrModulePath, 'utf8');
   const backgroundSource = await readFile(path.join(root, 'src', 'chrome', 'src', 'background.js'), 'utf8');
   const agentSource = await readFile(path.join(root, 'src', 'chrome', 'src', 'agent', 'agent.js'), 'utf8');
+  const firefoxAgentSource = await readFile(path.join(root, 'src', 'firefox', 'src', 'agent', 'agent.js'), 'utf8');
   assert.match(html, /id="ocr-page"/);
   assert.match(html, /id="cancel-ocr-page"/);
   assert.match(handlerSource, /action: 'ocr_pdf_page'/);
@@ -90,6 +91,10 @@ async function testScannedPdfOcrContract() {
   assert.match(backgroundSource, /pdfOcrRequests/);
   assert.match(backgroundSource, /agent\.ocrPdfPageWithVision/);
   assert.match(agentSource, /async ocrPdfPageWithVision\([^)]*externalSignal/);
+  assert.match(agentSource, /_wrapUntrusted\(\s*'pdf_ocr_image'/);
+  assert.match(agentSource, /source="\$\{name\}"/);
+  assert.match(firefoxAgentSource, /_wrapUntrusted\(\s*'pdf_ocr_image'/);
+  assert.match(firefoxAgentSource, /source="pdf_ocr_image"/);
   assert.match(ocrSource, /untrusted PDF page data/);
 }
 
@@ -125,6 +130,7 @@ async function testFirefoxProvidesAnExplicitOnlinePdfViewerFallback() {
   assert.match(firefoxHandlerHtml, /pdf-handler\.js/);
   assert.match(firefoxHandlerSource, /URLSearchParams\(globalThis\.location\.search\)/);
   assert.match(firefoxHandlerSource, /action: 'fetch_pdf_document'/);
+  assert.doesNotMatch(firefoxHandlerSource, /fetch\(/);
   assert.match(firefoxBackground, /case 'fetch_pdf_document'/);
   assert.match(chromeHandlerSource, /URLSearchParams\(globalThis\.location\.search\)/);
   const chromeBackground = await readFile(path.join(root, 'src', 'chrome', 'src', 'background.js'), 'utf8');
