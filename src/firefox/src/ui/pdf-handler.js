@@ -43,6 +43,7 @@ const state = {
   searchSequence: 0,
   resizeTimer: null,
   windowRenderTimer: null,
+  scrollFrame: null,
 };
 
 function setStatus(message, kind = '') {
@@ -372,22 +373,29 @@ function scrollToPage(pageNumber) {
 }
 
 function updateCurrentPageFromScroll() {
-  if (!state.pageViews.size) return;
-  const stageTop = elements['pdf-stage'].getBoundingClientRect().top;
-  let closestPage = state.currentPage;
-  let closestDistance = Number.POSITIVE_INFINITY;
-  for (const [pageNumber, pageView] of state.pageViews) {
-    const distance = Math.abs(pageView.getBoundingClientRect().top - stageTop - 12);
-    if (distance < closestDistance) {
-      closestDistance = distance;
-      closestPage = pageNumber;
+  // Throttle the O(n) page-distance scan to one pass per animation frame so
+  // fast scrolls over a large document do not run getBoundingClientRect for
+  // every shell on every scroll event.
+  if (state.scrollFrame) return;
+  state.scrollFrame = requestAnimationFrame(() => {
+    state.scrollFrame = null;
+    if (!state.pageViews.size) return;
+    const stageTop = elements['pdf-stage'].getBoundingClientRect().top;
+    let closestPage = state.currentPage;
+    let closestDistance = Number.POSITIVE_INFINITY;
+    for (const [pageNumber, pageView] of state.pageViews) {
+      const distance = Math.abs(pageView.getBoundingClientRect().top - stageTop - 12);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestPage = pageNumber;
+      }
     }
-  }
-  if (closestPage !== state.currentPage) {
-    setCurrentPage(closestPage);
-    setPageStatus();
-    scheduleWindowRender();
-  }
+    if (closestPage !== state.currentPage) {
+      setCurrentPage(closestPage);
+      setPageStatus();
+      scheduleWindowRender();
+    }
+  });
 }
 
 async function ocrCurrentPage() {
@@ -513,7 +521,12 @@ function downloadPdf() {
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = safeFilename();
+  anchor.style.display = 'none';
+  // Appending the anchor to the document first is more reliably treated as a
+  // user-initiated download than a detached anchor.click() in some engines.
+  document.body.append(anchor);
   anchor.click();
+  anchor.remove();
   setStatus(`Downloaded ${anchor.download}.`, 'success');
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -605,7 +618,7 @@ async function initialize() {
   await import(api.runtime.getURL('src/content/selection-shortcut.js'));
 
   const bytes = await loadPdfBytes(streamInfo);
-  if (!bytes.length) throw new Error('Chrome returned an empty PDF stream.');
+  if (!bytes.length) throw new Error('Firefox returned an empty PDF stream.');
   state.pdfBytes = bytes;
 
   state.pdfjs = await import(api.runtime.getURL('vendor/pdfjs/pdf.mjs'));

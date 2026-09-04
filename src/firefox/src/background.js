@@ -284,6 +284,12 @@ async function fetchPdfDocumentForViewer(url) {
   const maxPdfBytes = 64 * 1024 * 1024;
   const response = await fetch(url, { credentials: 'include', redirect: 'follow' });
   if (!response.ok) throw new Error(`Firefox PDF fetch returned HTTP ${response.status}.`);
+  // Require the proxied URL to actually be a PDF so the credentialed
+  // fetch cannot be pointed at arbitrary HTML the viewer did not open.
+  const contentType = String(response.headers.get('content-type') || '');
+  if (!/^application\/pdf(?:\s*;|$)/i.test(contentType)) {
+    throw new Error('The requested URL did not return a PDF document.');
+  }
   const contentLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(contentLength) && contentLength > maxPdfBytes) {
     throw new Error('This PDF is larger than the WebBrain viewer limit.');

@@ -138,6 +138,31 @@ async function testFirefoxProvidesAnExplicitOnlinePdfViewerFallback() {
   assert.match(chromeBackground, /onShown/);
 }
 
+async function testPdfHandlerHardeningReviewFindings() {
+  const chromeSource = await readFile(handlerJsPath, 'utf8');
+  const firefoxHandlerSource = await readFile(path.join(root, 'src', 'firefox', 'src', 'ui', 'pdf-handler.js'), 'utf8');
+  const firefoxBackground = await readFile(path.join(root, 'src', 'firefox', 'src', 'background.js'), 'utf8');
+  // Review nit: Firefox handler must not leak the Chrome error string.
+  assert.doesNotMatch(firefoxHandlerSource, /Chrome returned an empty PDF stream/);
+  assert.match(firefoxHandlerSource, /Firefox returned an empty PDF stream/);
+  assert.match(firefoxHandlerSource, /Firefox PDF fetch failed/);
+  // Review: the credentialed fetch proxy must require a PDF content type.
+  const fetchIndex = firefoxBackground.indexOf('async function fetchPdfDocumentForViewer');
+  const fetchBody = firefoxBackground.slice(fetchIndex, fetchIndex + 900);
+  assert.match(fetchBody, /application\\\/pdf/);
+  assert.match(fetchBody, /get\('content-type'\)/);
+  // Review: the O(n) scroll distance scan is throttled to one pass per frame.
+  assert.match(chromeSource, /requestAnimationFrame/);
+  assert.match(chromeSource, /scrollFrame/);
+  assert.match(firefoxHandlerSource, /requestAnimationFrame/);
+  assert.match(firefoxHandlerSource, /scrollFrame/);
+  // Review: the download anchor is appended to the document before click().
+  assert.match(chromeSource, /document\.body\.append\(anchor\)/);
+  assert.match(chromeSource, /anchor\.remove\(\)/);
+  assert.match(firefoxHandlerSource, /document\.body\.append\(anchor\)/);
+  assert.match(firefoxHandlerSource, /anchor\.remove\(\)/);
+}
+
 async function testPdfSelectionCarriesItsTabScope() {
   const browser = await chromium.launch();
   try {
@@ -280,6 +305,7 @@ const tests = [
   ['scanned PDF OCR has a bounded handler/background contract', testScannedPdfOcrContract],
   ['OCR normalization keeps bounded normalized text lines', testOcrNormalizationKeepsOnlyBoundedNormalizedLines],
   ['Firefox provides an explicit online PDF viewer fallback', testFirefoxProvidesAnExplicitOnlinePdfViewerFallback],
+  ['PDF handler hardening addresses review findings', testPdfHandlerHardeningReviewFindings],
   ['PDF selection submission carries tab scope and original URL', testPdfSelectionCarriesItsTabScope],
   ['PDF selection shortcut runs in the handler frame', testPdfSelectionShortcutRunsInHandlerFrame],
 ];
