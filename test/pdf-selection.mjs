@@ -12,6 +12,8 @@ const handlerHtmlPath = path.join(root, 'src', 'chrome', 'src', 'ui', 'pdf-handl
 const handlerJsPath = path.join(root, 'src', 'chrome', 'src', 'ui', 'pdf-handler.js');
 const ocrModulePath = path.join(root, 'src', 'chrome', 'src', 'agent', 'pdf-ocr.js');
 const selectionShortcutPath = path.join(root, 'src', 'chrome', 'src', 'content', 'selection-shortcut.js');
+const settingsHtmlPath = path.join(root, 'src', 'chrome', 'src', 'ui', 'settings.html');
+const settingsJsPath = path.join(root, 'src', 'chrome', 'src', 'ui', 'settings.js');
 
 async function testManifestRegistration() {
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
@@ -32,6 +34,21 @@ async function testHandlerUsesChromeStreamAndTextLayer() {
   assert.match(source, /__webbrainSelectionShortcutConfig/);
   assert.match(source, /allowNestedFrame: true/);
   assert.match(source, /streamInfo\.embedded/);
+}
+
+async function testPdfViewerIsOptInWithExplicitAndCapabilityFallbacks() {
+  const html = await readFile(settingsHtmlPath, 'utf8');
+  const settings = await readFile(settingsJsPath, 'utf8');
+  const source = await readFile(handlerJsPath, 'utf8');
+  assert.match(html, /id="toggle-pdf-viewer"/);
+  assert.match(settings, /pdfViewerEnabled/);
+  assert.match(settings, /stored\.pdfViewerEnabled === true/);
+  assert.match(source, /typeof api\?\.mimeHandler\?\.getStreamInfo === 'function'/);
+  assert.match(source, /api\.storage\.local\.get\(\{ \[PDF_VIEWER_ENABLED_KEY\]: false \}\)/);
+  assert.match(source, /if \(stored\?\.\[PDF_VIEWER_ENABLED_KEY\] !== true\)/);
+  assert.match(source, /const explicitViewer = Boolean\(explicitUrl && Number\.isInteger\(explicitTabId\)\)/);
+  assert.match(source, /if \(!explicitViewer\)/);
+  assert.match(source, /fallbackToNative\(\);/);
 }
 
 async function testPdfHandlerProvidesCompleteViewerControls() {
@@ -237,6 +254,7 @@ async function testPdfSelectionShortcutRunsInHandlerFrame() {
 const tests = [
   ['manifest registers a top-level application/pdf handler', testManifestRegistration],
   ['PDF handler consumes Chrome stream info and renders a text layer', testHandlerUsesChromeStreamAndTextLayer],
+  ['PDF viewer is opt-in with explicit and capability fallbacks', testPdfViewerIsOptInWithExplicitAndCapabilityFallbacks],
   ['PDF handler provides complete viewer controls', testPdfHandlerProvidesCompleteViewerControls],
   ['scanned PDF OCR has a bounded handler/background contract', testScannedPdfOcrContract],
   ['OCR normalization keeps bounded normalized text lines', testOcrNormalizationKeepsOnlyBoundedNormalizedLines],

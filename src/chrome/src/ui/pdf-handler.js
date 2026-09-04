@@ -10,6 +10,7 @@ const elements = Object.fromEntries([
 const MIN_SCALE = .5;
 const MAX_SCALE = 3;
 const SCALE_STEP = .15;
+const PDF_VIEWER_ENABLED_KEY = 'pdfViewerEnabled';
 
 const state = {
   pdf: null,
@@ -38,8 +39,8 @@ function setStatus(message, kind = '') {
   elements['pdf-status'].dataset.kind = kind;
 }
 
-async function fallbackToNative(message) {
-  setStatus(message, 'error');
+async function fallbackToNative(message = '') {
+  if (message) setStatus(message, 'error');
   try {
     if (api?.mimeHandler?.abortAndFallbackToNativeHandler) {
       await api.mimeHandler.abortAndFallbackToNativeHandler();
@@ -398,11 +399,21 @@ async function initialize() {
     }
   })();
   const explicitTabId = Number(new URLSearchParams(globalThis.location.search).get('tabId'));
-  const streamInfo = explicitUrl && Number.isInteger(explicitTabId)
+  const explicitViewer = Boolean(explicitUrl && Number.isInteger(explicitTabId));
+  const hasMimeHandler = typeof api?.mimeHandler?.getStreamInfo === 'function';
+  if (!explicitViewer && !hasMimeHandler) {
+    throw new Error('Chrome PDF MIME handler API is unavailable. Use the explicit WebBrain PDF viewer entry instead.');
+  }
+  if (!explicitViewer) {
+    const stored = await api.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: false });
+    if (stored?.[PDF_VIEWER_ENABLED_KEY] !== true) {
+      await fallbackToNative();
+      return;
+    }
+  }
+  const streamInfo = explicitViewer
     ? { streamUrl: explicitUrl, tabId: explicitTabId, originalUrl: explicitUrl, embedded: false }
-    : api?.mimeHandler?.getStreamInfo
-      ? await api.mimeHandler.getStreamInfo()
-      : null;
+    : await api.mimeHandler.getStreamInfo();
   if (!streamInfo?.streamUrl || !Number.isInteger(streamInfo.tabId)) {
     throw new Error('No readable PDF stream was provided. Open an online PDF or use the explicit WebBrain PDF viewer link.');
   }
