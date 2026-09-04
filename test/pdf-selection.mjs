@@ -27,9 +27,28 @@ async function testHandlerUsesChromeStreamAndTextLayer() {
   assert.match(source, /mimeHandler\.getStreamInfo\(\)/);
   assert.match(source, /fetch\(streamInfo\.streamUrl/);
   assert.match(source, /getDocument\(\{ data:/);
-  assert.match(source, /new (?:pdfjs\.)?TextLayer\(/);
+  assert.match(source, /new (?:state\.)?(?:pdfjs\.)?TextLayer\(/);
   assert.match(source, /__webbrainSelectionShortcutConfig/);
   assert.match(source, /allowNestedFrame: true/);
+}
+
+async function testPdfHandlerProvidesCompleteViewerControls() {
+  const html = await readFile(handlerHtmlPath, 'utf8');
+  const source = await readFile(handlerJsPath, 'utf8');
+  for (const id of [
+    'previous-page', 'page-number', 'page-count', 'next-page',
+    'zoom-out', 'fit-width', 'zoom-in', 'rotate-page',
+    'document-search', 'download-pdf', 'print-pdf',
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `viewer control ${id} is missing`);
+  }
+  assert.match(source, /for \(let pageNumber = 1; pageNumber <= (?:state\.)?pdf\.numPages; pageNumber\+\+\)/);
+  assert.match(source, /getTextContent\(\)/);
+  assert.match(source, /scrollIntoView\(/);
+  assert.match(source, /rotation/);
+  assert.match(source, /URL\.createObjectURL\(/);
+  assert.match(source, /(?:globalThis|window)\.print\(\)/);
+  assert.match(source, /abortAndFallbackToNativeHandler/);
 }
 
 async function testPdfSelectionCarriesItsTabScope() {
@@ -169,6 +188,7 @@ async function testPdfSelectionShortcutRunsInHandlerFrame() {
 const tests = [
   ['manifest registers a top-level application/pdf handler', testManifestRegistration],
   ['PDF handler consumes Chrome stream info and renders a text layer', testHandlerUsesChromeStreamAndTextLayer],
+  ['PDF handler provides complete viewer controls', testPdfHandlerProvidesCompleteViewerControls],
   ['PDF selection submission carries tab scope and original URL', testPdfSelectionCarriesItsTabScope],
   ['PDF selection shortcut runs in the handler frame', testPdfSelectionShortcutRunsInHandlerFrame],
 ];
