@@ -13859,6 +13859,94 @@ test('delivery recovery exposes only done and persists a partial terminal result
   }
 });
 
+test('step-limit recovery keeps Cloud observation checkpoints advisory but forces a done-only handoff', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = label === 'chrome' ? 920 : 921;
+    const messages = [
+      { role: 'system', content: 'ordinary agent prompt' },
+      { role: 'user', content: 'Collect every result and report what remains.' },
+      { role: 'tool', tool_call_id: 'read_1', content: JSON.stringify({ result: 'One verified item' }) },
+    ];
+    const updates = [];
+    let request = null;
+    agent._persist = () => {};
+    agent._chatWithCostAllowance = async (_provider, sentMessages, options) => {
+      request = { sentMessages, options };
+      return {
+        content: '',
+        toolCalls: [{
+          id: `step_limit_done_${label}`,
+          function: {
+            name: 'done',
+            arguments: JSON.stringify({
+              summary: 'One item was verified. Remaining results could not be checked before the step limit.',
+              outcome: 'partial',
+            }),
+          },
+        }],
+      };
+    };
+
+    assert.equal(agent._stepLimitRecoveryEligible({ supportsTools: true, config: { providerName: 'webbrain-cloud' } }), true, `${label}: selected WebBrain Cloud provider should receive terminal handoff`);
+    assert.equal(agent._stepLimitRecoveryEligible({ supportsTools: true }, { cloudRun: true }), false, `${label}: structured Cloud API run must keep its done_json contract`);
+    assert.equal(agent._stepLimitRecoveryEligible({ supportsTools: true }, { scheduledRun: true, independentRun: true }), false, `${label}: unattended scheduled runs must keep their deterministic max-step verdict`);
+    assert.equal(agent._stepLimitRecoveryEligible({ supportsTools: false }), false, `${label}: tool-free provider cannot produce a structured done call`);
+
+    const recovery = await agent._recoverDeliveryCheckpointTurn(
+      tabId,
+      messages,
+      (type, data) => updates.push({ type, data }),
+      { model: 'test-model', supportsTools: true, config: { providerName: 'webbrain-cloud' } },
+      {},
+      null,
+      130,
+      'fallback should not be used',
+      {},
+      null,
+      null,
+      { phase: 'step_limit_recovery' },
+    );
+
+    assert.equal(recovery.status, 'partial', `${label}: step-limit handoff should preserve the done outcome`);
+    assert.match(recovery.content, /One item was verified/i);
+    assert.equal(request?.options?.tools?.length, 1, `${label}: step-limit recovery exposed more than done`);
+    assert.equal(request?.options?.tools?.[0]?.function?.name, 'done');
+    assert.deepEqual(request?.options?.tools?.[0]?.function?.parameters?.properties?.outcome?.enum, ['partial', 'failed']);
+    assert.deepEqual(request?.options?.toolChoice, { type: 'function', function: { name: 'done' } });
+    assert.match(request?.sentMessages?.[0]?.content || '', /maximum agent steps/i);
+    assert.doesNotMatch(request?.sentMessages?.[0]?.content || '', /two delivery checkpoints|observation limit/i);
+    assert.match(request?.options?.tools?.[0]?.function?.description || '', /maximum agent steps/i);
+    const persistedResult = JSON.parse(messages.at(-1)?.content || '{}');
+    assert.equal(persistedResult.done, true);
+    assert.equal(persistedResult.stepLimitRecovery, true, `${label}: trace/conversation result needs an explicit step-limit marker`);
+    assert.equal(updates.some(update => update.type === 'run_status' && update.data?.status === 'partial'), true);
+
+    const invalidMessages = [{ role: 'system', content: 'ordinary agent prompt' }];
+    const invalidUpdates = [];
+    agent._chatWithCostAllowance = async () => ({ content: 'I will keep browsing.', toolCalls: [] });
+    const fallback = '[Step limit reached after 130 steps without completing the task.]';
+    const invalidRecovery = await agent._recoverDeliveryCheckpointTurn(
+      tabId + 10,
+      invalidMessages,
+      (type, data) => invalidUpdates.push({ type, data }),
+      { model: 'test-model', supportsTools: true, config: { providerName: 'webbrain-cloud' } },
+      {},
+      null,
+      130,
+      fallback,
+      {},
+      null,
+      null,
+      { phase: 'step_limit_recovery' },
+    );
+    assert.equal(invalidRecovery.content, fallback, `${label}: invalid recovery did not use the deterministic fallback`);
+    assert.equal(invalidRecovery.status, 'delivery_recovery_failed', `${label}: invalid recovery was not visibly failed`);
+    assert.equal(invalidMessages.at(-1)?.content, fallback, `${label}: deterministic fallback was not persisted`);
+    assert.equal(invalidUpdates.some(update => update.type === 'error' && update.data?.message === fallback), true, `${label}: deterministic blocker was not shown`);
+  }
+});
+
 test('active response-language policy reaches the normal system prompt without breaking translation jobs', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = 916;
@@ -78147,6 +78235,19 @@ test('non-stream and stream runs release forced done when progress work remains'
       }],
     },
     { content: null, toolCalls: [] },
+    {
+      content: null,
+      toolCalls: [{
+        id: 'progress_step_limit_done',
+        function: {
+          name: 'done',
+          arguments: JSON.stringify({
+            summary: 'Some progress was made, but pending rows remain at the step limit.',
+            outcome: 'partial',
+          }),
+        },
+      }],
+    },
   ];
 
   for (const streaming of [false, true]) {
@@ -78175,6 +78276,13 @@ test('non-stream and stream runs release forced done when progress work remains'
             };
           }
           yield { type: 'done' };
+        };
+        provider.chat = async (_messages, options) => {
+          provider.calls++;
+          provider.requests.push(options);
+          const next = responses.shift();
+          assert.ok(next, `${AgentClass.name}: streamed recovery model was called too many times`);
+          return next;
         };
       } else {
         provider.chat = async (_messages, options) => {
@@ -78226,7 +78334,7 @@ test('non-stream and stream runs release forced done when progress work remains'
       const run = streaming ? agent.processMessageStream.bind(agent) : agent.processMessage.bind(agent);
       await run(tabId, 'process every row', (type, data) => updates.push({ type, data }), 'act');
 
-      assert.equal(provider.calls, 5, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: recovery used the wrong number of turns`);
+      assert.equal(provider.calls, 6, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: recovery used the wrong number of turns`);
       assert.equal(executedDone, 0, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: a blocked completion executed`);
       assert.deepEqual(
         provider.requests[3]?.tools?.map(tool => tool?.function?.name),
@@ -78246,6 +78354,24 @@ test('non-stream and stream runs release forced done when progress work remains'
         { type: 'function', function: { name: 'done' } },
         `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: progress block retained the forced done choice`,
       );
+      assert.deepEqual(
+        provider.requests[5]?.tools?.map(tool => tool?.function?.name),
+        ['done'],
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: max-step handoff exposed browser tools`,
+      );
+      assert.deepEqual(
+        provider.requests[5]?.tools?.[0]?.function?.parameters?.properties?.outcome?.enum,
+        ['partial', 'failed'],
+        `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: max-step handoff allowed success`,
+      );
+      const stepLimitResultIndex = updates.findIndex(update => (
+        update.type === 'tool_result'
+        && update.data?.name === 'done'
+        && update.data?.result?.stepLimitRecovery === true
+      ));
+      const maxStepsIndex = updates.findIndex(update => update.type === 'max_steps_reached');
+      assert.ok(stepLimitResultIndex >= 0, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: terminal handoff result was not surfaced`);
+      assert.ok(maxStepsIndex > stepLimitResultIndex, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: Continue was enabled before terminal handoff settled`);
       assert.ok(
         updates.some(update => update.type === 'tool_result' && update.data?.result?.progressLedgerBlock === true),
         `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: progress gate did not reject the forced completion`,
@@ -81050,6 +81176,19 @@ test('trusted continuation carries consequential evidence without repeating the 
       },
       {
         content: null,
+        toolCalls: [{
+          id: `continuation_step_limit_${index}`,
+          function: {
+            name: 'done',
+            arguments: JSON.stringify({
+              summary: 'The mutation was dispatched, but verification remains incomplete.',
+              outcome: 'partial',
+            }),
+          },
+        }],
+      },
+      {
+        content: null,
         toolCalls: [
           {
             id: `continuation_verify_${index}`,
@@ -81149,34 +81288,34 @@ test('trusted continuation carries consequential evidence without repeating the 
       `${AgentClass.name}: continuation repeated a consequential action`,
     );
     assert.equal(responses.length, 0, `${AgentClass.name}: continuation entered recovery`);
-    assert.equal(requests.length, 2, `${AgentClass.name}: continuation made an unexpected number of model requests`);
+    assert.equal(requests.length, 3, `${AgentClass.name}: continuation made an unexpected number of model requests`);
     assert.match(
-      requests[1].systemPrompt,
+      requests[2].systemPrompt,
       /synthetic Continue control/,
       `${AgentClass.name}: continuation system prompt did not identify the synthetic user turn`,
     );
     assert.match(
-      requests[1].systemPrompt,
+      requests[2].systemPrompt,
       /most recent earlier genuine user request/,
       `${AgentClass.name}: fallback continuation did not anchor framing to the original request`,
     );
     assert.match(
-      requests[1].systemPrompt,
+      requests[2].systemPrompt,
       /must not influence response or deliverable language/,
       `${AgentClass.name}: continuation prompt treated the synthetic turn as a language instruction`,
     );
     assert.match(
-      requests[1].systemPrompt,
+      requests[2].systemPrompt,
       /No fixed authored-deliverable language was inferred/,
       `${AgentClass.name}: fallback continuation invented a fixed deliverable language`,
     );
     assert.doesNotMatch(
-      requests[1].doneDescription,
+      requests[2].doneDescription,
       /authored-deliverable language|explanatory framing/,
       `${AgentClass.name}: normal-turn done schema duplicated the system prompt's language policy`,
     );
     assert.doesNotMatch(
-      requests[1].systemPrompt,
+      requests[2].systemPrompt,
       /Use English \(en\) for explanatory framing/,
       `${AgentClass.name}: synthetic continuation prompt replaced the prior language policy`,
     );
@@ -81552,6 +81691,7 @@ test('trusted continuation carries verified submit state without permitting ordi
 test('streamed runs preserve consequential evidence for a trusted continuation', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const requests = [];
+    let nonStreamingCalls = 0;
     const provider = {
       supportsTools: true,
       supportsVision: false,
@@ -81579,6 +81719,22 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
           systemPrompt: String(messages?.[0]?.content || ''),
           doneDescription: String(options?.tools?.find(tool => tool?.function?.name === 'done')?.function?.description || ''),
         });
+        nonStreamingCalls++;
+        if (nonStreamingCalls === 1) {
+          return {
+            content: null,
+            toolCalls: [{
+              id: `stream_continuation_step_limit_${index}`,
+              function: {
+                name: 'done',
+                arguments: JSON.stringify({
+                  summary: 'The streamed mutation was dispatched, but verification remains incomplete.',
+                  outcome: 'partial',
+                }),
+              },
+            }],
+          };
+        }
         return {
           content: null,
           toolCalls: [
@@ -81649,19 +81805,19 @@ test('streamed runs preserve consequential evidence for a trusted continuation',
       ['click_ax', 'read_page', 'done'],
       `${AgentClass.name}: continuation repeated the streamed mutation`,
     );
-    assert.equal(requests.length, 2, `${AgentClass.name}: streamed continuation made unexpected model requests`);
+    assert.equal(requests.length, 3, `${AgentClass.name}: streamed continuation made unexpected model requests`);
     assert.match(
-      requests[1].systemPrompt,
+      requests[2].systemPrompt,
       /Use Spanish \(es\) for explanatory framing/,
       `${AgentClass.name}: streamed continuation system prompt lost the prior framing language`,
     );
     assert.match(
-      requests[1].systemPrompt,
+      requests[2].systemPrompt,
       /Write authored deliverables in Spanish \(es\)/,
       `${AgentClass.name}: streamed continuation lost the prior deliverable language`,
     );
     assert.doesNotMatch(
-      requests[1].doneDescription,
+      requests[2].doneDescription,
       /Spanish \(es\)/,
       `${AgentClass.name}: normal-turn done schema duplicated the system prompt's language policy`,
     );
