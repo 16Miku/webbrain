@@ -255,6 +255,31 @@ function trackPdfResponse(details) {
   else pdfResponseTabs.delete(details.tabId);
 }
 
+function getPdfHandlerBaseUrl() {
+  try {
+    return browser.runtime.getURL('src/ui/pdf-handler.html');
+  } catch {
+    return '';
+  }
+}
+
+// The PDF viewer is an extension page, so sender.tab is empty. Scope the
+// request to the handler that sent it: the sender must be our viewer and,
+// when the sender URL carries an explicit tabId, it must match msg.tabId.
+function isPdfHandlerSender(sender, tabId) {
+  if (!sender || sender.id !== browser.runtime.id) return false;
+  const senderUrl = String(sender?.url || '');
+  const base = getPdfHandlerBaseUrl();
+  if (!base || !senderUrl.startsWith(base)) return false;
+  try {
+    const senderTabId = new URL(senderUrl).searchParams.get('tabId');
+    if (senderTabId != null && Number(senderTabId) !== tabId) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 async function fetchPdfDocumentForViewer(url) {
   const maxPdfBytes = 64 * 1024 * 1024;
   const response = await fetch(url, { credentials: 'include', redirect: 'follow' });
@@ -1365,9 +1390,7 @@ browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // sidebarAction.open() gesture. Persist and notify the existing sidebar when
 // it is open; otherwise startup recovery will consume the prompt after the
 // user opens WebBrain manually.
-browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
-  const tab = sender?.tab;
+function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
   const selectionAction = normalizeSelectionAction(msg.action);
   const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
   const sourceGrounding = includePageContext
@@ -1386,7 +1409,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     );
   if (!tab?.id || !text) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid selection shortcut request.' });
-    return;
+    return false;
   }
   const payload = {
     id: `selection-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1410,56 +1433,29 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: error?.message || String(error) });
   });
   return true;
+}
+
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
+  return queueFirefoxSelectionShortcutPrompt(msg, sender?.tab, sendResponse);
 });
 
 // The explicit Firefox viewer is an extension page, so sender.tab is not a
 // reliable source of scope. Resolve the live tab from the handler-provided id
 // before handing the selected OCR/PDF text to the normal prompt storage path.
-browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== 'WB_PDF_SELECTION_SHORTCUT_SUBMIT') return;
   const tabId = Number(msg.tabId);
   if (!Number.isInteger(tabId) || tabId < 0) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid PDF selection tab.' });
     return;
   }
+  if (!isPdfHandlerSender(sender, tabId)) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid PDF selection sender.' });
+    return;
+  }
   browser.tabs.get(tabId)
-    .then(tab => {
-      const selectionAction = normalizeSelectionAction(msg.action);
-      const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
-      const sourceGrounding = includePageContext
-        ? ''
-        : selectionAction === 'custom'
-          ? SELECTION_CONTEXT_SOURCE_GROUNDING
-          : SELECTION_ONLY_SOURCE_GROUNDING;
-      const text = includePageContext
-        ? buildFullContextSelectionPrompt(msg.selectionText, msg.question)
-        : buildSelectionPrompt(
-          msg.selectionText,
-          msg.action,
-          msg.question,
-          msg.language,
-          sourceGrounding,
-        );
-      if (!tab?.id || !text) throw new Error('Invalid PDF selection shortcut request.');
-      const payload = {
-        id: `selection-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        tabId: tab.id,
-        text,
-        ...(sourceGrounding ? {
-          sourceGrounding,
-          ...(selectionAction ? { selectionAction } : {}),
-        } : {}),
-        ...(includePageContext ? { restoreSelectionScope: true } : {}),
-        createdAt: Date.now(),
-      };
-      return contextMenuStorage.save(tab.id, payload)
-        .catch(() => {})
-        .then(() => {
-          notifySidePanelOfContextMenuPrompt(payload);
-          return { ok: true, queued: true, requiresManualOpen: true };
-        });
-    })
-    .then(sendResponse)
+    .then(tab => queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse))
     .catch(error => sendResponse({
       ok: false,
       queued: false,
@@ -3527,6 +3523,9 @@ async function handleMessage(msg, sender) {
       if (!Number.isInteger(tabId) || tabId < 0) {
         return { success: false, error: 'Invalid PDF OCR tab.' };
       }
+      if (!isPdfHandlerSender(sender, tabId)) {
+        return { success: false, error: 'Invalid PDF OCR sender.' };
+      }
       const tab = await browser.tabs.get(tabId).catch(() => null);
       if (!tab) return { success: false, error: 'The PDF tab is no longer available.' };
       const requestId = String(msg.requestId || '').trim();
@@ -3552,6 +3551,9 @@ async function handleMessage(msg, sender) {
       const url = safeOnlinePdfUrl(msg.url);
       if (!Number.isInteger(tabId) || tabId < 0 || !url) {
         return { ok: false, error: 'Invalid Firefox PDF viewer request.' };
+      }
+      if (!isPdfHandlerSender(sender, tabId)) {
+        return { ok: false, error: 'Invalid Firefox PDF viewer sender.' };
       }
       const tab = await browser.tabs.get(tabId).catch(() => null);
       if (!tab) return { ok: false, error: 'The PDF tab is no longer available.' };

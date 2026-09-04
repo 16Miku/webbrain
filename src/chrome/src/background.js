@@ -324,6 +324,31 @@ function trackPdfResponse(details) {
   else pdfResponseTabs.delete(details.tabId);
 }
 
+function getPdfHandlerBaseUrl() {
+  try {
+    return chrome.runtime.getURL('src/ui/pdf-handler.html');
+  } catch {
+    return '';
+  }
+}
+
+// The PDF viewer is an extension page, so sender.tab is empty. Scope the
+// request to the handler that sent it: the sender must be our viewer and,
+// when the sender URL carries an explicit tabId, it must match msg.tabId.
+function isPdfHandlerSender(sender, tabId) {
+  if (!sender || sender.id !== chrome.runtime.id) return false;
+  const senderUrl = String(sender?.url || '');
+  const base = getPdfHandlerBaseUrl();
+  if (!base || !senderUrl.startsWith(base)) return false;
+  try {
+    const senderTabId = new URL(senderUrl).searchParams.get('tabId');
+    if (senderTabId != null && Number(senderTabId) !== tabId) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 function resolveStoredSelectionShortcutLocale(value) {
   return normalizeSelectionShortcutLocale(
     value || (typeof navigator !== 'undefined' ? navigator.language : 'en'),
@@ -1626,13 +1651,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // sender.tab. The handler carries the tab id returned by getStreamInfo();
 // resolve the live tab before building the prompt so its scope cannot be
 // forged or reused after the tab has gone away.
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== 'WB_PDF_SELECTION_SHORTCUT_SUBMIT') return;
   const tabId = Number(msg.tabId);
   if (!Number.isInteger(tabId) || tabId < 0) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: 'Invalid PDF selection tab.' });
     return;
   }
+  if (!isPdfHandlerSender(sender, tabId)) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: 'Invalid PDF selection sender.' });
+    return;
+  }
+  // sidePanel.open() must run synchronously in this handler to preserve the
+  // click gesture; chrome.tabs.get() would lose it. Open for the claimed tab
+  // now (stub is enough for setOptions/open), then verify the live tab.
+  try {
+    openSidePanelForContextMenu({ id: tabId });
+  } catch {}
   chrome.tabs.get(tabId)
     .then(tab => queueSelectionShortcutPrompt(msg, tab, sendResponse))
     .catch(error => sendResponse({
@@ -4043,6 +4078,9 @@ async function handleMessage(msg, sender) {
       const tabId = Number(msg.tabId);
       if (!Number.isInteger(tabId) || tabId < 0) {
         return { success: false, error: 'Invalid PDF OCR tab.' };
+      }
+      if (!isPdfHandlerSender(sender, tabId)) {
+        return { success: false, error: 'Invalid PDF OCR sender.' };
       }
       const tab = await chrome.tabs.get(tabId).catch(() => null);
       if (!tab) return { success: false, error: 'The PDF tab is no longer available.' };

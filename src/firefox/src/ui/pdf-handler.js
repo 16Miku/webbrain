@@ -12,6 +12,12 @@ const MAX_SCALE = 3;
 const SCALE_STEP = .15;
 const MAX_PDF_BYTES = 64 * 1024 * 1024;
 const MAX_PDF_PAGES = 500;
+// Render every page upfront only for small documents. Larger documents get
+// lightweight placeholder shells plus a rendered window around the current
+// page so a 500-page PDF does not mount 500 canvases + text layers at once.
+const EAGER_PAGE_LIMIT = 20;
+const RENDER_WINDOW = 3;
+const WINDOW_RENDER_DEBOUNCE_MS = 120;
 
 const state = {
   pdf: null,
@@ -24,6 +30,8 @@ const state = {
   fitWidth: true,
   rotation: 0,
   pageViews: new Map(),
+  pageSizes: new Map(),
+  renderedPages: new Set(),
   textCache: new Map(),
   ocrCache: new Map(),
   textLayerCount: 0,
@@ -34,6 +42,7 @@ const state = {
   renderTask: null,
   searchSequence: 0,
   resizeTimer: null,
+  windowRenderTimer: null,
 };
 
 function setStatus(message, kind = '') {
@@ -101,6 +110,9 @@ function updatePageControls() {
 }
 
 function currentPageHasNativeText() {
+  // Unrendered shells have no text layer yet; assume text exists so the OCR
+  // button does not flash on before the window render completes.
+  if (!state.renderedPages.has(state.currentPage)) return true;
   return !!state.pageViews.get(state.currentPage)
     ?.querySelector('.pdf-text-layer span:not([data-webbrain-ocr])');
 }
@@ -127,6 +139,7 @@ function enableViewerControls() {
 
 function cancelRender() {
   state.renderSequence += 1;
+  clearTimeout(state.windowRenderTimer);
   const pendingTask = state.renderTask;
   state.renderTask = null;
   try { pendingTask?.cancel?.(); } catch { /* a completed render cannot be cancelled */ }
@@ -143,13 +156,29 @@ function renderScaleFor(page) {
   return clampScale(availableWidth / naturalViewport.width);
 }
 
-function createPageView(pageNumber, viewport) {
+function createPageShell(pageNumber, width, height) {
   const pageView = document.createElement('section');
   pageView.className = 'pdf-page';
   pageView.dataset.pageNumber = String(pageNumber);
-  pageView.style.width = `${Math.ceil(viewport.width)}px`;
-  pageView.style.height = `${Math.ceil(viewport.height)}px`;
+  pageView.style.width = `${Math.ceil(width)}px`;
+  pageView.style.height = `${Math.ceil(height)}px`;
   pageView.setAttribute('aria-label', `PDF page ${pageNumber} of ${state.pdf.numPages}`);
+  elements['pdf-pages'].append(pageView);
+  state.pageViews.set(pageNumber, pageView);
+  state.pageSizes.set(pageNumber, { width, height });
+  return pageView;
+}
+
+function createPageView(pageNumber, viewport) {
+  let pageView = state.pageViews.get(pageNumber);
+  if (!pageView) {
+    pageView = createPageShell(pageNumber, viewport.width, viewport.height);
+  } else {
+    pageView.style.width = `${Math.ceil(viewport.width)}px`;
+    pageView.style.height = `${Math.ceil(viewport.height)}px`;
+    pageView.replaceChildren();
+    state.pageSizes.set(pageNumber, { width: viewport.width, height: viewport.height });
+  }
 
   const canvas = document.createElement('canvas');
   canvas.className = 'pdf-canvas';
@@ -160,13 +189,31 @@ function createPageView(pageNumber, viewport) {
   textLayer.style.width = `${Math.ceil(viewport.width)}px`;
   textLayer.style.height = `${Math.ceil(viewport.height)}px`;
   pageView.append(canvas, textLayer);
-  elements['pdf-pages'].append(pageView);
-  state.pageViews.set(pageNumber, pageView);
   return { pageView, canvas, textLayer };
+}
+
+function releaseFarPages(centerPageNumber) {
+  for (const pageNumber of Array.from(state.renderedPages)) {
+    if (Math.abs(pageNumber - centerPageNumber) > RENDER_WINDOW) {
+      const pageView = state.pageViews.get(pageNumber);
+      if (pageView) {
+        // Drop the bitmap + text nodes; the sized shell stays for scroll position.
+        for (const canvas of pageView.querySelectorAll('canvas')) {
+          try {
+            canvas.width = 0;
+            canvas.height = 0;
+          } catch {}
+        }
+        pageView.replaceChildren();
+      }
+      state.renderedPages.delete(pageNumber);
+    }
+  }
 }
 
 async function renderPage(pageNumber, sequence) {
   if (!isCurrentRender(sequence)) return false;
+  if (state.renderedPages.has(pageNumber)) return state.pageViews.get(pageNumber) || false;
   const page = await state.pdf.getPage(pageNumber);
   if (!isCurrentRender(sequence)) return false;
   const renderScale = renderScaleFor(page);
@@ -206,31 +253,101 @@ async function renderPage(pageNumber, sequence) {
     const rendered = renderPdfOcrTextLayer(textLayer, ocrLines, viewport.width, viewport.height);
     if (rendered) state.ocrTextLayerCount += 1;
   }
+  state.renderedPages.add(pageNumber);
   return pageView;
+}
+
+async function ensureWindowAround(centerPageNumber, sequence) {
+  const total = state.pdf?.numPages || 0;
+  if (!total) return false;
+  const center = Math.max(1, Math.min(total, Math.floor(Number(centerPageNumber) || 1)));
+  // Nearest-first so the visible page fills in before its neighbors.
+  const order = [center];
+  for (let offset = 1; offset <= RENDER_WINDOW; offset++) {
+    if (center - offset >= 1) order.push(center - offset);
+    if (center + offset <= total) order.push(center + offset);
+  }
+  for (const pageNumber of order) {
+    const pageView = await renderPage(pageNumber, sequence);
+    if (!pageView || !isCurrentRender(sequence)) return false;
+  }
+  releaseFarPages(center);
+  return true;
+}
+
+function scheduleWindowRender() {
+  if (!state.pdf) return;
+  clearTimeout(state.windowRenderTimer);
+  state.windowRenderTimer = setTimeout(() => {
+    const sequence = state.renderSequence;
+    const center = state.currentPage;
+    ensureWindowAround(center, sequence)
+      .then((ok) => {
+        if (ok && isCurrentRender(sequence)) updatePageControls();
+      })
+      .catch(() => {});
+  }, WINDOW_RENDER_DEBOUNCE_MS);
 }
 
 async function renderAllPages() {
   if (!state.pdf) return false;
   const sequence = ++state.renderSequence;
+  clearTimeout(state.windowRenderTimer);
   state.textLayerCount = 0;
   state.ocrTextLayerCount = 0;
   state.pageViews.clear();
+  state.pageSizes.clear();
+  state.renderedPages.clear();
   elements['pdf-pages'].replaceChildren();
-  setStatus(`Rendering ${state.pdf.numPages} pages…`);
-  for (let pageNumber = 1; pageNumber <= state.pdf.numPages; pageNumber++) {
-    const pageView = await renderPage(pageNumber, sequence);
-    if (!pageView || !isCurrentRender(sequence)) return false;
+  const total = state.pdf.numPages;
+  if (total <= EAGER_PAGE_LIMIT) {
+    setStatus(`Rendering ${total} pages…`);
+    for (let pageNumber = 1; pageNumber <= state.pdf.numPages; pageNumber++) {
+      const pageView = await renderPage(pageNumber, sequence);
+      if (!pageView || !isCurrentRender(sequence)) return false;
+    }
+    if (!isCurrentRender(sequence)) return false;
+    state.scale = renderScaleFor(await state.pdf.getPage(state.currentPage));
+    updatePageControls();
+    const target = state.pageViews.get(state.requestedPage);
+    target?.scrollIntoView({ block: 'start' });
+    if (state.textLayerCount === 0 && state.ocrTextLayerCount === 0) {
+      setStatus(`Loaded ${total} pages; this PDF has no selectable text. Use OCR on the current page when a vision model is available.`, 'warning');
+    } else {
+      setStatus(`Page ${state.currentPage} of ${total} · ${Math.round(state.scale * 100)}%`);
+    }
+    updateOcrControl();
+    return true;
   }
-  if (!isCurrentRender(sequence)) return false;
-  state.scale = renderScaleFor(await state.pdf.getPage(state.currentPage));
+  // Virtualized path: sized shells for scrollbar + rendered window around the
+  // requested page. Sizes are estimated from the first page and corrected as
+  // each page renders, avoiding an O(n) getPage scan and O(n) canvas memory.
+  setStatus(`Rendering page ${state.requestedPage} of ${total}…`);
+  let shellWidth = 800;
+  let shellHeight = 1050;
+  try {
+    const firstPage = await state.pdf.getPage(1);
+    if (!isCurrentRender(sequence)) return false;
+    const firstViewport = firstPage.getViewport({ scale: renderScaleFor(firstPage), rotation: state.rotation });
+    shellWidth = firstViewport.width;
+    shellHeight = firstViewport.height;
+  } catch {
+    // Fall back to the default shell size above.
+  }
+  for (let pageNumber = 1; pageNumber <= state.pdf.numPages; pageNumber++) {
+    createPageShell(pageNumber, shellWidth, shellHeight);
+    if (!isCurrentRender(sequence)) return false;
+  }
+  state.currentPage = Math.max(1, Math.min(total, Math.floor(Number(state.requestedPage) || 1)));
+  const ok = await ensureWindowAround(state.currentPage, sequence);
+  if (!ok || !isCurrentRender(sequence)) return false;
+  try {
+    state.scale = renderScaleFor(await state.pdf.getPage(state.currentPage));
+  } catch {}
   updatePageControls();
   const target = state.pageViews.get(state.requestedPage);
   target?.scrollIntoView({ block: 'start' });
-  if (state.textLayerCount === 0 && state.ocrTextLayerCount === 0) {
-    setStatus(`Loaded ${state.pdf.numPages} pages; this PDF has no selectable text. Use OCR on the current page when a vision model is available.`, 'warning');
-  } else {
-    setStatus(`Page ${state.currentPage} of ${state.pdf.numPages} · ${Math.round(state.scale * 100)}%`);
-  }
+  setStatus(`Page ${state.currentPage} of ${total} · ${Math.round(state.scale * 100)}%`);
   updateOcrControl();
   return true;
 }
@@ -251,6 +368,7 @@ function scrollToPage(pageNumber) {
   state.requestedPage = state.currentPage;
   state.pageViews.get(state.currentPage)?.scrollIntoView({ block: 'start' });
   setPageStatus();
+  scheduleWindowRender();
 }
 
 function updateCurrentPageFromScroll() {
@@ -268,14 +386,23 @@ function updateCurrentPageFromScroll() {
   if (closestPage !== state.currentPage) {
     setCurrentPage(closestPage);
     setPageStatus();
+    scheduleWindowRender();
   }
 }
 
 async function ocrCurrentPage() {
   const pageNumber = state.currentPage;
+  if (!state.pdf || !Number.isInteger(state.streamInfo?.tabId) || state.streamInfo.tabId < 0 || state.ocrInFlight) return;
+  // The current page should already be rendered by the visible window, but a
+  // fast scroll may have moved on before the debounced render ran. Ensure it.
+  if (!state.renderedPages.has(pageNumber)) {
+    clearTimeout(state.windowRenderTimer);
+    const rendered = await ensureWindowAround(pageNumber, state.renderSequence).catch(() => false);
+    if (rendered) updatePageControls();
+  }
   const pageView = state.pageViews.get(pageNumber);
   const canvas = pageView?.querySelector('.pdf-canvas');
-  if (!state.pdf || !pageView || !canvas || !Number.isInteger(state.streamInfo?.tabId) || state.streamInfo.tabId < 0 || state.ocrInFlight) return;
+  if (!pageView || !canvas) return;
   setStatus(`Capturing page ${pageNumber} for OCR…`);
   let imageDataUrl;
   try {
