@@ -46,9 +46,11 @@ async function testPdfViewerIsOptInWithExplicitAndCapabilityFallbacks() {
   assert.match(source, /typeof api\?\.mimeHandler\?\.getStreamInfo === 'function'/);
   assert.match(source, /api\.storage\.local\.get\(\{ \[PDF_VIEWER_ENABLED_KEY\]: false \}\)/);
   assert.match(source, /if \(stored\?\.\[PDF_VIEWER_ENABLED_KEY\] !== true\)/);
-  assert.match(source, /const explicitViewer = Boolean\(explicitUrl && Number\.isInteger\(explicitTabId\)\)/);
+  assert.match(source, /const explicitViewer = Boolean\(explicitUrl && Number\.isInteger\(explicitTabId\) && explicitTabId >= 0\)/);
   assert.match(source, /if \(!explicitViewer\)/);
   assert.match(source, /fallbackToNative\(\);/);
+  assert.match(source, /MAX_PDF_BYTES/);
+  assert.match(source, /MAX_PDF_PAGES/);
 }
 
 async function testPdfHandlerProvidesCompleteViewerControls() {
@@ -73,15 +75,22 @@ async function testPdfHandlerProvidesCompleteViewerControls() {
 async function testScannedPdfOcrContract() {
   const html = await readFile(handlerHtmlPath, 'utf8');
   const handlerSource = await readFile(handlerJsPath, 'utf8');
+  const ocrSource = await readFile(ocrModulePath, 'utf8');
   const backgroundSource = await readFile(path.join(root, 'src', 'chrome', 'src', 'background.js'), 'utf8');
   const agentSource = await readFile(path.join(root, 'src', 'chrome', 'src', 'agent', 'agent.js'), 'utf8');
   assert.match(html, /id="ocr-page"/);
+  assert.match(html, /id="cancel-ocr-page"/);
   assert.match(handlerSource, /action: 'ocr_pdf_page'/);
+  assert.match(handlerSource, /action: 'cancel_pdf_ocr'/);
+  assert.match(handlerSource, /ocrRequestId/);
   assert.match(handlerSource, /toDataURL\('image\/png'\)/);
   assert.match(handlerSource, /normalizePdfOcrResult/);
   assert.match(backgroundSource, /case 'ocr_pdf_page'/);
+  assert.match(backgroundSource, /case 'cancel_pdf_ocr'/);
+  assert.match(backgroundSource, /pdfOcrRequests/);
   assert.match(backgroundSource, /agent\.ocrPdfPageWithVision/);
-  assert.match(agentSource, /async ocrPdfPageWithVision\(/);
+  assert.match(agentSource, /async ocrPdfPageWithVision\([^)]*externalSignal/);
+  assert.match(ocrSource, /untrusted PDF page data/);
 }
 
 async function testOcrNormalizationKeepsOnlyBoundedNormalizedLines() {
@@ -110,11 +119,17 @@ async function testFirefoxProvidesAnExplicitOnlinePdfViewerFallback() {
   assert.ok(firefoxManifest.permissions.includes('<all_urls>'));
   assert.match(firefoxBackground, /CONTEXT_MENU_OPEN_PDF_VIEWER_ID/);
   assert.match(firefoxBackground, /pdf-handler\.html\?url=/);
+  assert.match(firefoxBackground, /trackPdfResponse/);
+  assert.match(firefoxBackground, /onShown/);
   assert.match(firefoxBackground, /WB_PDF_SELECTION_SHORTCUT_SUBMIT/);
   assert.match(firefoxHandlerHtml, /pdf-handler\.js/);
   assert.match(firefoxHandlerSource, /URLSearchParams\(globalThis\.location\.search\)/);
-  assert.match(firefoxHandlerSource, /fetch\(streamInfo\.streamUrl/);
+  assert.match(firefoxHandlerSource, /action: 'fetch_pdf_document'/);
+  assert.match(firefoxBackground, /case 'fetch_pdf_document'/);
   assert.match(chromeHandlerSource, /URLSearchParams\(globalThis\.location\.search\)/);
+  const chromeBackground = await readFile(path.join(root, 'src', 'chrome', 'src', 'background.js'), 'utf8');
+  assert.match(chromeBackground, /trackPdfResponse/);
+  assert.match(chromeBackground, /onShown/);
 }
 
 async function testPdfSelectionCarriesItsTabScope() {

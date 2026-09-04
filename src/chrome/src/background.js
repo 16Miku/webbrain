@@ -294,6 +294,8 @@ const CONTEXT_MENU_ACTION_PREFIX = 'webbrain-selection-action-';
 const CONTEXT_MENU_TRANSLATE_ID = 'webbrain-selection-translate';
 const CONTEXT_MENU_TRANSLATE_PREFIX = 'webbrain-selection-translate-';
 const CONTEXT_MENU_GENERIC_ASK_ID = 'webbrain-selection-generic-ask';
+const pdfResponseTabs = new Set();
+const pdfOcrRequests = new Map();
 
 function safeOnlinePdfUrl(value) {
   try {
@@ -302,6 +304,24 @@ function safeOnlinePdfUrl(value) {
   } catch {
     return '';
   }
+}
+
+function isPdfUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) && /\.pdf$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function trackPdfResponse(details) {
+  if (!Number.isInteger(details?.tabId) || details.tabId < 0) return;
+  const contentType = (details.responseHeaders || [])
+    .find(header => String(header?.name || '').toLowerCase() === 'content-type')?.value;
+  if (!contentType) return;
+  if (/^application\/pdf(?:\s*;|$)/i.test(String(contentType))) pdfResponseTabs.add(details.tabId);
+  else pdfResponseTabs.delete(details.tabId);
 }
 
 function resolveStoredSelectionShortcutLocale(value) {
@@ -386,7 +406,6 @@ async function createContextMenus() {
       id: CONTEXT_MENU_OPEN_PDF_VIEWER_ID,
       title: 'Open PDF with WebBrain',
       contexts: ['page'],
-      documentUrlPatterns: ['*://*/*.pdf*'],
     });
   });
 }
@@ -1478,7 +1497,7 @@ async function handleContextMenuAsk(info, tab) {
   const menuItemId = String(info?.menuItemId || '');
   if (menuItemId === CONTEXT_MENU_OPEN_PDF_VIEWER_ID) {
     const pdfUrl = safeOnlinePdfUrl(tab.url);
-    if (!pdfUrl) return;
+    if (!pdfUrl || (!pdfResponseTabs.has(tab.id) && !isPdfUrl(pdfUrl))) return;
     const viewerUrl = chrome.runtime.getURL(
       `src/ui/pdf-handler.html?url=${encodeURIComponent(pdfUrl)}&tabId=${encodeURIComponent(tab.id)}`,
     );
@@ -1524,6 +1543,14 @@ async function handleContextMenuAsk(info, tab) {
 
 chrome.contextMenus?.onClicked?.addListener?.((info, tab) => {
   handleContextMenuAsk(info, tab).catch(() => {});
+});
+chrome.contextMenus?.onShown?.addListener?.((info, tab) => {
+  const tabId = Number(tab?.id);
+  const visible = Number.isInteger(tabId) && tabId >= 0
+    && (pdfResponseTabs.has(tabId) || isPdfUrl(info?.pageUrl || tab?.url));
+  chrome.contextMenus.update(CONTEXT_MENU_OPEN_PDF_VIEWER_ID, { visible }, () => {
+    void chrome.runtime.lastError;
+  });
 });
 
 // Only this instance knows which runs are live in memory, so it owns the
@@ -2287,6 +2314,7 @@ chrome.webNavigation?.onCompleted?.addListener((details) => {
 // challenge-platform requests alone are not sufficient because ordinary bot
 // detection and embedded widgets may use the same managed endpoint.
 const observeCloudflareManagedChallengeResponse = details => {
+  trackPdfResponse(details);
   agent.observeCloudflareManagedChallengeResponse(details).catch(() => {});
 };
 const observeCloudflareChallengePlatformRequest = details => {
@@ -2303,6 +2331,7 @@ chrome.webRequest?.onBeforeRequest?.addListener?.(
 );
 
 chrome.tabs.onRemoved.addListener((tabId) => lastNavByTab.delete(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => pdfResponseTabs.delete(tabId));
 
 // Background API call observer (issue #189). Watches XHR/fetch requests the
 // page itself fires — e.g. clicking "Next Page" — so the agent can later spot
@@ -2669,6 +2698,7 @@ async function handleMessage(msg, sender) {
     'clear_tab_chat',
     'release_context_menu_prompt_claim',
     'capture_screenshot_redaction_snapshot',
+    'cancel_pdf_ocr',
     'ensure_offscreen_offline_rag_host',
     EMERGENCY_DOWNLOAD_ACTION,
     'flash_tab_attention',
@@ -4016,7 +4046,23 @@ async function handleMessage(msg, sender) {
       }
       const tab = await chrome.tabs.get(tabId).catch(() => null);
       if (!tab) return { success: false, error: 'The PDF tab is no longer available.' };
-      return await agent.ocrPdfPageWithVision(tabId, msg.imageDataUrl, msg.pageNumber);
+      const requestId = String(msg.requestId || '').trim();
+      const controller = new AbortController();
+      if (requestId) pdfOcrRequests.set(requestId, controller);
+      try {
+        return await agent.ocrPdfPageWithVision(tabId, msg.imageDataUrl, msg.pageNumber, controller.signal);
+      } finally {
+        if (requestId && pdfOcrRequests.get(requestId) === controller) pdfOcrRequests.delete(requestId);
+      }
+    }
+    case 'cancel_pdf_ocr': {
+      const requestId = String(msg.requestId || '').trim();
+      const controller = pdfOcrRequests.get(requestId);
+      if (!controller) return { ok: false, error: 'The PDF OCR request is no longer active.' };
+      const reason = new Error('PDF OCR cancelled by the user.');
+      reason.code = 'pdf_ocr_cancelled';
+      controller.abort(reason);
+      return { ok: true };
     }
     case 'capture_screenshot_redaction_snapshot': {
       const tabId = msg.tabId || sender.tab?.id;

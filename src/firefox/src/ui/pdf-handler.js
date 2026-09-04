@@ -4,12 +4,14 @@ const api = globalThis.browser || globalThis.chrome;
 const elements = Object.fromEntries([
   'pdf-title', 'pdf-stage', 'pdf-status', 'pdf-pages', 'previous-page', 'page-number',
   'page-count', 'next-page', 'zoom-out', 'fit-width', 'zoom-in', 'rotate-page',
-  'search-form', 'document-search', 'search-submit', 'download-pdf', 'print-pdf', 'ocr-page',
+  'search-form', 'document-search', 'search-submit', 'download-pdf', 'print-pdf', 'ocr-page', 'cancel-ocr-page',
 ].map(id => [id, document.getElementById(id)]));
 
 const MIN_SCALE = .5;
 const MAX_SCALE = 3;
 const SCALE_STEP = .15;
+const MAX_PDF_BYTES = 64 * 1024 * 1024;
+const MAX_PDF_PAGES = 500;
 
 const state = {
   pdf: null,
@@ -27,6 +29,7 @@ const state = {
   textLayerCount: 0,
   ocrTextLayerCount: 0,
   ocrInFlight: false,
+  ocrRequestId: null,
   renderSequence: 0,
   renderTask: null,
   searchSequence: 0,
@@ -38,8 +41,34 @@ function setStatus(message, kind = '') {
   elements['pdf-status'].dataset.kind = kind;
 }
 
-async function fallbackToNative(message) {
-  setStatus(message, 'error');
+async function loadPdfBytes(streamInfo) {
+  if (typeof globalThis.browser !== 'undefined') {
+    const result = await api.runtime.sendMessage({
+      target: 'background',
+      action: 'fetch_pdf_document',
+      tabId: streamInfo.tabId,
+      url: streamInfo.streamUrl,
+    });
+    if (!result?.ok) throw new Error(result?.error || 'Firefox PDF fetch failed.');
+    if (result.bytes instanceof ArrayBuffer) {
+      if (result.bytes.byteLength > MAX_PDF_BYTES) throw new Error('This PDF is larger than the WebBrain viewer limit.');
+      return new Uint8Array(result.bytes);
+    }
+    if (ArrayBuffer.isView(result.bytes)) {
+      if (result.bytes.byteLength > MAX_PDF_BYTES) throw new Error('This PDF is larger than the WebBrain viewer limit.');
+      return new Uint8Array(result.bytes.buffer);
+    }
+    throw new Error('Firefox returned no PDF bytes.');
+  }
+  const response = await fetch(streamInfo.streamUrl, { credentials: 'include' });
+  if (!response.ok) throw new Error(`Chrome PDF stream returned HTTP ${response.status}.`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > MAX_PDF_BYTES) throw new Error('This PDF is larger than the WebBrain viewer limit.');
+  return bytes;
+}
+
+async function fallbackToNative(message = '') {
+  if (message) setStatus(message, 'error');
   try {
     if (api?.mimeHandler?.abortAndFallbackToNativeHandler) {
       await api.mimeHandler.abortAndFallbackToNativeHandler();
@@ -47,8 +76,9 @@ async function fallbackToNative(message) {
     }
     const params = new URLSearchParams(globalThis.location.search);
     const url = new URL(String(params.get('url') || ''));
-    const tabId = Number(params.get('tabId'));
-    if (['http:', 'https:'].includes(url.protocol) && Number.isInteger(tabId)) {
+    const tabIdValue = params.get('tabId');
+    const tabId = tabIdValue == null ? NaN : Number(tabIdValue);
+    if (['http:', 'https:'].includes(url.protocol) && Number.isInteger(tabId) && tabId >= 0) {
       await api?.tabs?.update?.(tabId, { url: url.href });
     }
   } catch {
@@ -86,8 +116,13 @@ function updateOcrControl() {
   const button = elements['ocr-page'];
   if (!button) return;
   const hasOcr = state.ocrCache.has(state.currentPage);
-  button.hidden = currentPageHasNativeText() || hasOcr;
+  button.hidden = currentPageHasNativeText() || hasOcr || state.ocrInFlight;
   button.disabled = !state.pdf || state.ocrInFlight;
+  const cancelButton = elements['cancel-ocr-page'];
+  if (cancelButton) {
+    cancelButton.hidden = !state.ocrInFlight;
+    cancelButton.disabled = !state.ocrInFlight;
+  }
 }
 
 function enableViewerControls() {
@@ -247,7 +282,8 @@ async function ocrCurrentPage() {
   const pageNumber = state.currentPage;
   const pageView = state.pageViews.get(pageNumber);
   const canvas = pageView?.querySelector('.pdf-canvas');
-  if (!state.pdf || !pageView || !canvas || !state.streamInfo?.tabId || state.ocrInFlight) return;
+  if (!state.pdf || !pageView || !canvas || !Number.isInteger(state.streamInfo?.tabId) || state.streamInfo.tabId < 0 || state.ocrInFlight) return;
+  setStatus(`Capturing page ${pageNumber} for OCR…`);
   let imageDataUrl;
   try {
     imageDataUrl = canvas.toDataURL('image/png');
@@ -257,22 +293,27 @@ async function ocrCurrentPage() {
   }
 
   state.ocrInFlight = true;
+  const requestId = `pdf-ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  state.ocrRequestId = requestId;
   updateOcrControl();
   setStatus(`Reading text from page ${pageNumber} with OCR…`);
   try {
     const response = await api.runtime.sendMessage({
       target: 'background',
       action: 'ocr_pdf_page',
+      requestId,
       tabId: state.streamInfo.tabId,
       originalUrl: String(state.streamInfo.originalUrl || ''),
       pageNumber,
       imageDataUrl,
     });
+    if (state.ocrRequestId !== requestId) return;
     if (!response?.success) {
       throw new Error(response?.error || 'No OCR result was returned.');
     }
     const result = normalizePdfOcrResult(response);
     if (!result.success) throw new Error(result.error);
+    setStatus(`Applying OCR to page ${pageNumber}…`);
     const wasCached = state.ocrCache.has(pageNumber);
     state.ocrCache.set(pageNumber, result.lines);
     const textLayer = pageView.querySelector('.pdf-text-layer');
@@ -280,11 +321,31 @@ async function ocrCurrentPage() {
     if (!wasCached && rendered) state.ocrTextLayerCount += 1;
     setStatus(`OCR added ${rendered} text lines on page ${pageNumber}. Select the text to use WebBrain actions.`, 'success');
   } catch (error) {
-    setStatus(`OCR failed on page ${pageNumber}: ${error?.message || String(error)}`, 'error');
+    if (state.ocrRequestId === requestId) {
+      setStatus(`OCR failed on page ${pageNumber}: ${error?.message || String(error)}`, 'error');
+    }
   } finally {
-    state.ocrInFlight = false;
-    updateOcrControl();
+    if (state.ocrRequestId === requestId) {
+      state.ocrRequestId = null;
+      state.ocrInFlight = false;
+      updateOcrControl();
+    }
   }
+}
+
+function cancelOcrRequest() {
+  const requestId = state.ocrRequestId;
+  if (!requestId) return false;
+  state.ocrRequestId = null;
+  state.ocrInFlight = false;
+  setStatus('Cancelling OCR…');
+  updateOcrControl();
+  api.runtime.sendMessage({
+    target: 'background',
+    action: 'cancel_pdf_ocr',
+    requestId,
+  }).catch(() => {});
+  return true;
 }
 
 async function pageText(pageNumber) {
@@ -360,6 +421,7 @@ elements['fit-width'].addEventListener('click', () => {
   rerender().catch(error => fallbackToNative(`WebBrain could not fit this PDF: ${error?.message || String(error)}`));
 });
 elements['rotate-page'].addEventListener('click', () => {
+  cancelOcrRequest();
   state.rotation = (state.rotation + 90) % 360;
   state.ocrCache.clear();
   rerender().catch(error => fallbackToNative(`WebBrain could not rotate this PDF: ${error?.message || String(error)}`));
@@ -371,6 +433,7 @@ elements['search-form'].addEventListener('submit', event => {
 elements['download-pdf'].addEventListener('click', downloadPdf);
 elements['print-pdf'].addEventListener('click', () => globalThis.print());
 elements['ocr-page'].addEventListener('click', () => ocrCurrentPage());
+elements['cancel-ocr-page'].addEventListener('click', () => cancelOcrRequest());
 elements['pdf-stage'].addEventListener('scroll', updateCurrentPageFromScroll, { passive: true });
 globalThis.addEventListener('resize', () => {
   if (!state.pdf || !state.fitWidth) return;
@@ -397,8 +460,10 @@ async function initialize() {
       return '';
     }
   })();
-  const explicitTabId = Number(new URLSearchParams(globalThis.location.search).get('tabId'));
-  const streamInfo = explicitUrl && Number.isInteger(explicitTabId)
+  const explicitTabIdValue = new URLSearchParams(globalThis.location.search).get('tabId');
+  const explicitTabId = explicitTabIdValue == null ? NaN : Number(explicitTabIdValue);
+  const explicitViewer = Boolean(explicitUrl && Number.isInteger(explicitTabId) && explicitTabId >= 0);
+  const streamInfo = explicitViewer
     ? { streamUrl: explicitUrl, tabId: explicitTabId, originalUrl: explicitUrl, embedded: false }
     : api?.mimeHandler?.getStreamInfo
       ? await api.mimeHandler.getStreamInfo()
@@ -419,15 +484,16 @@ async function initialize() {
   };
   await import(api.runtime.getURL('src/content/selection-shortcut.js'));
 
-  const response = await fetch(streamInfo.streamUrl, { credentials: 'include' });
-  if (!response.ok) throw new Error(`Chrome PDF stream returned HTTP ${response.status}.`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = await loadPdfBytes(streamInfo);
   if (!bytes.length) throw new Error('Chrome returned an empty PDF stream.');
   state.pdfBytes = bytes;
 
   state.pdfjs = await import(api.runtime.getURL('vendor/pdfjs/pdf.mjs'));
   state.pdfjs.GlobalWorkerOptions.workerSrc = api.runtime.getURL('vendor/pdfjs/pdf.worker.mjs');
   state.pdf = await state.pdfjs.getDocument({ data: bytes, verbosity: 0 }).promise;
+  if (state.pdf.numPages > MAX_PDF_PAGES) {
+    throw new Error(`This PDF has more than ${MAX_PDF_PAGES} pages, so Firefox's native viewer will be used.`);
+  }
   enableViewerControls();
   await renderAllPages();
 }

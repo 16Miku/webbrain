@@ -1151,9 +1151,15 @@ export class Agent extends LoopDetector {
     return { signal: controller.signal, dispose };
   }
 
-  async _withVisionDeadline(operation) {
+  async _withVisionDeadline(operation, externalSignal = null) {
     const controller = new AbortController();
     let timeoutId = null;
+    const onExternalAbort = () => {
+      if (controller.signal.aborted) return;
+      try { controller.abort(externalSignal.reason); } catch { controller.abort(); }
+    };
+    if (externalSignal?.aborted) onExternalAbort();
+    else externalSignal?.addEventListener?.('abort', onExternalAbort, { once: true });
     const timeoutError = new Error(`Vision request timed out after ${VISION_SUB_CALL_TIMEOUT_MS}ms.`);
     timeoutError.code = 'vision_timeout';
     const timeout = new Promise((_, reject) => {
@@ -1170,6 +1176,7 @@ export class Agent extends LoopDetector {
       return await Promise.race([started, timeout]);
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      externalSignal?.removeEventListener?.('abort', onExternalAbort);
     }
   }
 
@@ -10736,7 +10743,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * data, never instructions, and the trace deliberately omits recognized
    * text so a normal metadata-only trace cannot become a document copy.
    */
-  async ocrPdfPageWithVision(tabId, dataUrl, pageNumber = 1) {
+  async ocrPdfPageWithVision(tabId, dataUrl, pageNumber = 1, externalSignal = null) {
     if (!/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) {
       return { success: false, error: 'PDF OCR requires a PNG or JPEG page image.' };
     }
@@ -10794,7 +10801,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           signal,
           isUsable: result => !!Agent._extractFirstJsonObject(result?.content || ''),
         },
-      ));
+      ), externalSignal);
       const normalized = normalizePdfOcrResult(Agent._extractFirstJsonObject(response?.content || ''));
       if (!normalized.success) {
         throw new Error(`${normalized.error} after ${attempts} attempt(s).`);
