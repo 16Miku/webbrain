@@ -329,15 +329,6 @@ tools keep working on Firefox.
 
 Source: [`lmstudio-plugin/`](lmstudio-plugin/).
 
-## Star History
-
-<a href="https://www.star-history.com/?repos=webbrain-one%2Fwebbrain&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&theme=dark&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
- </picture>
-</a>
 
 ## Contributors
 
