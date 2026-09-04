@@ -1299,6 +1299,7 @@ const {
 const {
   buildSelectionQuote,
   buildSelectionComposerDraft,
+  buildSelectionTextAttachment,
   selectionIsQuoteable,
   selectionRangeIsVisible,
   selectionRangeRect,
@@ -1310,6 +1311,7 @@ const {
 const {
   buildSelectionQuote: buildSelectionQuoteFx,
   buildSelectionComposerDraft: buildSelectionComposerDraftFx,
+  buildSelectionTextAttachment: buildSelectionTextAttachmentFx,
   selectionIsQuoteable: selectionIsQuoteableFx,
   selectionRangeIsVisible: selectionRangeIsVisibleFx,
   selectionRangeRect: selectionRangeRectFx,
@@ -1428,6 +1430,78 @@ test('selection quote helper stays byte-identical across browser builds', () => 
   assert.equal(selectionQuoteSources[0], selectionQuoteSources[1]);
 });
 
+test('selected answer attachments keep the full text outside the composer draft', () => {
+  const expectedText = '第一行\nSecond line — with UTF-8';
+  const expectedBytes = new TextEncoder().encode(expectedText).byteLength;
+  for (const [label, buildAttachment] of [
+    ['chrome', buildSelectionTextAttachment],
+    ['firefox', buildSelectionTextAttachmentFx],
+  ]) {
+    const attachment = buildAttachment(`  ${expectedText}\n`);
+    assert.deepEqual(
+      {
+        kind: attachment.kind,
+        name: attachment.name,
+        textContent: attachment.textContent,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      },
+      {
+        kind: 'text',
+        name: 'selected-text.txt',
+        textContent: expectedText,
+        mimeType: 'text/plain;charset=utf-8',
+        size: expectedBytes,
+      },
+      `${label}: selected answer should become a compact text attachment`,
+    );
+    assert.match(attachment.dataUrl, /^data:text\/plain;charset=utf-8;base64,/);
+    const bytes = Uint8Array.from(atob(attachment.dataUrl.split(',', 2)[1]), char => char.charCodeAt(0));
+    assert.equal(new TextDecoder().decode(bytes), expectedText, `${label}: attachment bytes should preserve selected text`);
+    assert.equal(buildAttachment(''), null, `${label}: empty selections should not create an attachment`);
+  }
+});
+
+test('selected answer attachments deduplicate repeated actions without dropping distinct snippets', () => {
+  for (const [label, buildAttachment] of [
+    ['chrome', buildSelectionTextAttachment],
+    ['firefox', buildSelectionTextAttachmentFx],
+  ]) {
+    const pending = [];
+    const stage = (text) => {
+      const attachment = buildAttachment(text);
+      const alreadyStaged = pending.some(att => att?.kind === 'text' && att?.textContent === attachment.textContent);
+      if (!alreadyStaged) {
+        const takenNames = new Set(pending.map(att => att?.name));
+        let name = attachment.name;
+        for (let suffix = 2; takenNames.has(name); suffix += 1) name = `selected-text-${suffix}.txt`;
+        pending.push({ ...attachment, name });
+      }
+    };
+
+    stage('First selected snippet');
+    assert.equal(pending.length, 1, `${label}: first selection should add an attachment`);
+    assert.equal(pending[0].textContent, 'First selected snippet');
+    assert.equal(pending[0].name, 'selected-text.txt');
+
+    stage('First selected snippet');
+    assert.equal(pending.length, 1, `${label}: re-adding the same snippet must not pile up identical chips`);
+
+    stage('Second selected snippet');
+    assert.equal(pending.length, 2, `${label}: a different snippet must not overwrite the earlier selection`);
+    assert.equal(pending[0].textContent, 'First selected snippet');
+    assert.equal(pending[1].textContent, 'Second selected snippet');
+    assert.equal(pending[1].name, 'selected-text-2.txt');
+
+    pending.unshift({ kind: 'image', name: 'screenshot.png', source: 'slash_screenshot' });
+    pending.push({ kind: 'text', name: 'selected-text-3.txt', textContent: 'file data', source: 'user_upload' });
+    stage('Third selected snippet');
+    assert.equal(pending.length, 5, `${label}: unrelated attachments must not be overwritten`);
+    assert.equal(pending[4].textContent, 'Third selected snippet');
+    assert.equal(pending[4].name, 'selected-text-4.txt', `${label}: a name already taken by an upload must not be reused`);
+  }
+});
+
 test('selectionTextFromContents skips in-bubble chrome and keeps answer text', () => {
   const textNode = (value) => ({ nodeType: 3, nodeValue: value });
   const element = (tagName, className, ...childNodes) => ({
@@ -1459,11 +1533,12 @@ test('selectionTextFromContents skips in-bubble chrome and keeps answer text', (
   assert.equal(isSelectionQuoteChrome(element('CODE', '', textNode('const x = 1;'))), false);
 });
 
-test('selection answer action wiring covers show, dismiss, and tab/conversation changes in both sidepanels', () => {
+test('selection answer action stages a visual attachment in both sidepanels', () => {
   for (const [index, source] of sidepanelSources.entries()) {
     const switchToTabSource = sourceBetween(source, 'async function switchToTab', '\n}\n\nasync function refreshVisibleSidePanelState');
     const clearConversationSource = sourceBetween(source, 'async function renderClearedConversationForTab', '\nconst TOOL_KEYS =');
     const sendMessageSource = sourceBetween(source, 'async function sendMessage', '\nasync function continueAgent');
+    const selectionActionSource = sourceBetween(source, 'function askAboutSelectedAnswer()', '\nfunction addMessage');
     assert.match(source, /document\.addEventListener\('selectionchange', scheduleSelectionAskActionRefresh\)/);
     assert.match(source, /document\.addEventListener\('pointerdown', handleSelectionAskPointerDown/);
     assert.match(source, /function showSelectionAskAction\(selected\)/);
@@ -1497,6 +1572,24 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.match(source, /if \(!range\.startContainer\.isConnected \|\| !range\.endContainer\.isConnected\) return null;/);
     assert.match(source, /const liveSelection = selectedAssistantAnswer\(\);/);
     assert.match(source, /selectionAskActionEl && !selectionAskActionEl\.classList\.contains\('hidden'\)[\s\S]*?dismissSelectionAskAction\(\);/);
+    assert.match(selectionActionSource, /buildSelectionTextAttachment\(selection\.text\)/);
+    assert.match(selectionActionSource, /normalizeAttachmentTabId\(renderedTabId \?\? currentTabId\)/);
+    assert.match(selectionActionSource, /showComposerToast\(t\('sp\.attach\.no_tab'\)\)/);
+    assert.doesNotMatch(selectionActionSource, /sp\.persistence\.unavailable/);
+    assert.doesNotMatch(selectionActionSource, /sp\.attach\.read_failed/);
+    assert.match(
+      sendMessageSource,
+      /if \(getPendingAttachmentsForTab\(undefined, \{ create: false \}\)\.length\) \{\s*showComposerToast\(t\('sp\.attach\.needs_prompt'\)\);/,
+      'a staged attachment with an empty composer should explain why Send did nothing',
+    );
+    assert.match(selectionActionSource, /const pending = getPendingAttachmentsForTab\(tabId\)/);
+    assert.match(selectionActionSource, /const alreadyStaged = pending\.some\(att => att\?\.kind === 'text' && att\?\.textContent === attachment\.textContent\)/);
+    assert.match(selectionActionSource, /const takenNames = new Set\(pending\.map\(att => att\?\.name\)\)/);
+    assert.match(selectionActionSource, /for \(let suffix = 2; takenNames\.has\(name\); suffix \+= 1\) name = `selected-text-\$\{suffix\}\.txt`/);
+    assert.match(selectionActionSource, /pending\.push\(\{ \.\.\.attachment, name \}\)/);
+    assert.doesNotMatch(selectionActionSource, /pending\[existingIndex\] = attachment/);
+    assert.match(selectionActionSource, /renderAttachmentPreviews\(\);/);
+    assert.doesNotMatch(selectionActionSource, /buildSelectionComposerDraft/);
     assert.match(switchToTabSource, /dismissSelectionAskAction\(\);/);
     assert.match(clearConversationSource, /dismissSelectionAskAction\(\);/);
     assert.match(sendMessageSource, /dismissSelectionAskAction\(\);/);
@@ -1506,6 +1599,34 @@ test('selection answer action wiring covers show, dismiss, and tab/conversation 
     assert.doesNotMatch(sidepanelHtmlSources[index], /<div id="app"[\s\S]*id="selection-ask-action"[\s\S]*<\/div>\s*<script/);
     assert.match(sidepanelStyleSources[index], /\.selection-ask-action \{[\s\S]*?z-index:\s*10000;[\s\S]*?opacity:\s*1;[\s\S]*?background:\s*var\(--bg-secondary\);[\s\S]*?color:\s*var\(--text-primary\);[\s\S]*?user-select:\s*none;/);
   }
+});
+
+test('attachment source stays a slash-screenshot flag, not a claim about who chose the file', () => {
+  // Selected assistant text ships as source 'user_upload' because that is the
+  // only other value the field has, and every attachment is wrapped untrusted
+  // regardless of it. That stays honest only while nothing reads 'user_upload'
+  // as a positive claim that a human picked a file off their disk.
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return walk(full);
+    return entry.name.endsWith('.js') ? [full] : [];
+  });
+  const branchesOnValue = /(?:[=!]==?)\s*['"]user_upload['"]|['"]user_upload['"]\s*(?:[=!]==?)|case\s+['"]user_upload['"]|includes\(\s*['"]user_upload['"]/;
+
+  let normalizers = 0;
+  for (const build of ['chrome', 'firefox']) {
+    for (const file of walk(path.join(ROOT, 'src', build, 'src'))) {
+      const source = fs.readFileSync(file, 'utf8');
+      if (!source.includes('user_upload')) continue;
+      normalizers += (source.match(/\? 'slash_screenshot' : 'user_upload'/g) || []).length;
+      assert.doesNotMatch(
+        source,
+        branchesOnValue,
+        `${path.relative(ROOT, file)}: 'user_upload' only means "not a slash screenshot", so branching on it would mislabel selected assistant text`,
+      );
+    }
+  }
+  assert.equal(normalizers, 8, 'both builds should keep normalizing source through the same two-value ternary');
 });
 
 console.log('\nscreenshot redaction');
@@ -47959,7 +48080,7 @@ test('context-menu ownership and stale-panel persistence guards are wired in bot
     );
     assert.match(
       panel,
-      /let text = inputEl\.value\.trim\(\);\s*const submittedText = text;\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;/,
+      /let text = inputEl\.value\.trim\(\);\s*const submittedText = text;\s*if \(!text\) \{\s*if \(contextMenuClaimOwned\) \{\s*await releaseOwnedContextMenuClaim\(\{ reason: 'preflight-empty', retryAfterMs: 1_000 \}\);\s*return false;\s*\}[\s\S]*?return;\s*\}/,
       `${label}: an empty refreshed composer should release and retry an owned prompt`,
     );
     assert.match(
