@@ -320,6 +320,48 @@ test("describeSnapshot surfaces stable permission decision values", () => {
   assert.doesNotMatch(text, /free-text answer verbatim/);
 });
 
+test("describeSnapshot surfaces stable submit-confirmation decision values", () => {
+  const text = describeSnapshot({
+    runId: "r",
+    status: "needs_user_input",
+    pendingInput: {
+      clarifyId: "submit_42",
+      question: "WebBrain wants to submit this form on example.com.",
+      submitConfirmation: { host: "example.com", tool: "click" },
+      options: ["once", "deny"],
+    },
+  });
+
+  assert.match(text, /decisions: once \| deny/);
+  assert.match(text, /`once` for an explicit confirmation or `deny` for a refusal/);
+  assert.match(text, /Do not pass localized labels or other free text/);
+  assert.doesNotMatch(text, /free-text answer verbatim/);
+});
+
+test("describeSnapshot surfaces workflow-healing candidate ids", () => {
+  const text = describeSnapshot({
+    runId: "r",
+    status: "needs_user_input",
+    pendingInput: {
+      clarifyId: "workflow_heal_42",
+      question: "Choose a replacement target for saved workflow step 2.",
+      workflowHealing: {
+        candidates: [
+          { id: "candidate_0", target: "#submit" },
+          { id: "candidate_1", target: { selector: ".send" } },
+        ],
+      },
+      options: ["deny"],
+    },
+  });
+
+  assert.match(text, /candidate_0: #submit/);
+  assert.match(text, /candidate_1: \{"selector":"\.send"\}/);
+  assert.match(text, /decisions: candidate_0 \| candidate_1 \| deny/);
+  assert.match(text, /send the exact candidate id they picked/);
+  assert.doesNotMatch(text, /free-text answer verbatim/);
+});
+
 test("awaitSettled reports a timeout without aborting the run", async () => {
   const bridge = new WebBrainBridge();
   await bridge.start();

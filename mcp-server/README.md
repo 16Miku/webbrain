@@ -118,6 +118,10 @@ explicitly requests a persistent grant. Localized labels such as "allow" must
 not be forwarded as the permission value because the extension deliberately
 fails closed on unknown decisions.
 
+Form-submission confirmations and saved-workflow repair prompts are structured
+the same way, and fail closed the same way. Each lists the values it accepts on
+a `decisions:` line in the status text — send one of those exactly.
+
 ### Example
 
 > "Open my Stripe dashboard and list last week's failed payments."
