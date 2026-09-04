@@ -1,8 +1,10 @@
+import { normalizePdfOcrResult, renderPdfOcrTextLayer } from '../agent/pdf-ocr.js';
+
 const api = globalThis.browser || globalThis.chrome;
 const elements = Object.fromEntries([
   'pdf-title', 'pdf-stage', 'pdf-status', 'pdf-pages', 'previous-page', 'page-number',
   'page-count', 'next-page', 'zoom-out', 'fit-width', 'zoom-in', 'rotate-page',
-  'search-form', 'document-search', 'search-submit', 'download-pdf', 'print-pdf',
+  'search-form', 'document-search', 'search-submit', 'download-pdf', 'print-pdf', 'ocr-page',
 ].map(id => [id, document.getElementById(id)]));
 
 const MIN_SCALE = .5;
@@ -21,7 +23,10 @@ const state = {
   rotation: 0,
   pageViews: new Map(),
   textCache: new Map(),
+  ocrCache: new Map(),
   textLayerCount: 0,
+  ocrTextLayerCount: 0,
+  ocrInFlight: false,
   renderSequence: 0,
   renderTask: null,
   searchSequence: 0,
@@ -60,6 +65,20 @@ function updatePageControls() {
   elements['page-count'].textContent = total ? String(total) : '—';
   elements['previous-page'].disabled = !total || state.currentPage <= 1;
   elements['next-page'].disabled = !total || state.currentPage >= total;
+  updateOcrControl();
+}
+
+function currentPageHasNativeText() {
+  return !!state.pageViews.get(state.currentPage)
+    ?.querySelector('.pdf-text-layer span:not([data-webbrain-ocr])');
+}
+
+function updateOcrControl() {
+  const button = elements['ocr-page'];
+  if (!button) return;
+  const hasOcr = state.ocrCache.has(state.currentPage);
+  button.hidden = currentPageHasNativeText() || hasOcr;
+  button.disabled = !state.pdf || state.ocrInFlight;
 }
 
 function enableViewerControls() {
@@ -143,7 +162,13 @@ async function renderPage(pageNumber, sequence) {
   });
   await layer.render();
   if (!isCurrentRender(sequence)) return false;
-  if (textLayer.querySelector('span')) state.textLayerCount += 1;
+  if (textLayer.querySelector('span')) {
+    state.textLayerCount += 1;
+  } else {
+    const ocrLines = state.ocrCache.get(pageNumber);
+    const rendered = renderPdfOcrTextLayer(textLayer, ocrLines, viewport.width, viewport.height);
+    if (rendered) state.ocrTextLayerCount += 1;
+  }
   return pageView;
 }
 
@@ -151,6 +176,7 @@ async function renderAllPages() {
   if (!state.pdf) return false;
   const sequence = ++state.renderSequence;
   state.textLayerCount = 0;
+  state.ocrTextLayerCount = 0;
   state.pageViews.clear();
   elements['pdf-pages'].replaceChildren();
   setStatus(`Rendering ${state.pdf.numPages} pages…`);
@@ -163,11 +189,12 @@ async function renderAllPages() {
   updatePageControls();
   const target = state.pageViews.get(state.requestedPage);
   target?.scrollIntoView({ block: 'start' });
-  if (state.textLayerCount === 0) {
-    setStatus(`Loaded ${state.pdf.numPages} pages; this PDF has no selectable text.`, 'warning');
+  if (state.textLayerCount === 0 && state.ocrTextLayerCount === 0) {
+    setStatus(`Loaded ${state.pdf.numPages} pages; this PDF has no selectable text. Use OCR on the current page when a vision model is available.`, 'warning');
   } else {
     setStatus(`Page ${state.currentPage} of ${state.pdf.numPages} · ${Math.round(state.scale * 100)}%`);
   }
+  updateOcrControl();
   return true;
 }
 
@@ -204,6 +231,50 @@ function updateCurrentPageFromScroll() {
   if (closestPage !== state.currentPage) {
     setCurrentPage(closestPage);
     setPageStatus();
+  }
+}
+
+async function ocrCurrentPage() {
+  const pageNumber = state.currentPage;
+  const pageView = state.pageViews.get(pageNumber);
+  const canvas = pageView?.querySelector('.pdf-canvas');
+  if (!state.pdf || !pageView || !canvas || !state.streamInfo?.tabId || state.ocrInFlight) return;
+  let imageDataUrl;
+  try {
+    imageDataUrl = canvas.toDataURL('image/png');
+  } catch (error) {
+    setStatus(`OCR could not capture page ${pageNumber}: ${error?.message || String(error)}`, 'error');
+    return;
+  }
+
+  state.ocrInFlight = true;
+  updateOcrControl();
+  setStatus(`Reading text from page ${pageNumber} with OCR…`);
+  try {
+    const response = await api.runtime.sendMessage({
+      target: 'background',
+      action: 'ocr_pdf_page',
+      tabId: state.streamInfo.tabId,
+      originalUrl: String(state.streamInfo.originalUrl || ''),
+      pageNumber,
+      imageDataUrl,
+    });
+    if (!response?.success) {
+      throw new Error(response?.error || 'No OCR result was returned.');
+    }
+    const result = normalizePdfOcrResult(response);
+    if (!result.success) throw new Error(result.error);
+    const wasCached = state.ocrCache.has(pageNumber);
+    state.ocrCache.set(pageNumber, result.lines);
+    const textLayer = pageView.querySelector('.pdf-text-layer');
+    const rendered = renderPdfOcrTextLayer(textLayer, result.lines, pageView.clientWidth, pageView.clientHeight);
+    if (!wasCached && rendered) state.ocrTextLayerCount += 1;
+    setStatus(`OCR added ${rendered} text lines on page ${pageNumber}. Select the text to use WebBrain actions.`, 'success');
+  } catch (error) {
+    setStatus(`OCR failed on page ${pageNumber}: ${error?.message || String(error)}`, 'error');
+  } finally {
+    state.ocrInFlight = false;
+    updateOcrControl();
   }
 }
 
@@ -281,6 +352,7 @@ elements['fit-width'].addEventListener('click', () => {
 });
 elements['rotate-page'].addEventListener('click', () => {
   state.rotation = (state.rotation + 90) % 360;
+  state.ocrCache.clear();
   rerender().catch(error => fallbackToNative(`WebBrain could not rotate this PDF: ${error?.message || String(error)}`));
 });
 elements['search-form'].addEventListener('submit', event => {
@@ -289,6 +361,7 @@ elements['search-form'].addEventListener('submit', event => {
 });
 elements['download-pdf'].addEventListener('click', downloadPdf);
 elements['print-pdf'].addEventListener('click', () => globalThis.print());
+elements['ocr-page'].addEventListener('click', () => ocrCurrentPage());
 elements['pdf-stage'].addEventListener('scroll', updateCurrentPageFromScroll, { passive: true });
 globalThis.addEventListener('resize', () => {
   if (!state.pdf || !state.fitWidth) return;

@@ -10,6 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifestPath = path.join(root, 'src', 'chrome', 'manifest.json');
 const handlerHtmlPath = path.join(root, 'src', 'chrome', 'src', 'ui', 'pdf-handler.html');
 const handlerJsPath = path.join(root, 'src', 'chrome', 'src', 'ui', 'pdf-handler.js');
+const ocrModulePath = path.join(root, 'src', 'chrome', 'src', 'agent', 'pdf-ocr.js');
 const selectionShortcutPath = path.join(root, 'src', 'chrome', 'src', 'content', 'selection-shortcut.js');
 
 async function testManifestRegistration() {
@@ -50,6 +51,37 @@ async function testPdfHandlerProvidesCompleteViewerControls() {
   assert.match(source, /URL\.createObjectURL\(/);
   assert.match(source, /(?:globalThis|window)\.print\(\)/);
   assert.match(source, /abortAndFallbackToNativeHandler/);
+}
+
+async function testScannedPdfOcrContract() {
+  const html = await readFile(handlerHtmlPath, 'utf8');
+  const handlerSource = await readFile(handlerJsPath, 'utf8');
+  const backgroundSource = await readFile(path.join(root, 'src', 'chrome', 'src', 'background.js'), 'utf8');
+  const agentSource = await readFile(path.join(root, 'src', 'chrome', 'src', 'agent', 'agent.js'), 'utf8');
+  assert.match(html, /id="ocr-page"/);
+  assert.match(handlerSource, /action: 'ocr_pdf_page'/);
+  assert.match(handlerSource, /toDataURL\('image\/png'\)/);
+  assert.match(handlerSource, /normalizePdfOcrResult/);
+  assert.match(backgroundSource, /case 'ocr_pdf_page'/);
+  assert.match(backgroundSource, /agent\.ocrPdfPageWithVision/);
+  assert.match(agentSource, /async ocrPdfPageWithVision\(/);
+}
+
+async function testOcrNormalizationKeepsOnlyBoundedNormalizedLines() {
+  const { normalizePdfOcrResult } = await import(ocrModulePath);
+  const result = normalizePdfOcrResult({
+    lines: [
+      { text: '  Keep this text  ', x: 0.1, y: 0.2, width: 0.7, height: 0.04, confidence: 0.91 },
+      { text: 'outside', x: -0.4, y: 0.8, width: 1.8, height: 0.4 },
+      { text: '', x: 0.2, y: 0.2, width: 0.2, height: 0.1 },
+      { text: 'pixel coordinates must fail', x: 10, y: 20, width: 100, height: 10 },
+    ],
+  });
+  assert.equal(result.success, true);
+  assert.deepEqual(result.lines.map(line => line.text), ['Keep this text', 'outside']);
+  assert.deepEqual(result.lines[1].box, { x: 0, y: 0.8, width: 1, height: 0.2 });
+  assert.equal(result.lines[0].confidence, 0.91);
+  assert.equal(normalizePdfOcrResult({ lines: [] }).success, false);
 }
 
 async function testPdfSelectionCarriesItsTabScope() {
@@ -190,6 +222,8 @@ const tests = [
   ['manifest registers a top-level application/pdf handler', testManifestRegistration],
   ['PDF handler consumes Chrome stream info and renders a text layer', testHandlerUsesChromeStreamAndTextLayer],
   ['PDF handler provides complete viewer controls', testPdfHandlerProvidesCompleteViewerControls],
+  ['scanned PDF OCR has a bounded handler/background contract', testScannedPdfOcrContract],
+  ['OCR normalization keeps bounded normalized text lines', testOcrNormalizationKeepsOnlyBoundedNormalizedLines],
   ['PDF selection submission carries tab scope and original URL', testPdfSelectionCarriesItsTabScope],
   ['PDF selection shortcut runs in the handler frame', testPdfSelectionShortcutRunsInHandlerFrame],
 ];

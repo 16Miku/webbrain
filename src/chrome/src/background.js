@@ -3983,6 +3983,15 @@ async function handleMessage(msg, sender) {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureViewportScreenshotForUser(tabId);
     }
+    case 'ocr_pdf_page': {
+      const tabId = Number(msg.tabId);
+      if (!Number.isInteger(tabId) || tabId < 0) {
+        return { success: false, error: 'Invalid PDF OCR tab.' };
+      }
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      if (!tab) return { success: false, error: 'The PDF tab is no longer available.' };
+      return await agent.ocrPdfPageWithVision(tabId, msg.imageDataUrl, msg.pageNumber);
+    }
     case 'capture_screenshot_redaction_snapshot': {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureScreenshotRedactionSnapshotForUser(tabId, {
