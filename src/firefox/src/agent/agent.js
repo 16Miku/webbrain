@@ -27344,6 +27344,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // one bounded chance to turn already-collected evidence into an explicit
       // partial/failed done result. This applies to WebBrain Cloud too without
       // changing its deliberately advisory in-loop observation checkpoints.
+      let handoffCancelled = false;
       if (!finalResponse || !finalResponse.trim()) {
         const fallback = this._buildStepLimitSummary(messages, steps);
         if (this._stepLimitRecoveryEligible(provider, runOptions)) {
@@ -27354,6 +27355,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           );
           finalResponse = recovery.content;
           _traceStatus = recovery.status;
+          handoffCancelled = recovery.status === 'cancelled';
         } else {
           finalResponse = fallback;
           messages.push({ role: 'assistant', content: finalResponse });
@@ -27362,8 +27364,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       // This event enables Continue in the side panel. Emit it only after the
       // awaited terminal handoff has settled so the user cannot start a second
-      // run while recovery still owns the tab.
-      onUpdate('max_steps_reached', { steps: this.maxSteps });
+      // run while recovery still owns the tab. A Stop pressed during the
+      // handoff is the user's own terminal decision: emitting it there would
+      // relabel the run journal's last error as a step-limit stop and replay a
+      // cancelled run as completed after a background restart.
+      if (!handoffCancelled) onUpdate('max_steps_reached', { steps: this.maxSteps });
     }
 
     this._persist(tabId);
@@ -28218,7 +28223,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       fallback, runOptions, enriched, sourceBoundPriorMessages,
       { phase: 'step_limit_recovery' },
     );
-    onUpdate('max_steps_reached', { steps: this.maxSteps });
+    // A Stop pressed during the handoff is the user's own terminal decision;
+    // re-arming Continue there would also relabel the cancellation as a
+    // step-limit error in the run journal.
+    if (recovery.status !== 'cancelled') onUpdate('max_steps_reached', { steps: this.maxSteps });
     return finish(recovery.content, recovery.status);
     } catch (error) {
       const message = formatErrorMessage(error);
