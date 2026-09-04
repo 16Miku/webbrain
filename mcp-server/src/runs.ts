@@ -143,16 +143,44 @@ export function describeSnapshot(snapshot: CloudSnapshot, timedOut = false): str
   if (snapshot.finalUrl) lines.push(`final_url: ${snapshot.finalUrl}`);
 
   if (snapshot.status === "needs_user_input" && snapshot.pendingInput) {
-    const clarifyId = snapshot.pendingInput.clarifyId || snapshot.pendingInput.clarify_id || "";
-    const question = snapshot.pendingInput.question || "(no question text supplied)";
+    const pending = snapshot.pendingInput;
+    const promptKind = pending.promptKind;
+    const clarifyId = pending.clarifyId || pending.clarify_id || "";
+    const question = pending.question || "(no question text supplied)";
     lines.push("");
     lines.push("WebBrain is waiting on a human decision before it continues.");
+    lines.push(`prompt_kind: ${promptKind || "unknown"}`);
+    switch (promptKind) {
+      case "permission":
+      case "submitConfirmation":
+      case "workflowHealing": {
+        const options = Array.isArray(pending.options)
+          ? pending.options.map(String).filter(Boolean)
+          : [];
+        if (options.length) lines.push(`allowed_answers: ${options.join(", ")}`);
+        const details = pending[promptKind];
+        if (details && typeof details === "object") {
+          lines.push(`structured_prompt: ${JSON.stringify(details)}`);
+        }
+        break;
+      }
+      case "clarify":
+        break;
+      default:
+        lines.push(
+          "This prompt kind is unsupported by this client. Do not send a free-form answer; " +
+            "update the client before calling webbrain_respond.",
+        );
+    }
     lines.push(`question: ${question}`);
     lines.push(`clarify_id: ${clarifyId}`);
-    lines.push(
-      "Relay this to the user and send their answer with webbrain_respond. " +
-        "Do not invent an answer on their behalf.",
-    );
+    if (promptKind === "clarify" || promptKind === "permission"
+        || promptKind === "submitConfirmation" || promptKind === "workflowHealing") {
+      lines.push(
+        "Relay this to the user and send their answer with webbrain_respond. " +
+          "Do not invent an answer on their behalf.",
+      );
+    }
   }
 
   if (snapshot.error) {

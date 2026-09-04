@@ -27,6 +27,8 @@ export interface BrowserTaskResult {
   runId?: string;
   status?: string;
   needsUserInput?: boolean;
+  promptKind?: string;
+  options?: string[];
   question?: string;
   clarifyId?: string;
   stillRunning?: boolean;
@@ -68,11 +70,35 @@ function bodyOf(snapshot: CloudSnapshot): string {
 function resultOf(snapshot: CloudSnapshot, timedOut = false): BrowserTaskResult {
   if (snapshot.status === "needs_user_input") {
     const pending = snapshot.pendingInput ?? {};
+    const promptKind = typeof pending.promptKind === "string" ? pending.promptKind : "";
+    switch (promptKind) {
+      case "clarify":
+      case "permission":
+      case "submitConfirmation":
+      case "workflowHealing":
+        break;
+      default:
+        return {
+          ok: false,
+          runId: snapshot.runId,
+          status: snapshot.status,
+          needsUserInput: true,
+          promptKind: promptKind || undefined,
+          clarifyId: String(pending.clarifyId ?? pending.clarify_id ?? ""),
+          error: `WebBrain returned unsupported prompt kind '${promptKind || "unknown"}'.`,
+          hint: "Do not send a free-form answer. Update the client before calling browser_respond.",
+        };
+    }
+    const options = Array.isArray(pending.options)
+      ? pending.options.map(String).filter(Boolean)
+      : undefined;
     return {
       ok: false,
       runId: snapshot.runId,
       status: snapshot.status,
       needsUserInput: true,
+      promptKind,
+      options,
       question: String(pending.question ?? "(no question text supplied)"),
       clarifyId: String(pending.clarifyId ?? pending.clarify_id ?? ""),
       hint:

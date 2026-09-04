@@ -281,7 +281,13 @@ test("awaitSettled stops on needs_user_input and surfaces clarify_id", async () 
       result: {
         runId: "r",
         status: "needs_user_input",
-        pendingInput: { clarifyId: "c_42", question: "Which account should I use?" },
+        pendingInput: {
+          promptKind: "permission",
+          permission: { capability: "send_message", host: "example.com" },
+          clarifyId: "c_42",
+          question: "Which account should I use?",
+          options: ["once", "always", "deny"],
+        },
       },
     };
   });
@@ -292,11 +298,24 @@ test("awaitSettled stops on needs_user_input and surfaces clarify_id", async () 
 
   const text = describeSnapshot(snapshot);
   assert.match(text, /clarify_id: c_42/);
+  assert.match(text, /prompt_kind: permission/);
+  assert.match(text, /allowed_answers: once, always, deny/);
   assert.match(text, /Which account should I use\?/);
   assert.match(text, /Do not invent an answer/);
 
   ext.close();
   await bridge.stop();
+});
+
+test("describeSnapshot refuses unknown prompt kinds instead of presenting free text", () => {
+  const text = describeSnapshot({
+    runId: "r",
+    status: "needs_user_input",
+    pendingInput: { promptKind: "futureGate", clarifyId: "c", question: "Choose." },
+  });
+  assert.match(text, /prompt_kind: futureGate/);
+  assert.match(text, /unsupported by this client/);
+  assert.doesNotMatch(text, /Relay this to the user/);
 });
 
 test("awaitSettled reports a timeout without aborting the run", async () => {
