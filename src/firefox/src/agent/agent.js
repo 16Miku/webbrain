@@ -5025,7 +5025,11 @@ export class Agent extends LoopDetector {
     // `cloudRun` is the separate structured API execution contract and may
     // require done_json. The selected WebBrain Cloud browser provider normally
     // has cloudRun=false, so it remains eligible for this user-facing handoff.
-    return runOptions?.cloudRun !== true && provider?.supportsTools === true;
+    // Scheduled/watch runs are unattended and retain their deterministic
+    // scheduler-owned max-step verdict without another billable generation.
+    return runOptions?.cloudRun !== true
+      && runOptions?.scheduledRun !== true
+      && provider?.supportsTools === true;
   }
 
   static NAV_TOOLS = new Set(['navigate', 'promote_iframe', 'go_back', 'go_forward']);
@@ -27336,7 +27340,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (steps >= this.maxSteps) {
       _traceStatus = 'max_steps';
-      onUpdate('max_steps_reached', { steps: this.maxSteps });
       // The normal loop is over: expose no browser tools, but give the model
       // one bounded chance to turn already-collected evidence into an explicit
       // partial/failed done result. This applies to WebBrain Cloud too without
@@ -27357,6 +27360,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('text', { content: finalResponse });
         }
       }
+      // This event enables Continue in the side panel. Emit it only after the
+      // awaited terminal handoff has settled so the user cannot start a second
+      // run while recovery still owns the tab.
+      onUpdate('max_steps_reached', { steps: this.maxSteps });
     }
 
     this._persist(tabId);
@@ -28198,12 +28205,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
-    onUpdate('max_steps_reached', { steps: this.maxSteps });
     const fallback = this._buildStepLimitSummary(messages, steps);
     if (!this._stepLimitRecoveryEligible(provider, runOptions)) {
       messages.push({ role: 'assistant', content: fallback });
       onUpdate('text', { content: fallback });
       this._persist(tabId);
+      onUpdate('max_steps_reached', { steps: this.maxSteps });
       return finish(fallback, 'max_steps');
     }
     const recovery = await this._recoverDeliveryCheckpointTurn(
@@ -28211,6 +28218,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       fallback, runOptions, enriched, sourceBoundPriorMessages,
       { phase: 'step_limit_recovery' },
     );
+    onUpdate('max_steps_reached', { steps: this.maxSteps });
     return finish(recovery.content, recovery.status);
     } catch (error) {
       const message = formatErrorMessage(error);

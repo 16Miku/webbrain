@@ -13890,6 +13890,7 @@ test('step-limit recovery keeps Cloud observation checkpoints advisory but force
 
     assert.equal(agent._stepLimitRecoveryEligible({ supportsTools: true, config: { providerName: 'webbrain-cloud' } }), true, `${label}: selected WebBrain Cloud provider should receive terminal handoff`);
     assert.equal(agent._stepLimitRecoveryEligible({ supportsTools: true }, { cloudRun: true }), false, `${label}: structured Cloud API run must keep its done_json contract`);
+    assert.equal(agent._stepLimitRecoveryEligible({ supportsTools: true }, { scheduledRun: true, independentRun: true }), false, `${label}: unattended scheduled runs must keep their deterministic max-step verdict`);
     assert.equal(agent._stepLimitRecoveryEligible({ supportsTools: false }), false, `${label}: tool-free provider cannot produce a structured done call`);
 
     const recovery = await agent._recoverDeliveryCheckpointTurn(
@@ -78363,6 +78364,14 @@ test('non-stream and stream runs release forced done when progress work remains'
         ['partial', 'failed'],
         `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: max-step handoff allowed success`,
       );
+      const stepLimitResultIndex = updates.findIndex(update => (
+        update.type === 'tool_result'
+        && update.data?.name === 'done'
+        && update.data?.result?.stepLimitRecovery === true
+      ));
+      const maxStepsIndex = updates.findIndex(update => update.type === 'max_steps_reached');
+      assert.ok(stepLimitResultIndex >= 0, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: terminal handoff result was not surfaced`);
+      assert.ok(maxStepsIndex > stepLimitResultIndex, `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: Continue was enabled before terminal handoff settled`);
       assert.ok(
         updates.some(update => update.type === 'tool_result' && update.data?.result?.progressLedgerBlock === true),
         `${AgentClass.name}/${streaming ? 'stream' : 'non-stream'}: progress gate did not reject the forced completion`,
