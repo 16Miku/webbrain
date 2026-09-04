@@ -1518,9 +1518,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // Selection-shortcut clicks originate in a content script. Keep this listener
 // synchronous until sidePanel.open() so Chrome preserves the originating user
 // gesture; prompt recovery storage can finish afterward.
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
-  const tab = sender?.tab;
+function queueSelectionShortcutPrompt(msg, tab, sendResponse) {
   const selectionAction = normalizeSelectionAction(msg.action);
   const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
   const sourceGrounding = includePageContext
@@ -1539,7 +1537,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     );
   if (!tab?.id || !text) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: 'Invalid selection shortcut request.' });
-    return;
+    return false;
   }
   const payload = {
     id: `selection-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1563,6 +1561,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })().then(sendResponse).catch((error) => {
     sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: error?.message || String(error) });
   });
+  return true;
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
+  return queueSelectionShortcutPrompt(msg, sender?.tab, sendResponse);
+});
+
+// PDF handler pages are extension pages, so Chrome does not populate
+// sender.tab. The handler carries the tab id returned by getStreamInfo();
+// resolve the live tab before building the prompt so its scope cannot be
+// forged or reused after the tab has gone away.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_PDF_SELECTION_SHORTCUT_SUBMIT') return;
+  const tabId = Number(msg.tabId);
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: 'Invalid PDF selection tab.' });
+    return;
+  }
+  chrome.tabs.get(tabId)
+    .then(tab => queueSelectionShortcutPrompt(msg, tab, sendResponse))
+    .catch(error => sendResponse({
+      ok: false,
+      queued: false,
+      requiresManualOpen: false,
+      error: error?.message || 'The PDF tab is no longer available.',
+    }));
   return true;
 });
 

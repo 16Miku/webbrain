@@ -47493,10 +47493,12 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
   const chromeBg = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   const chromeStart = chromeBg.indexOf("if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;");
   const chromeEnd = chromeBg.indexOf('// (See the panel visibility comment', chromeStart);
-  const chromeHandler = chromeBg.slice(chromeStart, chromeEnd);
+  const chromePromptStart = chromeBg.indexOf('function queueSelectionShortcutPrompt(');
+  const chromeHandler = chromeBg.slice(chromePromptStart, chromeEnd);
   const chromeOpen = chromeHandler.indexOf('openSidePanelForContextMenu(tab);');
   const chromeSave = chromeHandler.indexOf('await contextMenuStorage.save(tab.id, payload);');
   assert.notEqual(chromeStart, -1, 'chrome: selection shortcut listener missing');
+  assert.notEqual(chromePromptStart, -1, 'chrome: shared selection prompt handler missing');
   assert.equal(chromeOpen !== -1 && chromeSave !== -1 && chromeOpen < chromeSave, true, 'chrome: side panel must open before prompt storage awaits');
   assert.match(chromeHandler, /requiresManualOpen: false/, 'chrome: successful shortcut response should not require manual opening');
 
