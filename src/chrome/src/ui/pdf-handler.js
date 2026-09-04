@@ -1,4 +1,5 @@
 import { normalizePdfOcrResult, renderPdfOcrTextLayer } from '../agent/pdf-ocr.js';
+import { readPdfResponseBytes } from '../agent/pdf-stream.js';
 
 const api = globalThis.browser || globalThis.chrome;
 const elements = Object.fromEntries([
@@ -23,7 +24,6 @@ const WINDOW_RENDER_DEBOUNCE_MS = 120;
 const state = {
   pdf: null,
   pdfjs: null,
-  pdfBytes: null,
   streamInfo: null,
   currentPage: 1,
   requestedPage: 1,
@@ -44,7 +44,9 @@ const state = {
   searchSequence: 0,
   resizeTimer: null,
   windowRenderTimer: null,
+  windowRenderSequence: 0,
   scrollFrame: null,
+  printing: false,
 };
 
 function setStatus(message, kind = '') {
@@ -55,16 +57,20 @@ function setStatus(message, kind = '') {
 async function fallbackToNative(message = '') {
   if (message) setStatus(message, 'error');
   try {
-    if (api?.mimeHandler?.abortAndFallbackToNativeHandler) {
-      await api.mimeHandler.abortAndFallbackToNativeHandler();
-      return;
-    }
     const params = new URLSearchParams(globalThis.location.search);
     const url = new URL(String(params.get('url') || ''));
     const tabIdValue = params.get('tabId');
     const tabId = tabIdValue == null ? NaN : Number(tabIdValue);
     if (['http:', 'https:'].includes(url.protocol) && Number.isInteger(tabId) && tabId >= 0) {
       await api?.tabs?.update?.(tabId, { url: url.href });
+      return;
+    }
+  } catch {
+    // This was not an explicit top-level viewer, so try the MIME handler path.
+  }
+  try {
+    if (api?.mimeHandler?.abortAndFallbackToNativeHandler) {
+      await api.mimeHandler.abortAndFallbackToNativeHandler();
     }
   } catch {
     // Keep the actionable error visible if native fallback is unavailable.
@@ -123,6 +129,8 @@ function enableViewerControls() {
 function cancelRender() {
   state.renderSequence += 1;
   clearTimeout(state.windowRenderTimer);
+  state.windowRenderTimer = null;
+  state.windowRenderSequence += 1;
   const pendingTask = state.renderTask;
   state.renderTask = null;
   try { pendingTask?.cancel?.(); } catch { /* a completed render cannot be cancelled */ }
@@ -130,6 +138,11 @@ function cancelRender() {
 
 function isCurrentRender(sequence) {
   return sequence === state.renderSequence;
+}
+
+function isCurrentWindowRender(sequence, windowSequence) {
+  return isCurrentRender(sequence)
+    && (windowSequence == null || windowSequence === state.windowRenderSequence);
 }
 
 function renderScaleFor(page) {
@@ -176,6 +189,7 @@ function createPageView(pageNumber, viewport) {
 }
 
 function releaseFarPages(centerPageNumber) {
+  if (state.printing || (state.pdf?.numPages || 0) <= EAGER_PAGE_LIMIT) return;
   for (const pageNumber of Array.from(state.renderedPages)) {
     if (Math.abs(pageNumber - centerPageNumber) > RENDER_WINDOW) {
       const pageView = state.pageViews.get(pageNumber);
@@ -194,11 +208,11 @@ function releaseFarPages(centerPageNumber) {
   }
 }
 
-async function renderPage(pageNumber, sequence) {
-  if (!isCurrentRender(sequence)) return false;
+async function renderPage(pageNumber, sequence, windowSequence = null) {
+  if (!isCurrentWindowRender(sequence, windowSequence)) return false;
   if (state.renderedPages.has(pageNumber)) return state.pageViews.get(pageNumber) || false;
   const page = await state.pdf.getPage(pageNumber);
-  if (!isCurrentRender(sequence)) return false;
+  if (!isCurrentWindowRender(sequence, windowSequence)) return false;
   const renderScale = renderScaleFor(page);
   const pixelRatio = Math.min(2, globalThis.devicePixelRatio || 1);
   const viewport = page.getViewport({ scale: renderScale, rotation: state.rotation });
@@ -215,12 +229,12 @@ async function renderPage(pageNumber, sequence) {
   try {
     await task.promise;
   } catch (error) {
-    if (error?.name === 'RenderingCancelledException' || !isCurrentRender(sequence)) return false;
+    if (error?.name === 'RenderingCancelledException' || !isCurrentWindowRender(sequence, windowSequence)) return false;
     throw error;
   } finally {
     if (state.renderTask === task) state.renderTask = null;
   }
-  if (!isCurrentRender(sequence)) return false;
+  if (!isCurrentWindowRender(sequence, windowSequence)) return false;
 
   const layer = new state.pdfjs.TextLayer({
     textContentSource: page.streamTextContent(),
@@ -228,7 +242,7 @@ async function renderPage(pageNumber, sequence) {
     viewport,
   });
   await layer.render();
-  if (!isCurrentRender(sequence)) return false;
+  if (!isCurrentWindowRender(sequence, windowSequence)) return false;
   if (textLayer.querySelector('span')) {
     state.textLayerCount += 1;
   } else {
@@ -240,7 +254,7 @@ async function renderPage(pageNumber, sequence) {
   return pageView;
 }
 
-async function ensureWindowAround(centerPageNumber, sequence) {
+async function ensureWindowAround(centerPageNumber, sequence, windowSequence = null) {
   const total = state.pdf?.numPages || 0;
   if (!total) return false;
   const center = Math.max(1, Math.min(total, Math.floor(Number(centerPageNumber) || 1)));
@@ -251,22 +265,25 @@ async function ensureWindowAround(centerPageNumber, sequence) {
     if (center + offset <= total) order.push(center + offset);
   }
   for (const pageNumber of order) {
-    const pageView = await renderPage(pageNumber, sequence);
-    if (!pageView || !isCurrentRender(sequence)) return false;
+    const pageView = await renderPage(pageNumber, sequence, windowSequence);
+    if (!pageView || !isCurrentWindowRender(sequence, windowSequence)) return false;
   }
+  if (!isCurrentWindowRender(sequence, windowSequence)) return false;
   releaseFarPages(center);
   return true;
 }
 
 function scheduleWindowRender() {
-  if (!state.pdf) return;
+  if (!state.pdf || state.pdf.numPages <= EAGER_PAGE_LIMIT || state.printing) return;
   clearTimeout(state.windowRenderTimer);
+  const windowSequence = ++state.windowRenderSequence;
   state.windowRenderTimer = setTimeout(() => {
+    state.windowRenderTimer = null;
     const sequence = state.renderSequence;
     const center = state.currentPage;
-    ensureWindowAround(center, sequence)
+    ensureWindowAround(center, sequence, windowSequence)
       .then((ok) => {
-        if (ok && isCurrentRender(sequence)) updatePageControls();
+        if (ok && isCurrentWindowRender(sequence, windowSequence)) updatePageControls();
       })
       .catch(() => {});
   }, WINDOW_RENDER_DEBOUNCE_MS);
@@ -276,6 +293,8 @@ async function renderAllPages() {
   if (!state.pdf) return false;
   const sequence = ++state.renderSequence;
   clearTimeout(state.windowRenderTimer);
+  state.windowRenderTimer = null;
+  const windowSequence = ++state.windowRenderSequence;
   state.textLayerCount = 0;
   state.ocrTextLayerCount = 0;
   state.pageViews.clear();
@@ -322,7 +341,7 @@ async function renderAllPages() {
     if (!isCurrentRender(sequence)) return false;
   }
   state.currentPage = Math.max(1, Math.min(total, Math.floor(Number(state.requestedPage) || 1)));
-  const ok = await ensureWindowAround(state.currentPage, sequence);
+  const ok = await ensureWindowAround(state.currentPage, sequence, windowSequence);
   if (!ok || !isCurrentRender(sequence)) return false;
   try {
     state.scale = renderScaleFor(await state.pdf.getPage(state.currentPage));
@@ -374,6 +393,7 @@ function updateCurrentPageFromScroll() {
     }
     if (closestPage !== state.currentPage) {
       setCurrentPage(closestPage);
+      state.requestedPage = state.currentPage;
       setPageStatus();
       scheduleWindowRender();
     }
@@ -387,7 +407,9 @@ async function ocrCurrentPage() {
   // fast scroll may have moved on before the debounced render ran. Ensure it.
   if (!state.renderedPages.has(pageNumber)) {
     clearTimeout(state.windowRenderTimer);
-    const rendered = await ensureWindowAround(pageNumber, state.renderSequence).catch(() => false);
+    state.windowRenderTimer = null;
+    const windowSequence = ++state.windowRenderSequence;
+    const rendered = await ensureWindowAround(pageNumber, state.renderSequence, windowSequence).catch(() => false);
     if (rendered) updatePageControls();
   }
   const pageView = state.pageViews.get(pageNumber);
@@ -497,9 +519,11 @@ function safeFilename() {
   return 'webbrain-document.pdf';
 }
 
-function downloadPdf() {
-  if (!state.pdfBytes) return;
-  const url = URL.createObjectURL(new Blob([state.pdfBytes], { type: 'application/pdf' }));
+async function downloadPdf() {
+  if (!state.pdf) return;
+  const bytes = await state.pdf.getData();
+  if (!bytes?.byteLength) throw new Error('The loaded PDF has no downloadable data.');
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = safeFilename();
@@ -511,6 +535,35 @@ function downloadPdf() {
   anchor.remove();
   setStatus(`Downloaded ${anchor.download}.`, 'success');
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function printPdf() {
+  if (!state.pdf || state.printing) return;
+  if (state.pdf.numPages <= EAGER_PAGE_LIMIT) {
+    globalThis.print();
+    return;
+  }
+
+  const returnPage = state.currentPage;
+  state.printing = true;
+  elements['print-pdf'].disabled = true;
+  cancelRender();
+  const sequence = state.renderSequence;
+  try {
+    setStatus(`Rendering all ${state.pdf.numPages} pages for printing…`);
+    for (let pageNumber = 1; pageNumber <= state.pdf.numPages; pageNumber++) {
+      const pageView = await renderPage(pageNumber, sequence);
+      if (!pageView || !isCurrentRender(sequence)) throw new Error('Printing was interrupted.');
+    }
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    globalThis.print();
+  } finally {
+    state.printing = false;
+    state.currentPage = returnPage;
+    state.requestedPage = returnPage;
+    elements['print-pdf'].disabled = false;
+    await renderAllPages();
+  }
 }
 
 function rerender() {
@@ -545,13 +598,17 @@ elements['search-form'].addEventListener('submit', event => {
   event.preventDefault();
   findText(elements['document-search'].value).catch(error => setStatus(`Search failed: ${error?.message || String(error)}`, 'error'));
 });
-elements['download-pdf'].addEventListener('click', downloadPdf);
-elements['print-pdf'].addEventListener('click', () => globalThis.print());
+elements['download-pdf'].addEventListener('click', () => {
+  downloadPdf().catch(error => setStatus(`Download failed: ${error?.message || String(error)}`, 'error'));
+});
+elements['print-pdf'].addEventListener('click', () => {
+  printPdf().catch(error => fallbackToNative(`WebBrain could not print this PDF: ${error?.message || String(error)}`));
+});
 elements['ocr-page'].addEventListener('click', () => ocrCurrentPage());
 elements['cancel-ocr-page'].addEventListener('click', () => cancelOcrRequest());
 elements['pdf-stage'].addEventListener('scroll', updateCurrentPageFromScroll, { passive: true });
 globalThis.addEventListener('resize', () => {
-  if (!state.pdf || !state.fitWidth) return;
+  if (!state.pdf || !state.fitWidth || state.printing) return;
   clearTimeout(state.resizeTimer);
   state.resizeTimer = setTimeout(() => {
     rerender().catch(error => fallbackToNative(`WebBrain could not resize this PDF: ${error?.message || String(error)}`));
@@ -610,14 +667,11 @@ async function initialize() {
 
   const response = await fetch(streamInfo.streamUrl, { credentials: 'include' });
   if (!response.ok) throw new Error(`Chrome PDF stream returned HTTP ${response.status}.`);
-  const contentLength = Number(response.headers.get('content-length'));
-  if (Number.isFinite(contentLength) && contentLength > MAX_PDF_BYTES) {
-    throw new Error('This PDF is larger than the WebBrain viewer limit.');
-  }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (!bytes.length) throw new Error('Chrome returned an empty PDF stream.');
-  if (bytes.byteLength > MAX_PDF_BYTES) throw new Error('This PDF is larger than the WebBrain viewer limit.');
-  state.pdfBytes = bytes;
+  const bytes = await readPdfResponseBytes(response, {
+    maxBytes: MAX_PDF_BYTES,
+    emptyMessage: 'Chrome returned an empty PDF stream.',
+    unreadableMessage: 'Chrome PDF stream could not be read safely.',
+  });
 
   state.pdfjs = await import(api.runtime.getURL('vendor/pdfjs/pdf.mjs'));
   state.pdfjs.GlobalWorkerOptions.workerSrc = api.runtime.getURL('vendor/pdfjs/pdf.worker.mjs');

@@ -319,9 +319,23 @@ function trackPdfResponse(details) {
   if (!Number.isInteger(details?.tabId) || details.tabId < 0) return;
   const contentType = (details.responseHeaders || [])
     .find(header => String(header?.name || '').toLowerCase() === 'content-type')?.value;
-  if (!contentType) return;
   if (/^application\/pdf(?:\s*;|$)/i.test(String(contentType))) pdfResponseTabs.add(details.tabId);
   else pdfResponseTabs.delete(details.tabId);
+}
+
+function setPdfContextMenuVisibility(visible) {
+  chrome.contextMenus?.update?.(CONTEXT_MENU_OPEN_PDF_VIEWER_ID, { visible: Boolean(visible) }, () => {
+    void chrome.runtime.lastError;
+  });
+}
+
+async function syncPdfContextMenuForActiveTab() {
+  if (!chrome.contextMenus?.update || !chrome.tabs?.query) return;
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tabId = Number(tab?.id);
+  const visible = Number.isInteger(tabId) && tabId >= 0
+    && (pdfResponseTabs.has(tabId) || isPdfUrl(tab?.url));
+  setPdfContextMenuVisibility(visible);
 }
 
 function getPdfHandlerBaseUrl() {
@@ -395,6 +409,9 @@ async function createContextMenus() {
       if (err && !/duplicate/i.test(String(err.message || err))) {
         console.warn('[WebBrain] Failed to create context menu:', err.message || err);
       }
+      if (item.id === CONTEXT_MENU_OPEN_PDF_VIEWER_ID) {
+        syncPdfContextMenuForActiveTab().catch(() => {});
+      }
     });
   };
 
@@ -431,6 +448,7 @@ async function createContextMenus() {
       id: CONTEXT_MENU_OPEN_PDF_VIEWER_ID,
       title: 'Open PDF with WebBrain',
       contexts: ['page'],
+      visible: false,
     });
   });
 }
@@ -1569,14 +1587,6 @@ async function handleContextMenuAsk(info, tab) {
 chrome.contextMenus?.onClicked?.addListener?.((info, tab) => {
   handleContextMenuAsk(info, tab).catch(() => {});
 });
-chrome.contextMenus?.onShown?.addListener?.((info, tab) => {
-  const tabId = Number(tab?.id);
-  const visible = Number.isInteger(tabId) && tabId >= 0
-    && (pdfResponseTabs.has(tabId) || isPdfUrl(info?.pageUrl || tab?.url));
-  chrome.contextMenus.update(CONTEXT_MENU_OPEN_PDF_VIEWER_ID, { visible }, () => {
-    void chrome.runtime.lastError;
-  });
-});
 
 // Only this instance knows which runs are live in memory, so it owns the
 // stale-run repair whenever it is reachable.
@@ -1758,6 +1768,10 @@ function reassertIndicatorIfActive(tabId) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo?.url) pdfResponseTabs.delete(tabId);
+  if (changeInfo?.url || changeInfo?.status) {
+    syncPdfContextMenuForActiveTab().catch(() => {});
+  }
   if (changeInfo?.status === 'complete') {
     reassertIndicatorIfActive(tabId);
   }
@@ -2350,6 +2364,7 @@ chrome.webNavigation?.onCompleted?.addListener((details) => {
 // detection and embedded widgets may use the same managed endpoint.
 const observeCloudflareManagedChallengeResponse = details => {
   trackPdfResponse(details);
+  syncPdfContextMenuForActiveTab().catch(() => {});
   agent.observeCloudflareManagedChallengeResponse(details).catch(() => {});
 };
 const observeCloudflareChallengePlatformRequest = details => {
@@ -2600,6 +2615,7 @@ async function showCompletionNotification(tabId, success) {
 
 chrome.tabs.onActivated.addListener(({ tabId } = {}) => {
   flashedBadgeTabs.delete(tabId);
+  syncPdfContextMenuForActiveTab().catch(() => {});
   // Clear unconditionally: the Set only lives in service-worker memory, but
   // a tab-scoped badge survives MV3 worker suspension/restarts. Resetting
   // the per-tab override is idempotent and restores any global badge.
@@ -2617,6 +2633,7 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
     const [activeTab] = await chrome.tabs.query({ active: true, windowId });
     const activeTabId = Number(activeTab?.id);
     if (!Number.isInteger(activeTabId)) return;
+    setPdfContextMenuVisibility(pdfResponseTabs.has(activeTabId) || isPdfUrl(activeTab?.url));
     flashedBadgeTabs.delete(activeTabId);
     await chrome.action.setBadgeText({ tabId: activeTabId, text: '' });
   } catch { /* best-effort cleanup */ }

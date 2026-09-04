@@ -11,6 +11,8 @@ const manifestPath = path.join(root, 'src', 'chrome', 'manifest.json');
 const handlerHtmlPath = path.join(root, 'src', 'chrome', 'src', 'ui', 'pdf-handler.html');
 const handlerJsPath = path.join(root, 'src', 'chrome', 'src', 'ui', 'pdf-handler.js');
 const ocrModulePath = path.join(root, 'src', 'chrome', 'src', 'agent', 'pdf-ocr.js');
+const pdfStreamModulePath = path.join(root, 'src', 'chrome', 'src', 'agent', 'pdf-stream.js');
+const firefoxPdfStreamModulePath = path.join(root, 'src', 'firefox', 'src', 'agent', 'pdf-stream.js');
 const selectionShortcutPath = path.join(root, 'src', 'chrome', 'src', 'content', 'selection-shortcut.js');
 const settingsHtmlPath = path.join(root, 'src', 'chrome', 'src', 'ui', 'settings.html');
 const settingsJsPath = path.join(root, 'src', 'chrome', 'src', 'ui', 'settings.js');
@@ -126,6 +128,7 @@ async function testFirefoxProvidesAnExplicitOnlinePdfViewerFallback() {
   assert.match(firefoxBackground, /pdf-handler\.html\?url=/);
   assert.match(firefoxBackground, /trackPdfResponse/);
   assert.match(firefoxBackground, /onShown/);
+  assert.match(firefoxBackground, /await menuApi\?\.refresh\?\.\(\)/);
   assert.match(firefoxBackground, /WB_PDF_SELECTION_SHORTCUT_SUBMIT/);
   assert.match(firefoxHandlerHtml, /pdf-handler\.js/);
   assert.match(firefoxHandlerSource, /URLSearchParams\(globalThis\.location\.search\)/);
@@ -135,13 +138,52 @@ async function testFirefoxProvidesAnExplicitOnlinePdfViewerFallback() {
   assert.match(chromeHandlerSource, /URLSearchParams\(globalThis\.location\.search\)/);
   const chromeBackground = await readFile(path.join(root, 'src', 'chrome', 'src', 'background.js'), 'utf8');
   assert.match(chromeBackground, /trackPdfResponse/);
-  assert.match(chromeBackground, /onShown/);
+  assert.doesNotMatch(chromeBackground, /contextMenus\?\.onShown/);
+  assert.match(chromeBackground, /syncPdfContextMenuForActiveTab/);
+  assert.match(chromeBackground, /CONTEXT_MENU_OPEN_PDF_VIEWER_ID,[\s\S]{0,180}visible: false/);
+}
+
+async function testPdfResponseStreamingStopsAtTheByteLimit() {
+  const chromeModuleSource = await readFile(pdfStreamModulePath, 'utf8');
+  const firefoxModuleSource = await readFile(firefoxPdfStreamModulePath, 'utf8');
+  assert.equal(firefoxModuleSource, chromeModuleSource, 'Chrome and Firefox must share the same streaming limit behavior');
+
+  const { readPdfResponseBytes } = await import(pdfStreamModulePath);
+  let cancelled = false;
+  const oversizedResponse = {
+    headers: { get: () => '1' },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.enqueue(new Uint8Array([4, 5, 6]));
+      },
+      cancel() { cancelled = true; },
+    }),
+  };
+  await assert.rejects(
+    readPdfResponseBytes(oversizedResponse, { maxBytes: 5 }),
+    /larger than the WebBrain viewer limit/,
+  );
+  assert.equal(cancelled, true, 'the response stream should be cancelled as soon as it exceeds the limit');
+
+  const streamed = await readPdfResponseBytes({
+    headers: { get: () => 'not-a-number' },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([7, 8]));
+        controller.enqueue(new Uint8Array([9]));
+        controller.close();
+      },
+    }),
+  }, { maxBytes: 5 });
+  assert.deepEqual(Array.from(streamed), [7, 8, 9]);
 }
 
 async function testPdfHandlerHardeningReviewFindings() {
   const chromeSource = await readFile(handlerJsPath, 'utf8');
   const firefoxHandlerSource = await readFile(path.join(root, 'src', 'firefox', 'src', 'ui', 'pdf-handler.js'), 'utf8');
   const firefoxBackground = await readFile(path.join(root, 'src', 'firefox', 'src', 'background.js'), 'utf8');
+  const chromeBackground = await readFile(path.join(root, 'src', 'chrome', 'src', 'background.js'), 'utf8');
   // Review nit: Firefox handler must not leak the Chrome error string.
   assert.doesNotMatch(firefoxHandlerSource, /Chrome returned an empty PDF stream/);
   assert.match(firefoxHandlerSource, /Firefox returned an empty PDF stream/);
@@ -161,6 +203,36 @@ async function testPdfHandlerHardeningReviewFindings() {
   assert.match(chromeSource, /anchor\.remove\(\)/);
   assert.match(firefoxHandlerSource, /document\.body\.append\(anchor\)/);
   assert.match(firefoxHandlerSource, /anchor\.remove\(\)/);
+  // Review: PDF.js may transfer the original input buffer, so downloads ask
+  // the loaded document for fresh bytes instead of retaining that buffer.
+  assert.match(chromeSource, /const bytes = await state\.pdf\.getData\(\)/);
+  assert.match(firefoxHandlerSource, /const bytes = await state\.pdf\.getData\(\)/);
+  assert.doesNotMatch(chromeSource, /state\.pdfBytes\s*=\s*bytes/);
+  assert.doesNotMatch(firefoxHandlerSource, /state\.pdfBytes\s*=\s*bytes/);
+  // Review: large documents must materialize every page before print() and
+  // then return to their virtualized render window.
+  for (const source of [chromeSource, firefoxHandlerSource]) {
+    const printIndex = source.indexOf('async function printPdf()');
+    const printBody = source.slice(printIndex, printIndex + 1500);
+    assert.match(printBody, /for \(let pageNumber = 1; pageNumber <= state\.pdf\.numPages; pageNumber\+\+\)/);
+    assert.ok(printBody.indexOf('await renderPage(pageNumber, sequence)') < printBody.lastIndexOf('globalThis.print()'));
+    assert.match(printBody, /await renderAllPages\(\)/);
+    assert.match(source, /state\.requestedPage = state\.currentPage;\s*setPageStatus\(\);\s*scheduleWindowRender\(\);/);
+    assert.match(source, /windowRenderSequence/);
+    assert.match(source, /isCurrentWindowRender\(sequence, windowSequence\)/);
+    assert.match(source, /if \(!state\.pdf \|\| state\.pdf\.numPages <= EAGER_PAGE_LIMIT \|\| state\.printing\) return;/);
+  }
+  // Review: the explicit top-level viewer restores its URL without first
+  // invoking the MIME-child-only fallback API.
+  const fallbackIndex = chromeSource.indexOf('async function fallbackToNative');
+  const fallbackBody = chromeSource.slice(fallbackIndex, fallbackIndex + 1200);
+  assert.ok(fallbackBody.indexOf('tabs?.update') < fallbackBody.indexOf('abortAndFallbackToNativeHandler'));
+  // Review: Chrome uses supported tab/response hooks and Firefox refreshes
+  // the menu that is already open after updating visibility.
+  assert.doesNotMatch(chromeBackground, /contextMenus\?\.onShown/);
+  assert.match(chromeBackground, /tabs\.onUpdated\.addListener/);
+  assert.match(chromeBackground, /syncPdfContextMenuForActiveTab/);
+  assert.match(firefoxBackground, /menuApi\?\.refresh/);
 }
 
 async function testPdfSelectionCarriesItsTabScope() {
@@ -305,6 +377,7 @@ const tests = [
   ['scanned PDF OCR has a bounded handler/background contract', testScannedPdfOcrContract],
   ['OCR normalization keeps bounded normalized text lines', testOcrNormalizationKeepsOnlyBoundedNormalizedLines],
   ['Firefox provides an explicit online PDF viewer fallback', testFirefoxProvidesAnExplicitOnlinePdfViewerFallback],
+  ['PDF response streaming stops at the byte limit', testPdfResponseStreamingStopsAtTheByteLimit],
   ['PDF handler hardening addresses review findings', testPdfHandlerHardeningReviewFindings],
   ['PDF selection submission carries tab scope and original URL', testPdfSelectionCarriesItsTabScope],
   ['PDF selection shortcut runs in the handler frame', testPdfSelectionShortcutRunsInHandlerFrame],

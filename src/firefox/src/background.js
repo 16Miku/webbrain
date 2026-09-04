@@ -18,6 +18,7 @@ import { createEmergencyDownloadController } from './agent/emergency-download-co
 import { createHostedOfflineRagIndexClient } from './agent/offline-rag-index-host.js';
 import { getSharedOfflineSemanticReranker } from './agent/offline-semantic-runtime.js';
 import { EMERGENCY_DOWNLOAD_ACTION } from './ui/emergency-download-client.js';
+import { readPdfResponseBytes } from './agent/pdf-stream.js';
 import {
   compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
@@ -290,14 +291,12 @@ async function fetchPdfDocumentForViewer(url) {
   if (!/^application\/pdf(?:\s*;|$)/i.test(contentType)) {
     throw new Error('The requested URL did not return a PDF document.');
   }
-  const contentLength = Number(response.headers.get('content-length'));
-  if (Number.isFinite(contentLength) && contentLength > maxPdfBytes) {
-    throw new Error('This PDF is larger than the WebBrain viewer limit.');
-  }
-  const bytes = await response.arrayBuffer();
-  if (!bytes.byteLength) throw new Error('Firefox returned an empty PDF stream.');
-  if (bytes.byteLength > maxPdfBytes) throw new Error('This PDF is larger than the WebBrain viewer limit.');
-  return { ok: true, bytes };
+  const bytes = await readPdfResponseBytes(response, {
+    maxBytes: maxPdfBytes,
+    emptyMessage: 'Firefox returned an empty PDF stream.',
+    unreadableMessage: 'Firefox PDF stream could not be read safely.',
+  });
+  return { ok: true, bytes: bytes.buffer };
 }
 
 const contextMenuStorage = createContextMenuStorage(getContextMenuPromptStore);
@@ -371,6 +370,7 @@ async function createContextMenus() {
       id: CONTEXT_MENU_OPEN_PDF_VIEWER_ID,
       title: 'Open PDF with WebBrain',
       contexts: ['page'],
+      visible: false,
     });
   };
 
@@ -1369,11 +1369,16 @@ getContextMenuApi()?.onClicked?.addListener?.((info, tab) => {
   handleContextMenuAsk(info, tab).catch(() => {});
 });
 getContextMenuApi()?.onShown?.addListener?.((info, tab) => {
-  const api = getContextMenuApi();
+  const menuApi = getContextMenuApi();
   const tabId = Number(tab?.id);
   const visible = Number.isInteger(tabId) && tabId >= 0
     && (pdfResponseTabs.has(tabId) || isPdfUrl(info?.pageUrl || tab?.url));
-  api?.update?.(CONTEXT_MENU_OPEN_PDF_VIEWER_ID, { visible });
+  (async () => {
+    try {
+      await menuApi?.update?.(CONTEXT_MENU_OPEN_PDF_VIEWER_ID, { visible });
+      await menuApi?.refresh?.();
+    } catch {}
+  })();
 });
 browser.tabs.onRemoved?.addListener?.((tabId) => pdfResponseTabs.delete(tabId));
 
