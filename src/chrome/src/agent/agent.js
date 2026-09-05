@@ -27779,10 +27779,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { success: false, error: 'read_pdf: no url provided and could not read the active tab URL.' };
         }
 
+        const provider = this._activeProvider(tabId);
+        const supportsPdfPassthrough = providerSupportsPdfPassthrough(provider);
         const result = await extractPdfText(pdfUrl, {
           fromPage: args.fromPage,
           toPage: args.toPage,
           maxChars: args.maxChars,
+          includeBytes: supportsPdfPassthrough,
         });
 
         // Tier 2 — Anthropic Claude PDF passthrough. If the active provider
@@ -27792,13 +27795,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // stringifying the tool result and pushes the document as a
         // follow-up user message (analogous to the `_attachImage` path
         // used by `screenshot`).
-        const provider = this._activeProvider(tabId);
         const bytes = result._pdfBytes;
         delete result._pdfBytes;
 
         if (
           bytes &&
-          providerSupportsPdfPassthrough(provider) &&
+          supportsPdfPassthrough &&
           bytes.length <= PDF_PASSTHROUGH_MAX_BYTES
         ) {
           let docName = result.title || '';

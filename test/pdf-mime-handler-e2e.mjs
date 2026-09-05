@@ -159,6 +159,23 @@ async function main() {
     ));
     assert.equal(apiAvailable, true, `Chrome ${browser.version()} does not expose the public MIME handler options API.`);
 
+    const extraction = await settings.evaluate(async url => {
+      const ensured = await chrome.runtime.sendMessage({
+        target: 'background',
+        action: 'ensure_offscreen_offline_rag_host',
+      });
+      const response = await chrome.runtime.sendMessage({
+        type: 'offscreen-pdf-extract',
+        url,
+        options: { fromPage: 1, toPage: 1, maxChars: 5000 },
+      });
+      return { ensured, response };
+    }, fixture.url);
+    assert.equal(extraction.ensured?.ready, true, 'The background did not create the shared offscreen host.');
+    assert.equal(extraction.response?.ok, true, extraction.response?.error || 'The offscreen PDF parser failed.');
+    assert.equal(extraction.response.result?.totalPages, 1);
+    assert.match(extraction.response.result?.pages?.[0] || '', /WebBrain PDF MIME handler test/);
+
     await waitForNativeHandlerOption(settings, false);
     // Installation initially registers public MIME handlers as enabled. Allow
     // the post-registration reconciliation pass to settle before navigating.

@@ -23,22 +23,8 @@
  * additional context.
  */
 
-let pdfjsModule = null;
-
-/**
- * Lazy-load pdfjs only on first PDF read. The legacy bundle is ~1 MB
- * and the worker is ~2.3 MB; we don't want to pay that startup cost
- * for users who never open a PDF.
- */
-async function getPdfjs() {
-  if (pdfjsModule) return pdfjsModule;
-  pdfjsModule = await import(chrome.runtime.getURL('vendor/pdfjs/pdf.mjs'));
-  // Worker URL must be set BEFORE the first getDocument() call. We resolve
-  // it via runtime.getURL so it works at any extension-id deploy target.
-  pdfjsModule.GlobalWorkerOptions.workerSrc =
-    chrome.runtime.getURL('vendor/pdfjs/pdf.worker.mjs');
-  return pdfjsModule;
-}
+import { ensureOffscreen } from '../offscreen/ensure.js';
+import { PDF_EXTRACTION_MESSAGE, fetchPdfBytes } from './pdf-extraction.js';
 
 /**
  * Cheap byte-array → base64 conversion that doesn't blow the call
@@ -80,41 +66,6 @@ export function isPdfUrl(url) {
 }
 
 /**
- * Fetch the PDF binary from `url`. Returns a Uint8Array.
- * Throws with a helpful message on failure — file:// URLs in Chrome
- * require the user-toggle "Allow access to file URLs" at
- * chrome://extensions, which we explain instead of leaving the
- * agent guessing.
- */
-export async function fetchPdfBytes(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
-  try {
-    let res;
-    try {
-      res = await fetch(url, { credentials: 'include', signal: controller.signal });
-    } catch (e) {
-      if (typeof url === 'string' && url.startsWith('file://')) {
-        throw new Error(
-          'Cannot fetch local PDF from a file:// URL. WebBrain needs ' +
-          'file-URL access in Chrome: open chrome://extensions, find ' +
-          'WebBrain, click "Details", and enable "Allow access to file URLs". ' +
-          'Then reload the PDF tab and try read_pdf again.'
-        );
-      }
-      throw new Error(`PDF fetch failed: ${e.message}`);
-    }
-    if (!res.ok) {
-      throw new Error(`PDF fetch returned HTTP ${res.status} ${res.statusText}`);
-    }
-    const buf = await res.arrayBuffer();
-    return new Uint8Array(buf);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/**
  * Extract text from a PDF.
  *
  * Returns:
@@ -130,91 +81,31 @@ export async function fetchPdfBytes(url) {
  * having to render every page to PNG ourselves.
  */
 export async function extractPdfText(url, opts = {}) {
-  const fromPage = Math.max(1, Math.floor(opts.fromPage || 1));
-  const requestedTo = opts.toPage ? Math.floor(opts.toPage) : fromPage + 49;
-  const maxChars = Math.max(1000, Math.floor(opts.maxChars || 50000));
-
-  const bytes = await fetchPdfBytes(url);
-  const pdfjs = await getPdfjs();
-
-  const loadingTask = pdfjs.getDocument({
-    data: bytes,
-    // Suppress pdfjs's noisy console.warn for "non-embedded font fallback" etc.
-    // We surface real errors via the catch below.
-    verbosity: 0,
-  });
-  const pdf = await loadingTask.promise;
-
-  const totalPages = pdf.numPages;
-  const startPage = Math.min(fromPage, totalPages);
-  const endPage = Math.min(totalPages, Math.max(startPage, requestedTo));
-
-  // Best-effort title from the document's metadata dictionary.
-  let title = '';
-  try {
-    const meta = await pdf.getMetadata();
-    title = meta?.info?.Title || '';
-  } catch { /* ignore */ }
-
-  const pages = [];
-  let charCount = 0;
-  let truncated = false;
-  // Last page actually read, so the truncation notice's "read more with
-  // fromPage" advice resolves to a page that was really covered. Reporting
-  // `endPage` after an early `break` would make a caller resume past the
-  // unread pages and silently lose them.
-  let lastRead = startPage - 1;
-
-  for (let i = startPage; i <= endPage; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-
-    // pdfjs returns text items as a flat array with positional info.
-    // For LLM consumption we just join them with spaces — preserving
-    // exact layout would be more accurate but blows the token budget.
-    const pageText = content.items
-      .map((item) => (item && typeof item.str === 'string' ? item.str : ''))
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (charCount + pageText.length > maxChars) {
-      const remaining = Math.max(0, maxChars - charCount);
-      pages.push(pageText.slice(0, remaining) + '… [page truncated, use read_pdf with fromPage to read more]');
-      lastRead = i;
-      truncated = true;
-      break;
+  await ensureOffscreen();
+  const extraction = chrome.runtime.sendMessage({
+    type: PDF_EXTRACTION_MESSAGE,
+    url,
+    options: {
+      fromPage: opts.fromPage,
+      toPage: opts.toPage,
+      maxChars: opts.maxChars,
+    },
+  }).then((response) => {
+    if (!response?.ok || !response.result) {
+      throw new Error(response?.error || 'The offscreen PDF parser returned no result.');
     }
+    return response.result;
+  });
 
-    pages.push(pageText);
-    charCount += pageText.length;
-    lastRead = i;
-
-    // Free per-page resources — pdfjs caches aggressively otherwise.
-    page.cleanup?.();
-  }
-
-  // Heuristic: <100 chars across the whole requested range almost certainly
-  // means the pages are scanned images with no text layer. Tell the model.
-  const hasExtractableText = pages.join('\n').length > 100;
-
-  return {
-    success: true,
-    title,
-    totalPages,
-    fromPage: startPage,
-    toPage: lastRead,
-    pageCount: pages.length,
-    pages,
-    hasExtractableText,
-    truncated,
-    byteLength: bytes.length,
-    // The raw bytes are kept on `_pdfBytes` for the Tier 2 Claude
-    // passthrough path; the batch loop strips it before stringifying
-    // so the LLM doesn't see ~1 MB of base64 nonsense in the tool
-    // result text.
-    _pdfBytes: bytes,
-  };
+  // Only Claude-compatible providers need the original bytes. Keeping this
+  // fetch in the service worker avoids sending multi-megabyte binary payloads
+  // through extension messaging for every normal PDF read.
+  const rawBytes = opts.includeBytes === true
+    ? fetchPdfBytes(url)
+    : Promise.resolve(null);
+  const [result, bytes] = await Promise.all([extraction, rawBytes]);
+  if (bytes) result._pdfBytes = bytes;
+  return result;
 }
 
 /**
