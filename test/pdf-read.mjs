@@ -16,6 +16,7 @@ async function testMv3PdfExtractionUsesTheSharedOffscreenHost() {
   const host = await readFile(pdfExtractionHostPath, 'utf8');
   const offscreenHtml = await readFile(offscreenHtmlPath, 'utf8');
   assert.match(pdfTools, /ensureOffscreen\(\)/);
+  assert.match(pdfTools, /PDF_EXTRACTION_READY_MESSAGE/);
   assert.match(pdfTools, /type: PDF_EXTRACTION_MESSAGE/);
   assert.doesNotMatch(
     pdfTools,
@@ -24,7 +25,43 @@ async function testMv3PdfExtractionUsesTheSharedOffscreenHost() {
   );
   assert.match(host, /import\(chrome\.runtime\.getURL\('vendor\/pdfjs\/pdf\.mjs'\)\)/);
   assert.match(host, /extractPdfTextFromBytes/);
+  assert.match(host, /isTrustedPdfExtractionSender\(sender\)/);
   assert.match(offscreenHtml, /<script type="module" src="pdf-extraction-host\.js"><\/script>/);
+}
+
+async function testPdfUrlAndSenderBoundaries() {
+  const {
+    fetchPdfBytes,
+    isTrustedPdfExtractionSender,
+    normalizePdfUrl,
+  } = await import(pathToFileURL(pdfExtractionModulePath).href);
+  const runtime = {
+    id: 'trusted-extension',
+    getURL: path => `chrome-extension://trusted-extension/${path}`,
+  };
+  const backgroundUrl = runtime.getURL('src/background.js');
+  assert.equal(isTrustedPdfExtractionSender({ id: runtime.id, url: backgroundUrl }, runtime), true);
+  assert.equal(isTrustedPdfExtractionSender({ id: runtime.id, url: runtime.getURL('src/ui/settings.html') }, runtime), false);
+  assert.equal(isTrustedPdfExtractionSender({ id: runtime.id, url: backgroundUrl, tab: { id: 7 } }, runtime), false);
+  assert.equal(isTrustedPdfExtractionSender({ id: 'other-extension', url: backgroundUrl }, runtime), false);
+
+  assert.equal(normalizePdfUrl('https://example.test/document.pdf'), 'https://example.test/document.pdf');
+  assert.equal(normalizePdfUrl('file:///tmp/document.pdf'), 'file:///tmp/document.pdf');
+  assert.throws(() => normalizePdfUrl('data:application/pdf;base64,JVBERg=='), /must use http.*https.*file/i);
+  assert.throws(() => normalizePdfUrl('javascript:alert(1)'), /must use http.*https.*file/i);
+
+  let fetchCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error('disallowed URL reached fetch');
+  };
+  try {
+    await assert.rejects(fetchPdfBytes('chrome-extension://trusted-extension/private.pdf'), /must use http.*https.*file/i);
+    assert.equal(fetchCalls, 0, 'Disallowed schemes must be rejected before fetch.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 async function testPdfExtractionPreservesBoundedPageMetadataAndTruncation() {
@@ -73,11 +110,17 @@ async function testPdfFacadeRequestsOffscreenExtractionAndPreservesClaudeBytes()
   const originalChrome = globalThis.chrome;
   const originalFetch = globalThis.fetch;
   const messages = [];
+  let readyAttempts = 0;
+  let fetchCalls = 0;
   globalThis.chrome = {
     offscreen: { hasDocument: async () => true },
     runtime: {
       sendMessage: async message => {
         messages.push(message);
+        if (message.type === 'offscreen-pdf-extract-ready') {
+          readyAttempts += 1;
+          return readyAttempts < 3 ? undefined : { ok: true, ready: true };
+        }
         return {
           ok: true,
           result: {
@@ -91,39 +134,46 @@ async function testPdfFacadeRequestsOffscreenExtractionAndPreservesClaudeBytes()
             hasExtractableText: true,
             truncated: false,
             byteLength: 3,
+            ...(message.options?.includeBase64 ? { _pdfBase64: 'BAUG' } : {}),
           },
         };
       },
     },
   };
-  globalThis.fetch = async () => new Response(new Uint8Array([4, 5, 6]), {
-    status: 200,
-    headers: { 'content-type': 'application/pdf' },
-  });
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error('The service-worker facade must not fetch the PDF.');
+  };
   try {
-    const { extractPdfText } = await import(pathToFileURL(pdfToolsModulePath).href);
+    const { buildClaudeDocumentBlock, extractPdfText } = await import(pathToFileURL(pdfToolsModulePath).href);
     const plainResult = await extractPdfText('https://example.test/document.pdf', {
       fromPage: 2,
       toPage: 4,
       maxChars: 5000,
     });
     assert.equal(plainResult.title, 'Facade fixture');
-    assert.equal(plainResult._pdfBytes, undefined);
+    assert.equal(plainResult._pdfBase64, undefined);
 
     const claudeResult = await extractPdfText('https://example.test/document.pdf', {
-      includeBytes: true,
+      includeDocument: true,
     });
-    assert.deepEqual(Array.from(claudeResult._pdfBytes), [4, 5, 6]);
+    assert.equal(claudeResult._pdfBase64, 'BAUG');
+    assert.equal(buildClaudeDocumentBlock(claudeResult._pdfBase64, 'fixture.pdf').source.data, 'BAUG');
+    assert.equal(fetchCalls, 0);
     assert.deepEqual(messages, [
+      { type: 'offscreen-pdf-extract-ready' },
+      { type: 'offscreen-pdf-extract-ready' },
+      { type: 'offscreen-pdf-extract-ready' },
       {
         type: 'offscreen-pdf-extract',
         url: 'https://example.test/document.pdf',
-        options: { fromPage: 2, toPage: 4, maxChars: 5000 },
+        options: { fromPage: 2, toPage: 4, maxChars: 5000, includeBase64: false },
       },
+      { type: 'offscreen-pdf-extract-ready' },
       {
         type: 'offscreen-pdf-extract',
         url: 'https://example.test/document.pdf',
-        options: { fromPage: undefined, toPage: undefined, maxChars: undefined },
+        options: { fromPage: undefined, toPage: undefined, maxChars: undefined, includeBase64: true },
       },
     ]);
   } finally {
@@ -135,8 +185,9 @@ async function testPdfFacadeRequestsOffscreenExtractionAndPreservesClaudeBytes()
 
 const tests = [
   ['MV3 PDF extraction uses the shared offscreen host', testMv3PdfExtractionUsesTheSharedOffscreenHost],
+  ['PDF extraction rejects unsafe URLs and untrusted senders', testPdfUrlAndSenderBoundaries],
   ['PDF extraction preserves bounded page metadata and truncation', testPdfExtractionPreservesBoundedPageMetadataAndTruncation],
-  ['PDF facade delegates extraction and preserves Claude bytes', testPdfFacadeRequestsOffscreenExtractionAndPreservesClaudeBytes],
+  ['PDF facade waits for host readiness and reuses Claude bytes', testPdfFacadeRequestsOffscreenExtractionAndPreservesClaudeBytes],
 ];
 
 let failed = 0;

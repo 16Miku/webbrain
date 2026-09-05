@@ -7,16 +7,54 @@
  */
 
 export const PDF_EXTRACTION_MESSAGE = 'offscreen-pdf-extract';
+export const PDF_EXTRACTION_READY_MESSAGE = 'offscreen-pdf-extract-ready';
+export const PDF_PASSTHROUGH_MAX_BYTES = 16 * 1024 * 1024;
+
+const ALLOWED_PDF_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
+const BASE64_MAX_INPUT_BYTES = 32 * 1024 * 1024;
+
+export function normalizePdfUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value || '').trim());
+  } catch {
+    throw new Error('PDF extraction requires a valid URL.');
+  }
+  if (!ALLOWED_PDF_PROTOCOLS.has(url.protocol)) {
+    throw new Error('PDF URL must use http:, https:, or file:.');
+  }
+  return url.href;
+}
+
+export function isTrustedPdfExtractionSender(sender, runtime = globalThis.chrome?.runtime) {
+  if (!runtime?.id || typeof runtime.getURL !== 'function') return false;
+  return sender?.id === runtime.id
+    && sender?.tab == null
+    && sender?.url === runtime.getURL('src/background.js');
+}
+
+export function bytesToBase64(bytes) {
+  if (bytes.length > BASE64_MAX_INPUT_BYTES) {
+    throw new Error(`PDF too large for base64 conversion (${bytes.length} bytes, cap ${BASE64_MAX_INPUT_BYTES}).`);
+  }
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
 
 export async function fetchPdfBytes(url, { timeoutMs = 60000 } = {}) {
+  const normalizedUrl = normalizePdfUrl(url);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     let response;
     try {
-      response = await fetch(url, { credentials: 'include', signal: controller.signal });
+      response = await fetch(normalizedUrl, { credentials: 'include', signal: controller.signal });
     } catch (error) {
-      if (typeof url === 'string' && url.startsWith('file://')) {
+      if (normalizedUrl.startsWith('file:')) {
         throw new Error(
           'Cannot fetch local PDF from a file:// URL. WebBrain needs ' +
           'file-URL access in Chrome: open chrome://extensions, find ' +
@@ -40,6 +78,10 @@ export async function extractPdfTextFromBytes(pdfjs, bytes, opts = {}) {
   const requestedTo = opts.toPage ? Math.floor(opts.toPage) : fromPage + 49;
   const maxChars = Math.max(1000, Math.floor(opts.maxChars || 50000));
 
+  // PDF.js may transfer this buffer to its worker, detaching the caller's
+  // Uint8Array. Capture the length before getDocument() so metadata remains
+  // accurate after parsing.
+  const byteLength = bytes.length;
   const loadingTask = pdfjs.getDocument({
     data: bytes,
     verbosity: 0,
@@ -95,6 +137,6 @@ export async function extractPdfTextFromBytes(pdfjs, bytes, opts = {}) {
     pages,
     hasExtractableText: pages.join('\n').length > 100,
     truncated,
-    byteLength: bytes.length,
+    byteLength,
   };
 }

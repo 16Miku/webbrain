@@ -24,25 +24,37 @@
  */
 
 import { ensureOffscreen } from '../offscreen/ensure.js';
-import { PDF_EXTRACTION_MESSAGE, fetchPdfBytes } from './pdf-extraction.js';
+import {
+  PDF_EXTRACTION_MESSAGE,
+  PDF_EXTRACTION_READY_MESSAGE,
+  PDF_PASSTHROUGH_MAX_BYTES,
+  bytesToBase64,
+} from './pdf-extraction.js';
 
-/**
- * Cheap byte-array → base64 conversion that doesn't blow the call
- * stack on multi-MB PDFs. fromCharCode.apply has a per-call argument
- * limit (~64k in V8), so we chunk.
- */
-const BASE64_MAX_INPUT_BYTES = 32 * 1024 * 1024; // 32 MB safety cap
+// chrome.offscreen.createDocument() resolves when the document exists, not
+// when its module scripts have registered their listeners. Probe the PDF host
+// for up to one second so the first read after a cold start cannot race it.
+const PDF_HOST_READY_ATTEMPTS = 40;
+const PDF_HOST_READY_RETRY_MS = 25;
 
-function bytesToBase64(bytes) {
-  if (bytes.length > BASE64_MAX_INPUT_BYTES) {
-    throw new Error(`PDF too large for base64 conversion (${bytes.length} bytes, cap ${BASE64_MAX_INPUT_BYTES}).`);
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForPdfExtractionHost() {
+  let lastError = null;
+  for (let attempt = 0; attempt < PDF_HOST_READY_ATTEMPTS; attempt++) {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: PDF_EXTRACTION_READY_MESSAGE });
+      if (response?.ready === true) return;
+      if (response?.error) lastError = new Error(response.error);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt + 1 < PDF_HOST_READY_ATTEMPTS) await wait(PDF_HOST_READY_RETRY_MS);
   }
-  let bin = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  }
-  return btoa(bin);
+  const detail = lastError?.message ? ` ${lastError.message}` : '';
+  throw new Error(`The offscreen PDF parser did not become ready.${detail}`);
 }
 
 /**
@@ -82,30 +94,21 @@ export function isPdfUrl(url) {
  */
 export async function extractPdfText(url, opts = {}) {
   await ensureOffscreen();
-  const extraction = chrome.runtime.sendMessage({
+  await waitForPdfExtractionHost();
+  const response = await chrome.runtime.sendMessage({
     type: PDF_EXTRACTION_MESSAGE,
     url,
     options: {
       fromPage: opts.fromPage,
       toPage: opts.toPage,
       maxChars: opts.maxChars,
+      includeBase64: opts.includeDocument === true,
     },
-  }).then((response) => {
-    if (!response?.ok || !response.result) {
-      throw new Error(response?.error || 'The offscreen PDF parser returned no result.');
-    }
-    return response.result;
   });
-
-  // Only Claude-compatible providers need the original bytes. Keeping this
-  // fetch in the service worker avoids sending multi-megabyte binary payloads
-  // through extension messaging for every normal PDF read.
-  const rawBytes = opts.includeBytes === true
-    ? fetchPdfBytes(url)
-    : Promise.resolve(null);
-  const [result, bytes] = await Promise.all([extraction, rawBytes]);
-  if (bytes) result._pdfBytes = bytes;
-  return result;
+  if (!response?.ok || !response.result) {
+    throw new Error(response?.error || 'The offscreen PDF parser returned no result.');
+  }
+  return response.result;
 }
 
 /**
@@ -127,21 +130,24 @@ export function providerSupportsPdfPassthrough(provider) {
 }
 
 /**
- * Build the `document` content block for the Anthropic Messages API
- * from raw PDF bytes. Caller is responsible for size-checking — Claude's
- * cap is ~32 MB base64 / ~24 MB binary as of writing, but we cap
- * lower (16 MB binary) to leave room for the rest of the conversation.
+ * Build the `document` content block for the Anthropic Messages API from
+ * raw PDF bytes or base64 produced from those same bytes. Caller is
+ * responsible for size-checking — Claude's cap is ~32 MB base64 / ~24 MB
+ * binary as of writing, but we cap lower (16 MB binary) to leave room for
+ * the rest of the conversation.
  */
-export function buildClaudeDocumentBlock(bytes, name) {
+export function buildClaudeDocumentBlock(bytesOrBase64, name) {
   return {
     type: 'document',
     source: {
       type: 'base64',
       media_type: 'application/pdf',
-      data: bytesToBase64(bytes),
+      data: typeof bytesOrBase64 === 'string'
+        ? bytesOrBase64
+        : bytesToBase64(bytesOrBase64),
     },
     ...(name ? { title: name } : {}),
   };
 }
 
-export const PDF_PASSTHROUGH_MAX_BYTES = 16 * 1024 * 1024; // 16 MB
+export { PDF_PASSTHROUGH_MAX_BYTES };

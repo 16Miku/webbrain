@@ -27785,23 +27785,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           fromPage: args.fromPage,
           toPage: args.toPage,
           maxChars: args.maxChars,
-          includeBytes: supportsPdfPassthrough,
+          includeDocument: supportsPdfPassthrough,
         });
 
         // Tier 2 — Anthropic Claude PDF passthrough. If the active provider
         // can natively consume PDFs as a `document` content block AND the
-        // file fits under the size cap, attach the raw bytes via
-        // `_attachDocument`. The batch loop strips this field before
+        // file fits under the size cap, attach base64 encoded from the same
+        // bytes used for text extraction via `_attachDocument`. The batch
+        // loop strips this private field before
         // stringifying the tool result and pushes the document as a
         // follow-up user message (analogous to the `_attachImage` path
         // used by `screenshot`).
-        const bytes = result._pdfBytes;
-        delete result._pdfBytes;
+        const pdfBase64 = result._pdfBase64;
+        delete result._pdfBase64;
 
         if (
-          bytes &&
+          pdfBase64 &&
           supportsPdfPassthrough &&
-          bytes.length <= PDF_PASSTHROUGH_MAX_BYTES
+          result.byteLength <= PDF_PASSTHROUGH_MAX_BYTES
         ) {
           let docName = result.title || '';
           if (!docName) {
@@ -27810,11 +27811,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               docName = decodeURIComponent(u.pathname.split('/').pop() || 'document.pdf');
             } catch { docName = 'document.pdf'; }
           }
-          const docBlock = buildClaudeDocumentBlock(bytes, docName);
+          const docBlock = buildClaudeDocumentBlock(pdfBase64, docName);
           return {
             ...result,
             method: 'pdf_text+claude_document',
-            description: `PDF text extracted (${result.pageCount} pages); raw bytes also attached as Claude document block for full-fidelity reading.`,
+            description: `PDF text extracted (${result.pageCount} pages); the same PDF bytes are also attached as a Claude document block for full-fidelity reading.`,
             _attachDocument: docBlock,
           };
         }
