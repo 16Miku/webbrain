@@ -45,10 +45,34 @@ async function testPdfUrlAndSenderBoundaries() {
   assert.equal(isTrustedPdfExtractionSender({ id: runtime.id, url: backgroundUrl, tab: { id: 7 } }, runtime), false);
   assert.equal(isTrustedPdfExtractionSender({ id: 'other-extension', url: backgroundUrl }, runtime), false);
 
+  // The trusted path follows the manifest, so renaming the service worker
+  // entry cannot silently start rejecting every extraction.
+  const renamedRuntime = {
+    ...runtime,
+    getManifest: () => ({ background: { service_worker: 'src/sw/main.js' } }),
+  };
+  assert.equal(isTrustedPdfExtractionSender(
+    { id: runtime.id, url: renamedRuntime.getURL('src/sw/main.js') }, renamedRuntime), true);
+  assert.equal(isTrustedPdfExtractionSender(
+    { id: runtime.id, url: backgroundUrl }, renamedRuntime), false);
+
   assert.equal(normalizePdfUrl('https://example.test/document.pdf'), 'https://example.test/document.pdf');
   assert.equal(normalizePdfUrl('file:///tmp/document.pdf'), 'file:///tmp/document.pdf');
   assert.throws(() => normalizePdfUrl('data:application/pdf;base64,JVBERg=='), /must use http.*https.*file/i);
   assert.throws(() => normalizePdfUrl('javascript:alert(1)'), /must use http.*https.*file/i);
+
+  // A PDF tab owned by the native MIME handler reports our viewer page as its
+  // URL; read_pdf falls back to that, so the real URL must be unwrapped.
+  const handlerUrl = `${runtime.getURL('src/ui/pdf-handler.html')}?url=${encodeURIComponent('https://example.test/paper.pdf')}&tabId=7`;
+  assert.equal(normalizePdfUrl(handlerUrl, runtime), 'https://example.test/paper.pdf');
+  assert.throws(
+    () => normalizePdfUrl(`${runtime.getURL('src/ui/settings.html')}?url=${encodeURIComponent('https://example.test/x.pdf')}`, runtime),
+    /must use http.*https.*file/i,
+    'Only the PDF handler page may unwrap an inner URL.');
+  assert.throws(
+    () => normalizePdfUrl(`${runtime.getURL('src/ui/pdf-handler.html')}?url=${encodeURIComponent('javascript:alert(1)')}`, runtime),
+    /must use http.*https.*file/i,
+    'An unwrapped inner URL must still pass the scheme allowlist.');
 
   let fetchCalls = 0;
   const originalFetch = globalThis.fetch;

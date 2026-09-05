@@ -179,7 +179,15 @@ async function main() {
     assert.equal(fixture.requestCount(), 0, 'An unauthorized PDF extraction request reached the network.');
 
     const backgroundUrl = `chrome-extension://${extensionId}/src/background.js`;
-    const background = context.serviceWorkers().find(worker => worker.url() === backgroundUrl);
+    // serviceWorkers() is a snapshot: Playwright may not have observed the
+    // worker yet, and Chrome can idle it out during the steps above.
+    let background = context.serviceWorkers().find(worker => worker.url() === backgroundUrl);
+    if (!background) {
+      background = await context.waitForEvent('serviceworker', {
+        predicate: worker => worker.url() === backgroundUrl,
+        timeout: 10000,
+      }).catch(() => null);
+    }
     assert.ok(background, 'The WebBrain service worker was not available for the PDF extraction test.');
     const ready = await background.evaluate(async () => chrome.runtime.sendMessage({
       type: 'offscreen-pdf-extract-ready',

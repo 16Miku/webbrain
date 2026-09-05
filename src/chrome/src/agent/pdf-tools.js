@@ -44,13 +44,25 @@ function wait(ms) {
 async function waitForPdfExtractionHost() {
   let lastError = null;
   for (let attempt = 0; attempt < PDF_HOST_READY_ATTEMPTS; attempt++) {
+    let refusal = null;
     try {
       const response = await chrome.runtime.sendMessage({ type: PDF_EXTRACTION_READY_MESSAGE });
       if (response?.ready === true) return;
-      if (response?.error) lastError = new Error(response.error);
+      // An explicit error means the host answered and refused. Retrying cannot
+      // change the outcome, and reporting it as "not ready" sends whoever is
+      // debugging to the wrong subsystem.
+      if (response?.error) refusal = new Error(response.error);
     } catch (error) {
+      // No listener: the document went away between ensureOffscreen() seeing it
+      // and this probe. Recreate it rather than retrying into a dead channel.
       lastError = error;
+      try {
+        await ensureOffscreen();
+      } catch (ensureError) {
+        lastError = ensureError;
+      }
     }
+    if (refusal) throw refusal;
     if (attempt + 1 < PDF_HOST_READY_ATTEMPTS) await wait(PDF_HOST_READY_RETRY_MS);
   }
   const detail = lastError?.message ? ` ${lastError.message}` : '';

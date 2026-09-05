@@ -11,26 +11,58 @@ export const PDF_EXTRACTION_READY_MESSAGE = 'offscreen-pdf-extract-ready';
 export const PDF_PASSTHROUGH_MAX_BYTES = 16 * 1024 * 1024;
 
 const ALLOWED_PDF_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
+const PDF_HANDLER_PAGE = 'src/ui/pdf-handler.html';
 const BASE64_MAX_INPUT_BYTES = 32 * 1024 * 1024;
 
-export function normalizePdfUrl(value) {
+// When the native MIME handler owns a PDF tab, the tab URL is our own viewer
+// page wrapping the real URL in ?url=. read_pdf falls back to the tab URL when
+// called without an explicit one, so unwrap it before the scheme check.
+function unwrapPdfHandlerUrl(url, runtime = globalThis.chrome?.runtime) {
+  if (url.protocol !== 'chrome-extension:' && url.protocol !== 'moz-extension:') return url;
+  if (typeof runtime?.getURL !== 'function') return url;
+  let handler;
+  try {
+    handler = new URL(runtime.getURL(PDF_HANDLER_PAGE));
+  } catch {
+    return url;
+  }
+  if (url.origin !== handler.origin || url.pathname !== handler.pathname) return url;
+  const inner = url.searchParams.get('url');
+  if (!inner) return url;
+  try {
+    return new URL(inner);
+  } catch {
+    return url;
+  }
+}
+
+export function normalizePdfUrl(value, runtime = globalThis.chrome?.runtime) {
   let url;
   try {
     url = new URL(String(value || '').trim());
   } catch {
     throw new Error('PDF extraction requires a valid URL.');
   }
+  url = unwrapPdfHandlerUrl(url, runtime);
   if (!ALLOWED_PDF_PROTOCOLS.has(url.protocol)) {
     throw new Error('PDF URL must use http:, https:, or file:.');
   }
   return url.href;
 }
 
+// Derived from the manifest rather than hardcoded: a rename of the service
+// worker entry would otherwise reject every extraction with a "not ready"
+// error that points at the wrong subsystem.
+function backgroundScriptPath(runtime) {
+  const manifest = typeof runtime?.getManifest === 'function' ? runtime.getManifest() : null;
+  return manifest?.background?.service_worker || 'src/background.js';
+}
+
 export function isTrustedPdfExtractionSender(sender, runtime = globalThis.chrome?.runtime) {
   if (!runtime?.id || typeof runtime.getURL !== 'function') return false;
   return sender?.id === runtime.id
     && sender?.tab == null
-    && sender?.url === runtime.getURL('src/background.js');
+    && sender?.url === runtime.getURL(backgroundScriptPath(runtime));
 }
 
 export function bytesToBase64(bytes) {

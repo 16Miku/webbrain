@@ -35,17 +35,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     const url = normalizePdfUrl(message.url);
     const bytes = await fetchPdfBytes(url);
-    // PDF.js can transfer and detach the input buffer. Encode the optional
-    // Claude document before parsing so text and document use the same fetch.
-    // The ~4/3 base64 message overhead is intentional to preserve that
-    // single-fetch, byte-identical guarantee.
-    const pdfBase64 = message.options?.includeBase64 === true
-      && bytes.length <= PDF_PASSTHROUGH_MAX_BYTES
-      ? bytesToBase64(bytes)
-      : '';
+    // PDF.js can transfer and detach the input buffer, so keep a copy of the
+    // optional Claude document taken before parsing: text and document then
+    // come from the same fetch. The ~4/3 base64 message overhead is
+    // intentional to preserve that single-fetch, byte-identical guarantee.
+    // The encode itself is deferred until parsing succeeds, so a corrupt PDF
+    // that throws in getDocument() does not pay for a string nobody reads.
+    const wantsBase64 = message.options?.includeBase64 === true
+      && bytes.length <= PDF_PASSTHROUGH_MAX_BYTES;
+    const passthrough = wantsBase64 ? bytes.slice() : null;
     const pdfjs = await getPdfjs();
     const result = await extractPdfTextFromBytes(pdfjs, bytes, message.options || {});
-    if (pdfBase64) result._pdfBase64 = pdfBase64;
+    if (passthrough) result._pdfBase64 = bytesToBase64(passthrough);
     sendResponse({ ok: true, result });
   })().catch((error) => {
     sendResponse({ ok: false, error: error?.message || String(error) });
