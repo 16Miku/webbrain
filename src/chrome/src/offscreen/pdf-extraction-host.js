@@ -37,6 +37,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const bytes = await fetchPdfBytes(url);
     // PDF.js can transfer and detach the input buffer. Encode the optional
     // Claude document before parsing so text and document use the same fetch.
+    // The ~4/3 base64 message overhead is intentional to preserve that
+    // single-fetch, byte-identical guarantee.
     const pdfBase64 = message.options?.includeBase64 === true
       && bytes.length <= PDF_PASSTHROUGH_MAX_BYTES
       ? bytesToBase64(bytes)
