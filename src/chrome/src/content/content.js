@@ -3969,9 +3969,10 @@
     return true;
   }
 
-  function _setFieldValueMatches(actual, previous, text, clear, normalizeNewlines = false) {
+  function _setFieldValueMatches(actual, previous, text, clear, normalizeNewlines = false, semanticNewlines = false) {
     const expected = clear ? text : previous + text;
     if (!normalizeNewlines) return actual === expected;
+    if (semanticNewlines) return String(actual).replace(/\r\n?/g, '\n') === String(expected).replace(/\r\n?/g, '\n');
     if (clear) return _contentEditableValueMatches(actual, expected);
     const normalize = value => String(value).replace(/\r\n?/g, '\n');
     const actualText = normalize(actual);
@@ -3985,8 +3986,24 @@
     return _contentEditableValueMatches(`\u0000${actualSuffix}`, `\u0000${text}`);
   }
 
+  function readProseMirrorText(el) {
+    if (!el?.isContentEditable || !el.classList?.contains('ProseMirror')) return null;
+    // Paragraphs are document line breaks, not innerText's visual spacing.
+    // ProseMirror's final BR is a caret placeholder, not another hard break.
+    const read = node => {
+      if (node.nodeType === 3) return node.nodeValue || '';
+      if (node.nodeType !== 1) return '';
+      if (node.tagName === 'BR') return node.classList?.contains('ProseMirror-trailingBreak') ? '' : '\n';
+      return Array.from(node.childNodes).map(read).join('');
+    };
+    const children = Array.from(el.childNodes);
+    if (!children.every(node => node.nodeType === 1 && node.tagName === 'P')) return null;
+    return children.map(read).join('\n');
+  }
+
   function _editableTextValue(el) {
-    return typeof el.innerText === 'string' ? el.innerText : (el.textContent || '');
+    const semantic = readProseMirrorText(el);
+    return semantic !== null ? semantic : (typeof el.innerText === 'string' ? el.innerText : (el.textContent || ''));
   }
 
   // Pick the single commit path for set_field({submit:true}). Synthetic
@@ -6344,11 +6361,11 @@
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
           const verified = selectExpected !== null
             ? actual === selectExpected
-            : _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable);
+            : _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable, readProseMirrorText(el) !== null);
           const fallbackAttempted = false;
           if (!verified) {
             return failure(
-              'The field value did not exactly match the requested text after the page settled. Re-read the field and retry with a fresh ref_id.',
+              'The field value did not exactly match the requested text after the page settled. Repeat the original replacement text and target for readback-only recovery, or restore the editor before another write.',
               {
                 method,
                 ref_id,
@@ -6500,7 +6517,7 @@
             );
           }
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-          const verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable);
+          const verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable, readProseMirrorText(el) !== null);
           const fallbackAttempted = false;
           let nativeSubmitAttempted = false;
           let submissionOutcomeUnknown = false;
@@ -6632,7 +6649,7 @@
           }
           if (!verified) {
             return failure(
-              'The field value did not exactly match the requested text after the page settled. Re-read the field and retry with a fresh ref_id.',
+              'The field value did not exactly match the requested text after the page settled. Repeat the original replacement text and target for readback-only recovery, or restore the editor before another write.',
               {
                 method: 'set_field',
                 ref_id,
@@ -6735,7 +6752,7 @@
                   expectedPrefix,
                   verifiesAppend ? appendText : expected,
                   !verifiesAppend,
-                  el.isContentEditable,
+                  el.isContentEditable, readProseMirrorText(el) !== null,
                 ),
             actual: actual.slice(0, 200),
             fieldMeta: _fieldMeta(el),
@@ -6798,7 +6815,7 @@
           return {
             success: true,
             ...(typeof expected === 'string' ? {
-              verified: _setFieldValueMatches(value, '', expected, true, el.isContentEditable),
+              verified: _setFieldValueMatches(value, '', expected, true, el.isContentEditable, readProseMirrorText(el) !== null),
             } : {}),
             valueLength: value.length,
             valueSha256,

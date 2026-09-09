@@ -18144,20 +18144,43 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return !!leftIdentity && leftIdentity === rightIdentity;
   }
 
-  _socialSnapshotMatchesAction(action, snapshot) {
-    if (!snapshot?.complete || snapshot.posts?.length !== action.posts.length || !snapshot.account) return false;
+  _socialSnapshotActionIssues(action, snapshot) {
+    const issues = [];
+    if (!snapshot?.complete) issues.push({ reason: 'composer_incomplete' });
+    if (snapshot?.posts?.length !== action.posts.length) issues.push({ reason: 'post_count_mismatch' });
     const workflow = { adapterName: action.platform };
-    const account = this._workflowSocialPublicationAccountIdentity(workflow, snapshot.account);
-    if (!account || (action.account && account !== this._workflowSocialPublicationAccountIdentity(workflow, action.account))) return false;
-    return action.posts.every((post, i) => {
-      const observed = snapshot.posts[i];
-      return typeof observed?.bodyText === 'string'
-        && observed.bodyText.length <= 25000
-        && (post.body.kind === 'compose' || exactPublicationText(post.body.value) === exactPublicationText(observed.bodyText))
-        && publicationMediaMatches(post.media, observed)
-        && observed.context?.kind === post.context.kind
-        && (post.context.target === null || this._sameSocialPublicationResource(action.platform, post.context.target, observed.context.target));
+    const account = this._workflowSocialPublicationAccountIdentity(workflow, snapshot?.account);
+    if (!account) issues.push({ reason: 'account_unobserved' });
+    else if (action.account && account !== this._workflowSocialPublicationAccountIdentity(workflow, action.account)) {
+      issues.push({ reason: 'account_mismatch' });
+    }
+    action.posts.forEach((post, postIndex) => {
+      const observed = snapshot?.posts?.[postIndex];
+      if (typeof observed?.bodyText !== 'string' || observed.bodyText.length > 25000) {
+        issues.push({ reason: 'body_unobserved', postIndex });
+      } else if (post.body.kind !== 'compose') {
+        const expected = exactPublicationText(post.body.value);
+        const actual = exactPublicationText(observed.bodyText);
+        if (expected !== actual) {
+          let offset = 0;
+          while (offset < expected.length && offset < actual.length && expected[offset] === actual[offset]) offset++;
+          issues.push({ reason: 'body_mismatch', postIndex,
+            expectedLength: expected.length, observedLength: actual.length,
+            firstDifference: { offset, expectedCodePoint: expected.codePointAt(offset) ?? null,
+              observedCodePoint: actual.codePointAt(offset) ?? null } });
+        }
+      }
+      if (!publicationMediaMatches(post.media, observed)) issues.push({ reason: 'media_mismatch', postIndex });
+      if (observed?.context?.kind !== post.context.kind
+          || (post.context.target !== null && !this._sameSocialPublicationResource(action.platform, post.context.target, observed?.context?.target))) {
+        issues.push({ reason: 'context_mismatch', postIndex });
+      }
     });
+    return issues;
+  }
+
+  _socialSnapshotMatchesAction(action, snapshot) {
+    return this._socialSnapshotActionIssues(action, snapshot).length === 0;
   }
 
   async _socialPublicationPreSubmitBlock(tabId, name, args, detected, provider) {
@@ -18193,10 +18216,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return blocked(social?.error || 'This publication is not authorized, its prerequisite has not completed, or a previous dispatch still needs verification. Clarify unresolved intent; never repeat an uncertain publication.');
     }
     const snapshot = this._socialPublicationSnapshot(guard, detected.publicationSnapshot);
-    if (!this._socialSnapshotMatchesAction(action, snapshot)
-        || !Array.isArray(detected.publicationResourceUrls)
-        || detected.publicationResourceUrlsComplete !== true) {
-      return blocked('The complete composer, intended account, exact payload, media, context, and pre-publication baseline must be observed before publishing.');
+    const issues = this._socialSnapshotActionIssues(action, snapshot);
+    if (!Array.isArray(detected.publicationResourceUrls) || detected.publicationResourceUrlsComplete !== true) {
+      issues.push({ reason: 'baseline_incomplete' });
+    }
+    if (issues.length) {
+      return { ...blocked('Publication preflight failed: ' + [...new Set(issues.map(issue => issue.reason))].join(', ')
+          + '. Resolve publicationValidation before retrying. For body_mismatch, use the exact contract body; preserve every space and line break. A pending text write must first be verified or restored.'),
+        publicationValidation: { issues } };
     }
     const key = this._sha256TextSync(JSON.stringify({ contract: social.key, action, snapshot, pageUrl }));
     if (social.deniedAuditKey === key) return blocked('This unchanged publication did not pass authorization. Use publicationAudit to resolve the stated issue through clarify; do not rewrite a matching draft or retry another click target.');
@@ -22803,7 +22830,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return { identity: '', complete: false };
     };
+    function readProseMirrorText(el) {
+      if (!el?.isContentEditable || !el.classList?.contains('ProseMirror')) return null;
+      // Paragraphs are document line breaks, not innerText's visual spacing.
+      // ProseMirror's final BR is a caret placeholder, not another hard break.
+      const read = node => {
+        if (node.nodeType === 3) return node.nodeValue || '';
+        if (node.nodeType !== 1) return '';
+        if (node.tagName === 'BR') return node.classList?.contains('ProseMirror-trailingBreak') ? '' : '\n';
+        return Array.from(node.childNodes).map(read).join('');
+      };
+      const children = Array.from(el.childNodes);
+      if (!children.every(node => node.nodeType === 1 && node.tagName === 'P')) return null;
+      return children.map(read).join('\n');
+    }
     const publicationEditorText = editor => {
+      const semantic = readProseMirrorText(editor);
+      if (semantic !== null) return semantic;
       if (typeof editor.value === 'string') return editor.value;
       const read = node => {
         if (node.nodeType === 3) return node.nodeValue || '';
@@ -23346,6 +23389,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             blueskyComposerLauncher.getAttribute?.('aria-label') || blueskyComposerLauncher.textContent || '',
           ))) {
         return { isSubmit: false, host, url, resolvedNonSubmitTarget: true };
+      }
+      // Bluesky's Cancel/Keep editing controls have no test IDs. Resolve
+      // the actual modal button, reject conflicting publish labels/markers,
+      // and exempt only these reversible composer recovery controls.
+      const recoveryControl = target?.closest?.('button,[role="button"]');
+      const recoveryModal = recoveryControl?.closest?.('dialog,[role="dialog"],[role="alertdialog"]');
+      if (socialPublishAdapterName() === 'bluesky' && recoveryModal
+          && ['click', 'click_ax', 'iframe_click'].includes(toolName)
+          && !recoveryControl.form && !recoveryControl.closest?.('form')
+          && !recoveryControl.hasAttribute?.('data-testid')
+          && String(recoveryControl.getAttribute?.('type') || 'button').toLowerCase() === 'button') {
+        const labels = [recoveryControl.textContent, recoveryControl.getAttribute?.('aria-label')]
+          .map(value => compact(value || '')).filter(Boolean);
+        const label = labels[0];
+        const composer = recoveryModal.querySelector('textarea,[contenteditable="true"],[role="textbox"]');
+        if (labels.length && labels.every(value => value.toLowerCase() === label.toLowerCase())
+            && ((/^cancel$/i.test(label) && composer) || /^keep editing$/i.test(label))) {
+          return { isSubmit: false, host, url, resolvedNonSubmitTarget: true };
+        }
       }
       if (target && ['click', 'click_ax', 'iframe_click'].includes(toolName)
           && target.closest?.('[data-testid="SideNav_NewTweet_Button"],[data-testid="FloatingActionButton"],[data-testid="composeFAB"],[data-testid="addButton"],[data-testid="attachments"],[data-testid="fileInput"],[data-testid="app-bar-back"],[data-testid="closeButton"],button[aria-label="Close"]')) {
@@ -25184,6 +25246,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && debt.expectedLength === text.length
       && !!expectedSha256
       && debt.expectedSha256 === expectedSha256;
+    // A correction may differ from the earlier replacement (for example a
+    // missing space in an exact publication body). First prove that earlier
+    // write landed in this same document/field, using its stored digest. This
+    // is a read only check; an unverified or partial value never permits retry.
+    if (!sameReplacement && replacement && debt.replacesValue === true
+        && !target.ambiguous && debt.key === target.key && debt.documentToken) {
+      const original = await this._textMutationValueDigest(tabId, target);
+      if (original?.documentToken === debt.documentToken
+          && original.valueLength === debt.expectedLength
+          && original.valueSha256 === debt.expectedSha256
+          && !this._textMutationFieldsProvenDistinct(debt.fieldMeta, original.fieldMeta)) {
+        debts.delete(debt.key);
+        if (debts.size === 0) this._uncertainTextMutations.delete(tabId);
+        return debts.size ? this._uncertainTextMutationBlock(tabId, name, args) : null;
+      }
+    }
     // Readback-only recovery requires positive same-field identity. The
     // readback proves the current target holds the text, but when the debt
     // belongs to another field (ambiguous locator, or a re-issued AX ref that
@@ -25299,7 +25377,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       recoveryRequired: 'verify_or_restore_field',
       expectedLength: debt.expectedLength,
       expectedSha256: debt.expectedSha256,
-      error: 'Text entry is blocked because an earlier write to this editor may already have changed it. A generic page/tree read cannot prove the full value. Repeat the exact same replacement call once for readback-only recovery, or reload/restore the document before any further write to this editor.',
+      recoveryOriginalReplacementMatches: sameReplacement,
+      error: 'Text entry is blocked because an earlier write to this editor may already have changed it. A generic page/tree read cannot prove the full value. Repeat the original replacement text and target for readback-only recovery (not the most recent blocked correction), or reload/restore the document before any further write to this editor.',
     };
   }
 
@@ -38680,7 +38759,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           verified: false,
           ...(verification?.fieldMeta ? { fieldMeta: verification.fieldMeta } : {}),
           ...(Object.prototype.hasOwnProperty.call(verification || {}, 'actual') ? { actual: verification.actual } : {}),
-          error: 'The field value still did not exactly match after one trusted Chrome retry. Re-read the accessibility tree before another action.',
+          error: 'The field value still did not exactly match after trusted typing. Repeat this exact replacement once for readback-only recovery; a generic tree read cannot verify the full value. Restore the editor if the mismatch persists.',
         };
       }
 

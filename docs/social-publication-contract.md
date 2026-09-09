@@ -15,12 +15,16 @@ A ready contract is not sufficient permission to dispatch. Before a separate pub
 ## Deterministic enforcement
 
 - Preserve exact body and alt text, accepting only NFC equivalence and CRLF normalization. Compose requests bind completion to the audited draft.
+- Read ProseMirror paragraph boundaries and hard breaks as document text, excluding its trailing caret placeholder. Field verification, field digests, Chrome CDP verification, and publication snapshots preserve the same spaces and line breaks.
 - Require complete composer/account/media/context observations and a pre-dispatch permalink baseline. Unassigned or shared thread media makes the observation incomplete.
+- Failed preflight reports `publicationValidation.issues`, distinguishing missing account/composer/baseline evidence from body, media, or context mismatches. Body mismatches include lengths and the first differing character position/code points without copying the observed draft into diagnostics.
 - Verify a new, account-bound permalink with complete authored body and media evidence. Reply, quote, and ordered thread relationships need their own observed proof.
 - Track each contract action as pending, failed, or verified. Uncertain delivery never unlocks an alternative or fallback, and cannot authorize another publish attempt.
 - Preserve the contract, authentic clarification pairs, and outcomes only across the existing trusted Continue boundary. A new user task gets a new contract. Clarification after an attempted publication retains its outcomes and blocks further dispatch under the stale instructions; it cannot reset delivery uncertainty or authorize a duplicate.
 - Preserve bound upload evidence when clarification recompiles an unchanged, unattempted action in the same workflow. Changed action constraints or workflow bindings reset it; every refreshed contract still requires a fresh authorization audit.
 - Recognize Bluesky desktop composer launchers as non-submitting controls outside forms/dialogs. Actual publish buttons retain the full contract checks.
+- Recognize the modal Cancel and Keep editing controls as non-submitting recovery actions, rejecting conflicting publish labels, test IDs, or form ownership.
+- A corrected replacement after an uncertain text write can proceed only after a read-only digest proves the original replacement landed in the same document and field. Changed, incomplete, or unavailable readbacks retain the block; generic page reads never clear it.
 - Convert screenshot clicks to CSS coordinates before target/iframe preflight, and use that same point for dispatch.
 
 Malformed output or failed model calls block publication. Schema validation establishes structure, not correct language understanding; the independent audit is also fallible. Missing site evidence blocks dispatch/completion rather than supplying inferred proof.

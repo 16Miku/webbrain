@@ -6,6 +6,21 @@
 
 import { combineImages } from './image-utils.js';
 
+function readProseMirrorText(el) {
+  if (!el?.isContentEditable || !el.classList?.contains('ProseMirror')) return null;
+  // Paragraphs are document line breaks, not innerText's visual spacing.
+  // ProseMirror's final BR is a caret placeholder, not another hard break.
+  const read = node => {
+    if (node.nodeType === 3) return node.nodeValue || '';
+    if (node.nodeType !== 1) return '';
+    if (node.tagName === 'BR') return node.classList?.contains('ProseMirror-trailingBreak') ? '' : '\n';
+    return Array.from(node.childNodes).map(read).join('');
+  };
+  const children = Array.from(el.childNodes);
+  if (!children.every(node => node.nodeType === 1 && node.tagName === 'P')) return null;
+  return children.map(read).join('\n');
+}
+
 const FULL_PAGE_SCROLL_SETTLE_MS = 100;
 const FULL_PAGE_STABLE_PASSES = 2;
 const FULL_PAGE_MAX_DISCOVERY_STEPS = 100;
@@ -4258,7 +4273,8 @@ export class CDPClient {
       if (!el || el.nodeType !== 1 || !el.isConnected) return null;
       const tag = String(el.tagName || '').toUpperCase();
       if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
-      const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      const semantic = (${readProseMirrorText.toString()})(el);
+      const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
       return (${TEXT_ENTRY_SIGNATURE_SOURCE})(value);
     }`;
     if (Number.isInteger(nodeId) && nodeId > 0) {
@@ -4308,7 +4324,8 @@ export class CDPClient {
         if (!el || !el.isConnected) return null;
         const tag = String(el.tagName || '').toUpperCase();
         if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
-        const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+        const semantic = (${readProseMirrorText.toString()})(el);
+        const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
         return (${TEXT_ENTRY_SIGNATURE_SOURCE})(value);
       })()
     `).catch(() => null);
@@ -4351,7 +4368,9 @@ export class CDPClient {
       const tag = String(el.tagName || '').toUpperCase();
       const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
       if (!typeable) return { found: true, verified: false };
-      const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      const semantic = (${readProseMirrorText.toString()})(el);
+      if (semantic !== null) expected = expected.replace(/\\r\\n?/g, '\\n');
+      const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
       const signatureOf = ${TEXT_ENTRY_SIGNATURE_SOURCE};
       const exactInsertion = () => {
         if (value.length > ${TEXT_ENTRY_PROOF_MAX_CHARS}) return false;
@@ -4405,7 +4424,7 @@ export class CDPClient {
     const result = await this.evaluate(tabId, `
       (() => {
         const selector = ${selectorJSON};
-        const expected = ${expectedJSON};
+        let expected = ${expectedJSON};
         const shouldClear = ${clear === true};
         const beforeSignature = ${JSON.stringify(typeof beforeSignature === 'string' ? beforeSignature : '')};
         const queryDeep = (root) => {
@@ -4431,7 +4450,9 @@ export class CDPClient {
         const tag = String(el.tagName || '').toUpperCase();
         const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
         if (!typeable) return { found: true, verified: false };
-        const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+        const semantic = (${readProseMirrorText.toString()})(el);
+        if (semantic !== null) expected = expected.replace(/\\r\\n?/g, '\\n');
+        const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
         const signatureOf = ${TEXT_ENTRY_SIGNATURE_SOURCE};
         const exactInsertion = () => {
           if (value.length > ${TEXT_ENTRY_PROOF_MAX_CHARS}) return false;

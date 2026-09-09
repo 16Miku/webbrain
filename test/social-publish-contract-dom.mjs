@@ -66,6 +66,69 @@ try {
     }
     await clickPage.close();
 
+    // Bluesky uses ProseMirror paragraphs. Verify the actual content-script
+    // readback, digest, CDP paths and publication probe against the same DOM.
+    const editorPage = await context.newPage();
+    await editorPage.goto('https://bsky.app/');
+    await editorPage.evaluate(() => {
+      window.fieldListeners = [];
+      window.chrome = {runtime:{sendMessage:()=>{},onMessage:{addListener:fn=>window.fieldListeners.push(fn)}}};
+      window.browser = window.chrome;
+      window.__wb_ax_lookup = () => document.querySelector('.ProseMirror');
+    });
+    await editorPage.addScriptTag({content:fs.readFileSync(`src/${build}/src/content/content.js`,'utf8')});
+    const readField = (action, params) => editorPage.evaluate(({action,params}) => new Promise(resolve => {
+      for (const listener of window.fieldListeners) listener({target:'content',action,params},{},resolve);
+    }), {action,params});
+    const announcement = 'WebBrain 35.0.0 is coming with a lot of fixes.\n\nCheck out the changelog: https://github.com/webbrain-one/webbrain/blob/main/CHANGELOG.md';
+    const escape = text => text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const paragraphs = text => text.split('\n').map(line => `<p>${line ? escape(line) : '<br class="ProseMirror-trailingBreak">'}</p>`).join('');
+    const editorCases = [
+      [announcement, paragraphs(announcement)],
+      [' Leading \n\nline \n', paragraphs(' Leading \n\nline \n')],
+      ['a\nb', '<p>a<br>b</p>'],
+      ['a\n', '<p>a<br><br class="ProseMirror-trailingBreak"></p>'],
+      ['', '<p><br class="ProseMirror-trailingBreak"></p>'],
+    ];
+    const {cdpClient} = build === 'chrome' ? await import('../src/chrome/src/cdp/cdp-client.js') : {};
+    const oldEvaluate = cdpClient?.evaluate;
+    if (cdpClient) cdpClient.evaluate = async (_tab, code) => ({result:{value:await editorPage.evaluate(code => eval(code),code)}});
+    try {
+      for (const [expected,html] of editorCases) {
+        await editorPage.setContent(`<nav><a href="/profile/alice.bsky.social">Profile</a></nav><div role="dialog"><div class="ProseMirror" contenteditable="true" style="white-space:pre-wrap">${html}</div><button id="publish" type="button" data-testid="composerPublishBtn">Post</button></div>`);
+        const verification = await readField('ax_verify_field_value',{ref_id:'editor',expected});
+        assert.equal(verification.verified,true,`${build}: semantic exact readback ${JSON.stringify(expected)}`);
+        assert.equal(verification.actual,expected);
+        assert.equal((await readField('ax_verify_field_value',{ref_id:'editor',expected:expected.replace(/\n/g,'\r\n')})).verified,true,'CRLF remains canonically equivalent');
+        const wrong = await readField('ax_verify_field_value',{ref_id:'editor',expected:expected+' '});
+        assert.equal(wrong.verified,false,'a missing space cannot be normalized away');
+        const digest = await readField('field_value_digest',{ref_id:'editor',expected});
+        assert.equal(digest.verified,true);
+        assert.equal(digest.valueLength,expected.length);
+        const {createHash} = await import('node:crypto');
+        assert.equal(digest.valueSha256,createHash('sha256').update(expected).digest('hex'));
+        const detected = await editorPage.evaluate(source => Function('return ('+source+')')()('click',{selector:'#publish'}),Agent._submitActionProbe.toString());
+        assert.equal(detected.publicationSnapshot.posts[0].bodyText,expected,'preflight must read the same text as typing');
+        if (cdpClient) {
+          assert.equal(await cdpClient.verifyTextEntry(1,{selector:'.ProseMirror',text:expected,clear:true}),true);
+          assert.equal(await cdpClient.verifyTextEntry(1,{selector:'.ProseMirror',text:expected.replace(/\n/g,'\r\n'),clear:true}),true);
+          assert.equal(await cdpClient.verifyTextEntry(1,{selector:'.ProseMirror',text:expected+' ',clear:true}),null);
+          const signature = await cdpClient.textEntrySignature(1,{selector:'.ProseMirror'});
+          await editorPage.locator('.ProseMirror p').last().evaluate(el => el.append(' suffix'));
+          assert.equal(await cdpClient.verifyTextEntry(1,{selector:'.ProseMirror',text:' suffix',beforeSignature:signature}),true);
+        }
+        checked++;
+      }
+      // Actual hard breaks must not receive innerText's expanded-newline
+      // tolerance: these are two document line breaks, not three.
+      await editorPage.setContent('<div class="ProseMirror" contenteditable="true"><p>a</p><p><br class="ProseMirror-trailingBreak"></p><p>b</p></div>');
+      assert.equal((await readField('ax_verify_field_value',{ref_id:'editor',expected:'a\n\n\nb'})).verified,false);
+      checked++;
+    } finally {
+      if (cdpClient) cdpClient.evaluate = oldEvaluate;
+      await editorPage.close();
+    }
+
     const probe=async(selector='#publish')=>page.evaluate(({source,selector})=>{
       const fn=Function('return ('+source+')')();
       return fn('click',{selector});
@@ -105,6 +168,28 @@ try {
           }
         }
         if (platform === 'bluesky') {
+          for (const label of ['Cancel','Keep editing']) {
+            const composer = '<div role="dialog"><div contenteditable="true">Draft</div><button data-testid="composerPublishBtn">Post</button>CONTROL</div>';
+            const button = `<button id="recover" type="button" aria-label="${label}"><span>${label}</span></button>`;
+            for (const nested of [false,true]) {
+              await page.setContent(composer.replace('CONTROL',nested ? `<div role="alertdialog">${button}</div>` : button));
+              if (label === 'Cancel' && nested) continue;
+              await page.evaluate(() => { window.__wb_ax_lookup = () => document.querySelector('#recover span'); });
+              for (const [name,args] of [['click_ax',{ref_id:'recover'}],['click',{text:label,textMatch:'exact'}],['click',{selector:'#recover span'}]]) {
+                const detected = await scopeAgent._detectLikelySubmitAction(scopeTab,name,args);
+                assert.equal(detected?.resolvedNonSubmitTarget,true,`${build}: ${label}/${name}`);
+                assert.equal(await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,name,args,detected,providerScope),null);
+                checked++;
+              }
+            }
+            for (const attrs of ['data-testid="composerPublishBtn"','data-testid="unknown"','aria-label="Publish post"','type="submit"']) {
+              await page.setContent(composer.replace('CONTROL',`<button id="recover" ${attrs}>${label}</button>`));
+              const detected = await scopeAgent._detectLikelySubmitAction(scopeTab,'click',{selector:'#recover'});
+              assert.notEqual(detected?.resolvedNonSubmitTarget,true,'conflicting publish/form identity must remain guarded');
+              assert((await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,'click',{selector:'#recover'},detected,providerScope)).noDispatch);
+              checked++;
+            }
+          }
           for (const html of [
             '<button id="launch" type="button" aria-label="Publish post">Post</button>',
             '<div role="dialog"><button id="launch" type="button" aria-label="Compose new post">New Post</button></div>',
