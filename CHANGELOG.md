@@ -4,21 +4,35 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
-## [Unreleased]
+## [35.0.0] - 2026-09-09
 
 ### Added
-- Added one Mid/Full-only, OTP-skill-gated email verification reader. It can inspect an already open signed-in supported webmail tab, directly scope an already-open message across all supported providers, and, when needed, open one opaque inspected inbox item in a temporary inactive duplicate that is always closed. Candidate disclosure requires the full normalized service identity or all sufficiently discriminative service tokens. Ask remains read-only; opening requires Act/Dev plus mailbox-host click permission because it may mark mail read, and it dispatches only against the one-use authorization that gate issues. Mailbox list and pagination routes are never treated as an open message, a tab that navigates off the mailbox is never read, and a stop during a read still ends the run. Message continuations are consumed within hard bounds or fail closed, and the model receives no general tab catalog, tab switch, mailbox URL, or internal accessibility reference.
+- Added a cross-browser WebBrain PDF viewer fallback. Top-level and embedded PDFs can be routed through a selectable WebBrain viewer with page-navigation controls; scanned pages get an OCR fallback, and the feature is gated behind an opt-in setting (native PDF-handler opt-in is honored). Chrome parses PDFs in an offscreen document, retries the PDF.js import, and recognizes the extension's own handler tabs without a HEAD probe; Firefox adds hardened OCR trust and fallback/lifecycle handling. PDF `read_page` requests are auto-routed to the viewer, with page rotation, text-layer scaling, and page tracking corrected.
+- Added a durable, safe support-chat workflow. A state kernel persists support workflow state, exposes guarded observe and send tools for active conversations, makes resume scheduling durable, and discloses bounded workflow deltas; a failed or proven-undelivered send no longer wedges the workflow, and resident conversations restore state.
+- Added the Pollinations AI provider, with resolvable, vision-capable model suggestions.
+- Expanded the Baidu Tieba interaction adapter with reply publish controls and native first-floor and reply-level like, favorite, follow, share, and `more` actions.
+- Added explicit prompt kinds to the browser bridges (MCP server and LM Studio plugin), inferred from payload shape when the discriminator is absent.
+- Published a WebBrain Compass Tiny comparison benchmark and blog post with routing benchmark artifacts, plus WebBrain VL-2 and VL-3 vision benchmark outputs (web).
 
-### Removed
-- Removed model-callable browser tab creation, listing, and activation from every prompt tier. URL readers and current-tab navigation remain available; internal research/helper tabs and normal `target=_blank` behavior are unchanged.
+### Changed
+- Updated the README to acknowledge contributors.
+- Removed Qwen3.5-9B from the compact-model comparison and the Chrome/Firefox rows from the Browser AI Plugins comparison (web).
+- Bumped the MCP server's `hono` dependency.
 
 ### Fixed
-- Added a final max-step handoff for tool-capable interactive runs, including WebBrain Compass: after the normal loop exhausts its configured steps, one context-only turn exposes only `done(outcome: "partial" | "failed")` so collected evidence reaches the user. Invalid terminal output falls back to a visible deterministic blocker. The existing advisory 4/8 observation checkpoints for Compass and the structured Cloud `done_json` contract are unchanged.
-- Reserved the retired tab-tool names, so an enabled custom skill can no longer re-declare `new_tab`, `list_tabs`, or `activate_tab` and hand the model back a capability the prompts say it does not have.
-- Gave Ask mode its own wording for the browser-tab limitation. The shared text offered current-tab navigation, which read-only Ask cannot perform; it now offers to read the URL or to switch to Act.
-- Retuned the LLM benchmark goldens that still expected retired tools, so a model running against the current schemas is no longer scored wrong for answers it cannot give. `test/run.js` now fails when any golden or seeded turn names a tool its own mode does not offer.
-- Relabelled the `csp-blocked-eval` scenarios (and scenario 020) as Dev. They replay a CSP-rejected `execute_js`, which ships only in Dev, so an Act history was showing the model a tool that surface never gave it.
-- Added a `skipped` verdict to the scenario harness. A scenario whose mode has no payload at the tier under test is reported as skipped instead of erroring, sends no request, and stays out of the safety and regrade denominators.
+- Hardened social publication across the board: publication intent parsing (multilingual conjunctions and prepositions, per-clause and per-destination bodies, exact NFC bodies through link verification, proper-name and colon scope), media intent (typed, negative, and alternative attachments; per-format bounds; exclusions; GIF typing), destination handling (source-only platform rejection, coordinated multi-platform publish, reply-resource canonicalization and thread binding), and terminal evidence (verified posts, permalink verification after XHR publish, single-page-app publish evidence, shared commit-field identity, byte-exact Git paths, multi-line commit messages). Scope exit is governed by verb commands rather than prefixes.
+- Fixed message recipient-guard roles: authorized recipient role changes come strictly from user clarification, negation and conflicting role authorizations are rejected, grouped role labels apply across coordinate recipient lists, Gmail display aliases are preserved for clarification matching, and verified LinkedIn navigation is allowed through the recipient guard.
+- Fixed a Gmail draft-reply deadlock between the send and read guards, limited result counting to top-level thread containers, matched replacements to compatible observed slots, and fell back to independently observed candidates on expected-recipient mismatch.
+- Finalized the run at the agent step limit with a context-only terminal handoff exposing `done(outcome: "partial" | "failed")`; Stop during the handoff is a cancellation; traces preserve `max_steps` as the end status and carry the delivered outcome separately; the same-origin completion fallback was withdrawn entirely.
+- Fixed MCP permission decisions to cover submit and workflow-healing gates rather than permission alone.
+- Preserved selection scope and page-context restoration across early exits and stripped the restoration marker from page-scope matching.
+- Hardened tab-chat persistence for large images (bounded data-URL metadata walk).
+- Hardened PDF handler host readiness, sender gate, handler URLs, double-response guard, large-PDF rendering and selection gesture scope, OCR trust, and fallback viewer lifecycle.
+
+### Tests
+- Added `test:pdf-read`, `test:pdf-selection`, and `test:social-contract` (plus a DOM variant) suites; covered PDF handler tab routing in the Chrome e2e and isolated the tool-execution error-page expectation to Chrome < 152.
+- Updated extended-catalog fixtures and the built-in model table after adding Pollinations, and published compact benchmark comparison artifacts plus VL-2/VL-3 vision outputs.
+- Expanded selection-scope-restoration coverage across early exits and accept protocol-only tool errors in webmcp tests.
 
 ## [34.1.6] - 2026-09-04
 
