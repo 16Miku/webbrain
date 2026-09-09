@@ -19,6 +19,53 @@ try {
     const completionProbe=vm.runInNewContext('`'+raw+'`',invariant);
     const readPublished=()=>page.evaluate(code=>Function('return ('+code+')')(),completionProbe);
 
+    // Compare preflight with the real content-script click handler, plus the
+    // Chrome CDP resolver and pointer dispatch. A competing ARIA name must not
+    // turn an actual submit into an editable-target exemption.
+    const clickPage = await context.newPage();
+    await clickPage.goto('https://example.com/settings');
+    await clickPage.evaluate(() => {
+      window.clickListeners = [];
+      window.chrome = {runtime:{sendMessage:()=>{},onMessage:{addListener:fn=>window.clickListeners.push(fn)}}};
+      window.browser = window.chrome;
+    });
+    await clickPage.addScriptTag({content:fs.readFileSync(`src/${build}/src/content/content.js`,'utf8')});
+    const strategies = build === 'chrome' ? ['content', 'cdp'] : ['content'];
+    for (const strategy of strategies) {
+      for (const textMatch of [undefined, 'exact', 'prefix', 'contains']) {
+        await clickPage.setContent('<form><input aria-label="Save" placeholder="Name"><button type="submit">Save</button></form>');
+        await clickPage.evaluate(() => {
+          window.submitCount = 0;
+          document.querySelector('form').addEventListener('submit', event => { event.preventDefault(); window.submitCount++; });
+        });
+        const args = {text:'Save', ...(textMatch ? {textMatch} : {})};
+        const preflight = await clickPage.evaluate(({source,args}) => Function('return ('+source+')')()('click',args),
+          {source:Agent._submitActionProbe.toString(),args});
+        if (strategy === 'content') {
+          const result = await clickPage.evaluate(args => new Promise((resolve, reject) => {
+            if (!window.clickListeners.length) return reject(new Error('Content click handler was not installed'));
+            for (const listener of window.clickListeners) listener({target:'content',action:'click',params:args},{},resolve);
+          }), args);
+          assert.equal(result.success, true);
+        } else {
+          const start = source.indexOf('const result = await cdpClient.evaluate(tabId, `', source.indexOf('// Text-based click with auto-fallback matching.'));
+          assert(start >= 0);
+          const templateStart = source.indexOf('`', start);
+          const templateEnd = source.indexOf('`);', templateStart + 1);
+          const code = vm.runInNewContext(source.slice(templateStart, templateEnd + 1), {args});
+          const resolved = await clickPage.evaluate(code => Function('return ('+code+')')(), code);
+          assert.equal(resolved.found, true);
+          assert.equal(resolved.isSubmitControl, true);
+          await clickPage.mouse.click(resolved.x, resolved.y);
+        }
+        assert.equal(await clickPage.evaluate(() => window.submitCount), 1, `${build}/${strategy}: executor submits`);
+        assert.equal(preflight?.isSubmit, true, `${build}/${strategy}: preflight must classify the same submit`);
+        assert.notEqual(preflight?.resolvedEditableTarget, true);
+        checked++;
+      }
+    }
+    await clickPage.close();
+
     const probe=async(selector='#publish')=>page.evaluate(({source,selector})=>{
       const fn=Function('return ('+source+')')();
       return fn('click',{selector});
@@ -38,6 +85,43 @@ try {
       const previousChrome=globalThis.chrome;
       globalThis.chrome={scripting:{executeScript:async({func,args})=>[{result:await page.evaluate(({source,args})=>Function('return ('+source+')')()(...args),{source:func.toString(),args})}]}};
       try {
+        // Bluesky's desktop launcher has an accessible name but no composeFAB
+        // test ID. Visible text, icon-only and nested targets all open a draft.
+        const launchers = platform === 'bluesky' ? [
+          '<button id="launch" type="button" aria-label="Compose new post"><span>New Post</span></button>',
+          '<button id="launch" type="button" aria-label="Compose new post"><svg width="30" height="30"></svg></button>',
+          '<div id="launch" role="button" aria-label="Compose new post"><span>New Post</span></div>',
+          '<button id="launch" data-testid="composeFAB">Compose new post</button>',
+        ] : ['<button id="launch" data-testid="SideNav_NewTweet_Button">Compose new post</button>'];
+        for (const html of launchers) {
+          await page.setContent(html);
+          await page.evaluate(() => { window.__wb_ax_lookup = () => document.getElementById('launch'); });
+          const clickText = await page.locator('#launch').evaluate(el => el.innerText || el.ariaLabel);
+          for (const [name, args] of [['click_ax', {ref_id:'launch'}], ['click', {text:clickText,textMatch:'exact'}], ['click', {selector:'#launch'}]]) {
+            const detected = await scopeAgent._detectLikelySubmitAction(scopeTab,name,args);
+            assert.equal(detected?.resolvedNonSubmitTarget,true,`${build}/${platform}: launcher ${name}`);
+            assert.equal(await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,name,args,detected,providerScope),null);
+            checked++;
+          }
+        }
+        if (platform === 'bluesky') {
+          for (const html of [
+            '<button id="launch" type="button" aria-label="Publish post">Post</button>',
+            '<div role="dialog"><button id="launch" type="button" aria-label="Compose new post">New Post</button></div>',
+            '<form><button id="launch" type="submit" aria-label="Compose new post">New Post</button><textarea>Hello</textarea><button data-testid="composerPublishBtn">Post</button></form>',
+            '<div role="dialog"><div contenteditable="true">Hello</div><button id="launch" data-testid="composerPublishBtn" aria-label="Compose new post">Post</button></div>',
+          ]) {
+            await page.setContent(html);
+            const detected = await scopeAgent._detectLikelySubmitAction(scopeTab,'click',{selector:'#launch'});
+            assert.notEqual(detected?.resolvedNonSubmitTarget,true,'publish/form/dialog controls cannot claim the launcher exemption');
+            assert((await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,'click',{selector:'#launch'},detected,providerScope)).noDispatch);
+            checked++;
+          }
+          // The negative fixtures may compile a none contract; start the
+          // unrelated-form checks below from their original empty guard.
+          scopeGuard.socialPublication=null;
+          scopeCalls=0;
+        }
         await scopeAgent._ensureProgressSessionForCurrentTask(scopeTab,{provider:providerScope,taskText:'Save profile settings',progressLedgerPolicy:'disabled'});
         assert.equal(await scopeAgent._adoptLiveSocialPublishWorkflow(scopeTab,providerScope),false);
         for(const external of [false,true]){
@@ -323,10 +407,83 @@ try {
       verified=await verify();
       assert.equal(verified.state.workflowResourceRecords.find(r=>r.url===mentioned)?.replyToUrl,'','an authored permalink does not inherit the surrounding card relationship');
       assert.equal(verified.record.replyToUrl,parent);assert.equal(verified.terminal,null);checked++;
-
-
-
-
+    }
+    // Exercise the real batch ordering and injected submit detector at the
+    // trace's Retina dimensions, including an unrelated ordinary HTML form.
+    for (const platform of ['bluesky', 'twitter', 'ordinary']) {
+      await page.setViewportSize({width:1119,height:743});
+      await page.goto(platform==='bluesky'?'https://bsky.app/':platform==='twitter'?'https://x.com/home':'https://forms.example/settings');
+      for (const kind of ['screenshot', 'css', 'stale', 'outside']) {
+        const isSocial = platform !== 'ordinary';
+        const publishId = platform === 'bluesky' ? 'composerPublishBtn' : 'tweetButtonInline';
+        const profile = platform === 'bluesky' ? '<a href="/profile/alice.bsky.social">Profile</a>' : '<a data-testid="AppTabBar_Profile_Link" href="/alice">Profile</a>';
+        const button = `<button id="publish" ${isSocial?`type="button" data-testid="${publishId}"`:''} style="position:fixed;left:790px;top:57px;width:60px;height:40px">${isSocial?'Post':'Save'}</button>`;
+        await page.setContent(isSocial
+          ? `<nav>${profile}</nav><div role="dialog"><div contenteditable="true" role="textbox">Hello</div>${button}</div>`
+          : `<form><input value="Hello">${button}</form>`);
+        await page.evaluate(()=>{
+          window.__fixtureClicks=0;
+          document.getElementById('publish').addEventListener('click',event=>{event.preventDefault();window.__fixtureClicks++;});
+        });
+        const provider={chat:async()=>({content:'{}'})};
+        const agent=new Agent({getActive:()=>provider}),tabId=910;
+        agent.useSiteAdapters=true;agent._persist=()=>{};agent._currentUrl=async()=>page.url();
+        agent._skipPermissionGate=true;agent._ensureGateSetting=async()=>true;
+        agent._recordProgressObservation=async()=>null;agent._autoRecordProgressAction=()=>null;
+        agent._progressWarningForAction=()=>'';agent._captureFormValidationState=async()=>[];
+        agent._waitForFormValidationFailure=async()=>null;
+        agent.conversations.set(tabId,[{role:'system',content:'system'},{role:'user',content:isSocial?`Post Hello on ${platform}`:'Save my changes'}]);
+        agent._startPlanExecutionGuard(tabId,'act',{requestKind:'execute',requiresStateChange:true,requiresSubmission:true});
+        agent.screenshotCaptures.set(tabId,{captureId:'retina',imageWidth:2238,imageHeight:1486,scaleX:0.5,scaleY:0.5});
+        const args=kind==='css'?{x:820,y:77,coordinate_space:'css'}:{x:kind==='outside'?2300:1640,y:154,coordinate_space:'screenshot',capture_id:kind==='stale'?'old':'retina'};
+        const probes=[],frames=[],modelCalls=[];
+        const previousChrome=globalThis.chrome;
+        globalThis.chrome={scripting:{executeScript:async({func,args})=>{
+          if(func===Agent._submitActionProbe) probes.push(args[1]);
+          return [{result:await page.evaluate(({source,args})=>Function('return ('+source+')')()(...args),{source:func.toString(),args})}];
+        }}};
+        const frameProbe=agent._iframeRectsForCoordinate?.bind(agent);
+        if(frameProbe) agent._iframeRectsForCoordinate=async(tab,x,y)=>{frames.push({x,y});return frameProbe(tab,x,y);};
+        agent._chatWithCostAllowance=async(_provider,messages,_options,_cost,meta)=>{
+          modelCalls.push(meta.generationName);
+          assert(isSocial,'ordinary forms must never compile social intent');
+          const input=JSON.parse(messages[1].content);
+          const response=meta.generationName==='social_publication_authorization'
+            ? {key:input.key,actionId:input.action.id,authorized:true,reason:'Matches request'}
+            : {version:1,status:'ready',actions:[{id:'p1',platform,account:null,posts:[{body:{kind:'exact',source:{source:'request',start:'Hello',end:'Hello'}},media:{kind:'count',type:'any',format:null,min:0,max:0},context:{kind:'post',target:null}}]}],requirements:'p1',prohibited:[],reason:'User requested publication'};
+          return {content:JSON.stringify(response)};
+        };
+        agent.executeTool=async(tab,name,dispatchArgs)=>{
+          assert.equal(name,'click');
+          // The direct execution entry uses this same helper a second time;
+          // canonical args must not be scaled again.
+          const prepared=agent._prepareClickCoordinates(tab,name,dispatchArgs);
+          assert.deepEqual(prepared.point,{x:820,y:77});
+          await page.mouse.click(prepared.point.x,prepared.point.y);
+          return {success:true,dispatched:true};
+        };
+        try {
+          const messages=[];
+          await agent._executeToolBatch(tabId,[{id:'coordinate',function:{name:'click',arguments:JSON.stringify(args)}}],messages,()=>{},provider,'',new Set(['click']),1);
+          const result=JSON.parse(agent._unwrapUntrusted(messages.find(m=>m.tool_call_id==='coordinate').content));
+          const valid=kind==='screenshot'||kind==='css';
+          assert.equal(result.success,valid,`${build}/${platform}/${kind}: ${result.error||''}`);
+          assert.equal(await page.evaluate(()=>window.__fixtureClicks),valid?1:0);
+          if(valid){
+            assert(probes.length>0);
+            if(frameProbe) assert(frames.length>0);
+            for(const point of [...probes,...frames]) assert.deepEqual({x:point.x,y:point.y},{x:820,y:77});
+            assert.equal(modelCalls.includes('social_publication_authorization'),isSocial);
+          } else {
+            assert.equal(result.noDispatch,true);
+            assert.equal(result.staleCapture,true);
+            assert.deepEqual(probes,[],'invalid captures stop before target probes');
+            assert.deepEqual(frames,[],'invalid captures stop before iframe probes');
+            assert.deepEqual(modelCalls,[]);
+          }
+          checked++;
+        } finally {if(previousChrome===undefined) delete globalThis.chrome;else globalThis.chrome=previousChrome;}
+      }
     }
   }
 } finally { await browser.close(); }
