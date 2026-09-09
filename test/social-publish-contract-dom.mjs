@@ -53,6 +53,35 @@ try {
             assert.equal(scopeCalls,0);checked++;
           }
         }
+        // Exercise the actual batch caller with the actual injected detector.
+        // Only the final tool execution is simulated; the caller must collect
+        // composer ownership before either publication guard sees set_field.
+        scopeAgent._skipPermissionGate=true;scopeAgent._ensureGateSetting=async()=>true;
+        scopeAgent._recordProgressObservation=async()=>null;scopeAgent._autoRecordProgressAction=()=>null;
+        scopeAgent._progressWarningForAction=()=>'';scopeAgent._captureFormValidationState=async()=>[];
+        scopeAgent._waitForFormValidationFailure=async()=>null;
+        for(const kind of ['search','composer','missing']){
+          for(const submit of [true,false]){
+            scopeAgent._clearLoopState(scopeTab); // Each fixture is a separate attempted action.
+            await page.setContent(kind==='search'
+              ? '<form><input id="field" type="search" name="q"><button>Search</button></form>'
+              : kind==='composer'
+                ? `<form><textarea id="field">Draft</textarea><button data-testid="${publishId}">Post</button></form>`
+                : '<main>No resolved field</main>');
+            await page.evaluate(()=>{window.__wb_ax_lookup=ref=>document.getElementById(ref);});
+            let executions=0;
+            scopeAgent.executeTool=async()=>{executions++;return {success:true,dispatched:true};};
+            const messages=[];
+            await scopeAgent._executeToolBatch(scopeTab,[{id:'set_field_case',function:{name:'set_field',arguments:JSON.stringify({ref_id:'field',text:'Hello',submit})}}],messages,()=>{},providerScope,'',new Set(['set_field']),1);
+            const result=JSON.parse(scopeAgent._unwrapUntrusted(messages.find(m=>m.tool_call_id==='set_field_case').content));
+            const reachesDispatch=!submit || kind==='search';
+            assert.equal(executions,reachesDispatch?1:0,kind+' submit='+submit+' batch dispatch');
+            assert.equal(result.success,reachesDispatch,kind+' submit='+submit+' batch result');
+            if(!reachesDispatch) assert.equal(result.noDispatch,true);
+            assert.equal(scopeCalls,0,'no publication model call for ordinary forms or bundled submission rejection');
+            checked++;
+          }
+        }
         // A localized composer, an unnamed Post button, and an incomplete
         // composer all stay guarded. Implicit Enter must not become a bypass.
         for(const kind of ['localized','unnamed','incomplete']){

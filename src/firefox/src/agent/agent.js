@@ -10093,10 +10093,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         try {
           const preparation = await this._withContentActionDeadline(async abortSignal => {
             const allFrames = fnName === 'iframe_click' || fnName === 'press_keys';
-            const shouldDetectSubmit = ['click', 'click_ax', 'iframe_click', 'press_keys', 'execute_js'].includes(fnName);
-            const detected = shouldDetectSubmit
-              ? await this._detectLikelySubmitAction(tabId, fnName, fnArgs)
-              : null;
+            // The detector owns its supported-tool filtering. Every form
+            // validation candidate, including set_field({submit:true}), needs
+            // the same resolved-target evidence before workflow guards run.
+            const detected = await this._detectLikelySubmitAction(tabId, fnName, fnArgs);
             this._throwIfAborted(abortSignal);
             const currentValidationBlock = this._formValidationBlocks.get(tabId) || null;
             const obviousSubmit = this._formValidationActionLooksSubmit(fnName, fnArgs, null, detected);
@@ -15814,7 +15814,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _socialPublicationPreSubmitBlock(tabId, name, args, detected, provider) {
     const guard = this._planExecutionGuards.get(tabId);
-    const activationKey = name === 'press_keys' && (/enter|return|space/i.test(JSON.stringify(args?.key ?? args?.keys ?? '')) || args?.key === ' ');
+    const rawKeys = args?.key ?? args?.keys ?? '';
+    const activationKey = name === 'press_keys' && (Array.isArray(rawKeys) ? rawKeys : [rawKeys])
+      .some(key => typeof key === 'string' && /^(?:enter|return|space|spacebar| )$/i.test(key));
     if (!guard?.enabled || (!this._isFormValidationCandidate(name, args) && !activationKey
         && name !== 'execute_webmcp_tool' && !isNetworkMutation(name, args))) return null;
     const pageUrl = await this._currentUrl(tabId);

@@ -384,6 +384,46 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: publication activation requires a complete key name`,async()=>{
+    const f=setup();
+    for(const key of ['Backspace','Workspace','ReturnToSender','Entertain','Escape','Tab','ArrowLeft',';','']) {
+      assert.equal(await f.agent._socialPublicationPreSubmitBlock(f.tabId,'press_keys',{key},null,f.provider),null,key);
+    }
+    for(const key of ['Enter','Return','Space','Spacebar',' ','space']) {
+      assert((await f.agent._socialPublicationPreSubmitBlock(f.tabId,'press_keys',{key},null,f.provider)).noDispatch,key);
+    }
+    assert.equal(await f.agent._socialPublicationPreSubmitBlock(f.tabId,'press_keys',{keys:['Backspace','Tab']},null,f.provider),null);
+    assert((await f.agent._socialPublicationPreSubmitBlock(f.tabId,'press_keys',{keys:['Tab','Spacebar']},null,f.provider)).noDispatch);
+    assert.equal(f.calls.length,0);
+  });
+
+  test(`${browser}: tool batches probe set_field before ordinary-form and composer submission gates`,async()=>{
+    for(const publicationControl of [false,true,undefined]) {
+      const f=setup('Search for Hello');
+      f.agent._skipPermissionGate=true;
+      f.agent._ensureGateSetting=async()=>true;
+      f.agent._recordProgressObservation=async()=>null;
+      f.agent._autoRecordProgressAction=()=>null;
+      f.agent._progressWarningForAction=()=>'';
+      f.agent._captureFormValidationState=async()=>[];
+      f.agent._waitForFormValidationFailure=async()=>null;
+      const events=[];
+      f.agent._detectLikelySubmitAction=async(_tab,name,args)=>{
+        events.push({kind:'probe',name,submit:args.submit});
+        return publicationControl===undefined?null:{isSubmit:true,publicationControl};
+      };
+      f.agent.executeTool=async(_tab,name)=>{events.push({kind:'dispatch',name});return {success:true,dispatched:true};};
+      const messages=[];
+      await f.agent._executeToolBatch(f.tabId,[{id:'field',function:{name:'set_field',arguments:JSON.stringify({ref_id:'ref_search',text:'Hello',submit:true})}}],messages,()=>{},f.provider,'',new Set(['set_field']),1);
+      assert.deepEqual(events[0],{kind:'probe',name:'set_field',submit:true});
+      const result=JSON.parse(f.agent._unwrapUntrusted(messages.find(m=>m.tool_call_id==='field').content));
+      assert.equal(events.some(e=>e.kind==='dispatch'),publicationControl===false);
+      assert.equal(result.success,publicationControl===false);
+      if(publicationControl!==false) assert.equal(result.noDispatch,true);
+      assert.equal(f.calls.length,0,'ordinary forms and rejected bundled submissions need no publication model call');
+    }
+  });
+
   test(`${browser}: a thread needs every exact post and verified parent order`,async()=>{
     const action=rawAction('p1','twitter');action.posts.push(rawAction('unused','twitter','Second').posts[0]);
     const composer=snapshot();composer.posts.push(snapshot('Second').posts[0]);
