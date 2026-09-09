@@ -288,6 +288,7 @@ function sameScheduledIntent(a, b) {
     String(a?.mode || 'act') === String(b?.mode || 'act') &&
     scheduledJobPayloadKey(a) === scheduledJobPayloadKey(b);
   if (!samePayload) return false;
+  if (a.kind === 'resume' && String(a.resumeTaskId || '') !== String(b.resumeTaskId || '')) return false;
   if (a?.source === 'watch' || b?.source === 'watch') {
     return a?.source === 'watch' && b?.source === 'watch';
   }
@@ -768,7 +769,7 @@ export class ScheduledJobManager {
     });
   }
 
-  async createResumeJob({ tabId, conversationId, mode = 'act', args, currentUrl = '', currentTitle = '' }) {
+  async createResumeJob({ tabId, conversationId, resumeTaskId = null, mode = 'act', args, currentUrl = '', currentTitle = '' }) {
     const parsed = validateResumeArgs(args, this.now());
     if (!parsed.ok) return { success: false, error: parsed.error };
     const createdAt = iso(this.now());
@@ -778,6 +779,7 @@ export class ScheduledJobManager {
       status: 'pending',
       tabId,
       conversationId,
+      resumeTaskId: String(resumeTaskId || '') || null,
       mode,
       reason: parsed.reason,
       resumeInstruction: parsed.resumeInstruction,
@@ -928,6 +930,37 @@ export class ScheduledJobManager {
       summary: `Started watching this page every ${saved.job.watch.intervalSeconds} seconds.`,
       ...(saved.deduped ? { deduped: true, existingJobId: saved.job.id } : {}),
     };
+  }
+
+  async cancelPendingResumes({ tabId, conversationId, resumeTaskId }) {
+    if (tabId == null || !conversationId || !resumeTaskId) return;
+    // Persist the terminal state before clearing alarms, so an already queued
+    // alarm cannot revive a continuation after its originating task has finished.
+    const cancelled = await this._withJobMutation(async () => {
+      const jobs = await this._getJobs();
+      const changed = [];
+      const next = jobs.map(job => {
+        if (job.kind !== 'resume' || job.tabId !== tabId
+            || job.conversationId !== conversationId
+            || job.resumeTaskId !== resumeTaskId
+            || !['pending', 'queued', 'paused'].includes(job.status)) return job;
+        const updated = {
+          ...job,
+          status: 'cancelled',
+          nextRunAt: null,
+          lastError: 'The conversation task has finished.',
+          updatedAt: iso(this.now()),
+        };
+        changed.push(updated);
+        return updated;
+      });
+      if (changed.length) await this._setJobs(next);
+      return changed;
+    });
+    for (const job of cancelled) {
+      await this._clearAlarm(job.id);
+      this._emit(job, 'cancelled');
+    }
   }
 
   async cancelJob(jobId, reason = 'cancelled') {
@@ -1675,6 +1708,9 @@ export class ScheduledJobManager {
 
     this.showIndicator(tabId);
     this.agent.setScheduledRunPolicy(tabId, {
+      // Legacy jobs have no recorded origin. Give their descendants a distinct
+      // lineage without adopting other unbound resumes in the conversation.
+      resumeTaskId: running.resumeTaskId || running.id,
       requireConsequentialConfirmation: settings.requireConsequentialConfirmation,
       autoApprovePlanReview: true,
       watch: running.source === 'watch' ? {
@@ -1694,7 +1730,7 @@ export class ScheduledJobManager {
         onUpdate,
         running.mode || 'act',
         [],
-        { scheduledRun: true, independentRun: true },
+        { scheduledRun: true, independentRun: true, scheduledResume: running.kind === 'resume' },
       );
       this._waitingForInput.delete(job.id);
       if (runStatus === 'clarification_required') {
