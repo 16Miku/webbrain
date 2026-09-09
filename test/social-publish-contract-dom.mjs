@@ -25,6 +25,59 @@ try {
     },{source:Agent._submitActionProbe.toString(),selector});
     for(const platform of ['twitter','bluesky']){
       await page.goto(platform==='twitter'?'https://x.com/home':'https://bsky.app/');
+      // Run the real probe wrapper and dispatch gate against ordinary forms
+      // on social domains, including an unrelated composer on the same page.
+      const publishId=platform==='twitter'?'tweetButtonInline':'composerPublishBtn';
+      const providerScope={chat:async()=>({content:'{}'})};
+      const scopeAgent=new Agent({getActive:()=>providerScope}),scopeTab=909;
+      scopeAgent.useSiteAdapters=true;scopeAgent._persist=()=>{};scopeAgent._currentUrl=async()=>page.url();
+      scopeAgent.conversations.set(scopeTab,[{role:'system',content:'system'},{role:'user',content:'Save my profile settings. Do not publish anything.'}]);
+      const scopeGuard=scopeAgent._startPlanExecutionGuard(scopeTab,'act',{requestKind:'execute',requiresStateChange:true,requiresSubmission:true});
+      let scopeCalls=0;
+      scopeAgent._chatWithCostAllowance=async()=>{scopeCalls++;return {content:JSON.stringify({version:1,status:'none',actions:[],requirements:null,prohibited:[],reason:'Settings only.'})};};
+      const previousChrome=globalThis.chrome;
+      globalThis.chrome={scripting:{executeScript:async({func,args})=>[{result:await page.evaluate(({source,args})=>Function('return ('+source+')')()(...args),{source:func.toString(),args})}]}};
+      try {
+        await scopeAgent._ensureProgressSessionForCurrentTask(scopeTab,{provider:providerScope,taskText:'Save profile settings',progressLedgerPolicy:'disabled'});
+        assert.equal(await scopeAgent._adoptLiveSocialPublishWorkflow(scopeTab,providerScope),false);
+        for(const external of [false,true]){
+          const save=`<button id="save" ${external?'form="settings"':''}><span>Kaydet</span></button>`;
+          await page.setContent(`<main><form id="settings"><input id="name" value="Alice"><textarea id="bio">My profile</textarea>${external?'':save}</form>${external?save:''}<div id="other-composer"><div contenteditable="true" role="textbox">Unrelated draft</div><button data-testid="${publishId}">Post</button></div></main>`);
+          for(const [name,args] of [['click',{selector:'#save span'}],['press_keys',{key:'Enter'}]]){
+            await page.locator('#name').focus();
+            const ordinary=await scopeAgent._detectLikelySubmitAction(scopeTab,name,args);
+            assert.equal(ordinary.isSubmit,true);
+            assert.equal(ordinary.publicationControl,false,'own form is distinct from the nearby composer');
+            assert.equal(ordinary.publicationSnapshot,null);
+            assert.equal(await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,name,args,ordinary,providerScope),null);
+            assert.equal(scopeCalls,0);checked++;
+          }
+        }
+        // A localized composer, an unnamed Post button, and an incomplete
+        // composer all stay guarded. Implicit Enter must not become a bypass.
+        for(const kind of ['localized','unnamed','incomplete']){
+          await page.setContent(`<form id="composer">${kind==='incomplete'?'':'<textarea id="body">Hello</textarea>'}<button id="publish" ${kind==='unnamed'?'':`data-testid="${publishId}"`}>${kind==='unnamed'?'Post':'Yayınla'}</button></form>`);
+          const detected=await scopeAgent._detectLikelySubmitAction(scopeTab,'click',{selector:'#publish'});
+          assert.equal(detected.publicationControl,true,kind);
+          assert((await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,'click',{selector:'#publish'},detected,providerScope)).noDispatch);
+          if(kind!=='incomplete'){
+            await page.locator('#body').focus();
+            const implicit=await scopeAgent._detectLikelySubmitAction(scopeTab,'press_keys',{key:'Enter'});
+            assert.equal(implicit.publicationControl,true,kind+' implicit submission');
+            assert((await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,'press_keys',{key:'Enter'},implicit,providerScope)).noDispatch);
+          }
+          checked++;
+        }
+        assert.equal(scopeCalls,1,'one cached none contract, no authorization call');
+        assert.equal(scopeGuard.siteWorkflow,null);
+        // Cached none intent still permits a subsequent ordinary settings save.
+        await page.setContent('<form><textarea>Bio</textarea><button id="save">Save</button></form>');
+        const ordinary=await scopeAgent._detectLikelySubmitAction(scopeTab,'click',{selector:'#save'});
+        assert.equal(await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,'click',{selector:'#save'},ordinary,providerScope),null);
+        assert.equal(scopeCalls,1);checked++;
+        const opaque=await scopeAgent._detectLikelySubmitAction(scopeTab,'execute_js',{code:'publish()'});
+        assert((await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,'execute_js',{code:'publish()'},opaque,providerScope)).noDispatch);checked++;
+      } finally {if(previousChrome===undefined) delete globalThis.chrome;else globalThis.chrome=previousChrome;}
       const body='Beginning ① Ａ 👨‍👩‍👧\n\n'+ 'long exact body '.repeat(650)+'END';
       await page.setContent(`<nav><a ${platform==='twitter'?'data-testid="AppTabBar_Profile_Link" href="/alice"':'href="/profile/alice.bsky.social"'}>Profile</a></nav><main><div id="composer"><div contenteditable="true" role="textbox" id="body" style="white-space:pre-wrap"></div><button id="publish" data-testid="${platform==='twitter'?'tweetButtonInline':'composerPublishBtn'}">Post</button></div></main>`);
       await page.locator('#body').fill(body);

@@ -17938,9 +17938,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return progress.missing.map(id => social.contract.actions.find(a => a.id === id)?.platform || id);
   }
 
-  async _adoptLiveSocialPublishWorkflow(tabId, provider) {
+  async _adoptLiveSocialPublishWorkflow(tabId, provider, detected = null) {
     const guard = this._planExecutionGuards.get(tabId);
     if (!guard?.enabled) return false;
+    const knownWorkflow = SOCIAL_PLATFORMS.includes(guard.siteWorkflow?.adapterName)
+      && guard.siteWorkflow?.job?.id === 'publish-post';
+    // A domain match alone says nothing about the task: settings, messages,
+    // and ordinary forms also live on social sites. Compile only for a bound
+    // publication workflow or an observed composer submission. Once compiled,
+    // the contract can carry a multi-platform task across navigation.
+    if (!knownWorkflow && !guard.socialPublication && detected?.publicationControl !== true) return false;
+    if (guard.siteWorkflow?.job && !knownWorkflow) return false;
     const liveUrl = await this._currentUrl(tabId);
     const live = resolveAdapterWorkflowJob(liveUrl, 'publish-post');
     if (!SOCIAL_PLATFORMS.includes(live?.adapterName)) return false;
@@ -17951,7 +17959,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const action = social.contract.actions.find(a => a.platform === live.adapterName && eligible.includes(a.id));
     if (!action) return false;
     if (social.actionId === action.id && this._sameAdapterWorkflowBinding(guard.siteWorkflow, live)) return false;
-    if (guard.siteWorkflow?.job && !SOCIAL_PLATFORMS.includes(guard.siteWorkflow.adapterName)) return false;
     guard.siteWorkflow = live;
     guard.siteWorkflowUrl = liveUrl;
     guard.requiresSubmission = true;
@@ -18015,6 +18022,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const live = resolveAdapterWorkflowJob(pageUrl, 'publish-post');
     if (!SOCIAL_PLATFORMS.includes(live?.adapterName)) return null;
     if (detected?.resolvedEditableTarget || detected?.resolvedNavigationTarget || detected?.resolvedNonSubmitTarget) return null;
+    // An observed ordinary form still goes through the generic submission
+    // guards. Absent evidence is not a negative: opaque callbacks, failed
+    // probes, and unresolved controls cannot claim this exemption.
+    if (detected?.isSubmit === true && detected.publicationControl === false
+        && ['click', 'click_ax', 'iframe_click', 'set_field', 'press_keys'].includes(name)) return null;
     const blocked = error => ({ success: false, dispatched: false, noDispatch: true, repeatBlocked: true,
       workflowJob: 'publish-post', error,
       publicationContract: guard.socialPublication?.contract || null,
@@ -18022,7 +18034,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
     if (detected?.isSubmit !== true) return blocked('Publication-capable action could not be identified. Use a resolved page control; do not run arbitrary JavaScript or bundle editing and submission.');
     if (!['click', 'click_ax', 'iframe_click'].includes(name)) return blocked('Write and verify the draft first, then activate its publish control in a separate click.');
-    await this._adoptLiveSocialPublishWorkflow(tabId, provider);
+    if (detected.publicationControl !== true) return blocked('Publication composer ownership could not be observed. Read the current page and use its resolved publish control.');
+    await this._adoptLiveSocialPublishWorkflow(tabId, provider, detected);
     const social = await this._ensureSocialPublicationContract(tabId, provider);
     const action = this._socialPublicationAction(guard);
     if (!action || action.platform !== live.adapterName
@@ -18059,7 +18072,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // The semantic check can take time. Re-read the same target afterward;
     // neither a changed draft/account nor a navigated document inherits it.
     const fresh = await this._detectLikelySubmitAction(tabId, name, args);
-    if (fresh?.isSubmit !== true || fresh.publicationResourceUrlsComplete !== true
+    if (fresh?.isSubmit !== true || fresh.publicationControl !== true || fresh.publicationResourceUrlsComplete !== true
         || JSON.stringify(this._socialPublicationSnapshot(guard, fresh.publicationSnapshot)) !== JSON.stringify(snapshot)
         || this._normalizeUrl(await this._currentUrl(tabId)) !== this._normalizeUrl(pageUrl)) {
       social.dispatch = null;
@@ -22216,6 +22229,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           githubCommitDialogLauncher: detected.githubCommitDialogLauncher === true,
           ...(Array.isArray(detected.publicationResourceUrls) ? { publicationResourceUrls: detected.publicationResourceUrls.slice(0, 200) } : {}),
           publicationResourceUrlsComplete: detected.publicationResourceUrlsComplete === true,
+          ...(typeof detected.publicationControl === 'boolean' ? { publicationControl: detected.publicationControl } : {}),
           publicationSnapshot: detected.publicationSnapshot || null,
           publicationAccountIdentity: String(detected.publicationAccountIdentity || '').slice(0, 300),
           publicationAccountIdentityComplete: detected.publicationAccountIdentityComplete === true,
@@ -22740,8 +22754,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const pageOrders = transactionOrderSite
         ? transactionOrderScan(doc.body || doc.documentElement)
         : { ids: [], complete: false };
-      const publicationAccount = publicationAccountEvidence(submitControl);
-      const publicationBaseline = publicationResourceUrls();
+      const publicationControl = socialPublicationControlFor(form, submitControl);
+      const publicationAccount = publicationControl === true
+        ? publicationAccountEvidence(submitControl) : { identity: '', complete: false };
+      const publicationBaseline = publicationControl === true
+        ? publicationResourceUrls() : { urls: [], complete: false };
       const formSummary = summarizeForm(form, pendingEl, pendingValue);
       const control = labelControlFor(submitControl) || submitControl;
       const controlLabel = compact(
@@ -22785,7 +22802,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         validationSubmitEvidence,
         publicationResourceUrls: publicationBaseline.urls,
         publicationResourceUrlsComplete: publicationBaseline.complete,
-        publicationSnapshot: publicationComposerSnapshot(form, publicationAccount),
+        ...(typeof publicationControl === 'boolean' ? { publicationControl } : {}),
+        publicationSnapshot: publicationControl === true ? publicationComposerSnapshot(form, publicationAccount) : null,
         publicationAccountIdentity: publicationAccount.identity,
         publicationAccountIdentityComplete: publicationAccount.complete,
         transactionOrderIds: formOrders.ids,
@@ -22880,6 +22898,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return socialPublishComposerFor(candidate)
         ? { isSubmit: true, strong: publishTestId }
         : { isSubmit: false, strong: false };
+    };
+    const socialPublicationControlFor = (root, el) => {
+      if (!socialPublishAdapterName() || !el) return undefined;
+      const target = labelControlFor(el) || el;
+      const control = target.closest?.('button,input,[role="button"],[onclick],[data-action]') || target;
+      if (socialPublishControlEvidence(control).isSubmit) return true;
+      // The app's composer markers also cover localized/unnamed submit
+      // controls and implicit Enter/set_field submissions. Inspect only the
+      // target's own form/root; a separate composer elsewhere on the page
+      // cannot turn a settings form into a publication.
+      const markers = socialPublishAdapterName() === 'twitter'
+        ? '[data-testid="tweetButton"],[data-testid="tweetButtonInline"],[data-testid^="tweetTextarea_"]'
+        : '[data-testid="composerPublishBtn"],[data-testid="composerPublishButton"],[data-testid="composerTextInput"]';
+      if (control.matches?.(markers) || root?.matches?.(markers) || root?.querySelector?.(markers)) return true;
+      // Implicit submission acts on the form, not its focused editor. Include
+      // unnamed publish buttons and externally associated HTML controls too.
+      const controls = new Set([...(root?.elements || []),
+        ...(root?.querySelectorAll?.('button,input,[role="button"]') || [])]);
+      if ([...controls].some(candidate => socialPublishControlEvidence(candidate).isSubmit)) return true;
+      // Only a resolved HTML form establishes the ordinary-form exemption.
+      // Missing roots and arbitrary callbacks retain unknown classification.
+      return String(root?.tagName || '').toUpperCase() === 'FORM' ? false : undefined;
     };
     const submitControlEvidence = (el) => {
       const target = labelControlFor(el) || el;
@@ -27238,8 +27278,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _ensureProgressSessionForCurrentTask(tabId, opts = {}) {
     const publicationGuard = this._planExecutionGuards.get(tabId);
-    if (publicationGuard?.enabled && publicationGuard.requiresSubmission === true) {
-      await this._ensureSocialPublicationContract(tabId, opts.provider);
+    if (publicationGuard?.enabled && publicationGuard.requiresSubmission === true
+        && SOCIAL_PLATFORMS.includes(publicationGuard.siteWorkflow?.adapterName)
+        && publicationGuard.siteWorkflow?.job?.id === 'publish-post') {
       await this._adoptLiveSocialPublishWorkflow(tabId, opts.provider);
     }
     const expectedItems = this._normalizeExpectedItems(opts.expectedItems);

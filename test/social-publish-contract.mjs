@@ -101,17 +101,71 @@ for (const browser of ['chrome', 'firefox']) {
       }
       return {content:JSON.stringify(raw)};
     };
-    const detected = {isSubmit:true,publicationResourceUrls:[],publicationResourceUrlsComplete:true,
+    const detected = {isSubmit:true,publicationControl:true,publicationResourceUrls:[],publicationResourceUrlsComplete:true,
       publicationAccountIdentity:'twitter:alice',publicationAccountIdentityComplete:true,publicationSnapshot:snapshot()};
     agent._detectLikelySubmitAction = async () => structuredClone(detected);
     return {agent,tabId,guard,provider,calls,detected};
   }
 
+  test(`${browser}: unrelated submissions and social-site visits do not compile publication intent`, async () => {
+    for (const url of ['https://shop.example/checkout', 'https://mail.example/inbox', 'https://example.com/form',
+      'https://x.com/settings/profile', 'https://bsky.app/settings', 'https://x.com/home']) {
+      const f = setup('Save the requested changes');
+      f.agent._currentUrl = async () => url;
+      f.agent._chatWithCostAllowance = async () => { throw new Error('Unexpected publication provider call'); };
+      await f.agent._ensureProgressSessionForCurrentTask(f.tabId, {
+        provider:f.provider, taskText:'Save the requested changes', progressLedgerPolicy:'disabled',
+      });
+      assert.equal(await f.agent._adoptLiveSocialPublishWorkflow(f.tabId,f.provider),false);
+      assert.equal(f.guard.socialPublication,null);
+      assert.equal(f.guard.siteWorkflow,null);
+    }
+  });
+
+  test(`${browser}: bound publication plans compile at initialization and lazy composer discovery still works`, async () => {
+    const f = setup();
+    f.guard.siteWorkflow = f.agent._resolvePlannerSiteWorkflow('https://x.com/home', {request_kind:'execute',site_job:'publish-post'});
+    assert(f.guard.siteWorkflow);
+    await f.agent._ensureProgressSessionForCurrentTask(f.tabId, {
+      provider:f.provider, taskText:'Post Hello on X', progressLedgerPolicy:'disabled',
+    });
+    assert.equal(f.calls.length,1);
+    assert.equal(f.guard.socialPublication.contract.status,'ready');
+    const lazy = setup();
+    assert.equal(await lazy.agent._adoptLiveSocialPublishWorkflow(lazy.tabId,lazy.provider),false);
+    assert.equal(lazy.calls.length,0);
+    assert.equal(await lazy.agent._workflowPreSubmitDispatchBlock(lazy.tabId,'click',{},lazy.detected,lazy.provider),null);
+    assert.deepEqual(lazy.calls.map(c=>c.meta.generationName),['social_publication_contract','social_publication_authorization']);
+  });
+
+  test(`${browser}: ordinary forms stay outside publication authorization with absent, none, or ready intent`, async () => {
+    for (const intent of ['absent','none','ready']) {
+      const f = setup('Save settings after posting Hello on X', intent === 'none'
+        ? {version:1,status:'none',actions:[],requirements:null,prohibited:[],reason:'Settings task.'} : rawContract());
+      if (intent !== 'absent') {
+        await f.agent._ensureSocialPublicationContract(f.tabId,f.provider);
+        assert.equal(f.guard.socialPublication.contract.status,intent);
+      }
+      const before = f.calls.length;
+      const ordinary = {isSubmit:true,publicationControl:false};
+      for (const [name,args] of [['click',{}],['click_ax',{}],['iframe_click',{}],['press_keys',{key:'Enter'}],['set_field',{submit:true}]]) {
+        assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId,name,args,ordinary,f.provider),null);
+      }
+      assert.equal(f.calls.length,before);
+      assert.equal(f.guard.siteWorkflow,null);
+      // A missing snapshot/flag never supplies the ordinary-form exemption.
+      const unresolved = {isSubmit:true,publicationSnapshot:null};
+      assert((await f.agent._workflowPreSubmitDispatchBlock(f.tabId,'click',{},unresolved,f.provider)).noDispatch);
+      assert((await f.agent._workflowPreSubmitDispatchBlock(f.tabId,'execute_js',{code:'publish()'},ordinary,f.provider)).noDispatch);
+      assert.equal(f.calls.length,before);
+    }
+  });
+
   test(`${browser}: selected provider compiles once and checks the concrete draft before dispatch`, async () => {
     const {agent,tabId,guard,provider,calls,detected} = setup();
-    assert(await agent._adoptLiveSocialPublishWorkflow(tabId,provider));
+    assert(await agent._adoptLiveSocialPublishWorkflow(tabId,provider,detected));
     assert.equal(guard.siteWorkflow.adapterName,'twitter');
-    assert.equal(await agent._adoptLiveSocialPublishWorkflow(tabId,provider),false);
+    assert.equal(await agent._adoptLiveSocialPublishWorkflow(tabId,provider,detected),false);
     assert.equal(calls.length,1);
     assert.equal(await agent._workflowPreSubmitDispatchBlock(tabId,'click_ax',{ref_id:'post'},detected,provider),null);
     assert.equal(calls.length,2);
@@ -130,7 +184,7 @@ for (const browser of ['chrome', 'firefox']) {
     for (const request of ['Explain how brands publish on X effectively','The team will post on X tomorrow',
       'Do not publish anything; open composer to inspect','Read posts on X and summarize them']) {
       const {agent,tabId,guard,provider,detected} = setup(request,{version:1,status:'none',actions:[],requirements:null,prohibited:['twitter'],reason:'No publication authorized.'});
-      assert.equal(await agent._adoptLiveSocialPublishWorkflow(tabId,provider),false);
+      assert.equal(await agent._adoptLiveSocialPublishWorkflow(tabId,provider,detected),false);
       assert.deepEqual([...agent._trustedSocialPublishTargetAdapters(guard)],[]);
       assert((await agent._workflowPreSubmitDispatchBlock(tabId,'click_ax',{},detected,provider)).noDispatch);
     }
@@ -138,13 +192,13 @@ for (const browser of ['chrome', 'firefox']) {
 
   test(`${browser}: malformed/partial intent and failed semantic audits block without deterministic fallback`, async () => {
     const state = setup('Post Hello with an image on X',{workflowFields:[{field:'body',value:'Hello'}]});
-    await state.agent._adoptLiveSocialPublishWorkflow(state.tabId,state.provider);
+    await state.agent._adoptLiveSocialPublishWorkflow(state.tabId,state.provider,state.detected);
     assert.equal(state.calls.length,2);
     assert.equal(state.guard.socialPublication.contract,null);
     assert((await state.agent._workflowPreSubmitDispatchBlock(state.tabId,'click_ax',{},state.detected,state.provider)).noDispatch);
     assert.equal(state.calls.length,2);
     const other = setup();
-    await other.agent._adoptLiveSocialPublishWorkflow(other.tabId,other.provider);
+    await other.agent._adoptLiveSocialPublishWorkflow(other.tabId,other.provider,other.detected);
     other.agent._chatWithCostAllowance = async()=>({content:'{"authorized":true}'});
     assert((await other.agent._workflowPreSubmitDispatchBlock(other.tabId,'click_ax',{},other.detected,other.provider)).noDispatch);
     assert.equal(other.guard.socialPublication.dispatch,null);
@@ -170,7 +224,7 @@ for (const browser of ['chrome', 'firefox']) {
     const fixture = setup(request,raw);
     const {agent,tabId,provider,detected} = fixture;
     detected.publicationSnapshot=composer;
-    await agent._adoptLiveSocialPublishWorkflow(tabId,provider);
+    await agent._adoptLiveSocialPublishWorkflow(tabId,provider,detected);
     assert.equal(await agent._workflowPreSubmitDispatchBlock(tabId,'click_ax',{},detected,provider),null);
     agent._beginCompletionInvariant(tabId);
     agent._recordCompletionToolResult(tabId,'click_ax',{}, {success:true,dispatched:true});
@@ -235,7 +289,7 @@ for (const browser of ['chrome', 'firefox']) {
       const f=await dispatchedFixture(rawContract(actions,{kind,items:['p1','p2']}),'Post Hello on X and Bluesky');
       f.guard.workflowTerminalEvidence=f.terminal();
       f.agent._currentUrl=async()=> 'https://bsky.app/';
-      assert.equal(await f.agent._adoptLiveSocialPublishWorkflow(f.tabId,f.provider),kind==='all');
+      assert.equal(await f.agent._adoptLiveSocialPublishWorkflow(f.tabId,f.provider,f.detected),kind==='all');
       assert.equal(f.guard.socialPublication.outcomes.p1.status,'verified');
       assert.deepEqual(f.agent._missingSocialPublishTargets(f.guard),kind==='all'?['bluesky']:[]);
       assert.equal(f.calls.filter(c=>c.meta.generationName==='social_publication_contract').length,1);
