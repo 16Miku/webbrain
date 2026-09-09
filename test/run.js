@@ -76412,7 +76412,7 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     const helperStart = source.indexOf(label === 'chrome'
       ? 'function _contentEditableValueMatches('
       : 'function _setFieldValueMatches(');
-    const helperEnd = source.indexOf('\n\n  function _editableTextValue', helperStart);
+    const helperEnd = source.indexOf('\n\n  function readProseMirrorText', helperStart);
     assert.ok(helperStart >= 0 && helperEnd > helperStart, `${label}: exact-value helper should remain independently testable`);
     const matches = label === 'chrome'
       ? vm.runInNewContext(`(() => { ${source.slice(helperStart, helperEnd)}; return _setFieldValueMatches; })()`)
@@ -76424,6 +76424,8 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     assert.equal(matches('old-new', 'old-', 'new', false), true, `${label}: exact append should verify`);
     assert.equal(matches('new', 'old-', 'new', false), false, `${label}: append verification must preserve prior content`);
     assert.equal(matches('first\nsecond', '', 'first\r\nsecond', true, true), true, `${label}: rich-editor CRLF should match rendered newlines`);
+    assert.equal(matches('first\nsecond', '', 'first\r\nsecond', true, true, true), true, `${label}: semantic paragraph readback preserves CRLF equivalence`);
+    assert.equal(matches('first\n\n\nsecond', '', 'first\n\nsecond', true, true, true), false, `${label}: semantic paragraph readback must not accept extra document newlines`);
     assert.equal(matches('first\n\n\nsecond', '', 'first\n\nsecond', true, true), label === 'chrome', `${label}: only Chromium should accept its empty-block readback expansion`);
     assert.equal(matches('first\n\n\n\n\nsecond', '', 'first\n\n\nsecond', true, true), label === 'chrome', `${label}: only Chromium should accept multiple empty-block expansions`);
     assert.equal(matches('\n\nfirst', '', '\nfirst', true, true), label === 'chrome', `${label}: only Chromium should accept a leading empty-block expansion`);
@@ -76460,8 +76462,8 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
     const settleIndex = branch.indexOf('await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS))');
     const readbackIndex = branch.search(/(?:const|let) actual = el\.isContentEditable/);
     assert.ok(settleIndex >= 0 && readbackIndex > settleIndex, `${label}: verification must happen after controlled-input reconciliation`);
-    assert.match(branch, /(?:const|let) actual = el\.isContentEditable \? _editableTextValue\(el\)/, `${label}: rich-editor verification must use rendered text`);
-    assert.match(branch, /_setFieldValueMatches\(actual, prevValue, text, clear, el\.isContentEditable\)/, `${label}: newline normalization must remain contenteditable-only`);
+    assert.match(branch, /(?:const|let) actual = el\.isContentEditable \? _editableTextValue\(el\)/, `${label}: rich-editor verification must use the editor text reader`);
+    assert.match(branch, /_setFieldValueMatches\(actual, prevValue, text, clear, el\.isContentEditable, readProseMirrorText\(el\) !== null\)/, `${label}: visual newline normalization must remain limited to contenteditables without semantic paragraph readback`);
     assert.match(branch, /await new Promise\(resolve => setTimeout\(resolve, SET_FIELD_VERIFY_DELAY_MS\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can continue after its verification wait expires`);
     assert.match(branch, /if \(usesNativeSubmit\)[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*submissionDispatched = true;\s*try \{\s*form\.requestSubmit\(\)/, `${label}: native set_field submission is not guarded at the mutation boundary`);
     assert.match(branch, /await new Promise\(r => setTimeout\(r, 80\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*await new Promise\(r => setTimeout\(r, 30\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);[\s\S]*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*const enterResult = dispatchKeySequence\('Enter', 13, true\);\s*submissionDispatched = enterResult\.dispatched;\s*if \(!enterResult\.completedWithinDeadline\)/, `${label}: page-owned set_field submission can resume after its deadline`);

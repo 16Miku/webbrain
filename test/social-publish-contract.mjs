@@ -203,6 +203,60 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: Bluesky exact-body mismatch identifies the missing space and gates the audit`, async () => {
+    const typed = 'WebBrain 35.0.0 is coming with a lot of fixes.\n\nCheck out the changelog: https://github.com/webbrain-one/webbrain/blob/main/CHANGELOG.md';
+    const body = typed.replace('.\n\n', '. \n\n');
+    const f = setup('Post '+body+' on Bluesky',rawContract([rawAction('p1','bluesky',body)]));
+    f.agent._currentUrl = async () => 'https://bsky.app/';
+    f.detected.publicationSnapshot = snapshot(typed,'bluesky:alice.bsky.social');
+    const blocked = await f.agent._workflowPreSubmitDispatchBlock(f.tabId,'click_ax',{ref_id:'publish'},f.detected,f.provider);
+    assert.equal(blocked.noDispatch,true);
+    assert.deepEqual(blocked.publicationValidation.issues,[{reason:'body_mismatch',postIndex:0,
+      expectedLength:137,observedLength:136,firstDifference:{offset:46,expectedCodePoint:32,observedCodePoint:10}}]);
+    assert.equal(f.calls.some(c=>c.meta.generationName==='social_publication_authorization'),false);
+    f.detected.publicationSnapshot.posts[0].bodyText = body;
+    assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId,'click_ax',{ref_id:'publish'},f.detected,f.provider),null);
+    assert.equal(f.calls.filter(c=>c.meta.generationName==='social_publication_authorization').length,1);
+    const missing = f.agent._socialSnapshotActionIssues(f.guard.socialPublication.contract.actions[0],null);
+    assert(missing.some(issue=>issue.reason==='account_unobserved'));
+    assert(missing.some(issue=>issue.reason==='composer_incomplete'));
+  });
+
+  test(`${browser}: changed replacement settles the original write by exact same-document digest`, async () => {
+    for (const mode of ['exact','partial','wrong-document','wrong-target','append','second-debt','no-digest']) {
+      const f = setup();
+      const {agent,tabId} = f;
+      const original = 'Original\n\nbody';
+      const args = {ref_id:'editor',text:original,clear:true};
+      agent._lastAxScopes.set(tabId,{documentToken:'doc',pageUrl:'https://bsky.app/'});
+      agent._adoptLiveTextMutationScope = async () => null;
+      const target = agent._textMutationTarget(tabId,'set_field',args);
+      const debt = {...target,replacesValue:true,expectedLength:original.length,
+        expectedSha256:await agent._sha256Text(original),fieldMeta:{contentEditable:true},recordedAt:Date.now()};
+      agent._uncertainTextMutations.set(tabId,new Map([[target.key,debt]]));
+      if (mode === 'second-debt') agent._uncertainTextMutations.get(tabId).set('other',{...debt,key:'other'});
+      const probes = [];
+      agent._textMutationValueDigest = async (_tab,probeTarget) => {
+        probes.push(probeTarget.key);
+        return mode === 'no-digest' ? null : {documentToken:mode==='wrong-document'?'stale':'doc',
+          valueLength:original.length,valueSha256:mode==='partial'?'0'.repeat(64):debt.expectedSha256,
+          fieldMeta:{contentEditable:true}};
+      };
+      const correction = {ref_id:mode==='wrong-target'?'other':'editor',text:'Original \n\nbody',clear:mode!=='append'};
+      const result = await agent._uncertainTextMutationBlock(tabId,'type_ax',correction);
+      if (mode === 'exact') {
+        assert.equal(result,null,'verified original allows a subsequent replacement');
+        assert.equal(agent._uncertainTextMutations.has(tabId),false);
+        assert.deepEqual(probes,[target.key]);
+      } else {
+        assert.equal(result.noDispatch,true,mode);
+        assert.equal(result.recoveryRequired,'verify_or_restore_field',mode);
+        assert.equal(result.recoveryOriginalReplacementMatches,false,mode);
+        assert(agent._uncertainTextMutations.get(tabId).size>0,mode);
+      }
+    }
+  });
+
   async function clarify(f, question, answer, source = 'option', beforeReply = () => {}) {
     f.agent._persistNow = async () => {};
     f.agent.clarifyTimeoutSec = -1;
