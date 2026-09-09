@@ -17980,6 +17980,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return copy;
   }
 
+  _sameSocialPublicationResource(platform, left, right) {
+    const workflow = { adapterName: platform };
+    const leftIdentity = this._workflowPublishedResourceIdentity(workflow, left);
+    const rightIdentity = this._workflowPublishedResourceIdentity(workflow, right);
+    // Resource identity deliberately canonicalizes X's x.com/twitter.com host
+    // aliases and ignores presentation-only query/hash fragments. Unknown or
+    // malformed URLs never compare equal.
+    return !!leftIdentity && leftIdentity === rightIdentity;
+  }
+
   _socialSnapshotMatchesAction(action, snapshot) {
     if (!snapshot?.complete || snapshot.posts?.length !== action.posts.length || !snapshot.account) return false;
     const workflow = { adapterName: action.platform };
@@ -17992,7 +18002,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && (post.body.kind === 'compose' || exactPublicationText(post.body.value) === exactPublicationText(observed.bodyText))
         && publicationMediaMatches(post.media, observed)
         && observed.context?.kind === post.context.kind
-        && (post.context.target === null || this._normalizeUrl(post.context.target) === this._normalizeUrl(observed.context.target));
+        && (post.context.target === null || this._sameSocialPublicationResource(action.platform, post.context.target, observed.context.target));
     });
   }
 
@@ -18076,7 +18086,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const matches = records.filter(record => {
         const identity = this._workflowPublishedResourceIdentity(guard.siteWorkflow, record.url);
         if (!identity || used.has(identity) || (i === 0 && identity !== binding.publishedResourceIdentity)) return false;
-        if (i > 0 && this._normalizeUrl(record.replyToUrl || '') !== this._normalizeUrl(previousUrl)) return false;
+        if (i > 0 && !this._sameSocialPublicationResource(action.platform, record.replyToUrl, previousUrl)) return false;
         const author = this._workflowSocialPublicationAccountIdentity(guard.siteWorkflow, record.url);
         if (author !== account && !this._workflowSocialAccountAliasProven(guard.siteWorkflow, account, author, record)) return false;
         const mediaRecord = this._workflowSocialRecordWithUploadedAttachmentNames(record, binding);
@@ -18086,10 +18096,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && (i > 0 ? !(record.contextUrls?.length) : post.context.kind === 'post'
             ? !(record.contextUrls?.length) && !record.replyToUrl
             : post.context.kind === 'reply'
-            ? this._normalizeUrl(record.replyToUrl || '') === this._normalizeUrl(post.context.target)
+            ? this._sameSocialPublicationResource(action.platform, record.replyToUrl, post.context.target)
               && !(record.contextUrls?.length)
             : !record.replyToUrl && (record.contextUrls || []).length === 1
-              && this._normalizeUrl(record.contextUrls[0]) === this._normalizeUrl(post.context.target));
+              && this._sameSocialPublicationResource(action.platform, record.contextUrls[0], post.context.target));
       });
       if (matches.length !== 1) return false;
       used.add(this._workflowPublishedResourceIdentity(guard.siteWorkflow, matches[0].url));

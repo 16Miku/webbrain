@@ -288,23 +288,23 @@ for (const browser of ['chrome', 'firefox']) {
     const parent='https://x.com/bob/status/1111111111111111111';
     const other='https://x.com/carol/status/3333333333333333333';
     const action=rawAction('p1','twitter');action.posts[0].context={kind:'reply',target:ref(parent)};
-    for(const mode of ['matching','different','missing','changed']){
+    for(const mode of ['matching','host-alias','different','missing','changed']){
       const f=setup(`Reply exactly Hello to ${parent} on X`,rawContract([action]));
       f.agent._currentUrl=async()=>parent;
-      f.detected.publicationSnapshot.posts[0].context={kind:'reply',target:mode==='different'?other:mode==='missing'?null:parent};
+      f.detected.publicationSnapshot.posts[0].context={kind:'reply',target:mode==='host-alias'?parent.replace('x.com','twitter.com')+'?s=20#reply':mode==='different'?other:mode==='missing'?null:parent};
       if(mode==='missing') f.detected.publicationSnapshot.complete=false;
       if(mode==='changed') f.agent._detectLikelySubmitAction=async()=>{
         const fresh=structuredClone(f.detected);fresh.publicationSnapshot.posts[0].context.target=other;return fresh;
       };
       const block=await f.agent._workflowPreSubmitDispatchBlock(f.tabId,'click_ax',{},f.detected,f.provider);
-      if(mode==='matching'){
+      if(mode==='matching'||mode==='host-alias'){
         assert.equal(block,null);
-        assert.equal(f.guard.socialPublication.dispatch.snapshot.posts[0].context.target,parent);
+        assert.equal(f.guard.socialPublication.dispatch.snapshot.posts[0].context.target,mode==='host-alias'?parent.replace('x.com','twitter.com')+'?s=20#reply':parent);
       } else {
         assert.equal(block.noDispatch,true,mode);
         assert.equal(f.guard.socialPublication.dispatch,null,mode);
       }
-      assert.equal(f.calls.length,mode==='matching'||mode==='changed'?2:1,'a missing/wrong parent cannot be supplied by the contract or audit');
+      assert.equal(f.calls.length,mode==='matching'||mode==='host-alias'||mode==='changed'?2:1,'a missing/wrong parent cannot be supplied by the contract or audit');
     }
   });
 
