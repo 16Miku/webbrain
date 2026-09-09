@@ -20304,6 +20304,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const publicationComposerSnapshot = (root, account) => {
       if (!root || !account.complete || !['x.com', 'twitter.com', 'bsky.app'].includes(host.replace(/^www\./, ''))) return null;
       try {
+        const permalink = value => {
+          if (!value) return null;
+          try {
+            const parsed = new URL(value, url);
+            const linkHost = parsed.hostname.toLowerCase().replace(/^www\./, '');
+            const pageHost = host.toLowerCase().replace(/^www\./, '');
+            const path = parsed.pathname.replace(/\/+$/, '');
+            if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password || parsed.port) return null;
+            const isX = ['x.com', 'twitter.com'].includes(pageHost) && ['x.com', 'twitter.com'].includes(linkHost)
+              && /^\/[A-Za-z0-9_]{1,15}\/status\/\d+$/.test(path);
+            const isBluesky = pageHost === 'bsky.app' && linkHost === 'bsky.app'
+              && /^\/profile\/[^/]+\/post\/[^/]+$/.test(path);
+            return isX || isBluesky ? parsed.origin + path : null;
+          } catch { return null; }
+        };
         const editors = Array.from(root.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]'))
           .filter(isVisible).filter((el, _i, all) => !all.some(other => other !== el && other.contains(el)));
         if (!editors.length || editors.length > 12) return { complete: false };
@@ -20341,16 +20356,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             return { type: video ? 'video' : 'image', src: String(source),
               alt: node.getAttribute('alt') ?? node.querySelector('img')?.getAttribute('alt') ?? '' };
           });
-          // Only embedded context cards supply a quote/reply target. Authored
-          // links and link previews cannot turn into relationship evidence.
-          const contextCards = Array.from(scope?.querySelectorAll('article,[data-testid="quoteTweet"],[data-testid="replyToPost"]') || []).filter(card => !card.contains(editor));
+          // Authored links and link previews are not relationship evidence.
+          const contextCards = Array.from(scope?.querySelectorAll('article,[data-testid="quoteTweet"],[data-testid="replyToPost"]') || [])
+            .filter(isVisible).filter(card => !card.contains(editor) && !editor.contains(card));
           const contextUrls = [...new Set(contextCards.flatMap(card => Array.from(card.querySelectorAll('a[href]')))
-            .map(a => { try { return new URL(a.getAttribute('href'), url).href; } catch { return ''; } })
-            .filter(href => /\/status\/\d+|\/profile\/[^/]+\/post\/[^/]+/.test(href)))];
-          const reply = !!scope?.querySelector('[data-testid="replyToPost"],[data-testid="replyingTo"]');
+            .map(a => permalink(a.getAttribute('href'))).filter(Boolean))];
+          const reply = Array.from(scope?.querySelectorAll('[data-testid="replyToPost"],[data-testid="replyingTo"]') || []).some(isVisible);
+          // Inline replies on a permalink page use the active thread as their
+          // parent; replyingTo commonly contains only a profile link. Modals
+          // and composers nested inside another post can target a different
+          // reply without changing the background route, so require their
+          // explicit context. Never substitute the requested contract target
+          // for an observed parent: the runtime compares those separately.
+          const inlineThreadTarget = reply && !contextUrls.length && editors.length === 1
+            && !editor.closest('dialog,[role="dialog"],[aria-modal="true"],[data-testid="tweet"],[data-testid^="feedItem-by-"],[data-testid^="postThreadItem-by-"]')
+            ? permalink(url) : null;
+          const target = contextUrls.length === 1 ? contextUrls[0] : inlineThreadTarget;
           return { bodyText, attachments,
-            context: { kind: reply ? 'reply' : contextUrls.length ? 'quote' : 'post', target: contextUrls.length === 1 ? contextUrls[0] : null },
-            complete: bodyText.length <= 25000 && mediaNodes.length <= 20 && contextUrls.length <= 1 && (!reply || contextUrls.length === 1) };
+            context: { kind: reply ? 'reply' : contextUrls.length ? 'quote' : 'post', target },
+            complete: bodyText.length <= 25000 && mediaNodes.length <= 20 && contextUrls.length <= 1 && (!reply || !!target) };
         });
         return { complete: posts.every(p => p.complete) && !sharedMedia && allMedia.every(node => ownedMedia.has(node)), account: account.identity, posts };
       } catch { return { complete: false }; }

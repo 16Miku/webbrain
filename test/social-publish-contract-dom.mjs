@@ -55,6 +55,39 @@ try {
       const reply=await probe();
       assert.equal(reply.publicationSnapshot.complete,false);
       checked++;
+      // Standard inline replies expose replyingTo, but no descendant status
+      // link. Their parent comes from the active permalink route.
+      const parent=platform==='twitter'?'https://x.com/bob/status/1111111111111111111':'https://bsky.app/profile/bob.bsky.social/post/3parent';
+      const otherParent=platform==='twitter'?'https://x.com/carol/status/3333333333333333333':'https://bsky.app/profile/carol.bsky.social/post/3other';
+      await page.evaluate(parent=>history.replaceState({},'',parent+'?source=fixture#reply'),parent);
+      const inlineReply=await probe();
+      assert.equal(inlineReply.publicationSnapshot.complete,true,'active thread identifies an inline reply parent');
+      assert.deepEqual(inlineReply.publicationSnapshot.posts[0].context,{kind:'reply',target:parent});checked++;
+      // A modal can target a different reply in the same thread. Its explicit
+      // context wins; the background route must not fill missing modal proof.
+      await page.locator('#composer').evaluate(el=>el.setAttribute('role','dialog'));
+      assert.equal((await probe()).publicationSnapshot.complete,false);checked++;
+      await page.locator('#composer').evaluate((el,parent)=>{
+        const card=document.createElement('article');card.dataset.testid='replyToPost';card.id='reply-parent';
+        const link=document.createElement('a');link.href=parent;link.textContent='Parent';card.append(link);el.append(card);
+      },otherParent);
+      const modalReply=await probe();
+      assert.equal(modalReply.publicationSnapshot.complete,true);
+      assert.equal(modalReply.publicationSnapshot.posts[0].context.target,otherParent);checked++;
+      // A second possible parent stays ambiguous even on a known thread route.
+      await page.locator('#reply-parent').evaluate((el,parent)=>{const a=document.createElement('a');a.href=parent;a.textContent='Other parent';el.append(a);},parent);
+      assert.equal((await probe()).publicationSnapshot.complete,false);checked++;
+      await page.locator('#reply-parent').evaluate(el=>el.remove());
+      await page.locator('#composer').evaluate(el=>el.removeAttribute('role'));
+      await page.evaluate(()=>history.replaceState({},'','/home?next=/bob/status/1111111111111111111'));
+      // An authored body link cannot supply missing reply relationship proof.
+      await page.locator('#body').evaluate((el,parent)=>{const a=document.createElement('a');a.href=parent;a.textContent='link';el.append(a);},parent);
+      assert.equal((await probe()).publicationSnapshot.complete,false);checked++;
+      await page.evaluate(parent=>history.replaceState({},'',parent),parent);
+      await page.locator('[data-testid="replyingTo"]').evaluate(el=>el.remove());
+      const ordinary=await probe();
+      assert.deepEqual(ordinary.publicationSnapshot.posts[0].context,{kind:'post',target:null});checked++;
+
       // Each attachment must have exactly one observed owner in a thread.
       await page.setContent(`<nav><a ${platform==='twitter'?'data-testid="AppTabBar_Profile_Link" href="/alice"':'href="/profile/alice.bsky.social"'}>Profile</a></nav><div id="composer"><section id="first"><div contenteditable="true" role="textbox">First</div><img src="https://cdn.example/one.png" width="40" height="40"></section><section><div contenteditable="true" role="textbox">Second</div><img src="https://cdn.example/two.png" width="40" height="40"></section><button id="publish" data-testid="${platform==='twitter'?'tweetButtonInline':'composerPublishBtn'}">Post</button></div>`);
       const thread=await probe();
