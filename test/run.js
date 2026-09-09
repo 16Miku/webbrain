@@ -56173,7 +56173,8 @@ test('pending toolbar recovery binds and dispatches screenshot clicks at one can
           boundTarget: null,
         };
         const result = await agent.executeTool(tabId, 'click', args);
-        assert.equal(activeCase.mappingCalls, 1, `${label}: click coordinates must be canonicalized exactly once`);
+        assert.equal(activeCase.mappingCalls, args.coordinate_space === 'screenshot' ? 1 : 0,
+          `${label}: screenshot coordinates must be converted once and CSS coordinates must pass through`);
         assert.deepEqual(
           [activeCase.probeArgs?.x, activeCase.probeArgs?.y],
           [activeCase.dispatchArgs?.x, activeCase.dispatchArgs?.y],
@@ -74193,6 +74194,9 @@ test('coordinate iframe submits capture validation state in all frames', async (
 
   const captureOptions = [];
   let captures = 0;
+  const coordinateCapture = agent._registerScreenshotCapture(tabId, {
+    imageWidth: 2000, imageHeight: 1600, cssWidth: 1000, cssHeight: 800,
+  });
   agent._ensureGateSetting = async () => false;
   agent._skipPermissionGate = false;
   agent._currentUrl = async () => url;
@@ -74233,7 +74237,9 @@ test('coordinate iframe submits capture validation state in all frames', async (
     tabId,
     [{
       id: 'coordinate_iframe_submit',
-      function: { name: 'click', arguments: '{"x":120,"y":160}' },
+      function: { name: 'click', arguments: JSON.stringify({
+        x: 240, y: 320, coordinate_space: 'screenshot', capture_id: coordinateCapture.captureId,
+      }) },
     }],
     messages,
     () => {},

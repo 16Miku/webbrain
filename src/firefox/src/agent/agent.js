@@ -9804,8 +9804,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const parameters = this._toolParametersForValidation(tabId, fnName, toolSchemas);
       const argumentValidation = parameters ? validateToolArguments(fnName, fnArgs, parameters) : { ok: true };
-      if (!argumentValidation.ok) {
-        const result = argumentValidation.result;
+      // Every target probe and the eventual dispatch must use the same CSS
+      // point. Validate capture provenance before any DOM/iframe preflight.
+      const coordinates = argumentValidation.ok
+        ? this._prepareClickCoordinates(tabId, fnName, argumentValidation.args || fnArgs)
+        : null;
+      const preparationFailure = argumentValidation.ok ? coordinates.block : argumentValidation.result;
+      if (preparationFailure) {
+        const result = preparationFailure;
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
         onUpdate('tool_result', { name: fnName, result });
         messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
@@ -9814,7 +9820,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
-      if (argumentValidation.args) fnArgs = argumentValidation.args;
+      fnArgs = coordinates.args;
       if (fnName !== 'done' && !Agent.NAV_TOOLS.has(fnName)) {
         try {
           await this._adoptLiveSocialPublishWorkflow(tabId, provider);
@@ -11635,6 +11641,67 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch {
       return { width: 0, height: 0 };
     }
+  }
+
+  _prepareClickCoordinates(tabId, name, args = {}) {
+    let coordinatePoint = null;
+    // Canonicalize coordinate clicks before toolbar recovery probes them.
+    // The preflight binding and the eventual dispatch must resolve the same
+    // CSS-pixel point, especially when the model clicked a downscaled image.
+    if (name === 'click' && args?.x != null && args?.y != null) {
+      const coordinateSpace = String(args.coordinate_space || '').trim().toLowerCase();
+      if (coordinateSpace !== 'screenshot' && coordinateSpace !== 'css') {
+        return { block: {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          ambiguousCoordinateSpace: true,
+          failureScope: 'coordinate-provenance',
+          error: 'Coordinate click rejected: x/y requires coordinate_space:"screenshot" with the exact capture_id, or coordinate_space:"css" only for cx/cy copied verbatim from a WebBrain tool result.',
+        } };
+      }
+      if (args.from_screenshot === true && coordinateSpace !== 'screenshot') {
+        return { block: {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          ambiguousCoordinateSpace: true,
+          failureScope: 'coordinate-provenance',
+          error: 'Coordinate click rejected: from_screenshot conflicts with coordinate_space:"css".',
+        } };
+      }
+      args = { ...args, coordinate_space: coordinateSpace };
+      const xn = Number(args.x);
+      const yn = Number(args.y);
+      if (Number.isFinite(xn) && Number.isFinite(yn) && xn >= 0 && xn <= 1 && yn >= 0 && yn <= 1) {
+        return { block: {
+          success: false,
+          dispatched: false,
+          error: this._normalizedCoordinateRecoveryError(tabId, args),
+        } };
+      }
+      const mapped = coordinateSpace === 'screenshot'
+        ? this._screenshotClickCoords(tabId, args)
+        : { x: xn, y: yn, converted: false };
+      if (mapped?.error) {
+        return { block: {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          staleCapture: true,
+          failureScope: 'screenshot-coordinate-capture',
+          error: mapped.error,
+        } };
+      }
+      if (mapped && (mapped.converted || coordinateSpace === 'screenshot')) {
+        args = { ...args, x: mapped.x, y: mapped.y, coordinate_space: 'css' };
+        if (args.from_screenshot === true) args.from_screenshot = false;
+      }
+      if (mapped) {
+        coordinatePoint = { x: mapped.x, y: mapped.y };
+      }
+    }
+    return { args, point: coordinatePoint, block: null };
   }
 
   /**
@@ -15668,15 +15735,62 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _socialPublicationSources(tabId) {
     const guard = this._planExecutionGuards.get(tabId);
-    const sources = {
+    // Keep the original task/drafts through a trusted Continue and compaction.
+    const sources = { ...(guard?.socialPublication?.sources || {
       request: this._latestTaskText(tabId),
       task: this._progressTaskAnchorText(tabId),
       plan: String(guard?.approvedPlanText || ''),
-    };
-    const drafts = (this.conversations.get(tabId) || []).filter(m => m.role === 'assistant'
+    }) };
+    const messages = this.conversations.get(tabId) || [];
+    let priorRequests = Object.entries(sources).filter(([key]) => /^prior_request\d+$/.test(key));
+    priorRequests.forEach(([key]) => { delete sources[key]; });
+    if (!guard?.socialPublication?.sources) {
+      // Short follow-ups such as "do it now" can become the task anchor.
+      // Retain only recent, whole user turns; never trim away a correction or
+      // skip an oversized turn to revive an older publication instruction.
+      const requests = messages.filter(m => m.role === 'user'
+        && !this._isScheduledResumeTurn(m.content) && !this._isAgentInjectedUserMessage(m))
+        .map(m => this._plannerUserAuthoredText(m)).filter(Boolean);
+      priorRequests = requests.slice(0, -1).slice(-4).map((text, i) => [`prior_request${i}`, text]);
+    }
+    const drafts = messages.filter(m => m.role === 'assistant'
       && typeof m.content === 'string' && !m.tool_calls?.length).slice(-4);
-    drafts.forEach((m, i) => { sources[`draft${i}`] = m.content; });
+    let draftIndex = Object.keys(sources).filter(key => /^draft\d+$/.test(key)).length;
+    drafts.forEach(m => {
+      if (!Object.entries(sources).some(([key, value]) => /^draft\d+$/.test(key) && value === m.content)) {
+        sources[`draft${draftIndex++}`] = m.content;
+      }
+    });
+    (guard?.socialPublicationClarifications || []).forEach((entry, i) => {
+      sources[`clarification_question${i}`] = entry.question;
+      sources[`clarification_answer${i}`] = entry.answer;
+    });
+    // Current instructions and clarification pairs have priority. Count JSON
+    // escaping/keys as well as text, including when refreshing cached sources.
+    let priorBudget = 120000 - JSON.stringify(sources).length;
+    const retained = [];
+    for (const [key, value] of priorRequests.slice(-4).reverse()) {
+      const size = JSON.stringify({ [key]: value }).length - 1;
+      if (size > priorBudget) break;
+      priorBudget -= size;
+      retained.push([key, value]);
+    }
+    for (const [key, value] of retained.reverse()) sources[key] = value;
     return sources;
+  }
+
+  _recordSocialPublicationClarification(tabId, guard, question, answer, source) {
+    if (!guard?.enabled || this._planExecutionGuards.get(tabId) !== guard
+        || !['user', 'option'].includes(source) || !question || !answer) return;
+    (guard.socialPublicationClarifications ||= []).push({ question, answer });
+    const social = guard.socialPublication;
+    if (!social) return;
+    social.needsRecompile = true;
+    // Never erase an attempted publication's outcomes to obtain a fresh set
+    // of eligible actions. Its original binding still owns delivery evidence.
+    if (Object.keys(social.outcomes || {}).length) {
+      social.error = 'Publication instructions changed after a prior attempt. Verify that attempt before starting a revised publication task.';
+    }
   }
 
   async _ensureSocialPublicationContract(tabId, provider = this._activeProvider(tabId)) {
@@ -15684,23 +15798,40 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!guard?.enabled) return null;
     // The app-owned guard is new for every user revision. A trusted Continue
     // carries its frozen contract, including exact raw source text.
-    if (guard.socialPublication) return guard.socialPublication;
+    const previous = guard.socialPublication;
+    if (previous && (!previous.needsRecompile || Object.keys(previous.outcomes || {}).length)) return previous;
     const sources = this._socialPublicationSources(tabId);
-    const key = this._sha256TextSync(JSON.stringify({ sources, taskKey: guard.taskKey }));
-    const state = { key, sources, contract: null, outcomes: {}, actionId: null, dispatch: null, error: '' };
+    // This URL was observed by the app when the user task started, before
+    // agent navigation. It resolves an omitted destination, never permission.
+    const requestWorkflow = resolveAdapterWorkflowJob(guard.siteWorkflowUrl, 'publish-post');
+    const context = previous?.context || {
+      requestPlatform: SOCIAL_PLATFORMS.includes(requestWorkflow?.adapterName) ? requestWorkflow.adapterName : null,
+    };
+    const key = this._sha256TextSync(JSON.stringify({ sources, context, taskKey: guard.taskKey }));
+    const state = { key, sources, context, contract: null, outcomes: {}, actionId: null, dispatch: null, error: '' };
     guard.socialPublication = state;
     if (!provider?.chat || JSON.stringify(sources).length > 120000) {
       state.error = 'Publication intent could not be read completely with the selected provider.';
       return state;
     }
-    const messages = publicationContractMessages(sources);
+    const messages = publicationContractMessages(sources, context);
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const response = await this._chatWithCostAllowance(provider, messages, {
           temperature: 0, maxTokens: Math.min(4096, this._providerMaxOutputTokens(provider)),
         }, this.currentCostState.get(tabId) || null, { tabId, generationName: 'social_publication_contract' });
         if (this._planExecutionGuards.get(tabId) !== guard || this._checkAbort(tabId)) return null;
+        if (guard.socialPublication !== state || state.needsRecompile) return this._ensureSocialPublicationContract(tabId, provider);
         state.contract = normalizePublicationContract(Agent._extractFirstJsonObject(response?.content || ''), sources);
+        // A clarification invalidates authorization, not the uploads already
+        // bound to an unchanged, unattempted action. Preserve its binding only
+        // when all normalized action constraints match (IDs may be regenerated).
+        const previousAction = previous?.contract?.actions.find(action => action.id === previous.actionId);
+        if (previousAction) {
+          const sameAction = state.contract.actions.find(action => JSON.stringify({ ...action, id: null })
+            === JSON.stringify({ ...previousAction, id: null }));
+          if (sameAction) state.actionId = sameAction.id;
+        }
         state.error = '';
         return state;
       } catch (error) {
@@ -15768,7 +15899,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const live = resolveAdapterWorkflowJob(liveUrl, 'publish-post');
     if (!SOCIAL_PLATFORMS.includes(live?.adapterName)) return false;
     const social = await this._ensureSocialPublicationContract(tabId, provider);
-    if (!social || social.contract?.status !== 'ready') return false;
+    if (!social || social.needsRecompile || social.contract?.status !== 'ready') return false;
     this._recordSocialPublishTargetSatisfied(guard);
     const eligible = publicationProgress(social.contract, social.outcomes).eligible;
     const action = social.contract.actions.find(a => a.platform === live.adapterName && eligible.includes(a.id));
@@ -15848,6 +15979,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       workflowJob: 'publish-post', error,
       publicationContract: guard.socialPublication?.contract || null,
       publicationProgress: publicationProgress(guard.socialPublication?.contract, guard.socialPublication?.outcomes),
+      ...(guard.socialPublication?.deniedAudit ? { publicationAudit: guard.socialPublication.deniedAudit } : {}),
     });
     if (detected?.isSubmit !== true) return blocked('Publication-capable action could not be identified. Use a resolved page control; do not run arbitrary JavaScript or bundle editing and submission.');
     if (!['click', 'click_ax', 'iframe_click'].includes(name)) return blocked('Write and verify the draft first, then activate its publish control in a separate click.');
@@ -15855,7 +15987,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._adoptLiveSocialPublishWorkflow(tabId, provider, detected);
     const social = await this._ensureSocialPublicationContract(tabId, provider);
     const action = this._socialPublicationAction(guard);
-    if (!action || action.platform !== live.adapterName
+    if (social?.needsRecompile || !action || action.platform !== live.adapterName
         || !publicationProgress(social?.contract, social?.outcomes).eligible.includes(action.id)) {
       return blocked(social?.error || 'This publication is not authorized, its prerequisite has not completed, or a previous dispatch still needs verification. Clarify unresolved intent; never repeat an uncertain publication.');
     }
@@ -15866,19 +15998,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return blocked('The complete composer, intended account, exact payload, media, context, and pre-publication baseline must be observed before publishing.');
     }
     const key = this._sha256TextSync(JSON.stringify({ contract: social.key, action, snapshot, pageUrl }));
-    if (social.deniedAuditKey === key) return blocked('This unchanged publication did not pass authorization. Resolve the request or draft discrepancy before publishing.');
+    if (social.deniedAuditKey === key) return blocked('This unchanged publication did not pass authorization. Use publicationAudit to resolve the stated issue through clarify; do not rewrite a matching draft or retry another click target.');
     if (social.dispatch?.key !== key) {
       try {
         const response = await this._chatWithCostAllowance(provider || this._activeProvider(tabId),
-          publicationAuditMessages(social.sources, social.contract, action, snapshot, key), {
+          publicationAuditMessages(social.sources, social.contract, action, snapshot, key, social.context), {
             temperature: 0, maxTokens: 800,
           }, this.currentCostState.get(tabId) || null, { tabId, generationName: 'social_publication_authorization' });
-        if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social || this._checkAbort(tabId)) {
+        if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social
+            || social.needsRecompile || this._checkAbort(tabId)) {
           return blocked('Publication context changed during authorization.');
         }
-        if (!publicationAuditAccepted(Agent._extractFirstJsonObject(response?.content || ''), key, action.id)) {
+        const audit = Agent._extractFirstJsonObject(response?.content || '');
+        if (!publicationAuditAccepted(audit, key, action.id)) {
           social.deniedAuditKey = key;
-          return blocked('The selected provider could not confirm that the concrete publication satisfies the user request. Resolve the discrepancy before publishing.');
+          const validDenial = audit?.authorized === false && publicationAuditAccepted({ ...audit, authorized: true }, key, action.id);
+          social.deniedAudit = validDenial
+            ? { status: 'denied', reason: audit.reason }
+            : { status: 'invalid_response', reason: 'The publication checker returned an invalid or mismatched authorization response.' };
+          return blocked('The selected provider could not confirm this publication. Use publicationAudit to resolve the stated issue through clarify; do not rewrite a matching draft or retry another click target.');
         }
       } catch (error) {
         if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
@@ -15889,7 +16027,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // The semantic check can take time. Re-read the same target afterward;
     // neither a changed draft/account nor a navigated document inherits it.
     const fresh = await this._detectLikelySubmitAction(tabId, name, args);
-    if (fresh?.isSubmit !== true || fresh.publicationControl !== true || fresh.publicationResourceUrlsComplete !== true
+    if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social || social.needsRecompile
+        || fresh?.isSubmit !== true || fresh.publicationControl !== true || fresh.publicationResourceUrlsComplete !== true
         || JSON.stringify(this._socialPublicationSnapshot(guard, fresh.publicationSnapshot)) !== JSON.stringify(snapshot)
         || this._normalizeUrl(await this._currentUrl(tabId)) !== this._normalizeUrl(pageUrl)) {
       social.dispatch = null;
@@ -20783,6 +20922,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const needle = compact(args.text).toLowerCase();
         const all = interactiveElements().map(el => ({
           el,
+          // Match the click resolver's label precedence. An independent ARIA
+          // match could exempt a field while dispatch instead clicks Submit.
           text: compact(el.innerText || el.value || el.placeholder || el.ariaLabel).toLowerCase(),
         })).filter(item => item.text);
         const exact = all.find(item => item.text === needle);
@@ -20817,6 +20958,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           evidence.strong ? 'strong' : 'heuristic',
           target,
         );
+      }
+      const blueskyComposerLauncher = socialPublishAdapterName() === 'bluesky'
+        ? target?.closest?.('button,[role="button"]') : null;
+      if (blueskyComposerLauncher
+          && ['click', 'click_ax', 'iframe_click'].includes(toolName)
+          && !blueskyComposerLauncher.form
+          && !blueskyComposerLauncher.closest?.('form,dialog,[role="dialog"],[role="alertdialog"]')
+          && !blueskyComposerLauncher.hasAttribute?.('data-testid')
+          && /^(?:compose (?:new )?post|new post)$/i.test(compact(
+            blueskyComposerLauncher.getAttribute?.('aria-label') || blueskyComposerLauncher.textContent || '',
+          ))) {
+        return { isSubmit: false, host, url, resolvedNonSubmitTarget: true };
       }
       if (target && ['click', 'click_ax', 'iframe_click'].includes(toolName)
           && target.closest?.('[data-testid="SideNav_NewTweet_Button"],[data-testid="FloatingActionButton"],[data-testid="composeFAB"],[data-testid="addButton"],[data-testid="attachments"],[data-testid="fileInput"],[data-testid="app-bar-back"],[data-testid="closeButton"],button[aria-label="Close"]')) {
@@ -25443,6 +25596,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : 0,
       verifiedSubmissionEvidence: carryMatches && carried.verifiedSubmissionEvidence === true,
       socialPublication: carryMatches && carried.socialPublication ? structuredClone(carried.socialPublication) : null,
+      socialPublicationClarifications: carryMatches && carried.socialPublicationClarifications
+        ? structuredClone(carried.socialPublicationClarifications) : [],
       socialPublishSatisfiedTargets: carryMatches && Array.isArray(carried.socialPublishSatisfiedTargets)
         ? [...carried.socialPublishSatisfiedTargets]
         : [],
@@ -25802,6 +25957,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         successfulRequiredSchedulingToolCalls: guard.successfulRequiredSchedulingToolCalls,
         verifiedSubmissionEvidence: guard.verifiedSubmissionEvidence === true,
         socialPublication: guard.socialPublication ? structuredClone(guard.socialPublication) : null,
+        socialPublicationClarifications: structuredClone(guard.socialPublicationClarifications || []),
         socialPublishSatisfiedTargets: Array.isArray(guard.socialPublishSatisfiedTargets)
           ? [...guard.socialPublishSatisfiedTargets]
           : [],
@@ -28687,61 +28843,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const throwIfContentPipelineAborted = () => this._throwIfAborted(contentPipelineAbortSignal);
     const markContentPipelineDispatched = () => { contentPipelineDispatchState.started = true; };
     args = this._normalizeContinuationToolArgs(name, args);
-    let coordinatePoint = null;
+    const coordinates = this._prepareClickCoordinates(tabId, name, args);
+    if (coordinates.block) return coordinates.block;
+    args = coordinates.args;
+    const coordinatePoint = coordinates.point;
     let coordinateDiagnostic = null;
-    // Canonicalize coordinate clicks before toolbar recovery probes them.
-    // The preflight binding and the eventual dispatch must resolve the same
-    // CSS-pixel point, especially when the model clicked a downscaled image.
-    if (name === 'click' && args?.x != null && args?.y != null) {
-      const coordinateSpace = String(args.coordinate_space || '').trim().toLowerCase();
-      if (coordinateSpace !== 'screenshot' && coordinateSpace !== 'css') {
-        return {
-          success: false,
-          dispatched: false,
-          noDispatch: true,
-          ambiguousCoordinateSpace: true,
-          failureScope: 'coordinate-provenance',
-          error: 'Coordinate click rejected: x/y requires coordinate_space:"screenshot" with the exact capture_id, or coordinate_space:"css" only for cx/cy copied verbatim from a WebBrain tool result.',
-        };
-      }
-      if (args.from_screenshot === true && coordinateSpace !== 'screenshot') {
-        return {
-          success: false,
-          dispatched: false,
-          noDispatch: true,
-          ambiguousCoordinateSpace: true,
-          failureScope: 'coordinate-provenance',
-          error: 'Coordinate click rejected: from_screenshot conflicts with coordinate_space:"css".',
-        };
-      }
-      args = { ...args, coordinate_space: coordinateSpace };
-      const xn = Number(args.x);
-      const yn = Number(args.y);
-      if (Number.isFinite(xn) && Number.isFinite(yn) && xn >= 0 && xn <= 1 && yn >= 0 && yn <= 1) {
-        return {
-          success: false,
-          dispatched: false,
-          error: this._normalizedCoordinateRecoveryError(tabId, args),
-        };
-      }
-      const mapped = this._screenshotClickCoords(tabId, args);
-      if (mapped?.error) {
-        return {
-          success: false,
-          dispatched: false,
-          noDispatch: true,
-          staleCapture: true,
-          failureScope: 'screenshot-coordinate-capture',
-          error: mapped.error,
-        };
-      }
-      if (mapped && (mapped.converted || coordinateSpace === 'screenshot')) {
-        args = { ...args, x: mapped.x, y: mapped.y };
-      }
-      if (mapped) {
-        coordinatePoint = { x: mapped.x, y: mapped.y };
-      }
-    }
     const richTextToolbarBlock = await this._richTextToolbarToolBlock(
       tabId,
       name,
@@ -28900,6 +29006,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // / timeout note). Permission and form-submit prompts use separate
     // helpers and never time out.
     if (name === 'clarify') {
+      const clarificationGuard = this._planExecutionGuards.get(tabId);
       const question = String(args?.question || '').trim();
       if (!question) {
         return { success: false, error: 'clarify: `question` is required (a single sentence asking the user something specific).' };
@@ -29029,6 +29136,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Every clarification outcome (human answer, timeout, auto) must consume
       // the staged recipient consent so a later unrelated clarify does not inherit it.
       this._bindClarifiedMessageRecipient(tabId, answer, source, { question, options, reason, purpose });
+      this._recordSocialPublicationClarification(tabId, clarificationGuard, question, answer, source);
       const explicitResearchApproval = isResearchEscalation
         && source !== 'timeout'
         && source !== 'auto'
