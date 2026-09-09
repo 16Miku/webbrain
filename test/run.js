@@ -278,6 +278,7 @@ const {
   getMessageRecipientGuardPolicy: getMessageRecipientGuardPolicyFx,
   getAdapterWorkflowRouting: getAdapterWorkflowRoutingFx,
   resolveAdapterWorkflowJob: resolveAdapterWorkflowJobFx,
+  listAdapters: listAdaptersFx,
   listAdapterWorkflowProfiles: listAdapterWorkflowProfilesFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/adapters.js').replace(/\\/g, '/')
@@ -4739,7 +4740,39 @@ test('matches twitter.com and x.com', () => {
     assert.match(notes, /selector:"\[data-testid=\\"tweetTextarea_0\\"\]"/);
     assert.match(notes, /verified:false/);
     assert.match(notes, /keep the composer open/i);
+    const workflow = getAdapter('https://x.com/compose/post')?.workflow;
+    assert.deepEqual(getAdapter('https://x.com/compose/post')?.jobs, ['publish-post']);
+    assert.deepEqual(validateAdapterWorkflowProfile(getAdapter('https://x.com/compose/post')), { ok: true });
+    assert.equal(workflow?.jobs?.['publish-post']?.template, 'publish');
+    assert.equal(workflow?.jobs?.['publish-post']?.requiresSubmission, true);
   }
+});
+
+test('matches Bluesky and exposes a mirrored publish-post workflow', () => {
+  const chromeAdapter = getActiveAdapter('https://bsky.app/');
+  const firefoxAdapter = getActiveAdapterFx('https://www.bsky.app/profile/webbrain.one');
+  assert.equal(chromeAdapter?.name, 'bluesky');
+  assert.equal(firefoxAdapter?.name, 'bluesky');
+  assert.deepEqual(validateAdapterWorkflowProfile(chromeAdapter), { ok: true });
+  assert.deepEqual(validateAdapterWorkflowProfileFx(firefoxAdapter), { ok: true });
+  assert.deepEqual(firefoxAdapter?.workflow, chromeAdapter?.workflow);
+  assert.deepEqual(chromeAdapter?.jobs, ['publish-post']);
+  assert.match(chromeAdapter?.notes || '', /hidden <input type=file>/i);
+  assert.match(chromeAdapter?.notes || '', /complete text, mentions, link card, media, language, and account/i);
+  assert.match(chromeAdapter?.notes || '', /new bsky\.app\/profile\/<account>\/post\/<id> link/i);
+  for (const [getAdapter, resolveWorkflow, adapters] of [
+    [getActiveAdapter, resolveAdapterWorkflowJob, listAdapters],
+    [getActiveAdapterFx, resolveAdapterWorkflowJobFx, listAdaptersFx],
+  ]) {
+    assert.equal(adapters().filter(adapter => adapter.name === 'bluesky').length, 1,
+      'Bluesky should have one consolidated adapter');
+    for (const url of ['https://bsky.app/', 'https://www.bsky.app/']) {
+      assert.deepEqual(getAdapter(url)?.jobs, ['publish-post']);
+      assert.equal(resolveWorkflow(url, 'publish-post')?.adapterName, 'bluesky');
+    }
+  }
+  assert.notEqual(getActiveAdapter('https://bsky.app.evil.example/')?.name, 'bluesky');
+  assert.notEqual(getActiveAdapterFx('https://bsky.app.evil.example/')?.name, 'bluesky');
 });
 
 test('matches Weibo desktop and mobile surfaces and includes login and posting guidance', () => {
@@ -10018,7 +10051,9 @@ test('12306 exposes a validated regional workflow profile with browser parity', 
     'producthunt',
     'microsoft-forms',
     'gmail',
+    'twitter',
     'linkedin',
+    'bluesky',
     'youtube',
     'railway-12306',
     'douyin',
@@ -25595,6 +25630,287 @@ test('completion form classification ignores passive localized utility shells wi
       /const classifyForm = \$\{classifyCompletionForm\.toString\(\)\}/,
       `${label}: done verification probe is not wired to the shared form classifier`,
     );
+  }
+});
+
+test('publication resource records keep the owning social card when it embeds another post', () => {
+  for (const [label, invariant, identity, expectedSelector] of [
+    ['chrome X', CompletionInvariantCh, 'twitter:status:222', 'data-testid="tweet"'],
+    ['firefox X', CompletionInvariantFx, 'twitter:status:222', 'data-testid="tweet"'],
+    ['chrome Bluesky', CompletionInvariantCh, 'bluesky:bsky.app/profile/me.test/post/222', 'feedItem-by-'],
+    ['firefox Bluesky', CompletionInvariantFx, 'bluesky:bsky.app/profile/me.test/post/222', 'feedItem-by-'],
+  ]) {
+    const siblingFeed = { innerText: 'outer post\nquoted post\nsibling post' };
+    // The quoted post lives inside the owning card, so the card boundary alone
+    // does not separate authored text from the embedded post's text.
+    const quotedPermalink = { getAttribute: () => '/other/status/999', href: '/other/status/999' };
+    const quotedCard = {
+      innerText: 'quoted post body',
+      querySelectorAll: () => [quotedPermalink],
+      contains: node => node === quotedPermalink || node === quotedCard,
+    };
+    const permalink = {
+      innerText: '2m',
+      getAttribute: () => '/me/status/222',
+      href: '/me/status/222',
+      closest(selector) {
+        assert.match(selector, new RegExp(expectedSelector));
+        return owningCard;
+      },
+    };
+    quotedPermalink.parentElement = quotedCard;
+    const owningCard = {
+      innerText: 'outer post body\nquoted post body',
+      parentElement: siblingFeed,
+      querySelectorAll: () => [permalink, quotedPermalink],
+      contains: node => node !== siblingFeed,
+    };
+    permalink.parentElement = owningCard;
+    quotedCard.parentElement = owningCard;
+    const identityOf = value => {
+      const text = String(value || '');
+      if (text.includes('/status/222') || text.includes('/post/222')) return identity;
+      return text ? 'other:' + text : '';
+    };
+    const record = invariant.publicationResourceRecordRoot(permalink, identity, identityOf);
+    assert.equal(record.root, owningCard, `${label}: quoted post permalink discarded the owning card`);
+    assert.notEqual(record.root, siblingFeed, `${label}: sibling feed container was accepted as the owning card`);
+    assert.deepEqual(record.excluded, [quotedCard],
+      `${label}: the embedded post could still satisfy the authored body`);
+
+    const reconstructed = Function(`return (${invariant.publicationResourceRecordRoot.toString()});`)();
+    assert.equal(
+      reconstructed(permalink, identity, identityOf).root,
+      owningCard,
+      `${label}: publication card selector is not self-contained for page injection`,
+    );
+
+    // A card with nothing embedded keeps the whole card as authored content.
+    const plainPermalink = {
+      innerText: '2m',
+      getAttribute: () => '/me/status/222',
+      href: '/me/status/222',
+      closest: () => plainCard,
+    };
+    const plainCard = {
+      innerText: 'outer post body',
+      querySelectorAll: () => [plainPermalink],
+      contains: node => node === plainPermalink || node === plainCard,
+    };
+    plainPermalink.parentElement = plainCard;
+    const plainRecord = invariant.publicationResourceRecordRoot(plainPermalink, identity, identityOf);
+    assert.equal(plainRecord.root, plainCard);
+    assert.deepEqual(plainRecord.excluded, [],
+      `${label}: an ordinary post was treated as if it embedded another`);
+
+    // An X Premium long post still belongs to the card the app drew.
+    const longPermalink = {
+      innerText: '2m',
+      getAttribute: () => '/me/status/222',
+      href: '/me/status/222',
+      closest: () => longCard,
+    };
+    const longBody = { innerText: 'x'.repeat(9000), getAttribute: () => null };
+    const longCard = {
+      innerText: 'WebBrain\n' + 'x'.repeat(9000),
+      querySelectorAll: selector => (String(selector).includes('Text') ? [longBody] : [longPermalink]),
+      contains: node => node === longPermalink || node === longCard || node === longBody,
+    };
+    longPermalink.parentElement = longCard;
+    longBody.parentElement = longCard;
+    const longRecord = invariant.publicationResourceRecordRoot(longPermalink, identity, identityOf);
+    assert.equal(longRecord.root, longCard,
+      `${label}: a long post fell out of its own card and lost its body`);
+    assert.deepEqual(longRecord.authored, [longBody],
+      `${label}: the app's own post-text element was not reported`);
+
+    // Post media attachments are captured while avatars and emojis are excluded.
+    const avatarNode = {
+      tagName: 'img',
+      getAttribute: name => (name === 'src' ? 'https://pbs.twimg.com/profile_images/123/avatar.jpg' : null),
+      closest: () => null,
+    };
+    const emojiNode = {
+      tagName: 'img',
+      getAttribute: name => (name === 'data-testid' ? 'emoji' : (name === 'src' ? 'https://abs.twimg.com/emoji/v2/svg/1f600.svg' : null)),
+      closest: selector => (selector.includes('emoji') ? emojiNode : null),
+    };
+    const photoNode = {
+      tagName: 'img',
+      getAttribute: name => (name === 'data-testid' ? 'tweetPhoto' : (name === 'src' ? 'https://pbs.twimg.com/media/pic.jpg' : null)),
+      closest: () => null,
+    };
+    const numericAltPhotoNode = {
+      tagName: 'img',
+      getAttribute: name => (name === 'alt' ? '2026' : (name === 'src' ? 'https://pbs.twimg.com/media/pic2.jpg' : null)),
+      closest: () => null,
+    };
+    const linkPreviewNode = {
+      tagName: 'img',
+      getAttribute: name => (name === 'src' ? 'https://pbs.twimg.com/card_img/thumb.jpg' : null),
+      closest: selector => (selector.includes('card.layout') ? { testId: 'card.layoutLarge.media' } : null),
+    };
+    const videoNode = {
+      tagName: 'video',
+      getAttribute: name => (name === 'src' ? 'https://video.twimg.com/media/clip.mp4' : null),
+      closest: () => null,
+      contains: () => false,
+    };
+    const videoComponentNode = {
+      tagName: 'div',
+      getAttribute: name => (name === 'data-testid' ? 'videoComponent' : null),
+      closest: () => null,
+      contains: node => node === videoNode,
+    };
+    const mediaCard = {
+      innerText: 'post with image',
+      querySelectorAll: selector => {
+        const s = String(selector);
+        if (s.includes('img') || s.includes('video') || s.includes('tweetPhoto')) {
+          return [avatarNode, emojiNode, linkPreviewNode, photoNode, numericAltPhotoNode, videoComponentNode, videoNode];
+        }
+        return [plainPermalink];
+      },
+      contains: node => [plainPermalink, mediaCard, avatarNode, emojiNode, linkPreviewNode, photoNode, numericAltPhotoNode, videoComponentNode, videoNode].includes(node),
+    };
+    const mediaPermalink = {
+      ...plainPermalink,
+      closest: () => mediaCard,
+    };
+    const mediaRecord = invariant.publicationResourceRecordRoot(mediaPermalink, identity, identityOf);
+    assert.equal(mediaRecord.root, mediaCard);
+    assert.deepEqual(mediaRecord.attachments, [photoNode, numericAltPhotoNode, videoComponentNode],
+      `${label}: media attachments failed to deduplicate nested videoNode or failed to include photo`);
+
+    // A Bluesky external link card names no card container: its thumbnail sits
+    // in an anchor that leaves the site, and must not count as an upload.
+    const cardAnchor = {
+      getAttribute: name => (name === 'href' ? 'https://example.com/article' : null),
+      href: 'https://example.com/article',
+    };
+    const externalThumbNode = {
+      tagName: 'img',
+      getAttribute: name => (name === 'src' ? 'https://cdn.bsky.app/img/feed_thumbnail/thumb.jpg' : null),
+      closest: selector => (String(selector).includes('a[href]') ? cardAnchor : null),
+      contains: () => false,
+    };
+    const uploadedBlueskyNode = {
+      tagName: 'img',
+      getAttribute: name => (name === 'data-testid' ? 'postImage-0' : null),
+      closest: selector => (String(selector).includes('postImage') ? { testId: 'postImage-0' } : null),
+      contains: () => false,
+    };
+    const blueskyCard = {
+      innerText: 'bluesky post with a link',
+      querySelectorAll: selector => {
+        const s = String(selector);
+        if (s.includes('img') || s.includes('video') || s.includes('tweetPhoto')) {
+          return [externalThumbNode, uploadedBlueskyNode];
+        }
+        return [plainPermalink];
+      },
+      contains: node => [plainPermalink, externalThumbNode, uploadedBlueskyNode].includes(node),
+    };
+    const blueskyPermalink = { ...plainPermalink, closest: () => blueskyCard };
+    const blueskyRecord = invariant.publicationResourceRecordRoot(blueskyPermalink, identity, identityOf);
+    assert.deepEqual(blueskyRecord.attachments, [uploadedBlueskyNode],
+      `${label}: an external link-card thumbnail was counted as an uploaded attachment`);
+
+    // Authored post body containing a foreign permalink keeps the postText in authored nodes.
+    const foreignPermalink = { getAttribute: () => '/other/status/888', href: '/other/status/888' };
+    const foreignBodyNode = {
+      innerText: 'Check this out https://x.com/other/status/888',
+      querySelectorAll: selector => (selector === 'a[href]' ? [foreignPermalink] : []),
+      contains: node => node === foreignPermalink,
+    };
+    foreignPermalink.parentElement = foreignBodyNode;
+    foreignPermalink.closest = selector => (selector.includes('Text') ? foreignBodyNode : null);
+    const foreignCardPermalink = {
+      innerText: '2m',
+      getAttribute: () => '/me/status/222',
+      href: '/me/status/222',
+      closest: () => foreignCard,
+    };
+    const foreignCard = {
+      innerText: 'Author\nCheck this out https://x.com/other/status/888',
+      querySelectorAll: selector => (String(selector).includes('Text') ? [foreignBodyNode] : [foreignCardPermalink, foreignPermalink]),
+      contains: node => node === foreignCardPermalink || node === foreignCard || node === foreignBodyNode || node === foreignPermalink,
+    };
+    foreignCardPermalink.parentElement = foreignCard;
+    foreignBodyNode.parentElement = foreignCard;
+    const foreignRecord = invariant.publicationResourceRecordRoot(foreignCardPermalink, identity, identityOf);
+    assert.equal(foreignRecord.root, foreignCard, `${label}: authored permalink discarded the owning card`);
+    assert.deepEqual(foreignRecord.excluded, [], `${label}: authored foreign permalink was treated as an embedded post`);
+    assert.deepEqual(foreignRecord.authored, [foreignBodyNode], `${label}: authored body containing foreign permalink was lost`);
+
+    // A card with multiple distinct embedded posts excludes all of them without
+    // letting the first exclusion short-circuit later embedded post exclusions.
+    const embedCandidate1 = {
+      getAttribute: () => '/other/status/333',
+      href: '/other/status/333',
+      closest: sel => (sel && (sel.includes('quote') || sel.includes('embed')) ? embedContainer1 : null),
+    };
+    const embedContainer1 = {
+      querySelectorAll: () => [embedCandidate1],
+      contains: node => node === embedCandidate1 || node === embedContainer1,
+    };
+    embedCandidate1.parentElement = embedContainer1;
+
+    const embedCandidate2 = {
+      getAttribute: () => '/other/status/444',
+      href: '/other/status/444',
+      closest: sel => (sel && (sel.includes('quote') || sel.includes('embed')) ? embedContainer2 : null),
+    };
+    const embedContainer2 = {
+      querySelectorAll: () => [embedCandidate2],
+      contains: node => node === embedCandidate2 || node === embedContainer2,
+    };
+    embedCandidate2.parentElement = embedContainer2;
+
+    const multiEmbedPermalink = {
+      innerText: '2m',
+      getAttribute: () => '/me/status/222',
+      href: '/me/status/222',
+      closest: () => multiEmbedCard,
+    };
+    const multiEmbedCard = {
+      innerText: 'Author\nQuoting two posts',
+      querySelectorAll: selector => {
+        const s = String(selector);
+        if (s.includes('Text')) return [];
+        return [multiEmbedPermalink, embedCandidate1, embedCandidate2];
+      },
+      contains: node => [multiEmbedCard, multiEmbedPermalink, embedCandidate1, embedContainer1, embedCandidate2, embedContainer2].includes(node),
+    };
+    multiEmbedPermalink.parentElement = multiEmbedCard;
+    embedContainer1.parentElement = multiEmbedCard;
+    embedContainer2.parentElement = multiEmbedCard;
+
+    const multiEmbedRecord = invariant.publicationResourceRecordRoot(multiEmbedPermalink, identity, identityOf);
+    assert.equal(multiEmbedRecord.root, multiEmbedCard, `${label}: multi-embed discarded the owning card`);
+    assert.deepEqual(multiEmbedRecord.excluded, [embedContainer1, embedContainer2],
+      `${label}: failed to exclude multiple distinct embedded posts`);
+  }
+
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/agent/agent.js'],
+    ['firefox', 'src/firefox/src/agent/agent.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    assert.match(source, /const publicationRecordRoot = \$\{publicationResourceRecordRoot\.toString\(\)\}/,
+      `${label}: done probe does not inject the shared publication card selector`);
+    assert.match(source, /const record = publicationRecordRoot\(link, identity, publicationResourceIdentity\);/,
+      `${label}: publication records do not use the app-owned card root`);
+    assert.match(source, /const isEmbedded = node => embedded\.some\(entry => entry === node \|\| entry\.contains\?\.\(node\)\)/,
+      `${label}: the record builder does not exclude embedded posts`);
+    assert.match(source, /\.filter\(candidate => !isEmbedded\(candidate\)\)\.slice\(0, 100\)/,
+      `${label}: an embedded post's links still reach the record`);
+    assert.match(source, /const text = normalizeLines\(authoredText\(best\), 5000\);/,
+      `${label}: record text is not restricted to authored content`);
+    assert.match(source, /const rawBodyText = authoredNodes\.length/,
+      `${label}: the record does not carry the app's own post text`);
+    assert.match(source, /const bodyText = rawBodyText\.length <= 25000 \? rawBodyText : '';/,
+      `${label}: complete authored text must be bounded without truncation or whitespace folding`);
   }
 });
 
@@ -79513,10 +79829,10 @@ test('verification rejects commits unattributed to the requested branch', async 
         siteWorkflow: { adapterName: 'github', job: { id: 'edit-file-and-commit' } },
       });
       const sha = await agent._sha256Text(body);
-      const bindingFor = () => ({
+      const bindingFor = (branch = 'main') => ({
         githubFileCommit: {
           repository: 'example/repo',
-          branch: 'main',
+          branch,
           path: 'docs/plan.md',
           expectedLength: body.length,
           expectedSha256: sha,
@@ -79524,7 +79840,7 @@ test('verification rejects commits unattributed to the requested branch', async 
         },
         metadataRequirements: [
           { field: 'path', value: 'docs/plan.md' },
-          { field: 'branch', value: 'main' },
+          { field: 'branch', value: branch },
         ],
         preDispatchPublishedResourceIdentities: [],
       });
@@ -79539,6 +79855,14 @@ test('verification rejects commits unattributed to the requested branch', async 
         `${label}: branch-attributed commit was not verified`);
       assert.ok(!seen.includes(apiUrl),
         `${label}: same-host attribution needlessly consulted the token API`);
+      // Decode one HTML entity layer, not the newly produced entity text.
+      // The actual branch here is literally "main&lt;escape".
+      sameHost = { ok: true, status: 200, body: branchHtml('main&amp;lt;escape') };
+      assert.equal((await verify(bindingFor('main&lt;escape'))).verified, true,
+        `${label}: a singly decoded branch name was not attributed`);
+      const doubleDecodedBranch = await verify(bindingFor('main<escape'));
+      assert.equal(doubleDecodedBranch.reason, 'commit_wrong_branch',
+        `${label}: nested entity text was decoded twice into another branch name`);
       // Same-host list names only the PR branch: rejected.
       sameHost = { ok: true, status: 200, body: branchHtml('user-patch-1') };
       const wrongBranch = await verify(bindingFor());
@@ -79781,7 +80105,20 @@ test('submit detector source covers submit controls, Enter, set_field, iframes, 
     assert.match(agent, /const labelControlFor = \(el\) => \{[\s\S]*String\(el\.tagName \|\| ''\)\.toUpperCase\(\) !== 'LABEL'[\s\S]*el\.htmlFor[\s\S]*doc\.getElementById\(el\.htmlFor\)[\s\S]*button,input,textarea,select/, `${label}: submit probe should resolve labels to associated controls`);
     assert.match(agent, /const target = labelControlFor\(el\) \|\| el;[\s\S]*const candidate = target\.closest\?\.\('button,input,\[role="button"\],\[onclick\],\[data-action\]'\)/, `${label}: submit-control detection should inspect label-backed controls`);
     assert.match(agent, /const submitControlEvidence = \(el\) => \{/, `${label}: custom submit controls should classify preflight evidence strength`);
+    assert.match(agent, /if \(!form\) return socialPublishControlEvidence\(candidate\);/, `${label}: form-less social publish controls should still reach the submit probe`);
+    assert.match(agent, /const socialPublishAdapterName = \(\) => \{[\s\S]*x\.com[\s\S]*twitter\.com[\s\S]*bsky\.app/, `${label}: the probe should recognize the X and Bluesky publish surfaces`);
+    assert.match(agent, /\^tweetButton\(\?:Inline\)\?\$/, `${label}: the X Post control should be recognized by its app-owned test id`);
+    assert.match(agent, /\^composerPublish\(\?:Btn\|Button\)\$/, `${label}: the Bluesky publish control should be recognized by its app-owned test id`);
+    assert.match(agent, /const socialPublishComposerFor = \(candidate\) => \{[\s\S]*textarea,\[contenteditable="true"\],\[role="textbox"\]/, `${label}: a form-less publish control must belong to an open composer`);
+    assert.match(agent, /return socialPublishComposerFor\(candidate\)\s*\n\s*\? \{ isSubmit: true, strong: publishTestId \}/, `${label}: only composer-bound social publish controls should count as submits`);
+    assert.match(agent, /if \(testId\) \{\s*\n\s*if \(!publishTestId\) return \{ isSubmit: false, strong: false \};/, `${label}: an app-named control that is not the publish control should be rejected outright`);
+    assert.match(agent, /candidate\.closest\?\.\('nav,\[role="navigation"\],header,\[role="banner"\]'\)/, `${label}: a navigation control that only opens a composer should not count as a publish`);
+    assert.match(agent, /\|\| socialPublishComposerFor\(candidate\)/, `${label}: the composer should stand in for the missing form when summarizing the publish`);
+    assert.match(agent, /Composer on \$\{action\} \(no enclosing HTML form\)/, `${label}: publish confirmations should summarize a form-less composer`);
     assert.match(agent, /const submitInfo = \(form, reason, pendingEl = null, pendingValue = null, validationSubmitEvidence = 'strong', submitControl = null\)/, `${label}: submit summaries should carry preflight evidence strength and the resolved control`);
+    assert.match(agent, /const publicationAccountEvidence = \(submitTarget\) => \{/, `${label}: social publication submits should bind the active account`);
+    assert.match(agent, /AppTabBar_Profile_Link/, `${label}: X publishing account should use the app-owned profile navigation link`);
+    assert.match(agent, /publicationAccountIdentityComplete: publicationAccount\.complete/, `${label}: account evidence completeness should survive the page probe`);
     assert.match(agent, /evidence\.strong \? 'strong' : 'heuristic'/, `${label}: custom submit probes should label strong and heuristic evidence`);
     assert.match(agent, /detected\.validationSubmitEvidence === 'strong' \? 'strong' : 'heuristic'/, `${label}: submit evidence strength should survive page-probe normalization`);
     assert.match(agent, /githubCommitDialogLauncher: githubEditPage[\s\S]*!controlInModal[\s\S]*commit changes/, `${label}: GitHub's reversible commit-dialog launcher must be target- and modal-bound`);
@@ -90253,9 +90590,2587 @@ test('publication workflows classify and bind requested payload fields', async (
     ], `${AgentClass.name}: trusted publication payload fields were not retained`);
     const prompt = agent._progressIntentClassifierMessages(taskText, classifierContext)[0].content;
     assert.match(prompt, /publish-release/);
+    assert.match(prompt, /\bcanonical field names tag, title, notes, body, visibility, attachment, path, branch, or commit_message\b/);
+    assert.match(prompt, /for publish-post only, also use account/);
+    assert.match(prompt, /For edit-file-and-commit, include path, branch, and commit_message only when the user explicitly supplied them/);
+  }
+});
+
+test('a requested URL keeps the closing delimiter it opened', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const balanced = 'https://en.wikipedia.org/wiki/Function_(mathematics)';
+    assert.equal(agent._workflowTrimUrlPunctuation(balanced), balanced,
+      AgentClass.name + ': a balanced closing parenthesis was stripped from the requested URL');
+    assert.equal(agent._workflowTrimUrlPunctuation(balanced + '.'), balanced,
+      AgentClass.name + ': sentence punctuation after a balanced URL survived');
+    assert.equal(agent._workflowTrimUrlPunctuation('https://example.com/a),'), 'https://example.com/a',
+      AgentClass.name + ': an unopened closer was kept');
+    assert.equal(
+      agent._workflowTrimUrlPunctuation('https://example.com/x?y=(1)'),
+      'https://example.com/x?y=(1)',
+    );
+    // CJK sentence delimiters survive NFKC and the site keeps them as post
+    // text outside the link.
+    assert.equal(agent._workflowTrimUrlPunctuation('https://example.com/path\u3002'), 'https://example.com/path',
+      AgentClass.name + ': a CJK full stop stayed inside the requested URL');
+    assert.equal(agent._workflowTrimUrlPunctuation('https://example.com/path\u3001'), 'https://example.com/path');
+    assert.equal(agent._workflowTrimUrlPunctuation('https://example.com/path\u2026'), 'https://example.com/path');
+    assert.equal(
+      agent._workflowTrimUrlPunctuation('https://ja.wikipedia.org/wiki/\u95a2\u6570\uff08\u6570\u5b66\uff09\u3002'),
+      'https://ja.wikipedia.org/wiki/\u95a2\u6570\uff08\u6570\u5b66\uff09',
+      AgentClass.name + ': a balanced full-width closer was stripped with the sentence punctuation',
+    );
+
+    // Sentence delimiters are also valid path characters, so the raw URL wins
+    // whenever the page actually rendered it.
+    // CJK prose runs the delimiter straight into the next clause.
+    assert.equal(agent._workflowSocialPublishedBodyObserved(
+      { field: 'body', value: '\u8a73\u3057\u304f\u306fhttps://example.com/path\u3002\u7d9a\u5831\u3067\u3059' },
+      {
+        bodyText: '\u8a73\u3057\u304f\u306fexample.com/path\u3002\u7d9a\u5831\u3067\u3059',
+        links: [{ href: 'https://t.co/z', text: 'example.com/path', expandedUrl: 'https://example.com/path' }],
+      },
+    ), true, AgentClass.name + ': a URL ran into the CJK sentence that followed it');
+
+    const yahoo = 'https://en.wikipedia.org/wiki/Yahoo!';
+    assert.equal(agent._workflowSocialPublishedBodyObserved(
+      { field: 'body', value: `See ${yahoo} now` },
+      {
+        bodyText: `See ${yahoo} now`,
+        links: [{ href: 'https://t.co/z', text: 'en.wikipedia.org/wiki/Yahoo!', expandedUrl: yahoo }],
+      },
+    ), true, AgentClass.name + ': a URL ending in "!" was trimmed even though the post rendered it');
+    // With no evidence the site kept it, the delimiter is still sentence
+    // punctuation and comes off.
+    assert.equal(agent._workflowSocialPublishedBodyObserved(
+      { field: 'body', value: 'See https://example.com/path! now' },
+      {
+        // The site keeps the delimiter as post text, outside the link.
+        bodyText: 'See example.com/path! now',
+        links: [{ href: 'https://t.co/z', text: 'example.com/path', expandedUrl: 'https://example.com/path' }],
+      },
+    ), true, AgentClass.name + ': trailing sentence punctuation blocked the shortened-link match');
+
+    // The whole point is that exact-body verification still matches the link
+    // the site rendered for a URL shaped like that.
+    assert.equal(agent._workflowSocialPublishedBodyObserved(
+      { field: 'body', value: `Read ${balanced} today` },
+      {
+        text: 'Read en.wikipedia.org/wiki/Function_… today',
+        links: [{ href: 'https://t.co/abc', text: 'en.wikipedia.org/wiki/Function_…', expandedUrl: balanced }],
+      },
+    ), true, AgentClass.name + ': a URL ending in a balanced closer blocked exact-body verification');
+  }
+});
+
+test('social body verification reads the authored post text, not the card chrome', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    // The account is called WebBrain, so the card's byline equals the body the
+    // task asked for while the post itself says something else entirely.
+    const staleCard = {
+      url: 'https://x.com/webbrain/status/2222222222222222222',
+      text: 'WebBrain\n@webbrain\nA completely different post.\n2m',
+      bodyText: 'A completely different post.',
+      links: [],
+    };
+    assert.equal(
+      agent._workflowSocialPublishedBodyObserved({ field: 'body', value: 'WebBrain' }, staleCard),
+      false,
+      AgentClass.name + ': the author byline satisfied the requested body',
+    );
+    assert.equal(
+      agent._workflowSocialPublishedBodyObserved(
+        { field: 'body', value: 'A completely different post.' },
+        staleCard,
+      ),
+      true,
+      AgentClass.name + ': the authored post text did not satisfy its own body',
+    );
+    // Without the app's post-text element there is nothing better than the
+    // card, so the previous behavior has to stay available.
+    assert.equal(
+      agent._workflowSocialPublishedBodyObserved(
+        { field: 'body', value: 'A completely different post.' },
+        { ...staleCard, bodyText: '' },
+      ),
+      true,
+      AgentClass.name + ': a card without app-owned post text lost body verification',
+    );
+  }
+});
+
+test('social body verification prefers authored link over author-profile anchor when body links to own profile', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const ownProfileUrl = 'https://x.com/myhandle';
+    const card = {
+      bodyText: 'Follow my profile x.com/myhandle for updates',
+      links: [
+        // Earlier anchor on the card (e.g. author avatar/name linking to profile)
+        { href: ownProfileUrl, text: 'My Author Name', authored: false },
+        // Authored anchor inside the tweet text
+        { href: ownProfileUrl, text: 'x.com/myhandle', expandedUrl: ownProfileUrl, authored: true },
+      ],
+    };
+    assert.equal(
+      agent._workflowSocialPublishedBodyObserved(
+        { field: 'body', value: `Follow my profile ${ownProfileUrl} for updates` },
+        card,
+      ),
+      true,
+      AgentClass.name + ': should bind to authored anchor when linking to own profile'
+    );
+  }
+});
+
+
+test('a Bluesky DID and handle name one account only on the card that proves it', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const workflow = agent._resolvePlannerSiteWorkflow('https://bsky.app/', {
+      request_kind: 'execute',
+      site_job: 'publish-post',
+    });
+    const did = 'bluesky:did:plc:abc123';
+    const handle = 'bluesky:webbrain.one';
+    const cardWithDid = {
+      url: 'https://bsky.app/profile/webbrain.one/post/4def',
+      links: [{ href: 'https://bsky.app/profile/did:plc:abc123' }],
+    };
+    assert.equal(agent._workflowSocialAccountAliasProven(workflow, did, handle, cardWithDid), true,
+      AgentClass.name + ': the card proving the DID belongs to this post was ignored');
+
+    // A mention adds another handle, so a handle-form intent stays ambiguous.
+    assert.equal(agent._workflowSocialAccountAliasProven(
+      workflow,
+      handle,
+      did,
+      {
+        url: 'https://bsky.app/profile/did:plc:abc123/post/4def',
+        links: [
+          { href: 'https://bsky.app/profile/webbrain.one' },
+          { href: 'https://bsky.app/profile/someone.else' },
+        ],
+      },
+    ), false, AgentClass.name + ': an ambiguous card bridged two account identifiers');
+
+    // Two accounts of the same kind are a plain mismatch, never an alias.
+    assert.equal(agent._workflowSocialAccountAliasProven(
+      workflow,
+      'bluesky:notwebbrain.test',
+      handle,
+      cardWithDid,
+    ), false, AgentClass.name + ': a different handle was accepted as an alias');
+
+    // A link the author wrote in the post body is content, not proof of who
+    // wrote the post. A wrong-account post linking to the requested DID must
+    // not certify itself.
+    assert.equal(agent._workflowSocialAccountAliasProven(
+      workflow,
+      did,
+      'bluesky:attacker.one',
+      {
+        url: 'https://bsky.app/profile/attacker.one/post/9xyz',
+        links: [{ href: 'https://bsky.app/profile/did:plc:abc123', authored: true }],
+      },
+    ), false, AgentClass.name + ': a body link to the intended DID was accepted as alias proof');
+    assert.equal(agent._workflowSocialAccountAliasProven(
+      workflow,
+      did,
+      'bluesky:attacker.one',
+      {
+        url: 'https://bsky.app/profile/attacker.one/post/9xyz',
+        links: [
+          { href: 'https://bsky.app/profile/attacker.one' },
+          { href: 'https://bsky.app/profile/did:plc:abc123', authored: true },
+        ],
+      },
+    ), false, AgentClass.name + ': an authored DID link bridged two unrelated accounts');
+    assert.equal(
+      agent._workflowSocialAccountAliasProven(
+        agent._resolvePlannerSiteWorkflow('https://x.com/home', {
+          request_kind: 'execute',
+          site_job: 'publish-post',
+        }),
+        'twitter:webbrain',
+        'twitter:notwebbrain',
+        { links: [] },
+      ),
+      false,
+      AgentClass.name + ': X accounts were bridged by an alias rule that only Bluesky needs',
+    );
+  }
+});
+
+test('article-qualified mixed media requirements are counted and typed correctly', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const req1 = agent._parseWorkflowAttachmentRequirement('an image and a video');
+    assert.equal(req1.expectedCount, 2, AgentClass.name + ': expectedCount should be 2 for an image and a video');
+    assert.equal(req1.expectedImageCount, 1, AgentClass.name + ': expectedImageCount should be 1');
+    assert.equal(req1.expectedVideoCount, 1, AgentClass.name + ': expectedVideoCount should be 1');
+    assert.equal(req1.wantsImage, true, AgentClass.name + ': wantsImage should be true');
+    assert.equal(req1.wantsVideo, true, AgentClass.name + ': wantsVideo should be true');
+
+    const req2 = agent._parseWorkflowAttachmentRequirement('an image, a video');
+    assert.equal(req2.expectedCount, 2, AgentClass.name + ': expectedCount should be 2 for an image, a video');
+    assert.equal(req2.expectedImageCount, 1, AgentClass.name + ': expectedImageCount should be 1');
+    assert.equal(req2.expectedVideoCount, 1, AgentClass.name + ': expectedVideoCount should be 1');
+
+    const req3 = agent._parseWorkflowAttachmentRequirement('a photo and a clip');
+    assert.equal(req3.expectedCount, 2, AgentClass.name + ': expectedCount should be 2 for a photo and a clip');
+    assert.equal(req3.expectedImageCount, 1);
+    assert.equal(req3.expectedVideoCount, 1);
+  }
+});
+
+test('extracting post body skips URL scheme colons', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    assert.equal(
+      agent._extractWorkflowTaskBody('Publish this on https://x.com/home: Hello world'),
+      'Hello world',
+      AgentClass.name + ': URL scheme colon halted body extraction',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post to https://x.com: Hello world'),
+      'Hello world',
+      AgentClass.name + ': URL scheme colon before domain colon halted body extraction',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post the following on https://bluesky.app/: Announcing v2!'),
+      'Announcing v2!',
+      AgentClass.name + ': Bluesky URL scheme colon halted body extraction',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post on X: https://example.com/path'),
+      'https://example.com/path',
+      AgentClass.name + ': punctuation inside an unquoted URL truncated the post body',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post on X: Visit https://example.com/path today'),
+      'Visit https://example.com/path today',
+      AgentClass.name + ': an embedded unquoted URL truncated the surrounding post body',
+    );
+  }
+});
+
+test('extracting post body supports multilingual commands with colons and quotes', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    assert.equal(
+      agent._extractWorkflowTaskBody('Publica en X: Este es un texto largo para publicar'),
+      'Este es un texto largo para publicar',
+      AgentClass.name + ': Spanish colon extraction failed',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Publícalo en Bluesky: «Bonjour tout le monde»'),
+      'Bonjour tout le monde',
+      AgentClass.name + ': French colon and guillemets extraction failed',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Veröffentliche auf X: Dies ist ein langer Text'),
+      'Dies ist ein langer Text',
+      AgentClass.name + ': German colon extraction failed',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Опубликуй в X: Длинный текст поста'),
+      'Длинный текст поста',
+      AgentClass.name + ': Russian colon extraction failed',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Xに投稿：これはテスト投稿です'),
+      'これはテスト投稿です',
+      AgentClass.name + ': Japanese full-width colon extraction failed',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('在X发布：这是长文本内容'),
+      '这是长文本内容',
+      AgentClass.name + ': Chinese full-width colon extraction failed',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('X에 게시: 이것은 게시물 내용입니다'),
+      '이것은 게시물 내용입니다',
+      AgentClass.name + ': Korean colon extraction failed',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Publica en X "texto largo aquí"'),
+      'texto largo aquí',
+      AgentClass.name + ': Spanish quoted extraction failed',
+    );
+  }
+});
+
+test('publish-post alt text is a distinct verified metadata requirement', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    assert.equal(agent._workflowMetadataFieldKey('alt text'), 'alt_text',
+      AgentClass.name + ': alt text did not normalize to its canonical field');
     assert.match(
-      prompt,
-      /\bcanonical field names tag, title, notes, body, visibility, path, branch, or commit_message\b/,
+      agent._progressIntentClassifierMessages('Post chart.png on X with alt text "Sales growth"', {
+        workflow: { job: 'publish-post' },
+      })[0].content,
+      /alt_text when the user explicitly requests attachment alternative text/,
+      AgentClass.name + ': classifier prompt omitted publish-post alt text',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post chart.png on X with alt text "Sales growth"'),
+      '',
+      AgentClass.name + ': quoted alt text was misclassified as the post body',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post chart.png on X with alternative text “Sales growth”'),
+      '',
+      AgentClass.name + ': smart-quoted alternative text was misclassified as the post body',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post "Launch update" on X with alt text "Sales growth"'),
+      'Launch update',
+      AgentClass.name + ': masking alt text hid the actual quoted post body',
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post chart.png on X with alt text: Sales growth'),
+      '',
+      AgentClass.name + ': unquoted alt text was misclassified as the post body',
+    );
+    for (const metadataOnlyTask of [
+      'Post with attachment "chart.png" on X',
+      'Post on X using account "@acme"',
+      'Post on X with visibility "public"',
+      'Post on X with tag "launch"',
+    ]) {
+      assert.equal(
+        agent._extractWorkflowTaskBody(metadataOnlyTask),
+        '',
+        AgentClass.name + `: quoted metadata was misclassified as body in "${metadataOnlyTask}"`,
+      );
+    }
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post "Launch update" on X using account "@acme" with visibility "public"'),
+      'Launch update',
+      AgentClass.name + ': masking quoted metadata hid the actual quoted body',
+    );
+
+    const scopedAltDetails = agent._normalizeWorkflowMetadataRequirementsDetails([
+      { field: 'attachment', value: 'chart.png and logo.png' },
+      { field: 'alt_text', attachment: 'chart.png', value: 'Sales chart' },
+      { field: 'alt_text', attachment: 'logo.png', value: 'Company logo' },
+    ]);
+    assert.equal(scopedAltDetails.incomplete, false,
+      AgentClass.name + ': per-attachment alt text entries were rejected as duplicate fields');
+    assert.deepEqual(scopedAltDetails.items, [
+      { field: 'attachment', value: 'chart.png and logo.png' },
+      { field: 'alt_text', value: 'Sales chart', attachment: 'chart.png' },
+      { field: 'alt_text', value: 'Company logo', attachment: 'logo.png' },
+    ]);
+    const correctlyDescribedMedia = {
+      attachments: [
+        { type: 'image', name: 'chart.png', src: 'https://cdn.example/a', alt: 'Sales chart' },
+        { type: 'image', name: 'logo.png', src: 'https://cdn.example/b', alt: 'Company logo' },
+      ],
+    };
+    assert.equal(scopedAltDetails.items.filter(item => item.field === 'alt_text').every(
+      requirement => agent._workflowSocialPublishedAltTextObserved(requirement, correctlyDescribedMedia),
+    ), true, AgentClass.name + ': correct per-attachment alt text did not verify');
+    assert.equal(agent._workflowSocialPublishedAltTextObserved(
+      { field: 'alt_text', attachment: 'chart.png', value: 'Sales chart' },
+      {
+        attachments: [
+          { type: 'image', name: 'chart.png', alt: 'Company logo' },
+          { type: 'image', name: 'logo.png', alt: 'Sales chart' },
+        ],
+      },
+    ), false, AgentClass.name + ': alt text on the wrong attachment was accepted');
+
+  }
+});
+
+test('attachment requirement parser ignores numbers in specific attachment filenames', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const req1 = agent._parseWorkflowAttachmentRequirement('quarterly-chart-2.png');
+    assert.equal(req1.expectedCount, 1, AgentClass.name + ': quarterly-chart-2.png should expect 1 attachment');
+    assert.equal(req1.isGeneric, false, AgentClass.name + ': quarterly-chart-2.png should not be generic');
+
+    const req2 = agent._parseWorkflowAttachmentRequirement('photo-2024-12.jpg');
+    assert.equal(req2.expectedCount, 1, AgentClass.name + ': photo-2024-12.jpg should expect 1 attachment');
+    assert.equal(req2.isGeneric, false, AgentClass.name + ': photo-2024-12.jpg should not be generic');
+
+    const req3 = agent._parseWorkflowAttachmentRequirement('2 attachments');
+    assert.equal(req3.expectedCount, 2, AgentClass.name + ': 2 attachments should expect 2 attachments');
+    assert.equal(req3.isGeneric, true, AgentClass.name + ': 2 attachments should be generic');
+
+    const req4 = agent._parseWorkflowAttachmentRequirement('2枚');
+    assert.equal(req4.expectedCount, 2, AgentClass.name + ': 2枚 should expect 2 attachments');
+    assert.equal(req4.isGeneric, true, AgentClass.name + ': 2枚 should be generic');
+
+    const reqBrand = agent._parseWorkflowAttachmentRequirement('brand2images.png');
+    assert.equal(reqBrand.expectedCount, 1, AgentClass.name + ': brand2images.png should expect 1 attachment');
+    assert.equal(reqBrand.expectedImageCount, 0, AgentClass.name + ': brand2images.png should have 0 expectedImageCount');
+    assert.equal(reqBrand.hasExplicitImageCount, false, AgentClass.name + ': brand2images.png should not have explicit image count');
+    assert.equal(reqBrand.hasExplicitCardinality, false, AgentClass.name + ': brand2images.png should not have explicit cardinality');
+    assert.equal(reqBrand.isGeneric, false, AgentClass.name + ': brand2images.png should not be generic');
+    assert.equal(reqBrand.wantsImage, true, AgentClass.name + ': brand2images.png should want image');
+    assert.equal(reqBrand.wantsVideo, false, AgentClass.name + ': brand2images.png should not want video');
+
+    const brandVerified = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'brand2images.png' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/brand2images.png' }] },
+    );
+    assert.equal(brandVerified, true, AgentClass.name + ': single matching brand2images.png should pass');
+
+    const brandWrongFile = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'brand2images.png' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/other.png' }] },
+    );
+    assert.equal(brandWrongFile, false, AgentClass.name + ': non-matching file for brand2images.png should fail');
+
+    const reqBrandVid = agent._parseWorkflowAttachmentRequirement('brand2videos.mp4');
+    assert.equal(reqBrandVid.expectedCount, 1, AgentClass.name + ': brand2videos.mp4 should expect 1 attachment');
+    assert.equal(reqBrandVid.expectedVideoCount, 0, AgentClass.name + ': brand2videos.mp4 should have 0 expectedVideoCount');
+    assert.equal(reqBrandVid.hasExplicitVideoCount, false, AgentClass.name + ': brand2videos.mp4 should not have explicit video count');
+    assert.equal(reqBrandVid.isGeneric, false, AgentClass.name + ': brand2videos.mp4 should not be generic');
+    assert.equal(reqBrandVid.wantsVideo, true, AgentClass.name + ': brand2videos.mp4 should want video');
+    assert.equal(reqBrandVid.wantsImage, false, AgentClass.name + ': brand2videos.mp4 should not want image');
+
+    const brandVidVerified = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'brand2videos.mp4' },
+      { attachments: [{ type: 'video', src: 'https://video.twimg.com/media/brand2videos.mp4' }] },
+    );
+    assert.equal(brandVidVerified, true, AgentClass.name + ': single matching brand2videos.mp4 should pass');
+  }
+});
+
+test('social upload filenames bind to type-compatible published DOM attachments', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9220 + index;
+    const pageUrl = 'https://x.com/compose/post';
+    const siteWorkflow = agent._resolvePlannerSiteWorkflow(pageUrl, {
+      request_kind: 'execute',
+      site_job: 'publish-post',
+    });
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow,
+      siteWorkflowUrl: pageUrl,
+    });
+    guard.workflowMetadataRequirements = [
+      { field: 'body', value: 'Quarterly results' },
+      { field: 'attachment', value: 'chart.png' },
+    ];
+    guard.workflowMetadataRequirementsResolved = true;
+    const upload = agent._rememberSocialPublishUploadEvidence(tabId, 'upload_file', {
+      success: true,
+      attached: { name: 'chart.png', size: 1234 },
+      attachmentState: 'input_attached',
+    }, { lastAction: { sequence: 4 } });
+    assert.equal(upload?.name, 'chart.png', AgentClass.name + ': upload filename was not retained');
+    const binding = { uploadedAttachmentNames: guard.workflowSocialUploadEvidence.map(item => item.name) };
+
+    const cdnRecord = {
+      attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/G7RANDOM?format=png' }],
+    };
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' }, cdnRecord,
+    ), false, AgentClass.name + ': rewritten CDN URL unexpectedly retained the source filename');
+    const namedRecord = agent._workflowSocialRecordWithUploadedAttachmentNames(cdnRecord, binding);
+    assert.equal(namedRecord.attachments?.[0]?.name, 'chart.png',
+      AgentClass.name + ': upload provenance was not joined to the observed media node');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' }, namedRecord,
+    ), true, AgentClass.name + ': source filename did not verify the observed published media');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' }, agent._workflowSocialRecordWithUploadedAttachmentNames(
+        { attachments: [{ type: 'video', src: 'https://video.twimg.com/ext_tw_video/123/pu/vid/clip.mp4' }] },
+        binding,
+      ),
+    ), false, AgentClass.name + ': an image filename was attached to an incompatible video record');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' }, agent._workflowSocialRecordWithUploadedAttachmentNames(
+        { attachments: [] },
+        binding,
+      ),
+    ), false, AgentClass.name + ': upload provenance invented a missing published attachment');
+
+    guard.successfulTaskToolCalls = 1;
+    guard.evidenceTaskKey = guard.taskKey;
+    agent._storeContinuationExecutionEvidence(tabId);
+    const resumed = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow,
+      siteWorkflowUrl: pageUrl,
+    }, { trustedContinuation: true });
+    assert.deepEqual(resumed.workflowSocialUploadEvidence, [upload],
+      AgentClass.name + ': trusted Continue discarded source filename provenance');
+  }
+});
+
+test('social upload provenance reconciles only from complete composer snapshots', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9260 + index;
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Post an update on X.' },
+    ]);
+    const siteWorkflow = agent._resolvePlannerSiteWorkflow('https://x.com/compose/post', {
+      request_kind: 'execute',
+      site_job: 'publish-post',
+    });
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      siteWorkflow,
+      siteWorkflowUrl: 'https://x.com/compose/post',
+    });
+    const upload = (name, actionSequence) => ({
+      name,
+      attachmentState: 'input_attached',
+      actionSequence,
+    });
+    guard.workflowSocialUploadEvidence = [upload('a.png', 1), upload('b.png', 2)];
+
+    // A partial/paginated observation can omit an active filename. Preserve
+    // both rather than treating absence from one page as a removal signal.
+    assert.equal(
+      agent._pruneStaleSocialPublishUploadEvidence(tabId, 'composer page shows a.png'),
+      0,
+      AgentClass.name + ': a partial composer observation pruned active provenance',
+    );
+    assert.deepEqual(
+      guard.workflowSocialUploadEvidence.map(item => item.name),
+      ['a.png', 'b.png'],
+      AgentClass.name + ': an omitted active upload was lost after a partial observation',
+    );
+
+    // Upload recency cannot reveal which of two earlier files was removed.
+    // Refuse to assign the last two history entries to the two published nodes.
+    guard.workflowSocialUploadEvidence.push(upload('c.png', 3));
+    const cdnRecord = {
+      attachments: [
+        { type: 'image', src: 'https://pbs.twimg.com/media/XYZ123?format=png' },
+        { type: 'image', src: 'https://pbs.twimg.com/media/XYZ456?format=png' },
+      ],
+    };
+    const ambiguous = agent._workflowSocialRecordWithUploadedAttachmentNames(cdnRecord, {
+      uploadedAttachmentNames: ['a.png', 'b.png', 'c.png'],
+    });
+    assert.equal(ambiguous, cdnRecord,
+      AgentClass.name + ': upload recency was used to guess active composer media');
+    assert.equal(ambiguous.attachments.some(item => item.name), false,
+      AgentClass.name + ': ambiguous upload history supplied a false filename');
+
+    // A complete, untruncated root snapshot does establish that a.png and
+    // c.png remain active, so it can safely prune b.png before dispatch.
+    assert.equal(
+      agent._pruneStaleSocialPublishUploadEvidence(
+        tabId,
+        'complete composer shows a.png and c.png with Remove buttons',
+        { completeComposerSnapshot: true },
+      ),
+      1,
+      AgentClass.name + ': a complete composer snapshot did not prune removed media',
+    );
+    assert.deepEqual(
+      guard.workflowSocialUploadEvidence.map(item => item.name),
+      ['a.png', 'c.png'],
+      AgentClass.name + ': complete snapshot retained the wrong active provenance',
+    );
+    const joined = agent._workflowSocialRecordWithUploadedAttachmentNames(cdnRecord, {
+      uploadedAttachmentNames: guard.workflowSocialUploadEvidence.map(item => item.name),
+    });
+    assert.deepEqual(joined.attachments.map(item => item.name), ['a.png', 'c.png'],
+      AgentClass.name + ': reconciled active provenance did not join published media');
+    assert.equal(joined.uploadNameBindingAmbiguous, true,
+      AgentClass.name + ': same-type upload/DOM ordering was treated as a stable filename binding');
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved({ value: 'a.png and c.png' }, joined),
+      true,
+      AgentClass.name + ': active replacement media could not verify after reconciliation',
+    );
+    const ambiguousAltRecord = agent._workflowSocialRecordWithUploadedAttachmentNames({
+      attachments: [
+        { type: 'image', src: 'https://cdn.example/opaque-1', alt: 'Alt for a' },
+        { type: 'image', src: 'https://cdn.example/opaque-2', alt: 'Alt for c' },
+      ],
+    }, { uploadedAttachmentNames: ['a.png', 'c.png'] });
+    assert.equal(agent._workflowSocialPublishedAltTextObserved(
+      { attachment: 'a.png', value: 'Alt for a' }, ambiguousAltRecord,
+    ), false, AgentClass.name + ': upload order falsely bound targeted alt text to an opaque media card');
+    const stableAltRecord = agent._workflowSocialRecordWithUploadedAttachmentNames({
+      attachments: [
+        { type: 'image', src: 'https://cdn.example/c.png', alt: 'Alt for c' },
+        { type: 'image', src: 'https://cdn.example/a.png', alt: 'Alt for a' },
+      ],
+    }, { uploadedAttachmentNames: ['a.png', 'c.png'] });
+    assert.equal(stableAltRecord.uploadNameBindingAmbiguous, undefined,
+      AgentClass.name + ': filename evidence did not disambiguate reordered media cards');
+    assert.deepEqual(stableAltRecord.attachments.map(item => item.name), ['c.png', 'a.png'],
+      AgentClass.name + ': stable per-card filename evidence was ignored');
+    assert.equal(agent._workflowSocialPublishedAltTextObserved(
+      { attachment: 'a.png', value: 'Alt for a' }, stableAltRecord,
+    ), true, AgentClass.name + ': stable reordered filename/alt provenance did not verify');
+  }
+});
+
+test('upper-bound attachment qualifiers verify as maximum counts', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const mixed = agent._parseWorkflowAttachmentRequirement('one video and at most two images');
+    assert.equal(mixed.isGeneric, true, AgentClass.name + ': "one video and at most two images" should be generic');
+    assert.deepEqual(mixed.specificTargets, [], AgentClass.name + ': an upper bound should not name a file');
+    assert.equal(mixed.expectedVideoCount, 1, AgentClass.name + ': the exact video count was lost');
+    assert.equal(mixed.expectedImageCount, 2, AgentClass.name + ': the image maximum was lost');
+    assert.equal(mixed.isImageMaximum, true, AgentClass.name + ': the image maximum was not retained');
+    assert.equal(mixed.isVideoMaximum, false, AgentClass.name + ': the maximum leaked onto the exact video count');
+    const capped = agent._parseWorkflowAttachmentRequirement('up to two images');
+    assert.equal(capped.isGeneric, true, AgentClass.name + ': "up to two images" should be generic');
+    assert.equal(capped.expectedImageCount, 2, AgentClass.name + ': the capped image count was lost');
+    assert.equal(capped.isImageMaximum, true, AgentClass.name + ': the capped maximum was not retained');
+    const image = index => ({ type: 'image', src: `https://pbs.twimg.com/media/image${index}.png` });
+    const video = index => ({ type: 'video', src: `https://video.twimg.com/media/video${index}.mp4` });
+    const gif = index => ({ type: 'animated_gif', src: `https://video.twimg.com/tweet_video/gif${index}.mp4` });
+    const pngImage = agent._parseWorkflowAttachmentRequirement('one PNG image');
+    assert.equal(pngImage.isGeneric, true,
+      AgentClass.name + ': a PNG media qualifier was parsed as a filename');
+    assert.deepEqual(pngImage.specificTargets, [],
+      AgentClass.name + ': a PNG media qualifier created a specific target');
+    assert.deepEqual(pngImage.requestedImageFormats, ['png']);
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG image' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': a PNG image did not satisfy its format-qualified contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/media', name: 'source.png' }] }), true,
+      AgentClass.name + ': original upload provenance did not prove PNG format');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG image' }, { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/image1.jpg' }] }), false,
+      AgentClass.name + ': a JPEG image satisfied a PNG-only contract');
+    const mp4Video = agent._parseWorkflowAttachmentRequirement('one MP4 video');
+    assert.equal(mp4Video.isGeneric, true,
+      AgentClass.name + ': an MP4 media qualifier was parsed as a filename');
+    assert.deepEqual(mp4Video.specificTargets, [],
+      AgentClass.name + ': an MP4 media qualifier created a specific target');
+    assert.deepEqual(mp4Video.requestedVideoFormats, ['mp4']);
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one MP4 video' }, { attachments: [video(1)] }), true,
+      AgentClass.name + ': an MP4 video did not satisfy its format-qualified contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one MP4 video' }, { attachments: [{ type: 'video', src: 'https://video.twimg.com/media/video1.webm' }] }), false,
+      AgentClass.name + ': a WebM video satisfied an MP4-only contract');
+    const postfixPngImage = agent._parseWorkflowAttachmentRequirement('one image in PNG format');
+    assert.equal(postfixPngImage.isGeneric, true,
+      AgentClass.name + ': a postfix PNG qualifier was parsed as a filename');
+    assert.deepEqual(postfixPngImage.specificTargets, [],
+      AgentClass.name + ': a postfix PNG qualifier created a specific target');
+    assert.deepEqual(postfixPngImage.requestedImageFormats, ['png']);
+    assert.equal(postfixPngImage.expectedImageCount, 1,
+      AgentClass.name + ': a postfix format duplicated the image count as an unrestricted slot');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image in PNG format' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': a PNG image did not satisfy its postfix format contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image in PNG format' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), false,
+      AgentClass.name + ': a JPEG image satisfied a postfix PNG contract');
+    const postfixMp4Video = agent._parseWorkflowAttachmentRequirement('one video in MP4 format');
+    assert.equal(postfixMp4Video.isGeneric, true,
+      AgentClass.name + ': a postfix MP4 qualifier was parsed as a filename');
+    assert.deepEqual(postfixMp4Video.specificTargets, [],
+      AgentClass.name + ': a postfix MP4 qualifier created a specific target');
+    assert.deepEqual(postfixMp4Video.requestedVideoFormats, ['mp4']);
+    assert.equal(postfixMp4Video.expectedVideoCount, 1,
+      AgentClass.name + ': a postfix format duplicated the video count as an unrestricted slot');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video in MP4 format' }, { attachments: [video(1)] }), true,
+      AgentClass.name + ': an MP4 video did not satisfy its postfix format contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video in MP4 format' }, { attachments: [{ type: 'video', src: 'https://cdn.example/a.webm' }] }), false,
+      AgentClass.name + ': a WebM video satisfied a postfix MP4 contract');
+    const pngWithoutJpeg = agent._parseWorkflowAttachmentRequirement('one PNG image and no JPEG images');
+    assert.deepEqual(pngWithoutJpeg.requestedImageFormats, ['png'],
+      AgentClass.name + ': a negated JPEG qualifier was folded into the allowed image formats');
+    assert.deepEqual(pngWithoutJpeg.forbiddenImageFormats, ['jpeg'],
+      AgentClass.name + ': a negated JPEG qualifier was not retained');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG image and no JPEG images' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': the required PNG was rejected by a separate JPEG prohibition');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG image and no JPEG images' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), false,
+      AgentClass.name + ': an explicitly prohibited JPEG satisfied the image contract');
+    const mp4WithoutWebm = agent._parseWorkflowAttachmentRequirement('one video in MP4 format and no WebM videos');
+    assert.deepEqual(mp4WithoutWebm.requestedVideoFormats, ['mp4']);
+    assert.deepEqual(mp4WithoutWebm.forbiddenVideoFormats, ['webm']);
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video in MP4 format and no WebM videos' }, { attachments: [video(1)] }), true,
+      AgentClass.name + ': the required MP4 was rejected by a separate WebM prohibition');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video in MP4 format and no WebM videos' }, { attachments: [{ type: 'video', src: 'https://cdn.example/a.webm' }] }), false,
+      AgentClass.name + ': an explicitly prohibited WebM satisfied the video contract');
+    const gifWithoutPng = agent._parseWorkflowAttachmentRequirement('one GIF and no PNG images');
+    assert.equal(gifWithoutPng.wantsImage, false,
+      AgentClass.name + ': a negated PNG clause created positive image intent');
+    assert.equal(gifWithoutPng.wantsGif, true,
+      AgentClass.name + ': the affirmative GIF lost positive media intent');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one GIF and no PNG images' }, { attachments: [gif(1)] }), true,
+      AgentClass.name + ': a GIF-only publication was rejected by a negated PNG clause');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one GIF and no PNG images' }, { attachments: [gif(1), image(1)] }), false,
+      AgentClass.name + ': an image survived beside the required GIF despite the PNG prohibition');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one GIF and no PNG images' }, { attachments: [image(1)] }), false,
+      AgentClass.name + ': an image without the required GIF satisfied the GIF contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'no PNG or JPEG images' }, { attachments: [] }), true,
+      AgentClass.name + ': the valid empty set was rejected by a format-only prohibition');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'no PNG or JPEG images' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), false,
+      AgentClass.name + ': an explicitly prohibited JPEG satisfied a format-only prohibition');
+    const pngOrJpegImage = agent._parseWorkflowAttachmentRequirement('one PNG or JPEG image');
+    assert.equal(pngOrJpegImage.isGeneric, true,
+      AgentClass.name + ': a coordinated image-format choice was parsed as filenames');
+    assert.deepEqual(pngOrJpegImage.specificTargets, [],
+      AgentClass.name + ': a coordinated image-format choice created specific targets');
+    assert.deepEqual(pngOrJpegImage.requestedImageFormats, ['png', 'jpeg']);
+    assert.deepEqual(pngOrJpegImage.mediaAlternativeBranches, [],
+      AgentClass.name + ': format-choice glue became whole-media branches');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG or JPEG image' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': PNG did not satisfy the coordinated format choice');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG or JPEG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), true,
+      AgentClass.name + ': JPEG did not satisfy the coordinated format choice');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG or JPEG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.webp' }] }), false,
+      AgentClass.name + ': WebP satisfied a PNG-or-JPEG format choice');
+    const repeatedCountFormatChoice = agent._parseWorkflowAttachmentRequirement('one PNG or one JPEG image');
+    assert.equal(repeatedCountFormatChoice.isGeneric, true,
+      AgentClass.name + ': a repeated-count format choice was parsed as filenames');
+    assert.deepEqual(repeatedCountFormatChoice.specificTargets, [],
+      AgentClass.name + ': a repeated-count format choice created specific targets');
+    assert.deepEqual(repeatedCountFormatChoice.requestedImageFormats, ['png', 'jpeg']);
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG or one JPEG image' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': PNG did not satisfy the repeated-count format choice');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG or one JPEG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), true,
+      AgentClass.name + ': JPEG did not satisfy the repeated-count format choice');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG or one JPEG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.webp' }] }), false,
+      AgentClass.name + ': WebP satisfied a repeated-count format choice');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG or one JPEG image' }, { attachments: [image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }] }), false,
+      AgentClass.name + ': two images satisfied a single-image format choice');
+    const ellipticalAndFormats = agent._parseWorkflowAttachmentRequirement('one PNG and one JPEG image');
+    assert.equal(ellipticalAndFormats.isGeneric, true,
+      AgentClass.name + ': an elliptical and-format conjunction was parsed as filenames');
+    assert.deepEqual(ellipticalAndFormats.imageFormatCounts, [
+      { format: 'png', count: 1 },
+      { format: 'jpeg', count: 1 },
+    ], AgentClass.name + ': elliptical and-format counts were not distributed');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG and one JPEG image' },
+      { attachments: [image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }] },
+    ), true, AgentClass.name + ': one PNG plus one JPEG did not satisfy the elliptical conjunction');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG and one JPEG image' }, { attachments: [image(1)] },
+    ), false, AgentClass.name + ': one PNG satisfied a two-format elliptical conjunction');
+    const ellipticalPlusFormats = agent._parseWorkflowAttachmentRequirement('one PNG plus one JPEG image');
+    assert.equal(ellipticalPlusFormats.isGeneric, true,
+      AgentClass.name + ': an elliptical plus-format conjunction was parsed as filenames');
+    assert.deepEqual(ellipticalPlusFormats.imageFormatCounts, [
+      { format: 'png', count: 1 },
+      { format: 'jpeg', count: 1 },
+    ], AgentClass.name + ': elliptical plus-format counts were not distributed');
+    const ellipticalAlongsideFormats = agent._parseWorkflowAttachmentRequirement('one PNG alongside one JPEG image');
+    assert.equal(ellipticalAlongsideFormats.isGeneric, true,
+      AgentClass.name + ': an elliptical alongside-format conjunction was parsed as filenames');
+    assert.deepEqual(ellipticalAlongsideFormats.imageFormatCounts, [
+      { format: 'png', count: 1 },
+      { format: 'jpeg', count: 1 },
+    ], AgentClass.name + ': elliptical alongside-format counts were not distributed');
+    for (const conjunction of ['together with', 'along with']) {
+      const ellipticalFormats = agent._parseWorkflowAttachmentRequirement(`one PNG ${conjunction} one JPEG image`);
+      assert.equal(ellipticalFormats.isGeneric, true,
+        AgentClass.name + `: an elliptical ${conjunction} conjunction was parsed as filenames`);
+      assert.deepEqual(ellipticalFormats.imageFormatCounts, [
+        { format: 'png', count: 1 },
+        { format: 'jpeg', count: 1 },
+      ], AgentClass.name + `: elliptical ${conjunction} counts were not distributed`);
+    }
+    for (const [attachments, expected, message] of [
+      [[{ type: 'image', src: 'https://cdn.example/a.jpg' }], true, 'the required JPEG was rejected by a separate PNG prohibition'],
+      [[{ type: 'image', src: 'https://cdn.example/a.webp' }], false, 'an unrequested WebP satisfied a required JPEG'],
+      [[image(1)], false, 'a prohibited PNG satisfied the JPEG contract'],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'no PNG images and one JPEG image' }, { attachments },
+      ), expected, AgentClass.name + ': ' + message);
+    }
+    for (const [attachments, expected, message] of [
+      [[image(1)], true, 'one image alone was rejected by a no-more-than video cap'],
+      [[image(1), video(1)], true, 'one image plus one video was rejected by a no-more-than video cap'],
+      [[image(1), video(1), video(2)], false, 'too many videos satisfied a no-more-than video cap'],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'one image and no more than one video' }, { attachments },
+      ), expected, AgentClass.name + ': ' + message);
+    }
+    for (const [attachments, expected, message] of [
+      [[image(1), video(1), video(2)], true, 'image plus two videos was rejected by a contrastive video cap'],
+      [[], false, 'empty attachments satisfied a contrastive exact image'],
+      [[image(1)], true, 'one image alone was rejected by a contrastive video cap'],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'one image but at most two videos' }, { attachments },
+      ), expected, AgentClass.name + ': ' + message);
+    }
+    assert.equal(agent._parseWorkflowAttachmentRequirement('one image together with one video').isGeneric, true,
+      AgentClass.name + ': together-with conjunction was parsed as a filename');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image together with one video' }, { attachments: [image(1), video(1)] }), true,
+      AgentClass.name + ': one image together with one video was rejected');
+    assert.equal(agent._parseWorkflowAttachmentRequirement('one image along with one video').isGeneric, true,
+      AgentClass.name + ': along-with conjunction was parsed as a filename');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image along with one video' }, { attachments: [image(1), video(1)] }), true,
+      AgentClass.name + ': one image along with one video was rejected');
+    assert.equal(agent._parseWorkflowAttachmentRequirement('one image in addition to one video').isGeneric, true,
+      AgentClass.name + ': in-addition-to conjunction was parsed as a filename');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image in addition to one video' }, { attachments: [image(1), video(1)] }), true,
+      AgentClass.name + ': one image in addition to one video was rejected');
+    const unrestrictedOrPngImage = agent._parseWorkflowAttachmentRequirement('one image or one PNG image');
+    assert.equal(unrestrictedOrPngImage.mediaAlternativeBranches.length, 2,
+      AgentClass.name + ': a format token consumed the noun slot of a whole-media alternative');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image or one PNG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), true,
+      AgentClass.name + ': the unrestricted image branch incorrectly required PNG');
+    const pngAndJpegImages = agent._parseWorkflowAttachmentRequirement('one PNG image and one JPEG image');
+    assert.equal(pngAndJpegImages.expectedImageCount, 2,
+      AgentClass.name + ': conjunctive image-format counts were not summed');
+    assert.deepEqual(pngAndJpegImages.imageFormatCounts, [
+      { format: 'png', count: 1 },
+      { format: 'jpeg', count: 1 },
+    ], AgentClass.name + ': conjunctive image-format counts were flattened');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG image and one JPEG image' },
+      { attachments: [image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }] },
+    ), true, AgentClass.name + ': one PNG plus one JPEG did not satisfy the conjunctive contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG image and one JPEG image' }, { attachments: [image(1)] },
+    ), false, AgentClass.name + ': one PNG satisfied a two-format conjunctive contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one PNG image and one JPEG image' }, { attachments: [image(1), image(2)] },
+    ), false, AgentClass.name + ': two PNGs satisfied a PNG-plus-JPEG contract');
+    const twoPngAndJpegImages = agent._parseWorkflowAttachmentRequirement('two PNG images and one JPEG image');
+    assert.equal(twoPngAndJpegImages.expectedImageCount, 3,
+      AgentClass.name + ': unequal conjunctive format counts were not summed');
+    assert.deepEqual(twoPngAndJpegImages.imageFormatCounts, [
+      { format: 'png', count: 2 },
+      { format: 'jpeg', count: 1 },
+    ]);
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'two PNG images and one JPEG image' },
+      { attachments: [image(1), image(2), { type: 'image', src: 'https://cdn.example/a.jpg' }] },
+    ), true, AgentClass.name + ': two PNGs plus one JPEG did not satisfy the conjunctive contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'two PNG images and one JPEG image' },
+      { attachments: [image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }] },
+    ), false, AgentClass.name + ': too few PNGs satisfied unequal conjunctive format counts');
+    const exactAndCappedFormats = agent._parseWorkflowAttachmentRequirement(
+      'one PNG image and at most one JPEG image',
+    );
+    assert.deepEqual(exactAndCappedFormats.imageFormatConstraints, [
+      { format: 'png', exactCount: 1, minimumCount: 0, maximumCount: 0 },
+      { format: 'jpeg', exactCount: 0, minimumCount: 0, maximumCount: 1 },
+    ], AgentClass.name + ': exact and bounded format clauses were flattened');
+    assert.equal(exactAndCappedFormats.minimumImageCount, 1,
+      AgentClass.name + ': exact format count was omitted from the aggregate minimum');
+    assert.equal(exactAndCappedFormats.maximumImageCount, 2,
+      AgentClass.name + ': per-format maxima were collapsed into an image-wide cap');
+    for (const [attachments, expected, message] of [
+      [[], false, 'zero images satisfied a required exact PNG'],
+      [[{ type: 'image', src: 'https://cdn.example/a.jpg' }], false, 'a lone JPEG satisfied a required exact PNG'],
+      [[image(1)], true, 'the required PNG without an optional JPEG was rejected'],
+      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }], true, 'a PNG plus a capped JPEG was rejected'],
+      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }, { type: 'image', src: 'https://cdn.example/b.jpg' }], false, 'too many JPEGs satisfied the per-format cap'],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'one PNG image and at most one JPEG image' }, { attachments },
+      ), expected, AgentClass.name + ': ' + message);
+    }
+    const formattedAndUnrestricted = agent._parseWorkflowAttachmentRequirement('one PNG image and one image');
+    assert.equal(formattedAndUnrestricted.expectedImageCount, 2,
+      AgentClass.name + ': an unrestricted media conjunct was omitted from the exact total');
+    assert.deepEqual(formattedAndUnrestricted.imageUnrestrictedConstraint,
+      { format: '', exactCount: 1, minimumCount: 0, maximumCount: 0 },
+      AgentClass.name + ': an unrestricted media slot was not retained');
+    for (const [attachments, expected, message] of [
+      [[image(1)], true, 'the required PNG alone was rejected by its scoped JPEG cap'],
+      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }], true, 'a PNG plus a capped JPEG was capped by the total image count'],
+      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }, { type: 'image', src: 'https://cdn.example/b.jpg' }], true, 'a PNG plus two capped JPEGs was capped by the total image count'],
+      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }, { type: 'image', src: 'https://cdn.example/b.jpg' }, { type: 'image', src: 'https://cdn.example/c.jpg' }], false, 'too many JPEGs satisfied the scoped JPEG cap'],
+      [[{ type: 'image', src: 'https://cdn.example/a.jpg' }], false, 'a lone JPEG satisfied the required PNG minimum'],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'at least one PNG image and at most two JPEG images' }, { attachments },
+      ), expected, AgentClass.name + ': ' + message);
+    }
+    for (const [attachments, expected, message] of [
+      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }, { type: 'image', src: 'https://cdn.example/b.jpg' }], true, 'a generic image plus two capped JPEGs was rejected'],
+      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }, { type: 'image', src: 'https://cdn.example/b.jpg' }, { type: 'image', src: 'https://cdn.example/c.jpg' }], false, 'a third JPEG overflowed into the generic image slot'],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'at least one image and at most two JPEG images' }, { attachments },
+      ), expected, AgentClass.name + ': ' + message);
+    }
+    for (const [attachments, expected, message] of [
+      [[image(1)], true, 'one image was rejected by a paired image bound'],
+      [[image(1), image(2)], true, 'two images were rejected by a paired image bound'],
+      [[], false, 'empty attachments satisfied a paired image minimum'],
+      [[image(1), image(2), image(3)], false, 'three images satisfied a paired image maximum'],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'at least one and at most two images' }, { attachments },
+      ), expected, AgentClass.name + ': ' + message);
+    }
+    for (const [attachments, expected, message] of [
+      [[video(1)], true, 'the required MP4 alone was rejected by its scoped MOV cap'],
+      [[video(1), { type: 'video', src: 'https://cdn.example/b.mov' }], true, 'an MP4 plus a capped MOV was capped by the total video count'],
+      [[video(1), { type: 'video', src: 'https://cdn.example/b.mov' }, { type: 'video', src: 'https://cdn.example/c.mov' }], true, 'an MP4 plus two capped MOVs was capped by the total video count'],
+      [[video(1), { type: 'video', src: 'https://cdn.example/b.mov' }, { type: 'video', src: 'https://cdn.example/c.mov' }, { type: 'video', src: 'https://cdn.example/d.mov' }], false, 'too many MOVs satisfied the scoped MOV cap'],
+      [[{ type: 'video', src: 'https://cdn.example/b.mov' }], false, 'a lone MOV satisfied the required MP4 minimum'],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'at least one MP4 video and at most two MOV videos' }, { attachments },
+      ), expected, AgentClass.name + ': ' + message);
+    }
+    const imageButNoVideo = agent._parseWorkflowAttachmentRequirement('one image but no video');
+    assert.equal(imageButNoVideo.isGeneric, true,
+      AgentClass.name + ': contrastive media conjunction was parsed as a filename');
+    assert.equal(imageButNoVideo.isVideoNegated, true,
+      AgentClass.name + ': contrastive negative video constraint was lost');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image but no video' }, { attachments: [image(1)] },
+    ), true, AgentClass.name + ': an image-only publication failed the contrastive contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image but no video' }, { attachments: [image(1), video(1)] },
+    ), false, AgentClass.name + ': a video passed a contrastive no-video contract');
+    const sharedImageChoice = agent._parseWorkflowAttachmentRequirement(
+      'one image and either one video or one GIF',
+    );
+    assert.deepEqual(sharedImageChoice.mediaAlternativeBranches.map(branch => branch.normalized), [
+      'one image and one video',
+      'one image and one gif',
+    ], AgentClass.name + ': shared media conjunct was not distributed into every scoped alternative');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and either one video or one GIF' }, { attachments: [image(1), video(1)] },
+    ), true, AgentClass.name + ': image-plus-video scoped alternative was rejected');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and either one video or one GIF' }, { attachments: [image(1), gif(1)] },
+    ), true, AgentClass.name + ': image-plus-GIF scoped alternative was rejected');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and either one video or one GIF' }, { attachments: [gif(1)] },
+    ), false, AgentClass.name + ': GIF-only evidence omitted the shared image conjunct');
+    const sharedSuffixChoice = agent._parseWorkflowAttachmentRequirement(
+      'either one video or one GIF, and one image',
+    );
+    assert.deepEqual(sharedSuffixChoice.mediaAlternativeBranches.map(branch => branch.normalized), [
+      'one video and one image',
+      'one gif and one image',
+    ], AgentClass.name + ': shared media suffix was not distributed into every scoped alternative');
+    const enumeratedSharedChoice = agent._parseWorkflowAttachmentRequirement(
+      'one image and either one video, one GIF, or two videos',
+    );
+    assert.deepEqual(enumeratedSharedChoice.mediaAlternativeBranches.map(branch => branch.normalized), [
+      'one image and one video',
+      'one image and one gif',
+      'one image and two videos',
+    ], AgentClass.name + ': shared conjunct was lost from comma-enumerated media alternatives');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and either one video, one GIF, or two videos' },
+      { attachments: [image(1), gif(1)] },
+    ), true, AgentClass.name + ': valid image-plus-GIF enumerated choice was rejected');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and either one video, one GIF, or two videos' },
+      { attachments: [gif(1)] },
+    ), false, AgentClass.name + ': GIF-only evidence omitted the enumerated shared image conjunct');
+    const enumeratedSharedSuffix = agent._parseWorkflowAttachmentRequirement(
+      'either one video, one GIF, or two videos, and one image',
+    );
+    assert.deepEqual(enumeratedSharedSuffix.mediaAlternativeBranches.map(branch => branch.normalized), [
+      'one video and one image',
+      'one gif and one image',
+      'two videos and one image',
+    ], AgentClass.name + ': shared suffix was lost from comma-enumerated media alternatives');
+    const neitherVideoNorGif = agent._parseWorkflowAttachmentRequirement(
+      'one image but neither a video nor a GIF',
+    );
+    assert.equal(neitherVideoNorGif.isGeneric, true,
+      AgentClass.name + ': neither/nor media prohibition was parsed as a filename');
+    assert.equal(neitherVideoNorGif.isVideoNegated, true);
+    assert.equal(neitherVideoNorGif.isGifNegated, true);
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image but neither a video nor a GIF' }, { attachments: [image(1)] },
+    ), true, AgentClass.name + ': image-only evidence failed a neither-video-nor-GIF contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image but neither a video nor a GIF' }, { attachments: [image(1), gif(1)] },
+    ), false, AgentClass.name + ': a GIF passed a neither-video-nor-GIF contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'neither images nor videos' }, { attachments: [] },
+    ), true, AgentClass.name + ': empty evidence failed a bare neither-images-nor-videos contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'neither images nor videos' }, { attachments: [image(1)] },
+    ), false, AgentClass.name + ': an image passed a bare neither-images-nor-videos contract');
+    for (const [requirement, makeAttachment, minField, maxField] of [
+      ['at least one image and at most two images', image, 'minimumImageCount', 'maximumImageCount'],
+      ['at least one video and at most two videos', video, 'minimumVideoCount', 'maximumVideoCount'],
+      ['at least one GIF and at most two GIFs', gif, 'minimumGifCount', 'maximumGifCount'],
+    ]) {
+      const parsedRange = agent._parseWorkflowAttachmentRequirement(requirement);
+      assert.equal(parsedRange[minField], 1, AgentClass.name + `: lower bound was lost for ${requirement}`);
+      assert.equal(parsedRange[maxField], 2, AgentClass.name + `: upper bound was lost for ${requirement}`);
+      for (const [count, expected] of [[0, false], [1, true], [2, true], [3, false]]) {
+        assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+          { value: requirement },
+          { attachments: Array.from({ length: count }, (_value, index) => makeAttachment(index + 1)) },
+        ), expected, AgentClass.name + `: ${count} attachments misverified for ${requirement}`);
+      }
+    }
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'up to two images' }, { attachments: [] }), true,
+      AgentClass.name + ': zero images should satisfy "up to two images"');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'up to two images' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': one image should satisfy "up to two images"');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'up to two images' }, { attachments: [image(1), image(2)] }), true,
+      AgentClass.name + ': two images should satisfy "up to two images"');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'up to two images' }, { attachments: [image(1), image(2), image(3)] }), false,
+      AgentClass.name + ': three images should not satisfy "up to two images"');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video and at most two images' }, { attachments: [video(1), image(1)] }), true,
+      AgentClass.name + ': one video plus one image should satisfy the capped mixed requirement');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video and at most two images' }, { attachments: [video(1)] }), true,
+      AgentClass.name + ': exact video plus zero optional images should satisfy the capped mixed requirement');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video and at most two images' }, { attachments: [video(1), image(1), image(2)] }), true,
+      AgentClass.name + ': one video plus two images should satisfy the capped mixed requirement');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video and at most two images' }, { attachments: [video(1), image(1), image(2), image(3)] }), false,
+      AgentClass.name + ': the image maximum incorrectly loosened to three images');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video and at most two images' }, { attachments: [video(1), image(1), video(2)] }), false,
+      AgentClass.name + ': the image maximum incorrectly loosened the exact video count');
+    const cappedGifs = agent._parseWorkflowAttachmentRequirement('one video and at most two GIFs');
+    assert.equal(cappedGifs.expectedVideoCount, 1, AgentClass.name + ': the exact ordinary-video count was lost');
+    assert.equal(cappedGifs.expectedGifCount, 2, AgentClass.name + ': the GIF maximum count was lost');
+    assert.equal(cappedGifs.isVideoMaximum, false, AgentClass.name + ': the GIF maximum leaked onto ordinary videos');
+    assert.equal(cappedGifs.isGifMaximum, true, AgentClass.name + ': the GIF upper bound was not retained');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video and at most two GIFs' }, { attachments: [video(1), gif(1)] }), true,
+      AgentClass.name + ': one video plus one GIF should satisfy the GIF maximum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video and at most two GIFs' }, { attachments: [video(1)] }), true,
+      AgentClass.name + ': exact video plus zero optional GIFs should satisfy the GIF maximum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video and at most two GIFs' }, { attachments: [video(1), gif(1), gif(2)] }), true,
+      AgentClass.name + ': one video plus two GIFs should satisfy the GIF maximum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video and at most two GIFs' }, { attachments: [video(1), gif(1), gif(2), gif(3)] }), false,
+      AgentClass.name + ': three GIFs exceeded the requested maximum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one video and at most two GIFs' }, { attachments: [video(1), video(2), gif(1)] }), false,
+      AgentClass.name + ': the GIF maximum loosened the exact ordinary-video count');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and at most two GIFs' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': zero optional GIFs did not satisfy a mixed GIF maximum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and at most two GIFs' }, { attachments: [image(1), gif(1)] }), true,
+      AgentClass.name + ': one GIF did not satisfy a mixed GIF maximum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and at most two GIFs' }, { attachments: [image(1), gif(1), gif(2)] }), true,
+      AgentClass.name + ': two GIFs did not satisfy a mixed GIF maximum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and at most two GIFs' }, { attachments: [image(1), video(1)] }), false,
+      AgentClass.name + ': an ordinary video satisfied a mixed GIF-only constraint');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'up to two videos' }, { attachments: [] }), true,
+      AgentClass.name + ': zero videos should satisfy a standalone video maximum');
+    const imageWithoutGifs = agent._parseWorkflowAttachmentRequirement('one image and no GIFs');
+    assert.equal(imageWithoutGifs.wantsVideo, false,
+      AgentClass.name + ': a negated GIF mention created positive video intent');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and no GIFs' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': one image did not satisfy a no-GIF requirement');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and no GIFs' }, { attachments: [image(1), gif(1)] }), false,
+      AgentClass.name + ': a GIF satisfied a no-GIF requirement');
+    for (const coordinatedNegative of ['no images or videos', 'without images or videos']) {
+      const parsedCoordinatedNegative = agent._parseWorkflowAttachmentRequirement(coordinatedNegative);
+      assert.equal(parsedCoordinatedNegative.wantsNone, true,
+        AgentClass.name + `: coordinated media negation was split for "${coordinatedNegative}"`);
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        { value: coordinatedNegative }, { attachments: [] }), true,
+        AgentClass.name + `: empty media did not satisfy "${coordinatedNegative}"`);
+      for (const forbidden of [image(1), video(1), gif(1)]) {
+        assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+          { value: coordinatedNegative }, { attachments: [forbidden] }), false,
+          AgentClass.name + `: forbidden media satisfied "${coordinatedNegative}"`);
+      }
+    }
+    const gifWithOtherTypesProhibited = agent._parseWorkflowAttachmentRequirement(
+      'one GIF but no images or videos',
+    );
+    assert.notEqual(gifWithOtherTypesProhibited.wantsNone, true,
+      AgentClass.name + ': broad media negation discarded an affirmative GIF');
+    assert.equal(gifWithOtherTypesProhibited.wantsGif, true,
+      AgentClass.name + ': an affirmative GIF was treated as negated');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one GIF but no images or videos' }, { attachments: [gif(1)] }), true,
+      AgentClass.name + ': a GIF did not satisfy the positive GIF-only contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one GIF but no images or videos' }, { attachments: [video(1)] }), false,
+      AgentClass.name + ': an ordinary video satisfied the positive GIF-only contract');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one GIF but no images or videos' }, { attachments: [gif(1), image(1)] }), false,
+      AgentClass.name + ': a prohibited image survived beside the required GIF');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and no videos or GIFs' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': embedded coordinated media negation rejected the required image');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image and no videos or GIFs' }, { attachments: [image(1), gif(1)] }), false,
+      AgentClass.name + ': embedded coordinated media negation allowed a GIF');
+    const imageWithoutArticleVideo = agent._parseWorkflowAttachmentRequirement('one image without a video');
+    assert.equal(imageWithoutArticleVideo.wantsVideo, false,
+      AgentClass.name + ': an article hid the negated video requirement');
+    assert.equal(imageWithoutArticleVideo.isVideoNegated, true,
+      AgentClass.name + ': without-a-video did not retain its negative subtype constraint');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image without a video' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': an image-only post failed without-a-video verification');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one image without a video' }, { attachments: [image(1), video(1)] }), false,
+      AgentClass.name + ': a forbidden video satisfied without-a-video verification');
+    const emptyOrVideo = agent._parseWorkflowAttachmentRequirement('either no images or one video');
+    assert.equal(emptyOrVideo.mediaAlternativeBranches.length, 2,
+      AgentClass.name + ': empty-or-video requirement did not preserve both branches');
+    assert.equal(emptyOrVideo.mediaAlternativeBranches[0].wantsNone, true,
+      AgentClass.name + ': leading either prevented parsing the negative media branch');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'either no images or one video' }, { attachments: [] }), true,
+      AgentClass.name + ': empty media did not satisfy the negative alternative');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'either no images or one video' }, { attachments: [video(1)] }), true,
+      AgentClass.name + ': one video did not satisfy the positive alternative');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'either no images or one video' }, { attachments: [image(1), image(2)] }), false,
+      AgentClass.name + ': multiple images incorrectly satisfied an empty-or-video contract');
+
+    const boundedImages = agent._parseWorkflowAttachmentRequirement('between one and two images');
+    assert.equal(boundedImages.isGeneric, true,
+      AgentClass.name + ': bounded image range was parsed as filenames');
+    assert.equal(boundedImages.hasBoundedCountRange, true,
+      AgentClass.name + ': bounded image range marker was lost');
+    assert.equal(boundedImages.minimumCount, 1,
+      AgentClass.name + ': bounded image lower limit was lost');
+    assert.equal(boundedImages.maximumCount, 2,
+      AgentClass.name + ': bounded image upper limit was lost');
+    assert.equal(boundedImages.boundedRangeKind, 'image',
+      AgentClass.name + ': bounded image range was not scoped to images');
+    assert.deepEqual(boundedImages.specificTargets, [],
+      AgentClass.name + ': bounded image range created filename targets');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'between one and two images' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': one image should satisfy the bounded range');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'between one and two images' }, { attachments: [image(1), image(2)] }), true,
+      AgentClass.name + ': two images should satisfy the bounded range');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'between one and two images' }, { attachments: [] }), false,
+      AgentClass.name + ': zero images satisfied a positive bounded range');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'between one and two images' }, { attachments: [image(1), image(2), image(3)] }), false,
+      AgentClass.name + ': three images exceeded the bounded range');
+    const bareBoundedImages = agent._parseWorkflowAttachmentRequirement('one to two images');
+    assert.deepEqual(bareBoundedImages.boundedCountRanges, [
+      { minimumCount: 1, maximumCount: 2, kind: 'image' },
+    ], AgentClass.name + ': bare attachment range was not preserved');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one to two images' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': one image should satisfy a bare one-to-two range');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one to two images' }, { attachments: [image(1), image(2)] }), true,
+      AgentClass.name + ': two images should satisfy a bare one-to-two range');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one to two images' }, { attachments: [image(1), image(2), image(3)] }), false,
+      AgentClass.name + ': three images exceeded the bare one-to-two range');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'between one and two images or one video' }, { attachments: [video(1)] }), true,
+      AgentClass.name + ': valid video alternative was rejected by the image range');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'between one and two images or one video' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': valid bounded-image alternative was rejected');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'between one and two images or one video' }, { attachments: [image(1), image(2), image(3)] }), false,
+      AgentClass.name + ': image alternative exceeded its bounded upper limit');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'between one and two images or one video' }, { attachments: [] }), false,
+      AgentClass.name + ': empty media satisfied a positive bounded alternative');
+    const twoBoundedTypes = { value: 'between one and two images and between one and two videos' };
+    const parsedTwoBoundedTypes = agent._parseWorkflowAttachmentRequirement(twoBoundedTypes);
+    assert.deepEqual(parsedTwoBoundedTypes.boundedCountRanges, [
+      { minimumCount: 1, maximumCount: 2, kind: 'image' },
+      { minimumCount: 1, maximumCount: 2, kind: 'video' },
+    ], AgentClass.name + ': multiple typed bounded ranges were not preserved');
+    for (const attachments of [
+      [image(1), video(1)],
+      [image(1), image(2), video(1)],
+      [image(1), video(1), video(2)],
+      [image(1), image(2), video(1), video(2)],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        twoBoundedTypes, { attachments }), true,
+      AgentClass.name + ': a valid combination of two bounded media types was rejected');
+    }
+    for (const attachments of [
+      [video(1)],
+      [image(1)],
+      [image(1), image(2), image(3), video(1)],
+      [image(1), video(1), video(2), video(3)],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        twoBoundedTypes, { attachments }), false,
+      AgentClass.name + ': an out-of-range bounded media type was accepted');
+    }
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'up to two GIFs' }, { attachments: [] }), true,
+      AgentClass.name + ': zero GIFs should satisfy a standalone GIF maximum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'at most two GIFs or one image' }, { attachments: [video(1)] }), false,
+      AgentClass.name + ': ordinary video satisfied neither GIF-maximum nor image alternative');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'at most two GIFs or one image' }, { attachments: [video(1), video(2)] }), false,
+      AgentClass.name + ': ordinary videos were counted under the GIF-maximum alternative');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'at most two GIFs or one image' }, { attachments: [gif(1)] }), true,
+      AgentClass.name + ': valid GIF-maximum alternative was rejected');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'at most two GIFs or one image' }, { attachments: [image(1)] }), true,
+      AgentClass.name + ': valid image alternative was rejected');
+  }
+});
+
+test('attachment requirement parser treats conjunction-based requirements as generic', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const req = agent._parseWorkflowAttachmentRequirement('an image and a video');
+    assert.equal(req.isGeneric, true, AgentClass.name + ': an image and a video should be generic');
+    assert.equal(req.expectedCount, 2, AgentClass.name + ': should expect 2 attachments');
+    assert.equal(req.expectedImageCount, 1, AgentClass.name + ': should expect 1 image');
+    assert.equal(req.expectedVideoCount, 1, AgentClass.name + ': should expect 1 video');
+
+    const verified = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'an image and a video' },
+      { attachments: [{ type: 'image', src: 'pic.png' }, { type: 'video', src: 'vid.mp4' }] }
+    );
+    assert.equal(verified, true, AgentClass.name + ': image plus video should satisfy generic conjunction requirement');
+  }
+});
+
+test('attachment requirement parser recognizes Korean generic media nouns and counts', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const reqImg = agent._parseWorkflowAttachmentRequirement('사진');
+    assert.equal(reqImg.isGeneric, true, AgentClass.name + ': 사진 should be generic');
+    assert.equal(reqImg.wantsImage, true, AgentClass.name + ': 사진 should want image');
+    assert.equal(reqImg.expectedCount, 1, AgentClass.name + ': 사진 should expect 1 attachment');
+
+    const reqVid = agent._parseWorkflowAttachmentRequirement('동영상');
+    assert.equal(reqVid.isGeneric, true, AgentClass.name + ': 동영상 should be generic');
+    assert.equal(reqVid.wantsVideo, true, AgentClass.name + ': 동영상 should want video');
+    assert.equal(reqVid.expectedCount, 1, AgentClass.name + ': 동영상 should expect 1 attachment');
+
+    const reqImg2 = agent._parseWorkflowAttachmentRequirement('사진 2장');
+    assert.equal(reqImg2.isGeneric, true, AgentClass.name + ': 사진 2장 should be generic');
+    assert.equal(reqImg2.expectedCount, 2, AgentClass.name + ': 사진 2장 should expect 2 attachments');
+    assert.equal(reqImg2.expectedImageCount, 2, AgentClass.name + ': 사진 2장 should expect 2 images');
+
+    const reqBoth = agent._parseWorkflowAttachmentRequirement('이미지와 동영상');
+    assert.equal(reqBoth.isGeneric, true, AgentClass.name + ': 이미지와 동영상 should be generic');
+    assert.equal(reqBoth.wantsImage, true, AgentClass.name + ': 이미지와 동영상 should want image');
+    assert.equal(reqBoth.wantsVideo, true, AgentClass.name + ': 이미지와 동영상 should want video');
+    assert.equal(reqBoth.expectedCount, 2, AgentClass.name + ': 이미지와 동영상 should expect 2 attachments');
+
+    const verifiedImg = agent._workflowSocialPublishedAttachmentObserved(
+      { value: '사진' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }] }
+    );
+    assert.equal(verifiedImg, true, AgentClass.name + ': valid image should satisfy 사진 requirement');
+
+    const rejectedImg = agent._workflowSocialPublishedAttachmentObserved(
+      { value: '사진' },
+      { attachments: [{ type: 'video', src: 'https://video.twimg.com/media/clip.mp4' }] }
+    );
+    assert.equal(rejectedImg, false, AgentClass.name + ': video attachment should not satisfy 사진 requirement');
+
+    const verifiedVid = agent._workflowSocialPublishedAttachmentObserved(
+      { value: '동영상' },
+      { attachments: [{ type: 'video', src: 'https://video.twimg.com/media/clip.mp4' }] }
+    );
+    assert.equal(verifiedVid, true, AgentClass.name + ': valid video should satisfy 동영상 requirement');
+
+    const rejectedVid = agent._workflowSocialPublishedAttachmentObserved(
+      { value: '동영상' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }] }
+    );
+    assert.equal(rejectedVid, false, AgentClass.name + ': image attachment should not satisfy 동영상 requirement');
+  }
+});
+
+test('attachment verification requires each media type in unquantified mixed-media requests', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const req = agent._parseWorkflowAttachmentRequirement('image and video');
+    assert.equal(req.isGeneric, true, AgentClass.name + ': image and video should be generic');
+    assert.equal(req.wantsImage, true, AgentClass.name + ': should want image');
+    assert.equal(req.wantsVideo, true, AgentClass.name + ': should want video');
+    assert.equal(req.expectedCount, 2, AgentClass.name + ': should expect at least 2 attachments');
+
+    const twoImages = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'image and video' },
+      { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }] }
+    );
+    assert.equal(twoImages, false, AgentClass.name + ': two images without video should be rejected for image and video');
+
+    const twoVideos = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'image and video' },
+      { attachments: [{ type: 'video', src: 'clip1.mp4' }, { type: 'video', src: 'clip2.mp4' }] }
+    );
+    assert.equal(twoVideos, false, AgentClass.name + ': two videos without image should be rejected for image and video');
+
+    const imageAndVideo = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'image and video' },
+      { attachments: [{ type: 'image', src: 'pic.png' }, { type: 'video', src: 'clip.mp4' }] }
+    );
+    assert.equal(imageAndVideo, true, AgentClass.name + ': image plus video should satisfy image and video');
+
+    const twoImagesAndVideo = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'image and video' },
+      { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }, { type: 'video', src: 'clip.mp4' }] }
+    );
+    assert.equal(twoImagesAndVideo, true, AgentClass.name + ': 2 images plus video should satisfy image and video');
+  }
+});
+
+test('attachment verification rejects extra media beyond explicitly requested counts and types', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+
+    const reqOneImg = agent._parseWorkflowAttachmentRequirement('one image');
+    assert.equal(reqOneImg.hasExplicitCardinality, true, AgentClass.name + ': one image should have explicit cardinality');
+    assert.equal(reqOneImg.hasExplicitImageCount, true, AgentClass.name + ': one image should have explicit image count');
+    assert.equal(reqOneImg.expectedCount, 1, AgentClass.name + ': one image should expect 1');
+
+    // one image exact match
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'one image' },
+        { attachments: [{ type: 'image', src: 'pic1.png' }] }
+      ),
+      true,
+      AgentClass.name + ': exact one image should pass'
+    );
+
+    // one image with extra image
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'one image' },
+        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }] }
+      ),
+      false,
+      AgentClass.name + ': extra image beyond one image should be rejected'
+    );
+
+    // one image with unintended video
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'one image' },
+        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'video', src: 'vid.mp4' }] }
+      ),
+      false,
+      AgentClass.name + ': unintended video with one image should be rejected'
+    );
+
+    // two videos
+    const reqTwoVid = agent._parseWorkflowAttachmentRequirement('two videos');
+    assert.equal(reqTwoVid.hasExplicitCardinality, true, AgentClass.name + ': two videos should have explicit cardinality');
+    assert.equal(reqTwoVid.hasExplicitVideoCount, true, AgentClass.name + ': two videos should have explicit video count');
+    assert.equal(reqTwoVid.expectedCount, 2, AgentClass.name + ': two videos should expect 2');
+
+    // two videos exact match
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'two videos' },
+        { attachments: [{ type: 'video', src: 'vid1.mp4' }, { type: 'video', src: 'vid2.mp4' }] }
+      ),
+      true,
+      AgentClass.name + ': exact two videos should pass'
+    );
+
+    // two videos with extra video
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'two videos' },
+        { attachments: [{ type: 'video', src: 'vid1.mp4' }, { type: 'video', src: 'vid2.mp4' }, { type: 'video', src: 'vid3.mp4' }] }
+      ),
+      false,
+      AgentClass.name + ': extra video beyond two videos should be rejected'
+    );
+
+    // two videos with unintended image
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'two videos' },
+        { attachments: [{ type: 'video', src: 'vid1.mp4' }, { type: 'video', src: 'vid2.mp4' }, { type: 'image', src: 'pic.png' }] }
+      ),
+      false,
+      AgentClass.name + ': unintended image with two videos should be rejected'
+    );
+
+    // one image and two videos
+    const reqMixed = agent._parseWorkflowAttachmentRequirement('one image and two videos');
+    assert.equal(reqMixed.hasExplicitCardinality, true, AgentClass.name + ': one image and two videos should have explicit cardinality');
+    assert.equal(reqMixed.hasExplicitImageCount, true, AgentClass.name + ': should have explicit image count');
+    assert.equal(reqMixed.hasExplicitVideoCount, true, AgentClass.name + ': should have explicit video count');
+    assert.equal(reqMixed.expectedCount, 3, AgentClass.name + ': should expect 3 attachments');
+
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'one image and two videos' },
+        { attachments: [{ type: 'image', src: 'pic.png' }, { type: 'video', src: 'vid1.mp4' }, { type: 'video', src: 'vid2.mp4' }] }
+      ),
+      true,
+      AgentClass.name + ': exact 1 image + 2 videos should pass'
+    );
+
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'one image and two videos' },
+        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }, { type: 'video', src: 'vid1.mp4' }, { type: 'video', src: 'vid2.mp4' }] }
+      ),
+      false,
+      AgentClass.name + ': 2 images + 2 videos should be rejected for 1 image and 2 videos'
+    );
+
+    // two attachments
+    const reqTwoAtt = agent._parseWorkflowAttachmentRequirement('two attachments');
+    assert.equal(reqTwoAtt.hasExplicitCardinality, true, AgentClass.name + ': two attachments should have explicit cardinality');
+    assert.equal(reqTwoAtt.expectedCount, 2, AgentClass.name + ': two attachments should expect 2');
+
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'two attachments' },
+        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'video', src: 'vid1.mp4' }] }
+      ),
+      true,
+      AgentClass.name + ': 2 attachments should pass'
+    );
+
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'two attachments' },
+        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'video', src: 'vid1.mp4' }, { type: 'image', src: 'pic2.png' }] }
+      ),
+      false,
+      AgentClass.name + ': 3 attachments should be rejected for two attachments'
+    );
+
+    // Korean 사진 2장
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: '사진 2장' },
+        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }] }
+      ),
+      true,
+      AgentClass.name + ': 2 images should satisfy 사진 2장'
+    );
+
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: '사진 2장' },
+        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }, { type: 'image', src: 'pic3.png' }] }
+      ),
+      false,
+      AgentClass.name + ': 3 images should be rejected for 사진 2장'
+    );
+
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: '사진 2장' },
+        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }, { type: 'video', src: 'vid.mp4' }] }
+      ),
+      false,
+      AgentClass.name + ': 2 images + 1 video should be rejected for 사진 2장'
+    );
+  }
+});
+
+
+test('attachment verification matches specific attachment names without substring collisions', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+
+    const oldChartUrl = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/old-chart.png', alt: 'old-chart.png' }] }
+    );
+    assert.equal(oldChartUrl, false, AgentClass.name + ': old-chart.png should not satisfy chart.png');
+
+    const notChartUrl = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/not-chart.png', alt: 'not-chart.png' }] }
+    );
+    assert.equal(notChartUrl, false, AgentClass.name + ': not-chart.png should not satisfy chart.png');
+
+    const oldChartAlt = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/random-id.jpg', alt: 'Uploaded old-chart.png' }] }
+    );
+    assert.equal(oldChartAlt, false, AgentClass.name + ': alt with old-chart.png should not satisfy chart.png');
+
+    const exactChartUrl = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/chart.png' }] }
+    );
+    assert.equal(exactChartUrl, true, AgentClass.name + ': chart.png in URL should satisfy chart.png');
+
+    const exactChartWithExtra = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' },
+      {
+        attachments: [
+          { type: 'image', src: 'https://pbs.twimg.com/media/chart.png' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/stale.png' },
+        ],
+      }
+    );
+    assert.equal(exactChartWithExtra, false,
+      AgentClass.name + ': one named attachment should reject extra media');
+
+    const exactChartAlt = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/random-id.jpg', alt: 'Uploaded chart.png' }] }
+    );
+    assert.equal(exactChartAlt, false, AgentClass.name + ': alt text was treated as attachment filename evidence');
+
+    const wrongNameExactAlt = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'chart.png' },
+      { attachments: [{ type: 'image', name: 'wrong.png', src: 'https://pbs.twimg.com/media/random-id.jpg', alt: 'chart.png' }] },
+    );
+    assert.equal(wrongNameExactAlt, false,
+      AgentClass.name + ': exact requested filename in alt text overrode wrong upload provenance');
+
+    const cleanedPrefixAccepted = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'an image of chart.png' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/chart.png' }] }
+    );
+    assert.equal(cleanedPrefixAccepted, true, AgentClass.name + ': an image of chart.png should accept chart.png');
+
+    const cleanedPrefixRejected = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'an image of chart.png' },
+      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/old-chart.png' }] }
+    );
+    assert.equal(cleanedPrefixRejected, false, AgentClass.name + ': an image of chart.png should reject old-chart.png');
+
+    // Multiple specific attachment targets
+    const multiSpecificReq = agent._parseWorkflowAttachmentRequirement({ value: 'cat.png and dog.jpg' });
+    assert.equal(multiSpecificReq.expectedCount, 2, AgentClass.name + ': expectedCount for cat.png and dog.jpg should be 2');
+    assert.equal(multiSpecificReq.hasExplicitCardinality, true, AgentClass.name + ': hasExplicitCardinality should be true for multi-target');
+    assert.deepEqual(multiSpecificReq.specificTargets, ['cat.png', 'dog.jpg'], AgentClass.name + ': specific targets parsed correctly');
+
+    const bothMatched = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'cat.png and dog.jpg' },
+      {
+        attachments: [
+          { type: 'image', src: 'https://pbs.twimg.com/media/cat.png' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/dog.jpg' },
+        ],
+      }
+    );
+    assert.equal(bothMatched, true, AgentClass.name + ': both distinct attachments matched should satisfy requirement');
+
+    const duplicateAttachment = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'cat.png and dog.jpg' },
+      {
+        attachments: [
+          { type: 'image', src: 'https://pbs.twimg.com/media/cat.png' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/cat.png' },
+        ],
+      }
+    );
+    assert.equal(duplicateAttachment, false, AgentClass.name + ': duplicate single attachment cannot satisfy two distinct targets');
+
+    const missingAttachment = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'cat.png and dog.jpg' },
+      {
+        attachments: [
+          { type: 'image', src: 'https://pbs.twimg.com/media/cat.png' },
+        ],
+      }
+    );
+    assert.equal(missingAttachment, false, AgentClass.name + ': missing second attachment should reject');
+
+    const wrongSecondAttachment = agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'cat.png and dog.jpg' },
+      {
+        attachments: [
+          { type: 'image', src: 'https://pbs.twimg.com/media/cat.png' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/bird.png' },
+        ],
+      }
+    );
+    assert.equal(wrongSecondAttachment, false, AgentClass.name + ': wrong second attachment should reject');
+
+    const namedAlternatives = agent._parseWorkflowAttachmentRequirement({
+      value: 'chart.png or graph.png',
+    });
+    assert.deepEqual(namedAlternatives.specificTargetAlternatives, [['chart.png'], ['graph.png']],
+      AgentClass.name + ': named attachment alternatives were flattened into one required set');
+    for (const allowedName of ['chart.png', 'graph.png']) {
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved(
+          { value: 'chart.png or graph.png' },
+          { attachments: [{ type: 'image', src: `https://pbs.twimg.com/media/${allowedName}` }] },
+        ),
+        true,
+        AgentClass.name + `: permitted attachment alternative ${allowedName} was rejected`,
+      );
+    }
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'chart.png or graph.png' },
+        {
+          attachments: [
+            { type: 'image', src: 'https://pbs.twimg.com/media/chart.png' },
+            { type: 'image', src: 'https://pbs.twimg.com/media/graph.png' },
+          ],
+        },
+      ),
+      false,
+      AgentClass.name + ': both alternatives were accepted when exactly one was requested',
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'chart.png or graph.png' },
+        { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/other.png' }] },
+      ),
+      false,
+      AgentClass.name + ': unrelated media satisfied a named attachment alternative',
+    );
+    assert.deepEqual(
+      agent._parseWorkflowAttachmentRequirement('either chart.png or graph.png').specificTargetAlternatives,
+      [['chart.png'], ['graph.png']],
+      AgentClass.name + ': either modifier became part of a filename alternative',
+    );
+    for (const commaChoice of [
+      'chart.png, graph.png, or logo.png',
+      'one of chart.png, graph.png, or logo.png',
+    ]) {
+      assert.deepEqual(
+        agent._parseWorkflowAttachmentRequirement(commaChoice).specificTargetAlternatives,
+        [['chart.png'], ['graph.png'], ['logo.png']],
+        AgentClass.name + `: Oxford-comma attachment choices were not preserved for "${commaChoice}"`,
+      );
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved(
+          { value: commaChoice },
+          { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/graph.png' }] },
+        ),
+        true,
+        AgentClass.name + `: one permitted Oxford-comma attachment was rejected for "${commaChoice}"`,
+      );
+    }
+    assert.deepEqual(
+      agent._parseWorkflowAttachmentRequirement('report-or-draft.png').specificTargetAlternatives,
+      [],
+      AgentClass.name + ': disjunction text inside one hyphenated filename created alternatives',
+    );
+    const groupedAlternatives = agent._parseWorkflowAttachmentRequirement({
+      value: 'chart.png and logo.png or summary.jpg',
+    });
+    assert.deepEqual(groupedAlternatives.specificTargetAlternatives,
+      [['chart.png', 'logo.png'], ['summary.jpg']],
+      AgentClass.name + ': conjunctive groups inside attachment alternatives were not preserved');
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'chart.png and logo.png or summary.jpg' },
+        {
+          attachments: [
+            { type: 'image', src: 'https://pbs.twimg.com/media/chart.png' },
+            { type: 'image', src: 'https://pbs.twimg.com/media/logo.png' },
+          ],
+        },
+      ),
+      true,
+      AgentClass.name + ': complete conjunctive alternative group was rejected',
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'chart.png and logo.png or summary.jpg' },
+        { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/chart.png' }] },
+      ),
+      false,
+      AgentClass.name + ': incomplete conjunctive alternative group was accepted',
+    );
+    const sharedConjunctAlternatives = agent._parseWorkflowAttachmentRequirement(
+      'logo.png and either chart.png or graph.png',
+    );
+    assert.deepEqual(sharedConjunctAlternatives.specificTargetAlternatives,
+      [['logo.png', 'chart.png'], ['logo.png', 'graph.png']],
+      AgentClass.name + ': shared conjunct was not retained in every explicit either/or branch');
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'logo.png and either chart.png or graph.png' },
+        {
+          attachments: [
+            { type: 'image', src: 'https://pbs.twimg.com/media/logo.png' },
+            { type: 'image', src: 'https://pbs.twimg.com/media/chart.png' },
+          ],
+        },
+      ),
+      true,
+      AgentClass.name + ': valid shared-conjunct alternative was rejected',
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'logo.png and either chart.png or graph.png' },
+        { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/graph.png' }] },
+      ),
+      false,
+      AgentClass.name + ': alternative file alone satisfied a missing shared conjunct',
+    );
+    const trailingSharedConjunct = agent._parseWorkflowAttachmentRequirement(
+      'either chart.png or graph.png, and logo.png',
+    );
+    assert.deepEqual(trailingSharedConjunct.specificTargetAlternatives,
+      [['chart.png', 'logo.png'], ['graph.png', 'logo.png']],
+      AgentClass.name + ': trailing shared conjunct was not retained in every alternative branch');
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'either chart.png or graph.png, and logo.png' },
+        {
+          attachments: [
+            { type: 'image', src: 'https://pbs.twimg.com/media/chart.png' },
+            { type: 'image', src: 'https://pbs.twimg.com/media/logo.png' },
+          ],
+        },
+      ),
+      true,
+      AgentClass.name + ': valid choice plus trailing shared conjunct was rejected',
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'either chart.png or graph.png, and logo.png' },
+        { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/chart.png' }] },
+      ),
+      false,
+      AgentClass.name + ': choice without trailing shared conjunct was accepted',
+    );
+    for (const [allowedName, type] of [['chart.png', 'image'], ['clip.mp4', 'video']]) {
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved(
+          { value: 'chart.png or clip.mp4' },
+          { attachments: [{ type, src: `https://cdn.example/${allowedName}` }] },
+        ),
+        true,
+        AgentClass.name + `: cross-type named alternative ${allowedName} was rejected`,
+      );
+    }
+
+    // Multilingual conjunctions / delimiters in specific targets
+    for (const conjCase of [
+      'image1.png, image2.png',
+      'chart.png und graphic.png',
+      'foto1.jpg y foto2.jpg',
+      'pic1.png & pic2.png',
+      'diagram1.png et diagram2.png',
+    ]) {
+      const parsedConj = agent._parseWorkflowAttachmentRequirement({ value: conjCase });
+      assert.equal(parsedConj.expectedCount, 2, AgentClass.name + `: expectedCount should be 2 for "${conjCase}"`);
+      assert.equal(parsedConj.specificTargets.length, 2, AgentClass.name + `: should parse 2 targets for "${conjCase}"`);
+    }
+
+    // A conjunction inside one filename is part of the name, not a separator.
+    for (const [singleName, expected] of [
+      ['"research and development.png"', 'research and development.png'],
+      ['research and development.png', 'research and development.png'],
+      ['sales & marketing.png', 'sales & marketing.png'],
+      ['\u201cq1 and q2 summary.pdf\u201d', 'q1 and q2 summary.pdf'],
+    ]) {
+      const parsedName = agent._parseWorkflowAttachmentRequirement({ value: singleName });
+      assert.deepEqual(parsedName.specificTargets, [expected],
+        AgentClass.name + `: "${singleName}" should stay one attachment target`);
+      assert.equal(parsedName.expectedCount, 1,
+        AgentClass.name + `: "${singleName}" should expect one attachment`);
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved(
+          { value: singleName },
+          { attachments: [{ type: 'image', src: `https://pbs.twimg.com/media/${encodeURIComponent(expected)}` }] },
+        ),
+        true,
+        AgentClass.name + `: the uploaded "${expected}" should satisfy "${singleName}"`,
+      );
+    }
+
+    // A quoted name keeps its conjunction while the list around it still splits.
+    const quotedListReq = agent._parseWorkflowAttachmentRequirement({
+      value: '"research and development.png", "q1 report.png"',
+    });
+    assert.deepEqual(quotedListReq.specificTargets, ['research and development.png', 'q1 report.png'],
+      AgentClass.name + ': quoted names split on the delimiter but not on their own conjunctions');
+
+    // A finished quoted name still ends a target, so the list around it splits.
+    for (const [mixedValue, mixedTargets] of [
+      ['"research and development.png" and cover.jpg', ['research and development.png', 'cover.jpg']],
+      ['cover.jpg and "research and development.png"', ['cover.jpg', 'research and development.png']],
+      ['research and "development.png"', ['research', 'development.png']],
+      ['"my notes" and cover.jpg', ['my notes', 'cover.jpg']],
+    ]) {
+      assert.deepEqual(agent._parseSpecificAttachmentTargets(mixedValue), mixedTargets,
+        AgentClass.name + `: "${mixedValue}" should split around the quoted name`);
+    }
+
+    // An unquoted conjunction still separates two named files.
+    const mixedListReq = agent._parseWorkflowAttachmentRequirement({
+      value: 'research and development.png and cover.jpg',
+    });
+    assert.deepEqual(mixedListReq.specificTargets, ['research and development.png', 'cover.jpg'],
+      AgentClass.name + ': a trailing conjunction between two filenames still splits');
+
+    // A GIF is a video, but an ordinary video is not a GIF.
+    const gifMedia = {
+      mp4: { type: 'video', src: 'https://video.twimg.com/media/clip.mp4' },
+      altNamedMp4: { type: 'video', src: 'https://video.twimg.com/media/clip.mp4', alt: 'demo.gif' },
+      typed: { type: 'animated_gif', src: 'https://video.twimg.com/tweet_video/loop.mp4' },
+      named: { type: 'video', src: 'https://video.twimg.com/tweet_video/animation.gif.mp4', alt: 'animation.gif' },
+      plain: { type: 'video', src: 'https://cdn.example.com/loop.gif' },
+    };
+    for (const [gifKey, gifLabel] of [['typed', 'a typed animated GIF'], ['named', 'an mp4-served GIF'], ['plain', 'a plain .gif']]) {
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved({ value: 'a GIF' }, { attachments: [gifMedia[gifKey]] }),
+        true,
+        AgentClass.name + `: ${gifLabel} should satisfy a GIF requirement`,
+      );
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved(
+          { value: 'one video and no GIFs' },
+          { attachments: [gifMedia[gifKey]] },
+        ),
+        false,
+        AgentClass.name + `: ${gifLabel} should not pass a negated GIF requirement`,
+      );
+    }
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved({ value: 'a GIF' }, { attachments: [gifMedia.mp4] }),
+      false,
+      AgentClass.name + ': an ordinary mp4 should not satisfy a GIF requirement',
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'one video and no GIFs' },
+        { attachments: [gifMedia.mp4] },
+      ),
+      true,
+      AgentClass.name + ': an ordinary mp4 should pass a negated GIF requirement',
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved({ value: 'a GIF' }, { attachments: [gifMedia.altNamedMp4] }),
+      false,
+      AgentClass.name + ': alt text ending in .gif reclassified an ordinary mp4',
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'one video and no GIFs' },
+        { attachments: [gifMedia.altNamedMp4] },
+      ),
+      true,
+      AgentClass.name + ': GIF-like alt text violated a no-GIF requirement for an ordinary mp4',
+    );
+    const twoGifRequirement = agent._parseWorkflowAttachmentRequirement({ value: 'two GIFs' });
+    assert.equal(twoGifRequirement.expectedGifCount, 2,
+      AgentClass.name + ': the GIF count was collapsed into the general video count');
+    assert.equal(twoGifRequirement.expectedVideoCount, 0,
+      AgentClass.name + ': GIFs were also counted as requested ordinary videos');
+    assert.equal(twoGifRequirement.hasExplicitGifCount, true);
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'two GIFs' },
+      { attachments: [gifMedia.typed] },
+    ), false, AgentClass.name + ': one GIF satisfied an exact two-GIF requirement');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'two GIFs' },
+      { attachments: [gifMedia.typed, gifMedia.named] },
+    ), true, AgentClass.name + ': two GIFs did not satisfy an exact two-GIF requirement');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'two GIFs' },
+      { attachments: [gifMedia.typed, gifMedia.mp4] },
+    ), false, AgentClass.name + ': an ordinary video substituted for the second GIF');
+
+    const gifAndVideoRequirement = agent._parseWorkflowAttachmentRequirement({ value: 'one GIF and one video' });
+    assert.equal(gifAndVideoRequirement.expectedGifCount, 1);
+    assert.equal(gifAndVideoRequirement.expectedVideoCount, 1);
+    assert.equal(gifAndVideoRequirement.expectedCount, 2);
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one GIF and one video' },
+      { attachments: [gifMedia.typed, gifMedia.mp4] },
+    ), true, AgentClass.name + ': one GIF plus one ordinary video did not satisfy both typed counts');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one GIF and one video' },
+      { attachments: [gifMedia.typed, gifMedia.named] },
+    ), false, AgentClass.name + ': two GIFs satisfied a GIF-plus-video requirement');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'one GIF and one video' },
+      { attachments: [gifMedia.typed, gifMedia.mp4, { ...gifMedia.mp4, src: 'second.mp4' }] },
+    ), false, AgentClass.name + ': an extra ordinary video bypassed the exact typed counts');
+
+    const minimumGifs = agent._parseWorkflowAttachmentRequirement({ value: 'at least two GIFs' });
+    assert.equal(minimumGifs.isGifMinimum, true);
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      { value: 'at least two GIFs' },
+      { attachments: [gifMedia.typed, gifMedia.named, gifMedia.plain] },
+    ), true, AgentClass.name + ': a GIF minimum was incorrectly treated as an exact count');
+
+    // A singular article counts as exactly one, the same as the word "one".
+    const oneImage = { type: 'image', src: 'https://pbs.twimg.com/media/first.png' };
+    const otherImage = { type: 'image', src: 'https://pbs.twimg.com/media/second.png' };
+    const oneVideo = { type: 'video', src: 'https://video.twimg.com/media/clip.mp4' };
+    for (const articleReq of ['a video', 'an image', 'un video', 'une image', 'ein bild', 'uma imagem']) {
+      assert.equal(agent._parseWorkflowAttachmentRequirement({ value: articleReq }).hasExplicitCardinality, true,
+        AgentClass.name + `: "${articleReq}" should read as an explicit count of one`);
+    }
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved({ value: 'a video' }, { attachments: [oneVideo] }), true,
+      AgentClass.name + ': one video should satisfy "a video"');
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'a video' },
+        { attachments: [oneVideo, { type: 'video', src: 'https://video.twimg.com/media/other.mp4' }] },
+      ),
+      false,
+      AgentClass.name + ': two videos should not satisfy "a video"',
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'an image and a video' },
+        { attachments: [oneImage, oneVideo] },
+      ),
+      true,
+      AgentClass.name + ': one image and one video should satisfy "an image and a video"',
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'an image and a video' },
+        { attachments: [oneImage, otherImage, oneVideo] },
+      ),
+      false,
+      AgentClass.name + ': an extra image should not satisfy "an image and a video"',
+    );
+
+    // Minimum-count qualifiers bound the count from below instead of naming a file.
+    for (const [minReq, minCount] of [
+      ['one or more images', 1],
+      ['at least two images', 2],
+      ['at least 2 images', 2],
+      ['minimum of 3 photos', 3],
+      ['no fewer than two images', 2],
+      ['mindestens zwei bilder', 2],
+      ['au moins deux photos', 2],
+      ['al menos dos im\u00e1genes', 2],
+      ['en az 2 foto\u011fraf', 2],
+      ['\u81f3\u5c11\u4e24\u5f20\u56fe\u7247', 2],
+      ['\ucd5c\uc18c 2\uc7a5 \uc0ac\uc9c4', 2],
+    ]) {
+      const parsedMin = agent._parseWorkflowAttachmentRequirement({ value: minReq });
+      assert.equal(parsedMin.isGeneric, true,
+        AgentClass.name + `: "${minReq}" should read as a generic media requirement`);
+      assert.equal(parsedMin.isMinimumCount, true,
+        AgentClass.name + `: "${minReq}" should carry lower-bound semantics`);
+      assert.deepEqual(parsedMin.specificTargets, [],
+        AgentClass.name + `: "${minReq}" should not name an attachment`);
+      assert.equal(parsedMin.expectedCount, minCount,
+        AgentClass.name + `: "${minReq}" should expect ${minCount}`);
+      const images = count => ({
+        attachments: Array.from({ length: count }, (unused, index) => (
+          { type: 'image', src: `https://pbs.twimg.com/media/shot${index}.png` }
+        )),
+      });
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved({ value: minReq }, images(minCount)), true,
+        AgentClass.name + `: exactly ${minCount} attachments should satisfy "${minReq}"`);
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved({ value: minReq }, images(minCount + 1)), true,
+        AgentClass.name + `: more than ${minCount} attachments should satisfy "${minReq}"`);
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved({ value: minReq }, images(minCount - 1)), false,
+        AgentClass.name + `: fewer than ${minCount} attachments should reject "${minReq}"`);
+    }
+
+    // A minimum qualifier applies only to the media count in its own phrase.
+    const image = index => ({ type: 'image', src: `https://pbs.twimg.com/media/image${index}.png` });
+    const video = index => ({ type: 'video', src: `https://video.twimg.com/media/video${index}.mp4` });
+    const scopedImageMinimum = { value: 'at least two images and one video' };
+    const parsedScopedImageMinimum = agent._parseWorkflowAttachmentRequirement(scopedImageMinimum);
+    assert.equal(parsedScopedImageMinimum.isImageMinimum, true,
+      AgentClass.name + ': the image minimum qualifier was not retained');
+    assert.equal(parsedScopedImageMinimum.isVideoMinimum, false,
+      AgentClass.name + ': the image minimum qualifier leaked onto the exact video count');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      scopedImageMinimum,
+      { attachments: [image(1), image(2), video(1)] },
+    ), true, AgentClass.name + ': the exact mixed minimum requirement did not pass');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      scopedImageMinimum,
+      { attachments: [image(1), image(2), image(3), video(1)] },
+    ), true, AgentClass.name + ': an extra image did not satisfy the image minimum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      scopedImageMinimum,
+      { attachments: [image(1), image(2), video(1), video(2)] },
+    ), false, AgentClass.name + ': the image minimum incorrectly loosened the exact video count');
+
+    const scopedVideoMinimum = { value: 'one image and at least two videos' };
+    const parsedScopedVideoMinimum = agent._parseWorkflowAttachmentRequirement(scopedVideoMinimum);
+    assert.equal(parsedScopedVideoMinimum.isImageMinimum, false,
+      AgentClass.name + ': the video minimum qualifier leaked onto the exact image count');
+    assert.equal(parsedScopedVideoMinimum.isVideoMinimum, true,
+      AgentClass.name + ': the video minimum qualifier was not retained');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      scopedVideoMinimum,
+      { attachments: [image(1), video(1), video(2), video(3)] },
+    ), true, AgentClass.name + ': an extra video did not satisfy the video minimum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      scopedVideoMinimum,
+      { attachments: [image(1), image(2), video(1), video(2)] },
+    ), false, AgentClass.name + ': the video minimum incorrectly loosened the exact image count');
+
+    const postfixVideoMinimum = { value: 'one image and one or more videos' };
+    const parsedPostfixVideoMinimum = agent._parseWorkflowAttachmentRequirement(postfixVideoMinimum);
+    assert.equal(parsedPostfixVideoMinimum.isAlternative, false,
+      AgentClass.name + ': "or more" was parsed as a media alternative');
+    assert.equal(parsedPostfixVideoMinimum.isVideoMinimum, true,
+      AgentClass.name + ': postfix video minimum scope was lost');
+    assert.equal(parsedPostfixVideoMinimum.isImageMinimum, false,
+      AgentClass.name + ': postfix video minimum leaked onto the image count');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      postfixVideoMinimum,
+      { attachments: [image(1), video(1), video(2)] },
+    ), true, AgentClass.name + ': extra video did not satisfy the postfix minimum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      postfixVideoMinimum,
+      { attachments: [image(1)] },
+    ), false, AgentClass.name + ': missing videos satisfied the postfix minimum');
+
+    const independentlyScopedMaximum = { value: 'at least one image and at most two videos' };
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      independentlyScopedMaximum,
+      { attachments: [image(1), image(2), image(3), image(4)] },
+    ), true, AgentClass.name + ': the video maximum imposed an aggregate limit on valid images');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      independentlyScopedMaximum,
+      { attachments: [image(1), video(1), video(2)] },
+    ), true, AgentClass.name + ': the scoped video maximum rejected its boundary');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      independentlyScopedMaximum,
+      { attachments: [image(1), video(1), video(2), video(3)] },
+    ), false, AgentClass.name + ': the scoped video maximum accepted too many videos');
+
+    const alternativeScopedMinimum = { value: 'at least two images or one video' };
+    const parsedAlternativeScopedMinimum = agent._parseWorkflowAttachmentRequirement(alternativeScopedMinimum);
+    assert.equal(parsedAlternativeScopedMinimum.isImageMinimum, true,
+      AgentClass.name + ': the alternative image minimum qualifier was not retained');
+    assert.equal(parsedAlternativeScopedMinimum.isVideoMinimum, false,
+      AgentClass.name + ': an alternative image minimum leaked onto the exact video count');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      alternativeScopedMinimum,
+      { attachments: [image(1), image(2), image(3)] },
+    ), true, AgentClass.name + ': extra images did not satisfy the alternative image minimum');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      alternativeScopedMinimum,
+      { attachments: [video(1)] },
+    ), true, AgentClass.name + ': one video did not satisfy the exact alternative');
+    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+      alternativeScopedMinimum,
+      { attachments: [video(1), video(2)] },
+    ), false, AgentClass.name + ': an image minimum loosened the alternative exact video count');
+
+    // An unqualified count stays exact.
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: 'two images' },
+        {
+          attachments: [
+            { type: 'image', src: 'https://pbs.twimg.com/media/one.png' },
+            { type: 'image', src: 'https://pbs.twimg.com/media/two.png' },
+            { type: 'image', src: 'https://pbs.twimg.com/media/three.png' },
+          ],
+        },
+      ),
+      false,
+      AgentClass.name + ': three attachments should not satisfy an exact two-image requirement',
+    );
+
+    // Negative attachment requirements
+    for (const negReq of [
+      'no attachments',
+      'without media',
+      'without any media',
+      '0 attachments',
+      'zero attachments',
+      'none',
+      'sin archivos',
+      'sans photos',
+      'sem anexos',
+      'senza allegati',
+      'ohne anhang',
+      'без вложений',
+      '添付なし',
+      '첨부 없음',
+      '无附件',
+      'ek yok',
+    ]) {
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved(
+          { value: negReq },
+          { attachments: [] }
+        ),
+        true,
+        AgentClass.name + `: text-only post (0 attachments) should satisfy "${negReq}"`
+      );
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved(
+          { value: negReq },
+          { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }] }
+        ),
+        false,
+        AgentClass.name + `: post with attachment should reject "${negReq}"`
+      );
+    }
+
+    // Mixed positive and negative media types
+    const mixedCases = [
+      {
+        req: 'one video and no images',
+        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+        invalidExtra: [
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+      },
+      {
+        req: '2 photos without video',
+        valid: [
+          { type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/2.jpg' },
+        ],
+        invalidExtra: [
+          { type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/2.jpg' },
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' }],
+      },
+      {
+        req: '1 video, 0 images',
+        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+        invalidExtra: [
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+      },
+      {
+        req: 'un video sin imágenes',
+        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+        invalidExtra: [
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+      },
+      {
+        req: '1 vidéo sans photos',
+        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+        invalidExtra: [
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+      },
+      {
+        req: '1 Video ohne Bilder',
+        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+        invalidExtra: [
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+      },
+      {
+        req: '動画1つ、画像なし',
+        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+        invalidExtra: [
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+      },
+      {
+        req: '동영상 1개, 사진 없음',
+        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+        invalidExtra: [
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+      },
+      {
+        req: '1个视频，无图片',
+        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+        invalidExtra: [
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+      },
+      {
+        req: 'no images, no videos',
+        valid: [],
+        invalidExtra: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+        invalidWrong: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+      },
+      {
+        req: 'videos and no images',
+        valid: [
+          { type: 'video', src: 'https://video.twimg.com/clip1.mp4' },
+          { type: 'video', src: 'https://video.twimg.com/clip2.mp4' },
+        ],
+        invalidExtra: [
+          { type: 'video', src: 'https://video.twimg.com/clip1.mp4' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+      },
+      {
+        req: 'images only',
+        valid: [
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic1.jpg' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic2.jpg' },
+        ],
+        invalidExtra: [
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic1.jpg' },
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+        ],
+        invalidWrong: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+      },
+      {
+        req: 'video only',
+        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
+        invalidExtra: [
+          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
+        ],
+        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
+      },
+    ];
+
+    for (const { req, valid, invalidExtra, invalidWrong } of mixedCases) {
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved({ value: req }, { attachments: valid }),
+        true,
+        AgentClass.name + `: valid post should satisfy "${req}"`
+      );
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved({ value: req }, { attachments: invalidExtra }),
+        false,
+        AgentClass.name + `: post with extra forbidden media should reject "${req}"`
+      );
+      assert.equal(
+        agent._workflowSocialPublishedAttachmentObserved({ value: req }, { attachments: invalidWrong }),
+        false,
+        AgentClass.name + `: post with wrong media should reject "${req}"`
+      );
+    }
+
+    // Media disjunctions (e.g. "one image or one video")
+    const altReq = 'one image or one video';
+    const parsedAlt = agent._parseWorkflowAttachmentRequirement({ value: altReq });
+    assert.equal(parsedAlt.isAlternative, true, AgentClass.name + ': isAlternative should be true for "one image or one video"');
+    assert.equal(parsedAlt.expectedCount, 1, AgentClass.name + ': expectedCount should be 1 for alternative');
+
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: altReq },
+        { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' }] },
+      ),
+      true,
+      AgentClass.name + ': 1 image should satisfy "one image or one video"'
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: altReq },
+        { attachments: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }] },
+      ),
+      true,
+      AgentClass.name + ': 1 video should satisfy "one image or one video"'
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: altReq },
+        {
+          attachments: [
+            { type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' },
+            { type: 'image', src: 'https://pbs.twimg.com/media/2.jpg' },
+          ],
+        },
+      ),
+      false,
+      AgentClass.name + ': 2 images should reject "one image or one video"'
+    );
+    assert.equal(
+      agent._workflowSocialPublishedAttachmentObserved(
+        { value: altReq },
+        {
+          attachments: [
+            { type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' },
+            { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
+          ],
+        },
+      ),
+      false,
+      AgentClass.name + ': simultaneous image and video should reject "one image or one video"'
+    );
+
+    const alternativeImage = index => ({ type: 'image', src: `https://example.test/alternative-${index}.png` });
+    const alternativeVideo = index => ({ type: 'video', src: `https://example.test/alternative-${index}.mp4` });
+    const alternativeGif = index => ({ type: 'animated_gif', src: `https://example.test/alternative-${index}.gif` });
+    const scopedCountAlternative = { value: 'one or two images and one video' };
+    const parsedScopedCountAlternative = agent._parseWorkflowAttachmentRequirement(scopedCountAlternative);
+    assert.equal(parsedScopedCountAlternative.isAlternative, false,
+      AgentClass.name + ': a same-type count choice made the surrounding media conjunctive clause alternative');
+    assert.deepEqual(parsedScopedCountAlternative.imageAlternativeCounts, [1, 2],
+      AgentClass.name + ': scoped image count alternatives were lost');
+    for (const attachments of [
+      [alternativeImage(1), alternativeVideo(1)],
+      [alternativeImage(1), alternativeImage(2), alternativeVideo(1)],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        scopedCountAlternative,
+        { attachments },
+      ), true, AgentClass.name + ': a valid scoped image-count branch was rejected');
+    }
+    for (const attachments of [
+      [alternativeImage(1), alternativeImage(2)],
+      [alternativeImage(1), alternativeImage(2), alternativeImage(3), alternativeVideo(1)],
+      [alternativeImage(1), alternativeVideo(1), alternativeVideo(2)],
+    ]) {
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        scopedCountAlternative,
+        { attachments },
+      ), false, AgentClass.name + ': invalid conjunctive media satisfied a scoped count alternative');
+    }
+    for (const { requirement, branchCount = 2, valid, invalid } of [
+      {
+        requirement: 'either one image or two videos',
+        valid: [[alternativeImage(1)], [alternativeVideo(1), alternativeVideo(2)]],
+        invalid: [[alternativeVideo(1)]],
+      },
+      {
+        requirement: 'one image or two GIFs',
+        valid: [[alternativeImage(1)], [alternativeGif(1), alternativeGif(2)]],
+        invalid: [[alternativeGif(1)], [alternativeVideo(1), alternativeVideo(2)], [alternativeImage(1), alternativeGif(1)]],
+      },
+      {
+        requirement: 'one GIF or two videos',
+        valid: [[alternativeGif(1)], [alternativeVideo(1), alternativeVideo(2)]],
+        invalid: [[alternativeVideo(1)], [alternativeGif(1), alternativeVideo(1)], [alternativeGif(1), alternativeGif(2)]],
+      },
+      {
+        requirement: 'either one image or both one GIF and one video',
+        valid: [[alternativeImage(1)], [alternativeGif(1), alternativeVideo(1)]],
+        invalid: [
+          [alternativeGif(1)],
+          [alternativeVideo(1)],
+          [alternativeGif(1), alternativeGif(2)],
+          [alternativeVideo(1), alternativeVideo(2)],
+          [alternativeImage(1), alternativeVideo(1)],
+        ],
+      },
+      {
+        requirement: 'one of an image, a video, and a GIF',
+        branchCount: 3,
+        valid: [[alternativeImage(1)], [alternativeVideo(1)], [alternativeGif(1)]],
+        invalid: [
+          [alternativeImage(1), alternativeVideo(1)],
+          [alternativeGif(1), alternativeVideo(1)],
+          [alternativeImage(1), alternativeImage(2)],
+        ],
+      },
+      {
+        requirement: 'either one image and one video or one GIF',
+        valid: [[alternativeImage(1), alternativeVideo(1)], [alternativeGif(1)]],
+        invalid: [
+          [alternativeImage(1), alternativeGif(1)],
+          [alternativeImage(1)],
+          [alternativeVideo(1)],
+        ],
+      },
+      {
+        requirement: 'either one image, two videos, or three GIFs',
+        branchCount: 3,
+        valid: [
+          [alternativeImage(1)],
+          [alternativeVideo(1), alternativeVideo(2)],
+          [alternativeGif(1), alternativeGif(2), alternativeGif(3)],
+        ],
+        invalid: [
+          [alternativeGif(1)],
+          [alternativeImage(1), alternativeVideo(1), alternativeVideo(2)],
+          [alternativeVideo(1), alternativeVideo(2), alternativeVideo(3)],
+        ],
+      },
+    ]) {
+      const parsedTypedAlternative = agent._parseWorkflowAttachmentRequirement({ value: requirement });
+      assert.equal(parsedTypedAlternative.isGeneric, true,
+        AgentClass.name + `: typed alternative was parsed as filenames for "${requirement}"`);
+      assert.equal(parsedTypedAlternative.isAlternative, true,
+        AgentClass.name + `: typed alternative grammar was lost for "${requirement}"`);
+      assert.equal(parsedTypedAlternative.mediaAlternativeBranches.length, branchCount,
+        AgentClass.name + `: complete typed alternative branches were not retained for "${requirement}"`);
+      for (const attachments of valid) {
+        assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+          { value: requirement },
+          { attachments },
+        ), true, AgentClass.name + `: a permitted branch did not satisfy "${requirement}"`);
+      }
+      for (const attachments of invalid) {
+        assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+          { value: requirement },
+          { attachments },
+        ), false, AgentClass.name + `: a non-permitted branch satisfied "${requirement}"`);
+      }
+    }
+
+    for (const [sameTypeRequirement, attachment] of [
+      ['one or two images', index => ({ type: 'image', src: `https://example.test/${index}.png` })],
+      ['one image or two images', index => ({ type: 'image', src: `https://example.test/${index}.png` })],
+      ['one or two videos', index => ({ type: 'video', src: `https://example.test/${index}.mp4` })],
+      ['one or two GIFs', index => ({ type: 'animated_gif', src: `https://example.test/${index}.gif` })],
+      ['one or two attachments', index => ({ type: 'image', src: `https://example.test/${index}.png` })],
+    ]) {
+      const parsedSameType = agent._parseWorkflowAttachmentRequirement(sameTypeRequirement);
+      assert.equal(parsedSameType.isAlternative, true,
+        AgentClass.name + `: same-type disjunction was not retained for "${sameTypeRequirement}"`);
+      assert.deepEqual(parsedSameType.alternativeCounts, [1, 2],
+        AgentClass.name + `: alternative counts were lost for "${sameTypeRequirement}"`);
+      for (const count of [1, 2]) {
+        assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+          { value: sameTypeRequirement },
+          { attachments: Array.from({ length: count }, (_, index) => attachment(index)) },
+        ), true, AgentClass.name + `: ${count} attachments should satisfy "${sameTypeRequirement}"`);
+      }
+      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
+        { value: sameTypeRequirement },
+        { attachments: Array.from({ length: 3 }, (_, index) => attachment(index)) },
+      ), false, AgentClass.name + `: three attachments should reject "${sameTypeRequirement}"`);
+    }
+
+    // Media-only generic phrase check
+    const parsedOnly = agent._parseWorkflowAttachmentRequirement({ value: 'images only' });
+    assert.equal(parsedOnly.isGeneric, true, AgentClass.name + ': "images only" should be parsed as generic');
+    assert.equal(parsedOnly.wantsImage, true, AgentClass.name + ': "images only" should want image');
+  }
+});
+
+test('post body extraction prefers colon-introduced body when colon precedes incidental quotes', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const longBodyWithQuotes = 'Post on X: Here is a long announcement containing "important news" and more updates today';
+    assert.equal(
+      agent._extractWorkflowTaskBody(longBodyWithQuotes),
+      'Here is a long announcement containing "important news" and more updates today',
+      AgentClass.name + ': colon-introduced body should preserve text containing incidental quotes'
+    );
+
+    const quotedBeforeColon = 'Post "breaking news" on X: see updates now';
+    assert.equal(
+      agent._extractWorkflowTaskBody(quotedBeforeColon),
+      'breaking news',
+      AgentClass.name + ': quote before colon should take precedence'
+    );
+
+    const colonWrappedInQuotes = 'Post on X: "Hello world with updates"';
+    assert.equal(
+      agent._extractWorkflowTaskBody(colonWrappedInQuotes),
+      'Hello world with updates',
+      AgentClass.name + ': colon body completely wrapped in quotes should be unwrapped'
+    );
+  }
+});
+
+test('post body extraction skips incidental command colons and parenthesized metadata', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post on X (account: @acme): Hello world'),
+      'Hello world',
+      AgentClass.name + ': parenthesized account metadata with colon should not be captured as body'
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post on X [account: @acme]: Hello world'),
+      'Hello world',
+      AgentClass.name + ': bracketed account metadata with colon should not be captured as body'
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post on X (account: @acme): Here is a long announcement containing "important news" and more updates today'),
+      'Here is a long announcement containing "important news" and more updates today',
+      AgentClass.name + ': parenthesized metadata with colon preceding inner quotes should extract full body'
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post on X, account: @acme: Hello world'),
+      'Hello world',
+      AgentClass.name + ': metadata key prefix with colon should be skipped in favor of payload colon'
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Xに投稿（アカウント：@acme）：こんにちは世界'),
+      'こんにちは世界',
+      AgentClass.name + ': Japanese full-width parenthesized account with colon should not be captured as body'
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post on X (account: @acme): Breaking: Version 2 is released'),
+      'Breaking: Version 2 is released',
+      AgentClass.name + ': body containing colon should preserve colon after payload delimiter'
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post on X at 3:00: Hello world'),
+      'Hello world',
+      AgentClass.name + ': clock colon in at 3:00 should not be captured as body delimiter'
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post on X at 14:30: Hello world'),
+      'Hello world',
+      AgentClass.name + ': 24-hour clock colon in at 14:30 should not be captured as body delimiter'
+    );
+    assert.equal(
+      agent._extractWorkflowTaskBody('Post on X at 3:00 PM: Hello world'),
+      'Hello world',
+      AgentClass.name + ': clock colon with AM/PM should not be captured as body delimiter'
     );
   }
 });
@@ -91509,7 +94424,10 @@ test('completion page text keeps the line boundaries publication payloads match 
     assert.ok(start >= 0, `${label}: completion page text probe not found`);
     const end = source.indexOf('.slice(0, 20000),', start);
     assert.ok(end > start, `${label}: completion page text probe is unbounded`);
-    const expression = source.slice(start + 'workflowPageText: '.length, end)
+    // The probe is injected through a template literal, so the file text is
+    // one unescaping away from the source the page actually runs. Testing the
+    // file text directly would pass on escapes the template silently eats.
+    const expression = vm.runInNewContext('`' + source.slice(start + 'workflowPageText: '.length, end) + '`')
       .replace("String(document.body?.innerText || '')", 'String(innerText)');
     const normalize = vm.runInNewContext(`(innerText) => (${expression})`);
     const pageText = normalize('Release v9\n\n  Fixed   the parser\nShipped the CLI  \n');
@@ -91529,6 +94447,36 @@ test('completion page text keeps the line boundaries publication payloads match 
       false,
       `${label}: a value absent from the published page was accepted`,
     );
+  }
+});
+
+test('the injected completion probe survives its own template literal', () => {
+  // A lone backslash in the probe is eaten by the template literal that
+  // injects it, and the call site swallows the resulting SyntaxError, so the
+  // probe silently returns nothing and every completion check loses its page
+  // state. Parse what the page actually receives, not what the file contains.
+  for (const [label, rel, invariant] of [
+    ['chrome', 'src/chrome/src/agent/agent.js', CompletionInvariantCh],
+    ['firefox', 'src/firefox/src/agent/agent.js', CompletionInvariantFx],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const anchor = source.indexOf('const publicationRecordRoot = ${publicationResourceRecordRoot.toString()};');
+    assert.ok(anchor > 0, `${label}: completion probe not found`);
+    const open = source.lastIndexOf('`', anchor);
+    const close = source.indexOf('`', anchor + 1);
+    assert.ok(open > 0 && close > anchor, `${label}: completion probe template is not delimited`);
+    const raw = source.slice(open + 1, close);
+    const injected = vm.runInNewContext('`' + raw + '`', {
+      classifyCompletionForm: invariant.classifyCompletionForm,
+      publicationResourceRecordRoot: invariant.publicationResourceRecordRoot,
+      publicationReplyParent: invariant.publicationReplyParent,
+    });
+    assert.doesNotThrow(
+      () => new vm.Script(`(${injected})`),
+      `${label}: the injected completion probe is not valid JavaScript`,
+    );
+    assert.match(injected, /\/\\r\\n\?\/g/,
+      `${label}: the probe lost the CRLF normalization its line matching needs`);
   }
 });
 
@@ -93383,6 +96331,35 @@ test('required submission evidence needs dispatch plus a post-submit success obs
       relevantFormCount: 0,
       successMessages: ['Successfully submitted'],
     }, 'https://example.com/form').verifiedFinalSubmit, true);
+  }
+});
+
+test('generic submission evidence failure does not claim that a site workflow job was selected', () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const tabId = 8965 + index;
+    const agent = new AgentClass({});
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+    });
+    guard.successfulConsequentialToolCalls = 1;
+    guard.evidenceTaskKey = guard.taskKey;
+    const retry = agent._planOnlyTerminalDecision(
+      tabId,
+      'Published.',
+      { viaDone: true, outcome: 'success' },
+    );
+    assert.equal(retry?.retry, true);
+    assert.match(retry?.nudge || '', /no structured site workflow is bound/i);
+    assert.doesNotMatch(retry?.nudge || '', /selected workflow job/i);
+    const failure = agent._planOnlyTerminalDecision(
+      tabId,
+      'Published.',
+      { viaDone: true, outcome: 'success' },
+    );
+    assert.match(failure?.failure || '', /no structured site workflow was bound/i);
+    assert.doesNotMatch(failure?.failure || '', /selected workflow job/i);
   }
 });
 
@@ -103386,7 +106363,7 @@ test('Chrome Web Store release uses an always-on protected-page guard and opt-in
   const guardIndex = chromeAgentSource.indexOf('const protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);');
   const webMcpPreparationIndex = chromeAgentSource.indexOf('const webMcpPreparation = protectedPageFailure', guardIndex);
   const toolbarPreflightIndex = chromeAgentSource.indexOf('const pipelineToolbarPreflight = await this._preflightRichTextToolbarTarget(', webMcpPreparationIndex);
-  const toolDispatchIndex = chromeAgentSource.indexOf('const pipelineRawToolResult = pipelineToolbarPreflight.block || await this.executeTool(', toolbarPreflightIndex);
+  const toolDispatchIndex = chromeAgentSource.indexOf('const pipelineRawToolResult = pipelineToolbarPreflight.block || socialDispatchBlock || await this.executeTool(', toolbarPreflightIndex);
   assert.ok(
     guardIndex >= 0
       && webMcpPreparationIndex > guardIndex
