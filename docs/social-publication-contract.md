@@ -1,0 +1,27 @@
+# Social publication contracts
+
+X and Bluesky publication use the agent's selected provider for language understanding. The runtime validates a structured contract and compares app-observed values before dispatch and completion. There is no separate intent model or provider setting.
+
+## Intent and authorization
+
+`social-publish-contract.js` defines the schema and prompts in both browser builds. The agent compiles one contract per task, with at most one repair attempt for invalid output. Inputs include the authentic request and task anchor, plus the approved plan and recent assistant drafts as reference data. Plans, drafts, and page content do not independently authorize publication.
+
+The contract records destinations, accounts, ordered post bodies, media constraints, reply/quote targets, prohibited destinations, and `all`, `any`, or conditional `fallback` requirements. Exact text uses source anchors so the runtime copies the original text instead of accepting a model-reconstructed excerpt. Repeated anchors accept optional `startOccurrence` and `endOccurrence` positive, one-based ordinals, each counted from the beginning of the named source (including overlapping matches). For a short literal with identical start/end anchors, `startOccurrence` alone selects that copy. Omitted ordinals still require unambiguous anchors; invalid or reversed selections are rejected. Unsupported or ambiguous requirements produce `clarify`; read-only or narrative requests produce `none`. Invalid contracts cannot fall back to lexical intent rules.
+
+A ready contract is not sufficient permission to dispatch. Before a separate publish click, the same selected provider independently checks the authentic request against the concrete composer snapshot. Approval is cached only for that contract, action, payload, account, and page. The runtime rereads the composer after the audit and immediately before execution. A changed snapshot needs a new audit. Arbitrary JavaScript, bundled editing/submission, keyboard submission, and opaque callbacks cannot substitute for the observed publish control.
+
+## Deterministic enforcement
+
+- Preserve exact body and alt text, accepting only NFC equivalence and CRLF normalization. Compose requests bind completion to the audited draft.
+- Require complete composer/account/media/context observations and a pre-dispatch permalink baseline. Unassigned or shared thread media makes the observation incomplete.
+- Verify a new, account-bound permalink with complete authored body and media evidence. Reply, quote, and ordered thread relationships need their own observed proof.
+- Track each contract action as pending, failed, or verified. Uncertain delivery never unlocks an alternative or fallback, and cannot authorize another publish attempt.
+- Preserve the contract and outcomes only across the existing trusted Continue boundary. A new user task gets a new contract.
+
+Malformed output or failed model calls block publication. Schema validation establishes structure, not correct language understanding; the independent audit is also fallible. Missing site evidence blocks dispatch/completion rather than supplying inferred proof.
+
+## Validation
+
+`npm test` includes the deterministic contract/runtime tests, using mocked responses to verify selected-provider routing, validation, caching, conditional progress, and dispatch/completion enforcement. `npm run test:social-contract:dom` runs both browser implementations against local Playwright fixtures, including their actual injected completion probes. It requires installed Playwright Chromium; every fixture request is fulfilled locally.
+
+The historical language cases from PR #340 are retained in `test/llm/fixtures/social-publication-intent.json`. They are evaluation inputs, not a claim of live-model accuracy. Evaluate the compiler and independent audit against the selected provider before drawing conclusions about multilingual understanding, false authorization rates, or latency. Some historical inputs omit the payload or parent URL and should legitimately require clarification.
