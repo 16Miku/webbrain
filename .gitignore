@@ -3,6 +3,7 @@
 node_modules/
 test/anonymous/.test-profile/
 ci/artifacts/
+test/llm/results-social-publication/
 
 # Benchmark runner process state and console logs
 test/llm/analysis/**/*.pid

@@ -25,3 +25,18 @@ Malformed output or failed model calls block publication. Schema validation esta
 `npm test` includes the deterministic contract/runtime tests, using mocked responses to verify selected-provider routing, validation, caching, conditional progress, and dispatch/completion enforcement. `npm run test:social-contract:dom` runs both browser implementations against local Playwright fixtures, including their actual injected completion probes. It requires installed Playwright Chromium; every fixture request is fulfilled locally.
 
 The historical language cases from PR #340 are retained in `test/llm/fixtures/social-publication-intent.json`. They are evaluation inputs, not a claim of live-model accuracy. Evaluate the compiler and independent audit against the selected provider before drawing conclusions about multilingual understanding, false authorization rates, or latency. Some historical inputs omit the payload or parent URL and should legitimately require clarification.
+
+### Live benchmark
+
+`test/llm/run-social-publication.mjs` uses the production provider class, compiler/repair loop, and audit prompt. Its reviewed set contains 51 compiler cases and 20 deliberately incorrect audit proposals, plus positive audits of initially eligible reviewed actions. The historical corpus is a separate exploratory suite because some old destination labels treat opening a composer as publication intent.
+
+```sh
+node test/llm/run-social-publication.mjs --validate-only
+node --test test/llm/lib/social-publication-score.test.mjs
+node test/llm/run-social-publication.mjs --config /private/provider.json
+node test/llm/run-social-publication.mjs --config /private/provider.json --suite legacy
+```
+
+The config accepts the existing provider fields (`providerName`, `baseUrl`, `model`, `apiKey`, and optional provider settings). Alternatively supply `--base`, `--model`, `--provider`, and an API-key environment variable named by `--api-key-env`. Use the same provider/model/settings as the agent; the runner does not silently select a replacement. Anthropic native and OpenAI-compatible transports are supported.
+
+Calls run sequentially. Reports distinguish first-response validity, repairs, semantic contract errors, audit false accepts/rejects, token usage, and median/p95 latency. First-call latency is reported separately without assuming a cold server. Default results are ignored local artifacts under `test/llm/results-social-publication/`, with a Markdown report, per-case JSONL, and prompt/fixture hashes. The runner never invokes a browser action or publishes a post.
