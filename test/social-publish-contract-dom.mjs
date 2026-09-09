@@ -173,6 +173,57 @@ try {
       },bodyId);
       published=(await readPublished()).workflowResourceRecords[0];
       assert.equal(published.bodyTextComplete,false,'overflow cannot prove a complete body');checked++;
+      // Link thumbnails have no dedicated container on Bluesky. Check the
+      // same media in the real composer and published-resource probes, then
+      // drive no-attachment authorization and completion for the preview case.
+      const previewImg='<img src="https://cdn.example/thumb.png" alt="Preview" width="40" height="40">';
+      const uploadImg='<img src="https://cdn.example/upload.png" alt="Upload" width="40" height="40">';
+      const outbound=`<a href="https://news.example/article">${previewImg}<span>Article</span></a>`;
+      const uploadId=platform==='twitter'?'tweetPhoto':'postImage-0';
+      for(const [kind,media,expectedCount] of [
+        ['unmarked outbound preview',outbound,0],
+        ['preview plus upload',outbound+uploadImg,1],
+        ['uploaded wrapper inside outbound anchor',`<a href="https://news.example/article"><div data-testid="${uploadId}">${uploadImg}</div></a>`,1],
+        ['onsite media link',`<a href="/photo/1">${uploadImg}</a>`,1],
+        ['named card layout',`<div data-testid="card.layoutLarge.media">${previewImg}</div>`,0],
+        ['plain external CDN image',uploadImg,1],
+      ]){
+        await page.evaluate(()=>history.replaceState({},'','/home'));
+        const text='Hello https://news.example/article';
+        await page.setContent(`<nav><a ${platform==='twitter'?'data-testid="AppTabBar_Profile_Link" href="/alice"':'href="/profile/alice.bsky.social"'}>Profile</a></nav><div id="composer"><div role="textbox" contenteditable="true">${text}</div>${media}<button id="publish" data-testid="${publishId}">Post</button></div>`);
+        const detected=await probe();
+        assert.equal(detected.publicationSnapshot.complete,true,kind);
+        assert.equal(detected.publicationSnapshot.posts[0].attachments.length,expectedCount,kind+' composer count');
+        const provider={chat:async()=>({content:'{}'})},previewAgent=new Agent({getActive:()=>provider}),previewTab=911;
+        previewAgent.useSiteAdapters=true;previewAgent._persist=()=>{};previewAgent._currentUrl=async()=>page.url();
+        previewAgent.conversations.set(previewTab,[{role:'system',content:'system'},{role:'user',content:`Post exactly ${text} on ${platform==='twitter'?'X':'Bluesky'} without attachments.`}]);
+        previewAgent._startPlanExecutionGuard(previewTab,'act',{requestKind:'execute',requiresStateChange:true,requiresSubmission:true});
+        const raw={version:1,status:'ready',actions:[{id:'p1',platform,account:null,posts:[{body:{kind:'exact',source:{source:'request',start:text,end:text}},media:{kind:'count',type:'any',format:null,min:0,max:0},context:{kind:'post',target:null}}]}],requirements:'p1',prohibited:[],reason:'No attachments requested.'};
+        let audits=0;
+        previewAgent._chatWithCostAllowance=async(_p,messages,_o,_c,meta)=>{
+          const input=JSON.parse(messages[1].content);
+          if(meta.generationName==='social_publication_authorization') audits++;
+          return {content:JSON.stringify(meta.generationName==='social_publication_authorization'?{key:input.key,actionId:input.action.id,authorized:true,reason:'Fixture audit.'}:raw)};
+        };
+        previewAgent._detectLikelySubmitAction=async()=>probe();
+        const block=await previewAgent._workflowPreSubmitDispatchBlock(previewTab,'click',{selector:'#publish'},detected,provider);
+        assert.equal(block===null,expectedCount===0,kind+' zero-upload contract');
+        assert.equal(audits,expectedCount===0?1:0,kind+' only matching media reaches audit');
+        if(expectedCount===0){
+          previewAgent._beginCompletionInvariant(previewTab);
+          previewAgent._recordCompletionToolResult(previewTab,'click',{selector:'#publish'},{success:true,dispatched:true});
+          previewAgent._recordCompletionSubmitAttempt(previewTab,detected,'click',{selector:'#publish'},page.url(),page.url(),{success:true,dispatched:true});
+        }
+        await page.setContent(`<article data-testid="${card}"><a href="${permalink}">timestamp</a><div data-testid="${bodyId}">${text}</div>${media}</article>`);
+        const state=await readPublished(),record=state.workflowResourceRecords.find(r=>r.url===permalink);
+        assert.equal(record.attachmentsComplete,true,kind);
+        assert.equal(record.attachments.length,expectedCount,kind+' published count');
+        if(expectedCount===0){
+          previewAgent._recordCompletionToolResult(previewTab,'read_page',{}, {success:true,url:page.url(),content:'Observed published post.'});
+          assert(previewAgent._workflowTerminalEvidenceFromDone(previewTab,state,page.url(),previewAgent._completionSubmissionEvidence(previewTab,state,page.url())),kind+' completes with no uploaded attachment');
+        }
+        checked++;
+      }
       // Drive composer observation, simulated dispatch, actual completion DOM
       // extraction, and terminal verification. No replyToUrl is hand-written.
       const profile=name=>platform==='twitter'?`https://x.com/${name}`:`https://bsky.app/profile/${name}.bsky.social`;

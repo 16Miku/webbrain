@@ -32,6 +32,48 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(api.exactPublicationText('e\u0301\r\nx'), api.exactPublicationText('é\nx'));
   });
 
+  test(`${browser}: repeated source anchors select exact occurrences without command text`, () => {
+    const request='Post "Hello" on X and "Hello" on Bluesky';
+    for (const startOccurrence of [1,2]) {
+      assert.equal(api.resolvePublicationText({...ref('Hello'),startOccurrence},{request}),'Hello');
+    }
+    const body='Başlangıç ① 👨‍👩‍👧\n\n'+ 'same payload '.repeat(500)+'Bitiş';
+    const sources={request:`Post this on X: ${body}\nAnd on Bluesky: ${body}`};
+    for (const occurrence of [1,2]) {
+      assert.equal(api.resolvePublicationText({source:'request',start:'Başlangıç',end:'Bitiş',startOccurrence:occurrence,endOccurrence:occurrence},sources),body);
+    }
+    assert.equal(api.resolvePublicationText({source:'request',start:'begin',end:'end',endOccurrence:2},{request:'begin first end second end'}),'begin first end second end');
+    assert.equal(api.resolvePublicationText({...ref('mark'),startOccurrence:1,endOccurrence:2},{request:'mark in between mark'}),'mark in between mark');
+    // Occurrences count exact code-unit matches, including overlapping ones.
+    assert.equal(api.resolvePublicationText({...ref('aa'),startOccurrence:2},{request:'aaa'}),'aa');
+    assert.throws(()=>api.resolvePublicationText({...ref('aa'),startOccurrence:3},{request:'aaa'}),/missing/);
+    for(const occurrence of [0,-1,1.5,'1',null,true,undefined,NaN,Infinity,Number.MAX_SAFE_INTEGER+1]) {
+      for(const key of ['startOccurrence','endOccurrence']) {
+        assert.throws(()=>api.resolvePublicationText({...ref('Hello'),[key]:occurrence},{request}),/occurrence/);
+      }
+    }
+    assert.throws(()=>api.resolvePublicationText({...ref('Hello'),startOccurrence:3},{request}),/missing/);
+    assert.throws(()=>api.resolvePublicationText({...ref('Hello'),startOccurrence:1,endOccurrence:3},{request}),/missing/);
+    assert.throws(()=>api.resolvePublicationText({...ref('Hello'),startOccurrence:2,endOccurrence:1},{request}),/order/);
+    assert.throws(()=>api.resolvePublicationText({source:'request',start:'begin',end:'end',endOccurrence:1},{request:'end then begin end'}),/order/);
+    assert.throws(()=>api.resolvePublicationText({source:'request',start:'begin',end:'end'},{request:'begin end end'}),/ambiguous/);
+    assert.throws(()=>api.resolvePublicationText({source:'request',start:'A',end:'Z',startOccurrence:1,endOccurrence:1},{request:'A'+ 'x'.repeat(25000)+'Z'}),/size/);
+  });
+
+  test(`${browser}: occurrence references work for account, media and reply targets too`, () => {
+    const parent='https://x.com/bob/status/1111111111111111111';
+    const request=`Post Hello as alice with chart.png alt Diagram replying to ${parent}; repeat alice chart.png Diagram ${parent}`;
+    const selected=text=>({...ref(text),startOccurrence:2});
+    const raw=rawContract();
+    raw.actions[0].account=selected('alice');
+    raw.actions[0].posts[0].media={kind:'all',items:[{kind:'file',name:selected('chart.png')},{kind:'alt',name:selected('chart.png'),value:selected('Diagram')},count('any',1,1)]};
+    raw.actions[0].posts[0].context={kind:'reply',target:selected(parent)};
+    const action=normalize(raw,request).actions[0];
+    assert.equal(action.account,'alice');
+    assert.equal(action.posts[0].media.items[1].value,'Diagram');
+    assert.equal(action.posts[0].context.target,parent);
+  });
+
   test(`${browser}: schema cannot invent destinations, lose constraints, or contradict prohibitions`, () => {
     const good = rawContract();
     assert.equal(normalize(good).status, 'ready');
@@ -178,6 +220,21 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(guard.socialPublication.outcomes.p1.status,'pending');
     assert((await agent._workflowPreSubmitDispatchBlock(tabId,'click_ax',{},detected,provider)).noDispatch);
     assert.deepEqual(agent._missingSocialPublishTargets(guard),['twitter']);
+  });
+
+  test(`${browser}: the selected provider can compile and audit repeated cross-platform payloads`, async () => {
+    const raw=rawContract([rawAction('p1','twitter'),rawAction('p2','bluesky')],{kind:'all',items:['p1','p2']});
+    raw.actions.forEach((action,index)=>{action.posts[0].body.source.startOccurrence=index+1;});
+    const f=setup('Post "Hello" on X and "Hello" on Bluesky',raw);
+    for(const platform of ['twitter','bluesky']) {
+      f.agent._currentUrl=async()=>platform==='twitter'?'https://x.com/compose/post':'https://bsky.app/';
+      f.detected.publicationSnapshot.account=platform==='twitter'?'twitter:alice':'bluesky:alice.bsky.social';
+      assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId,'click_ax',{},f.detected,f.provider),null);
+      assert.equal(f.guard.siteWorkflow.adapterName,platform);
+      assert.equal(f.agent._socialPublicationAction(f.guard).posts[0].body.value,'Hello');
+    }
+    assert.equal(f.calls.filter(c=>c.meta.generationName==='social_publication_contract').length,1,'no repair needed');
+    assert.equal(f.calls.filter(c=>c.meta.generationName==='social_publication_authorization').length,2,'each destination is audited');
   });
 
   test(`${browser}: read-only, negated and narrative tasks cannot acquire a publication from their text`, async () => {

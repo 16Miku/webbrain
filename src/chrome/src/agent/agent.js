@@ -22689,10 +22689,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const editors = Array.from(root.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]'))
           .filter(isVisible).filter((el, _i, all) => !all.some(other => other !== el && other.contains(el)));
         if (!editors.length || editors.length > 12) return { complete: false };
+        const isLinkPreview = node => {
+          // Match published-resource media classification. App-owned upload
+          // wrappers take precedence; an ordinary outbound link's thumbnail
+          // is a preview even when Bluesky supplies no named card container.
+          if (node.closest('[data-testid="tweetPhoto"],[data-testid^="postImage"],[data-testid="postGalleryImage"]')) return false;
+          if (node.closest('[data-testid*="card.layout"]')) return true;
+          const anchor = node.closest('a[href]');
+          if (!anchor) return false;
+          try {
+            const target = new URL(anchor.getAttribute('href') || anchor.href || '', url);
+            const targetHost = target.hostname.toLowerCase();
+            const pageHost = host.toLowerCase();
+            const sameSite = targetHost === pageHost || targetHost.endsWith('.' + pageHost) || pageHost.endsWith('.' + targetHost);
+            return /^https?:$/.test(target.protocol) && !sameSite;
+          } catch { return false; }
+        };
         const mediaIn = scope => {
           const nodes = Array.from(scope?.querySelectorAll('img,video,[data-testid="videoPlayer"]') || []).filter(isVisible)
             .filter(node => {
-              if (editors.some(editor => editor.contains(node))) return false;
+              if (editors.some(editor => editor.contains(node)) || isLinkPreview(node)) return false;
               if (node.closest('[data-testid*="Avatar"],[data-testid*="avatar"],[data-testid="emoji"],[data-testid="card.wrapper"],[data-testid="linkPreview"],[data-testid="quoteTweet"]')) return false;
               const embeddedCard = node.closest('article');
               if (embeddedCard && !editors.some(editor => embeddedCard.contains(editor))) return false;
