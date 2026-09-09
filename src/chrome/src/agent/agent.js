@@ -6328,6 +6328,7 @@ export class Agent extends LoopDetector {
 
   setScheduledRunPolicy(tabId, policy) {
     this.scheduledRunPolicies.set(tabId, {
+      resumeTaskId: String(policy?.resumeTaskId || ''),
       requireConsequentialConfirmation: policy?.requireConsequentialConfirmation !== false,
       autoApprovePlanReview: policy?.autoApprovePlanReview === true,
       watch: policy?.watch?.beep === true ? {
@@ -12341,7 +12342,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       // done() short-circuit — push result, persist, and bail out.
       if (toolResult && toolResult.done) {
-        const planOnlyDecision = this._planOnlyTerminalDecision(
+        // A durable resume pauses unfinished work. Applying success-only
+        // completion checks after saving its job would reject the pause while
+        // leaving a live alarm behind as the current run continues.
+        const scheduledResume = fnName === 'schedule_resume'
+          && this._isSuccessfulSchedulingEvidence(toolResult);
+        const cancelPendingResumes = async () => {
+          if (runOptions?.scheduledRun === true && runOptions?.scheduledResume !== true) return;
+          await this.scheduler?.cancelPendingResumes?.({
+            tabId,
+            conversationId: this.conversationIds.get(tabId),
+            resumeTaskId: this._resumeTaskId(tabId),
+          });
+        };
+        const planOnlyDecision = scheduledResume ? null : this._planOnlyTerminalDecision(
           tabId,
           toolResult.summary || partialAssistantText || '',
           { viaDone: true, outcome: toolResult.outcome },
@@ -12375,6 +12389,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { action: 'continue' };
         }
         if (planOnlyDecision?.failure) {
+          await cancelPendingResumes();
           const failedResult = {
             success: false,
             done: true,
@@ -12398,7 +12413,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { action: 'return', value: planOnlyDecision.failure, status: 'plan_only_output' };
         }
         const rawDoneSummary = toolResult.summary || partialAssistantText || 'Task completed.';
-        if (this._looksLikeMetaOnlyDoneSummary(rawDoneSummary)) {
+        if (!scheduledResume && this._looksLikeMetaOnlyDoneSummary(rawDoneSummary)) {
           const blockedResult = {
             success: false,
             blockedDone: true,
@@ -12421,6 +12436,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._persist(tabId);
           return { action: 'continue' };
         }
+        if (!scheduledResume) await cancelPendingResumes();
         onUpdate('tool_result', { name: fnName, result: toolResult });
         this._doneBlockCount.delete(tabId);
         const repairedDoneSummary = repairAssistantDisplayText(rawDoneSummary);
@@ -28817,6 +28833,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return nextArgs;
   }
 
+  _resumeTaskId(tabId, { create = false } = {}) {
+    // Scheduled continuations retain their origin even when newer user tasks
+    // have entered the conversation. Never infer that origin from their text.
+    const scheduledPolicy = this.scheduledRunPolicies.get(tabId);
+    if (scheduledPolicy) return scheduledPolicy.resumeTaskId || '';
+    const messages = this.conversations.get(tabId) || [];
+    const { taskIndex } = this._activeTaskBinding(messages);
+    const task = messages[taskIndex];
+    if (!task) return '';
+    // Bind to the actual app-owned user turn, not its text/hash: two identical
+    // requests can still be separate tasks. Pinned task metadata survives saves.
+    if (!task.webbrainResumeTaskId && create) {
+      task.webbrainResumeTaskId = `resume_task_${globalThis.crypto.randomUUID()}`;
+      this._persist(tabId);
+    }
+    return task.webbrainResumeTaskId || '';
+  }
+
   async _scheduleAutoProgressResume(tabId, onUpdate = () => {}) {
     if (!this.scheduler) return null;
     const mode = this._effectiveRunMode(tabId);
@@ -28829,6 +28863,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       result = await this.scheduler.createResumeJob({
         tabId,
         conversationId: this.conversationIds.get(tabId) || null,
+        resumeTaskId: this._resumeTaskId(tabId, { create: true }),
         mode,
         args: {
           after_seconds: 90,
@@ -32025,6 +32060,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           error: 'Scheduling is not available in this build.',
         };
       }
+      const resumeTaskId = this._resumeTaskId(tabId, { create: true });
       if (this.chatSessions.has(tabId)) {
         const chatStatePersisted = await this._persistNow(tabId);
         if (chatStatePersisted !== true && chatStatePersisted?.ok !== true) {
@@ -32042,6 +32078,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const result = await this.scheduler.createResumeJob({
         tabId,
         conversationId: this.conversationIds.get(tabId) || null,
+        resumeTaskId,
         mode: this._effectiveRunMode(tabId, 'act'),
         args: this._resumeArgsWithProgressGuard(tabId, args || {}),
         currentUrl: tab?.url || '',

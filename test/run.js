@@ -52133,7 +52133,7 @@ test('ScheduledJobManager marks alarm executions as independent runs', async () 
     assert.deepEqual(processArgs[4], [], `${label}: scheduled task attachments should be explicit`);
     assert.deepEqual(
       processArgs[5],
-      { scheduledRun: true, independentRun: true },
+      { scheduledRun: true, independentRun: true, scheduledResume: false },
       `${label}: scheduled task must bypass interactive grounding inheritance`,
     );
   }
@@ -52668,6 +52668,245 @@ test('ScheduledJobManager confirms recurring tasks as fixed intervals', async ()
     assert.match(created.summary, /Repeats every 5 minutes as a fixed interval/i, `${label}: summary should confirm exact interval`);
     assert.match(created.summary, /not a calendar schedule/i, `${label}: summary should disclose calendar limitation`);
     assert.doesNotMatch(created.summary, /monthly/i, `${label}: summary should not invent monthly semantics`);
+  }
+});
+
+test('ScheduledJobManager cancels only inactive resumes for the completed originating task', async () => {
+  for (const [label, SchedulerMod] of [['chrome', SchedulerCh], ['firefox', SchedulerFx]]) {
+    const seed = { kind: 'resume', status: 'pending', tabId: 77, conversationId: 'conv-1', resumeTaskId: 'support-task' };
+    let runs = 0;
+    const h = makeSchedulerHarness(SchedulerMod, {
+      jobs: [
+        { ...seed, id: 'pending' },
+        { ...seed, id: 'queued', status: 'queued' },
+        { ...seed, id: 'paused', status: 'paused' },
+        { ...seed, id: 'running', status: 'running' },
+        { ...seed, id: 'clarify', status: 'needs_user_input' },
+        { ...seed, id: 'completed', status: 'completed' },
+        { ...seed, id: 'task', kind: 'task' },
+        { ...seed, id: 'watch', kind: 'task', source: 'watch' },
+        { ...seed, id: 'other-tab', tabId: 88 },
+        { ...seed, id: 'other-conversation', conversationId: 'conv-2' },
+        { ...seed, id: 'other-task', resumeTaskId: 'side-task' },
+        { ...seed, id: 'legacy-task', resumeTaskId: null },
+        { ...seed, id: 'unbound', conversationId: null },
+      ],
+      processMessage: async () => { runs++; return 'unexpected run'; },
+    });
+    for (const job of h.jobs()) h.alarms.set(h.alarmName(job.id), {});
+    const before = structuredClone(h.jobs());
+    await h.manager.cancelPendingResumes({ tabId: 77, conversationId: null });
+    assert.deepEqual(h.jobs(), before, `${label}: missing conversation identity must not cancel jobs`);
+    await h.manager.cancelPendingResumes({ tabId: 77, conversationId: 'conv-1' });
+    assert.deepEqual(h.jobs(), before, `${label}: conversation identity alone must not cancel jobs`);
+    await h.manager.cancelPendingResumes({ tabId: 77, conversationId: 'conv-1', resumeTaskId: 'support-task' });
+    for (const job of h.jobs()) {
+      if (['pending', 'queued', 'paused'].includes(job.id)) {
+        assert.equal(job.status, 'cancelled', `${label}/${job.id}: stale continuation remains live`);
+        assert.equal(job.nextRunAt, null);
+        assert.equal(h.alarms.has(h.alarmName(job.id)), false);
+        await h.manager.handleAlarm(h.alarmName(job.id));
+      } else {
+        assert.deepEqual(job, before.find(old => old.id === job.id), `${label}/${job.id}: unrelated job changed`);
+        assert.equal(h.alarms.has(h.alarmName(job.id)), true);
+      }
+    }
+    assert.equal(runs, 0, `${label}: a stale alarm restarted the finished task`);
+    await h.manager.cancelPendingResumes({ tabId: 77, conversationId: 'conv-1', resumeTaskId: 'support-task' });
+    assert.equal(h.updates.length, 3, `${label}: cancellation should emit once per changed job`);
+    assert.ok(h.updates.every(update => update.data?.event === 'cancelled'));
+  }
+});
+
+function makeResumeBatchHarness(AgentClass, SchedulerMod) {
+  const h = makeSchedulerHarness(SchedulerMod);
+  const agent = new AgentClass({ getVisionProvider: async () => null });
+  agent.scheduler = h.manager;
+  agent.conversationIds.set(77, 'conv-1');
+  agent.conversationModes.set(77, 'act');
+  agent.conversations.set(77, [
+    { role: 'system', content: 'Support task test.' },
+    { role: 'user', content: 'Ask support for the status of my case and wait for their reply.' },
+  ]);
+  h.manager.agent.setScheduledRunPolicy = agent.setScheduledRunPolicy.bind(agent);
+  h.manager.agent.clearScheduledRunPolicy = agent.clearScheduledRunPolicy.bind(agent);
+  agent._ensureGateSetting = async () => {};
+  agent._skipPermissionGate = true;
+  agent._currentUrl = async () => 'https://example.com/';
+  agent._persist = () => {};
+  const executeTool = agent.executeTool.bind(agent);
+  const executed = [];
+  agent.executeTool = async (tabId, name, args, ...rest) => {
+    executed.push(name);
+    if (name === 'done') return { done: true, summary: args.summary, outcome: args.outcome };
+    return executeTool(tabId, name, args, ...rest);
+  };
+  const updates = [];
+  const messages = [];
+  const batch = (calls, runOptions = {}) => agent._executeToolBatch(
+    77,
+    calls.map(([name, args], index) => ({
+      id: `resume_batch_${messages.length}_${index}`,
+      function: { name, arguments: JSON.stringify(args) },
+    })),
+    messages,
+    (type, data) => updates.push({ type, data }),
+    { supportsVision: false },
+    null,
+    new Set(['schedule_resume', 'done']),
+    1,
+    runOptions,
+  );
+  const schedule = () => h.manager.createResumeJob({
+    tabId: 77,
+    conversationId: 'conv-1',
+    resumeTaskId: agent._resumeTaskId(77, { create: true }),
+    args: { after_seconds: 60, reason: 'Wait for support', resume_instruction: 'Read the support reply.' },
+  });
+  return { ...h, agent, executed, updates, messages, batch, schedule };
+}
+
+test('schedule_resume pauses unfinished chat work without running success completion guards', async () => {
+  for (const [label, AgentClass, SchedulerMod] of [['chrome', AgentCh, SchedulerCh], ['firefox', AgentFx, SchedulerFx]]) {
+    const h = makeResumeBatchHarness(AgentClass, SchedulerMod);
+    const guard = h.agent._startPlanExecutionGuard(77, 'act', {
+      requestKind: 'execute', requiresStateChange: true, requiresSubmission: true,
+    });
+    guard.successfulConsequentialToolCalls = 1;
+    guard.evidenceTaskKey = guard.taskKey;
+    const result = await h.batch([
+      ['schedule_resume', { after_seconds: 60, reason: 'Wait for support', resume_instruction: 'Read the support reply.' }],
+      ['done', { summary: 'The support answer is complete.', outcome: 'success' }],
+    ]);
+    assert.equal(result.action, 'return', `${label}: saved resume did not stop the current run`);
+    assert.match(result.value, /Scheduled a resume/);
+    assert.deepEqual(h.executed, ['schedule_resume'], `${label}: work continued after scheduling`);
+    assert.equal(h.jobs().length, 1);
+    assert.equal(h.jobs()[0].status, 'pending');
+    assert.equal(h.alarms.has(h.alarmName(h.jobs()[0].id)), true);
+    assert.equal(guard.recoveryAttempted, false, `${label}: pause consumed completion recovery`);
+    assert.notEqual(guard.verifiedSubmissionEvidence, true, `${label}: pause forged submission evidence`);
+    const resultUpdate = h.updates.find(update => update.type === 'tool_result' && update.data.name === 'schedule_resume');
+    assert.equal(resultUpdate.data.result.success, true);
+    assert.equal(resultUpdate.data.result.outcome, undefined, `${label}: pause claimed task success`);
+    assert.equal(h.messages.length, 2, `${label}: remaining tool calls were not closed`);
+    // Resuming must still enforce the unfinished submission requirement.
+    const premature = await h.batch([['done', { summary: 'The support answer is complete.', outcome: 'success' }]]);
+    assert.equal(premature.action, 'continue');
+    assert.equal(h.jobs()[0].status, 'pending', `${label}: a rejected done cancelled needed work`);
+    const failed = await h.batch([['done', { summary: 'The support answer is complete.', outcome: 'success' }]]);
+    assert.equal(failed.status, 'plan_only_output');
+    assert.equal(h.jobs()[0].status, 'cancelled', `${label}: terminal failure left a continuation behind`);
+  }
+});
+
+test('accepted done cancels stale resumes for interactive and resumed runs but preserves independent tasks', async () => {
+  for (const [label, AgentClass, SchedulerMod] of [['chrome', AgentCh, SchedulerCh], ['firefox', AgentFx, SchedulerFx]]) {
+    for (const outcome of ['success', 'partial', 'failed']) {
+      for (const runOptions of [{}, { scheduledRun: true, independentRun: true, scheduledResume: true }]) {
+        const h = makeResumeBatchHarness(AgentClass, SchedulerMod);
+        await h.schedule();
+        const result = await h.batch([['done', { summary: 'Support says the review is still ongoing; no reply date is available.', outcome }]], runOptions);
+        assert.equal(result.action, 'return', `${label}/${outcome}: done did not complete`);
+        assert.equal(h.jobs()[0].status, 'cancelled', `${label}/${outcome}: completed chat still has a pending resume`);
+        assert.equal(h.alarms.size, 0);
+      }
+    }
+    const independent = makeResumeBatchHarness(AgentClass, SchedulerMod);
+    await independent.schedule();
+    await independent.batch([['done', { summary: 'The independent page check is complete.', outcome: 'success' }]], {
+      scheduledRun: true, independentRun: true, scheduledResume: false,
+    });
+    assert.equal(independent.jobs()[0].status, 'pending', `${label}: independent task completion cancelled an interactive resume`);
+    const invalid = makeResumeBatchHarness(AgentClass, SchedulerMod);
+    await invalid.schedule();
+    const failedSchedule = await invalid.batch([['schedule_resume', { after_seconds: 1 }]]);
+    assert.equal(failedSchedule.action, 'continue', `${label}: invalid scheduling ended the run`);
+    assert.equal(invalid.jobs()[0].status, 'pending', `${label}: failed scheduling cancelled an existing job`);
+  }
+});
+
+test('scheduled resume descendants keep their origin after a side task and cancel only their own siblings', async () => {
+  for (const [label, AgentClass, SchedulerMod] of [['chrome', AgentCh, SchedulerCh], ['firefox', AgentFx, SchedulerFx]]) {
+    const h = makeResumeBatchHarness(AgentClass, SchedulerMod);
+    const first = await h.schedule();
+    const origin = h.jobs()[0].resumeTaskId;
+    const sibling = await h.manager.createResumeJob({
+      tabId: 77,
+      conversationId: 'conv-1',
+      resumeTaskId: origin,
+      args: { after_seconds: 120, reason: 'One last check', resume_instruction: 'Check the last chat reply.' },
+    });
+    h.agent.conversations.get(77).push({ role: 'user', content: 'Remind me to check a separate delivery.' });
+    const otherTask = await h.schedule();
+    const otherTaskOrigin = h.jobs().find(job => job.id === otherTask.jobId).resumeTaskId;
+    assert.notEqual(otherTaskOrigin, origin);
+    let resumed = false;
+    h.manager.agent.processMessage = async (_tabId, _message, onUpdate, _mode, _attachments, runOptions) => {
+      assert.equal(runOptions.scheduledResume, true, `${label}: resumed run lost its lifecycle scope`);
+      assert.equal(h.agent._resumeTaskId(77), origin, `${label}: resume adopted the most recent side task`);
+      const start = h.updates.length;
+      const result = await h.batch(resumed
+        ? [['done', { summary: 'Support has no reply date to provide.', outcome: 'partial' }]]
+        : [['schedule_resume', { after_seconds: 60, reason: 'Support is still typing', resume_instruction: 'Read the next support reply.' }]], runOptions);
+      for (const update of h.updates.slice(start)) onUpdate(update.type, update.data);
+      resumed = true;
+      return result.value;
+    };
+    await h.manager.handleAlarm(h.alarmName(first.jobId));
+    const descendant = h.jobs().find(job => job.reason === 'Support is still typing');
+    assert.equal(descendant.resumeTaskId, origin, `${label}: re-scheduling lost the originating task`);
+    assert.equal(h.jobs().find(job => job.id === sibling.jobId).status, 'pending', `${label}: pause cancelled unfinished siblings`);
+    await h.manager.handleAlarm(h.alarmName(descendant.id));
+    const completed = h.jobs().find(job => job.id === descendant.id);
+    assert.equal(completed.status, 'completed', `${label}: cleanup cancelled the active resumed run`);
+    assert.equal(completed.lastOutcome, 'partial');
+    assert.equal(h.jobs().find(job => job.id === sibling.jobId).status, 'cancelled');
+    assert.equal(h.alarms.has(h.alarmName(sibling.jobId)), false);
+    assert.equal(h.jobs().find(job => job.id === otherTask.jobId).status, 'pending', `${label}: completion cancelled the side task`);
+    assert.equal(h.alarms.has(h.alarmName(otherTask.jobId)), true);
+  }
+});
+
+test('answering a side question never cancels an unfinished support task in the same conversation', async () => {
+  for (const [label, AgentClass, SchedulerMod] of [['chrome', AgentCh, SchedulerCh], ['firefox', AgentFx, SchedulerFx]]) {
+    for (const outcome of ['success', 'partial', 'failed']) {
+      const h = makeResumeBatchHarness(AgentClass, SchedulerMod);
+      await h.batch([['schedule_resume', { after_seconds: 60, reason: 'Wait for support', resume_instruction: 'Read the support reply.' }]]);
+      const pending = structuredClone(h.jobs()[0]);
+      assert.ok(pending.resumeTaskId, `${label}: resume was not bound to its originating task`);
+      h.agent.conversations.get(77).push(
+        { role: 'assistant', content: 'Waiting for support.' },
+        { role: 'user', content: 'While we wait, what does a chargeback mean?' },
+      );
+      const result = await h.batch([['done', { summary: 'A chargeback is a payment reversal through the card issuer.', outcome }]]);
+      assert.equal(result.action, 'return');
+      assert.deepEqual(h.jobs()[0], pending, `${label}/${outcome}: side answer cancelled or modified the unfinished task`);
+      assert.equal(h.alarms.has(h.alarmName(pending.id)), true);
+    }
+  }
+});
+
+test('resume task identities survive persistence and keep identical requests separate during dedupe and restore', async () => {
+  for (const [label, AgentClass, SchedulerMod] of [['chrome', AgentCh, SchedulerCh], ['firefox', AgentFx, SchedulerFx]]) {
+    const h = makeResumeBatchHarness(AgentClass, SchedulerMod);
+    const first = await h.schedule();
+    const origin = h.jobs()[0].resumeTaskId;
+    const saved = h.agent._conversationStorageEntry(77);
+    h.agent.conversations.set(77, structuredClone(saved.messages));
+    h.agent.conversations.get(77).push({ role: 'user', content: 'continue' });
+    assert.equal(h.agent._resumeTaskId(77), origin, `${label}: saved task identity was lost on continuation`);
+    h.agent.conversations.get(77).push({ role: 'user', content: saved.messages[1].content });
+    assert.equal(h.agent._resumeTaskId(77), '', `${label}: an identical new request inherited the old task identity`);
+    await h.batch([['done', { summary: 'Support has no reply date to provide.', outcome: 'success' }]]);
+    assert.equal(h.jobs()[0].status, 'pending', `${label}: identical task text cancelled another request`);
+    const second = await h.schedule();
+    assert.notEqual(first.jobId, second.jobId, `${label}: distinct task origins were deduped`);
+    assert.notEqual(h.jobs()[1].resumeTaskId, origin);
+    const restored = makeSchedulerHarness(SchedulerMod, { jobs: h.jobs() });
+    await restored.manager.restoreAlarms();
+    assert.deepEqual(restored.jobs().map(job => job.status), ['pending', 'pending'], `${label}: restoration coalesced distinct tasks`);
+    assert.equal(restored.alarms.size, 2);
   }
 });
 
