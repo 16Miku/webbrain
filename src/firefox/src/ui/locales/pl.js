@@ -457,7 +457,7 @@ export default {
   'st.display.max_steps.label': 'Maksymalna liczba kroków agenta',
   'st.display.max_steps.desc': 'Maksymalna liczba kroków z użyciem narzędzi, jakie agent może wykonać na wiadomość. Wyższe wartości pozwalają na bardziej złożone wieloetapowe zadania, ale mogą zużywać więcej tokenów. Ustaw suwak na ∞, aby uzyskać nieograniczoną liczbę kroków.',
   'st.display.request_timeout.label': 'Limit czasu żądania LLM',
-  'st.display.request_timeout.desc': 'Jak długo czekać na rozpoczęcie odpowiedzi przez LLM, zanim się podda. Przerywa tylko fazę połączenia / czasu do nagłówków — strumieniowane treści nie są naruszane. Domyślnie 120 s. Dostawcy chmury (OpenAI / Anthropic / Gemini) odpowiadają w ciągu sekund; modele lokalne (Jan / LM Studio / Ollama / llama.cpp / vLLM / SGLang) na CPU lub z dużymi kontekstami mogą potrzebować 60–180 s przed pierwszym bajtem.',
+  'st.display.request_timeout.desc': "Maksymalny czas oczekiwania na nagłówki odpowiedzi oraz na każdą kolejną część odpowiedzi strumieniowej. Domyślnie: 120 s. Zwiększ go dla wolnych modeli lokalnych, szczególnie działających na CPU lub z dużym kontekstem.",
   'st.display.traces_link.label': 'Ślady',
   'st.display.traces_link.desc': 'Analizuj nagrane wykonania obok siebie. Dostępne tylko, gdy rejestrowanie śladów jest włączone.',
   'st.display.traces_link.open': 'Otwórz Ślady →',

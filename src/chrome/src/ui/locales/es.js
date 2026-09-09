@@ -521,7 +521,7 @@ export default {
   "st.display.strict_secret.label": "Manejo estricto de secretos",
   "st.display.strict_secret.desc": "Se niega a citar credenciales (contraseñas, claves de API, tokens, OTPs) en resúmenes o texto del asistente, incluso cuando se las pidas explícitamente. Útil si compartes a menudo archivos de traza o tu pantalla. Desactivado por defecto: WebBrain se ejecuta en tu propio navegador, así que por defecto el agente te muestra los valores que pides y solo mantiene ordenados los resúmenes de `done`.",
   "st.display.request_timeout.label": "Tiempo de espera de la petición al LLM",
-  "st.display.request_timeout.desc": "Cuánto esperar a que el LLM empiece a responder antes de rendirse. Aborta solo la fase de conexión / tiempo hasta las cabeceras; no afecta a los cuerpos en streaming. Por defecto 120s. Los proveedores en la nube (OpenAI / Anthropic / Gemini) responden en segundos; los modelos locales (llama.cpp / Ollama / LM Studio) en CPU o con contextos grandes pueden tardar 60–180s antes del primer byte.",
+  "st.display.request_timeout.desc": "Tiempo máximo de espera para recibir las cabeceras y para cada pausa entre fragmentos de la respuesta en streaming. Por defecto: 120 s. Auméntalo para modelos locales lentos, especialmente en CPU o con contextos grandes.",
   "st.providers.filter.all": "Todos",
   "st.providers.filter.local": "Local",
   "st.providers.filter.cloud": "Nube",

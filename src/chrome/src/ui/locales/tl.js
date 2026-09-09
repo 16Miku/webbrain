@@ -521,7 +521,7 @@ export default {
   "st.display.strict_secret.label": "Mahigpit na paghawak ng lihim",
   "st.display.strict_secret.desc": "Tanggihang i-quote ang mga kredensyal (password, API key, token, OTPs) sa mga summary o teksto ng assistant — kahit hayagan mong hilingin ang mga ito. Mainam kung madalas kang magbahagi ng trace files o screen-share. Naka-off bilang default: tumatakbo ang webbrain sa sarili mong browser, kaya bilang default ay ipinapakita sa iyo ng ahente ang mga value na hiniling mo at pinapanatili lang na malinis ang mga `done` na summary.",
   "st.display.request_timeout.label": "Timeout ng LLM request",
-  "st.display.request_timeout.desc": "Gaano katagal hihintayin ang LLM na magsimulang tumugon bago sumuko. Inaabort lamang nito ang connection / time-to-headers na phase — hindi apektado ang mga streaming body. Default na 120s. Mabilis tumugon ang cloud providers (OpenAI / Anthropic / Gemini) sa loob ng ilang segundo; ang mga lokal na modelo (llama.cpp / Ollama / LM Studio) sa CPU o may malalaking konteksto ay maaaring umabot ng 60–180s bago ang unang byte.",
+  "st.display.request_timeout.desc": "Pinakamatagal na paghihintay sa mga header ng tugon at sa bawat pagitan ng mga bahagi ng streaming na tugon. Default: 120 segundo. Dagdagan ito para sa mababagal na lokal na modelo, lalo na kung gumagamit ng CPU o malaking konteksto.",
   "st.providers.filter.all": "Lahat",
   "st.providers.filter.local": "Lokal",
   "st.providers.filter.cloud": "Cloud",

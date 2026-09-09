@@ -633,7 +633,7 @@ export default {
   'st.display.max_steps.label': 'Maximale Agent-Schritte',
   'st.display.max_steps.desc': 'Maximale Anzahl an Tool-Schritten, die der Agent pro Nachricht ausführen kann. Höhere Werte ermöglichen komplexere mehrstufige Aufgaben, können aber mehr Token verbrauchen. Stellen Sie den Schieberegler für unbegrenzte Schritte auf ∞.',
   'st.display.request_timeout.label': 'LLM-Anfrage-Timeout',
-  'st.display.request_timeout.desc': 'Wie lange auf den Beginn der LLM-Antwort gewartet wird, bevor aufgegeben wird.',
+  'st.display.request_timeout.desc': "Maximale Wartezeit auf Antwort-Header und für jede Pause zwischen gestreamten Antwortteilen. Standard: 120 s. Für langsame lokale Modelle erhöhen, besonders bei CPU-Betrieb oder großem Kontext.",
   'st.display.traces_link.label': 'Traces',
   'st.display.traces_link.desc': 'Aufgezeichnete Durchläufe seitenweise inspizieren. Nur verfügbar, wenn die Trace-Aufzeichnung aktiviert ist.',
   'st.display.history_link.label': 'Chat-Verlauf',

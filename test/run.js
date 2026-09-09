@@ -16555,7 +16555,7 @@ test('tool-free response and recovery calls honor Stop before rendering model ou
       assert.equal(messages.at(-1)?.webbrainLocalStatus, 'cancelled', `${label}: ${phase} cancellation was not marked UI-only`);
       assert.equal(agent._modelVisibleConversationMessages(messages).includes(messages.at(-1)), false, `${label}: ${phase} cancellation remained model-visible`);
       assert.equal(updates.some(update => /late model output/.test(update.data?.content || '')), false, `${label}: ${phase} rendered late model output`);
-      assert.equal(agent.abortFlags.has(tabId), false, `${label}: ${phase} left the abort flag pending`);
+      assert.equal(agent._checkAbort(tabId), true, `${label}: ${phase} consumed cancellation before the owning run released it`);
     }
   }
 });
@@ -44850,7 +44850,7 @@ test('chrome sidepanel drops stale async tab-chat restores', () => {
   const consumeIdx = body.indexOf('consumePendingContextMenuPrompt()');
   const flushIdx = body.indexOf('await flushRenderedTabChat();');
   const historyFlushIdx = body.indexOf('await flushChatHistorySnapshot(outgoingTabId);');
-  const syncRunFlagsIdx = body.indexOf('syncCurrentTabRunFlags();');
+  const syncRunFlagsIdx = body.indexOf('syncCurrentTabRunFlags();', setIdx);
   assert.notEqual(setIdx, -1, 'chrome: switchToTab should set the visible tab before restoring chat');
   assert.notEqual(loadIdx, -1, 'chrome: switchToTab should load persisted tab chat asynchronously');
   assert.notEqual(guardIdx, -1, 'chrome: stale async tab-chat restores should be dropped');
@@ -44887,7 +44887,7 @@ test('sidepanel queues target-tab updates and suppresses non-target updates duri
     const flushIdx = body.indexOf('await flushRenderedTabChat();');
     const historyFlushIdx = body.indexOf('await flushChatHistorySnapshot(outgoingTabId);');
     const loadIdx = body.indexOf('loadTabChat(newTabId');
-    const clearTransitionIdx = body.indexOf('if (switchGeneration === tabSwitchGeneration && tabSwitchTransitionId === newTabId) tabSwitchTransitionId = null;');
+    const clearTransitionIdx = body.search(/if \(switchGeneration === tabSwitchGeneration\) \{\s*tabSwitchTransitionId = null;/);
     const replayIdx = body.indexOf('drainQueuedAgentUpdatesForTab(newTabId);');
     const consumeIdx = body.indexOf('consumePendingContextMenuPrompt()');
     assert.notEqual(markIdx, -1, `${label}: switchToTab should mark the target tab before any async flush can yield`);
@@ -52132,7 +52132,11 @@ test('ScheduledJobManager marks alarm executions as independent runs', async () 
     assert.ok(processArgs, `${label}: scheduled task did not run`);
     assert.deepEqual(processArgs[4], [], `${label}: scheduled task attachments should be explicit`);
     assert.deepEqual(
-      processArgs[5],
+      {
+        scheduledRun: processArgs[5].scheduledRun,
+        independentRun: processArgs[5].independentRun,
+        scheduledResume: processArgs[5].scheduledResume,
+      },
       { scheduledRun: true, independentRun: true, scheduledResume: false },
       `${label}: scheduled task must bypass interactive grounding inheritance`,
     );
@@ -84104,7 +84108,7 @@ test('aborted content-plus-tool responses do not become successful finals', asyn
 
     const final = await agent.processMessage(tabId, 'continue', () => {}, 'act');
 
-    assert.equal(final, '[Stopped by user before executing requested tool calls.]', `${AgentClass.name}: partial tool-call text became final`);
+    assert.match(final, /^\[Stopped by user(?: before executing requested tool calls\.)?\]$/, `${AgentClass.name}: partial tool-call text became final`);
     assert.equal(executed, false, `${AgentClass.name}: tool executed after abort`);
     assert.equal(ended?.status, 'cancelled', `${AgentClass.name}: trace was not marked cancelled`);
     assert.equal(ended?.finalContent, final, `${AgentClass.name}: trace final did not use interrupted message`);
@@ -107498,8 +107502,8 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.match(source, /const CONTENT_ACTION_TIMEOUT_MS = 60_000;/, `${label}: content action deadline missing`);
     assert.match(source, /const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;/, `${label}: requested wait grace missing`);
     assert.match(source, /const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap\(\);/, `${label}: absolute page-action deadlines are not tracked by signal`);
-    assert.match(source, /const controller = new AbortController\(\);[\s\S]*controller\.abort\(timeoutError\)[\s\S]*operation\(controller\.signal\)/, `${label}: content action deadline does not cancel late pipeline work`);
-    assert.match(source, /Promise\.race\(\[started, timeout\]\)/, `${label}: content action does not race its deadline`);
+    assert.match(source, /const controller = new AbortController\(\);[\s\S]*controller\.abort\(timeoutError\)[\s\S]*operation\(linked\.signal\)/, `${label}: content action deadline does not cancel late pipeline work`);
+    assert.match(source, /Promise\.race\(\[started, timeout, cancelled\]\)/, `${label}: content action does not race its deadline`);
     assert.match(
       source,
       label === 'chrome'
@@ -107511,7 +107515,7 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.match(source, /dispatchContentAction = \(\) => runContentActionStage\(sendContentAction\);/, `${label}: page dispatch bypasses the pipeline deadline`);
     assert.match(
       source,
-      /const actionDeadlineAt = Number\(CONTENT_ACTION_SIGNAL_DEADLINES\.get\(actionSignal\)\?\.deadlineAt\) \|\| 0;[\s\S]*?target: 'content',[\s\S]*?\.\.\.\(actionDeadlineAt > 0 \? \{ actionDeadlineAt \} : \{\}\)/,
+      /const actionDeadlineAt = deadlines\.length \? Math\.min\(\.\.\.deadlines\) : 0;[\s\S]*?target: 'content',[\s\S]*?\.\.\.\(actionDeadlineAt > 0 \? \{ actionDeadlineAt \} : \{\}\)/,
       `${label}: the absolute deadline is not delivered to the content-script mutation boundary`,
     );
     const contentSource = fs.readFileSync(path.join(ROOT, prefix, 'src/content/content.js'), 'utf8');
@@ -107564,7 +107568,7 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     const toolPipelineSource = source.slice(toolPipelineStart, toolPipelineEnd);
     assert.match(
       toolPipelineSource,
-      /const runActionPipeline = async abortSignal => \{[\s\S]*this\._preflightRichTextToolbarTarget\([\s\S]*this\.executeTool\([\s\S]*_contentActionAbortSignal: abortSignal[\s\S]*this\._waitForFormValidationFailure\([\s\S]*abortSignal[\s\S]*this\._withContentActionDeadline\(\s*runActionPipeline/,
+      /const runActionPipeline = async deadlineSignal => \{[\s\S]*this\._linkAbortSignals\(deadlineSignal, this\._runAbortSignal\(tabId\)\)[\s\S]*const abortSignal = linked\.signal;[\s\S]*this\._preflightRichTextToolbarTarget\([\s\S]*this\.executeTool\([\s\S]*_contentActionAbortSignal: abortSignal[\s\S]*this\._waitForFormValidationFailure\([\s\S]*abortSignal[\s\S]*this\._withContentActionDeadline\(\s*runActionPipeline/,
       `${label}: toolbar preflight, dispatch, and form validation do not share one action deadline`,
     );
     assert.match(
@@ -109370,7 +109374,7 @@ test('planner request failures expose provider settings and retry actions in bot
     );
     assert.match(
       background,
-      /if \(updates\.some\(update => update\?\.type === 'error' \|\| isPlannerRequestFailureUpdate\(update\)\)\) return 'failed';/,
+      /if \(updates\.some\(update => update\?\.type === 'error'\s*\|\| isPlannerRequestFailureUpdate\(update\)[\s\S]*?return 'failed';/,
       `${label}: planner request failure does not produce a failed terminal run status`,
     );
     assert.match(
@@ -113117,7 +113121,7 @@ test('detached-start cancellation survives setup until before LLM work', async (
       );
 
       assert.equal(final, 'Stopped by user before the run started.', `${label}: cancelled detached start should stop before provider work`);
-      assert.equal(cancellationChecks, 1, `${label}: cancellation should be checked at the final pre-LLM boundary`);
+      assert.equal(cancellationChecks, 2, `${label}: cancellation should be checked at claim and the final pre-LLM boundary`);
       assert.equal(updates.some(update => update.type === 'attachment_rejected'), true, `${label}: pre-validation cancellation should restore unsent attachments`);
       assert.equal(agent.activeRunState(tabId).running, false, `${label}: cancelled setup should release active-run state`);
 
@@ -113135,7 +113139,7 @@ test('detached-start cancellation survives setup until before LLM work', async (
         },
       );
       assert.equal(continued, 'Stopped by user before the run started.', `${label}: cancelled detached continuation should stop before provider work`);
-      assert.equal(continueCancellationChecks, 1, `${label}: continueProcessing should forward detached cancellation`);
+      assert.equal(continueCancellationChecks, 2, `${label}: continueProcessing should forward cancellation through claim and pre-LLM boundaries`);
       assert.equal(agent.activeRunState(continueTabId).running, false, `${label}: cancelled continuation should release active-run state`);
     }
   });

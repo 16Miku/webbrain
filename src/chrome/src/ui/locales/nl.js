@@ -629,7 +629,7 @@ export default {
   'st.display.max_steps.label': 'Max Agentstappen',
   'st.display.max_steps.desc': 'Maximaal aantal toolstappen dat de agent per bericht kan uitvoeren. Hogere waarden maken complexere taken met meerdere stappen mogelijk, maar kunnen meer tokens gebruiken. Zet de schuifregelaar op ∞ voor onbeperkte stappen.',
   'st.display.request_timeout.label': 'LLM-verzoektime-out',
-  'st.display.request_timeout.desc': 'Hoelang wachten op het begin van het LLM-antwoord voordat het wordt opgegeven...',
+  'st.display.request_timeout.desc': "Maximale wachttijd voor antwoordheaders en voor elke pauze tussen delen van een gestreamd antwoord. Standaard: 120 s. Verhoog dit voor trage lokale modellen, vooral op de CPU of met een grote context.",
   'st.display.traces_link.label': 'Traces',
   'st.display.traces_link.desc': 'Inspecteer opgenomen uitvoeringen naast elkaar. Alleen beschikbaar wanneer tracing is ingeschakeld.',
   'st.display.history_link.label': 'Chatgeschiedenis',

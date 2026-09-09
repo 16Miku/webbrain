@@ -638,7 +638,7 @@ export default {
   'st.display.max_steps.label': "Số bước đại lý tối đa",
   'st.display.max_steps.desc': "Số bước sử dụng công cụ tối đa mà tác nhân có thể thực hiện trên mỗi tin nhắn. Giá trị cao hơn cho phép thực hiện các tác vụ nhiều bước phức tạp hơn nhưng có thể sử dụng nhiều mã thông báo hơn. Đặt thanh trượt thành ∞ để có số bước không giới hạn.",
   'st.display.request_timeout.label': "Hết thời gian yêu cầu LLM",
-  'st.display.request_timeout.desc': "Phải đợi bao lâu để LLM bắt đầu phản hồi trước khi bỏ cuộc. Chỉ hủy bỏ giai đoạn kết nối/thời gian đến tiêu đề - nội dung phát trực tuyến không bị ảnh hưởng. Mặc định 120s. Các nhà cung cấp đám mây (OpenAI / Anthropic / Gemini) phản hồi trong vòng vài giây; các mô hình cục bộ (Jan / LM Studio / Ollama / llama.cpp / vLLM / SGLang) trên CPU hoặc với bối cảnh lớn có thể mất 60–180 giây trước byte đầu tiên.",
+  'st.display.request_timeout.desc': "Thời gian chờ tối đa cho tiêu đề phản hồi và mỗi khoảng dừng giữa các phần phản hồi truyền liên tục. Mặc định: 120 giây. Tăng thời gian này cho mô hình cục bộ chậm, nhất là khi chạy trên CPU hoặc dùng ngữ cảnh lớn.",
   'st.display.traces_link.label': "Dấu vết",
   'st.display.traces_link.desc': "Kiểm tra các lần chạy được ghi cạnh nhau. Chỉ khả dụng khi tính năng theo dõi được bật.",
   'st.display.history_link.label': "Lịch sử trò chuyện",

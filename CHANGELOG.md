@@ -4,6 +4,24 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.0.0] - 2026-09-09
+
+### Fixed
+- Required a durable recovery checkpoint before sending consequential browser actions. Storage failures stop the run before dispatch; uncertain action results retain their checkpoint instead of being treated as safely replayable.
+- Made cancellation persist for the lifetime of a run and propagate through provider requests and page-action deadlines. Stop during setup, nested publication checks, or streaming no longer disappears before the owning run can observe it; scheduled cancellation, pause, and deletion also invalidate in-flight startup.
+- Completed outstanding tool results before saving cancellation, preserving completed responses and distinguishing uncertain actions from calls that were never dispatched. Subsequent model requests now retain valid tool-call history in both normal and streaming runs.
+- Preserved uncertain text-write evidence when Stop or a closed response channel interrupts page messaging, including saved workflows. Late replies cannot erase the readback requirement or repeat the write.
+- Rearmed resumed scheduled-task alarms that fired while a cancelled previous attempt was still releasing the job, without reviving paused, cancelled, or deleted jobs.
+- Stopped automatic replay of interrupted scheduled tasks that may already have changed external state. These jobs retain their action evidence and require reconciliation before another attempt; interrupted read-only work can still retry.
+- Fixed rapid tab switching so stale background responses cannot replace the latest selected conversation or route its next message to the wrong tab.
+- Preserved rich-text editor structure when inserting text in Firefox and Chrome content-script fallbacks. Editing now honors cancellation before changing the document, uses native insertion, and verifies settled content without flattening links, formatting, or mentions.
+- Blocked unverified network redirects before following them, including page-source and API replay paths, so final-URL validation cannot occur after a disallowed destination has already been contacted.
+- Added cancellation, idle deadlines, and reader cleanup to provider streams. Bounded fetched text by bytes and time before JSON/HTML processing.
+- Preserved successful, cancelled, and failed terminal outcomes on the final allowed agent step instead of replacing them with a step-limit event and an incorrect Continue button.
+
+### Tests
+- Added Chrome/Firefox regressions for cancellation, durable action checkpoints, scheduled recovery, tab-switch races, streaming cleanup, network response limits, and final-step outcomes, plus native Chromium/Firefox rich-text editing checks.
+
 ## [35.0.0] - 2026-09-09
 
 ### Added

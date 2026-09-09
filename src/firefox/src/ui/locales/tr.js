@@ -544,7 +544,7 @@ export default {
   "st.display.strict_secret.label": "Katı gizli bilgi işleme",
   "st.display.strict_secret.desc": "Özellikle istesen bile, özetlerde veya asistan metninde kimlik bilgilerini (parolalar, API anahtarları, jetonlar, OTP'ler) aktarmayı reddet. Düzenli olarak iz dosyaları paylaşıyorsan veya ekran paylaşımı yapıyorsan kullanışlıdır. Varsayılan olarak kapalı: WebBrain kendi tarayıcında çalışır, bu yüzden varsayılan olarak aracı istediğin değerleri sana gösterir ve yalnızca `done` özetlerini derli toplu tutar.",
   "st.display.request_timeout.label": "LLM istek zaman aşımı",
-  "st.display.request_timeout.desc": "LLM'in yanıt vermeye başlaması için vazgeçmeden önce ne kadar beklenmesi gerektiği. Yalnızca bağlantı / başlıklara kadar geçen süre aşamasını iptal eder — akan gövdeler etkilenmez. Varsayılan 120s. Bulut sağlayıcılar (OpenAI / Anthropic / Gemini) saniyeler içinde yanıt verir; CPU üzerinde veya büyük bağlamlarla çalışan yerel modeller (llama.cpp / Ollama / LM Studio) ilk bayttan önce 60–180s sürebilir.",
+  "st.display.request_timeout.desc": "Yanıt başlıkları ve akıştaki yanıt parçaları arasındaki her duraklama için en uzun bekleme süresi. Varsayılan: 120 saniye. Yavaş yerel modellerde, özellikle CPU üzerinde veya büyük bağlamla çalışırken bu süreyi artırın.",
   "st.providers.filter.all": "Tümü",
   "st.providers.filter.local": "Yerel",
   "st.providers.filter.cloud": "Bulut",

@@ -505,7 +505,7 @@ export default {
   "st.display.strict_secret.label": "Pengendalian rahsia ketat",
   "st.display.strict_secret.desc": "Enggan memetik kelayakan (kata laluan, kunci API, token, OTP) dalam ringkasan atau teks pembantu — walaupun apabila anda secara jelas memintanya. Berguna jika anda kerap berkongsi fail jejak atau berkongsi skrin. Dimatikan secara lalai: webbrain berjalan dalam pelayar anda sendiri, jadi secara lalai ejen menunjukkan kepada anda nilai yang anda minta dan hanya memastikan ringkasan `done` kemas.",
   "st.display.request_timeout.label": "Tamat masa permintaan LLM",
-  "st.display.request_timeout.desc": "Berapa lama untuk menunggu LLM mula bertindak balas sebelum berputus asa. Membatalkan hanya fasa sambungan / masa-ke-pengepala — badan penstriman tidak terjejas. Lalai 120s. Pembekal awan (OpenAI / Anthropic / Gemini) bertindak balas dalam beberapa saat; model tempatan (llama.cpp / Ollama / LM Studio) pada CPU atau dengan konteks besar boleh mengambil masa 60–180s sebelum bait pertama.",
+  "st.display.request_timeout.desc": "Masa menunggu maksimum untuk pengepala respons dan setiap jeda antara bahagian respons penstriman. Lalai: 120 saat. Tambahkan masa ini untuk model tempatan yang perlahan, terutamanya pada CPU atau dengan konteks besar.",
   "st.providers.filter.all": "Semua",
   "st.providers.filter.local": "Tempatan",
   "st.providers.filter.cloud": "Awan",

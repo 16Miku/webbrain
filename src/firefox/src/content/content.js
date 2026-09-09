@@ -2145,6 +2145,135 @@
     return _typeTextInner(params, actionDeadlineExpired);
   }
 
+  async function _insertContentEditableText(el, text, clear, actionDeadlineExpired = () => false) {
+    const doc = el.ownerDocument;
+    let dispatched = false;
+    const failure = (error, extra = {}) => ({
+      success: false,
+      verified: false,
+      dispatched,
+      ...(dispatched
+        ? { mutationMayHaveOccurred: true, outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+      error,
+      ...extra,
+    });
+    const expired = () => failure('The page action deadline expired during rich-text entry.', { deadlineExpired: true });
+    if (actionDeadlineExpired()) return expired();
+    if (typeof doc.execCommand !== 'function') {
+      return failure('This editor has no supported native text insertion path. No content was changed.');
+    }
+    const selection = el.getRootNode?.().getSelection?.() || doc.defaultView?.getSelection();
+    if (!selection || !el.isConnected) return failure('The editable target is no longer available.');
+    // Native editing represents line feeds with <br> and block nodes. Read
+    // logical line boundaries rather than CSS-dependent innerText paragraph
+    // spacing; a lone <br> is the native caret placeholder of an empty block.
+    const blockTags = new Set(['DIV', 'P', 'LI', 'PRE', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+    const readText = (node) => {
+      if (node.nodeType === 3) return node.nodeValue || '';
+      if (node.nodeType !== 1) return '';
+      if (node.tagName === 'BR') return '\n';
+      const children = Array.from(node.childNodes);
+      if (children.length === 1 && children[0].nodeName === 'BR'
+          && (node === el || blockTags.has(node.tagName))) return '';
+      // Firefox leaves one trailing caret <br> after native line insertion.
+      // Additional <br> nodes before it remain real (including blank lines).
+      if (children.at(-1)?.nodeName === 'BR' && (node === el || blockTags.has(node.tagName))) children.pop();
+      return children.map((child, index) => {
+        const previousChild = children[index - 1];
+        const boundary = index > 0 && previousChild.nodeName !== 'BR'
+          && (blockTags.has(child.nodeName) || blockTags.has(previousChild.nodeName));
+        return (boundary ? '\n' : '') + readText(child);
+      }).join('');
+    };
+    const previous = readText(el);
+    const selectContents = (collapse) => {
+      const range = doc.createRange();
+      let container = el;
+      if (collapse) {
+        // End the append inside the last editable block. Collapsing at the
+        // root end inserts a new sibling after the paragraph on Firefox.
+        while (container.lastChild?.nodeType === 1
+            && container.lastChild.isContentEditable
+            && container.lastChild.nodeName !== 'BR') container = container.lastChild;
+      }
+      range.selectNodeContents(container);
+      if (collapse) range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    };
+    const edit = (command, inputType, data = null) => {
+      const htmlBefore = el.innerHTML;
+      const rangeBefore = selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+      if (!rangeBefore || !el.contains(rangeBefore.startContainer) || !el.contains(rangeBefore.endContainer)) {
+        return failure('The text selection moved outside the intended editor before insertion.');
+      }
+      // execCommand is the native editing fallback: it preserves markup and
+      // the editor's undo stack. Its beforeinput behavior differs by browser,
+      // so offer the page a cancellable gate BEFORE invoking the command.
+      const accepted = el.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true, composed: true, cancelable: true, inputType, data,
+      }));
+      if (el.innerHTML !== htmlBefore || !el.isConnected) {
+        dispatched = true;
+        return failure('The editor changed while handling beforeinput. No additional text was dispatched.');
+      }
+      if (!accepted) return failure('The editor cancelled text entry before mutation.', { cancelled: true });
+      if (actionDeadlineExpired()) return expired();
+      const range = selection.rangeCount ? selection.getRangeAt(0) : null;
+      let active = doc.activeElement;
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+      if (!range || !rangeBefore || (active !== el && !el.contains(active))
+          || range.startContainer !== rangeBefore.startContainer || range.startOffset !== rangeBefore.startOffset
+          || range.endContainer !== rangeBefore.endContainer || range.endOffset !== rangeBefore.endOffset) {
+        return failure('The editor focus or selection changed before text insertion.');
+      }
+      dispatched = true;
+      try {
+        if (!doc.execCommand(command, false, data)) {
+          return failure('The editor rejected native text entry. No DOM replacement was attempted.');
+        }
+      } catch (error) {
+        return failure(`Native text entry failed: ${error?.message || String(error)}`);
+      }
+      return null;
+    };
+
+    const hasNonTextContent = () => !!el.querySelector('img, svg, canvas, video, audio, iframe, object, embed, [contenteditable="false"]');
+    const mustClear = clear && (previous !== '' || hasNonTextContent());
+    if (mustClear) {
+      selectContents(false);
+      const deletionFailure = edit('delete', 'deleteContentBackward');
+      if (deletionFailure) return deletionFailure;
+      await new Promise(resolve => setTimeout(resolve, 30));
+      if (actionDeadlineExpired()) return expired();
+      if (!el.isConnected || readText(el) !== '' || hasNonTextContent()) {
+        return failure('The editor could not be proven empty. No replacement text was inserted.');
+      }
+    }
+    if (text) {
+      // Keep the legacy append contract, but retain every existing rich-text
+      // node instead of assigning textContent for the entire editor.
+      if (!mustClear) selectContents(true);
+      const insertionFailure = edit('insertText', 'insertText', text);
+      if (insertionFailure) return insertionFailure;
+    }
+    await new Promise(resolve => setTimeout(resolve, 30));
+    if (actionDeadlineExpired()) return expired();
+    const value = readText(el);
+    const expected = clear ? text : previous + text;
+    // Native editing encodes boundary/repeated spaces as nonbreaking spaces.
+    const normalize = value => value.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ');
+    if (!el.isConnected || normalize(value) !== normalize(expected)) {
+      return failure('The complete settled rich-text value could not be verified exactly.');
+    }
+    return {
+      success: true, verified: true, dispatched,
+      ...(!dispatched ? { noDispatch: true, noop: true } : {}),
+      method: 'contenteditable-native', value: value.slice(0, 100), fieldMeta: _fieldMeta(el),
+    };
+  }
+
   async function _typeTextInner(params, actionDeadlineExpired = () => false) {
     let dispatched = false;
     const deadlineFailure = () => ({
@@ -2238,25 +2367,9 @@
     const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
     const routeHrefBeforeType = location.href;
 
-    // contenteditable path (Notion, Google Docs comments, Lexical,
-    // ProseMirror, Slate, Draft — all need the beforeinput → input →
-    // change sequence with a real inputType, or their internal state
-    // won't update).
+    // Rich editors must retain their native node structure and editing events.
     if (el.isContentEditable) {
-      if (actionDeadlineExpired()) return deadlineFailure();
-      dispatched = true;
-      if (params.clear) el.textContent = '';
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.textContent += params.text;
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: params.text }));
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: params.text }));
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
-      if (actionDeadlineExpired()) return deadlineFailure();
-      return { success: true, ...(verified === true ? { verified: true } : {}), method: 'contenteditable', value: el.textContent.slice(0, 100), fieldMeta: _fieldMeta(el) };
+      return _insertContentEditableText(el, typedText, params.clear === true, actionDeadlineExpired);
     }
 
     // <select>: match by value or option text.

@@ -894,7 +894,8 @@ export class Agent extends LoopDetector {
     this.hydratedTabs = new Set(); // tabIds we've already pulled from storage
     this._hydrationPromises = new Map(); // tabId -> shared in-flight storage hydration
     this.persistTimers = new Map(); // tabId -> debounce handle
-    this.abortFlags = new Map(); // tabId -> boolean
+    this.abortFlags = new Map(); // tabId -> sticky cancellation until run release
+    this._runAbortStates = new Map(); // tabId -> owned controller and external-signal cleanup
     this.currentRunId = new Map(); // tabId -> active trace runId (for recorder hooks)
     this._taskTokens = new Map(); // tabId -> per-task proof-scoping token, independent of optional tracing
     this._continuationTaskTokens = new Map(); // tabId -> stashed task token carried only by trusted continuations
@@ -1462,6 +1463,7 @@ export class Agent extends LoopDetector {
     operation,
     toolName = 'content action',
     deadlineMs = CONTENT_ACTION_TIMEOUT_MS,
+    externalSignal = null,
   ) {
     const timeoutMs = Number.isFinite(deadlineMs) && deadlineMs > 0
       ? deadlineMs
@@ -1480,13 +1482,26 @@ export class Agent extends LoopDetector {
         reject(timeoutError);
       }, timeoutMs);
     });
-    const started = Promise.resolve().then(() => operation(controller.signal));
+    const linked = this._linkAbortSignals(controller.signal, externalSignal);
+    let rejectCancelled;
+    const cancelled = new Promise((_, reject) => { rejectCancelled = reject; });
+    const onAbort = () => {
+      try { this._throwIfAborted(linked.signal); } catch (error) { rejectCancelled(error); }
+    };
+    linked.signal.addEventListener('abort', onAbort, { once: true });
+    if (linked.signal.aborted) onAbort();
+    const started = Promise.resolve().then(() => {
+      this._throwIfAborted(linked.signal);
+      return operation(linked.signal);
+    });
     // The page response may settle after the timeout. Observe that settlement
     // so it cannot become an unhandled rejection after this race has returned.
     started.catch(() => {});
     try {
-      return await Promise.race([started, timeout]);
+      return await Promise.race([started, timeout, cancelled]);
     } finally {
+      linked.signal.removeEventListener('abort', onAbort);
+      linked.dispose();
       if (timeoutId != null) clearTimeout(timeoutId);
     }
   }
@@ -5881,12 +5896,34 @@ export class Agent extends LoopDetector {
     // Claim synchronously before awaiting the external guard so teacher-mode
     // startup cannot race a run whose persisted teacher-state check is pending.
     this._runningTabs.add(tabId);
+    // Reset only when claiming a NEW run, before any asynchronous setup.
+    this.abortFlags.delete(tabId);
+    const controller = new AbortController();
+    const externalSignal = runOptions?.signal;
+    const onAbort = () => this.abort(tabId);
+    this._runAbortStates.set(tabId, {
+      controller,
+      dispose: () => externalSignal?.removeEventListener?.('abort', onAbort),
+    });
+    if (externalSignal?.aborted || runOptions?.isDetachedStartCancelled?.()) onAbort();
+    else externalSignal?.addEventListener?.('abort', onAbort, { once: true });
     try {
       await this.assertRunStartAllowed(tabId, defaultKind, runOptions);
     } catch (error) {
-      this._runningTabs.delete(tabId);
+      this._releaseRunEntry(tabId);
       throw error;
     }
+  }
+
+  _releaseRunEntry(tabId) {
+    this._runAbortStates.get(tabId)?.dispose();
+    this._runAbortStates.delete(tabId);
+    this.abortFlags.delete(tabId);
+    this._runningTabs.delete(tabId);
+  }
+
+  _runAbortSignal(tabId) {
+    return this._runAbortStates.get(tabId)?.controller.signal || null;
   }
 
   isRunning(tabId) {
@@ -6674,6 +6711,10 @@ export class Agent extends LoopDetector {
   }
 
   async _chatWithCostAllowance(provider, messages, options, costState, requestContext = null) {
+    const linked = this._linkAbortSignals(options?.signal, this._runAbortSignal(requestContext?.tabId));
+    options = { ...options, signal: linked.signal };
+    try {
+    this._throwIfAborted(options.signal);
     const before = await this._checkCostAllowance(provider, costState);
     if (before) throw this._costAllowanceError(before);
     this._throwIfAborted(options?.signal);
@@ -6687,6 +6728,9 @@ export class Agent extends LoopDetector {
     const after = await this._recordCostUsage(provider, result?.usage, costState);
     if (after) result.costAllowanceMessage = after;
     return result;
+    } finally {
+      linked.dispose();
+    }
   }
 
   _estimateAskStreamUsage(messages, options, content, reasoningContent, toolCalls) {
@@ -6771,6 +6815,7 @@ export class Agent extends LoopDetector {
   }
 
   _shouldFallbackAskStream(error) {
+    if (error?.name === 'AbortError') return false;
     return error?.isAskStreamFallbackSafe === true
       || error?.isOpenAIAskStreamFallbackSafe === true
       || error?.isResponsesStreamFallbackSafe === true;
@@ -6781,6 +6826,10 @@ export class Agent extends LoopDetector {
   }
 
   async _chatStreamWithCostAllowance(provider, messages, options, costState, requestContext = null, onTextDelta = () => {}) {
+    const linked = this._linkAbortSignals(options?.signal, this._runAbortSignal(requestContext?.tabId));
+    options = { ...options, signal: linked.signal };
+    try {
+    this._throwIfAborted(options.signal);
     const before = await this._checkCostAllowance(provider, costState);
     if (before) throw this._costAllowanceError(before);
 
@@ -6831,6 +6880,7 @@ export class Agent extends LoopDetector {
 
     try {
       for await (const chunk of provider.chatStream(messages, streamOptions)) {
+        this._throwIfAborted(streamOptions.signal);
         if (chunk?.type === 'text') {
           const delta = String(chunk.content || '');
           if (delta) {
@@ -6872,6 +6922,7 @@ export class Agent extends LoopDetector {
           break;
         }
       }
+      this._throwIfAborted(streamOptions.signal);
       if (!sawCompleted) {
         const error = new Error('Ask stream ended before its terminal event.');
         error.isAskStreamError = true;
@@ -6900,6 +6951,9 @@ export class Agent extends LoopDetector {
     const after = await recordUsage();
     if (after) result.costAllowanceMessage = after;
     return result;
+    } finally {
+      linked.dispose();
+    }
   }
 
   _containsProviderReplayState(responseItems) {
@@ -11094,6 +11148,90 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _executeToolBatch(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText = null, allowedToolNames = AGENT_TOOL_NAMES, step = null, runOptions = {}, toolSchemas = null) {
+    const messageStart = messages.length;
+    const cancellationState = { active: null };
+    try {
+      const result = await this._executeToolBatchInner(
+        tabId, toolCalls, messages, onUpdate, provider, partialAssistantText,
+        allowedToolNames, step, runOptions, toolSchemas, cancellationState,
+      );
+      this._throwIfAborted(this._runAbortSignal(tabId));
+      return result;
+    } catch (error) {
+      if (this._checkAbort(tabId) || error?.name === 'AbortError') {
+        // Repair the whole assistant tool batch before any caller persists a
+        // terminal cancellation. Earlier completed results must stay intact.
+        const answered = new Set(messages.slice(messageStart)
+          .filter(message => message.role === 'tool').map(message => message.tool_call_id));
+        const withoutAttachments = result => {
+          const clean = { ...result };
+          delete clean._attachImage;
+          delete clean._attachDocument;
+          return clean;
+        };
+        const serialize = (name, result) => this._wrapUntrusted(
+          this._toolResultTrustName(name, result), this._limitToolResult(result),
+        );
+        const notifications = [];
+        for (let index = 0; index < toolCalls.length; index++) {
+          const call = toolCalls[index];
+          if (answered.has(call.id)) continue;
+          const active = cancellationState.active?.index === index ? cancellationState.active : null;
+          const raw = active?.result || active?.dispatchState?.rawToolResult;
+          const noDispatch = !active?.invoked || raw?.noDispatch === true || raw?.dispatched === false
+            || (!raw && active?.dispatchState?.tracksTextMutationDispatch === true && active.dispatchState.started !== true);
+          const confirmed = raw && (raw.success === true || raw.verified === true)
+            && raw.outcomeUnknown !== true && raw.mutationMayHaveOccurred !== true
+            && raw.inconclusive !== true && raw.verified !== false;
+          const unknown = !noDispatch && active?.consequential === true && !confirmed;
+          const result = {
+            ...(raw && typeof raw === 'object' ? withoutAttachments(raw) : {
+              success: false,
+              ...(noDispatch ? { dispatched: false, noDispatch: true }
+                : active?.dispatchState?.started ? { dispatched: true } : {}),
+              outcomeUnknown: unknown,
+              error: noDispatch ? 'Stopped by user; this tool was not dispatched.'
+                : 'Stopped by user before the tool result was available.',
+            }),
+            cancelled: true,
+            ...(unknown ? {
+              success: false, verified: false, outcomeUnknown: true,
+              mutationMayHaveOccurred: true, retryable: false,
+              error: raw?.error || 'Stopped by user while awaiting the action result. The action may have completed; verify the current state with a safe read before retrying.',
+            } : {}),
+          };
+          const name = call.function?.name || 'unknown_tool';
+          const message = { role: 'tool', tool_call_id: call.id, content: serialize(name, result) };
+          messages.push(message);
+          notifications.push({ name, args: active?.args || this._toolCallArgs(call), result, message, active });
+          answered.add(call.id);
+        }
+        // Earlier results can carry supplemental image/PDF user messages.
+        // All results for this assistant batch must precede those messages.
+        const callIds = new Set(toolCalls.map(call => call.id));
+        const tail = messages.splice(messageStart);
+        const isBatchResult = message => message.role === 'tool' && callIds.has(message.tool_call_id);
+        messages.push(...tail.filter(isBatchResult), ...tail.filter(message => !isBatchResult(message)));
+        // UI/trace failures cannot leave the transcript half-repaired.
+        for (const notification of notifications) {
+          const { name, args, message, active } = notification;
+          let result = notification.result;
+          if (active?.invoked) {
+            result = { ...withoutAttachments(await this._finalizeToolResultOnce(tabId, name, args, result, active.dispatchState)), cancelled: true };
+            message.content = serialize(name, result);
+          }
+          try { onUpdate('tool_result', { name, result }); } catch {}
+          const runId = this.currentRunId.get(tabId);
+          if (runId) {
+            try { trace.recordToolCall(runId, step, { name, args, result, latencyMs: 0 }); } catch {}
+          }
+        }
+      }
+      throw error;
+    }
+  }
+
+  async _executeToolBatchInner(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText, allowedToolNames, step, runOptions, toolSchemas, cancellationState) {
     let didStateChange = false;
     const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true;
     const apiMutationsAllowedForRun = () =>
@@ -11126,12 +11264,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     for (let toolIndex = 0; toolIndex < toolCalls.length; toolIndex++) {
       const tc = toolCalls[toolIndex];
+      const callState = { index: toolIndex, invoked: false, consequential: false, result: null, dispatchState: null };
+      cancellationState.active = callState;
       // Abort check before each tool call.
       if (this._checkAbort(tabId)) {
         const value = '[Stopped by user before executing requested tool calls.]';
         this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
           success: false,
           cancelled: true,
+          dispatched: false,
+          noDispatch: true,
+          outcomeUnknown: false,
           error: value,
         }));
         onUpdate('warning', { message: 'Stopped by user.' });
@@ -11992,16 +12135,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         continue;
       }
 
+      callState.consequential = missingResponseOutcomeUnknown;
+      callState.args = fnArgs;
       onUpdate('tool_call', {
         name: fnName,
         args: fnArgs,
         outcomeUnknown: missingResponseOutcomeUnknown,
       });
+      this._throwIfAborted(this._runAbortSignal(tabId));
       if (missingResponseOutcomeUnknown && typeof runOptions?.beforeConsequentialTool === 'function') {
+        let durable = false;
         try {
-          await runOptions.beforeConsequentialTool({ name: fnName });
+          const checkpoint = await runOptions.beforeConsequentialTool({ name: fnName });
+          durable = checkpoint === true || checkpoint?.ok === true;
         } catch {}
+        this._throwIfAborted(this._runAbortSignal(tabId));
+        if (!durable) {
+          const value = 'Stopped before sending the page action because its recovery checkpoint could not be saved. Retry after extension storage is available.';
+          this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+            success: false, dispatched: false, noDispatch: true, outcomeUnknown: false,
+            errorCode: 'checkpoint_not_durable', error: value,
+          }));
+          this._markPersistenceDegraded(tabId, 'run_ui');
+          onUpdate('warning', { message: value });
+          return { action: 'return', value, status: 'persistence_degraded' };
+        }
       }
+      this._throwIfAborted(this._runAbortSignal(tabId));
       const _toolStart = Date.now();
       let toolbarPreflight = { block: null };
       let rawToolResult = protectedPageFailure;
@@ -12017,7 +12177,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await this._auditRichTextToolbarTarget(tabId, fnName, fnArgs, toolResult, null);
       } else {
         const actionDispatchState = { started: false };
-        const runActionPipeline = async abortSignal => {
+        callState.dispatchState = actionDispatchState;
+        const runActionPipeline = async deadlineSignal => {
+          const linked = this._linkAbortSignals(deadlineSignal, this._runAbortSignal(tabId));
+          const abortSignal = linked.signal;
+          try {
+            this._throwIfAborted(abortSignal);
             const pipelineToolbarPreflight = await this._preflightRichTextToolbarTarget(
               tabId,
               fnName,
@@ -12029,6 +12194,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const socialDispatchBlock = pipelineToolbarPreflight.block ? null
               : await this._socialPublicationPreSubmitBlock(tabId, fnName, fnArgs, detectedSubmitAction, provider);
             this._throwIfAborted(abortSignal);
+            if (!pipelineToolbarPreflight.block && !socialDispatchBlock) callState.invoked = true;
             const pipelineRawToolResult = pipelineToolbarPreflight.block || socialDispatchBlock || await this.executeTool(
               tabId,
               fnName,
@@ -12044,6 +12210,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 _contentActionDispatchState: actionDispatchState,
               },
             );
+            callState.result = this._normalizeToolResult(fnName, pipelineRawToolResult, missingResponseOutcomeUnknown);
             if (pipelineRawToolResult?.dispatched === false || pipelineRawToolResult?.noDispatch === true) {
               actionDispatchState.started = false;
             } else if (
@@ -12112,6 +12279,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               rawToolResult: pipelineRawToolResult,
               toolResult: pipelineToolResult,
             };
+          } finally { linked.dispose(); }
         };
         const needsSharedActionPipelineDeadline = this._needsSharedActionPipelineDeadline(
           tabId,
@@ -12124,6 +12292,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               runActionPipeline,
               fnName,
               this._contentActionDeadlineMs(fnName, fnArgs),
+              this._runAbortSignal(tabId),
             );
             toolbarPreflight = pipelineResult.toolbarPreflight;
             rawToolResult = pipelineResult.rawToolResult;
@@ -12651,15 +12820,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tool_call_id: tc.id,
         content: resultContent,
       });
-      if (missingResponseOutcomeUnknown && typeof runOptions?.afterConsequentialTool === 'function') {
+      const knownToolOutcome = toolResult?.dispatched === false || toolResult?.noDispatch === true
+        || (toolResult?.outcomeUnknown !== true && toolResult?.inconclusive !== true
+          && toolResult?.mutationMayHaveOccurred !== true
+          && (toolResult?.success === true || toolResult?.verified === true));
+      if (missingResponseOutcomeUnknown && knownToolOutcome && typeof runOptions?.afterConsequentialTool === 'function') {
         const conversationDurable = await this._persistNow(tabId);
         if (conversationDurable === true || conversationDurable?.ok === true) {
           try {
-            await runOptions.afterConsequentialTool({ name: fnName });
+            await runOptions.afterConsequentialTool({ name: fnName, result: toolResult, outcomeUnknown: false });
           } catch {}
         }
       }
 
+      this._throwIfAborted(this._runAbortSignal(tabId));
       if (captchaGateDecision?.status === 'manual_required' || captchaSolveOutcome?.status === 'manual_required') {
         this._appendSyntheticToolResults(
           tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
@@ -15733,6 +15907,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   abort(tabId) {
     for (const id of this._researchEscalationTabIds(tabId)) {
       this.abortFlags.set(id, true);
+      const controller = this._runAbortStates.get(id)?.controller;
+      if (controller && !controller.signal.aborted) {
+        const error = new Error('Stopped by user');
+        error.name = 'AbortError';
+        controller.abort(error);
+      }
       this._cancelClarifications(id, 'aborted by user');
       this._cancelPendingPlans(id, 'aborted by user');
     }
@@ -23519,14 +23699,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * Check and clear abort flag.
+   * Cancellation is a run state, not a one-consumer event.
    */
   _checkAbort(tabId) {
-    if (this.abortFlags.get(tabId)) {
-      this.abortFlags.delete(tabId);
-      return true;
-    }
-    return false;
+    return this.abortFlags.get(tabId) === true || this._runAbortSignal(tabId)?.aborted === true;
   }
 
   /**
@@ -24575,7 +24751,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _cleanupTab(tabId, { preserveRunGuard = false } = {}) {
     // Closing either the ChatGPT helper or its originating source tab must abort
     // the mapped wait instead of leaving it stuck until the deadline.
-    if (this._researchEscalationTabIds(tabId).size > 1) this.abort(tabId);
+    if (this._researchEscalationTabIds(tabId).size > 1
+        || (!preserveRunGuard && this._runAbortStates.has(tabId))) this.abort(tabId);
     // Tab removal can race the protocol teardown; the tab is already gone if
     // cleanup rejects, so there is no useful recovery for this fire-and-forget path.
     void cdpClient.cleanupTab(tabId).catch(() => {});
@@ -24655,7 +24832,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._runUpdateCallbacks.delete(tabId);
     if (!preserveRunGuard) this.persistenceDegradedTabs.delete(tabId);
     if (!preserveRunGuard) {
-      this._runningTabs.delete(tabId);
+      // The owning run must see cancellation while its outstanding awaits unwind.
+      if (!this._runAbortStates.has(tabId)) this._runningTabs.delete(tabId);
       this.currentRunId.delete(tabId);
       this._taskTokens.delete(tabId);
       this._continuationTaskTokens.delete(tabId);
@@ -25382,7 +25560,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  async _finalizeTextMutationResult(tabId, name, args = {}, result) {
+  async _finalizeTextMutationResult(tabId, name, args = {}, result, enrichmentSignal = null) {
     if (!['set_field', 'type_ax', 'type_text'].includes(name) || !result || typeof result !== 'object') {
       return result;
     }
@@ -25392,6 +25570,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (result.noop === true && result.success === true && result.noDispatch === true) {
       return result;
     }
+    const enrich = operation => this._readTextMutationEnrichment(operation, enrichmentSignal);
     let target = this._textMutationTarget(tabId, name, args);
     const replacesValue = this._textMutationReplacesValue(name, args);
     const text = typeof args.text === 'string' ? args.text : '';
@@ -25417,7 +25596,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // old-document debts/proofs through the document-change path when both
       // tokens exist), then re-derive the target below.
       try {
-        const liveScope = await this._liveTextMutationScope(tabId, name, args);
+        const liveScope = await enrich(() => this._liveTextMutationScope(tabId, name, args));
         if (liveScope && (liveScope.documentToken || liveScope.pageUrl)) {
           const cachedScope = this._lastAxScopes.get(tabId) || {};
           if (String(liveScope.documentToken || '') !== String(cachedScope.documentToken || '')
@@ -25454,7 +25633,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // full navigation apart from the same page. Empty when unreachable.
       let debtPageUrl = target.pageUrl;
       if (!target.documentToken && !debtPageUrl) {
-        try { debtPageUrl = String(await this._currentUrl(tabId) || ''); } catch { debtPageUrl = ''; }
+        try { debtPageUrl = String(await enrich(() => this._currentUrl(tabId)) || ''); } catch { debtPageUrl = ''; }
       }
       // Focused identity capture: selectorless writes carry no locator, so an
       // identical retry could never prove same-field recovery. Capture the
@@ -25464,7 +25643,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let debtFieldMeta = result.fieldMeta || null;
       if (target.locatorType === 'focused') {
         try {
-          const identity = await this._textMutationValueDigest(tabId, { locatorType: 'focused', ambiguous: false });
+          const identity = await enrich(() => this._textMutationValueDigest(tabId, { locatorType: 'focused', ambiguous: false }));
           if (identity?.fieldMeta) debtFieldMeta = identity.fieldMeta;
         } catch { /* identity stays as the result metadata */ }
       } else if (!debtFieldMeta && target.locatorType === 'selector') {
@@ -25473,7 +25652,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // block the rest of a multi-field form until navigation. Capture it
         // live: the target element is right there.
         try {
-          const identity = await this._textMutationValueDigest(tabId, target);
+          const identity = await enrich(() => this._textMutationValueDigest(tabId, target));
           if (identity?.fieldMeta) debtFieldMeta = identity.fieldMeta;
         } catch { /* identity-less debts stay fully blocking */ }
       }
@@ -25528,9 +25707,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           effectiveFieldMeta = normalizedFocusedMeta;
         }
       }
-      verifiedReplacements.set(effectiveTarget.key, await this._verifiedTextReplacementRecord(
-        tabId, effectiveTarget, text, effectiveFieldMeta,
-      ));
+      try {
+        const record = await enrich(() => this._verifiedTextReplacementRecord(
+          tabId, effectiveTarget, text, effectiveFieldMeta,
+        ));
+        verifiedReplacements.set(effectiveTarget.key, record);
+      } catch (error) {
+        if (!enrichmentSignal?.aborted) throw error;
+        // The observed write stays verified, but an interrupted metadata
+        // read must not leave an old proof authorizing a later submission.
+        verifiedReplacements.delete(effectiveTarget.key);
+      }
     } else if (result.success === true) {
       const verifiedReplacements = this._verifiedTextReplacements.get(tabId);
       if (verifiedReplacements instanceof Map) {
@@ -31254,7 +31441,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return response;
     }
     const recoveryState = { clickStarted: false, clickResult: null, trustedClickSucceeded: false };
-    if (upstreamAbortSignal) {
+    if (CONTENT_ACTION_SIGNAL_DEADLINES.has(upstreamAbortSignal)) {
       return this._completeSetCheckedWithCdpImpl(
         tabId,
         args,
@@ -31277,6 +31464,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           upstreamDispatchState,
         ),
         'set_checked',
+        CONTENT_ACTION_TIMEOUT_MS,
+        upstreamAbortSignal,
       );
     } catch (error) {
       if (error?.code !== 'content_action_timeout') throw error;
@@ -31594,7 +31783,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clearRunLoopState(tabId);
       this._resetRichTextToolbarAudit(tabId);
       this._clickAxCdpFallbacks?.delete(tabId);
-      this.abortFlags.delete(tabId);
+      this._throwIfAborted(this._runAbortSignal(tabId));
       this._prepareClarificationAuthorizationForRun(tabId);
       this.permissions.beginTurn(tabId);
       this.conversationModes.set(tabId, 'act');
@@ -31632,7 +31821,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         try {
           if (completionRunToken) this._clearCompletionInvariant(tabId, completionRunToken);
         } finally {
-          this._runningTabs.delete(tabId);
+          this._releaseRunEntry(tabId);
         }
       }
       throw error;
@@ -31903,6 +32092,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         estimatedLlmCallsSaved: matchedSteps,
         healings: verifiedHealings,
       };
+    } catch (error) {
+      if (!this._checkAbort(tabId) && error?.name !== 'AbortError') throw error;
+      const stopped = finishStopped('stopped by the user', matchedSteps);
+      await this._persistNow(tabId);
+      return stopped;
     } finally {
       try {
         try {
@@ -31926,7 +32120,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               await cdpClient.cleanupRun(tabId);
             } catch { /* the debugger may already be detached during teardown */ }
             finally {
-              this._runningTabs.delete(tabId);
+              this._releaseRunEntry(tabId);
             }
           }
         }
@@ -31934,44 +32128,134 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
-    const uncertainTextBlock = await this._uncertainTextMutationBlock(tabId, name, args || {});
-    if (uncertainTextBlock) return uncertainTextBlock;
-    const context = executionContext && typeof executionContext === 'object'
-      ? executionContext
-      : {};
-    const needsEntryActionDeadline = EARLY_CDP_ACTION_TOOLS.has(name)
-      && !(name === 'click' && context.dispatchBinding?.token);
-    if (needsEntryActionDeadline && !context._contentActionAbortSignal) {
-      const dispatchState = { started: false };
-      try {
-        const result = await this._withContentActionDeadline(
-          abortSignal => this._executeToolImpl(tabId, name, args, onUpdate, {
-            ...context,
-            _contentActionAbortSignal: abortSignal,
-            _contentActionDispatchState: dispatchState,
-          }),
-          name,
-          this._contentActionDeadlineMs(name, args),
-        );
-        return this._finalizeTextMutationResult(tabId, name, args || {}, result);
-      } catch (error) {
-        if (error?.code === 'content_action_timeout') {
-          const result = dispatchState.started ? this._contentActionTimeoutResult(name, error) : {
-            success: false,
-            dispatched: false,
-            noDispatch: true,
-            outcomeUnknown: false,
-            retryable: true,
-            error: `${error.message} No ${name} input was sent because action preparation did not finish. Re-observe the page before retrying.`,
-          };
-          return this._finalizeTextMutationResult(tabId, name, args || {}, result);
-        }
-        throw error;
-      }
+  _isMissingContentReceiverError(error) {
+    // A closed response channel or cancellation can happen after a write.
+    // Only the browser's explicit missing-receiver failure proves no delivery.
+    return /receiving end does not exist/i.test(String(error?.message || ''));
+  }
+
+  _contentActionCommunicationFailure(name, error, dispatchStarted, { cancelled = false } = {}) {
+    const dispatched = dispatchStarted === true;
+    const mutationMayHaveOccurred = dispatched && Agent.STATE_CHANGE_TOOLS.has(name);
+    return {
+      success: false,
+      dispatched,
+      ...(!dispatched ? { noDispatch: true } : {}),
+      outcomeUnknown: mutationMayHaveOccurred,
+      ...(mutationMayHaveOccurred ? { mutationMayHaveOccurred: true, verified: false } : {}),
+      ...(cancelled ? { cancelled: true } : {}),
+      retryable: !mutationMayHaveOccurred && !cancelled,
+      error: cancelled
+        ? `The ${name} action was cancelled${mutationMayHaveOccurred ? ' after dispatch; its page outcome is unknown' : ' before dispatch'}.`
+        : `Failed to communicate with page: ${error?.message || String(error)}`,
+    };
+  }
+
+  async _readTextMutationEnrichment(operation, signal) {
+    if (!signal) return operation();
+    this._throwIfAborted(signal);
+    let onAbort;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => { this._throwIfAborted(signal); return operation(); }),
+        new Promise((_, reject) => {
+          onAbort = () => reject(signal.reason);
+          signal.addEventListener('abort', onAbort, { once: true });
+        }),
+      ]);
+    } finally {
+      signal.removeEventListener('abort', onAbort);
     }
-    const result = await this._executeToolImpl(tabId, name, args, onUpdate, context);
-    return this._finalizeTextMutationResult(tabId, name, args || {}, result);
+  }
+
+  _finalizeToolResultOnce(tabId, name, args, result, dispatchState = null) {
+    // The outer action deadline can finish before executeTool unwinds. Share
+    // its observed result and finalization so cancellation cannot release the
+    // run before mutation debt is recorded, or finalize a late reply twice.
+    const state = dispatchState || {};
+    if (!state.toolResultFinalization) {
+      state.rawToolResult = result;
+      const controller = new AbortController();
+      const signal = state.toolResultAbortSignal || this._runAbortSignal(tabId);
+      let timer = null;
+      state.cancelToolResultEnrichment = () => {
+        if (timer !== null || state.toolResultFinalizationSettled) return;
+        // Give read-only scope/identity enrichment a short opportunity to
+        // finish after Stop. An unresponsive page keeps cached evidence.
+        timer = setTimeout(() => controller.abort(new Error('Cancelled tool result enrichment timed out.')), 250);
+      };
+      signal?.addEventListener('abort', state.cancelToolResultEnrichment, { once: true });
+      state.toolResultFinalization = this._finalizeTextMutationResult(
+        tabId, name, args || {}, result, controller.signal,
+      ).finally(() => {
+        state.toolResultFinalizationSettled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', state.cancelToolResultEnrichment);
+      });
+      if (signal?.aborted) state.cancelToolResultEnrichment();
+    }
+    if (result?.cancelled === true) state.cancelToolResultEnrichment?.();
+    return state.toolResultFinalization;
+  }
+
+  async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
+    const linked = this._linkAbortSignals(executionContext?._contentActionAbortSignal, this._runAbortSignal(tabId));
+    const dispatchState = executionContext?._contentActionDispatchState || { started: false };
+    // Every text-write route marks dispatch before content messaging or CDP input.
+    dispatchState.tracksTextMutationDispatch = ['set_field', 'type_ax', 'type_text'].includes(name);
+    dispatchState.toolResultAbortSignal = linked.signal;
+    executionContext = { ...executionContext, _contentActionAbortSignal: linked.signal, _contentActionDispatchState: dispatchState };
+    try {
+      this._throwIfAborted(linked.signal);
+      const uncertainTextBlock = await this._uncertainTextMutationBlock(tabId, name, args || {});
+      if (uncertainTextBlock) return uncertainTextBlock;
+      const context = executionContext && typeof executionContext === 'object'
+        ? executionContext
+        : {};
+      const needsEntryActionDeadline = EARLY_CDP_ACTION_TOOLS.has(name)
+        && !(name === 'click' && context.dispatchBinding?.token);
+      if (needsEntryActionDeadline && !CONTENT_ACTION_SIGNAL_DEADLINES.has(context._contentActionAbortSignal)) {
+        try {
+          const result = await this._withContentActionDeadline(
+            abortSignal => this._executeToolImpl(tabId, name, args, onUpdate, {
+              ...context,
+              _contentActionAbortSignal: abortSignal,
+              _contentActionDispatchState: dispatchState,
+            }),
+            name,
+            this._contentActionDeadlineMs(name, args),
+            context._contentActionAbortSignal,
+          );
+          return await this._finalizeToolResultOnce(tabId, name, args, result, dispatchState);
+        } catch (error) {
+          if (error?.code === 'content_action_timeout') {
+            const result = dispatchState.started ? this._contentActionTimeoutResult(name, error) : {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
+              error: `${error.message} No ${name} input was sent because action preparation did not finish. Re-observe the page before retrying.`,
+            };
+            return await this._finalizeToolResultOnce(tabId, name, args, result, dispatchState);
+          }
+          throw error;
+        }
+      }
+      const result = await this._executeToolImpl(tabId, name, args, onUpdate, context);
+      return await this._finalizeToolResultOnce(tabId, name, args, result, dispatchState);
+    } catch (error) {
+      const cancelled = error?.name === 'AbortError'
+        || (linked.signal.aborted && error?.code !== 'content_action_timeout');
+      if (!cancelled) throw error;
+      // A public/saved-workflow caller may have no outer batch deadline.
+      // Record write uncertainty before the stopped run releases its owner;
+      // a later run must verify this field instead of blindly writing again.
+      return await this._finalizeToolResultOnce(tabId, name, args,
+        this._contentActionCommunicationFailure(name, error, dispatchState.started, { cancelled: true }), dispatchState);
+    } finally {
+      linked.dispose();
+    }
   }
 
   async _executeToolImpl(tabId, name, args, onUpdate = null, executionContext = null) {
@@ -34041,10 +34325,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return skillEndpointRedirect;
     }
     if (name === 'fetch_url') {
-      return await fetchUrl(args.url, args, { tabId });
+      return await fetchUrl(args.url, args, { tabId, signal: executionContext?._contentActionAbortSignal });
     }
     if (name === 'read_page_source') {
-      return await readPageSource(args.url, args, { tabId });
+      return await readPageSource(args.url, args, { tabId, signal: executionContext?._contentActionAbortSignal });
     }
     if (name === 'research_url') {
       return await researchUrl(args.url, { ...args, sourceTabId: tabId });
@@ -38020,6 +38304,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       operation,
       name,
       remainingContentActionDeadlineMs(),
+      earlyCdpAbortSignal,
     );
     let clickProgressBefore = '';
     if (name === 'click') {
@@ -38082,8 +38367,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } else {
         this._throwIfAborted(stageAbortSignal);
       }
-      const actionSignal = earlyCdpAbortSignal || stageAbortSignal;
-      const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(actionSignal)?.deadlineAt) || 0;
+      this._throwIfAborted(stageAbortSignal);
+      const deadlines = [earlyCdpAbortSignal, stageAbortSignal]
+        .map(signal => Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(signal)?.deadlineAt))
+        .filter(value => Number.isFinite(value) && value > 0);
+      const actionDeadlineAt = deadlines.length ? Math.min(...deadlines) : 0;
       return chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action,
@@ -38114,6 +38402,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (e?.code === 'content_action_timeout') {
           return this._withCoordinateReconciliation(
             this._contentActionTimeoutResult(name, e),
+            coordinateDiagnostic,
+          );
+        }
+        if (e?.name === 'AbortError' || earlyCdpAbortSignal?.aborted) throw e;
+        if (!this._isMissingContentReceiverError(e)) {
+          return this._withCoordinateReconciliation(
+            this._contentActionCommunicationFailure(name, e, earlyCdpDispatchState.started),
             coordinateDiagnostic,
           );
         }
@@ -38149,8 +38444,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               coordinateDiagnostic,
             );
           }
+          if (e2?.name === 'AbortError' || earlyCdpAbortSignal?.aborted) throw e2;
+          if (this._isMissingContentReceiverError(e2)) earlyCdpDispatchState.started = false;
           return this._withCoordinateReconciliation(
-            { error: `Failed to communicate with page: ${e2.message}` },
+            this._contentActionCommunicationFailure(name, e2, earlyCdpDispatchState.started),
             coordinateDiagnostic,
           );
         }
@@ -38594,7 +38891,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     messageRecipientContext = {},
     upstreamAbortSignal = null,
   ) {
-    if (upstreamAbortSignal) {
+    if (CONTENT_ACTION_SIGNAL_DEADLINES.has(upstreamAbortSignal)) {
       return this._maybeFallbackFieldWithCdpImpl(
         tabId,
         toolName,
@@ -38616,6 +38913,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ),
         toolName,
         this._contentActionDeadlineMs(toolName, args),
+        upstreamAbortSignal,
       );
     } catch (error) {
       if (error?.code === 'content_action_timeout') {
@@ -38886,7 +39184,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _maybeFallbackClickAxWithCdp(tabId, args, response, baseline, upstreamAbortSignal = null) {
-    if (upstreamAbortSignal) {
+    if (CONTENT_ACTION_SIGNAL_DEADLINES.has(upstreamAbortSignal)) {
       return this._maybeFallbackClickAxWithCdpImpl(
         tabId,
         args,
@@ -38906,6 +39204,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ),
         'click_ax',
         this._contentActionDeadlineMs('click_ax', args),
+        upstreamAbortSignal,
       );
     } catch (error) {
       if (error?.code === 'content_action_timeout') {
@@ -39611,24 +39910,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async processMessage(tabId, userMessage, onUpdate = () => {}, mode = 'ask', attachments = [], runOptions = {}) {
     await this._claimRunEntry(tabId, 'interactive', runOptions);
+    try {
     let continuationEligible = false;
     const emitUpdate = onUpdate;
     onUpdate = (type, data) => {
       if (type === 'max_steps_reached') continuationEligible = true;
       return emitUpdate(type, data);
     };
-    try {
-      // Hydration has to run before the toolbar-ledger reset below, so a
-      // persisted obligation cannot outlive the run that cleared it. It is
-      // also the first await after the tab is marked busy, and it sits
-      // outside the try/finally that releases that marker: without this
-      // catch, a rejected storage read wedges the tab on "An agent run is
-      // already in progress" until the worker restarts.
-      await this._hydrate(tabId);
-    } catch (error) {
-      this._runningTabs.delete(tabId);
-      throw error;
-    }
+    // Hydrate before resetting the toolbar ledger so persisted obligations
+    // cannot outlive the run that cleared them. The outer finally releases
+    // the run even if this first storage read fails.
+    await this._hydrate(tabId);
     const hadContinuationResponseLanguagePolicy = this._continuationResponseLanguagePolicies.has(tabId);
     const trustedContinuationResponseLanguagePolicy = runOptions?.trustedContinuation === true
       ? this._takeContinuationResponseLanguagePolicy(tabId)
@@ -39706,9 +39998,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try {
         await cdpClient.cleanupRun(tabId);
       } catch { /* the debugger may already be detached during teardown */ }
-      finally {
-        this._runningTabs.delete(tabId);
-      }
+
+    }
+    } catch (error) {
+      if (!this._checkAbort(tabId) && error?.name !== 'AbortError') throw error;
+      const stopped = '[Stopped by user]';
+      onUpdate('text', { content: stopped, replace: true });
+      onUpdate('run_status', { status: 'cancelled', message: stopped });
+      return stopped;
+    } finally {
+      this._releaseRunEntry(tabId);
     }
   }
 
@@ -40034,7 +40333,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (typeof runOptions?.isDetachedStartCancelled === 'function'
         && runOptions.isDetachedStartCancelled()) {
-      this.abortFlags.delete(tabId);
       const stopped = 'Stopped by user before the run started.';
       if (Array.isArray(attachments) && attachments.length) {
         onUpdate('attachment_rejected', { error: stopped });
@@ -40042,10 +40340,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return stopped;
     }
 
-    // Clear any stale abort flag before any LLM work. The planner gate makes a
-    // paid LLM call and checks/consumes this flag, so a leftover flag from a
-    // prior run must not cancel this fresh task. (#1)
-    this.abortFlags.delete(tabId);
+    // The run claim owns cancellation reset. Stop during setup must survive.
+    this._throwIfAborted(this._runAbortSignal(tabId));
 
     let runId = null;
     let finalResponse = '';
@@ -40548,6 +40844,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (runId) trace.recordStepEnd(runId, steps, this._traceStepEndForResult(result));
       } catch (e) {
+        if (this._checkAbort(tabId)) throw e;
         this._logDebug({ type: 'llm_error', step: steps, error: e.message });
         if (this._isCostAllowanceError(e)) {
           finalResponse = e.message;
@@ -40577,6 +40874,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             this._logDebug({ type: 'llm_response_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
             if (runId) trace.recordStepEnd(runId, steps, this._traceStepEndForResult(result, { retried: true }));
           } catch (e2) {
+            if (this._checkAbort(tabId)) throw e2;
             this._logDebug({ type: 'llm_error_retry', step: steps, error: e2.message });
             if (this._isCostAllowanceError(e2)) {
               finalResponse = e2.message;
@@ -40636,6 +40934,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             this._logDebug({ type: 'llm_response_after_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
             if (runId) trace.recordStepEnd(runId, steps, this._traceStepEndForResult(result, { retried: true }));
           } catch (e2) {
+            if (this._checkAbort(tabId)) throw e2;
             this._logDebug({ type: 'llm_error_final', step: steps, error: e2.message });
             if (this._isCostAllowanceError(e2)) {
               finalResponse = e2.message;
@@ -41066,7 +41365,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       break;
     }
 
-    if (steps >= this.maxSteps) {
+    if (steps >= this.maxSteps && !finalResponse && !this._checkAbort(tabId)) {
       _traceStatus = 'max_steps';
       // The normal loop is over: expose no browser tools, but give the model
       // one bounded chance to turn already-collected evidence into an explicit
@@ -41109,6 +41408,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._persist(tabId);
     return finalResponse;
     } catch (error) {
+      if (this._checkAbort(tabId)) {
+        _traceStatus = 'cancelled';
+        traceFailureCode = null;
+        finalResponse = '[Stopped by user]';
+        messages.push(this._localCancellationMessage(finalResponse));
+        onUpdate('text', { content: finalResponse, replace: true });
+        onUpdate('run_status', { status: 'cancelled', message: finalResponse });
+        await this._persistNow(tabId);
+        return finalResponse;
+      }
       const message = formatErrorMessage(error);
       _traceStatus = 'error';
       traceFailureCode = this._traceErrorCodeFor(error);
@@ -41136,24 +41445,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
     await this._claimRunEntry(tabId, 'interactive', runOptions);
+    try {
     let continuationEligible = false;
     const emitUpdate = onUpdate;
     onUpdate = (type, data) => {
       if (type === 'max_steps_reached') continuationEligible = true;
       return emitUpdate(type, data);
     };
-    try {
-      // Hydration has to run before the toolbar-ledger reset below, so a
-      // persisted obligation cannot outlive the run that cleared it. It is
-      // also the first await after the tab is marked busy, and it sits
-      // outside the try/finally that releases that marker: without this
-      // catch, a rejected storage read wedges the tab on "An agent run is
-      // already in progress" until the worker restarts.
-      await this._hydrate(tabId);
-    } catch (error) {
-      this._runningTabs.delete(tabId);
-      throw error;
-    }
+    // Hydrate before resetting the toolbar ledger so persisted obligations
+    // cannot outlive the run that cleared them. The outer finally releases
+    // the run even if this first storage read fails.
+    await this._hydrate(tabId);
     const hadContinuationResponseLanguagePolicy = this._continuationResponseLanguagePolicies.has(tabId);
     const trustedContinuationResponseLanguagePolicy = runOptions?.trustedContinuation === true
       ? this._takeContinuationResponseLanguagePolicy(tabId)
@@ -41231,9 +41533,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try {
         await cdpClient.cleanupRun(tabId);
       } catch { /* the debugger may already be detached during teardown */ }
-      finally {
-        this._runningTabs.delete(tabId);
-      }
+
+    }
+    } catch (error) {
+      if (!this._checkAbort(tabId) && error?.name !== 'AbortError') throw error;
+      const stopped = '[Stopped by user]';
+      onUpdate('text', { content: stopped, replace: true });
+      onUpdate('run_status', { status: 'cancelled', message: stopped });
+      return stopped;
+    } finally {
+      this._releaseRunEntry(tabId);
     }
   }
 
@@ -41331,10 +41640,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const provider = this._activeProvider(tabId);
     void flushCloudRuntimeOutbox(provider);
 
-    // Clear any stale abort flag before any LLM work. The planner gate makes a
-    // paid LLM call and checks/consumes this flag, so a leftover flag from a
-    // prior run must not cancel this fresh task. (#1)
-    this.abortFlags.delete(tabId);
+    // The run claim owns cancellation reset. Stop during setup must survive.
+    this._throwIfAborted(this._runAbortSignal(tabId));
 
     let runId = null;
     let finalResponse = '';
@@ -41579,6 +41886,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let finishReason = '';
 
         const streamOpts = this._cloudGenerationOptions(provider, {
+          signal: this._runAbortSignal(tabId),
           tools: provider.supportsTools && tools.length > 0 ? tools : undefined,
           temperature: plannerTemperature,
             maxTokens: mainMaxTokens,
@@ -41616,7 +41924,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const _llmStart = Date.now();
         let costStopMessage = '';
 
+        this._throwIfAborted(streamOpts.signal);
         for await (const chunk of provider.chatStream(prunedMessages, streamOpts)) {
+          this._throwIfAborted(streamOpts.signal);
           if (chunk.type === 'text') {
             streamEmittedOutput = true;
             fullText += chunk.content;
@@ -41670,6 +41980,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             break;
           }
         }
+        this._throwIfAborted(streamOpts.signal);
 
         fullText = Agent._stripReasoningTags(fullText);
         const streamedToolCalls = hasToolCalls ? Object.values(toolCallsAccumulator) : [];
@@ -42061,6 +42372,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finish(fullText);
 
       } catch (e) {
+        if (this._checkAbort(tabId)) throw e;
         const caughtMessage = formatErrorMessage(e);
         const stepErrorCode = this._traceErrorCodeFor(e);
         await closeTraceStep({ ok: false, code: stepErrorCode });
@@ -42138,6 +42450,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     _traceStatus = 'max_steps';
     return handoffResponse;
     } catch (error) {
+      if (this._checkAbort(tabId)) {
+        _traceStatus = 'cancelled';
+        traceFailureCode = null;
+        finalResponse = '[Stopped by user]';
+        messages.push(this._localCancellationMessage(finalResponse));
+        onUpdate('text', { content: finalResponse, replace: true });
+        onUpdate('run_status', { status: 'cancelled', message: finalResponse });
+        await this._persistNow(tabId);
+        return finalResponse;
+      }
       const message = formatErrorMessage(error);
       _traceStatus = 'error';
       traceFailureCode = this._traceErrorCodeFor(error);
