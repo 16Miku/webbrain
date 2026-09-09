@@ -1,3 +1,4 @@
+import { SOCIAL_PLATFORMS, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { validateToolArguments } from './tool-arguments.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
@@ -148,12 +149,9 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
-// Publication intent, in the languages a task is actually written in. An
-// English-only verb list left a non-English task unable to name its own
-// destination, and a bare platform or feed reference is not intent at all, so
-// this is the single gate the destination scan and the platform-keyword rules
-// both go through. Forms are listed explicitly: neither "public" nor
-// "publication" is a request to publish anything.
+// Legacy metadata extraction for other workflow types. Social publication
+// uses social-publish-contract.js; these lexical helpers never authorize a
+// public dispatch or reconstruct its payload.
 //
 // The boundaries are Unicode-aware because JavaScript's \b is defined on
 // [A-Za-z0-9_] alone, which places no boundary at all around a Cyrillic word.
@@ -226,11 +224,6 @@ const SOCIAL_SEQUENTIAL_DELIMITER = /^(?:then|luego|puis|ensuite|dann|poi|sonra|
 // is on Bluesky." is prose about a person, not a command. Post + Name +
 // copula/reporting verb stays body prose instead of opening a new command.
 const SOCIAL_PROPER_NAME_PROSE_LEAD = /^post\s+[A-Z][a-z]+(?:'[a-z]+)?\s+(?:is|are|was|were|be|been|being|has|have|had|say|says|said|announce|announces|announced)\b/i;
-// Past-tense and participle verb forms describe already-published content
-// and never issue a new publication command, in every covered language:
-// English -ed, French -e-acute endings, the listed German participle. The
-// remaining listed forms are tenseless, imperative, or infinitive.
-const SOCIAL_PAST_PUBLISH_VERB = /(?:ed|\u00e9e?s?|ver\u00f6ffentlicht)$/iu;
 // A sequential step continues authored prose ("Then we launched it") rather
 // than starting an operational follow-up ("Then let me know"): narrative
 // pronouns/demonstratives or proper names governing a past-tense verb.
@@ -240,10 +233,6 @@ const SOCIAL_NARRATIVE_CONTINUATION = /^[\s.,;:!?]*(?:then\s+)?(?:(?:[Ii]|[Ww]e|
 // opens a new publication command.
 const SOCIAL_STANDALONE_PUBLISH_VERB = new RegExp(
   `(?<![\\p{L}\\p{N}_-])(?:${SOCIAL_PUBLISH_VERBS.source})(?![\\p{L}\\p{N}_-])`,
-  'iu',
-);
-const SOCIAL_CLAUSE_BREAK = new RegExp(
-  `[.!?;:,\\n]|(?<![${SOCIAL_WORD_EDGE}])(?:and|then|but|or|nor|after|before|y|e|ed|luego|puis|et|ensuite|und|dann|poi|sonra|ve|затем|и)(?![${SOCIAL_WORD_EDGE}])|然后|然後|接着|そして|それから|または|、|。`,
   'iu',
 );
 
@@ -354,80 +343,6 @@ const MAX_ATTACHMENT_COUNT_REGEX = new RegExp(
 const MAX_ATTACHMENT_COUNT_STRIP_REGEX = new RegExp(MAX_ATTACHMENT_COUNT_REGEX.source, 'giu');
 
 const CJK_GENERIC_ATTACHMENT_REGEX = /^[0-9一二两三四五六七八九十添付画像写真動画メディア已上传附件图片照片视频媒体枚つの本张條条个個장에서의사진이미지포토동영상비디오영상클립움짤첨부파일미디어하나둘셋넷다섯한두세네일이삼사오개건편와과및그리고하고도无没有不带零なし無しゼロ없음안함只仅唯一だけのみ만오직단지\s\-_,.:;!?/\\()&+、，。；：/]+$/u;
-
-// "On <url>, publish this" names a destination just as plainly as
-// "publish this on <url>", but only when the URL is presented as a place.
-const SOCIAL_PUBLISH_DESTINATION_LEAD = new RegExp(
-  '(?:^|[\\s,;:(\\[\'"])(?:on|onto|to|via|en|\u00e0|au|auf|su|em|na|no|nos|nas|para|\u0432|\u043d\u0430)\\s+$'
-  + '|[\u3067\u306b\u4e0a\u5728\u5230\u81f3]\\s*$',
-  'iu',
-);
-
-const NON_SOCIAL_DESTINATION_NOUNS = '(?:survey|form|questionnaire|poll|spreadsheet|sheet|doc|document|report|ticket|table|database|email|mail|inbox|slack|discord|notion|airtable|crm|system|file|input|field|box|website|portal|blog|formulario|formulaire|formular|encuesta|fragebogen|relat[oó]rio|rapport|bericht|tabela|tabelle|tableau|scheda|sondage|sondaggio|questionario|pesquisa|informe|postfach|buz[oó]n|bo[iî]te|casella|sitio|s[ií]tio|site|webseite|portale?|umfragen?|\u043e\u043f\u0440\u043e\u0441|\u0430\u043d\u043a\u0435\u0442\u0430|\u0444\u043e\u0440\u043c\u0430|\u0442\u0430\u0431\u043b\u0438\u0446\u0430|\u043e\u0442\u0447[e\u0451]\u0442|\u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442|\u0444\u0430\u0439\u043b|\u043f\u043e\u0447\u0442\u0430|\u0441\u0430\u0439\u0442)';
-const NON_SOCIAL_DESTINATION_PREPS = '(?:in|into|to|within|inside|through|en|dans|auf|em|para|su|sur|\u00e0|au|nel|nella|in\\s+der|im|\u0432|\u0432\\s+\u044d\u0442\u043e\u0442|\u043d\u0430)';
-const NON_SOCIAL_DESTINATION_ARTICLES = '(?:the\\s+|an?\\s+|un\\s+|une\\s+|el\\s+|la\\s+|los\\s+|las\\s+|der\\s+|die\\s+|das\\s+|dem\\s+|den\\s+|o\\s+|a\\s+|os\\s+|as\\s+|il\\s+|lo\\s+|gli\\s+|le\\s+|d\\w*\\s+)?';
-
-const NON_SOCIAL_DESTINATION_AFTER_PLATFORM = new RegExp(
-  `^\\s*(?:(?:right\\s+)?now\\s+|today\\s+|immediately\\s+|directly\\s+)?${NON_SOCIAL_DESTINATION_PREPS}\\s+${NON_SOCIAL_DESTINATION_ARTICLES}${NON_SOCIAL_DESTINATION_NOUNS}\\b`,
-  'iu',
-);
-
-const NON_SOCIAL_DESTINATION_IN_TEXT = new RegExp(
-  `(?:^|\\s+)${NON_SOCIAL_DESTINATION_PREPS}\\s+${NON_SOCIAL_DESTINATION_ARTICLES}${NON_SOCIAL_DESTINATION_NOUNS}\\b`,
-  'iu',
-);
-
-const NON_SOCIAL_DESTINATION_GOVERNING_AFTER_VERB = new RegExp(
-  `^\\s*(?:(?:right\\s+)?now\\s+|today\\s+|immediately\\s+|directly\\s+)?${NON_SOCIAL_DESTINATION_PREPS}\\s+${NON_SOCIAL_DESTINATION_ARTICLES}${NON_SOCIAL_DESTINATION_NOUNS}\\b`,
-  'iu',
-);
-
-const NON_SOCIAL_DESTINATION_GOVERNING_BEFORE_VERB = new RegExp(
-  `^[\\s,;:]*${NON_SOCIAL_DESTINATION_PREPS}\\s+${NON_SOCIAL_DESTINATION_ARTICLES}${NON_SOCIAL_DESTINATION_NOUNS}\\b`,
-  'iu',
-);
-
-const CONTENT_LINK_PHRASE = new RegExp(
-  `\\b(?:links?|urls?|invites?|invitations?|pointers?|references?|redirects?|routes?|access|updates?|results?|summaries|summary|reports?|articles?|pieces?|stories|story|posts?|drafts?|notes?`
-  + `|enlaces?|v[ií]nculos?|invitaci[oó]n(?:es)?|acceso|res[uú]men(?:es)?|informes?|reportes?|noticias?`
-  + `|liens?|invitations?|acc[eè]s|r[eé]sum[eé]s?|rapports?`
-  + `|verkn[uü]pfungen?|anbindung|einladungen?|zugang|zusammenfassungen?|berichte?`
-  + `|collegament[oi]|inviti?|accesso|riassunt[oi]|relazioni?`
-  + `|liga[cç][oõ]es|convites?|acesso|resumos?|relat[oó]rios?`
-  + `|ссылк[аиу]|ссылок|приглашени[ея]|доступ|отч[eё]т(?:ы|а)?|резюме)`
-  + `\\s+(?:to|towards|into|for|about|regarding|vers|pour|[aà]|para|zu|zur|zum|auf|in|nel|nella|su|на|в|о|об)\\s+`
-  + `${NON_SOCIAL_DESTINATION_ARTICLES}${NON_SOCIAL_DESTINATION_NOUNS}\\b`,
-  'iu',
-);
-
-const SOURCE_MODIFIER_BEFORE_PLATFORM = new RegExp(
-  '(?:available|found|seen|reported|trending|existing|visible|present|hosted|stored|gathered|collected|shown|featured|sourced|read|heard|posted|published|shared'
-  + '|disponible|verf\u00fcgbar|encontrado|trouv\u00e9|trovato|gefunden|h\u00e9berg\u00e9|hospedado|pr\u00e9sent|presente|affich\u00e9|mostrado|gezeigt|recopilado|gesammelt|rassembl\u00e9|accessible|accesible|zug\u00e4nglich'
-  + '|\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0439|\u043d\u0430\u0439\u0434\u0435\u043d\u043d\u044b\u0439|\u043e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432\u0430\u043d\u043d\u044b\u0439|\u0440\u0430\u0437\u043c\u0435\u0449\u0435\u043d\u043d\u044b\u0439)'
-  + '(?:\\s+(?:now|currently|presently|online|already|recently|first|originally))?\\s*$',
-  'iu',
-);
-
-const TOPIC_NOUN_BEFORE_PLATFORM = new RegExp(
-  '\\b(?:report|reports|article|articles|paper|papers|study|studies|analysis|analyses|summary|summaries|overview|notes?|findings?|stats?|statistics|metrics?|data|info|information|updates?|news|briefs?|reviews?|drafts?|memos?|pieces?|columns?|posts?|stories|story|feedback|discussion|commentary|presentation|deck|slides?|content|research|surveys?|polls?'
-  + '|informes?|reportes?|art[ií]culos?|estudios?|an[aá]lisis|res[uú]men(?:es)?|noticias|datos|investiga[cç][ií][oó]n(?:es)?'
-  + '|rapports?|articles?|[eé]tudes?|analyses?|r[eé]sum[eé]s?|actualit[eé]s?|donn[eé]es?|recherches?|sondages?'
-  + '|berichte?|studien?|analysen?|nachrichten|daten|umfragen?)\\b'
-  + '|\\b(?:of|about|regarding|concerning|sur|de|von|su|sobre|\\u00fcber)\\s+[^.?!;:\\n]*$',
-  'iu',
-);
-
-const TOPIC_NOUN_AFTER_PLATFORM = new RegExp(
-  '^\\s*(?:adoption|usage|growth|metrics?|statistics|stats|analytics|trends?|features?|sentiment|engagement|activity|performance|traffic|users?|accounts?|behavior|behaviour|policies|policy|changes?|updates?|security|api|platform|ecosystem|community|content|posts?|data|adopci[oó]n|uso|tendencias|rendimiento|croissance|utilisation|tendances|performances)\\b',
-  'iu',
-);
-
-const CONTENT_QUALIFIER_BEFORE_PLATFORM = /(?:(?:with|containing|including|include|using|use)\s+(?:(?:no|any|only)\s+)?|(?:no|without|excluding|exclude|omit(?:ting)?|avoid(?:ing)?)\s+(?:any\s+)?)$/iu;
-const CONTENT_QUALIFIER_AFTER_PLATFORM = /^\s+(?:links?|urls?|hashtags?|tags?|mentions?|references?|redirects?|handles?|accounts?|profiles?|content|posts?)\b/iu;
-const platformMentionIsContentQualifier = (before, after) => (
-  CONTENT_QUALIFIER_BEFORE_PLATFORM.test(String(before || ''))
-  && CONTENT_QUALIFIER_AFTER_PLATFORM.test(String(after || ''))
-);
 
 const IMAGE_NEGATION_REGEX = new RegExp(
   `(?<![${SOCIAL_WORD_EDGE}])(?:no|not|without|without\\s+any|0|zero|none|sin|sans|sem|senza|ohne|kein|keine|keinen|aucun|aucune|ningun|ningún|ninguna|nenhum|nenhuma|nessun|nessuno|nessuna|nie|без|нет)\\s+(?:any\\s+)?(?:images?|photos?|pictures?|pics?|fotos?|bilder?|imagen(?:es)?|imágenes|imagem|imagens|pièces?\\s+jointes?|изображени[яй]|фото(?:графий)?|resim|fotoğraf)(?![${SOCIAL_WORD_EDGE}])`
@@ -1450,6 +1365,14 @@ export class Agent extends LoopDetector {
   _recordCompletionToolResult(tabId, name, args, result, { detectedSubmit = null } = {}) {
     const state = this.completionInvariants.get(tabId);
     if (!state) return null;
+    const social = this._planExecutionGuards.get(tabId)?.socialPublication;
+    if (name === 'navigate' && result?.navigationFailed === true && result?.success === false
+        && result?.outcomeUnknown !== true && social?.contract?.status === 'ready') {
+      const platform = this._socialPublishDestinationAdapter(result.resolvedUrl || result.requestedUrl || '');
+      const eligible = publicationProgress(social.contract, social.outcomes).eligible;
+      const candidates = social.contract.actions.filter(a => a.platform === platform && eligible.includes(a.id));
+      if (candidates.length === 1) social.outcomes[candidates[0].id] = { status: 'failed', cause: 'unavailable' };
+    }
     const completionArgs = this._activeSkillToolForName(tabId, name)?.requiresDownloadPermission
       ? { ...(args || {}), __completionDownloadAction: true }
       : args;
@@ -1687,6 +1610,12 @@ export class Agent extends LoopDetector {
       observedAfterSubmit: false,
       workflowBinding,
     };
+    const social = this._planExecutionGuards.get(tabId)?.socialPublication;
+    if (social && workflowBinding?.socialPublication?.contractKey === social.key) {
+      social.outcomes[workflowBinding.socialPublication.actionId] = {
+        status: explicitlyNotDispatched || result?.formValidationFailed === true ? 'failed' : 'pending', cause: 'publish_failed',
+      };
+    }
     this._completionSubmitStates.set(tabId, state);
     return state;
   }
@@ -1760,6 +1689,7 @@ export class Agent extends LoopDetector {
     const guard = this._planExecutionGuards.get(tabId);
     const siteWorkflow = guard?.siteWorkflow;
     if (!guard?.enabled || siteWorkflow?.job?.requiresSubmission !== true || !pageUrl) return null;
+    if (SOCIAL_PLATFORMS.includes(siteWorkflow.adapterName) && !guard.socialPublication?.dispatch) return null;
     const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
     if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
     const recipientTarget = normalizeMessageTarget(guard.messaging);
@@ -1946,6 +1876,9 @@ export class Agent extends LoopDetector {
               : []).map(item => String(item?.name || '').trim()).filter(Boolean).slice(-12),
           }
         : {}),
+      ...(guard.socialPublication?.dispatch && SOCIAL_PLATFORMS.includes(siteWorkflow.adapterName) ? {
+        socialPublication: { contractKey: guard.socialPublication.key, ...structuredClone(guard.socialPublication.dispatch) },
+      } : {}),
       ...(githubFileCommit ? { githubFileCommit } : {}),
       ...(verificationKind === 'form_confirmation' ? {
         formDocumentScope: this._workflowInventoryDocumentScope(tabId, pageUrl),
@@ -1961,7 +1894,9 @@ export class Agent extends LoopDetector {
     };
   }
 
-  async _workflowPreSubmitDispatchBlock(tabId, name, args = {}, detectedSubmit = null) {
+  async _workflowPreSubmitDispatchBlock(tabId, name, args = {}, detectedSubmit = null, provider = this._activeProvider(tabId)) {
+    const socialBlock = await this._socialPublicationPreSubmitBlock(tabId, name, args, detectedSubmit, provider);
+    if (socialBlock) return socialBlock;
     const guard = this._planExecutionGuards.get(tabId);
     if (guard?.siteWorkflow?.adapterName !== 'github'
         || guard.siteWorkflow?.job?.id !== 'edit-file-and-commit') return null;
@@ -2064,14 +1999,7 @@ export class Agent extends LoopDetector {
   // characters are stripped: zero-width join controls shape visible text
   // (joined emoji, Indic scripts) and are preserved. Keep the two in sync.
   _workflowSocialExactBody(value) {
-    let text = String(value ?? '')
-      .replace(new RegExp('[\\u200b\\ufeff]', 'g'), '')
-      .replace(/\r\n?/g, '\n')
-      .split('\n')
-      .map(line => line.replace(/\s+/g, ' ').trim())
-      .filter(Boolean)
-      .join('\n');
-    try { text = text.normalize('NFC'); } catch {}
+    const text = exactPublicationText(value);
     return text.length <= 25000 ? text : '';
   }
 
@@ -2530,7 +2458,9 @@ export class Agent extends LoopDetector {
       if (this._workflowSocialExactBody(requiredBody)
         === this._workflowSocialExactBody(authoredText)) return true;
     } else {
-      if (this._workflowPublishedPayloadValueObserved(requirement, { pageText: authoredText })) return true;
+      const want = exactPublicationText(requirement?.rawValue ?? requirement?.value);
+      const have = exactPublicationText(authoredText);
+      if (want && (have === want || have.split('\n').includes(want))) return true;
     }
     const links = Array.isArray(record?.links) ? record.links : [];
     // The URL-substitution comparison below runs on the exact (NFC) bodies
@@ -2659,10 +2589,10 @@ export class Agent extends LoopDetector {
     if (hasDedicatedAuthoredText) {
       return comparableExpected === comparableObserved;
     }
-    return this._workflowPublishedPayloadValueObserved(
-      { ...requirement, value: comparableExpected },
-      { pageText: comparableObserved },
-    );
+    return comparableObserved === comparableExpected
+      || comparableObserved.includes('\n' + comparableExpected + '\n')
+      || comparableObserved.startsWith(comparableExpected + '\n')
+      || comparableObserved.endsWith('\n' + comparableExpected);
   }
 
   // "cat.png and dog.jpg" lists two files, but "research and development.png"
@@ -4896,58 +4826,12 @@ export class Agent extends LoopDetector {
     if (this._workflowJobIsReleaseAssetUpload(state?.siteWorkflow)) {
       return this._workflowReleaseAssetResourceMatch(binding, pageUrl, submit);
     }
+    if (binding?.socialPublication) return this._socialPublishedContractMatches(binding, state, pageState);
+    if (SOCIAL_PLATFORMS.includes(state?.siteWorkflow?.adapterName)) return false;
     if (!this._workflowJobBindsPublicationPayload(state?.siteWorkflow?.job)) return true;
     if (binding?.metadataRequirementsIncomplete === true) return false;
     const requirements = Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [];
     if (requirements.length < 1) return false;
-    if (state?.siteWorkflow?.adapterName === 'twitter'
-        || state?.siteWorkflow?.adapterName === 'bluesky') {
-      const records = (Array.isArray(pageState?.workflowResourceRecords)
-        ? pageState.workflowResourceRecords
-        : []).filter(record => (
-        this._workflowPublishedResourceIdentity(state.siteWorkflow, record?.url)
-          === binding?.publishedResourceIdentity
-      ));
-      if (records.length !== 1 || !this._workflowMetadataValue(records[0]?.text)) return false;
-      const accountRequirement = requirements.find(requirement => requirement?.field === 'account');
-      const requestedAccount = accountRequirement
-        ? this._workflowSocialPublicationAccountIdentity(state.siteWorkflow, accountRequirement.value)
-        : '';
-      if (accountRequirement && !requestedAccount) return false;
-      const capturedAccount = binding?.preDispatchPublicationAccountIdentityComplete === true
-        ? this._workflowSocialPublicationAccountIdentity(
-            state.siteWorkflow,
-            binding.preDispatchPublicationAccountIdentity,
-          )
-        : '';
-      const intendedAccount = requestedAccount || capturedAccount;
-      const publishedAccount = this._workflowSocialPublicationAccountIdentity(
-        state.siteWorkflow,
-        records[0].url,
-      );
-      const accountMatches = candidate => !candidate
-        || candidate === publishedAccount
-        || this._workflowSocialAccountAliasProven(state.siteWorkflow, candidate, publishedAccount, records[0]);
-      if (!intendedAccount || !publishedAccount
-          || !accountMatches(requestedAccount)
-          || !accountMatches(capturedAccount)) return false;
-      const publishedRecord = this._workflowSocialRecordWithUploadedAttachmentNames(records[0], binding);
-      return requirements.every(requirement => (
-        requirement?.field === 'account'
-          ? true
-          : requirement?.field === 'body'
-          ? this._workflowSocialPublishedBodyObserved(requirement, publishedRecord)
-          : requirement?.field === 'attachment'
-          ? this._workflowSocialPublishedAttachmentObserved(requirement, publishedRecord)
-          : requirement?.field === 'alt_text'
-          ? this._workflowSocialPublishedAltTextObserved(requirement, publishedRecord)
-          : this._workflowPublishedPayloadValueObserved(requirement, {
-              pageText: publishedRecord.text,
-              pageUrl: publishedRecord.url,
-              publishedResourceIdentity: binding.publishedResourceIdentity,
-            })
-      ));
-    }
     if (this._workflowMetadataRequirementsMatchInventory(
       requirements,
       state?.workflowInventoryEvidence,
@@ -5316,10 +5200,8 @@ export class Agent extends LoopDetector {
       // The XHR flow opens the new permalink to read it: that navigation click
       // moves lastAction past the dispatch and leaves the composer behind.
       // The payload match below still has to confirm the exact reviewed body
-      // on the intended account before anything binds. A missing pre-dispatch
-      // baseline means nothing was seen before, so every observed identity is
-      // new; on a permalink page there is exactly one candidate, so no
-      // ambiguity can arise from that.
+      // on the intended account before anything binds. An absent baseline is
+      // unknown and cannot establish that an opened permalink is new.
       const submitOrigin = this._normalizeUrl(submit?.originatingUrl || '');
       const openedPermalinkAfterDispatch = !!submitOrigin
         && !!this._workflowPublishedResourceIdentity(siteWorkflow, pageUrl)
@@ -5329,7 +5211,7 @@ export class Agent extends LoopDetector {
         : [];
       if (!binding.publishedResourceIdentity
           && sameRouteAdapter
-          && (Array.isArray(binding.preDispatchPublishedResourceIdentities) || openedPermalinkAfterDispatch)
+          && Array.isArray(binding.preDispatchPublishedResourceIdentities)
           && submit?.dispatched === true
           && submit?.observedAfterSubmit === true
           && submit?.formValidationFailed !== true
@@ -5394,6 +5276,7 @@ export class Agent extends LoopDetector {
       job: siteWorkflow.job.id,
       verificationKind,
       source,
+      ...(binding?.socialPublication ? { socialContractKey: binding.socialPublication.contractKey, socialActionId: binding.socialPublication.actionId } : {}),
     };
   }
 
@@ -10248,7 +10131,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       const workflowPreSubmitBlock = await this._workflowPreSubmitDispatchBlock(
-        tabId, fnName, fnArgs, detectedSubmitAction,
+        tabId, fnName, fnArgs, detectedSubmitAction, provider,
       );
       if (workflowPreSubmitBlock) {
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
@@ -10262,7 +10145,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (runId) trace.recordToolCall(runId, step, {
           name: fnName, args: fnArgs, result: workflowPreSubmitBlock, latencyMs: 0,
         });
-        onUpdate('warning', { message: 'GitHub commit blocked until the exact file-editor value and requested commit metadata are verified.' });
+        onUpdate('warning', { message: workflowPreSubmitBlock.error });
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
@@ -10661,7 +10544,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             { onUpdate },
           );
           this._throwIfAborted(abortSignal);
-          const pipelineRawToolResult = pipelineToolbarPreflight.block || await this.executeTool(
+          const socialDispatchBlock = pipelineToolbarPreflight.block ? null
+            : await this._socialPublicationPreSubmitBlock(tabId, fnName, fnArgs, detectedSubmitAction, provider);
+          this._throwIfAborted(abortSignal);
+          const pipelineRawToolResult = pipelineToolbarPreflight.block || socialDispatchBlock || await this.executeTool(
             tabId,
             fnName,
             fnArgs,
@@ -15742,22 +15628,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // and "阅读推文 <feed>" name content; "do not post this on <feed>" forbids
   // publication; "read the summary and publish it on <feed>" asks for a post in
   // a clause of its own.
-  _socialPublicationCommandIn(text) {
-    return this._socialPublicationClauses(text).some((clause) => {
-      if (clause.isNegated) return false;
-      const targetText = clause.maskedText || clause.text;
-      const publish = targetText ? targetText.match(SOCIAL_PUBLISH_VERBS) : null;
-      if (!publish) return false;
-      const before = targetText.slice(0, publish.index);
-      if (SOCIAL_READ_VERBS.test(before)) return false;
-      if (socialNegationGovernsPublish(before)) return false;
-      const after = targetText.slice(publish.index + publish[0].length);
-      if (socialPostNegationGovernsPublish(after)) return false;
-      if (SOCIAL_NOUN_LIKE_PUBLISH.test(publish[0]) && SOCIAL_READ_VERBS.test(after)) return false;
-      if (/^shares?$/i.test(publish[0]) && /(?<![\p{L}\p{N}_])(?:market|mind|revenue|profit|traffic|audience|wallet|fair|lion's|stock|equity|file|screen|time)\s+$/iu.test(before)) return false;
-      return true;
-    });
-  }
+
 
   _socialPublishDestinationAdapter(rawUrl) {
     let parsed;
@@ -15779,545 +15650,251 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return '';
   }
 
-  _trustedSocialPublishTargetAdapters(guard) {
-    const targets = new Set();
-    const current = guard?.siteWorkflow;
-    const currentIsSocialPublish = !!current?.job
-      && current.job.id === 'publish-post'
-      && current.job.template === 'publish'
-      && current.job.requiresSubmission === true
-      && ['twitter', 'bluesky'].includes(current.adapterName);
-    const trustedContext = [guard?.taskText, guard?.approvedPlanAnchor]
-      .map(value => String(value || '').trim())
-      .filter(Boolean)
-      .join(' ');
-    const hasPublishIntent = this._socialPublicationCommandIn(trustedContext);
-    const clauses = this._socialPublicationClauses(trustedContext);
-    const currentPlatformPattern = current?.adapterName === 'twitter'
-      ? /(?<![\p{L}\p{N}_])(?:x|x\.com|twitter(?:\.com)?)(?![\p{L}\p{N}_])/iu
-      : /(?<![\p{L}\p{N}_])(?:bluesky|bsky(?:\.app)?)(?![\p{L}\p{N}_])/iu;
-    const currentIsExplicitlyExcluded = currentIsSocialPublish && clauses.some(clause => (
-      clause.isNegated && currentPlatformPattern.test(clause.maskedText || clause.text || '')
-    ));
-    const hasContrastivePublishIntent = clauses.some((clause, index) => (
-      index > 0
-      && /^(?:but)$/iu.test(clause.delim || '')
-      && !clause.isNegated
-      && clauses[index - 1]?.isNegated
-      && SOCIAL_PUBLISH_VERBS.test(clauses[index - 1].maskedText || clauses[index - 1].text)
-      && !SOCIAL_READ_VERBS.test(clause.maskedText || clause.text)
-      && /(?<![\p{L}\p{N}_])(?:x|twitter|bluesky|bsky\.app)(?![\p{L}\p{N}_])/iu.test(clause.maskedText || clause.text)
-    ));
-    for (const match of trustedContext.matchAll(/https?:\/\/[^\s<>"'`\u3002\u3001\uff0c\uff1b\uff1a\uff01\uff1f\u2026\u2025]+/gi)) {
-      const url = this._workflowTrimUrlPunctuation(match[0]);
-      const destination = this._socialPublishDestinationAdapter(url);
-      if (!destination) continue;
-      // A feed or profile root is where you read as often as where you post,
-      // so it is a destination only when publication language governs it.
-      // A composer route needs no verb: it is a destination by construction,
-      // in any language.
-      const before = trustedContext.slice(0, match.index);
-      const after = trustedContext.slice(match.index + match[0].length);
-      // Earlier destination URLs are part of the same command, not sentence
-      // punctuation. Mask them before clause splitting so their scheme and
-      // hostname do not sever a later sequential destination from its verb.
-      const beforeClauseText = before.replace(
-        /https?:\/\/[^\s<>"'`\u3002\u3001\uff0c\uff1b\uff1a\uff01\uff1f\u2026\u2025]+/gi,
-        priorUrl => ' '.repeat(priorUrl.length),
-      );
-      const beforeClauses = this._socialPublicationClauses(beforeClauseText);
-      let lastBeforeClause = beforeClauses[beforeClauses.length - 1];
-      if (lastBeforeClause && !lastBeforeClause.text.trim()) {
-        if (lastBeforeClause.delim === ':' && beforeClauses.length > 1) {
-          lastBeforeClause = beforeClauses[beforeClauses.length - 2];
-        } else {
-          lastBeforeClause = null;
-        }
-      }
-      if (SOCIAL_CONTRASTIVE_EXCLUSION.test(lastBeforeClause?.maskedText || lastBeforeClause?.text || '')) continue;
-      if (lastBeforeClause?.isNegated) continue;
-      const afterClauses = this._socialPublicationClauses(after);
-      const firstAfterClause = afterClauses.find(c => c.text.trim().length > 0);
-      // The route matcher accepts a bare /compose, so the composer test has to
-      // end at a path boundary rather than demand a following slash.
-      const isComposer = /\/(?:compose|intent|i\/flow)(?:[/?#]|$)/i.test(url);
-      const firstAfterPublish = firstAfterClause?.maskedText?.match(SOCIAL_PUBLISH_VERBS);
-      const firstAfterIsContrastive = Boolean(firstAfterPublish
-        && SOCIAL_CONTRASTIVE_EXCLUSION.test(firstAfterClause.maskedText.slice(0, firstAfterPublish.index)));
-      const firstAfterNegatesPublish = firstAfterClause?.isNegated
-        && !firstAfterIsContrastive
-        && (isComposer
-          || SOCIAL_PUBLISH_VERBS.test(firstAfterClause.maskedText || firstAfterClause.text));
-      if (firstAfterNegatesPublish) continue;
-      let publishGoverned = this._socialPublicationCommandIn(lastBeforeClause?.text || '');
-      if (!publishGoverned && beforeClauses.length > 1 && !lastBeforeClause?.isNegated) {
-        for (let bIdx = beforeClauses.length - 2; bIdx >= 0; bIdx--) {
-          const nextB = beforeClauses[bIdx + 1];
-          const isCoord = SOCIAL_COORDINATING_DELIMITER.test(nextB.delim || '')
-            || SOCIAL_SEQUENTIAL_DELIMITER.test(nextB.delim || '')
-            || (nextB.delim || '').trim() === ','
-            || (nextB.delim || '').trim() === '、';
-          if (!isCoord) break;
-          const bClause = beforeClauses[bIdx];
-          if (bClause.isNegated) break;
-          if (SOCIAL_READ_VERBS.test(bClause.maskedText || bClause.text)) break;
-          if (this._socialPublicationCommandIn(bClause.text || '')) {
-            publishGoverned = true;
-            break;
-          }
-        }
-      }
-      // A composer opened under an explicit publish prohibition ("Do not
-      // publish anything; open <composer> to inspect it") is for reading,
-      // not posting: the prohibition anywhere in the trusted context vetoes
-      // the verb-free composer shortcut (an affirmative publish command still
-      // governs through the other arms below).
-      const hasPublishProhibition = clauses.some(clause => (
-        clause.isNegated && SOCIAL_PUBLISH_VERBS.test(clause.maskedText || clause.text || '')
-      ));
-      const governed = (isComposer && !firstAfterClause?.isNegated && !hasPublishProhibition)
-        || publishGoverned
-        || (SOCIAL_PUBLISH_DESTINATION_LEAD.test(lastBeforeClause?.text || '')
-          && this._socialPublicationCommandIn(firstAfterClause?.text || ''));
-      if (!governed) continue;
-      const workflow = resolveAdapterWorkflowJob(url, 'publish-post');
-      if (workflow?.job && workflow.adapterName === destination) targets.add(destination);
-    }
-    if (!currentIsSocialPublish && !hasPublishIntent && !hasContrastivePublishIntent && targets.size < 1) return targets;
-    // A platform named anywhere in the task is not a destination: "read Acme's
-    // posts on X, then share the findings in the survey" mentions both a
-    // publish verb and X without ever asking for a post. The verb has to
-    // govern the platform through a destination preposition for this to be a
-    // publication target. Verbs and prepositions are the same multilingual
-    // sets the URL scan uses, so "Publícalo en X" counts while English-only
-    // matching would leave it unbound.
-    const publishesTo = (platform) => {
-      const destPreps = '(?:on|onto|to|via|in|at|en|sur|sobre|\u00e0|au|auf|su|em|na|no|nos|nas|para|\u0432|\u043d\u0430)';
-      const coordConj = '(?:and|und|et|e|y|ve|и|oder|or|ou|o|plus|as\\s+well\\s+as|alongside|along\\s+with|together\\s+with|&|\\/)';
-      const listModifiers = '(?:both|either|all|one\\s+of(?:\\s+the)?|ambos|ambas|entrambi|entrambe|beide|beiden|les\\s+deux|tous\\s+les\\s+deux|\u043e\u0431\u0430|\u043e\u0431\u0435|\u4e24\u8005|\u4e24\u4e2a|\u4e24|\u4e21\u65b9|\u4e21\u8005|\u4e21|\ub458\\s*\ub2e4|\ub458|\uc591\uc790|\uc591)';
-      const coordItem = `(?:the\\s+)?(?:${listModifiers}\\s+)?[a-z0-9_.-]+(?:\\s+page|\\s+account|\\s+profile)?`;
-      const coordPrefix = `(?:${coordItem}(?:\\s*,\\s*${coordItem})*\\s*(?:,\\s*${coordConj}|,|;|\\s+${coordConj})\\s+(?:the\\s+)?)`;
-      const platformPattern = new RegExp(
-        `(?<![${SOCIAL_WORD_EDGE}])${destPreps}(?![${SOCIAL_WORD_EDGE}])\\s+(?:(?:${listModifiers}|the)\\s+)*(?:${coordPrefix})?${platform}(?![${SOCIAL_WORD_EDGE}])`
-        + `|[\\u5230\\u81f3\\u5728]\\s*(?:[^\\s,;:.?!]+\\s*(?:和|与|及|以及|,|、)\\s*)*${platform}(?![a-z0-9_])`
-        + `|(?:\u5728\\s*)?${platform}(?:\\s*(?:と|や|、)\\s*(?:[^\\s,;:.?!]+\\s*(?:と|や|、)\\s*)*[^\\s,;:.?!]+)?\\s*[\\u306b\\u3078\\u3067\\u4e0a\\uc5d0\\ub85c](?![a-z0-9_])`
-        + `|${platform}(?:\\s*(?:와|과|및|,)\\s*(?:[^\\s,;:.?!]+\\s*(?:와|과|및|,)\\s*)*[^\\s,;:.?!]+)?\\s*\\uc73c\\ub85c(?![a-z0-9_])`,
-        'giu',
-      );
-      const coordPlatformPattern = new RegExp(
-        `(?<![${SOCIAL_WORD_EDGE}])(?:${destPreps}(?![${SOCIAL_WORD_EDGE}])\\s+)?(?:(?:${listModifiers}|the)\\s+)*(?:${coordPrefix})?${platform}(?![${SOCIAL_WORD_EDGE}])`
-        + `|(?:[\\u5230\\u81f3\\u5728]\\s*)?(?:[^\\s,;:.?!]+\\s*(?:和|与|及|以及|,|、)\\s*)*${platform}(?![a-z0-9_])`
-        + `|(?:\u5728\\s*)?${platform}(?:\\s*(?:と|や|、)\\s*(?:[^\\s,;:.?!]+\\s*(?:と|や|、)\\s*)*[^\\s,;:.?!]+)?\\s*[\\u306b\\u3078\\u3067\\u4e0a\\uc5d0\\ub85c]?(?![a-z0-9_])`
-        + `|${platform}(?:\\s*(?:와|과|및|,)\\s*(?:[^\\s,;:.?!]+\\s*(?:와|과|및|,)\\s*)*[^\\s,;:.?!]+)?\\s*(?:\\uc73c\\ub85c)?(?![a-z0-9_])`,
-        'giu',
-      );
-      const verbPattern = new RegExp(SOCIAL_PUBLISH_VERBS.source, 'giu');
-      // A clause opens a new publication command when a standalone publish
-      // verb governs this platform through a destination preposition:
-      // imperatives, polite and modal requests alike, with no prefix
-      // enumeration, in any language the verb and preposition sets cover.
-      // Past-tense reportage ("I posted on Bluesky yesterday") and overt
-      // non-addressee subjects ("Malone posts on Bluesky") stay prose.
-      const opensNewPublicationCommand = (clauseText) => {
-        const text = String(clauseText || '');
-        if (SOCIAL_PROPER_NAME_PROSE_LEAD.test(text.trimStart())) return false;
-        for (const match of text.matchAll(new RegExp(platformPattern.source, 'giu'))) {
-          const beforePlat = text.slice(0, match.index);
-          const govern = [...beforePlat.matchAll(new RegExp(SOCIAL_STANDALONE_PUBLISH_VERB.source, 'giu'))].pop();
-          if (!govern) continue;
-          if (SOCIAL_PAST_PUBLISH_VERB.test(govern[0])) continue;
-          const beforeVerb = beforePlat.slice(0, govern.index);
-          const hasReporterSubject = /(?<![\p{L}\p{N}_])(?:i|we|he|she|they|it)(?![\p{L}\p{N}_])/iu.test(beforeVerb)
-            || (/s$/iu.test(govern[0]) && /(?<![\p{L}\p{N}_])[A-Z][a-z]+(?![\p{L}\p{N}_])/u.test(beforeVerb));
-          if (hasReporterSubject) continue;
-          return true;
-        }
-        return false;
-      };
-      // Colon-scoped payload is body prose: "Post on X: Hello. I posted on
-      // Bluesky yesterday." must not adopt Bluesky from a later sentence.
-      // Track the scope across subsequent prose until a clause begins a
-      // genuine new publication command (a leading publish verb or a
-      // coordinated boundary).
-      let inColonBodyScope = false;
-      return clauses.some((clause, clauseIdx) => {
-        if (!clause.text || clause.isNegated) return false;
-        // Colon-scoped payload is body prose, not a new destination command:
-        // "Post on X: I posted on Bluesky yesterday." must not adopt Bluesky
-        // without a genuine coordinated command boundary.
-        if ((clause.delim || '').trim() === ':') {
-          inColonBodyScope = true;
-          return false;
-        }
-        if (inColonBodyScope) {
-          const clauseDelim = clause.delim || '';
-          const leadsWithPublish = opensNewPublicationCommand(clause.maskedText || clause.text);
-          if (!SOCIAL_COORDINATING_DELIMITER.test(clauseDelim)
-            && !SOCIAL_SEQUENTIAL_DELIMITER.test(clauseDelim)
-            && clauseDelim.trim() !== ','
-            && clauseDelim.trim() !== '、'
-            && !leadsWithPublish) {
-            return false;
-          }
-          inColonBodyScope = false;
-        }
-        const targetText = clause.maskedText || clause.text;
-        // "Post this not on X but on Bluesky" carries the publish action into
-        // the positive contrastive destination even though that clause is
-        // elliptical. The negated source clause must not contribute X.
-        if (clauseIdx > 0 && /^(?:but)$/iu.test(clause.delim || '')
-            && clauses[clauseIdx - 1]?.isNegated
-            && SOCIAL_PUBLISH_VERBS.test(clauses[clauseIdx - 1].maskedText || clauses[clauseIdx - 1].text)
-            && !SOCIAL_READ_VERBS.test(targetText)) {
-          const contrastivePattern = new RegExp(coordPlatformPattern.source, 'iu');
-          const contrastiveMatch = contrastivePattern.exec(targetText);
-          if (contrastiveMatch) {
-            const beforePlat = targetText.slice(0, contrastiveMatch.index);
-            const afterPlat = targetText.slice(contrastiveMatch.index + contrastiveMatch[0].length);
-            if (!isPlaceholderBareXMatch(contrastiveMatch[0], afterPlat)
-                && !SOURCE_MODIFIER_BEFORE_PLATFORM.test(beforePlat)
-                && !NON_SOCIAL_DESTINATION_AFTER_PLATFORM.test(afterPlat)
-                && !platformMentionIsContentQualifier(beforePlat, afterPlat)) return true;
-          }
-        }
-        for (const verb of targetText.matchAll(verbPattern)) {
-          const verbIndex = verb.index ?? 0;
-          const beforeVerbClause = targetText.slice(0, verbIndex);
-          if (SOCIAL_READ_VERBS.test(beforeVerbClause)) continue;
-          if (socialNegationGovernsPublish(beforeVerbClause)) continue;
-          const verbWord = verb[0] || '';
-          // A past-tense verb describes already-published content ("the post
-          // published on X"), it never issues a new publication command.
-          if (SOCIAL_PAST_PUBLISH_VERB.test(verbWord)) continue;
-          const unscopedAfterVerbText = targetText.slice(verbIndex + verbWord.length);
-          const nextPublish = unscopedAfterVerbText.match(SOCIAL_PUBLISH_VERBS);
-          const afterVerbText = nextPublish
-            ? unscopedAfterVerbText.slice(0, nextPublish.index)
-            : unscopedAfterVerbText;
-          if (socialPostNegationGovernsPublish(afterVerbText)) continue;
-          if (SOCIAL_NOUN_LIKE_PUBLISH.test(verbWord) && (
-            SOCIAL_READ_VERBS.test(afterVerbText)
-            || /(?<![\p{L}\p{N}_])(?:of|about|regarding|concerning|sur|de|des|du|von|su|sobre|über|all|these|those|some|any|the|my|our|their|his|her|user's|recent|latest|past|old|new|more)\s+$/iu.test(beforeVerbClause)
-            || NON_SOCIAL_DESTINATION_IN_TEXT.test(beforeVerbClause)
-          )) continue;
-          if (/^shares?$/i.test(verbWord) && /(?<![\p{L}\p{N}_])(?:market|mind|revenue|profit|traffic|audience|wallet|fair|lion's|stock|equity|file|screen|time)\s+$/iu.test(beforeVerbClause)) continue;
-          const afterVerb = afterVerbText;
-          const beforeVerb = targetText.slice(0, verbIndex);
-
-          for (const matchAfter of afterVerb.matchAll(platformPattern)) {
-            const beforePlat = afterVerb.slice(0, matchAfter.index);
-            const afterPlat = afterVerb.slice((matchAfter.index ?? 0) + matchAfter[0].length);
-            if (isPlaceholderBareXMatch(matchAfter[0], afterPlat)) continue;
-            const isSourceOnly = SOURCE_MODIFIER_BEFORE_PLATFORM.test(beforePlat)
-              || NON_SOCIAL_DESTINATION_AFTER_PLATFORM.test(afterPlat)
-              || platformMentionIsContentQualifier(beforePlat, afterPlat)
-              || SOCIAL_CONTRASTIVE_EXCLUSION.test(beforePlat)
-              || (NON_SOCIAL_DESTINATION_GOVERNING_AFTER_VERB.test(beforePlat)
-                  && !CONTENT_LINK_PHRASE.test(beforePlat)
-                  && !/(?:and|und|et|e|y|ve|и|oder|or|as\s+well\s+as)\s+$/i.test(beforePlat))
-              || (NON_SOCIAL_DESTINATION_GOVERNING_BEFORE_VERB.test(beforeVerb)
-                  && !CONTENT_LINK_PHRASE.test(beforeVerb)
-                  && (TOPIC_NOUN_BEFORE_PLATFORM.test(beforePlat) || SOURCE_MODIFIER_BEFORE_PLATFORM.test(beforePlat)))
-              || ((TOPIC_NOUN_BEFORE_PLATFORM.test(beforePlat) || TOPIC_NOUN_AFTER_PLATFORM.test(afterPlat))
-                  && (NON_SOCIAL_DESTINATION_IN_TEXT.test(afterPlat)
-                      || (NON_SOCIAL_DESTINATION_GOVERNING_AFTER_VERB.test(beforePlat)
-                          && !CONTENT_LINK_PHRASE.test(beforePlat)))
-                  && !/^\s*(?:and|und|et|e|y|ve|и|oder|or|as\s+well\s+as)\s+/i.test(afterPlat));
-            if (!isSourceOnly) return true;
-          }
-
-          for (const matchBefore of beforeVerb.matchAll(platformPattern)) {
-            const beforePlat = beforeVerb.slice(0, matchBefore.index);
-            const afterPlat = beforeVerb.slice((matchBefore.index ?? 0) + matchBefore[0].length);
-            if (isPlaceholderBareXMatch(matchBefore[0], afterPlat)) continue;
-            const hasCompeteInAfterVerb = NON_SOCIAL_DESTINATION_IN_TEXT.test(afterVerb)
-              && !CONTENT_LINK_PHRASE.test(afterVerb);
-            const isSourceOnly = SOURCE_MODIFIER_BEFORE_PLATFORM.test(beforePlat)
-              || NON_SOCIAL_DESTINATION_AFTER_PLATFORM.test(afterPlat)
-              || platformMentionIsContentQualifier(beforePlat, afterPlat)
-              || SOCIAL_CONTRASTIVE_EXCLUSION.test(beforePlat)
-              || hasCompeteInAfterVerb
-              || (NON_SOCIAL_DESTINATION_GOVERNING_AFTER_VERB.test(beforePlat)
-                  && !CONTENT_LINK_PHRASE.test(beforePlat)
-                  && !/(?:and|und|et|e|y|ve|и|oder|or|as\s+well\s+as)\s+$/i.test(beforePlat))
-              || ((TOPIC_NOUN_BEFORE_PLATFORM.test(beforePlat) || TOPIC_NOUN_AFTER_PLATFORM.test(afterPlat))
-                  && (NON_SOCIAL_DESTINATION_AFTER_PLATFORM.test(afterPlat) || hasCompeteInAfterVerb)
-                  && !/^\s*(?:and|und|et|e|y|ve|и|oder|or|as\s+well\s+as)\s+/i.test(afterPlat));
-            if (!isSourceOnly) return true;
-          }
-
-          for (let pIdx = clauseIdx - 1; pIdx >= 0; pIdx--) {
-            if (/[.?!;\n]/.test(clauses[pIdx + 1]?.delim || '')) break;
-            const pClause = clauses[pIdx];
-            if (pClause.isNegated) break;
-            const pTargetText = pClause.maskedText || pClause.text;
-            if (SOCIAL_PUBLISH_VERBS.test(pTargetText)) break;
-            let foundLeadingPlatform = false;
-            const hasLeadingPrep = clauses.slice(0, clauseIdx).some(c =>
-              new RegExp(`(?<![${SOCIAL_WORD_EDGE}])${destPreps}(?![${SOCIAL_WORD_EDGE}])`, 'iu').test(c.maskedText || c.text)
-            );
-            const prevPattern = hasLeadingPrep ? coordPlatformPattern : platformPattern;
-            for (const matchPrev of pTargetText.matchAll(prevPattern)) {
-              if (SOCIAL_READ_VERBS.test(pTargetText)) break;
-              const beforePlat = pTargetText.slice(0, matchPrev.index);
-              const afterPlat = pTargetText.slice((matchPrev.index ?? 0) + matchPrev[0].length);
-              if (isPlaceholderBareXMatch(matchPrev[0], afterPlat)) continue;
-              const isSourceOnly = SOURCE_MODIFIER_BEFORE_PLATFORM.test(beforePlat)
-                || NON_SOCIAL_DESTINATION_AFTER_PLATFORM.test(afterPlat)
-                || platformMentionIsContentQualifier(beforePlat, afterPlat)
-                || SOCIAL_CONTRASTIVE_EXCLUSION.test(beforePlat)
-                || (NON_SOCIAL_DESTINATION_GOVERNING_AFTER_VERB.test(beforePlat)
-                    && !CONTENT_LINK_PHRASE.test(beforePlat)
-                    && !/(?:and|und|et|e|y|ve|и|oder|or|as\s+well\s+as)\s+$/i.test(beforePlat))
-                || ((TOPIC_NOUN_BEFORE_PLATFORM.test(beforePlat) || TOPIC_NOUN_AFTER_PLATFORM.test(afterPlat))
-                    && NON_SOCIAL_DESTINATION_AFTER_PLATFORM.test(afterPlat)
-                    && !/^\s*(?:and|und|et|e|y|ve|и|oder|or|as\s+well\s+as)\s+/i.test(afterPlat));
-              if (!isSourceOnly) {
-                foundLeadingPlatform = true;
-                break;
-              }
-            }
-            if (foundLeadingPlatform) {
-              const hasCompeteInAfterVerb = NON_SOCIAL_DESTINATION_IN_TEXT.test(afterVerb)
-                && !CONTENT_LINK_PHRASE.test(afterVerb);
-              if (!hasCompeteInAfterVerb) {
-                return true;
-              }
-              break;
-            }
-          }
-
-          for (let nextIdx = clauseIdx + 1; nextIdx < clauses.length; nextIdx++) {
-            const nextClause = clauses[nextIdx];
-            if (nextClause.isNegated) break;
-            const nextTargetText = nextClause.maskedText || nextClause.text;
-            // Step over a destination's scoped body ("Post on X: hello; and on
-            // Bluesky"): colon/semicolon fragments without their own publish
-            // verb, read verb, or platform carry the governing publish intent
-            // forward to the next coordinated destination.
-            const nextDelim = (nextClause.delim || '').trim();
-            const isScopedBodyFragment = (nextDelim === ':' || nextDelim === ';')
-              && !SOCIAL_PUBLISH_VERBS.test(nextTargetText)
-              && !SOCIAL_READ_VERBS.test(nextTargetText)
-              && ![...nextTargetText.matchAll(coordPlatformPattern)].length;
-            const isCoord = SOCIAL_COORDINATING_DELIMITER.test(nextClause.delim || '')
-              || SOCIAL_SEQUENTIAL_DELIMITER.test(nextClause.delim || '')
-              || (nextClause.delim || '').trim() === ','
-              || (nextClause.delim || '').trim() === '、'
-              || isScopedBodyFragment;
-            if (!isCoord) break;
-            if (SOCIAL_READ_VERBS.test(nextTargetText)) break;
-            if (SOCIAL_PUBLISH_VERBS.test(nextTargetText)) break;
-            for (const matchNext of nextTargetText.matchAll(coordPlatformPattern)) {
-              const beforePlat = nextTargetText.slice(0, matchNext.index);
-              const afterPlat = nextTargetText.slice((matchNext.index ?? 0) + matchNext[0].length);
-              if (isPlaceholderBareXMatch(matchNext[0], afterPlat)) continue;
-              const isSourceOnly = SOURCE_MODIFIER_BEFORE_PLATFORM.test(beforePlat)
-                || NON_SOCIAL_DESTINATION_AFTER_PLATFORM.test(afterPlat)
-                || platformMentionIsContentQualifier(beforePlat, afterPlat)
-                || SOCIAL_CONTRASTIVE_EXCLUSION.test(beforePlat)
-                || (NON_SOCIAL_DESTINATION_GOVERNING_AFTER_VERB.test(beforePlat)
-                    && !CONTENT_LINK_PHRASE.test(beforePlat)
-                    && !/(?:and|und|et|e|y|ve|и|oder|or|as\s+well\s+as)\s+$/i.test(beforePlat))
-                || ((TOPIC_NOUN_BEFORE_PLATFORM.test(beforePlat) || TOPIC_NOUN_AFTER_PLATFORM.test(afterPlat))
-                    && NON_SOCIAL_DESTINATION_AFTER_PLATFORM.test(afterPlat)
-                    && !/^\s*(?:and|und|et|e|y|ve|и|oder|or|as\s+well\s+as)\s+/i.test(afterPlat));
-              if (!isSourceOnly) return true;
-            }
-          }
-        }
-        return false;
-      });
+  _socialPublicationSources(tabId) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const sources = {
+      request: this._latestTaskText(tabId),
+      task: this._progressTaskAnchorText(tabId),
+      plan: String(guard?.approvedPlanText || ''),
     };
-    const tweetsThis = clauses.some((clause) => {
-      if (clause.isNegated) return false;
-      const targetText = clause.maskedText || clause.text;
-      const match = targetText.match(/\btweet\s+(?:this|that|it|the\s+following)\b/i);
-      if (!match) return false;
-      const before = targetText.slice(0, match.index);
-      if (SOCIAL_READ_VERBS.test(before) || socialNegationGovernsPublish(before)) return false;
-      const after = targetText.slice(match.index + match[0].length);
-      if (socialPostNegationGovernsPublish(after)) return false;
-      return true;
-    });
-    if (publishesTo('(?:bluesky|bsky(?:\\.app)?)')) targets.add('bluesky');
-    if (publishesTo('(?:x|x\\.com|twitter(?:\\.com)?)')
-        // "tweet this" names its own destination.
-        || tweetsThis) {
-      targets.add('twitter');
-    }
-    // The live tab is a fallback only when the task did not authorize another
-    // destination. Never let it override an explicit negative platform clause.
-    if (currentIsSocialPublish && targets.size < 1 && !currentIsExplicitlyExcluded) {
-      targets.add(current.adapterName);
-    }
-    return targets;
+    const drafts = (this.conversations.get(tabId) || []).filter(m => m.role === 'assistant'
+      && typeof m.content === 'string' && !m.tool_calls?.length).slice(-4);
+    drafts.forEach((m, i) => { sources[`draft${i}`] = m.content; });
+    return sources;
   }
 
-  _socialPublishTargetsAreAlternatives(guard, knownTargets = null) {
-    const targets = knownTargets instanceof Set
-      ? knownTargets
-      : this._trustedSocialPublishTargetAdapters(guard);
-    if (targets.size < 2 || !targets.has('twitter') || !targets.has('bluesky')) return false;
-    // Only list-shaped glue may sit between the two platform mentions. An
-    // unrelated branch such as "X or report the blocker; also post on
-    // Bluesky" contains `or`, but it does not coordinate the destinations.
-    const directAlternativeBridge = /^\s*(?:(?:page|account|profile)\s*)?(?:(?:[,;]|[.!?](?=\s*(?:if|unless|but|and)\b))\s*)?(?:(?:(?:but|and)\s+)?(?:if\s+(?:(?:that|it|this)\s+)?(?:unavailable|not\s+available|not\s+work(?:ing|s)?|(?:do|does|did)\s+not\s+work|(?:do|does|did)n['’]?t\s+work|available|needed|necessary|possible|possibly|unable|unsuccessful|failing|failed|fails?|failure)\b[^,;]*,?\s*)(?:(?:or|otherwise|failing\s+that|oder|ou|o|oppure|veya|ya\s+da|\u0438\u043b\u0438|\u043b\u0438\u0431\u043e)(?![\p{L}\p{N}_])|(?:\u6216\u8005|\u6216|\u307e\u305f\u306f|\u305d\u308c\u3068\u3082|\uB610\uB294|\uD639\uC740))?|(?:(?:or|otherwise|failing\s+that|oder|ou|o|oppure|veya|ya\s+da|\u0438\u043b\u0438|\u043b\u0438\u0431\u043e)(?![\p{L}\p{N}_])|(?:\u6216\u8005|\u6216|\u307e\u305f\u306f|\u305d\u308c\u3068\u3082|\uB610\uB294|\uD639\uC740))|(?:(?:but|and)\s+)?(?:unless\s+[^,;]*,\s*then\s*))\s*(?:,\s*)?(?:(?:alternatively|otherwise|else)(?:\s*,\s*|\s+))?(?:,\s*if\s+(?:(?:that|it|this)\s+)?(?:unavailable|not\s+available|not\s+work(?:ing|s)?|(?:do|does|did)\s+not\s+work|(?:do|does|did)n['’]?t\s+work|available|needed|necessary|possible|unable|unsuccessful|failing|failed|fails?|failure)\b[^,;]*,?\s*)?(?:(?:post|publish|share|tweet|send|reply|respond)\s+(?:(?:this|that|it|the\s+following)\s+)?)?(?:(?:also\s+)?(?:on|onto|to|via|in|at|en|sur|sobre|\u00e0|au|auf|su|em|na|no|nos|nas|para|\u0432|\u043d\u0430)\s+)?(?:the\s+)?$/iu;
-    const explicitAlternativeBridge = /^\s*(?:(?:page|account|profile)\s*)?(?:,\s*)?(?:(?:alternatively|otherwise|failing\s+that)(?:\s*,\s*)?(?:[\s,]+(?:on|onto|to|via|in|at))?|as\s+an\s+alternative\s+to)\s*(?:the\s+)?$/iu;
-    const oneOfAlternativeLead = /(?<![\p{L}\p{N}_])one\s+of\s+(?:the\s+)?$/iu;
-    const oneOfAlternativeBridge = /^\s*(?:,\s*)?(?:and|or)\s+(?:the\s+)?$/iu;
-    const platformPattern = /(?:https?:\/\/(?:www\.)?(?:x\.com|twitter\.com|bsky\.app)(?:[/?#][^\s<>"'`\u3002\u3001\uff0c\uff1b\uff1a\uff01\uff1f\u2026\u2025]*|(?=[\s<>"'`\u3002\u3001\uff0c\uff1b\uff1a\uff01\uff1f\u2026\u2025,;!?]|$))|(?<![\p{L}\p{N}_])(?:x|twitter|bluesky|bsky\.app)(?![\p{L}\p{N}_]))/giu;
-    const texts = [guard?.taskText, guard?.approvedPlanAnchor]
-      .map(value => String(value || '').trim())
-      .filter(Boolean);
-    return texts.some((text) => {
-      const masked = this._maskQuotedPayload(text);
-      // URL punctuation is sentence content, not a boundary: hide URLs so a
-      // host dot cannot split the publication command a pair belongs to.
-      const urlBlind = masked.replace(
-        /https?:\/\/[^\s<>"'`\u3002\u3001\uff0c\uff1b\uff1a\uff01\uff1f\u2026\u2025]+/gi,
-        match => ' '.repeat(match.length),
-      );
-      const platforms = [...masked.matchAll(platformPattern)].map(match => {
-        const matchedText = /^https?:/i.test(match[0])
-          ? this._workflowTrimUrlPunctuation(match[0])
-          : match[0];
-        return {
-          index: match.index ?? 0,
-          end: (match.index ?? 0) + matchedText.length,
-          name: /(?:bluesky|bsky)/i.test(matchedText) ? 'bluesky' : 'twitter',
-        };
-      });
-      for (let index = 1; index < platforms.length; index++) {
-        const left = platforms[index - 1];
-        const right = platforms[index];
-        if (left.name === right.name) continue;
-        // An alternative pair only counts inside a publication command: a
-        // later unrelated choice ("Compare X or Bluesky afterward.") must
-        // not suppress an explicitly requested second publication.
-        const sentenceStart = Math.max(
-          urlBlind.lastIndexOf('.', left.index),
-          urlBlind.lastIndexOf('?', left.index),
-          urlBlind.lastIndexOf('!', left.index),
-          urlBlind.lastIndexOf(';', left.index),
-          urlBlind.lastIndexOf('\n', left.index),
-        ) + 1;
-        let sentenceEnd = urlBlind.length;
-        for (const boundary of ['.', '?', '!', ';', '\n']) {
-          const at = urlBlind.indexOf(boundary, right.end);
-          if (at >= 0 && at < sentenceEnd) sentenceEnd = at;
-        }
-        if (!this._socialPublicationCommandIn(masked.slice(sentenceStart, sentenceEnd))) continue;
-        const bridge = masked.slice(left.end, right.index);
-        if (directAlternativeBridge.test(bridge)
-            || explicitAlternativeBridge.test(bridge)
-            || (oneOfAlternativeLead.test(masked.slice(0, left.index))
-              && oneOfAlternativeBridge.test(bridge))) return true;
+  async _ensureSocialPublicationContract(tabId, provider = this._activeProvider(tabId)) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled) return null;
+    // The app-owned guard is new for every user revision. A trusted Continue
+    // carries its frozen contract, including exact raw source text.
+    if (guard.socialPublication) return guard.socialPublication;
+    const sources = this._socialPublicationSources(tabId);
+    const key = this._sha256TextSync(JSON.stringify({ sources, taskKey: guard.taskKey }));
+    const state = { key, sources, contract: null, outcomes: {}, actionId: null, dispatch: null, error: '' };
+    guard.socialPublication = state;
+    if (!provider?.chat || JSON.stringify(sources).length > 120000) {
+      state.error = 'Publication intent could not be read completely with the selected provider.';
+      return state;
+    }
+    const messages = publicationContractMessages(sources);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await this._chatWithCostAllowance(provider, messages, {
+          temperature: 0, maxTokens: Math.min(4096, this._providerMaxOutputTokens(provider)),
+        }, this.currentCostState.get(tabId) || null, { tabId, generationName: 'social_publication_contract' });
+        if (this._planExecutionGuards.get(tabId) !== guard || this._checkAbort(tabId)) return null;
+        state.contract = normalizePublicationContract(Agent._extractFirstJsonObject(response?.content || ''), sources);
+        state.error = '';
+        return state;
+      } catch (error) {
+        if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+        state.error = 'Publication intent is incomplete or ambiguous. Clarify the request before publishing.';
+        if (attempt === 0) messages.push({ role: 'user', content: 'The contract failed strict validation. Return a complete valid object using only the documented schema and exact unique source anchors. If any requirement cannot be represented, return status=clarify with no actions. Do not guess.' });
       }
-      return false;
-    });
+    }
+    return state;
   }
 
-  // The guard holds one workflow slot, so a run that publishes on X and then
-  // rebinds to Bluesky forgets the first post. A task that named both is not
-  // finished until both exist, so each proven platform is remembered here as
-  // the run moves on.
+  _socialPublicationAction(guard) {
+    const social = guard?.socialPublication;
+    return social?.contract?.actions.find(a => a.id === social.actionId) || null;
+  }
+
+  _trustedSocialPublishTargetAdapters(guard) {
+    return new Set(guard?.socialPublication?.contract?.actions.map(a => a.platform) || []);
+  }
+
+  _socialPublishTargetsAreAlternatives(guard) {
+    return guard?.socialPublication?.contract?.requirements?.kind === 'any';
+  }
+
+  _socialPublicationRequirements(guard) {
+    const action = this._socialPublicationAction(guard);
+    if (!action) return [];
+    return [
+      ...(action.account ? [{ field: 'account', value: action.account, rawValue: action.account }] : []),
+      ...action.posts.filter(p => p.body.kind === 'exact').map(p => ({ field: 'body', value: p.body.value, rawValue: p.body.value })),
+    ];
+  }
+
   _recordSocialPublishTargetSatisfied(guard) {
-    const bound = guard?.siteWorkflow;
-    if (!guard || !bound?.job || bound.job.id !== 'publish-post') return;
-    if (!['twitter', 'bluesky'].includes(bound.adapterName)) return;
-    // A permalink discovered after dispatch is only a candidate. Record the
-    // platform after the full account/body/attachment contract has verified.
-    if (!this._workflowTerminalEvidenceMatchesState(guard, guard.workflowTerminalEvidence)) return;
-    const satisfied = Array.isArray(guard.socialPublishSatisfiedTargets)
-      ? guard.socialPublishSatisfiedTargets
-      : [];
-    if (!satisfied.includes(bound.adapterName)) satisfied.push(bound.adapterName);
-    guard.socialPublishSatisfiedTargets = satisfied;
+    const social = guard?.socialPublication;
+    const evidence = guard?.workflowTerminalEvidence;
+    if (!social || evidence?.socialContractKey !== social.key || evidence?.socialActionId !== social.actionId
+        || !this._workflowTerminalEvidenceMatchesState(guard, evidence)) return;
+    social.outcomes[social.actionId] = { status: 'verified' };
   }
 
-  _missingSocialPublishTargets(state) {
-    if (!state || state.requiresSubmission !== true) return [];
-    let targets;
-    try {
-      targets = this._trustedSocialPublishTargetAdapters(state);
-    } catch {
-      return ['unknown'];
-    }
-    // One destination is already covered by the ordinary terminal evidence,
-    // but only when the bound workflow is that destination. A run bound to X
-    // for a Bluesky-only request must still report Bluesky as missing.
-    if (!targets || targets.size < 2) {
-      const boundAdapter = state?.siteWorkflow?.adapterName;
-      const boundIsSocialPublish = !!state?.siteWorkflow?.job
-        && state.siteWorkflow.job.id === 'publish-post'
-        && ['twitter', 'bluesky'].includes(boundAdapter);
-      if (boundIsSocialPublish && targets?.size === 1 && !targets.has(boundAdapter)) {
-        const satisfied = Array.isArray(state.socialPublishSatisfiedTargets)
-          ? state.socialPublishSatisfiedTargets
-          : [];
-        return [...targets].filter(name => !satisfied.includes(name));
-      }
-      return [];
-    }
-    const satisfied = Array.isArray(state.socialPublishSatisfiedTargets)
-      ? state.socialPublishSatisfiedTargets
-      : [];
-    // "X or Bluesky" authorizes one destination, unlike "X and Bluesky".
-    // Once any alternative has fully verified, another public post would be
-    // both unnecessary and potentially harmful.
-    if (satisfied.length > 0 && this._socialPublishTargetsAreAlternatives(state, targets)) return [];
-    return [...targets].filter(name => !satisfied.includes(name));
+  _missingSocialPublishTargets(guard) {
+    const social = guard?.socialPublication;
+    if (!social) return [];
+    if (!social.contract) return SOCIAL_PLATFORMS.includes(guard.siteWorkflow?.adapterName) ? ['unresolved_intent'] : [];
+    if (social.contract.status === 'none') return [];
+    this._recordSocialPublishTargetSatisfied(guard);
+    const progress = publicationProgress(social.contract, social.outcomes);
+    if (progress.complete) return [];
+    return progress.missing.map(id => social.contract.actions.find(a => a.id === id)?.platform || id);
   }
 
   async _adoptLiveSocialPublishWorkflow(tabId, provider) {
     const guard = this._planExecutionGuards.get(tabId);
-    if (!guard?.enabled || guard.requiresSubmission !== true) return false;
-    const current = guard.siteWorkflow;
-    if (current?.job && (
-      current.job.id !== 'publish-post'
-      || current.job.template !== 'publish'
-      || current.job.requiresSubmission !== true
-      || !['twitter', 'bluesky'].includes(current.adapterName)
-    )) return false;
+    if (!guard?.enabled) return false;
     const liveUrl = await this._currentUrl(tabId);
-    if (!liveUrl) return false;
     const live = resolveAdapterWorkflowJob(liveUrl, 'publish-post');
-    if (!live?.job || !['twitter', 'bluesky'].includes(live.adapterName)) return false;
-    if (this._sameAdapterWorkflowBinding(current, live)) return false;
-    if (!this._trustedSocialPublishTargetAdapters(guard).has(live.adapterName)) return false;
-
-    // A fully verified destination must survive the rebind: checkpoint it
-    // before its terminal evidence is cleared, or the final `done` reports
-    // it missing and prompts a duplicate publication.
+    if (!SOCIAL_PLATFORMS.includes(live?.adapterName)) return false;
+    const social = await this._ensureSocialPublicationContract(tabId, provider);
+    if (!social || social.contract?.status !== 'ready') return false;
     this._recordSocialPublishTargetSatisfied(guard);
-    const previousBindingKey = this._adapterWorkflowBindingKey(current);
+    const eligible = publicationProgress(social.contract, social.outcomes).eligible;
+    const action = social.contract.actions.find(a => a.platform === live.adapterName && eligible.includes(a.id));
+    if (!action) return false;
+    if (social.actionId === action.id && this._sameAdapterWorkflowBinding(guard.siteWorkflow, live)) return false;
+    if (guard.siteWorkflow?.job && !SOCIAL_PLATFORMS.includes(guard.siteWorkflow.adapterName)) return false;
     guard.siteWorkflow = live;
     guard.siteWorkflowUrl = liveUrl;
+    guard.requiresSubmission = true;
+    guard.requiresStateChange = true;
+    social.actionId = action.id;
+    social.dispatch = null;
     guard.workflowTerminalEvidence = null;
     guard.verifiedSubmissionEvidence = false;
-    // Publication requirements and upload provenance belong to the currently
-    // bound destination. Reclassify and recollect them after X <-> Bluesky
-    // navigation instead of reusing the first platform's payload.
-    guard.workflowMetadataRequirements = [];
-    guard.workflowMetadataRequirementsResolved = false;
-    guard.workflowMetadataRequirementsIncomplete = false;
     guard.workflowSocialUploadEvidence = [];
-    await this._ensureWorkflowMetadataRequirements(
-      tabId,
-      { provider, costState: this.currentCostState.get(tabId) || null },
-      guard.taskText || this._latestTaskText(tabId),
-      this._currentProgressPageScope(tabId) || liveUrl,
-    );
-    const runId = this.currentRunId.get(tabId);
-    if (runId) {
-      trace.recordNote(runId, null, 'adapter_workflow_rebound', {
-        from: previousBindingKey || null,
-        to: this._adapterWorkflowBindingKey(live),
-        reason: 'live_social_publish_destination',
+    guard.workflowMetadataRequirements = this._socialPublicationRequirements(guard);
+    guard.workflowMetadataRequirementsResolved = true;
+    guard.workflowMetadataRequirementsIncomplete = false;
+    return true;
+  }
+
+  _socialPublicationSnapshot(guard, snapshot) {
+    if (!snapshot?.complete) return snapshot;
+    const copy = structuredClone(snapshot);
+    // A multi-post composer must supply its own per-post identity evidence;
+    // a task-wide filename list cannot be distributed by guessed ordering.
+    if (copy.posts?.length === 1) {
+      copy.posts[0] = this._workflowSocialRecordWithUploadedAttachmentNames(copy.posts[0], {
+        uploadedAttachmentNames: (guard.workflowSocialUploadEvidence || []).map(item => item.name),
       });
     }
-    return true;
+    return copy;
+  }
+
+  _socialSnapshotMatchesAction(action, snapshot) {
+    if (!snapshot?.complete || snapshot.posts?.length !== action.posts.length || !snapshot.account) return false;
+    const workflow = { adapterName: action.platform };
+    const account = this._workflowSocialPublicationAccountIdentity(workflow, snapshot.account);
+    if (!account || (action.account && account !== this._workflowSocialPublicationAccountIdentity(workflow, action.account))) return false;
+    return action.posts.every((post, i) => {
+      const observed = snapshot.posts[i];
+      return typeof observed?.bodyText === 'string'
+        && observed.bodyText.length <= 25000
+        && (post.body.kind === 'compose' || exactPublicationText(post.body.value) === exactPublicationText(observed.bodyText))
+        && publicationMediaMatches(post.media, observed)
+        && observed.context?.kind === post.context.kind
+        && (post.context.target === null || this._normalizeUrl(post.context.target) === this._normalizeUrl(observed.context.target));
+    });
+  }
+
+  async _socialPublicationPreSubmitBlock(tabId, name, args, detected, provider) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const activationKey = name === 'press_keys' && (/enter|return|space/i.test(JSON.stringify(args?.key ?? args?.keys ?? '')) || args?.key === ' ');
+    if (!guard?.enabled || (!this._isFormValidationCandidate(name, args) && !activationKey
+        && name !== 'execute_webmcp_tool' && !isNetworkMutation(name, args))) return null;
+    const pageUrl = await this._currentUrl(tabId);
+    const live = resolveAdapterWorkflowJob(pageUrl, 'publish-post');
+    if (!SOCIAL_PLATFORMS.includes(live?.adapterName)) return null;
+    if (detected?.resolvedEditableTarget || detected?.resolvedNavigationTarget || detected?.resolvedNonSubmitTarget) return null;
+    const blocked = error => ({ success: false, dispatched: false, noDispatch: true, repeatBlocked: true,
+      workflowJob: 'publish-post', error,
+      publicationContract: guard.socialPublication?.contract || null,
+      publicationProgress: publicationProgress(guard.socialPublication?.contract, guard.socialPublication?.outcomes),
+    });
+    if (detected?.isSubmit !== true) return blocked('Publication-capable action could not be identified. Use a resolved page control; do not run arbitrary JavaScript or bundle editing and submission.');
+    if (!['click', 'click_ax', 'iframe_click'].includes(name)) return blocked('Write and verify the draft first, then activate its publish control in a separate click.');
+    await this._adoptLiveSocialPublishWorkflow(tabId, provider);
+    const social = await this._ensureSocialPublicationContract(tabId, provider);
+    const action = this._socialPublicationAction(guard);
+    if (!action || action.platform !== live.adapterName
+        || !publicationProgress(social?.contract, social?.outcomes).eligible.includes(action.id)) {
+      return blocked(social?.error || 'This publication is not authorized, its prerequisite has not completed, or a previous dispatch still needs verification. Clarify unresolved intent; never repeat an uncertain publication.');
+    }
+    const snapshot = this._socialPublicationSnapshot(guard, detected.publicationSnapshot);
+    if (!this._socialSnapshotMatchesAction(action, snapshot)
+        || !Array.isArray(detected.publicationResourceUrls)
+        || detected.publicationResourceUrlsComplete !== true) {
+      return blocked('The complete composer, intended account, exact payload, media, context, and pre-publication baseline must be observed before publishing.');
+    }
+    const key = this._sha256TextSync(JSON.stringify({ contract: social.key, action, snapshot, pageUrl }));
+    if (social.deniedAuditKey === key) return blocked('This unchanged publication did not pass authorization. Resolve the request or draft discrepancy before publishing.');
+    if (social.dispatch?.key !== key) {
+      try {
+        const response = await this._chatWithCostAllowance(provider || this._activeProvider(tabId),
+          publicationAuditMessages(social.sources, social.contract, action, snapshot, key), {
+            temperature: 0, maxTokens: 800,
+          }, this.currentCostState.get(tabId) || null, { tabId, generationName: 'social_publication_authorization' });
+        if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social || this._checkAbort(tabId)) {
+          return blocked('Publication context changed during authorization.');
+        }
+        if (!publicationAuditAccepted(Agent._extractFirstJsonObject(response?.content || ''), key, action.id)) {
+          social.deniedAuditKey = key;
+          return blocked('The selected provider could not confirm that the concrete publication satisfies the user request. Resolve the discrepancy before publishing.');
+        }
+      } catch (error) {
+        if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+        return blocked('Publication authorization could not be verified with the selected provider.');
+      }
+      social.dispatch = { key, actionId: action.id, snapshot: JSON.parse(JSON.stringify(snapshot)), pageUrl };
+    }
+    // The semantic check can take time. Re-read the same target afterward;
+    // neither a changed draft/account nor a navigated document inherits it.
+    const fresh = await this._detectLikelySubmitAction(tabId, name, args);
+    if (fresh?.isSubmit !== true || fresh.publicationResourceUrlsComplete !== true
+        || JSON.stringify(this._socialPublicationSnapshot(guard, fresh.publicationSnapshot)) !== JSON.stringify(snapshot)
+        || this._normalizeUrl(await this._currentUrl(tabId)) !== this._normalizeUrl(pageUrl)) {
+      social.dispatch = null;
+      return blocked('The composer or publication target changed during verification. Read the current draft before trying again.');
+    }
+    Object.assign(detected, fresh);
+    return null;
+  }
+
+  _socialPublishedContractMatches(binding, guard, pageState) {
+    const social = guard?.socialPublication;
+    const dispatch = binding?.socialPublication;
+    const action = social?.contract?.actions.find(a => a.id === dispatch?.actionId);
+    if (!action || dispatch.contractKey !== social.key || !dispatch.snapshot?.complete
+        || !Array.isArray(binding.preDispatchPublishedResourceIdentities)) return false;
+    const baseline = new Set(binding.preDispatchPublishedResourceIdentities);
+    const records = (pageState?.workflowResourceRecords || []).filter(r => !baseline.has(
+      this._workflowPublishedResourceIdentity(guard.siteWorkflow, r.url)));
+    const account = this._workflowSocialPublicationAccountIdentity(guard.siteWorkflow, dispatch.snapshot.account);
+    const used = new Set();
+    let previousUrl = '';
+    return action.posts.every((post, i) => {
+      const expected = dispatch.snapshot.posts[i];
+      const matches = records.filter(record => {
+        const identity = this._workflowPublishedResourceIdentity(guard.siteWorkflow, record.url);
+        if (!identity || used.has(identity) || (i === 0 && identity !== binding.publishedResourceIdentity)) return false;
+        if (i > 0 && this._normalizeUrl(record.replyToUrl || '') !== this._normalizeUrl(previousUrl)) return false;
+        const author = this._workflowSocialPublicationAccountIdentity(guard.siteWorkflow, record.url);
+        if (author !== account && !this._workflowSocialAccountAliasProven(guard.siteWorkflow, account, author, record)) return false;
+        const mediaRecord = this._workflowSocialRecordWithUploadedAttachmentNames(record, binding);
+        return record.bodyTextComplete === true && record.attachmentsComplete === true && typeof record.bodyText === 'string'
+          && (expected.bodyText === '' ? record.bodyText === '' : this._workflowSocialPublishedBodyObserved({ field: 'body', value: expected.bodyText, rawValue: expected.bodyText }, record))
+          && publicationMediaMatches(post.media, mediaRecord)
+          && (i > 0 ? !(record.contextUrls?.length) : post.context.kind === 'post'
+            ? !(record.contextUrls?.length) && !record.replyToUrl
+            : post.context.kind === 'reply'
+            ? this._normalizeUrl(record.replyToUrl || '') === this._normalizeUrl(post.context.target)
+              && !(record.contextUrls?.length)
+            : !record.replyToUrl && (record.contextUrls || []).length === 1
+              && this._normalizeUrl(record.contextUrls[0]) === this._normalizeUrl(post.context.target));
+      });
+      if (matches.length !== 1) return false;
+      used.add(this._workflowPublishedResourceIdentity(guard.siteWorkflow, matches[0].url));
+      previousUrl = matches[0].url;
+      return true;
+    });
   }
 
   async _revalidateCarriedSiteWorkflow(tabId, siteWorkflow) {
@@ -20374,9 +19951,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           fields: Array.isArray(detected.fields) ? detected.fields.slice(0, 12) : [],
           changedFields: Array.isArray(detected.changedFields) ? detected.changedFields.slice(0, 8) : [],
           githubCommitDialogLauncher: detected.githubCommitDialogLauncher === true,
-          publicationResourceUrls: Array.isArray(detected.publicationResourceUrls)
-            ? detected.publicationResourceUrls.slice(0, 200)
-            : [],
+          ...(Array.isArray(detected.publicationResourceUrls) ? { publicationResourceUrls: detected.publicationResourceUrls.slice(0, 200) } : {}),
+          publicationResourceUrlsComplete: detected.publicationResourceUrlsComplete === true,
+          publicationSnapshot: detected.publicationSnapshot || null,
           publicationAccountIdentity: String(detected.publicationAccountIdentity || '').slice(0, 300),
           publicationAccountIdentityComplete: detected.publicationAccountIdentityComplete === true,
           transactionOrderIds: Array.isArray(detected.transactionOrderIds)
@@ -20389,6 +19966,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           transactionPageOrderIdsComplete: detected.transactionPageOrderIdsComplete === true,
         };
       }
+      const nonSubmit = rawResults.find(item => item?.resolvedNonSubmitTarget === true);
+      if (nonSubmit) return { isSubmit: false, resolvedNonSubmitTarget: true };
       // Explicit negative: the probe resolved the click target to an editable
       // field, proving activation only focuses it. Propagated (not dropped
       // like inconclusive results) so gates can pass proven non-submits while
@@ -20622,7 +20201,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     const publicationResourceUrls = () => {
       try {
-        return Array.from(doc.querySelectorAll('a[href]'))
+        const urls = Array.from(doc.querySelectorAll('a[href]'))
           .map((link) => {
             try { return new URL(link.getAttribute('href') || link.href || '', url).href; } catch { return ''; }
           })
@@ -20640,9 +20219,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               return false;
             }
           })
-          .slice(0, 200);
+          ;
+        return { urls: urls.slice(0, 200), complete: urls.length <= 200 };
       } catch {
-        return [];
+        return { urls: [], complete: false };
       }
     };
     const publicationAccountEvidence = (submitTarget) => {
@@ -20699,6 +20279,82 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return { identity: '', complete: false };
     };
+    const publicationEditorText = editor => {
+      if (typeof editor.value === 'string') return editor.value;
+      const read = node => {
+        if (node.nodeType === 3) return node.nodeValue || '';
+        if (node.nodeType !== 1) return '';
+        if (node.tagName === 'BR') return '\n';
+        const children = Array.from(node.childNodes);
+        // An empty editable block's BR is a caret placeholder. The block
+        // separator already represents that blank line.
+        if (children.length === 1 && children[0].nodeName === 'BR') return '';
+        let text = '';
+        let previousBlock = false;
+        children.forEach((child, index) => {
+          const block = child.nodeType === 1 && /^(DIV|P|LI)$/.test(child.nodeName);
+          if (index > 0 && (block || previousBlock)) text += '\n';
+          text += read(child);
+          previousBlock = block;
+        });
+        return text;
+      };
+      return read(editor);
+    };
+    const publicationComposerSnapshot = (root, account) => {
+      if (!root || !account.complete || !['x.com', 'twitter.com', 'bsky.app'].includes(host.replace(/^www\./, ''))) return null;
+      try {
+        const editors = Array.from(root.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]'))
+          .filter(isVisible).filter((el, _i, all) => !all.some(other => other !== el && other.contains(el)));
+        if (!editors.length || editors.length > 12) return { complete: false };
+        const mediaIn = scope => {
+          const nodes = Array.from(scope?.querySelectorAll('img,video,[data-testid="videoPlayer"]') || []).filter(isVisible)
+            .filter(node => {
+              if (editors.some(editor => editor.contains(node))) return false;
+              if (node.closest('[data-testid*="Avatar"],[data-testid*="avatar"],[data-testid="emoji"],[data-testid="card.wrapper"],[data-testid="linkPreview"],[data-testid="quoteTweet"]')) return false;
+              const embeddedCard = node.closest('article');
+              if (embeddedCard && !editors.some(editor => embeddedCard.contains(editor))) return false;
+              const src = String(node.getAttribute('src') || node.src || '');
+              return !/profile_images|\/avatar\/|\/emoji\/|twemoji/i.test(src);
+            });
+          return nodes.filter(node => !nodes.some(other => other !== node && other.contains(node)));
+        };
+        const allMedia = mediaIn(root);
+        const ownedMedia = new Set();
+        let sharedMedia = false;
+        const posts = editors.map(editor => {
+          let scope = editor.parentElement;
+          while (scope && scope !== root && !scope.querySelector('img,video,[data-testid="tweetPhoto"]')) {
+            if (Array.from(scope.parentElement?.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]') || []).filter(isVisible).length > 1) break;
+            scope = scope.parentElement;
+          }
+          if (editors.length === 1) scope = root;
+          const bodyText = publicationEditorText(editor);
+          const mediaNodes = mediaIn(scope);
+          for (const node of mediaNodes) {
+            if (ownedMedia.has(node)) sharedMedia = true;
+            ownedMedia.add(node);
+          }
+          const attachments = mediaNodes.map(node => {
+            const video = node.tagName?.toLowerCase() === 'video' || node.getAttribute('data-testid') === 'videoPlayer';
+            const source = video ? (node.currentSrc || node.src || node.querySelector('video,source')?.src || '') : (node.currentSrc || node.src || '');
+            return { type: video ? 'video' : 'image', src: String(source),
+              alt: node.getAttribute('alt') ?? node.querySelector('img')?.getAttribute('alt') ?? '' };
+          });
+          // Only embedded context cards supply a quote/reply target. Authored
+          // links and link previews cannot turn into relationship evidence.
+          const contextCards = Array.from(scope?.querySelectorAll('article,[data-testid="quoteTweet"],[data-testid="replyToPost"]') || []).filter(card => !card.contains(editor));
+          const contextUrls = [...new Set(contextCards.flatMap(card => Array.from(card.querySelectorAll('a[href]')))
+            .map(a => { try { return new URL(a.getAttribute('href'), url).href; } catch { return ''; } })
+            .filter(href => /\/status\/\d+|\/profile\/[^/]+\/post\/[^/]+/.test(href)))];
+          const reply = !!scope?.querySelector('[data-testid="replyToPost"],[data-testid="replyingTo"]');
+          return { bodyText, attachments,
+            context: { kind: reply ? 'reply' : contextUrls.length ? 'quote' : 'post', target: contextUrls.length === 1 ? contextUrls[0] : null },
+            complete: bodyText.length <= 25000 && mediaNodes.length <= 20 && contextUrls.length <= 1 && (!reply || contextUrls.length === 1) };
+        });
+        return { complete: posts.every(p => p.complete) && !sharedMedia && allMedia.every(node => ownedMedia.has(node)), account: account.identity, posts };
+      } catch { return { complete: false }; }
+    };
     const transactionOrderSite = /(?:^|\.)12306\.cn$/i.test(host);
     const submitInfo = (form, reason, pendingEl = null, pendingValue = null, validationSubmitEvidence = 'strong', submitControl = null) => {
       const formOrders = transactionOrderSite
@@ -20708,6 +20364,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? transactionOrderScan(doc.body || doc.documentElement)
         : { ids: [], complete: false };
       const publicationAccount = publicationAccountEvidence(submitControl);
+      const publicationBaseline = publicationResourceUrls();
       const formSummary = summarizeForm(form, pendingEl, pendingValue);
       const control = labelControlFor(submitControl) || submitControl;
       const controlLabel = compact(
@@ -20749,7 +20406,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         url,
         reason,
         validationSubmitEvidence,
-        publicationResourceUrls: publicationResourceUrls(),
+        publicationResourceUrls: publicationBaseline.urls,
+        publicationResourceUrlsComplete: publicationBaseline.complete,
+        publicationSnapshot: publicationComposerSnapshot(form, publicationAccount),
         publicationAccountIdentity: publicationAccount.identity,
         publicationAccountIdentityComplete: publicationAccount.complete,
         transactionOrderIds: formOrders.ids,
@@ -21048,6 +20707,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           evidence.strong ? 'strong' : 'heuristic',
           target,
         );
+      }
+      if (target && ['click', 'click_ax', 'iframe_click'].includes(toolName)
+          && target.closest?.('[data-testid="SideNav_NewTweet_Button"],[data-testid="FloatingActionButton"],[data-testid="composeFAB"],[data-testid="addButton"],[data-testid="attachments"],[data-testid="fileInput"],[data-testid="app-bar-back"],[data-testid="closeButton"],button[aria-label="Close"]')) {
+        return { isSubmit: false, host, url, resolvedNonSubmitTarget: true };
       }
       if (target
           && (toolName === 'click' || toolName === 'click_ax' || toolName === 'iframe_click')
@@ -24876,7 +24539,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         extraBody: { chat_template_kwargs: { enable_thinking: false } },
       }, opts.costState || this.currentCostState.get(tabId) || null, { tabId, generationName: 'intent' });
       const obj = Agent._extractFirstJsonObject(response?.content || '');
-      if (this._workflowJobStoresMetadataRequirements(siteWorkflow)) {
+      if (this._workflowJobStoresMetadataRequirements(siteWorkflow)
+          && !SOCIAL_PLATFORMS.includes(siteWorkflow?.adapterName)) {
         const guard = this._planExecutionGuards.get(tabId);
         if (guard) {
           const details = this._normalizeWorkflowMetadataRequirementsDetails(
@@ -24921,7 +24585,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return normalizeProgressIntent(obj, { taskText, pageScope, source: 'classifier' });
     } catch {
-      if (this._workflowJobStoresMetadataRequirements(siteWorkflow)) {
+      if (this._workflowJobStoresMetadataRequirements(siteWorkflow)
+          && !SOCIAL_PLATFORMS.includes(siteWorkflow?.adapterName)) {
         const guard = this._planExecutionGuards.get(tabId);
         if (guard && guard.workflowMetadataRequirementsResolved !== true) {
           const extractedBody = this._extractWorkflowTaskBody(taskText, approvedPlanText, siteWorkflow?.adapterName);
@@ -25123,6 +24788,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _ensureWorkflowMetadataRequirements(tabId, opts, taskText, pageScope) {
     const guard = this._planExecutionGuards.get(tabId);
     if (!guard?.enabled) return;
+    if (SOCIAL_PLATFORMS.includes(guard.siteWorkflow?.adapterName)) {
+      await this._ensureSocialPublicationContract(tabId, opts.provider);
+      await this._adoptLiveSocialPublishWorkflow(tabId, opts.provider);
+      return;
+    }
     const needsFields = this._workflowJobStoresMetadataRequirements(guard.siteWorkflow)
       && guard.workflowMetadataRequirementsResolved !== true;
     const needsLabels = guard.siteWorkflow?.job?.template === 'form'
@@ -25138,6 +24808,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _ensureProgressSessionForCurrentTask(tabId, opts = {}) {
+    const publicationGuard = this._planExecutionGuards.get(tabId);
+    if (publicationGuard?.enabled && publicationGuard.requiresSubmission === true) {
+      await this._ensureSocialPublicationContract(tabId, opts.provider);
+      await this._adoptLiveSocialPublishWorkflow(tabId, opts.provider);
+    }
     const expectedItems = this._normalizeExpectedItems(opts.expectedItems);
     if (expectedItems) this.progressExpectedItems.set(tabId, expectedItems);
     else if (opts.expectedItems !== undefined) this.progressExpectedItems.delete(tabId);
@@ -25656,6 +25331,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? (carried.successfulRequiredSchedulingToolCalls || 0)
         : 0,
       verifiedSubmissionEvidence: carryMatches && carried.verifiedSubmissionEvidence === true,
+      socialPublication: carryMatches && carried.socialPublication ? structuredClone(carried.socialPublication) : null,
       socialPublishSatisfiedTargets: carryMatches && Array.isArray(carried.socialPublishSatisfiedTargets)
         ? [...carried.socialPublishSatisfiedTargets]
         : [],
@@ -26014,6 +25690,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         pendingDownloadIds: [...guard.pendingDownloadIds],
         successfulRequiredSchedulingToolCalls: guard.successfulRequiredSchedulingToolCalls,
         verifiedSubmissionEvidence: guard.verifiedSubmissionEvidence === true,
+        socialPublication: guard.socialPublication ? structuredClone(guard.socialPublication) : null,
         socialPublishSatisfiedTargets: Array.isArray(guard.socialPublishSatisfiedTargets)
           ? [...guard.socialPublishSatisfiedTargets]
           : [],
@@ -30237,9 +29914,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   // body cannot be satisfied by the author name or timestamp
                   // the card also renders. Sized for X Premium long posts.
                   const authoredNodes = Array.isArray(record?.authored) ? record.authored : [];
-                  const bodyText = authoredNodes.length
-                    ? normalizeLines(authoredNodes.map(node => String(node.innerText || '')).join('\\n'), 25000)
+                  const rawBodyText = authoredNodes.length
+                    ? authoredNodes.map(node => String(node.innerText ?? node.textContent ?? '')).join('\\n').replace(/\\r\\n?/g, '\\n')
                     : '';
+                  const bodyText = rawBodyText.length <= 25000 ? rawBodyText : '';
                   const recordLinks = [
                     ...(best.matches?.('a[href]') ? [best] : []),
                     ...Array.from(best.querySelectorAll?.('a[href]') || []),
@@ -30313,7 +29991,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   const rawAttachments = mediaNodes.length
                     ? mediaNodes
                     : filteredAttachments.filter(node => !filteredAttachments.some(other => other !== node && other.contains?.(node)));
-                  const attachments = rawAttachments.slice(0, 12).map(candidate => {
+                  let attachmentDataComplete = true;
+                  const attachments = rawAttachments.slice(0, 20).map(candidate => {
                     const tag = (candidate.tagName || '').toLowerCase();
                     const testId = typeof candidate.getAttribute === 'function' ? (candidate.getAttribute('data-testid') || '') : '';
                     const isVideo = tag === 'video' || /video/i.test(testId) || !!candidate.querySelector?.('video');
@@ -30327,10 +30006,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       ? (candidate.getAttribute('alt') || candidate.getAttribute('aria-label')
                         || candidate.querySelector?.('img')?.getAttribute?.('alt') || '')
                       : '';
+                    if (String(src || '').length > 25000 || String(alt || '').length > 25000) attachmentDataComplete = false;
                     return {
                       type: isVideo ? 'video' : 'image',
-                      src: String(src || '').slice(0, 500),
-                      alt: String(alt || '').slice(0, 10000),
+                      src: String(src || '').slice(0, 25000),
+                      alt: String(alt || '').slice(0, 25000),
                     };
                   });
                   const prior = workflowResourceRecordMap.get(identity);
@@ -30339,7 +30019,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       url,
                       text,
                       bodyText,
+                      bodyTextComplete: record?.authorshipComplete === true && rawBodyText.length <= 25000,
+                      attachmentsComplete: record?.authorshipComplete === true && rawAttachments.length <= 20 && attachmentDataComplete,
                       links,
+                      replyToUrl: (() => {
+                        const parent = best.querySelector?.('[data-testid="replyToPost"] a[href],a[data-testid="replyToPost"],a[rel="in-reply-to"]');
+                        const explicit = best.getAttribute?.('data-in-reply-to-url') || parent?.href || '';
+                        return publicationResourceIdentity(explicit) ? explicit : '';
+                      })(),
+                      contextUrls: Array.from(new Set((record?.excluded || []).filter(node => !node.matches?.('[data-testid="replyToPost"]') && !node.closest?.('[data-testid="replyToPost"]')).flatMap(node => Array.from(node.querySelectorAll?.('a[href]') || []))
+                        .map(a => a.href).filter(href => publicationResourceIdentity(href)))),
                       attachments: attachments.length ? attachments : (prior?.attachments || []),
                     });
                   }

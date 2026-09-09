@@ -326,7 +326,7 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
     if (!links) return [];
     const excluded = [];
     for (const candidate of links) {
-      if (excluded.length >= 8) break;
+      if (excluded.length >= 9) break;
       const found = identityOf(candidate);
       if (!found || found === value) continue;
       if (isInsideAuthoredText(candidate)) continue;
@@ -355,7 +355,7 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
       }
       excluded.push(best);
     }
-    return excluded.slice(0, 8);
+    return excluded.slice(0, 9);
   };
 
   const authoredTextNodesIn = (card, excluded) => {
@@ -363,7 +363,7 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
     try {
       return Array.from(card.querySelectorAll(bodySelector))
         .filter(node => !excluded.some(entry => entry === node || entry.contains?.(node)))
-        .slice(0, 8);
+        .slice(0, 9);
     } catch {
       return [];
     }
@@ -440,7 +440,7 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
       });
       return validMedia
         .filter(node => !validMedia.some(other => other !== node && other.contains?.(node)))
-        .slice(0, 12);
+        .slice(0, 21);
     } catch {
       return [];
     }
@@ -455,10 +455,14 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
       // subtree carrying no post body at all.
       if (card && String(card.innerText || '').trim()) {
         const excluded = embeddedResourcesIn(card);
+        const authored = authoredTextNodesIn(card, excluded);
         return {
           root: card,
           excluded,
-          authored: authoredTextNodesIn(card, excluded),
+          // Keep one overflow sentinel; a truncated observation is not proof
+          // of the complete authored body or its embedded relationships.
+          authorshipComplete: excluded.length <= 8 && authored.length <= 8,
+          authored,
           attachments: authoredMediaNodesIn(card, excluded),
         };
       }
