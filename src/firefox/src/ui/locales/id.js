@@ -505,7 +505,7 @@ export default {
   "st.display.strict_secret.label": "Penanganan rahasia ketat",
   "st.display.strict_secret.desc": "Menolak mengutip kredensial (kata sandi, kunci API, token, OTP) dalam ringkasan atau teks asisten — bahkan saat Anda memintanya secara eksplisit. Berguna jika Anda kerap berbagi berkas jejak atau berbagi layar. Nonaktif secara bawaan: webbrain berjalan di peramban Anda sendiri, jadi secara bawaan agen menampilkan nilai yang Anda minta dan hanya menjaga ringkasan `done` tetap rapi.",
   "st.display.request_timeout.label": "Batas waktu permintaan LLM",
-  "st.display.request_timeout.desc": "Berapa lama menunggu LLM mulai merespons sebelum menyerah. Membatalkan hanya fase koneksi / waktu-hingga-header — badan streaming tidak terpengaruh. Bawaan 120s. Penyedia cloud (OpenAI / Anthropic / Gemini) merespons dalam hitungan detik; model lokal (llama.cpp / Ollama / LM Studio) pada CPU atau dengan konteks besar bisa memakan 60–180s sebelum byte pertama.",
+  "st.display.request_timeout.desc": "Batas waktu menunggu header respons dan setiap jeda antarbagian respons streaming. Bawaan: 120 detik. Naikkan untuk model lokal yang lambat, terutama pada CPU atau dengan konteks besar.",
   "st.providers.filter.all": "Semua",
   "st.providers.filter.local": "Lokal",
   "st.providers.filter.cloud": "Cloud",

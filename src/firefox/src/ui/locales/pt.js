@@ -638,7 +638,7 @@ export default {
   'st.display.max_steps.label': "Máximo de etapas do agente",
   'st.display.max_steps.desc': "Número máximo de etapas de uso da ferramenta que o agente pode realizar por mensagem. Valores mais altos permitem tarefas mais complexas de várias etapas, mas podem usar mais tokens. Defina o controle deslizante para ∞ para etapas ilimitadas.",
   'st.display.request_timeout.label': "Tempo limite da solicitação LLM",
-  'st.display.request_timeout.desc': "Quanto tempo esperar até que o LLM comece a responder antes de desistir. Aborta apenas a fase de conexão/tempo de cabeçalho — os corpos de streaming não são afetados. Padrão 120s. Os provedores de nuvem (OpenAI/Anthropic/Gemini) respondem em segundos; modelos locais (Jan / LM Studio / Ollama / llama.cpp / vLLM / SGLang) na CPU ou com contextos grandes podem levar de 60 a 180 segundos antes do primeiro byte.",
+  'st.display.request_timeout.desc': "Tempo máximo de espera pelos cabeçalhos da resposta e por cada pausa entre os trechos da resposta em streaming. Padrão: 120 s. Aumente para modelos locais lentos, especialmente na CPU ou com contextos grandes.",
   'st.display.traces_link.label': "Vestígios",
   'st.display.traces_link.desc': "Inspecione as execuções registradas lado a lado. Disponível apenas quando o rastreamento está ativado.",
   'st.display.history_link.label': "Histórico de bate-papo",

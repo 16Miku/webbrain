@@ -4499,34 +4499,53 @@ if (verboseBtn) {
 activityProgressToggle?.addEventListener('click', toggleCompactProgressVisibility);
 
 async function switchToTab(newTabId) {
-  if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
+  // Reserve the user's latest tab intent before any lookup can yield. Returning
+  // to the already-rendered tab must also invalidate an older pending switch.
+  const switchGeneration = ++tabSwitchGeneration;
+  const interruptedTransition = tabSwitchTransitionId != null;
+  tabSwitchTransitionId = newTabId;
+  queuedTabSwitchMessages = queuedTabSwitchMessages.filter(msg => msg?.tabId === newTabId);
+  syncSendButtonState();
   try {
-    const state = await sendToBackground('agent_run_state', { tabId: newTabId });
+    if (newTabId === currentTabId && renderedTabId === newTabId) {
+      if (interruptedTransition) await restoreActiveRunState(newTabId);
+      return;
+    }
+    let state = null;
+    try {
+      state = await sendToBackground('agent_run_state', { tabId: newTabId });
+    } catch {}
+    if (switchGeneration !== tabSwitchGeneration) return;
     const sourceTabId = researchEscalationSourceTabIdFromState(state);
     if (sourceTabId != null
         && (sameTabId(currentTabId, sourceTabId)
           || sameTabId(renderedTabId, sourceTabId)
           || isTabProcessing(sourceTabId)
           || isTabProcessing(currentTabId))) {
+      // The research helper keeps the visible source conversation. Queue its
+      // new events while restoring the snapshot, including events that arrive
+      // after that snapshot was captured but before reconciliation finishes.
+      const retainedTabId = renderedTabId ?? currentTabId;
+      currentTabId = retainedTabId;
+      tabSwitchTransitionId = retainedTabId;
+      queuedTabSwitchMessages = queuedTabSwitchMessages.filter(msg => msg?.tabId === retainedTabId);
+      syncCurrentTabRunFlags();
+      syncApiMutationsAllowedForCurrentTab();
+      syncSelectionScopeUi();
+      await restoreActiveRunState(retainedTabId);
       return;
     }
-  } catch {}
-  dismissSelectionAskAction();
-  if (newConversationConfirmationState
-      && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {
-    settleNewConversationConfirmation(false, { restoreFocus: false });
-  }
-  const switchGeneration = ++tabSwitchGeneration;
-  tabSwitchTransitionId = newTabId;
-  queuedTabSwitchMessages = [];
-  syncSendButtonState();
-  // The activity strip is a single panel-wide DOM node, unlike the tab-scoped
-  // chat and run journals. Clear the outgoing tab's transient status before
-  // any async restore work can yield; restoreActiveRunState (or a queued target
-  // update) will show it again if the destination tab is actually running.
-  hideActivity();
+    dismissSelectionAskAction();
+    if (newConversationConfirmationState
+        && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {
+      settleNewConversationConfirmation(false, { restoreFocus: false });
+    }
+    // The activity strip is a single panel-wide DOM node, unlike the tab-scoped
+    // chat and run journals. Clear the outgoing tab's transient status before
+    // any async restore work can yield; restoreActiveRunState (or a queued target
+    // update) will show it again if the destination tab is actually running.
+    hideActivity();
 
-  try {
     // Save the tab currently represented by the DOM. During an async restore,
     // currentTabId may already point at the target while the DOM is still older.
     if (renderedTabId != null) {
@@ -4579,7 +4598,11 @@ async function switchToTab(newTabId) {
     refreshScheduledJobs({ tabId: newTabId });
     refreshRecommendedActions();
   } finally {
-    if (switchGeneration === tabSwitchGeneration && tabSwitchTransitionId === newTabId) tabSwitchTransitionId = null;
+    if (switchGeneration === tabSwitchGeneration) {
+      tabSwitchTransitionId = null;
+      if (currentTabId === renderedTabId) drainQueuedAgentUpdatesForTab(currentTabId);
+      if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
+    }
     syncSendButtonState();
   }
   drainQueuedAgentUpdatesForTab(newTabId);
@@ -4816,6 +4839,8 @@ async function adoptRestoredRunState(tabId, state) {
       || runUi.status === 'awaiting_plan'
       || isConversationClearInProgress(tabId)
       || clearedConversationRunRequestIds.has(requestId)
+      || cancelledRunRecoveryRequestIds.has(requestId)
+      || isTabAbortRequested(tabId)
       || !sameTabId(currentTabId, tabId)
       || !sameTabId(renderedTabId, tabId)
       || localRunRequestIds.has(Number(tabId))
@@ -5035,9 +5060,13 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
   invalidatePlanReviewCards({ tabId: numericTabId });
   if (state?.running || state?.starting) {
     setTabProcessing(numericTabId, true);
-    setTabAbortRequested(numericTabId, false);
     hideRecommendedActions();
-    startThinkingActivity();
+    const stopping = requestId
+      ? cancelledRunRecoveryRequestIds.has(requestId)
+      : isTabAbortRequested(numericTabId);
+    setTabAbortRequested(numericTabId, stopping);
+    if (stopping) showActivity(t('sp.activity.stopping'));
+    else startThinkingActivity();
     syncSendButtonState();
   } else {
     setPlanReviewAwaiting(numericTabId, false);

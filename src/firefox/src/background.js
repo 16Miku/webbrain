@@ -2027,11 +2027,11 @@ function persistRunUiSnapshot(tabId, snapshot) {
   const write = previous.catch(() => false).then(async () => {
     if (runUiPersistenceFailures.get(tabId) === requestId) return false;
     try {
-      await browser.storage.session?.set({ [RUN_UI_PREFIX + tabId]: stableSnapshot });
+      await browser.storage.session.set({ [RUN_UI_PREFIX + tabId]: stableSnapshot });
       return true;
     } catch {
       try {
-        await browser.storage.session?.set({
+        await browser.storage.session.set({
           [RUN_UI_PREFIX + tabId]: compactRunUiSnapshotForPersist(stableSnapshot, { tight: true }),
         });
         return true;
@@ -2096,10 +2096,16 @@ function isPlannerRequestFailureUpdate(update) {
     && update?.data?.code === 'planner_request_failed';
 }
 
+function isPersistenceDegradedRunUpdate(update) {
+  return update?.type === 'run_status'
+    && update?.data?.status === 'persistence_degraded';
+}
+
 function runUpdatesSucceeded(updates = []) {
   return !updates.some(update => (
     update?.type === 'error'
     || isClarificationRequiredRunUpdate(update)
+    || isPersistenceDegradedRunUpdate(update)
     || isPlannerRequestFailureUpdate(update)
   ));
 }
@@ -2109,7 +2115,8 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   const text = String(content || '');
   if (/stopped by user|aborted by user/i.test(text)) return 'stopped';
   if (/before executing requested tool calls/i.test(text)) return 'cancelled';
-  if (updates.some(update => update?.type === 'error' || isPlannerRequestFailureUpdate(update))) return 'failed';
+  if (updates.some(update => update?.type === 'error'
+    || isPlannerRequestFailureUpdate(update) || isPersistenceDegradedRunUpdate(update))) return 'failed';
   if (updates.some(isClarificationRequiredRunUpdate)) return 'clarification_required';
   return 'completed';
 }

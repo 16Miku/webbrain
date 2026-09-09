@@ -521,7 +521,7 @@ export default {
   "st.display.strict_secret.label": "엄격한 비밀 정보 처리",
   "st.display.strict_secret.desc": "요약이나 어시스턴트 텍스트에 자격 증명(비밀번호, API 키, 토큰, OTP)을 인용하기를 거부합니다 — 명시적으로 요청하더라도 마찬가지입니다. 트레이스 파일을 자주 공유하거나 화면을 공유한다면 유용합니다. 기본값은 꺼짐: WebBrain은 사용자 본인의 브라우저에서 실행되므로, 기본적으로 에이전트는 요청한 값을 보여 주고 `done` 요약만 깔끔하게 유지합니다.",
   "st.display.request_timeout.label": "LLM 요청 시간 제한",
-  "st.display.request_timeout.desc": "포기하기 전에 LLM이 응답을 시작하기를 기다리는 시간입니다. 연결 / 헤더 도달 단계만 중단하며 — 스트리밍 본문에는 영향을 주지 않습니다. 기본값 120s. 클라우드 제공자(OpenAI / Anthropic / Gemini)는 몇 초 안에 응답하지만, CPU에서 실행되거나 컨텍스트가 큰 로컬 모델(llama.cpp / Ollama / LM Studio)은 첫 바이트까지 60–180s가 걸릴 수 있습니다.",
+  "st.display.request_timeout.desc": "응답 헤더 수신과 스트리밍 응답의 각 청크 사이에 기다리는 최대 시간입니다. 기본값: 120초. 로컬 모델이 느리면, 특히 CPU에서 실행하거나 컨텍스트가 큰 경우 이 시간을 늘리세요.",
   "st.providers.filter.all": "전체",
   "st.providers.filter.local": "로컬",
   "st.providers.filter.cloud": "클라우드",
