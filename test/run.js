@@ -66568,14 +66568,14 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     kuae-cloud-coding-plan llama lucidquery meganova minimax-cn-coding-plan
     minimax-coding-plan moark modelscope morph nano-gpt nebius nova novita-ai
     ollama-cloud opencode opencode-go orcarouter ovhcloud perplexity
-    perplexity-agent poe privatemode-ai qihang-ai qiniu-ai requesty scaleway siliconflow
+    perplexity-agent poe pollinations privatemode-ai qihang-ai qiniu-ai requesty scaleway siliconflow
     siliconflow-cn stackit stepfun submodel synthetic tencent-coding-plan
     upstage v0 venice vercel vivgrid vultr wandb xiaomi zai-coding-plan zenmux
     zhipuai zhipuai-coding-plan
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 77);
+  assert.equal(expectedIds.length, 78);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -66589,7 +66589,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 108 : 107;
+    const expectedDefaultCount = label === 'chrome' ? 109 : 108;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
