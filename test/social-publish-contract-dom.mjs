@@ -120,6 +120,79 @@ try {
       },bodyId);
       published=(await readPublished()).workflowResourceRecords[0];
       assert.equal(published.bodyTextComplete,false,'overflow cannot prove a complete body');checked++;
+      // Drive composer observation, simulated dispatch, actual completion DOM
+      // extraction, and terminal verification. No replyToUrl is hand-written.
+      const profile=name=>platform==='twitter'?`https://x.com/${name}`:`https://bsky.app/profile/${name}.bsky.social`;
+      const item=(id,who,href,text,hint='')=>`<div data-testid="cellInnerDiv" id="${id}-cell"><article data-testid="${card}" id="${id}"><div data-testid="User-Name"><a href="${profile(who)}">${who}</a><a href="${href}"><time>Today</time></a></div>${hint}<div data-testid="${bodyId}">${text}</div></article></div>`;
+      const parentItem=item('parent-post','bob',parent,'Parent body');
+      const hint=`<div data-testid="replyingTo" id="reply-hint">Replying to <a href="${profile('bob')}">@bob</a></div>`;
+      const replyItem=item('reply-post','alice',permalink,'Hello',hint);
+      const threadHtml=items=>`<nav><a ${platform==='twitter'?'data-testid="AppTabBar_Profile_Link"':''} href="${platform==='twitter'?'/alice':'/profile/alice.bsky.social'}">Profile</a></nav><main><div data-testid="primaryColumn"><div id="thread">${items}</div></div></main>`;
+      await page.evaluate(parent=>history.replaceState({},'',parent),parent);
+      await page.setContent(threadHtml(parentItem+`<div id="composer"><div data-testid="replyingTo">Replying to <a href="${profile('bob')}">@bob</a></div><div contenteditable="true" role="textbox">Hello</div><button id="publish" data-testid="${platform==='twitter'?'tweetButtonInline':'composerPublishBtn'}">Reply</button></div>`));
+      const provider={chat:async()=>({content:'{}'})},agent=new Agent({getActive:()=>provider}),tabId=910;
+      const request=`Reply exactly Hello to ${parent} on ${platform==='twitter'?'X':'Bluesky'} without attachments.`;
+      agent.useSiteAdapters=true;agent._persist=()=>{};agent._currentUrl=async()=>page.url();
+      agent.conversations.set(tabId,[{role:'system',content:'system'},{role:'user',content:request}]);
+      agent._startPlanExecutionGuard(tabId,'act',{requestKind:'execute',requiresStateChange:true,requiresSubmission:true});
+      const reference=text=>({source:'request',start:text,end:text});
+      const raw={version:1,status:'ready',actions:[{id:'p1',platform,account:null,posts:[{body:{kind:'exact',source:reference('Hello')},media:{kind:'count',type:'any',format:null,min:0,max:0},context:{kind:'reply',target:reference(parent)}}]}],requirements:'p1',prohibited:[],reason:'Fixture request.'};
+      agent._chatWithCostAllowance=async(_p,messages,_o,_c,meta)=>{
+        const input=JSON.parse(messages[1].content);
+        return {content:JSON.stringify(meta.generationName==='social_publication_authorization'?{key:input.key,actionId:input.action.id,authorized:true,reason:'Fixture authorization.'}:raw)};
+      };
+      agent._detectLikelySubmitAction=async()=>probe();
+      const detected=await probe();
+      assert.equal(detected.publicationSnapshot.account,platform==='twitter'?'twitter:alice':'bluesky:alice.bsky.social','reply recipient cannot become the publishing account');
+      assert.equal(await agent._workflowPreSubmitDispatchBlock(tabId,'click',{selector:'#publish'},detected,provider),null);
+      agent._beginCompletionInvariant(tabId);
+      agent._recordCompletionToolResult(tabId,'click',{selector:'#publish'},{success:true,dispatched:true});
+      agent._recordCompletionSubmitAttempt(tabId,detected,'click',{selector:'#publish'},parent,parent,{success:true,dispatched:true});
+      await page.setContent(threadHtml(parentItem+replyItem));
+      const verify=async()=>{
+        const state=await readPublished();
+        agent._recordCompletionToolResult(tabId,'read_page',{}, {success:true,url:page.url(),content:'Observed thread.'});
+        return {state,record:state.workflowResourceRecords.find(r=>r.url===permalink),terminal:agent._workflowTerminalEvidenceFromDone(tabId,state,page.url(),agent._completionSubmissionEvidence(tabId,state,page.url()))};
+      };
+      let verified=await verify();
+      assert.equal(verified.record.replyToUrl,parent,'published reply profile hint resolves through surrounding thread');
+      assert(verified.terminal,`${build}/${platform}: actual extracted reply relationship completes the submitted contract`);checked++;
+      await page.evaluate(permalink=>history.replaceState({},'',permalink+'?s=20#reply'),permalink);
+      verified=await verify();assert.equal(verified.record.replyToUrl,parent);assert(verified.terminal);checked++;
+      // Native profile-only reply UI may have no reply-specific test ID.
+      await page.locator('#reply-hint').evaluate(el=>el.removeAttribute('data-testid'));
+      verified=await verify();assert.equal(verified.record.replyToUrl,parent);assert(verified.terminal);checked++;
+      for(const variation of ['feed','wrong-profile','missing-parent','reordered','gap','duplicate-parent','quoted-parent','body-mention']){
+        await page.evaluate(permalink=>history.replaceState({},'',permalink),permalink);
+        await page.setContent(threadHtml(parentItem+replyItem));
+        if(variation==='feed') await page.evaluate(()=>history.replaceState({},'','/home'));
+        if(variation==='wrong-profile') await page.locator('#reply-hint a').evaluate((el,href)=>el.href=href,profile('carol'));
+        if(variation==='missing-parent') await page.locator('#parent-post-cell').evaluate(el=>el.remove());
+        if(variation==='reordered') await page.locator('#thread').evaluate(el=>el.prepend(el.lastElementChild));
+        if(variation==='gap') await page.locator('#parent-post-cell').evaluate(el=>{const gap=document.createElement('div');gap.dataset.testid='cellInnerDiv';gap.textContent='Show more';el.after(gap);});
+        if(variation==='duplicate-parent') await page.locator('#parent-post-cell').evaluate(el=>el.before(el.cloneNode(true)));
+        if(variation==='quoted-parent') await page.locator('#reply-post').evaluate(el=>{const quote=document.createElement('div');quote.dataset.testid='quoteTweet';quote.append(document.querySelector('#parent-post-cell'));el.append(quote);});
+        if(variation==='body-mention') await page.locator('#reply-hint').evaluate((el,bodyId)=>{el.removeAttribute('data-testid');document.querySelector(`#reply-post [data-testid="${bodyId}"]`).append(el);},bodyId);
+        verified=await verify();assert.equal(verified.record.replyToUrl,'',variation);assert.equal(verified.terminal,null,variation);checked++;
+      }
+      // Explicit app-provided parent metadata also works outside a thread,
+      // but invalid metadata cannot be repaired by the background page URL.
+      await page.evaluate(()=>history.replaceState({},'','/home'));
+      await page.setContent(threadHtml(replyItem));
+      await page.locator('#reply-post').evaluate((el,parent)=>el.setAttribute('data-in-reply-to-url',parent),parent);
+      verified=await verify();assert.equal(verified.record.replyToUrl,parent);assert(verified.terminal);checked++;
+      await page.locator('#reply-post').evaluate(el=>el.setAttribute('data-in-reply-to-url','https://example.com/bob/status/1111111111111111111'));
+      verified=await verify();assert.equal(verified.record.replyToUrl,'');assert.equal(verified.terminal,null);checked++;
+      await page.evaluate(permalink=>history.replaceState({},'',permalink),permalink);
+      await page.setContent(threadHtml(parentItem+replyItem));
+      const mentioned=platform==='twitter'?'https://x.com/alice/status/5555555555555555555':'https://bsky.app/profile/alice.bsky.social/post/3mentioned';
+      await page.locator(`#reply-post [data-testid="${bodyId}"]`).evaluate((el,href)=>{const link=document.createElement('a');link.href=href;link.textContent=href;el.append(link);},mentioned);
+      verified=await verify();
+      assert.equal(verified.state.workflowResourceRecords.find(r=>r.url===mentioned)?.replyToUrl,'','an authored permalink does not inherit the surrounding card relationship');
+      assert.equal(verified.record.replyToUrl,parent);assert.equal(verified.terminal,null);checked++;
+
+
+
 
     }
   }

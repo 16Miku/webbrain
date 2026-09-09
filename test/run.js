@@ -94328,6 +94328,7 @@ test('the injected completion probe survives its own template literal', () => {
     const injected = vm.runInNewContext('`' + raw + '`', {
       classifyCompletionForm: invariant.classifyCompletionForm,
       publicationResourceRecordRoot: invariant.publicationResourceRecordRoot,
+      publicationReplyParent: invariant.publicationReplyParent,
     });
     assert.doesNotThrow(
       () => new vm.Script(`(${injected})`),

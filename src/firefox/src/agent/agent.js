@@ -31,7 +31,7 @@ import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLe
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
-import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
+import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, publicationReplyParent, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
 import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
 import {
@@ -20272,6 +20272,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const profileNav = identitiesIn(doc, 'a[data-testid="AppTabBar_Profile_Link"][href]');
         if (profileNav.length === 1) return { identity: profileNav[0], complete: true };
       }
+      // Navigation identifies the signed-in account before a reply target's
+      // profile link inside the composer can be mistaken for its author.
+      if (adapterName === 'bluesky') {
+        const profileNav = identitiesIn(doc, 'nav a[href^="/profile/"], [role="navigation"] a[href^="/profile/"]');
+        if (profileNav.length === 1) return { identity: profileNav[0], complete: true };
+      }
       let node = submitTarget;
       for (let depth = 0; node && depth < 10; depth++, node = node.parentElement) {
         let hasEditor = false;
@@ -20282,10 +20288,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const identities = identitiesIn(node);
         if (identities.length === 1) return { identity: identities[0], complete: true };
         if (identities.length > 1) break;
-      }
-      if (adapterName === 'bluesky') {
-        const profileNav = identitiesIn(doc, 'nav a[href^="/profile/"], [role="navigation"] a[href^="/profile/"]');
-        if (profileNav.length === 1) return { identity: profileNav[0], complete: true };
       }
       return { identity: '', complete: false };
     };
@@ -29824,6 +29826,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 }
                 const classifyForm = ${classifyCompletionForm.toString()};
                 const publicationRecordRoot = ${publicationResourceRecordRoot.toString()};
+                const publicationParent = ${publicationReplyParent.toString()};
+                const publicationParentCache = new Map();
                 const dialogs = Array.from(document.querySelectorAll('[role=dialog],[role=alertdialog],[aria-modal="true"],dialog[open]')).filter(visible);
                 const forms = Array.from(document.querySelectorAll('form')).filter(visible);
                 const primaryContent = document.querySelector('main,[role=main]');
@@ -30057,9 +30061,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       attachmentsComplete: record?.authorshipComplete === true && rawAttachments.length <= 20 && attachmentDataComplete,
                       links,
                       replyToUrl: (() => {
-                        const parent = best.querySelector?.('[data-testid="replyToPost"] a[href],a[data-testid="replyToPost"],a[rel="in-reply-to"]');
-                        const explicit = best.getAttribute?.('data-in-reply-to-url') || parent?.href || '';
-                        return publicationResourceIdentity(explicit) ? explicit : '';
+                        if (!publicationParentCache.has(best)) publicationParentCache.set(best, new Map());
+                        const parents = publicationParentCache.get(best);
+                        if (!parents.has(identity)) parents.set(identity,
+                          publicationParent(best, location.href, publicationResourceIdentity, identity));
+                        return parents.get(identity);
                       })(),
                       contextUrls: Array.from(new Set((record?.excluded || []).filter(node => !node.matches?.('[data-testid="replyToPost"]') && !node.closest?.('[data-testid="replyToPost"]')).flatMap(node => Array.from(node.querySelectorAll?.('a[href]') || []))
                         .map(a => a.href).filter(href => publicationResourceIdentity(href)))),

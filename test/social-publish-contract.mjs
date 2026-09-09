@@ -368,4 +368,5 @@ test('Chrome and Firefox share the contract runtime and composer extraction', as
   const chromeInvariant=await import('../src/chrome/src/agent/completion-invariant.js');
   const firefoxInvariant=await import('../src/firefox/src/agent/completion-invariant.js');
   assert.equal(chromeInvariant.publicationResourceRecordRoot.toString()===firefoxInvariant.publicationResourceRecordRoot.toString(),true,'publication record parity');
+  assert.equal(chromeInvariant.publicationReplyParent.toString()===firefoxInvariant.publicationReplyParent.toString(),true,'published reply parent parity');
 });

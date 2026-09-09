@@ -483,6 +483,100 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
   return { root: best, excluded: [], authored: [], attachments: authoredMediaNodesIn(best, []) };
 }
 
+// Infer a published reply's parent only from the page's own thread structure.
+// Keep self-contained: Agent serializes this function into the completion probe.
+export function publicationReplyParent(card, pageUrl, publicationResourceIdentity, expectedIdentity) {
+  try {
+    const page = new URL(pageUrl);
+    const host = page.hostname.toLowerCase().replace(/^www\./, '');
+    const twitter = host === 'x.com' || host === 'twitter.com';
+    if (!twitter && host !== 'bsky.app') return '';
+    const cardSelector = twitter ? '[data-testid="tweet"]' : '[data-testid^="feedItem-by-"],[data-testid^="postThreadItem-by-"]';
+    const bodySelector = twitter ? '[data-testid="tweetText"]' : '[data-testid="postText"]';
+    const embeds = '[data-testid="quoteTweet"],[role="blockquote"],[data-testid*="quote"],[data-testid*="card.layout"],[data-testid^="postQuote-"],[data-testid="embeddedPost"],[data-testid^="embed-"]';
+    const hints = '[data-testid="replyingTo"],[data-testid="replyToPost"]';
+    if (!card?.matches?.(cardSelector) || card.parentElement?.closest(cardSelector + ',' + embeds)) return '';
+    const visible = node => {
+      const rect = node.getBoundingClientRect();
+      const style = window.getComputedStyle(node);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0;
+    };
+    const parse = value => {
+      if (!value) return null;
+      const parsed = new URL(value, pageUrl);
+      const candidateHost = parsed.hostname.toLowerCase().replace(/^www\./, '');
+      if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password || parsed.port
+          || (twitter ? !['x.com', 'twitter.com'].includes(candidateHost) : candidateHost !== 'bsky.app')) return null;
+      return parsed;
+    };
+    const permalink = value => {
+      try {
+        const parsed = parse(value);
+        if (!parsed) return '';
+        const url = parsed.origin + parsed.pathname.replace(/\/+$/, '');
+        return publicationResourceIdentity(url) ? url : '';
+      } catch { return ''; }
+    };
+    const profile = value => {
+      try {
+        const parsed = parse(value);
+        if (!parsed) return '';
+        const match = parsed.pathname.replace(/\/+$/, '').match(twitter ? /^\/([A-Za-z0-9_]{1,15})$/ : /^\/profile\/([^/]+)$/);
+        return match ? match[1].toLowerCase() : '';
+      } catch { return ''; }
+    };
+    const owner = value => {
+      try {
+        const parsed = parse(value);
+        const match = parsed?.pathname.match(twitter ? /^\/([^/]+)\/status\/\d+\/?$/ : /^\/profile\/([^/]+)\/post\/[^/]+\/?$/);
+        return match ? match[1].toLowerCase() : '';
+      } catch { return ''; }
+    };
+    const owned = (node, root) => node.closest(cardSelector) === root && !node.closest(bodySelector + ',' + embeds);
+    const ownPermalink = root => {
+      const urls = new Map(Array.from(root.querySelectorAll('a[href]')).filter(a => visible(a) && owned(a, root) && !a.closest(hints))
+        .map(a => permalink(a.getAttribute('href'))).filter(Boolean).map(url => [publicationResourceIdentity(url), url]));
+      return urls.size === 1 ? [...urls.values()][0] : '';
+    };
+    const childUrl = ownPermalink(card), childId = publicationResourceIdentity(childUrl);
+    if (!childId || childId !== expectedIdentity) return '';
+    const explicit = new Map([
+      card.getAttribute('data-in-reply-to-url'),
+      ...Array.from(card.querySelectorAll('[data-testid="replyToPost"] a[href],a[data-testid="replyToPost"],a[rel="in-reply-to"]'))
+        .filter(a => visible(a) && owned(a, card)).map(a => a.getAttribute('href')),
+    ].map(permalink).filter(Boolean).map(url => [publicationResourceIdentity(url), url]));
+    if (explicit.size) return explicit.size === 1 && !explicit.has(childId) ? [...explicit.values()][0] : '';
+    if (card.hasAttribute('data-in-reply-to-url')) return '';
+
+    const threadUrl = permalink(pageUrl), threadId = publicationResourceIdentity(threadUrl);
+    const scope = card.closest('[data-testid="primaryColumn"],main,[role="main"]');
+    if (!threadId || !scope || card.closest('dialog,[role="dialog"],aside,[role="complementary"]')) return '';
+    const cards = Array.from(scope.querySelectorAll(cardSelector)).filter(node => visible(node)
+      && !node.parentElement?.closest(cardSelector + ',' + embeds)
+      && !node.closest('dialog,[role="dialog"],aside,[role="complementary"]'));
+    if (cards.length > 200) return '';
+    const items = cards.map(root => ({ root, url: ownPermalink(root) })).filter(item => item.url);
+    const current = items.findIndex(item => item.root === card);
+    if (current <= 0 || items.filter(item => publicationResourceIdentity(item.url) === threadId).length !== 1
+        || items.filter(item => publicationResourceIdentity(item.url) === childId).length !== 1) return '';
+    const parent = items[current - 1], parentId = publicationResourceIdentity(parent.url);
+    // The active permalink must be one endpoint of this adjacent thread pair.
+    // A grandparent route, a feed, or mere page co-occurrence is insufficient.
+    if (threadId !== childId && threadId !== parentId) return '';
+    if (items.filter(item => publicationResourceIdentity(item.url) === parentId).length !== 1) return '';
+    const parentCell = parent.root.closest('[data-testid="cellInnerDiv"]') || parent.root;
+    const childCell = card.closest('[data-testid="cellInnerDiv"]') || card;
+    if (parentCell.parentElement !== childCell.parentElement || parentCell.nextElementSibling !== childCell) return '';
+    const markedHints = Array.from(card.querySelectorAll(hints)).filter(visible);
+    const profileLinks = markedHints.length
+      ? markedHints.flatMap(node => Array.from(node.querySelectorAll('a[href]')))
+      : Array.from(card.querySelectorAll('a[href]')).filter(a => !a.closest('[data-testid="User-Name"],[data-testid*="Avatar"],[data-testid*="avatar"],button,[role="button"]')
+        && profile(a.getAttribute('href')) !== owner(childUrl));
+    const recipients = new Set(profileLinks.filter(a => visible(a) && owned(a, card)).map(a => profile(a.getAttribute('href'))).filter(Boolean));
+    return recipients.size === 1 && recipients.has(owner(parent.url)) ? parent.url : '';
+  } catch { return ''; }
+}
+
 export function isCompletionActionTool(name, args = {}) {
   if (name === 'execute_webmcp_tool') return true;
   if (
