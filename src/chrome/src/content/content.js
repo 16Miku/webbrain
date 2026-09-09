@@ -1337,6 +1337,20 @@
     };
   }
 
+  // Shared by click dispatch and its recipient-safety preflight. In
+  // particular, navigation links must participate in text-match ambiguity.
+  function _clickTextCandidates(scope) {
+    const selectors = [
+      'a', 'button', '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
+      'input:not([type="hidden"])', 'textarea', 'select', 'input[type="button"]',
+      'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
+      ..._siteInteractiveSelectors(),
+    ].join(', ');
+    return Array.from(scope.querySelectorAll(selectors))
+      .map(e => ({ e, txt: _siteInteractionText(e).toLowerCase() }))
+      .filter(candidate => candidate.txt);
+  }
+
   let _lastClickIdent = null;
 
   /**
@@ -1372,13 +1386,6 @@
     if (params.text) {
       const needle = params.text.toLowerCase();
       const explicit = params.textMatch || '';
-      // Include inputs/select/textarea so we can match by placeholder, value, or aria-label
-      const sels = [
-        'a', 'button', '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
-        'input:not([type="hidden"])', 'textarea', 'select', 'input[type="button"]',
-        'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
-        ..._siteInteractiveSelectors(),
-      ].join(', ');
       // Modal scoping: if a topmost modal/dialog is open, restrict the search
       // to elements inside it. Without this, click({text: "Create"}) can land
       // on a background button (GitHub's "Create new tag" dialog over the
@@ -1386,11 +1393,7 @@
       // what queryInteractive() already does for index-based clicks.
       const _modalRoot = _findTopmostModal();
       const _scope = _modalRoot || document;
-      const all = Array.from(_scope.querySelectorAll(sels));
-      const normalized = all.map(e => ({
-        e,
-        txt: _siteInteractionText(e).toLowerCase(),
-      })).filter(x => !!x.txt);
+      const normalized = _clickTextCandidates(_scope);
 
       // Build label→input map so we can match label text and resolve to associated input
       const labelMap = new Map();
@@ -1447,11 +1450,7 @@
           if (actionDeadlineExpired()) return deadlineFailure();
           window.scrollBy(0, Math.round(window.innerHeight * 0.7));
           const _retryScope = _findTopmostModal() || document;
-          const allRetry = Array.from(_retryScope.querySelectorAll(sels));
-          const normRetry = allRetry.map(e => ({
-            e,
-            txt: _siteInteractionText(e).toLowerCase(),
-          })).filter(x => !!x.txt);
+          const normRetry = _clickTextCandidates(_retryScope);
           for (const m of modes) {
             if (m === 'exact') matches = normRetry.filter(x => x.txt === needle);
             else if (m === 'prefix') matches = normRetry.filter(x => x.txt.startsWith(needle));
@@ -4900,20 +4899,32 @@
         if (refId && typeof window.__wb_ax_lookup === 'function') target = window.__wb_ax_lookup(refId);
         targetResolved = !!target;
       } else if (tool === 'click') {
-        if (typeof args.selector === 'string' && args.selector) {
-          try { target = document.querySelector(args.selector); } catch {}
+        // Match dispatch precedence, modal scope, candidate text and match
+        // mode. A supplied selector must not approve a different text click.
+        if (typeof args.text === 'string' && args.text) {
+          const needle = args.text.toLowerCase();
+          const scope = _findTopmostModal() || document;
+          const candidates = _clickTextCandidates(scope);
+          const modes = args.textMatch ? [args.textMatch] : ['exact', 'prefix', 'contains'];
+          for (const mode of modes) {
+            let matches = candidates.filter(({ txt }) => mode === 'exact' ? txt === needle
+              : mode === 'prefix' ? txt.startsWith(needle)
+                : mode === 'contains' ? txt.includes(needle) : false);
+            // Dispatch prefers the sole interactive match over passive labels.
+            // Multiple interactive matches must still stop at this match tier.
+            if (matches.length > 1) {
+              const interactiveMatches = matches.filter(({ e }) => _isInteractive(e));
+              if (interactiveMatches.length === 1) matches = interactiveMatches;
+            }
+            if (matches.length === 1) target = _resolveInteractiveAncestor(matches[0].e);
+            if (matches.length) break;
+          }
+        } else if (typeof args.selector === 'string' && args.selector) {
+          target = safeIndexedQuerySelector(args.selector, args.matchIndex).element;
         } else if (Number.isInteger(args.index) && args.index >= 0) {
           target = queryInteractiveForToolIndex()[args.index] || null;
         } else if (Number.isFinite(args.x) && Number.isFinite(args.y)) {
           target = document.elementFromPoint(args.x, args.y);
-        } else if (typeof args.text === 'string' && args.text.trim()) {
-          const needle = compact(args.text).toLocaleLowerCase();
-          const matches = Array.from(document.querySelectorAll(
-            'button,[role="button"],input[type="submit"],input[type="button"],[data-action]'
-          )).filter((el) => compact(
-            el.innerText || el.value || el.getAttribute?.('aria-label') || el.getAttribute?.('title')
-          ).toLocaleLowerCase() === needle);
-          if (matches.length === 1) target = matches[0];
         }
         targetResolved = !!target;
       }
@@ -5023,6 +5034,33 @@
           && railRect.right <= composerRect.left + 64;
       };
 
+      const verifiedLinkedInNavigation = (clicked) => {
+        if (params.adapterName !== 'linkedin' || !clicked) return false;
+        const link = clicked.closest?.('a[href]');
+        if (!link || !visible(link) || !link.closest?.('nav,[role="navigation"]')) return false;
+        // A navigation-looking descendant of a composer/action is not a
+        // navigation escape hatch. Keep actual sends and modal controls on
+        // the existing recipient-verification path.
+        if (clicked.closest?.('button,[role="button"],input,select,textarea,[contenteditable]:not([contenteditable="false"]),[onclick],[data-action]')
+            || link.closest?.('form,dialog,[role="dialog"],[role="alertdialog"]')
+            || link.hasAttribute?.('download')
+            || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return false;
+        try {
+          const href = String(link.getAttribute('href') || '').trim();
+          if (!href || href.startsWith('#')) return false;
+          const destination = new URL(href, document.baseURI);
+          // Only the site's top-level navigation destinations are known not
+          // to send. Arbitrary action URLs and conversation controls stay
+          // inconclusive, even when their visible label says Home or Jobs.
+          return /^https?:$/.test(destination.protocol)
+            && destination.origin === location.origin
+            && /^(?:www\.)?linkedin\.com$/.test(destination.hostname)
+            && /^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname);
+        } catch {
+          return false;
+        }
+      };
+
       let composer = null;
       let messageSend = null;
       if (observationOnly) {
@@ -5059,8 +5097,12 @@
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         const control = target.closest?.('button,[role="button"],input[type="submit"],input[type="button"],[data-action]') || target;
-        if (!visible(control)) {
+        const modal = _findTopmostBlockingModal();
+        if (!visible(control) || (modal && !_isComposedAncestor(modal, target))) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (verifiedLinkedInNavigation(target)) {
+          return { success: true, messageSend: false, conclusive: true, navigation: true, identityCandidates: [] };
         }
         composer = layoutComposer;
         if (!composer) {

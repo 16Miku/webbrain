@@ -1277,6 +1277,54 @@
     return { element: matches[requested] || null, matchCount: matches.length, matchIndex: requested };
   }
 
+  // Shared by click dispatch and its recipient-safety preflight. Keep the
+  // Firefox option visibility and input-label rules identical in both paths.
+  function _clickTextCandidates(scope) {
+    const sels = [
+      'a', 'button', '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
+      '[role="option"]', '[role="menuitemradio"]', '[role="menuitemcheckbox"]', '[role="treeitem"]',
+      'input:not([type="hidden"])', 'textarea', 'select', 'input[type="button"]',
+      'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
+      ..._siteInteractiveSelectors(),
+    ].join(', ');
+    // Candidate filter: listbox/menu option roles are often kept mounted but
+    // hidden while a custom select is collapsed or virtualized (Radix/MUI/
+    // React-Select). Drop hidden ones so click({text}) can't match — and
+    // falsely "succeed" on — an invisible option; the open-listbox fallback
+    // still surfaces them when the control is actually open. Shared by the
+    // primary pass AND the auto-scroll retry below so they can't diverge.
+    const _keepCandidate = (el) => {
+      const role = (el.getAttribute && el.getAttribute('role')) || '';
+      if (role !== 'option' && role !== 'menuitemradio' && role !== 'menuitemcheckbox' && role !== 'treeitem') return true;
+      try {
+        const r = el.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) return false;
+        const s = window.getComputedStyle(el);
+        if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return false;
+        if (el.closest('[aria-hidden="true"],[hidden]')) return false;
+        return true;
+      } catch (e) { return false; }
+    };
+    // A text field's `value` is content the user typed, NOT a click label.
+    // Matching on it makes click({text}) resolve to the field you just filled
+    // (e.g. a combobox/filter box whose value now equals the needle) instead
+    // of the menu option bearing the same text — the "click succeeds but
+    // nothing happens, model loops forever" bug. Only treat `value` as a label
+    // for button-like inputs; non-input elements with .value (<select>) keep it.
+    const _valIsLabel = (el) => {
+      if (el.tagName === 'TEXTAREA') return false;
+      if (el.tagName !== 'INPUT') return true;
+      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      return t === 'button' || t === 'submit' || t === 'reset';
+    };
+    const _normTxt = (el) => {
+      const siteText = _isSiteInteractive(el) ? _siteInteractionText(el) : '';
+      return (siteText || el.innerText || (_valIsLabel(el) ? el.value : '') || el.placeholder || el.ariaLabel || '').trim().toLowerCase();
+    };
+    const all = Array.from(scope.querySelectorAll(sels)).filter(_keepCandidate);
+    return all.map(e => ({ e, txt: _normTxt(e) })).filter(x => !!x.txt);
+  }
+
   let _lastClickIdent = null;
   let _lastEditableTarget = null;
 
@@ -1599,14 +1647,6 @@
     if (params.text) {
       const needle = params.text.toLowerCase();
       const explicit = params.textMatch || '';
-      // Include inputs/select/textarea so we can match by placeholder, value, or aria-label
-      const sels = [
-        'a', 'button', '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
-        '[role="option"]', '[role="menuitemradio"]', '[role="menuitemcheckbox"]', '[role="treeitem"]',
-        'input:not([type="hidden"])', 'textarea', 'select', 'input[type="button"]',
-        'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
-        ..._siteInteractiveSelectors(),
-      ].join(', ');
       // Modal scoping: if a topmost modal/dialog is open, restrict the search
       // to elements inside it. Prevents the classic failure where the model
       // types "Publish release" and the resolver clicks the dimmed Publish
@@ -1615,42 +1655,7 @@
       // reachable via coordinate clicks.
       const _modalRoot = _findTopmostModal();
       const _scope = _modalRoot || document;
-      // Candidate filter: listbox/menu option roles are often kept mounted but
-      // hidden while a custom select is collapsed or virtualized (Radix/MUI/
-      // React-Select). Drop hidden ones so click({text}) can't match — and
-      // falsely "succeed" on — an invisible option; the open-listbox fallback
-      // still surfaces them when the control is actually open. Shared by the
-      // primary pass AND the auto-scroll retry below so they can't diverge.
-      const _keepCandidate = (el) => {
-        const role = (el.getAttribute && el.getAttribute('role')) || '';
-        if (role !== 'option' && role !== 'menuitemradio' && role !== 'menuitemcheckbox' && role !== 'treeitem') return true;
-        try {
-          const r = el.getBoundingClientRect();
-          if (r.width < 1 || r.height < 1) return false;
-          const s = window.getComputedStyle(el);
-          if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return false;
-          if (el.closest('[aria-hidden="true"],[hidden]')) return false;
-          return true;
-        } catch (e) { return false; }
-      };
-      // A text field's `value` is content the user typed, NOT a click label.
-      // Matching on it makes click({text}) resolve to the field you just filled
-      // (e.g. a combobox/filter box whose value now equals the needle) instead
-      // of the menu option bearing the same text — the "click succeeds but
-      // nothing happens, model loops forever" bug. Only treat `value` as a label
-      // for button-like inputs; non-input elements with .value (<select>) keep it.
-      const _valIsLabel = (el) => {
-        if (el.tagName === 'TEXTAREA') return false;
-        if (el.tagName !== 'INPUT') return true;
-        const t = (el.getAttribute('type') || 'text').toLowerCase();
-        return t === 'button' || t === 'submit' || t === 'reset';
-      };
-      const _normTxt = (el) => {
-        const siteText = _isSiteInteractive(el) ? _siteInteractionText(el) : '';
-        return (siteText || el.innerText || (_valIsLabel(el) ? el.value : '') || el.placeholder || el.ariaLabel || '').trim().toLowerCase();
-      };
-      const all = Array.from(_scope.querySelectorAll(sels)).filter(_keepCandidate);
-      const normalized = all.map(e => ({ e, txt: _normTxt(e) })).filter(x => !!x.txt);
+      const normalized = _clickTextCandidates(_scope);
 
       // Build label→input map so we can match label text and resolve to associated input
       const labelMap = new Map();
@@ -1710,8 +1715,7 @@
           // Re-query after scroll. Re-resolve the modal root in case the
           // dialog opened/closed during scroll.
           const _retryScope = _findTopmostModal() || document;
-          const allRetry = Array.from(_retryScope.querySelectorAll(sels)).filter(_keepCandidate);
-          const normRetry = allRetry.map(e => ({ e, txt: _normTxt(e) })).filter(x => !!x.txt);
+          const normRetry = _clickTextCandidates(_retryScope);
           for (const m of modes) {
             if (m === 'exact') matches = normRetry.filter(x => x.txt === needle);
             else if (m === 'prefix') matches = normRetry.filter(x => x.txt.startsWith(needle));
@@ -4060,20 +4064,32 @@
         if (refId && typeof window.__wb_ax_lookup === 'function') target = window.__wb_ax_lookup(refId);
         targetResolved = !!target;
       } else if (tool === 'click') {
-        if (typeof args.selector === 'string' && args.selector) {
-          try { target = document.querySelector(args.selector); } catch {}
+        // Match dispatch precedence, modal scope, candidate text and match
+        // mode. A supplied selector must not approve a different text click.
+        if (typeof args.text === 'string' && args.text) {
+          const needle = args.text.toLowerCase();
+          const scope = _findTopmostModal() || document;
+          const candidates = _clickTextCandidates(scope);
+          const modes = args.textMatch ? [args.textMatch] : ['exact', 'prefix', 'contains'];
+          for (const mode of modes) {
+            let matches = candidates.filter(({ txt }) => mode === 'exact' ? txt === needle
+              : mode === 'prefix' ? txt.startsWith(needle)
+                : mode === 'contains' ? txt.includes(needle) : false);
+            // Dispatch prefers the sole interactive match over passive labels.
+            // Multiple interactive matches must still stop at this match tier.
+            if (matches.length > 1) {
+              const interactiveMatches = matches.filter(({ e }) => _isInteractive(e));
+              if (interactiveMatches.length === 1) matches = interactiveMatches;
+            }
+            if (matches.length === 1) target = _resolveInteractiveAncestor(matches[0].e);
+            if (matches.length) break;
+          }
+        } else if (typeof args.selector === 'string' && args.selector) {
+          target = safeIndexedQuerySelector(args.selector, args.matchIndex).element;
         } else if (Number.isInteger(args.index) && args.index >= 0) {
           target = queryInteractiveForToolIndex()[args.index] || null;
         } else if (Number.isFinite(args.x) && Number.isFinite(args.y)) {
           target = document.elementFromPoint(args.x, args.y);
-        } else if (typeof args.text === 'string' && args.text.trim()) {
-          const needle = compact(args.text).toLocaleLowerCase();
-          const matches = Array.from(document.querySelectorAll(
-            'button,[role="button"],input[type="submit"],input[type="button"],[data-action]'
-          )).filter((el) => compact(
-            el.innerText || el.value || el.getAttribute?.('aria-label') || el.getAttribute?.('title')
-          ).toLocaleLowerCase() === needle);
-          if (matches.length === 1) target = matches[0];
         }
         targetResolved = !!target;
       }
@@ -4183,6 +4199,33 @@
           && railRect.right <= composerRect.left + 64;
       };
 
+      const verifiedLinkedInNavigation = (clicked) => {
+        if (params.adapterName !== 'linkedin' || !clicked) return false;
+        const link = clicked.closest?.('a[href]');
+        if (!link || !visible(link) || !link.closest?.('nav,[role="navigation"]')) return false;
+        // A navigation-looking descendant of a composer/action is not a
+        // navigation escape hatch. Keep actual sends and modal controls on
+        // the existing recipient-verification path.
+        if (clicked.closest?.('button,[role="button"],input,select,textarea,[contenteditable]:not([contenteditable="false"]),[onclick],[data-action]')
+            || link.closest?.('form,dialog,[role="dialog"],[role="alertdialog"]')
+            || link.hasAttribute?.('download')
+            || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return false;
+        try {
+          const href = String(link.getAttribute('href') || '').trim();
+          if (!href || href.startsWith('#')) return false;
+          const destination = new URL(href, document.baseURI);
+          // Only the site's top-level navigation destinations are known not
+          // to send. Arbitrary action URLs and conversation controls stay
+          // inconclusive, even when their visible label says Home or Jobs.
+          return /^https?:$/.test(destination.protocol)
+            && destination.origin === location.origin
+            && /^(?:www\.)?linkedin\.com$/.test(destination.hostname)
+            && /^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname);
+        } catch {
+          return false;
+        }
+      };
+
       let composer = null;
       let messageSend = null;
       if (observationOnly) {
@@ -4219,8 +4262,12 @@
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         const control = target.closest?.('button,[role="button"],input[type="submit"],input[type="button"],[data-action]') || target;
-        if (!visible(control)) {
+        const modal = _findTopmostBlockingModal();
+        if (!visible(control) || (modal && !_isComposedAncestor(modal, target))) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (verifiedLinkedInNavigation(target)) {
+          return { success: true, messageSend: false, conclusive: true, navigation: true, identityCandidates: [] };
         }
         composer = layoutComposer;
         if (!composer) {

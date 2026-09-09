@@ -6925,7 +6925,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       querySelector: (selector) => selector === '#conversation-row' ? conversationRow : null,
       querySelectorAll: (selector) => {
         if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer, searchBox, alternateComposer];
-        if (selector.startsWith('button,')) return [sendButton, customSendControl, distantControl, conversationRowMenu];
+        if (selector.startsWith('a, button,')) return [sendButton, customSendControl, distantControl, conversationRowMenu];
         if (selector.startsWith('[aria-selected')) return [];
         if (selector.startsWith('h1,')) return [searchedName, activeHeader, conversationMessageHeading];
         if (selector.startsWith('[data-testid')) return [];
@@ -6953,7 +6953,20 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       }),
       _deepActiveElement: () => activeElement,
     };
-    const probe = vm.runInNewContext(`(${source.slice(start, end)})`, context);
+    const candidatesStart = source.indexOf('  function _clickTextCandidates(');
+    const candidatesEnd = source.indexOf('\n\n  let _lastClickIdent', candidatesStart);
+    Object.assign(context, {
+      _siteInteractiveSelectors: () => [],
+      _siteInteractionText: el => (el.innerText || el.value || '').trim(),
+      _isSiteInteractive: () => false,
+      _findTopmostModal: () => null,
+      _findTopmostBlockingModal: () => null,
+      _resolveInteractiveAncestor: el => el,
+      safeIndexedQuerySelector: selector => ({ element: document.querySelector(selector) }),
+    });
+    const probe = vm.runInNewContext(
+      `${source.slice(candidatesStart, candidatesEnd)}; (${source.slice(start, end)})`, context,
+    );
     const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
     const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
     const fieldSubmitResult = probe({
@@ -6992,7 +7005,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const conversationAxResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-label' } });
     const conversationMenuResult = probe({ tool: 'click', args: { text: 'More' } });
     const conversationMenuLeafResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-menu-leaf' } });
-    const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen' } });
+    const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen', textMatch: 'exact' } });
     activeElement = composer;
     const gmailAliceChip = element('Alice', {
       left: 430, right: 620, top: 610, bottom: 650, width: 190, height: 40,
