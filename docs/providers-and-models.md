@@ -64,7 +64,6 @@ class BaseLLMProvider {
 | `alibaba` (Qwen) | `openai` | cloud | `qwen-max` | Model-name regex |
 | `together` | `openai` | router | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | Model-name regex |
 | `openrouter` | `openai` | router | `openrouter/free` | Model-name regex |
-| `pollinations` | `openai` | router | `openai` | Model-name regex |
 | `huggingface` | `openai` | router | `zai-org/GLM-5.2` | Model-name regex |
 | `fireworks` | `openai` | router | `accounts/fireworks/models/llama-v3p3-70b-instruct` | Model-name regex |
 | `z_ai` | `openai` | cloud | `glm-5.2` | Model-name regex |
