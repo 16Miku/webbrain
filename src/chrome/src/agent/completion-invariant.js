@@ -274,12 +274,12 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
   const bodySelector = value.startsWith('twitter:')
     ? '[data-testid="tweetText"]'
     : value.startsWith('bluesky:')
-    ? '[data-testid="postText"]'
+    ? '[data-testid="postText"],div[data-word-wrap="1"]'
     : '';
   const embedSelector = value.startsWith('twitter:')
     ? '[data-testid="quoteTweet"],[role="blockquote"],[data-testid*="quote"],[data-testid*="card.layout"]'
     : value.startsWith('bluesky:')
-    ? '[data-testid^="postQuote-"],[data-testid="embeddedPost"],[data-testid*="quote"],[data-testid^="embed-"]'
+    ? '[data-testid^="postQuote-"],[data-testid="embeddedPost"],[data-testid*="quote"],[data-testid^="embed-"],div[role="link"]:not([data-testid^="feedItem-by-"]):not([data-testid^="postThreadItem-by-"])'
     : '';
   const identityOf = (candidate) => {
     try {
@@ -324,7 +324,16 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
   const embeddedResourcesIn = (card) => {
     const links = linksIn(card);
     if (!links) return [];
-    const excluded = [];
+    // Native Bluesky quotes are pressable divs, often without either an
+    // embed test ID or a permalink anchor. Exclude the whole subtree even
+    // when its target cannot be established from DOM links.
+    const nativeQuoteSelector = 'div[role="link"]:not([data-testid^="feedItem-by-"]):not([data-testid^="postThreadItem-by-"])';
+    const excluded = value.startsWith('bluesky:')
+      ? Array.from(card.querySelectorAll(nativeQuoteSelector))
+        .filter(node => node.matches?.(nativeQuoteSelector) && node.closest(cardSelector) === card)
+        .filter((node, _i, nodes) => !nodes.some(other => other !== node && other.contains(node)))
+        .slice(0, 9)
+      : [];
     for (const candidate of links) {
       if (excluded.length >= 9) break;
       const found = identityOf(candidate);
@@ -362,7 +371,15 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
     if (!bodySelector) return [];
     try {
       return Array.from(card.querySelectorAll(bodySelector))
-        .filter(node => !excluded.some(entry => entry === node || entry.contains?.(node)))
+        .filter(node => !excluded.some(entry => entry === node || entry.contains?.(node) || node.contains?.(entry)))
+        .filter(node => {
+          // Bluesky's native rich text has no postText test ID. Its word-wrap
+          // div must belong to this card, not a preview, byline, or control.
+          if (!node.matches?.('div[data-word-wrap="1"]')) return true;
+          return node.closest(cardSelector) === card
+            && !node.closest(embedSelector + ',a[href],button,[role="button"],[data-testid="replyingTo"],[data-testid="replyToPost"]');
+        })
+        .filter((node, _index, nodes) => !nodes.some(other => other !== node && other.contains?.(node)))
         .slice(0, 9);
     } catch {
       return [];
@@ -462,6 +479,13 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
           // Keep one overflow sentinel; a truncated observation is not proof
           // of the complete authored body or its embedded relationships.
           authorshipComplete: excluded.length <= 8 && authored.length <= 8,
+          // A quote whose own permalink is unavailable is unknown context,
+          // not evidence that this is a standalone post. Body links inside
+          // that quote cannot stand in for its own identity.
+          contextComplete: excluded.filter(node => value.startsWith('bluesky:') && node.matches?.('div[role="link"]'))
+            .every(node => new Set((linksIn(node) || [])
+              .filter(candidate => !candidate.closest?.(bodySelector))
+              .map(identityOf).filter(identity => identity && identity !== value)).size === 1),
           authored,
           attachments: authoredMediaNodesIn(card, excluded),
         };
@@ -483,17 +507,103 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
   return { root: best, excluded: [], authored: [], attachments: authoredMediaNodesIn(best, []) };
 }
 
+// The focused Bluesky thread item renders its timestamp as text, without a
+// self-permalink anchor. The detail route may name the author by DID while
+// the focused card renders the account handle, so binding cannot assume the
+// route identifier and rendered handle are spelled identically. Bind the
+// route only to one visible, focused card in the app's thread screen. Feed
+// items, embeds, and cards that already identify a different post cannot
+// borrow the current URL.
+// Keep self-contained: Agent serializes this function into the page.
+export function publicationDetailResource(doc, pageUrl, publicationResourceIdentity) {
+  try {
+    const page = new URL(pageUrl);
+    if (!/^https?:$/.test(page.protocol) || page.hostname !== 'bsky.app'
+        || page.username || page.password || page.port) return null;
+    const match = page.pathname.match(/^\/profile\/([^/]+)\/post\/[^/]+\/?$/);
+    if (!match) return null;
+    const url = page.origin + page.pathname.replace(/\/+$/, '');
+    const identity = publicationResourceIdentity(url);
+    if (!identity) return null;
+    const owner = decodeURIComponent(match[1]).toLowerCase();
+    const didOwner = /^did:[a-z0-9][a-z0-9:._-]*$/i.test(owner);
+    const authorOf = card => {
+      const testId = card.getAttribute('data-testid') || '';
+      const prefix = 'postthreaditem-by-';
+      return testId.toLowerCase().startsWith(prefix) ? testId.toLowerCase().slice(prefix.length) : '';
+    };
+    const cards = '[data-testid^="feedItem-by-"],[data-testid^="postThreadItem-by-"]';
+    const excluded = '[data-testid^="postQuote-"],[data-testid="embeddedPost"],[data-testid*="quote"],[data-testid^="embed-"],div[role="link"]:not([data-testid^="feedItem-by-"]):not([data-testid^="postThreadItem-by-"]),dialog,[role="dialog"],aside,[role="complementary"]';
+    const body = '[data-testid="postText"],div[data-word-wrap="1"]';
+    const visible = node => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return false;
+      for (let el = node; el; el = el.parentElement) {
+        const style = el.ownerDocument.defaultView.getComputedStyle(el);
+        if (el.hidden || el.getAttribute('aria-hidden') === 'true'
+            || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+      }
+      return true;
+    };
+    const candidates = Array.from(doc.querySelectorAll('[data-testid="postThreadScreen"] [data-testid^="postThreadItem-by-"]'));
+    if (candidates.length > 200) return null;
+    const matches = candidates.filter(card => {
+      if (!visible(card) || card.closest(excluded) || card.parentElement?.closest(cards)) return false;
+      const author = authorOf(card);
+      // A handle-backed route must still name the rendered author verbatim.
+      // A DID-backed route cannot be compared by string equality; it binds
+      // through the authored-identity and screen-wide uniqueness checks below,
+      // and the later body match still confirms authorship.
+      if (!author || (!didOwner && author !== owner)) return false;
+      const links = Array.from(card.querySelectorAll('a[href]'));
+      if (links.length > 200) return false;
+      const owned = links.filter(a => a.closest(cards) === card && !a.closest(body + ',' + excluded));
+      // A non-focused thread item supplies its own permalink. Even a single
+      // conflicting identity is enough to reject route-based attribution. The
+      // focused card is anchorless, so this alone cannot bind a DID route; the
+      // screen-wide uniqueness check below does.
+      const identities = owned.map(a => publicationResourceIdentity(a.href)).filter(Boolean);
+      if (identities.some(value => value !== identity)) return false;
+      return owned.some(a => {
+        const profile = new URL(a.href, pageUrl);
+        if (!visible(a) || profile.origin !== page.origin) return false;
+        const path = decodeURIComponent(profile.pathname).replace(/\/+$/, '').toLowerCase();
+        if (!/^\/profile\/[^/]+$/.test(path)) return false;
+        // A handle route requires the on-site profile link to be the route
+        // owner. A DID route renders the handle instead; while that handle is
+        // not comparable on-page, the card binds only when it is the thread
+        // screen's unique anchorless item with no conflicting post identity.
+        return didOwner || path === '/profile/' + owner;
+      });
+    });
+    if (matches.length !== 1) return null;
+    const link = matches[0];
+    const screen = link.closest('[data-testid="postThreadScreen"]');
+    const threadCards = Array.from(screen.querySelectorAll(cards))
+      .filter(node => !node.closest(excluded) && !node.parentElement?.closest(cards));
+    // Earlier native thread cards are ancestors even when separate wrappers
+    // prevent the legacy parent matcher from identifying the exact parent.
+    // Preserve that uncertainty; an empty replyToUrl must not erase it.
+    const replyContextComplete = threadCards.length <= 200 && threadCards[0] === link
+      && !link.hasAttribute('data-in-reply-to-url')
+      && !link.querySelector('[data-testid="replyingTo"],[data-testid="replyToPost"],a[rel="in-reply-to"]')
+      && !screen.querySelector('[aria-busy="true"],[role="progressbar"]');
+    return { link, url, identity, replyContextComplete };
+  } catch { return null; }
+}
+
 // Infer a published reply's parent only from the page's own thread structure.
 // Keep self-contained: Agent serializes this function into the completion probe.
-export function publicationReplyParent(card, pageUrl, publicationResourceIdentity, expectedIdentity) {
+export function publicationReplyParent(card, pageUrl, publicationResourceIdentity, expectedIdentity, detailResource = null) {
   try {
     const page = new URL(pageUrl);
     const host = page.hostname.toLowerCase().replace(/^www\./, '');
     const twitter = host === 'x.com' || host === 'twitter.com';
     if (!twitter && host !== 'bsky.app') return '';
     const cardSelector = twitter ? '[data-testid="tweet"]' : '[data-testid^="feedItem-by-"],[data-testid^="postThreadItem-by-"]';
-    const bodySelector = twitter ? '[data-testid="tweetText"]' : '[data-testid="postText"]';
-    const embeds = '[data-testid="quoteTweet"],[role="blockquote"],[data-testid*="quote"],[data-testid*="card.layout"],[data-testid^="postQuote-"],[data-testid="embeddedPost"],[data-testid^="embed-"]';
+    const bodySelector = twitter ? '[data-testid="tweetText"]' : '[data-testid="postText"],div[data-word-wrap="1"]';
+    const embeds = '[data-testid="quoteTweet"],[role="blockquote"],[data-testid*="quote"],[data-testid*="card.layout"],[data-testid^="postQuote-"],[data-testid="embeddedPost"],[data-testid^="embed-"]'
+      + (twitter ? '' : ',div[role="link"]:not([data-testid^="feedItem-by-"]):not([data-testid^="postThreadItem-by-"])');
     const hints = '[data-testid="replyingTo"],[data-testid="replyToPost"]';
     if (!card?.matches?.(cardSelector) || card.parentElement?.closest(cardSelector + ',' + embeds)) return '';
     const visible = node => {
@@ -534,6 +644,7 @@ export function publicationReplyParent(card, pageUrl, publicationResourceIdentit
     };
     const owned = (node, root) => node.closest(cardSelector) === root && !node.closest(bodySelector + ',' + embeds);
     const ownPermalink = root => {
+      if (root === detailResource?.link) return detailResource.url;
       const urls = new Map(Array.from(root.querySelectorAll('a[href]')).filter(a => visible(a) && owned(a, root) && !a.closest(hints))
         .map(a => permalink(a.getAttribute('href'))).filter(Boolean).map(url => [publicationResourceIdentity(url), url]));
       return urls.size === 1 ? [...urls.values()][0] : '';
@@ -549,7 +660,7 @@ export function publicationReplyParent(card, pageUrl, publicationResourceIdentit
     if (card.hasAttribute('data-in-reply-to-url')) return '';
 
     const threadUrl = permalink(pageUrl), threadId = publicationResourceIdentity(threadUrl);
-    const scope = card.closest('[data-testid="primaryColumn"],main,[role="main"]');
+    const scope = card.closest('[data-testid="primaryColumn"],[data-testid="postThreadScreen"],main,[role="main"]');
     if (!threadId || !scope || card.closest('dialog,[role="dialog"],aside,[role="complementary"]')) return '';
     const cards = Array.from(scope.querySelectorAll(cardSelector)).filter(node => visible(node)
       && !node.parentElement?.closest(cardSelector + ',' + embeds)

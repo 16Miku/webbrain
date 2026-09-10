@@ -813,6 +813,15 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: incomplete context cannot satisfy publication even with matching body and account`,async()=>{
+    const f=await dispatchedFixture();
+    const record=f.page.workflowResourceRecords[0];
+    record.contextComplete=true;
+    assert(f.terminal());
+    record.contextComplete=false;
+    assert.equal(f.terminal(),null,'unknown reply or quote context is not a standalone post');
+  });
+
   test(`${browser}: fallback checks the specified failure cause`,()=>{
     for(const trigger of ['unavailable','publish_failed','not_published']){
       const c=normalize(rawContract([rawAction('p1','twitter'),rawAction('p2','bluesky')],{kind:'fallback',trigger,items:['p1','p2']}));
@@ -857,4 +866,5 @@ test('Chrome and Firefox share the contract runtime and composer extraction', as
   const firefoxInvariant=await import('../src/firefox/src/agent/completion-invariant.js');
   assert.equal(chromeInvariant.publicationResourceRecordRoot.toString()===firefoxInvariant.publicationResourceRecordRoot.toString(),true,'publication record parity');
   assert.equal(chromeInvariant.publicationReplyParent.toString()===firefoxInvariant.publicationReplyParent.toString(),true,'published reply parent parity');
+  assert.equal(chromeInvariant.publicationDetailResource.toString()===firefoxInvariant.publicationDetailResource.toString(),true,'published detail resource parity');
 });

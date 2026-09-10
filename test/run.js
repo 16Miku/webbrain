@@ -52738,6 +52738,7 @@ function makeResumeBatchHarness(AgentClass, SchedulerMod) {
   agent._skipPermissionGate = true;
   agent._currentUrl = async () => 'https://example.com/';
   agent._persist = () => {};
+  agent._persistNow = async () => true;
   const executeTool = agent.executeTool.bind(agent);
   const executed = [];
   agent.executeTool = async (tabId, name, args, ...rest) => {
@@ -52769,6 +52770,50 @@ function makeResumeBatchHarness(AgentClass, SchedulerMod) {
   });
   return { ...h, agent, executed, updates, messages, batch, schedule };
 }
+
+test('terminal schedule_resume settles its parent checkpoint only after durable result persistence', async () => {
+  for (const [label, AgentClass, SchedulerMod] of [['chrome', AgentCh, SchedulerCh], ['firefox', AgentFx, SchedulerFx]]) {
+    for (const durable of [true, false]) {
+      const h = makeResumeBatchHarness(AgentClass, SchedulerMod);
+      const parent = await h.schedule();
+      const events = [];
+      h.agent._persistNow = async () => {
+        const results = h.messages.filter(message => message.role === 'tool');
+        assert.equal(results.length, 2, `${label}: persistence must include the terminal result and skipped stale call`);
+        assert.match(results[0].content, /"scheduled":true/);
+        assert.match(results[1].content, /skipped: run ended via done/);
+        events.push('persist');
+        return durable;
+      };
+      h.manager.agent.processMessage = async (_tabId, _message, onUpdate, _mode, _attachments, runOptions) => {
+        const after = runOptions.afterConsequentialTool;
+        const result = await h.batch([
+          ['schedule_resume', { after_seconds: 60, reason: 'Build still running', resume_instruction: 'Recheck the build; finish if complete.' }],
+          ['done', { summary: 'Stale completion must not run.', outcome: 'success' }],
+        ], {
+          ...runOptions,
+          afterConsequentialTool: async (args) => {
+            assert.deepEqual(events, ['persist'], `${label}: checkpoint settled before result durability`);
+            events.push('settle');
+            return after(args);
+          },
+        });
+        for (const update of h.updates) onUpdate(update.type, update.data);
+        return result.value;
+      };
+      await h.manager.handleAlarm(h.alarmName(parent.jobId));
+      const finished = h.jobs().find(job => job.id === parent.jobId);
+      assert.equal(finished.status, durable ? 'completed' : 'needs_user_input', `${label}: wrong parent state after terminal schedule`);
+      assert.equal(!!finished.pendingToolCall, !durable, `${label}: checkpoint must match durable result availability`);
+      assert.deepEqual(events, durable ? ['persist', 'settle'] : ['persist']);
+      assert.deepEqual(h.executed, ['schedule_resume'], `${label}: scheduling must not replay stale work`);
+      const children = h.jobs().filter(job => job.id !== parent.jobId);
+      assert.equal(children.length, 1);
+      assert.equal(children[0].status, 'pending');
+      assert.equal(h.alarms.has(h.alarmName(children[0].id)), true);
+    }
+  }
+});
 
 test('schedule_resume pauses unfinished chat work without running success completion guards', async () => {
   for (const [label, AgentClass, SchedulerMod] of [['chrome', AgentCh, SchedulerCh], ['firefox', AgentFx, SchedulerFx]]) {
@@ -77844,9 +77889,11 @@ test('GitHub edit-file workflow verifies the exact committed raw blob', async ()
   const editUrl = 'https://github.com/Example/Repo/edit/main/docs/plan.md';
   const commitUrl = `https://github.com/Example/Repo/commit/${commitSha}`;
   try {
-    for (const [label, AgentClass, resolveJob] of [
-      ['chrome', AgentCh, resolveAdapterWorkflowJob],
-      ['firefox', AgentFx, resolveAdapterWorkflowJobFx],
+    for (const [label, AgentClass, resolveJob, conditional] of [
+      ['chrome', AgentCh, resolveAdapterWorkflowJob, false],
+      ['firefox', AgentFx, resolveAdapterWorkflowJobFx, false],
+      ['chrome', AgentCh, resolveAdapterWorkflowJob, true],
+      ['firefox', AgentFx, resolveAdapterWorkflowJobFx, true],
     ]) {
       const agent = new AgentClass({});
       const tabId = label === 'chrome' ? 9445 : 9446;
@@ -77862,16 +77909,25 @@ test('GitHub edit-file workflow verifies the exact committed raw blob', async ()
         branch: 'feature/fix-copy',
         path: 'docs/plan.md',
       }, `${label}: an explicit slash-containing branch was split into the file path`);
-      const workflowGuard = {
-        enabled: true,
-        siteWorkflow,
+      const workflowGuard = conditional ? agent._startPlanExecutionGuard(tabId, 'act', {
+        requestKind: 'execute', requiresStateChange: false, requiresSubmission: false,
+        siteWorkflowUrl: 'https://github.com/Example/Repo/actions/runs/123', conditionalSiteWorkflow: siteWorkflow,
+      }, { scheduledResume: true }) : { enabled: true, siteWorkflow };
+      if (conditional) {
+        agent._currentUrl = async () => editUrl;
+        agent._ensureWorkflowMetadataRequirements = async () => {};
+        assert.equal((await agent._conditionalGithubCommitTransition(tabId, 'set_field', { ref_id: 'ref_editor', text: body }))?.workflowRearmed, true);
+        assert.equal(workflowGuard.requiresSubmission, true);
+      }
+      Object.assign(workflowGuard, {
         workflowMetadataRequirements: [
           { field: 'path', value: 'docs/plan.md' },
           { field: 'branch', value: 'main' },
           { field: 'commit_message', value: 'Translate plan' },
         ],
         workflowMetadataRequirementsResolved: true,
-      };
+        workflowMetadataRequirementsIncomplete: false,
+      });
       agent._planExecutionGuards.set(tabId, workflowGuard);
       agent._lastAxScopes.set(tabId, { documentToken: 'doc', pageUrl: editUrl });
       let liveEditorValue = body;
@@ -88205,6 +88261,119 @@ test('execution evidence ignores failed, denied, skipped, blocked, and unknown o
   }
 });
 
+test('completed CI verification can finish without taking its conditional scheduled-resume branch', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+      for (const fullPlanner of [false, true]) {
+        const tabId = 8560;
+        const agent = new AgentClass({ getActive: () => ({ name: 'planner-test', model: 'planner-test' }) });
+        agent._chatWithCostAllowance = async (_provider, messages) => {
+          assert.match(messages[0].content, /app-owned scheduled continuation/);
+          assert.match(messages[0].content, /site_job:null, requires_state_change:false, and requires_submission:false/);
+          assert.match(messages[0].content, /conditional "if failed, fix and commit" branch does not require a commit/);
+          return { content: plannerFixtureJson({
+            scope_relation: 'continue',
+            conditional_site_job: 'edit-file-and-commit',
+            summary: 'Verify Build and Package #169 and its Playwright installation and tests.',
+            steps: [
+              { id: '1', action: 'Read the current build result.', tools: ['get_accessibility_tree'] },
+              { id: '2', action: 'If still running, resume later; otherwise verify the result and finish.', tools: ['schedule_resume', 'done'] },
+            ],
+            scheduling: { tool: 'schedule_resume', hint: 'Use only if CI is still queued or in progress.' },
+          }) };
+        };
+        const tabInfo = { tabUrl: 'https://github.com/webbrain-one/webbrain/actions/runs/34418357023/job/102688157939', tabTitle: 'Build and Package' };
+        agent._currentUrl = async () => tabInfo.tabUrl;
+        const options = { scheduledRun: true, scheduledResume: true };
+        const user = { role: 'user', content: 'Recheck the build. If successful, verify the result and finish; if failed, fix the workflow file and commit; if still running, resume later.' };
+        const gate = fullPlanner
+          ? await agent._runPlannerGate(tabId, user, () => {}, null, null, '', tabInfo, 'try', 'act', options)
+          : await agent._runPlannerIntentGate(tabId, user, () => {}, null, null, '', tabInfo, 'act', options);
+        assert.equal(gate.proceed, true, `${label}: planner did not authorize verification`);
+        assert.equal(gate.requiredSchedulingTool, null, `${label}: optional wait became mandatory`);
+        assert.equal(gate.requiresStateChange, false, `${label}: optional wait required a mutation`);
+        assert.equal(gate.requiresSubmission, false, `${label}: verification inherited a commit requirement`);
+        assert.equal(gate.siteWorkflow, null);
+        assert.equal(gate.conditionalSiteWorkflow?.job?.id, 'edit-file-and-commit');
+        const state = agent._startPlanExecutionGuard(tabId, 'act', gate, options);
+        const summary = 'Build #169 succeeded in 3m14s. Install Playwright Chromium and Test passed.';
+        agent._markPlanExecutionToolCall(tabId, 'get_accessibility_tree', { success: true, pageContent: summary });
+        assert.equal(agent._completionPageWarning(tabId, summary, 'success', {
+          url: tabInfo.tabUrl, visibleFormCount: 1, relevantFormCount: 1, successMessages: [],
+        }, tabInfo.tabUrl), null, `${label}: log-page form blocked read-only verification`);
+        assert.equal(agent._planOnlyTerminalDecision(tabId, summary, { viaDone: true, outcome: 'success' }), null);
+        assert.equal(state.successfulConsequentialToolCalls, 0, `${label}: verification should need no mutation`);
+
+        // Older planner handoffs must not re-arm the erroneous resume requirement.
+        const legacy = agent._startPlanExecutionGuard(tabId, 'act', { ...gate, requiredSchedulingTool: 'schedule_resume' });
+        assert.equal(legacy.requiredSchedulingTool, null);
+      }
+    }
+  });
+});
+
+test('conditional resumed GitHub repair re-arms commit guards before dispatch and rejects missing contracts', async () => {
+  for (const [label, AgentClass, resolveJob] of [['chrome', AgentCh, resolveAdapterWorkflowJob], ['firefox', AgentFx, resolveAdapterWorkflowJobFx]]) {
+    for (const variant of ['authorized', 'missing', 'other_repository', 'changed_task', 'new_file', 'network', 'script']) {
+      const tabId = 8562;
+      const runUrl = 'https://github.com/Example/Repo/actions/runs/123';
+      const editUrl = `https://github.com/${variant === 'other_repository' ? 'Other/Repo' : 'Example/Repo'}/${variant === 'new_file' ? 'new' : 'edit'}/main/.github/workflows/main.yml`;
+      const agent = new AgentClass({ getActive: () => ({ supportsVision: false }), getVisionProvider: async () => null });
+      configurePlanOnlyGuardAgent(agent, tabId);
+      agent.conversations.get(tabId).push({ role: 'user', content: 'Check CI; if it failed, fix the workflow and commit.' });
+      agent._currentUrl = async () => editUrl;
+      agent._ensureGateSetting = async () => {};
+      agent._detectLikelySubmitAction = async () => ({ resolvedEditableTarget: true });
+      agent.isApiMutationsAllowed = () => true;
+      let metadataCalls = 0;
+      agent._ensureWorkflowMetadataRequirements = async () => {
+        metadataCalls++;
+        assert.equal(agent._planExecutionGuards.get(tabId).siteWorkflow.job.id, 'edit-file-and-commit');
+      };
+      const state = agent._startPlanExecutionGuard(tabId, 'act', {
+        requestKind: 'execute', requiresStateChange: false, requiresSubmission: false,
+        siteWorkflowUrl: runUrl,
+        conditionalSiteWorkflow: variant === 'missing' ? null : resolveJob(runUrl, 'edit-file-and-commit'),
+      }, { scheduledResume: true });
+      agent._markPlanExecutionToolCall(tabId, 'get_accessibility_tree', { success: true, pageContent: 'Build failed: missing Chromium executable.' });
+      if (variant === 'changed_task') agent._progressTaskKeyHash = () => 'new-task';
+      const dispatched = [];
+      agent.executeTool = async (_tab, name) => { dispatched.push(name); return { success: true }; };
+      const messages = [];
+      const calls = [
+        variant === 'network' ? ['fetch_url', { url: 'https://api.github.com/repos/Example/Repo/contents/main.yml', method: 'PUT' }]
+          : variant === 'script' ? ['execute_js', { code: 'void 0' }]
+          : ['set_field', { ref_id: 'ref_editor', text: 'corrected workflow', submit: false }],
+        ['click_ax', { ref_id: 'ref_commit' }],
+        ['done', { summary: 'Workflow fixed.', outcome: 'success' }],
+      ].map(([name, args], index) => ({ id: `conditional_${index}`, function: { name, arguments: JSON.stringify(args) } }));
+      const batch = await agent._executeToolBatch(tabId, calls, messages, () => {}, { supportsVision: false }, null,
+        new Set(['set_field', 'click_ax', 'done', 'fetch_url', 'execute_js']), 1, { scheduledRun: true, scheduledResume: true });
+      assert.equal(batch.action, 'continue', `${label}/${variant}: transition did not require a fresh batch`);
+      assert.deepEqual(dispatched, [], `${label}/${variant}: stale read-only batch dispatched a mutation`);
+      assert.equal(messages.filter(message => message.role === 'tool').length, 3, `${label}: stale calls were not closed`);
+      if (variant === 'authorized') {
+        assert.equal(state.siteWorkflow.job.id, 'edit-file-and-commit');
+        assert.equal(state.requiresStateChange, true);
+        assert.equal(state.requiresSubmission, true);
+        assert.equal(metadataCalls, 1);
+        assert.equal(state.successfulTaskToolCalls, 0, `${label}: initial CI read survived as repair evidence`);
+        assert.equal((await agent._workflowPreSubmitDispatchBlock(tabId, 'click_ax', {}, { isSubmit: true }))?.noDispatch, true,
+          `${label}: re-armed workflow allowed a commit without exact editor proof`);
+        assert.equal((await agent._githubCommittedFileVerification(tabId, {}, runUrl, {}))?.verified, false,
+          `${label}: committed-file verification was still disabled`);
+      } else {
+        assert.equal(state.siteWorkflow, null);
+        assert.equal(metadataCalls, 0);
+        assert.equal(state.conditionalMutationBlocked, true);
+      }
+      assert.equal(agent._executionEvidenceSatisfied(state), false, `${label}: a CI read proved the repair completed`);
+      assert.ok(agent._planOnlyTerminalDecision(tabId, 'Workflow fixed.', { viaDone: true, outcome: 'success' }));
+      assert.equal(agent._planOnlyTerminalDecision(tabId, 'The build failed and the repair could not be verified.', { viaDone: true, outcome: 'partial' }), null);
+    }
+  }
+});
+
 test('planned scheduling requires successful evidence from the matching scheduling tool', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
@@ -88284,9 +88453,10 @@ test('planned scheduling requires successful evidence from the matching scheduli
     );
     assert.equal(
       agent._executionEvidenceSatisfied(resumeState),
-      true,
-      `${AgentClass.name}: terminal schedule_resume result was not counted`,
+      false,
+      `${AgentClass.name}: an optional pause must not prove the state-changing task is complete`,
     );
+    assert.equal(resumeState.requiredSchedulingTool, null, `${AgentClass.name}: pause became a completion prerequisite`);
 
     const blockedTabId = 8576 + index;
     agent._startPlanExecutionGuard(blockedTabId, 'act', {
@@ -94720,6 +94890,7 @@ test('the injected completion probe survives its own template literal', () => {
     const injected = vm.runInNewContext('`' + raw + '`', {
       classifyCompletionForm: invariant.classifyCompletionForm,
       publicationResourceRecordRoot: invariant.publicationResourceRecordRoot,
+      publicationDetailResource: invariant.publicationDetailResource,
       publicationReplyParent: invariant.publicationReplyParent,
     });
     assert.doesNotThrow(
@@ -105057,6 +105228,7 @@ function plannerFixtureJson(overrides = {}) {
   return JSON.stringify({
     request_kind: 'execute',
     site_job: null,
+    conditional_site_job: null,
     requires_state_change: false,
     requires_submission: false,
     completion_requirements: { download: false },
@@ -106000,7 +106172,8 @@ test('reviewed plan edits preserve only explicitly approved scheduling metadata'
         'verbose',
         text => text.replace(/-\s*schedule_task:/, '- schedule_resume:'),
       );
-      assert.equal(changed.requiredSchedulingTool, 'schedule_resume', `${label}: edited schedule tool was not honored`);
+      assert.equal(changed.requiredSchedulingTool, null, `${label}: edited resume became a mandatory completion action`);
+      assert.match(changed.approvedScratchpadText, /-\s*schedule_resume:/, `${label}: edited pause metadata was lost`);
     }
   });
 });

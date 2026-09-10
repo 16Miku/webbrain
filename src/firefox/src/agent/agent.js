@@ -31,7 +31,7 @@ import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLe
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
-import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, publicationReplyParent, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
+import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, publicationDetailResource, publicationReplyParent, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
 import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
 import {
@@ -1906,6 +1906,64 @@ export class Agent extends LoopDetector {
           ? { transactionOrderIdentity: transactionOrderIdentities[0] }
           : {}),
       } : {}),
+    };
+  }
+
+  async _conditionalGithubCommitTransition(tabId, name, args = {}, detectedSubmit = null) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled || !guard.scheduledResume || guard.siteWorkflow
+        || guard.requiresStateChange !== false || guard.requiresSubmission !== false) return null;
+    const capabilities = capabilitiesFor(name, args);
+    const mayMutate = capabilities.some(capability => [
+      Capability.TYPE, Capability.CLICK, Capability.EXECUTE_JS, Capability.DEV_PATCH, Capability.UPLOAD,
+    ].includes(capability)) || isNetworkMutation(name, args);
+    const navigationOrFocus = ['click', 'click_ax', 'iframe_click'].includes(name)
+      && (detectedSubmit?.resolvedNavigationTarget === true || detectedSubmit?.resolvedEditableTarget === true);
+    if (!mayMutate || navigationOrFocus) return null;
+    const pageUrl = await this._currentUrl(tabId);
+    const repository = this._workflowGithubRepositoryPath(pageUrl);
+    const opaqueMutation = name === 'execute_js' || isNetworkMutation(name, args);
+    const fileEditorRoute = repository && /^\/[^/]+\/[^/]+\/(?:edit|new)(?:\/|$)/i.test(new URL(pageUrl).pathname);
+    if (!repository || (!fileEditorRoute && !opaqueMutation)) return null;
+    const editor = this._workflowGithubEditFileScope(pageUrl);
+    const deferred = guard.conditionalSiteWorkflow;
+    const live = this._resolvePlannerSiteWorkflow(pageUrl, { request_kind: 'execute', site_job: 'edit-file-and-commit' });
+    const sameTask = !guard.taskDrifted && guard.taskKey === this._progressTaskKeyHash(tabId);
+    const sameRepository = editor?.repository === this._workflowGithubRepositoryPath(guard.siteWorkflowUrl);
+    if (opaqueMutation || !editor || !sameTask || !sameRepository || !this._sameAdapterWorkflowBinding(deferred, live)) {
+      guard.conditionalMutationBlocked = true;
+      return {
+        success: false, noDispatch: true, dispatched: false, conditionalMutationBlocked: true,
+        error: 'This resumed verification cannot bind this action to its conditional file-commit contract. Use the supported file editor in the authorized repository. No editor change was dispatched. Finish with outcome partial or failed and explain that the failure branch needs a fresh plan; do not claim the repair is complete.',
+      };
+    }
+    // Activate before even the first write, so its replacement proof and every
+    // later commit use the same contract. Earlier CI reads cannot satisfy it.
+    guard.siteWorkflow = live;
+    guard.siteWorkflowUrl = pageUrl;
+    guard.conditionalSiteWorkflow = null;
+    guard.requiresStateChange = true;
+    guard.requiresSubmission = true;
+    guard.successfulTaskToolCalls = 0;
+    guard.successfulConsequentialToolCalls = 0;
+    guard.evidenceTaskKey = '';
+    guard.verifiedSubmissionEvidence = false;
+    guard.workflowTerminalEvidence = null;
+    guard.workflowMetadataRequirementsResolved = false;
+    guard.workflowMetadataRequirementsIncomplete = true;
+    guard.conditionalMutationBlocked = false;
+    this._completionSubmitStates.delete(tabId);
+    this._armWorkflowJobRequiredEvidence(tabId, guard);
+    const messages = this.conversations.get(tabId);
+    if (messages?.[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(this._effectiveRunMode(tabId), tabId);
+    this._recordAdapterWorkflowTrace(this.currentRunId.get(tabId), live);
+    await this._ensureWorkflowMetadataRequirements(tabId, {
+      provider: this._activeProvider(tabId), costState: this.currentCostState.get(tabId) || null,
+    }, guard.taskText, pageUrl);
+    return {
+      success: false, noDispatch: true, dispatched: false, retryable: true,
+      workflowRearmed: true, workflowJob: 'edit-file-and-commit',
+      error: 'The conditional repair branch now requires a verified file edit and commit. The editor action was not dispatched. Reread the editor, make and verify the intended change, then commit and verify the exact committed blob before done(success).',
     };
   }
 
@@ -10280,7 +10338,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           reason: 'submit the configured Chrome Web Store release for review',
         };
       }
-      const workflowPreSubmitBlock = await this._workflowPreSubmitDispatchBlock(
+      const workflowPreSubmitBlock = await this._conditionalGithubCommitTransition(tabId, fnName, fnArgs, detectedSubmitAction)
+        || await this._workflowPreSubmitDispatchBlock(
         tabId, fnName, fnArgs, detectedSubmitAction, provider,
       );
       if (workflowPreSubmitBlock) {
@@ -10296,6 +10355,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           name: fnName, args: fnArgs, result: workflowPreSubmitBlock, latencyMs: 0,
         });
         onUpdate('warning', { message: workflowPreSubmitBlock.error });
+        if (workflowPreSubmitBlock.workflowRearmed || workflowPreSubmitBlock.conditionalMutationBlocked) {
+          this._appendSyntheticToolResults(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
+            () => ({ success: false, skipped: true, error: 'skipped: conditional workflow transition requires a fresh tool batch' }));
+          this._injectNavNotices(messages, navNotices, onUpdate);
+          this._persist(tabId);
+          return { action: 'continue' };
+        }
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
@@ -11015,6 +11081,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         } catch {}
       };
+      const settleConsequentialTool = async () => {
+        const knownToolOutcome = toolResult?.dispatched === false || toolResult?.noDispatch === true
+          || (toolResult?.outcomeUnknown !== true && toolResult?.inconclusive !== true
+            && toolResult?.mutationMayHaveOccurred !== true
+            && (toolResult?.success === true || toolResult?.verified === true));
+        if (missingResponseOutcomeUnknown && knownToolOutcome && typeof runOptions?.afterConsequentialTool === 'function') {
+          const conversationDurable = await this._persistNow(tabId);
+          if (conversationDurable === true || conversationDurable?.ok === true) {
+            try {
+              await runOptions.afterConsequentialTool({ name: fnName, result: toolResult, outcomeUnknown: false });
+            } catch {}
+          }
+        }
+      };
       if (!toolResult?.done) {
         await recordFinalToolTrace(toolResult);
         if (runIdForTool && toolbarPreflight.traceCapture?.dataUrl) {
@@ -11151,6 +11231,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
           () => ({ success: false, skipped: true, error: 'skipped: run ended via done' })
         );
+        // schedule_resume is consequential AND terminal. Persist its result and
+        // settle the parent run's checkpoint before taking this early return.
+        // Without this, the child alarm exists but the parent needs reconciliation.
+        await settleConsequentialTool();
         this._persist(tabId);
         return { action: 'return', value: finalResponse };
       }
@@ -11312,18 +11396,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tool_call_id: tc.id,
         content: resultContent,
       });
-      const knownToolOutcome = toolResult?.dispatched === false || toolResult?.noDispatch === true
-        || (toolResult?.outcomeUnknown !== true && toolResult?.inconclusive !== true
-          && toolResult?.mutationMayHaveOccurred !== true
-          && (toolResult?.success === true || toolResult?.verified === true));
-      if (missingResponseOutcomeUnknown && knownToolOutcome && typeof runOptions?.afterConsequentialTool === 'function') {
-        const conversationDurable = await this._persistNow(tabId);
-        if (conversationDurable === true || conversationDurable?.ok === true) {
-          try {
-            await runOptions.afterConsequentialTool({ name: fnName, result: toolResult, outcomeUnknown: false });
-          } catch {}
-        }
-      }
+      await settleConsequentialTool();
       this._throwIfAborted(this._runAbortSignal(tabId));
       if (captchaGateDecision?.status === 'manual_required' || captchaSolveOutcome?.status === 'manual_required') {
         this._appendSyntheticToolResults(
@@ -16266,8 +16339,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const author = this._workflowSocialPublicationAccountIdentity(guard.siteWorkflow, record.url);
         if (author !== account && !this._workflowSocialAccountAliasProven(guard.siteWorkflow, account, author, record)) return false;
         const mediaRecord = this._workflowSocialRecordWithUploadedAttachmentNames(record, binding);
-        return record.bodyTextComplete === true && record.attachmentsComplete === true && typeof record.bodyText === 'string'
-          && (expected.bodyText === '' ? record.bodyText === '' : this._workflowSocialPublishedBodyObserved({ field: 'body', value: expected.bodyText, rawValue: expected.bodyText }, record))
+        return record.contextComplete !== false && record.bodyTextComplete === true && record.attachmentsComplete === true && typeof record.bodyText === 'string'
+          && (expected.bodyText === '' ? record.bodyText === '' : record.bodyText !== '' && this._workflowSocialPublishedBodyObserved({ field: 'body', value: expected.bodyText, rawValue: expected.bodyText }, record))
           && publicationMediaMatches(post.media, mediaRecord)
           && (i > 0 ? !(record.contextUrls?.length) : post.context.kind === 'post'
             ? !(record.contextUrls?.length) && !record.replyToUrl
@@ -17178,6 +17251,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       allowsAppStateToolEvidence: gate.allowsAppStateToolEvidence === true,
       requiredSchedulingTool: gate.requiredSchedulingTool || null,
       siteWorkflow,
+      conditionalSiteWorkflow: gate.conditionalSiteWorkflow || null,
       progressLedgerPolicy: workflowRequiresLedger ? 'enabled' : (gate.progressLedgerPolicy || 'auto'),
       progressAction: workflowRequiresLedger
         ? (normalizeProgressAction(gate.progressAction) || 'process_item')
@@ -17850,11 +17924,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ),
     };
     const locale = runOptions?.locale || 'en';
-    const plannerParseOptions = { requireIntent: true, locale, latestUserTask: userMessageToText(enriched) };
+    const plannerParseOptions = { requireIntent: true, locale, latestUserTask: userMessageToText(enriched), scheduledResume: runOptions?.scheduledResume === true };
     const recheckOnly = runOptions?.plannerIntentRecheckOnly === true;
     const provider = this.providerManager.getActive();
     const plannerMessages = buildPlannerIntentMessages(enriched, tabUrl, tabTitle, historyDigest, {
       noThink: this._plannerPrefersNoThinkPrompt(provider),
+      scheduledResume: runOptions?.scheduledResume === true,
       locale,
       priorUserTask: followUpContext.priorUserTask,
       scratchpadFacts: followUpContext.scratchpadFacts,
@@ -18031,8 +18106,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         draftRecipients: plan.draft_recipients,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
-        requiredSchedulingTool: plan.scheduling?.tool || null,
+        requiredSchedulingTool: plan.scheduling?.tool === 'schedule_task' ? 'schedule_task' : null,
         siteWorkflow,
+        conditionalSiteWorkflow: await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, { ...plan, site_job: plan.conditional_site_job }),
         ...this._plannerCompletionGateFields(plan),
         ...this._plannerProgressLedgerGateFields(plan),
       };
@@ -18069,7 +18145,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ),
     };
     const locale = runOptions?.locale || 'en';
-    const plannerParseOptions = { requireIntent: true, locale, latestUserTask: userMessageToText(enriched) };
+    const plannerParseOptions = { requireIntent: true, locale, latestUserTask: userMessageToText(enriched), scheduledResume: runOptions?.scheduledResume === true };
 
     onUpdate('thinking', { step: 0, note: 'Planning…' });
 
@@ -18078,6 +18154,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const skillCatalog = this._skillCatalog(conversationMode, tier);
     const plannerMessages = buildPlannerMessages(enriched, tabUrl, tabTitle, historyDigest, {
       noThink: this._plannerPrefersNoThinkPrompt(provider),
+      scheduledResume: runOptions?.scheduledResume === true,
       allowApi: this.isApiMutationsAllowed(tabId),
       skillCatalog,
       locale,
@@ -18313,8 +18390,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           draftRecipients: plan.draft_recipients,
           allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
           allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
-          requiredSchedulingTool: plan.scheduling?.tool || null,
+          requiredSchedulingTool: plan.scheduling?.tool === 'schedule_task' ? 'schedule_task' : null,
           siteWorkflow: await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, plan),
+          conditionalSiteWorkflow: await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, { ...plan, site_job: plan.conditional_site_job }),
           ...this._plannerCompletionGateFields(plan),
           ...this._plannerProgressLedgerGateFields(plan),
         };
@@ -18417,8 +18495,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         draftRecipients: approvedPlanEdited ? null : plan.draft_recipients,
         allowsPlannerShapedResult: plan.allows_planner_shaped_result === true,
         allowsAppStateToolEvidence: plan.allows_app_state_tool_evidence === true,
-        requiredSchedulingTool: approvedSchedulingTool,
+        requiredSchedulingTool: approvedSchedulingTool === 'schedule_task' ? 'schedule_task' : null,
         siteWorkflow: approvedSiteWorkflow,
+        conditionalSiteWorkflow: approvedPlanEdited ? null
+          : await this._resolvePlannerSiteWorkflowForLiveTab(tabId, tabUrl, { ...plan, site_job: plan.conditional_site_job }),
         requiresDownload: approvedRequiresDownload,
         expectedItems: approvedExpectedItems,
         ...approvedProgressLedger,
@@ -20589,11 +20669,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     const publicationResourceUrls = () => {
       try {
-        const urls = Array.from(doc.querySelectorAll('a[href]'))
+        // The current detail route already existed before this dispatch,
+        // even if its post has no self-link or a composer hides its card.
+        // Baseline exclusion needs no claim that the old post was published
+        // by this job; omitting it would let it appear new at completion.
+        const candidates = [url, ...Array.from(doc.querySelectorAll('a[href]'))
           .map((link) => {
             try { return new URL(link.getAttribute('href') || link.href || '', url).href; } catch { return ''; }
-          })
-          .filter((value) => {
+          })];
+        const urls = [...new Set(candidates.filter((value) => {
             try {
               const parsed = new URL(value);
               const resourceHost = parsed.hostname.toLowerCase().replace(/^www\./, '');
@@ -20606,8 +20690,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             } catch {
               return false;
             }
-          })
-          ;
+          }))];
         return { urls: urls.slice(0, 200), complete: urls.length <= 200 };
       } catch {
         return { urls: [], complete: false };
@@ -25797,8 +25880,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._workflowJobScopeIdentity(gateOutcome?.siteWorkflowUrl)
       : '';
     const allowsAppStateToolEvidence = gateOutcome?.allowsAppStateToolEvidence === true;
+    // schedule_resume is an optional external wait. Requiring it at completion
+    // makes every resumed verification enqueue another run, even after success.
     const requiredSchedulingTool = gateOutcome?.requiredSchedulingTool === 'schedule_task'
-      || gateOutcome?.requiredSchedulingTool === 'schedule_resume'
       ? gateOutcome.requiredSchedulingTool
       : null;
     const taskText = this._progressTaskTextKey(
@@ -25821,6 +25905,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && carried.allowsAppStateToolEvidence === allowsAppStateToolEvidence
       && carried.requiredSchedulingTool === requiredSchedulingTool
       && JSON.stringify(carried.siteWorkflow || null) === JSON.stringify(siteWorkflow || null)
+      && JSON.stringify(carried.conditionalSiteWorkflow || null) === JSON.stringify(gateOutcome.conditionalSiteWorkflow || null)
       && carried.taskKey === taskKey
       && carried.evidenceTaskKey === taskKey
       && carried.conversationId === (this.conversationIds.get(tabId) || null);
@@ -25842,6 +25927,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       allowsAppStateToolEvidence,
       requiredSchedulingTool,
       siteWorkflow,
+      scheduledResume: runOptions?.scheduledResume === true || (carried?.scheduledResume === true
+        && carried.taskKey === taskKey && carried.conversationId === (this.conversationIds.get(tabId) || null)),
+      conditionalSiteWorkflow: gateOutcome.conditionalSiteWorkflow || null,
+      conditionalMutationBlocked: carryMatches && carried.conditionalMutationBlocked === true,
       taskKey,
       taskText,
       approvedPlanAnchor,
@@ -26147,7 +26236,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _executionEvidenceSatisfied(state) {
     if (!state) return false;
-    if (state.taskDrifted === true) return false;
+    if (state.taskDrifted === true || state.conditionalMutationBlocked === true) return false;
     if (state.workflowForbiddenSubmission === true) return false;
     if (state.taskKey && state.evidenceTaskKey !== state.taskKey) return false;
     // Unknown mutation intent is conservative: observational evidence may be
@@ -26212,6 +26301,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowsAppStateToolEvidence: guard.allowsAppStateToolEvidence,
         requiredSchedulingTool: guard.requiredSchedulingTool,
         siteWorkflow: guard.siteWorkflow,
+        scheduledResume: guard.scheduledResume === true,
+        conditionalSiteWorkflow: guard.conditionalSiteWorkflow,
+        conditionalMutationBlocked: guard.conditionalMutationBlocked === true,
         approvedPlanAnchor: guard.approvedPlanAnchor,
         approvedPlanText: guard.approvedPlanText,
         taskKey: guard.taskKey,
@@ -26566,6 +26658,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : null,
         nudge: (state.taskDrifted
           ? '[PLAN EXECUTION BLOCK: The genuine user task changed after this run was authorized. Do not execute either the old or new task under stale authorization. Call done with outcome failed and report that a fresh run is required.]'
+          : state.conditionalMutationBlocked
+          ? '[PLAN EXECUTION BLOCK: The conditional editor mutation was not authorized by a matching workflow contract. No repair was dispatched. Use done with outcome partial or failed and explain that the failure branch needs a fresh plan.]'
           : staleCancellation
           ? '[PLAN EXECUTION BLOCK: No current user stop was received. The previous response echoed a stale local cancellation status from conversation history. That status is UI metadata, not an instruction or task result. Continue the active task with permitted tools. If complete or blocked, call done with an explicit outcome; do not repeat the cancellation status or return plain text.]'
           : missingRequiredSchedulingTool
@@ -30391,6 +30485,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 }
                 const classifyForm = ${classifyCompletionForm.toString()};
                 const publicationRecordRoot = ${publicationResourceRecordRoot.toString()};
+                const publicationDetail = ${publicationDetailResource.toString()};
                 const publicationParent = ${publicationReplyParent.toString()};
                 const publicationParentCache = new Map();
                 const dialogs = Array.from(document.querySelectorAll('[role=dialog],[role=alertdialog],[aria-modal="true"],dialog[open]')).filter(visible);
@@ -30458,7 +30553,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   } catch {}
                   return '';
                 };
-                const workflowResourceLinks = Array.from(document.querySelectorAll('a[href]'))
+                let workflowResourceLinks = Array.from(document.querySelectorAll('a[href]'))
                   .slice(0, 2000)
                   .map(link => {
                     let url = '';
@@ -30466,6 +30561,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                     return { link, url, identity: publicationResourceIdentity(url) };
                   })
                   .filter(item => !!item.identity);
+                const detailResource = publicationDetail(document, location.href, publicationResourceIdentity);
+                if (detailResource) {
+                  workflowResourceLinks = workflowResourceLinks.filter(item => item.identity !== detailResource.identity);
+                  // Reserve the focused post before the URL, record, and
+                  // candidate limits so a long thread cannot crowd it out.
+                  workflowResourceLinks.unshift(detailResource);
+                }
                 // Commit pages expose changed files as blob links. They prove
                 // the commit's file scope without becoming published-resource
                 // records of their own.
@@ -30527,7 +30629,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   ].filter(candidate => !isEmbedded(candidate)).slice(0, 100).map(candidate => {
                     let href = '';
                     try { href = new URL(candidate.getAttribute('href') || candidate.href || '', location.href).href; } catch {}
-                    const compact = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 1000);
+                    const compact = value => String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 1000);
                     let inAuthoredBody = false;
                     try {
                       inAuthoredBody = authoredNodes.some(node => node === candidate || node.contains?.(candidate));
@@ -30616,6 +30718,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       alt: String(alt || '').slice(0, 25000),
                     };
                   });
+                  if (!publicationParentCache.has(best)) publicationParentCache.set(best, new Map());
+                  const parents = publicationParentCache.get(best);
+                  if (!parents.has(identity)) parents.set(identity,
+                    publicationParent(best, location.href, publicationResourceIdentity, identity, detailResource));
+                  const replyToUrl = parents.get(identity);
+                  const contextComplete = record?.contextComplete !== false
+                    && (best !== detailResource?.link || (identity === detailResource.identity
+                      && (!!replyToUrl || detailResource.replyContextComplete === true)));
                   const prior = workflowResourceRecordMap.get(identity);
                   if (!prior || text.length > prior.text.length || (!prior.attachments?.length && attachments.length)) {
                     workflowResourceRecordMap.set(identity, {
@@ -30625,13 +30735,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       bodyTextComplete: record?.authorshipComplete === true && rawBodyText.length <= 25000,
                       attachmentsComplete: record?.authorshipComplete === true && rawAttachments.length <= 20 && attachmentDataComplete,
                       links,
-                      replyToUrl: (() => {
-                        if (!publicationParentCache.has(best)) publicationParentCache.set(best, new Map());
-                        const parents = publicationParentCache.get(best);
-                        if (!parents.has(identity)) parents.set(identity,
-                          publicationParent(best, location.href, publicationResourceIdentity, identity));
-                        return parents.get(identity);
-                      })(),
+                      replyToUrl,
+                      contextComplete,
                       contextUrls: Array.from(new Set((record?.excluded || []).filter(node => !node.matches?.('[data-testid="replyToPost"]') && !node.closest?.('[data-testid="replyToPost"]')).flatMap(node => Array.from(node.querySelectorAll?.('a[href]') || []))
                         .map(a => a.href).filter(href => publicationResourceIdentity(href)))),
                       attachments: attachments.length ? attachments : (prior?.attachments || []),

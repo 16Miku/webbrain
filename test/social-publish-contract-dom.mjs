@@ -371,6 +371,175 @@ try {
       },bodyId);
       published=(await readPublished()).workflowResourceRecords[0];
       assert.equal(published.bodyTextComplete,false,'overflow cannot prove a complete body');checked++;
+      if (platform === 'bluesky') {
+        // Current Bluesky detail markup: the timestamp is plain text and the
+        // rich-text div has data-word-wrap, not a postText test ID. Exercise
+        // real extraction through dispatch-bound completion, including the
+        // exact paragraphs and shortened changelog link from the failing run.
+        const body = announcement.replace('35.0.0', '36.0.0');
+        const changelog = 'https://github.com/webbrain-one/webbrain/blob/main/CHANGELOG.md';
+        const bodyHtml = escape(body).replace(changelog, `<a href="${changelog}">github.com/webbrain-one...</a>`);
+        const detailCard = `<div data-testid="postThreadItem-by-alice.bsky.social" id="detail"><div><a href="/profile/alice.bsky.social"><div>Alice</div><div>@alice.bsky.social</div></a></div><div><div data-word-wrap="1" dir="auto" style="white-space:pre-wrap" id="detail-body">${bodyHtml}</div><div>4:36 PM · Sep 9, 2026</div><button>Reply</button></div></div>`;
+        const detailHtml = `<main><div data-testid="postThreadScreen">${detailCard}</div></main>`;
+        const composerHtml = `<nav><a href="/profile/alice.bsky.social">Profile</a></nav><div role="dialog"><div class="ProseMirror" contenteditable="true" style="white-space:pre-wrap">${paragraphs(body)}</div><button id="publish" data-testid="composerPublishBtn">Post</button></div>`;
+        const verifyDetail = async (html, url = permalink, options = {}) => {
+          const origin = options.origin || 'https://bsky.app/profile/alice.bsky.social/post/deleted';
+          const dispatchResult = options.dispatchResult || {success:true,dispatched:true};
+          await page.evaluate(url => history.replaceState({}, '', url), origin);
+          await page.setContent(`${options.background || ''}${composerHtml}`);
+          const provider = {chat:async()=>({content:'{}'})}, agent = new Agent({getActive:()=>provider}), tab = 912;
+          agent.useSiteAdapters=true;agent._persist=()=>{};agent._currentUrl=async()=>page.url();
+          agent.conversations.set(tab,[{role:'system',content:'system'},{role:'user',content:`Post exactly ${body} on Bluesky without attachments.`}]);
+          const guard = agent._startPlanExecutionGuard(tab,'act',{requestKind:'execute',requiresStateChange:true,requiresSubmission:true});
+          const raw = {version:1,status:'ready',actions:[{id:'p1',platform,account:null,posts:[{body:{kind:'exact',source:{source:'request',start:body,end:body}},media:{kind:'count',type:'any',format:null,min:0,max:0},context:{kind:'post',target:null}}]}],requirements:'p1',prohibited:[],reason:'Fixture request.'};
+          agent._chatWithCostAllowance=async(_p,messages,_o,_c,meta)=>{
+            const input=JSON.parse(messages[1].content);
+            return {content:JSON.stringify(meta.generationName==='social_publication_authorization'?{key:input.key,actionId:input.action.id,authorized:true,reason:'Fixture audit.'}:raw)};
+          };
+          agent._detectLikelySubmitAction=async()=>probe();
+          const detected=await probe();
+          assert.equal(await agent._workflowPreSubmitDispatchBlock(tab,'click',{selector:'#publish'},detected,provider),null);
+          agent._beginCompletionInvariant(tab);
+          agent._recordCompletionToolResult(tab,'click',{selector:'#publish'},dispatchResult);
+          agent._recordCompletionSubmitAttempt(tab,detected,'click',{selector:'#publish'},origin,origin,dispatchResult);
+          await page.evaluate(url => history.replaceState({}, '', url), url);
+          await page.setContent(html);
+          const state=await readPublished();
+          agent._recordCompletionToolResult(tab,'read_page',{}, {success:true,url:page.url(),content:'Observed published post.'});
+          const terminal=agent._workflowTerminalEvidenceFromDone(tab,state,page.url(),agent._completionSubmissionEvidence(tab,state,page.url()));
+          if (terminal) guard.workflowTerminalEvidence=terminal;
+          return {state,terminal,missing:agent._missingSocialPublishTargets(guard),baseline:detected.publicationResourceUrls,baselineComplete:detected.publicationResourceUrlsComplete};
+        };
+        let result = await verifyDetail(detailHtml);
+        const detail = result.state.workflowResourceRecords.find(r=>r.url===permalink);
+        assert(detail, 'current permalink binds to the focused post without a self-link');
+        assert.equal(detail.bodyText,body.replace(changelog,'github.com/webbrain-one...'));
+        assert.equal(detail.bodyTextComplete,true);
+        assert.equal(detail.contextComplete,true,'a standalone detail retains complete context');
+        assert.equal(detail.links.find(l=>l.authored)?.href,changelog,'authored URL survives probe serialization');
+        assert(result.terminal,`${build}: real Bluesky detail markup completes the publication`);
+        assert.deepEqual(result.missing,[],'the social completion guard accepts the verified publication');checked++;
+        // Bluesky names one account either by handle or by DID, and the detail
+        // route may name the author by DID while the focused card renders the
+        // handle. Binding must not assume the two read identically.
+        const did='did:plc:alicebskyhandle';
+        const didPermalink=`https://bsky.app/profile/${did}/post/3abc`;
+        result=await verifyDetail(detailHtml,didPermalink);
+        let didRecord=result.state.workflowResourceRecords.find(r=>r.url===didPermalink);
+        assert(didRecord,'a DID detail route binds to its handle-rendered focused card');
+        assert.equal(didRecord.bodyText,body.replace(changelog,'github.com/webbrain-one...'));
+        assert.equal(didRecord.bodyTextComplete,true);
+        assert.equal(didRecord.contextComplete,true,'a DID-backed standalone detail retains complete context');
+        assert(result.terminal,`${build}: DID-backed detail page completes the publication`);
+        assert.deepEqual(result.missing,[],'the completion guard accepts a DID-backed detail');checked++;
+        // Relaxed DID matching must still fail closed under ambiguity: only a
+        // unique anchorless focused card may borrow the route.
+        result=await verifyDetail(detailHtml.replace(detailCard,detailCard+detailCard),didPermalink);
+        assert.equal(result.state.workflowResourceRecords.some(r=>r.url===didPermalink),false,'a duplicate focused card cannot borrow a DID route');
+        assert.equal(result.terminal,null,`${build}: duplicate cards cannot bind a DID route`);
+        assert.deepEqual(result.missing,['bluesky']);checked++;
+        const nativeBody = `<div data-word-wrap="1" dir="auto" style="white-space:pre-wrap" id="detail-body">${bodyHtml}</div>`;
+        const nativeQuote = `<div role="link" tabindex="0"><a href="/profile/bob.bsky.social">Bob</a><div data-word-wrap="1" style="white-space:pre-wrap">${bodyHtml}</div></div>`;
+        for (const [label,html,expectedBody] of [
+          ['native quote-only',detailHtml.replace(nativeBody,nativeQuote),''],
+          ['native body plus quote',detailHtml.replace(nativeBody,nativeBody+nativeQuote),body.replace(changelog,'github.com/webbrain-one...')],
+          ['native quote with media',detailHtml.replace(nativeBody,nativeQuote.replace('</div>','<img src="https://cdn.example/quoted.png" width="30" height="30"></div>')),''],
+        ]) {
+          result=await verifyDetail(html);
+          const record=result.state.workflowResourceRecords.find(r=>r.url===permalink);
+          assert.equal(record?.bodyText,expectedBody,`${build}: ${label} excludes quoted text`);
+          assert.deepEqual(record?.attachments,[],`${build}: ${label} excludes quoted media`);
+          assert.equal(record?.contextComplete,false,'an unresolved native quote remains incomplete context');
+          assert.equal(result.terminal,null,`${build}: ${label} cannot fulfill a standalone post`);
+          assert.deepEqual(result.missing,['bluesky']);checked++;
+        }
+        const nativeParent='<div data-testid="postThreadItem-by-bob.bsky.social"><a href="/profile/bob.bsky.social">Bob</a><a href="/profile/bob.bsky.social/post/parent">Earlier</a><div data-word-wrap="1">Parent text</div></div>';
+        for (const [label,leading] of [
+          ['wrapped parent',`<div><div>${nativeParent}</div></div>`],
+          ['unresolved parent gap',`<div>${nativeParent}</div><div>Continue thread</div>`],
+        ]) {
+          result=await verifyDetail(detailHtml.replace(detailCard,leading+`<div><div>${detailCard}</div></div>`));
+          const record=result.state.workflowResourceRecords.find(r=>r.url===permalink);
+          assert.equal(record?.bodyText,body.replace(changelog,'github.com/webbrain-one...'),'the matching authored body is still observed');
+          assert.equal(record?.replyToUrl,'','unresolved native parent is not guessed');
+          assert.equal(record?.contextComplete,false,'missing parent URL does not mean standalone');
+          assert.equal(result.terminal,null,`${build}: native ${label} cannot fulfill a standalone post`);
+          assert.deepEqual(result.missing,['bluesky']);checked++;
+        }
+        // Opening and closing a composer over an existing identical post
+        // does not publish anything. Its anchorless route must be in the
+        // pre-dispatch baseline even when the modal hides the underlying UI.
+        for (const [label,dispatchResult] of [
+          ['acknowledged click without publication',{success:true,dispatched:true}],
+          ['uncertain dispatch',{success:false,outcomeUnknown:true}],
+        ]) {
+          for (const background of [detailHtml,detailHtml.replace('<main>','<main aria-hidden="true" style="display:none">')]) {
+            result=await verifyDetail(detailHtml,permalink,{
+              origin:permalink+'?view=thread#post',background,dispatchResult,
+            });
+            assert.equal(result.terminal,null,`${build}: ${label} cannot reuse an existing detail post`);
+            assert.equal(result.baselineComplete,true);
+            assert(result.baseline.some(url=>url.startsWith(permalink)),`${build}: current detail URL is captured before dispatch`);
+            assert.deepEqual(result.missing,['bluesky'],label);checked++;
+          }
+        }
+        // The added route counts toward the baseline bound; overflow must
+        // remain incomplete, and the route cannot be truncated out itself.
+        for (const count of [199,200]) {
+          await page.evaluate(url=>history.replaceState({},'',url),permalink);
+          const links=Array.from({length:count},(_,i)=>`<a href="/profile/bob.bsky.social/post/baseline${i}">${i}</a>`).join('');
+          await page.setContent(links+composerHtml);
+          const baseline=await probe();
+          assert.equal(baseline.publicationResourceUrls[0],permalink);
+          assert.equal(baseline.publicationResourceUrls.length,200);
+          assert.equal(baseline.publicationResourceUrlsComplete,count===199);checked++;
+        }
+        // The focused card is first in the DOM, but its route-derived record
+        // used to be appended after every neighbor and lost at the 40 cap.
+        for (const count of [39,40,60]) {
+          const neighbors=Array.from({length:count},(_,i)=>`<div data-testid="postThreadItem-by-bob.bsky.social"><a href="/profile/bob.bsky.social/post/neighbor${i}">Earlier ${i}</a><div data-word-wrap="1">Unrelated body ${i}</div></div>`).join('');
+          result=await verifyDetail(detailHtml.replace(detailCard,detailCard+neighbors));
+          assert(result.state.workflowResourceRecords.some(record=>record.url===permalink),`${build}: focused evidence survives ${count} neighboring records`);
+          assert(result.state.workflowResourceRecords.length<=40,'the resource-record bound is preserved');
+          assert(result.terminal,`${build}: focused publication completes with ${count} neighbors`);
+          assert.deepEqual(result.missing,[]);checked++;
+        }
+        for (const [label, html, url] of [
+          ['wrong author',detailHtml.replaceAll('alice.bsky.social','bob.bsky.social')],
+          ['conflicting permalink',detailHtml.replace('<div>4:36 PM', '<a href="/profile/alice.bsky.social/post/other">Earlier post</a><div>4:36 PM')],
+          ['duplicate focused card',detailHtml.replace(detailCard,detailCard+detailCard)],
+          ['hidden focused card',detailHtml.replace('<main>','<main style="display:none">')],
+          ['feed card',detailHtml.replace('postThreadItem-by-','feedItem-by-')],
+          ['missing thread screen',detailHtml.replace('postThreadScreen','profileScreen')],
+          ['quoted focused card',detailHtml.replace(detailCard,`<div data-testid="embeddedPost">${detailCard}</div>`)],
+          ['feed route',detailHtml,'https://bsky.app/'],
+          ['wrong body',detailHtml.replace('36.0.0','37.0.0')],
+          ['wrong link',detailHtml.replace(changelog,'https://example.com/wrong')],
+          ['reply instead of post',detailHtml.replace('id="detail"','id="detail" data-in-reply-to-url="https://bsky.app/profile/bob.bsky.social/post/parent"')],
+          ['quote instead of post',detailHtml.replace('</button>','</button><div data-testid="embeddedPost"><a href="/profile/bob.bsky.social/post/quoted">Quoted post</a></div>')],
+          ['body only in preview',detailHtml.replace(bodyHtml,`<a href="https://example.com/card"><div data-word-wrap="1">${escape(body)}</div></a>`).replace('data-word-wrap="1" dir="auto"','dir="auto"')],
+          ['body only in quote',detailHtml.replace(bodyHtml,`<div data-testid="embeddedPost"><div data-word-wrap="1">${bodyHtml}</div></div>`).replace('data-word-wrap="1" dir="auto"','dir="auto"')],
+        ]) {
+          result=await verifyDetail(html,url);
+          assert.equal(result.terminal,null,`${build}: ${label} cannot complete the publication`);
+          assert.deepEqual(result.missing,['bluesky'],label);checked++;
+        }
+        const preview = '<a href="https://example.com/preview"><div data-word-wrap="1">Preview title</div></a>';
+        result=await verifyDetail(detailHtml.replace('</main>',preview+'</main>').replace('</button>','</button>'+preview));
+        assert(result.terminal,'external preview text cannot contaminate the authored body');checked++;
+        const neighbor='<div data-testid="postThreadItem-by-alice.bsky.social"><a href="/profile/alice.bsky.social">Alice</a><a href="/profile/alice.bsky.social/post/older">Earlier</a><div data-word-wrap="1">Earlier body</div></div>';
+        result=await verifyDetail(detailHtml.replace(detailCard,neighbor+detailCard),permalink+'?view=thread#post');
+        assert.equal(result.terminal,null,'a preceding native thread card cannot be treated as absent reply context');
+        assert(result.state.workflowResourceRecords.some(record=>record.url===permalink),'the focused resource remains attributed to its route');checked++;
+        // The same body marker occurs in feeds. A mentioned permalink in
+        // native rich text must stay in the authored body, not become a quote.
+        await page.setContent(detailHtml.replace('postThreadItem-by-','feedItem-by-').replace('<div>4:36 PM',`<a href="${permalink}">timestamp</a><div>4:36 PM`));
+        assert.equal((await readPublished()).workflowResourceRecords.find(r=>r.url===permalink)?.bodyText,body.replace(changelog,'github.com/webbrain-one...'));checked++;
+        await page.locator('#detail-body a').evaluate(el=>el.href='https://bsky.app/profile/bob.bsky.social/post/mentioned');
+        const mentioned=(await readPublished()).workflowResourceRecords.find(r=>r.url===permalink);
+        assert.equal(mentioned.bodyText,body.replace(changelog,'github.com/webbrain-one...'));
+        assert.deepEqual(mentioned.contextUrls,[]);checked++;
+      }
       // Link thumbnails have no dedicated container on Bluesky. Check the
       // same media in the real composer and published-resource probes, then
       // drive no-attachment authorization and completion for the preview case.

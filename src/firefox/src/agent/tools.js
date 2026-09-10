@@ -555,7 +555,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'schedule_resume',
-      description: 'Durably pause this current task and resume it later in the same tab/conversation. Use only when the task is blocked on external time or an external event (CI/deploy/email/upload/etc.) and continuing immediately would be wasteful or impossible. This is a terminal tool: after it succeeds, the current run ends; only then may you tell the user the scheduled resume time. Do NOT use for standalone reminders or recurring monitors — use schedule_task only when the user explicitly asks for future/recurring work.',
+      description: 'Durably pause this current task and resume it later in the same tab/conversation. Use only when the task is blocked on external time or an external event (CI/deploy/email/upload/etc.) and continuing immediately would be wasteful or impossible. Recheck the event first: if it has completed, verify the result and call done. Never schedule a redundant final checkpoint or use scheduling to escape a rejected done; if completion evidence cannot be verified, use done with outcome partial or failed. This is a terminal tool: after it succeeds, the current run ends; only then may you tell the user the scheduled resume time. Do NOT use for standalone reminders or recurring monitors — use schedule_task only when the user explicitly asks for future/recurring work.',
       parameters: {
         type: 'object',
         properties: {
