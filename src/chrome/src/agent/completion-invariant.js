@@ -508,9 +508,12 @@ export function publicationResourceRecordRoot(link, identity, publicationResourc
 }
 
 // The focused Bluesky thread item renders its timestamp as text, without a
-// self-permalink anchor. Bind the route only to one visible, matching author
-// card in the app's thread screen. Feed items, embeds, and cards that already
-// identify a different post cannot borrow the current URL.
+// self-permalink anchor. The detail route may name the author by DID while
+// the focused card renders the account handle, so binding cannot assume the
+// route identifier and rendered handle are spelled identically. Bind the
+// route only to one visible, focused card in the app's thread screen. Feed
+// items, embeds, and cards that already identify a different post cannot
+// borrow the current URL.
 // Keep self-contained: Agent serializes this function into the page.
 export function publicationDetailResource(doc, pageUrl, publicationResourceIdentity) {
   try {
@@ -523,6 +526,12 @@ export function publicationDetailResource(doc, pageUrl, publicationResourceIdent
     const identity = publicationResourceIdentity(url);
     if (!identity) return null;
     const owner = decodeURIComponent(match[1]).toLowerCase();
+    const didOwner = /^did:[a-z0-9][a-z0-9:._-]*$/i.test(owner);
+    const authorOf = card => {
+      const testId = card.getAttribute('data-testid') || '';
+      const prefix = 'postthreaditem-by-';
+      return testId.toLowerCase().startsWith(prefix) ? testId.toLowerCase().slice(prefix.length) : '';
+    };
     const cards = '[data-testid^="feedItem-by-"],[data-testid^="postThreadItem-by-"]';
     const excluded = '[data-testid^="postQuote-"],[data-testid="embeddedPost"],[data-testid*="quote"],[data-testid^="embed-"],div[role="link"]:not([data-testid^="feedItem-by-"]):not([data-testid^="postThreadItem-by-"]),dialog,[role="dialog"],aside,[role="complementary"]';
     const body = '[data-testid="postText"],div[data-word-wrap="1"]';
@@ -539,19 +548,32 @@ export function publicationDetailResource(doc, pageUrl, publicationResourceIdent
     const candidates = Array.from(doc.querySelectorAll('[data-testid="postThreadScreen"] [data-testid^="postThreadItem-by-"]'));
     if (candidates.length > 200) return null;
     const matches = candidates.filter(card => {
-      if (!visible(card) || card.closest(excluded) || card.parentElement?.closest(cards)
-          || card.getAttribute('data-testid').toLowerCase() !== 'postthreaditem-by-' + owner) return false;
+      if (!visible(card) || card.closest(excluded) || card.parentElement?.closest(cards)) return false;
+      const author = authorOf(card);
+      // A handle-backed route must still name the rendered author verbatim.
+      // A DID-backed route cannot be compared by string equality; it binds
+      // through the authored-identity and screen-wide uniqueness checks below,
+      // and the later body match still confirms authorship.
+      if (!author || (!didOwner && author !== owner)) return false;
       const links = Array.from(card.querySelectorAll('a[href]'));
       if (links.length > 200) return false;
       const owned = links.filter(a => a.closest(cards) === card && !a.closest(body + ',' + excluded));
       // A non-focused thread item supplies its own permalink. Even a single
-      // conflicting identity is enough to reject route-based attribution.
+      // conflicting identity is enough to reject route-based attribution. The
+      // focused card is anchorless, so this alone cannot bind a DID route; the
+      // screen-wide uniqueness check below does.
       const identities = owned.map(a => publicationResourceIdentity(a.href)).filter(Boolean);
       if (identities.some(value => value !== identity)) return false;
       return owned.some(a => {
         const profile = new URL(a.href, pageUrl);
-        return visible(a) && profile.origin === page.origin
-          && decodeURIComponent(profile.pathname).replace(/\/+$/, '').toLowerCase() === '/profile/' + owner;
+        if (!visible(a) || profile.origin !== page.origin) return false;
+        const path = decodeURIComponent(profile.pathname).replace(/\/+$/, '').toLowerCase();
+        if (!/^\/profile\/[^/]+$/.test(path)) return false;
+        // A handle route requires the on-site profile link to be the route
+        // owner. A DID route renders the handle instead; while that handle is
+        // not comparable on-page, the card binds only when it is the thread
+        // screen's unique anchorless item with no conflicting post identity.
+        return didOwner || path === '/profile/' + owner;
       });
     });
     if (matches.length !== 1) return null;

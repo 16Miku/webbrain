@@ -419,6 +419,25 @@ try {
         assert.equal(detail.links.find(l=>l.authored)?.href,changelog,'authored URL survives probe serialization');
         assert(result.terminal,`${build}: real Bluesky detail markup completes the publication`);
         assert.deepEqual(result.missing,[],'the social completion guard accepts the verified publication');checked++;
+        // Bluesky names one account either by handle or by DID, and the detail
+        // route may name the author by DID while the focused card renders the
+        // handle. Binding must not assume the two read identically.
+        const did='did:plc:alicebskyhandle';
+        const didPermalink=`https://bsky.app/profile/${did}/post/3abc`;
+        result=await verifyDetail(detailHtml,didPermalink);
+        let didRecord=result.state.workflowResourceRecords.find(r=>r.url===didPermalink);
+        assert(didRecord,'a DID detail route binds to its handle-rendered focused card');
+        assert.equal(didRecord.bodyText,body.replace(changelog,'github.com/webbrain-one...'));
+        assert.equal(didRecord.bodyTextComplete,true);
+        assert.equal(didRecord.contextComplete,true,'a DID-backed standalone detail retains complete context');
+        assert(result.terminal,`${build}: DID-backed detail page completes the publication`);
+        assert.deepEqual(result.missing,[],'the completion guard accepts a DID-backed detail');checked++;
+        // Relaxed DID matching must still fail closed under ambiguity: only a
+        // unique anchorless focused card may borrow the route.
+        result=await verifyDetail(detailHtml.replace(detailCard,detailCard+detailCard),didPermalink);
+        assert.equal(result.state.workflowResourceRecords.some(r=>r.url===didPermalink),false,'a duplicate focused card cannot borrow a DID route');
+        assert.equal(result.terminal,null,`${build}: duplicate cards cannot bind a DID route`);
+        assert.deepEqual(result.missing,['bluesky']);checked++;
         const nativeBody = `<div data-word-wrap="1" dir="auto" style="white-space:pre-wrap" id="detail-body">${bodyHtml}</div>`;
         const nativeQuote = `<div role="link" tabindex="0"><a href="/profile/bob.bsky.social">Bob</a><div data-word-wrap="1" style="white-space:pre-wrap">${bodyHtml}</div></div>`;
         for (const [label,html,expectedBody] of [
