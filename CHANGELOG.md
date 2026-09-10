@@ -4,6 +4,15 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.0.4] - 2026-09-10
+
+### Changed
+- fix: bind Bluesky detail cards when the route names the author by DID
+- 36.0.3
+- fixes
+- 36.0.2
+- fix: verify Bluesky publication details safely
+
 ## [36.0.1] - 2026-09-09
 
 ### Changed
