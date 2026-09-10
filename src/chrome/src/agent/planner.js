@@ -137,6 +137,7 @@ export const PLANNER_RESPONSE_JSON_SCHEMA = {
     deliverables: { type: 'array', items: { type: 'string' } },
     expected_items: PLANNER_EXPECTED_ITEMS_SCHEMA,
     site_job: PLANNER_SITE_JOB_SCHEMA,
+    conditional_site_job: { anyOf: [{ type: 'null' }, { type: 'string', enum: ['edit-file-and-commit'] }] },
     requires_state_change: { type: 'boolean' },
     requires_submission: { type: 'boolean' },
     messaging: PLANNER_MESSAGING_SCHEMA,
@@ -180,6 +181,7 @@ export const PLANNER_RESPONSE_JSON_SCHEMA = {
   required: [
     'request_kind',
     'site_job',
+    'conditional_site_job',
     'requires_state_change',
     'requires_submission',
     'messaging',
@@ -209,6 +211,7 @@ export const PLANNER_INTENT_RESPONSE_JSON_SCHEMA = {
     deliverables: { type: 'array', items: { type: 'string' } },
     expected_items: PLANNER_EXPECTED_ITEMS_SCHEMA,
     site_job: PLANNER_SITE_JOB_SCHEMA,
+    conditional_site_job: { anyOf: [{ type: 'null' }, { type: 'string', enum: ['edit-file-and-commit'] }] },
     requires_state_change: { type: 'boolean' },
     requires_submission: { type: 'boolean' },
     messaging: PLANNER_MESSAGING_SCHEMA,
@@ -243,6 +246,7 @@ export const PLANNER_INTENT_RESPONSE_JSON_SCHEMA = {
   required: [
     'request_kind',
     'site_job',
+    'conditional_site_job',
     'requires_state_change',
     'requires_submission',
     'messaging',
@@ -293,6 +297,7 @@ Schema:
   "deliverables": ["explicit result the latest user request asks for"],
   "expected_items": null | { "count": 15, "item_type": "hotel", "ordered": true, "required_fields": ["hotel_name", "carousel_position", "evidence_source"] },
   "site_job": null | "exact app-provided site workflow job id",
+  "conditional_site_job": null | "edit-file-and-commit",
   "requires_state_change": boolean,
   "requires_submission": boolean,
   "messaging": null | { "target_kind": "named" | "active_conversation", "recipients": [{ "identity": "exact user-authorized recipient", "role": "to" | "cc" | "bcc" }] },
@@ -386,6 +391,7 @@ export const PLANNER_INTENT_SYSTEM_PROMPT = `You are the intent and compact plan
 {
   "request_kind": "execute" | "respond" | "plan_only" | "clarify",
   "site_job": null | "exact app-provided site workflow job id",
+  "conditional_site_job": null | "edit-file-and-commit",
   "scope_relation": "new" | "continue" | "narrow" | "extend",
   "deliverables": ["explicit result required by the latest request"],
   "expected_items": null | { "count": 15, "item_type": "hotel", "ordered": true, "required_fields": ["hotel_name", "carousel_position", "evidence_source"] },
@@ -612,8 +618,11 @@ export function formatResponseLanguagePolicyInstruction(value, fallbackLocale = 
   ].join('\n');
 }
 
+const PLANNER_RESUME_RULE = '\n- This run is an app-owned scheduled continuation. Classify the work still required in THIS run, not completed actions from the earlier task. First inspect the external event. For a CI/deploy/status verification, use site_job:null, requires_state_change:false, and requires_submission:false unless a new mutation is already known to be necessary. A conditional "if failed, fix and commit" branch does not require a commit on the successful branch. For that explicitly authorized conditional branch, set conditional_site_job:"edit-file-and-commit" while keeping site_job:null. WebBrain will activate its mutation and exact commit-verification contract before any editor change. Use conditional_site_job:null when no such branch is authorized. Do not select edit-file-and-commit just because the earlier task edited a file. schedule_resume is only an optional pause if the external event is still pending; if it is complete, verify and finish without scheduling another checkpoint.';
+
 export function buildPlannerSystemPrompt(opts = {}) {
   let prompt = opts.allowApi ? `${PLANNER_SYSTEM_PROMPT}\n${PLANNER_API_REPLAY_RULE}` : PLANNER_SYSTEM_PROMPT;
+  if (opts.scheduledResume === true) prompt += PLANNER_RESUME_RULE;
   prompt += `\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.`;
   if (opts.researchEscalationEnabled === true) {
     prompt += '\n- Research escalation is available for materially complex read-only research subtasks. If it would substantially improve speed or quality, plan an explicit clarify consent step followed by delegate_research; only the exact user-approved prompt may be shared. Do not use it for ordinary browsing, private/account data, mutations, purchases, bookings, or high-stakes decisions.';
@@ -643,7 +652,7 @@ export function buildPlannerIntentSystemPrompt(opts = {}) {
     ? '\n- A complex read-only research subtask may use explicit clarify consent followed by delegate_research; never delegate private data or consequential actions.'
     : '';
   const workflowRouting = formatSiteWorkflowRouting(opts.siteWorkflow);
-  return `${PLANNER_INTENT_SYSTEM_PROMPT}\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.${researchRule}${workflowRouting ? `\n\n${workflowRouting}` : ''}`;
+  return `${PLANNER_INTENT_SYSTEM_PROMPT}${opts.scheduledResume === true ? PLANNER_RESUME_RULE : ''}\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.${researchRule}${workflowRouting ? `\n\n${workflowRouting}` : ''}`;
 }
 
 export function formatSiteWorkflowRouting(value) {
@@ -926,7 +935,9 @@ export function normalizePlan(obj, opts = {}) {
     ? (
       !!obj.requires_state_change
       || requiresSubmission === true
-      || !!normalizedScheduling
+      // A resume is a possible pause while waiting, not a required mutation
+      // when the external event has already completed by the time we read it.
+      || normalizedScheduling?.tool === 'schedule_task'
       || requiresDownload
     )
     : false;
@@ -936,6 +947,10 @@ export function normalizePlan(obj, opts = {}) {
     deliverables,
     expected_items: expectedItems,
     site_job: siteJob,
+    conditional_site_job: opts.scheduledResume === true && executablePlan
+      && !siteJob && !requiresStateChange && requiresSubmission === false
+      && obj.conditional_site_job === 'edit-file-and-commit'
+      ? 'edit-file-and-commit' : null,
     requires_state_change: requiresStateChange,
     requires_submission: requiresSubmission,
     messaging,
@@ -981,6 +996,7 @@ export function normalizePlan(obj, opts = {}) {
       tools: ['carousel_navigate', 'progress_update'],
     };
     normalizedPlan.scope_relation = 'narrow';
+    normalizedPlan.conditional_site_job = null;
     normalizedPlan.deliverables = [deliverable];
     normalizedPlan.expected_items = {
       count: hotelCount,
@@ -1060,6 +1076,7 @@ function appendPlanExecutionMetadata(lines, plan) {
     lines.push(`- Expected items: ${plan.expected_items.count} ordered=${plan.expected_items.ordered ? 'yes' : 'no'} type=${plan.expected_items.item_type}; required fields=${plan.expected_items.required_fields.join(', ') || 'none'}`);
   }
   if (plan.site_job) lines.push(`- Site workflow job: ${plan.site_job}`);
+  if (plan.conditional_site_job) lines.push(`- Conditional site workflow job: ${plan.conditional_site_job}`);
   lines.push(`- Submission required: ${plan.requires_submission === true ? 'yes' : (plan.requires_submission === false ? 'no' : 'auto')}`);
   if (plan.messaging?.target_kind === 'named') {
     lines.push(`- Message targets: ${plan.messaging.recipients.map(recipient => `${recipient.role}:${recipient.identity}`).join(', ')}`);
