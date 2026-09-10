@@ -31,7 +31,7 @@ import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLe
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
-import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, publicationReplyParent, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
+import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, publicationDetailResource, publicationReplyParent, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
 import { cdpClient } from '../cdp/cdp-client.js';
 import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getFullPageCapturePolicy, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
@@ -18467,8 +18467,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const author = this._workflowSocialPublicationAccountIdentity(guard.siteWorkflow, record.url);
         if (author !== account && !this._workflowSocialAccountAliasProven(guard.siteWorkflow, account, author, record)) return false;
         const mediaRecord = this._workflowSocialRecordWithUploadedAttachmentNames(record, binding);
-        return record.bodyTextComplete === true && record.attachmentsComplete === true && typeof record.bodyText === 'string'
-          && (expected.bodyText === '' ? record.bodyText === '' : this._workflowSocialPublishedBodyObserved({ field: 'body', value: expected.bodyText, rawValue: expected.bodyText }, record))
+        return record.contextComplete !== false && record.bodyTextComplete === true && record.attachmentsComplete === true && typeof record.bodyText === 'string'
+          && (expected.bodyText === '' ? record.bodyText === '' : record.bodyText !== '' && this._workflowSocialPublishedBodyObserved({ field: 'body', value: expected.bodyText, rawValue: expected.bodyText }, record))
           && publicationMediaMatches(post.media, mediaRecord)
           && (i > 0 ? !(record.contextUrls?.length) : post.context.kind === 'post'
             ? !(record.contextUrls?.length) && !record.replyToUrl
@@ -22930,11 +22930,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     const publicationResourceUrls = () => {
       try {
-        const urls = Array.from(doc.querySelectorAll('a[href]'))
+        // The current detail route already existed before this dispatch,
+        // even if its post has no self-link or a composer hides its card.
+        // Baseline exclusion needs no claim that the old post was published
+        // by this job; omitting it would let it appear new at completion.
+        const candidates = [url, ...Array.from(doc.querySelectorAll('a[href]'))
           .map((link) => {
             try { return new URL(link.getAttribute('href') || link.href || '', url).href; } catch { return ''; }
-          })
-          .filter((value) => {
+          })];
+        const urls = [...new Set(candidates.filter((value) => {
             try {
               const parsed = new URL(value);
               const resourceHost = parsed.hostname.toLowerCase().replace(/^www\./, '');
@@ -22947,8 +22951,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             } catch {
               return false;
             }
-          })
-          ;
+          }))];
         return { urls: urls.slice(0, 200), complete: urls.length <= 200 };
       } catch {
         return { urls: [], complete: false };
@@ -33914,6 +33917,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 }
                 const classifyForm = ${classifyCompletionForm.toString()};
                 const publicationRecordRoot = ${publicationResourceRecordRoot.toString()};
+                const publicationDetail = ${publicationDetailResource.toString()};
                 const publicationParent = ${publicationReplyParent.toString()};
                 const publicationParentCache = new Map();
                 const dialogs = Array.from(document.querySelectorAll('[role=dialog],[role=alertdialog],[aria-modal="true"],dialog[open]')).filter(visible);
@@ -33981,7 +33985,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   } catch {}
                   return '';
                 };
-                const workflowResourceLinks = Array.from(document.querySelectorAll('a[href]'))
+                let workflowResourceLinks = Array.from(document.querySelectorAll('a[href]'))
                   .slice(0, 2000)
                   .map(link => {
                     let url = '';
@@ -33989,6 +33993,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                     return { link, url, identity: publicationResourceIdentity(url) };
                   })
                   .filter(item => !!item.identity);
+                const detailResource = publicationDetail(document, location.href, publicationResourceIdentity);
+                if (detailResource) {
+                  workflowResourceLinks = workflowResourceLinks.filter(item => item.identity !== detailResource.identity);
+                  // Reserve the focused post before the URL, record, and
+                  // candidate limits so a long thread cannot crowd it out.
+                  workflowResourceLinks.unshift(detailResource);
+                }
                 // Commit pages expose changed files as blob links. They prove
                 // the commit's file scope without becoming published-resource
                 // records of their own.
@@ -34050,7 +34061,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   ].filter(candidate => !isEmbedded(candidate)).slice(0, 100).map(candidate => {
                     let href = '';
                     try { href = new URL(candidate.getAttribute('href') || candidate.href || '', location.href).href; } catch {}
-                    const compact = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 1000);
+                    const compact = value => String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 1000);
                     let inAuthoredBody = false;
                     try {
                       inAuthoredBody = authoredNodes.some(node => node === candidate || node.contains?.(candidate));
@@ -34139,6 +34150,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       alt: String(alt || '').slice(0, 25000),
                     };
                   });
+                  if (!publicationParentCache.has(best)) publicationParentCache.set(best, new Map());
+                  const parents = publicationParentCache.get(best);
+                  if (!parents.has(identity)) parents.set(identity,
+                    publicationParent(best, location.href, publicationResourceIdentity, identity, detailResource));
+                  const replyToUrl = parents.get(identity);
+                  const contextComplete = record?.contextComplete !== false
+                    && (best !== detailResource?.link || (identity === detailResource.identity
+                      && (!!replyToUrl || detailResource.replyContextComplete === true)));
                   const prior = workflowResourceRecordMap.get(identity);
                   if (!prior || text.length > prior.text.length || (!prior.attachments?.length && attachments.length)) {
                     workflowResourceRecordMap.set(identity, {
@@ -34148,13 +34167,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                       bodyTextComplete: record?.authorshipComplete === true && rawBodyText.length <= 25000,
                       attachmentsComplete: record?.authorshipComplete === true && rawAttachments.length <= 20 && attachmentDataComplete,
                       links,
-                      replyToUrl: (() => {
-                        if (!publicationParentCache.has(best)) publicationParentCache.set(best, new Map());
-                        const parents = publicationParentCache.get(best);
-                        if (!parents.has(identity)) parents.set(identity,
-                          publicationParent(best, location.href, publicationResourceIdentity, identity));
-                        return parents.get(identity);
-                      })(),
+                      replyToUrl,
+                      contextComplete,
                       contextUrls: Array.from(new Set((record?.excluded || []).filter(node => !node.matches?.('[data-testid="replyToPost"]') && !node.closest?.('[data-testid="replyToPost"]')).flatMap(node => Array.from(node.querySelectorAll?.('a[href]') || []))
                         .map(a => a.href).filter(href => publicationResourceIdentity(href)))),
                       attachments: attachments.length ? attachments : (prior?.attachments || []),
