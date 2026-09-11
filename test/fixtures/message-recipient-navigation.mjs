@@ -205,6 +205,41 @@ export function registerMessageRecipientNavigationFixtures({
       assert.equal((await guard('click_ax', args))?.noDispatch, true);
     });
 
+    register(`${kind}: LinkedIn Contact info ownership crosses open shadow roots`, async (page) => {
+      const { guard, probe } = await setup(page);
+      await page.evaluate(() => {
+        history.replaceState(null, '', '/in/alice/overlay/contact-info/');
+        const dialog = document.querySelector('#contact-info-dialog');
+        dialog.hidden = false;
+        const profile = document.querySelector('#contact-profile');
+        const host = document.createElement('span');
+        dialog.append(host);
+        host.attachShadow({ mode: 'open' }).append(profile);
+      });
+      const args = { text: 'portfolio.example', textMatch: 'exact' };
+      const result = await probe('click', args);
+      assert.equal(result.navigation, true, JSON.stringify(result));
+      assert.equal(await guard('click', args), null);
+    });
+
+    register(`${kind}: LinkedIn non-blocking dialogs cannot claim Contact info redirects`, async (page) => {
+      const { guard, probe } = await setup(page);
+      await page.evaluate(() => {
+        history.replaceState(null, '', '/in/alice/overlay/contact-info/');
+        document.querySelector('#chat').hidden = false;
+        document.body.insertAdjacentHTML('beforeend', `
+          <div role="dialog" style="position:fixed;inset:120px;background:white">
+            <a href="/in/alice/">linkedin.com/in/alice</a>
+            <a id="non-blocking-dialog-link" href="/safety/go/?url=https%3A%2F%2Fportfolio.example%2F">Non-blocking dialog link</a>
+          </div>`);
+      });
+      const args = { selector: '#non-blocking-dialog-link' };
+      const result = await probe('click', args);
+      assert.equal(result.navigationBlocked, true, JSON.stringify(result));
+      assert.equal(result.conclusive, false, JSON.stringify(result));
+      assert.equal((await guard('click', args))?.noDispatch, true);
+    });
+
     register(`${kind}: LinkedIn safety redirects cannot escape a heuristic modal`, async (page) => {
       const { guard, probe } = await setup(page);
       await page.evaluate(() => {
@@ -256,6 +291,7 @@ export function registerMessageRecipientNavigationFixtures({
         'https://linkedin.com/messaging/send/',
         'https://m.linkedin.com/messaging/send/',
         'https://m.linkedin.com./messaging/send/',
+        '/safety/go/?url=https%3A%2F%2Fportfolio.example%2F',
         '/safety/go/',
         '/safety/go/?url=javascript%3Aalert(1)',
         '/safety/go/?url=https%3A%2F%2Fwww.linkedin.com%2Fmessaging%2Fsend',

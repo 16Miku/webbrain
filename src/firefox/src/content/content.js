@@ -569,6 +569,22 @@
     return null;
   }
 
+  function _someComposedDescendant(root, selector, predicate, limit = 2000) {
+    const pending = [root];
+    let visited = 0;
+    while (pending.length && visited < limit) {
+      const scope = pending.shift();
+      const elements = scope?.querySelectorAll?.('*') || [];
+      for (const element of elements) {
+        visited += 1;
+        if (element.matches?.(selector) && predicate(element)) return true;
+        if (element.shadowRoot) pending.push(element.shadowRoot);
+        if (visited >= limit) break;
+      }
+    }
+    return false;
+  }
+
   function isVisiblyInteractive(el) {
     if (!el || el.tagName === 'BODY' || el.tagName === 'HTML') return false;
     if (_hasComposedClosest(el, '[aria-hidden="true"], [inert]')) return false;
@@ -4339,14 +4355,26 @@
             || _composedClosestElement(link, 'form')
             || link.hasAttribute?.('download')
             || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return 'blocked';
+        const heuristicModalSelector = '[data-overlay],.modal.show,.modal-overlay,.overlay,'
+          + '[class*="modal"][class*="open"],[class*="overlay"][class*="active"],'
+          + '[class*="DialogOverlay"],[class*="ModalOverlay"]';
         const composedModal = _composedClosestElement(
           link,
-          'dialog,[role="dialog"],[role="alertdialog"],[data-overlay],.modal.show,.modal-overlay,.overlay,'
-            + '[class*="modal"][class*="open"],[class*="overlay"][class*="active"],'
-            + '[class*="DialogOverlay"],[class*="ModalOverlay"]',
+          `dialog,[role="dialog"],[role="alertdialog"],${heuristicModalSelector}`,
         );
         const modal = composedModal
           || (blockingModal && _isComposedAncestor(blockingModal, link) ? blockingModal : null);
+        const modalIsBlocking = !!modal && (
+          modal === blockingModal
+          || (modal.tagName === 'DIALOG' && modal.hasAttribute('open') && _isNativeBlockingDialog(modal))
+          || (/^(?:dialog|alertdialog)$/.test(modal.getAttribute?.('role') || '')
+            && modal.getAttribute?.('aria-modal') === 'true')
+          || (() => {
+            if (!modal.matches?.(heuristicModalSelector)) return false;
+            const rect = modal.getBoundingClientRect();
+            return rect.width > 100 && rect.height > 100;
+          })()
+        );
         const unresolved = () => modal ? 'blocked' : 'none';
         try {
           const href = String(link.getAttribute('href') || '').trim();
@@ -4371,8 +4399,8 @@
           if (modal) {
             const contactInfoOverlay = /^\/in\/([^/]+)\/overlay\/contact-info\/?$/.exec(location.pathname);
             const profilePath = contactInfoOverlay ? `/in/${contactInfoOverlay[1]}` : '';
-            const ownsContactInfoRoute = !!profilePath && Array.from(modal.querySelectorAll?.('a[href]') || [])
-              .some((candidate) => {
+            const ownsContactInfoRoute = modalIsBlocking && !!profilePath
+              && _someComposedDescendant(modal, 'a[href]', (candidate) => {
                 try {
                   const candidateUrl = new URL(candidate.getAttribute('href'), document.baseURI);
                   return isLinkedInHost(candidateUrl.hostname)
@@ -4382,10 +4410,11 @@
                 }
               });
             if (!ownsContactInfoRoute || !verifiedExternalRedirect) return 'blocked';
+            return 'navigation';
           }
           if (!linkedInDestination) return 'navigation';
-          return (verifiedExternalRedirect
-            || /^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname)
+          if (redirectPath) return 'blocked';
+          return (/^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname)
             || /^\/in\/[^/]+\/overlay\/contact-info\/?$/.test(destination.pathname))
             ? 'navigation'
             : 'none';
