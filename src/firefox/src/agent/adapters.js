@@ -17647,7 +17647,7 @@ const ADAPTERS = [
     notes: `
 - IRCTC (irctc.co.in) is Indian Railways ticketing. Login ("LOGIN") needs username/password + CAPTCHA; booking also needs passenger details (name, age, berth preference) and an explicit user confirm before "Book Now".
 - Search with station CODES (e.g. NDLS, BCT, HWH) in "From"/"To", journey date, and quota ("General", "Tatkal", "Ladies"). Sort/filter by class (SL/3A/2A/1A/CC) and train type; availability colours (Available/RAC/WL + number) are per class — read the exact class row before quoting.
-- Tatkal trap: booking opens at 10:00 IST for AC classes and 11:00 IST for non-AC classes on the calendar day before the train's departure date at its originating station. Do not calculate from a later boarding-station date; check live availability before promising a berth.
+- Tatkal trap: booking opens at 10:00 IST for AC classes and 11:00 IST for non-AC classes on the calendar day before the train's departure date at its originating station. Online Tatkal/Premium Tatkal booking requires an Aadhaar-authenticated account and Aadhaar-based OTP during booking; surface authentication or OTP needs to the user instead of retrying. Do not calculate from a later boarding-station date; check live availability before promising a berth.
 - PNR/status trap: "PNR Status" is a separate flow from booking history ("Booked Ticket History"). Cancel via "Cancel Ticket" with confirmation; partial-cancel needs per-passenger selection.
 - Never submit payment or final booking without the user confirming train number, class, date, quota, and passenger list. Success = PNR on the booking-confirmation page.`,
   },

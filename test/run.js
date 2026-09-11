@@ -10226,7 +10226,7 @@ test('report-driven adapter notes remain bounded and do not overfit low-evidence
   assert.equal(getActiveAdapter('https://naukrigulf.com.evil.example/job/1'), null);
 });
 
-test('India payment and Tatkal guidance keeps finance and opening-time safety signals', () => {
+test('India payment and Tatkal guidance keeps finance, timing, and authentication safety signals', () => {
   for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
     const paytm = getAdapter('https://paytm.com/recharge');
     assert.equal(paytm?.name, 'paytm');
@@ -10237,6 +10237,8 @@ test('India payment and Tatkal guidance keeps finance and opening-time safety si
     assert.match(irctc?.notes || '', /10:00 IST for AC classes/);
     assert.match(irctc?.notes || '', /11:00 IST for non-AC classes/);
     assert.match(irctc?.notes || '', /departure date at its originating station/);
+    assert.match(irctc?.notes || '', /requires an Aadhaar-authenticated account/);
+    assert.match(irctc?.notes || '', /Aadhaar-based OTP during booking/);
     assert.doesNotMatch(irctc?.notes || '', /~24h before departure/);
   }
 });
