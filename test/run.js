@@ -10248,6 +10248,40 @@ test('VK adapter covers canonical, mobile, and login hosts without trusting look
   }
 });
 
+test('Noon adapter covers its primary and Supermall storefronts without trusting lookalikes', () => {
+  const trustedUrls = [
+    'https://noon.com/egypt-en/',
+    'https://www.noon.com/uae-en/',
+    'https://supermall.noon.com/saudi-en/cart/',
+  ];
+  const lookalikeUrls = [
+    'https://supermall.noon.com.evil.example/saudi-en/cart/',
+    'https://example.com/?next=https://supermall.noon.com/saudi-en/cart/',
+  ];
+
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    for (const url of trustedUrls) assert.equal(getAdapter(url)?.name, 'noon', url);
+    for (const url of lookalikeUrls) assert.notEqual(getAdapter(url)?.name, 'noon', url);
+  }
+});
+
+test('India payment and Tatkal guidance keeps finance, timing, and authentication safety signals', () => {
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    const paytm = getAdapter('https://paytm.com/recharge');
+    assert.equal(paytm?.name, 'paytm');
+    assert.equal(paytm?.category, 'finance');
+
+    const irctc = getAdapter('https://www.irctc.co.in/nget/train-search');
+    assert.equal(irctc?.name, 'irctc');
+    assert.match(irctc?.notes || '', /10:00 IST for AC classes/);
+    assert.match(irctc?.notes || '', /11:00 IST for non-AC classes/);
+    assert.match(irctc?.notes || '', /departure date at its originating station/);
+    assert.match(irctc?.notes || '', /requires an Aadhaar-authenticated account/);
+    assert.match(irctc?.notes || '', /Aadhaar-based OTP during booking/);
+    assert.doesNotMatch(irctc?.notes || '', /~24h before departure/);
+  }
+});
+
 test('adapter-match trace metadata is content-free, queued before tracing, and de-duplicated per run', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
