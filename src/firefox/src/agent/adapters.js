@@ -17654,7 +17654,7 @@ const ADAPTERS = [
   {
     name: 'vk',
     category: 'general',
-    matches: (url) => /^https?:\/\/(www\.|m\.)?vk\.com\//.test(url) || /^https?:\/\/(www\.)?vk\.ru\//.test(url),
+    matches: (url) => /^https?:\/\/(?:vk\.(?:com|ru)|(?:www|m)\.vk\.(?:com|ru)|id\.vk\.ru)\//.test(url),
     notes: `
 - VK (vk.com) is Russia/CIS social + services (Feed, Messages, Communities, Video, Market, Mini-apps). Login is phone/QR; 2FA may appear — surface it to the user and stop, do not loop.
 - Messages: dialog list on the LEFT, active chat on the RIGHT; input is a contenteditable box, Enter sends. DO NOT send unless the user named the recipient AND the exact body in this conversation.

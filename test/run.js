@@ -10226,6 +10226,28 @@ test('report-driven adapter notes remain bounded and do not overfit low-evidence
   assert.equal(getActiveAdapter('https://naukrigulf.com.evil.example/job/1'), null);
 });
 
+test('VK adapter covers canonical, mobile, and login hosts without trusting lookalikes', () => {
+  const trustedUrls = [
+    'https://vk.com/feed',
+    'https://www.vk.com/im',
+    'https://m.vk.com/messages',
+    'https://vk.ru/feed',
+    'https://www.vk.ru/im',
+    'https://m.vk.ru/messages',
+    'https://id.vk.ru/auth',
+  ];
+  const lookalikeUrls = [
+    'https://id.vk.com.evil.example/auth',
+    'https://m.vk.ru.evil.example/messages',
+    'https://example.com/?next=https://id.vk.ru/auth',
+  ];
+
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    for (const url of trustedUrls) assert.equal(getAdapter(url)?.name, 'vk', url);
+    for (const url of lookalikeUrls) assert.notEqual(getAdapter(url)?.name, 'vk', url);
+  }
+});
+
 test('adapter-match trace metadata is content-free, queued before tracing, and de-duplicated per run', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
