@@ -222,6 +222,33 @@ export function registerMessageRecipientNavigationFixtures({
       assert.equal(await guard('click', args), null);
     });
 
+    register(`${kind}: LinkedIn Contact info ownership follows flattened slots`, async (page) => {
+      const { guard, probe } = await setup(page);
+      const ref_id = await page.evaluate(() => {
+        history.replaceState(null, '', '/in/alice/overlay/contact-info/');
+        document.querySelector('#contact-info-dialog').remove();
+        const host = document.createElement('div');
+        const profile = document.createElement('a');
+        profile.slot = 'profile';
+        profile.href = '/in/alice/';
+        profile.textContent = 'linkedin.com/in/alice';
+        host.append(profile);
+        document.body.append(host);
+        const shadow = host.attachShadow({ mode: 'open' });
+        shadow.innerHTML = `
+          <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:white">
+            <slot name="profile"></slot>
+            <a id="slotted-ownership-link" href="/safety/go/?url=https%3A%2F%2Fportfolio.example%2F"
+              style="display:inline-block;padding:8px">Slotted ownership link</a>
+          </div>`;
+        return window.__wb_ax_ref(shadow.querySelector('#slotted-ownership-link'));
+      });
+      const args = { ref_id };
+      const result = await probe('click_ax', args);
+      assert.equal(result.navigation, true, JSON.stringify(result));
+      assert.equal(await guard('click_ax', args), null);
+    });
+
     register(`${kind}: LinkedIn non-blocking dialogs cannot claim Contact info redirects`, async (page) => {
       const { guard, probe } = await setup(page);
       await page.evaluate(() => {
@@ -280,17 +307,28 @@ export function registerMessageRecipientNavigationFixtures({
     });
 
     register(`${kind}: LinkedIn recipient guard rejects ambiguous navigation and action lookalikes`, async (page) => {
-      const { guard } = await setup(page);
-      for (const href of [
-        '#',
-        'javascript:void(0)',
-        'mailto:alice@example.com',
-        '/in/alice/',
+      const { guard, probe } = await setup(page);
+      const messageActionHrefs = [
         '/messaging/compose/',
         '/messaging/send/',
         'https://linkedin.com/messaging/send/',
         'https://m.linkedin.com/messaging/send/',
         'https://m.linkedin.com./messaging/send/',
+      ];
+      await page.evaluate(() => { document.querySelector('#chat').hidden = false; });
+      for (const href of messageActionHrefs) {
+        await page.locator('#jobs').evaluate((el, value) => el.setAttribute('href', value), href);
+        const args = { text: 'Jobs' };
+        const result = await probe('click', args);
+        assert.equal(result.navigationBlocked, true, `${href}: ${JSON.stringify(result)}`);
+        assert.equal((await guard('click', args))?.noDispatch, true, href);
+      }
+      await page.evaluate(() => { document.querySelector('#chat').hidden = true; });
+      for (const href of [
+        '#',
+        'javascript:void(0)',
+        'mailto:alice@example.com',
+        '/in/alice/',
         '/safety/go/?url=https%3A%2F%2Fportfolio.example%2F',
         '/safety/go/',
         '/safety/go/?url=javascript%3Aalert(1)',

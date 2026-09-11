@@ -5260,6 +5260,7 @@
           }
           if (!linkedInDestination) return 'navigation';
           if (redirectPath) return 'blocked';
+          if (/^\/messaging\/(?:send|compose)\/?$/.test(destination.pathname)) return 'blocked';
           return (/^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname)
             || /^\/in\/[^/]+\/overlay\/contact-info\/?$/.test(destination.pathname))
             ? 'navigation'
