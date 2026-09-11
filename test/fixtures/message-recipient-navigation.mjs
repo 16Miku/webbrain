@@ -31,6 +31,7 @@ export function registerMessageRecipientNavigationFixtures({
         </main>
         <div id="contact-info-dialog" role="dialog" aria-modal="true" hidden>
           <button id="close-contact-info" type="button">Close</button>
+          <a id="contact-profile" href="/in/alice/">linkedin.com/in/alice</a>
           <a id="safety-portfolio" href="/safety/go/?url=https%3A%2F%2Fportfolio.example%2F">portfolio.example</a>
           <a id="legacy-portfolio" href="/redir/redirect?url=https%3A%2F%2Flegacy-portfolio.example%2F">legacy-portfolio.example</a>
         </div>
@@ -184,6 +185,7 @@ export function registerMessageRecipientNavigationFixtures({
     register(`${kind}: LinkedIn safety redirects cannot escape a shadow-root modal`, async (page) => {
       const { guard, probe } = await setup(page);
       const ref_id = await page.evaluate(() => {
+        history.replaceState(null, '', '/in/alice/overlay/contact-info/');
         document.querySelector('#chat').hidden = false;
         const modal = document.createElement('div');
         modal.setAttribute('role', 'dialog');
@@ -201,6 +203,24 @@ export function registerMessageRecipientNavigationFixtures({
       assert.equal(result.navigationBlocked, true, JSON.stringify(result));
       assert.equal(result.conclusive, false, JSON.stringify(result));
       assert.equal((await guard('click_ax', args))?.noDispatch, true);
+    });
+
+    register(`${kind}: LinkedIn safety redirects cannot escape a heuristic modal`, async (page) => {
+      const { guard, probe } = await setup(page);
+      await page.evaluate(() => {
+        history.replaceState(null, '', '/in/alice/overlay/contact-info/');
+        document.querySelector('#chat').hidden = false;
+        const modal = document.createElement('div');
+        modal.className = 'modal show';
+        modal.style.cssText = 'position:fixed;inset:0;background:white';
+        modal.innerHTML = '<a id="heuristic-modal-link" href="/safety/go/?url=https%3A%2F%2Fportfolio.example%2F" style="display:inline-block;padding:8px">Heuristic modal link</a>';
+        document.body.append(modal);
+      });
+      const args = { selector: '#heuristic-modal-link' };
+      const result = await probe('click', args);
+      assert.equal(result.navigationBlocked, true, JSON.stringify(result));
+      assert.equal(result.conclusive, false, JSON.stringify(result));
+      assert.equal((await guard('click', args))?.noDispatch, true);
     });
 
     register(`${kind}: LinkedIn recipient guard rejects ambiguous navigation and action lookalikes`, async (page) => {

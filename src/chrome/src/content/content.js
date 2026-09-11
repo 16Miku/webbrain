@@ -5165,7 +5165,7 @@
           && railRect.right <= composerRect.left + 64;
       };
 
-      const classifyLinkedInNavigation = (clicked) => {
+      const classifyLinkedInNavigation = (clicked, blockingModal = null) => {
         if (params.adapterName !== 'linkedin' || !clicked) return 'none';
         const link = _composedClosestElement(clicked, 'a[href]');
         if (!link || !visible(link)) return 'none';
@@ -5176,7 +5176,9 @@
             || _composedClosestElement(link, 'form')
             || link.hasAttribute?.('download')
             || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return 'blocked';
-        const modal = _composedClosestElement(link, 'dialog,[role="dialog"],[role="alertdialog"]') || _findTopmostBlockingModal();
+        const modal = blockingModal && _isComposedAncestor(blockingModal, link)
+          ? blockingModal
+          : _composedClosestElement(link, 'dialog,[role="dialog"],[role="alertdialog"]');
         const unresolved = () => modal ? 'blocked' : 'none';
         try {
           const href = String(link.getAttribute('href') || '').trim();
@@ -5199,8 +5201,19 @@
             } catch {}
           }
           if (modal) {
-            const contactInfoOverlay = /^\/in\/[^/]+\/overlay\/contact-info\/?$/.test(location.pathname);
-            if (!contactInfoOverlay || !verifiedExternalRedirect) return 'blocked';
+            const contactInfoOverlay = /^\/in\/([^/]+)\/overlay\/contact-info\/?$/.exec(location.pathname);
+            const profilePath = contactInfoOverlay ? `/in/${contactInfoOverlay[1]}` : '';
+            const ownsContactInfoRoute = !!profilePath && Array.from(modal.querySelectorAll?.('a[href]') || [])
+              .some((candidate) => {
+                try {
+                  const candidateUrl = new URL(candidate.getAttribute('href'), document.baseURI);
+                  return isLinkedInHost(candidateUrl.hostname)
+                    && candidateUrl.pathname.replace(/\/+$/, '') === profilePath;
+                } catch {
+                  return false;
+                }
+              });
+            if (!ownsContactInfoRoute || !verifiedExternalRedirect) return 'blocked';
           }
           if (!linkedInDestination) return 'navigation';
           return (verifiedExternalRedirect
@@ -5253,7 +5266,7 @@
         if (!visible(control) || (modal && !_isComposedAncestor(modal, target))) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
-        const linkedInNavigation = classifyLinkedInNavigation(target);
+        const linkedInNavigation = classifyLinkedInNavigation(target, modal);
         if (linkedInNavigation === 'navigation') {
           return { success: true, messageSend: false, conclusive: true, navigation: true, identityCandidates: [] };
         }
