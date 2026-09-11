@@ -17628,6 +17628,53 @@ const ADAPTERS = [
 - DO NOT send a message unless the user named the recipient AND the exact message body in this conversation.
 - "Edit message" works for a window after sending (~48h); "Delete for everyone" within a shorter window — both have explicit confirms.`,
   },
+  // ─── Regional — India daily-use (IN) ────────────────────────────────
+  // High-priority CONTRIBUTING.md coverage: food, rail, payments, value
+  // marketplace. Keep before the federated Mastodon matcher.
+  {
+    name: 'swiggy',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?swiggy\.com\//.test(url),
+    notes: `
+- Swiggy is India's food-delivery + quick-commerce site (Food, Instamart grocery, Dineout). As of 2026-09, ordering needs a delivery LOCATION first — set it via the location pin/header ("Enter delivery address") before the restaurant list is meaningful; without it listings are generic.
+- Restaurant discovery: search by dish/restaurant, then open the restaurant page. Veg-only toggle ("Veg"), "Offers" filter, ratings ("4.0+"), cost-for-two, and delivery-time sort live above the list — set them instead of guessing URL params.
+- Dish trap: many dishes have REQUIRED customisations (size, spice, add-ons) in a modal. Pick them before "Add". "Add" becomes "ADD +" stepper; the cart is the header "Cart" drawer, not a page.
+- Instamart is a SEPARATE tab/flow from Food with its own cart — do not mix Food and Instamart items in one checkout.
+- Checkout requires login (phone OTP). Do NOT place the order without explicit user confirmation — payment/UPI is irreversible. Success = order-tracking page with ETA, not the cart drawer.`,
+  },
+  {
+    name: 'irctc',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?irctc\.co\.in\//.test(url),
+    notes: `
+- IRCTC (irctc.co.in) is Indian Railways ticketing. Login ("LOGIN") needs username/password + CAPTCHA; booking also needs passenger details (name, age, berth preference) and an explicit user confirm before "Book Now".
+- Search with station CODES (e.g. NDLS, BCT, HWH) in "From"/"To", journey date, and quota ("General", "Tatkal", "Ladies"). Sort/filter by class (SL/3A/2A/1A/CC) and train type; availability colours (Available/RAC/WL + number) are per class — read the exact class row before quoting.
+- Tatkal trap: Tatkal opens ~24h before departure (AC ~10:00, non-AC ~11:00 IST) and sells out in minutes. Do NOT promise a Tatkal berth without checking live availability at booking time.
+- PNR/status trap: "PNR Status" is a separate flow from booking history ("Booked Ticket History"). Cancel via "Cancel Ticket" with confirmation; partial-cancel needs per-passenger selection.
+- Never submit payment or final booking without the user confirming train number, class, date, quota, and passenger list. Success = PNR on the booking-confirmation page.`,
+  },
+  {
+    name: 'paytm',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?paytm\.com\//.test(url),
+    notes: `
+- Paytm is Indian recharge/bills/UPI/payments. Top flows: Mobile Recharge, DTH, Electricity, Gas, Broadband, Credit-card bill. Pick the operator/circle (e.g. "Airtel Prepaid", state electricity board) BEFORE entering the number — plans and bill-fetch depend on it.
+- Bill-fetch trap: postpaid/utility pages "Fetch Bill" from the account/consumer number first; the payable amount appears only after fetch. Do NOT pay a stale or typed amount without fetching.
+- Pay-via choice matters: UPI vs Wallet vs card/netbanking are separate radios at checkout. Wallet balance may be insufficient — check it before promising a wallet payment.
+- Login is phone-OTP; KYC-gated features (Wallet top-up limits) fail without it. Surface OTP/login to the user and stop — do not loop retries.
+- Do NOT complete any payment without explicit user confirmation of payee, amount, and method. Success = transaction/UPI reference ID page, not the "Pay" button state.`,
+  },
+  {
+    name: 'snapdeal',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?snapdeal\.com\//.test(url),
+    notes: `
+- Snapdeal is an Indian value-goods MARKETPLACE (unbranded/apparel/home). Prices are low but sizes/sellers vary — open the product page and read the exact variant before quoting.
+- Pincode-first trap: delivery/availability depends on the delivery "Pincode" set near the buy box. Set it first; "Check" reveals COD availability and delivery ETA.
+- Variant trap: pick Size/Color BEFORE "Add To Cart"/"Buy Now" — required options block the add until chosen.
+- COD vs prepaid: many listings offer Cash on Delivery; prepaid may show extra discount. Confirm the payment choice with the user — do not assume.
+- Sort via "Sort by" (popularity, price low→high) and filter via the left rail (Brand, Price, Size, Ratings) rather than URL edits. Cart lives at /cart; checkout needs login/OTP.`,
+  },
   {
     // Mastodon is federated and self-hosted across many domains. Keep this
     // host-agnostic matcher after site-specific adapters so @profile paths on
