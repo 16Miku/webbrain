@@ -17626,6 +17626,53 @@ const ADAPTERS = [
 - DO NOT send a message unless the user named the recipient AND the exact message body in this conversation.
 - "Edit message" works for a window after sending (~48h); "Delete for everyone" within a shorter window — both have explicit confirms.`,
   },
+  // ─── Regional — CIS + MENA (RU/TR/AE) ──────────────────────────────
+  // High-priority CONTRIBUTING.md coverage: Wildberries, Avito, VK, noon.
+  // Keep before the federated Mastodon matcher.
+  {
+    name: 'wildberries',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?wildberries\.ru\//.test(url),
+    notes: `
+- Wildberries is Russia's largest e-commerce MARKETPLACE (fashion-first, sells everything). As of 2026-09, Russian labels: "Добавить в корзину" = add to cart, "Корзина" = cart, "Войти" = log in, "Сортировка" = sort, "Фильтры" = filters.
+- Variant trap: pick size ("Размер") and color BEFORE adding — apparel listings block the add until a size is chosen.
+- Seller/price trap: the same item ships from different warehouses with different delivery ETAs ("Способ доставки"). Check the delivery estimate before quoting; the card price is not the arrival date.
+- WB Wallet ("WB Кошелёк") vs card pricing may differ — quote the cart/payment total, not the card price.
+- Sort with "Сортировка" (price low→high "Дешевле", rating, new) and filter in the left rail (brand, price, size, rating) rather than URL edits. Cart lives at /lk/basket; checkout needs login.`,
+  },
+  {
+    name: 'avito',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.|m\.)?avito\.ru\//.test(url),
+    notes: `
+- Avito is Russia's largest CLASSIFIEDS site (like sahibinden: vehicles, real estate, goods, jobs, services). Most listings are "contact the seller", NOT checkout — do NOT hunt for a cart button on a typical listing.
+- Anti-scam trap: contact via "Показать номер" (show number) or "Написать" (message) often needs login; phone numbers may be partially masked. Never promise a revealed number without clicking through.
+- Filter in the left/top rail: price, "Город" (city), category facets, "С фото"/"С доставкой" toggles. Sort via "Сначала дешевле/дороже" rather than URL params.
+- Avito Delivery ("Авито Доставка") is a SEPARATE escrow flow from local pickup — confirm which one the user wants before advising.
+- Posting ("Разместить объявление") needs login and moderation; new ads show "На проверке" (under review), not live. Do not report as published until active.`,
+  },
+  {
+    name: 'vk',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.|m\.)?vk\.com\//.test(url) || /^https?:\/\/(www\.)?vk\.ru\//.test(url),
+    notes: `
+- VK (vk.com) is Russia/CIS social + services (Feed, Messages, Communities, Video, Market, Mini-apps). Login is phone/QR; 2FA may appear — surface it to the user and stop, do not loop.
+- Messages: dialog list on the LEFT, active chat on the RIGHT; input is a contenteditable box, Enter sends. DO NOT send unless the user named the recipient AND the exact body in this conversation.
+- Communities/Groups vs personal pages look alike — check the header ("Сообщество"/subscribers vs "Друзья"/friends) before acting as/against the wrong entity.
+- VK Video/Clips and Market are separate tabs with their own players/carts — do not mix Market checkout with social actions.
+- Language trap: UI may be Russian ("Войти", "Сообщения", "Новости") or English depending on locale — read visible button text instead of assuming.`,
+  },
+  {
+    name: 'noon',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?noon\.com\//.test(url),
+    notes: `
+- noon.com is the MENA mega-marketplace (UAE/Saudi/Egypt storefronts share one domain with country switcher). Prices/availability are PER COUNTRY — set the country ("Ship to UAE/Saudi/Egypt") first or listings are meaningless.
+- Variant trap: pick size/color ("Size", "Colour") BEFORE "Add To Cart" — required options block the add.
+- Seller trap ("Sold by noon" vs marketplace sellers): check "Sold by" + ratings before quoting; fulfillment speed ("Get it by") varies by seller/warehouse.
+- Price trap: coupons ("Apply code") and noon VIP/"noon One" discounts apply only at cart — quote the cart total, not the card price.
+- Sort via "Sort by" (price low→high, popularity) and filter via the left rail (Brand, Price, Fulfilment) rather than URL edits. Cart at /cart; checkout needs login/OTP.`,
+  },
   {
     // Mastodon is federated and self-hosted across many domains. Keep this
     // host-agnostic matcher after site-specific adapters so @profile paths on
