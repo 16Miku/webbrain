@@ -5176,7 +5176,7 @@
             || _composedClosestElement(link, 'form')
             || link.hasAttribute?.('download')
             || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return 'blocked';
-        const modal = _composedClosestElement(link, 'dialog,[role="dialog"],[role="alertdialog"]');
+        const modal = _composedClosestElement(link, 'dialog,[role="dialog"],[role="alertdialog"]') || _findTopmostBlockingModal();
         const unresolved = () => modal ? 'blocked' : 'none';
         try {
           const href = String(link.getAttribute('href') || '').trim();
