@@ -129,6 +129,8 @@ export function registerMessageRecipientNavigationFixtures({
         '/safety/go/',
         '/safety/go/?url=javascript%3Aalert(1)',
         '/safety/go/?url=https%3A%2F%2Flinkedin.com%2Fmessaging%2Fsend',
+        '/safety/go/?url=https%3A%2F%2Fm.linkedin.com%2Fmessaging%2Fsend',
+        '/safety/go/?url=https%3A%2F%2Fm.linkedin.com.%2Fmessaging%2Fsend',
       ]) {
         await page.locator('#safety-portfolio').evaluate((el, value) => el.setAttribute('href', value), href);
         const result = await probe('click', { text: 'portfolio.example', textMatch: 'exact' });
@@ -146,10 +148,14 @@ export function registerMessageRecipientNavigationFixtures({
         '/messaging/compose/',
         '/messaging/send/',
         'https://linkedin.com/messaging/send/',
+        'https://m.linkedin.com/messaging/send/',
+        'https://m.linkedin.com./messaging/send/',
         '/safety/go/',
         '/safety/go/?url=javascript%3Aalert(1)',
         '/safety/go/?url=https%3A%2F%2Fwww.linkedin.com%2Fmessaging%2Fsend',
         '/safety/go/?url=https%3A%2F%2Flinkedin.com%2Fmessaging%2Fsend',
+        '/safety/go/?url=https%3A%2F%2Fm.linkedin.com%2Fmessaging%2Fsend',
+        '/safety/go/?url=https%3A%2F%2Fm.linkedin.com.%2Fmessaging%2Fsend',
       ]) {
         await page.locator('#jobs').evaluate((el, href) => el.setAttribute('href', href), href);
         assert.equal((await guard('click', { text: 'Jobs' }))?.noDispatch, true, href);

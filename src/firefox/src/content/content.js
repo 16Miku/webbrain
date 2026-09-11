@@ -4344,7 +4344,10 @@
           if (!href || href.startsWith('#')) return false;
           const destination = new URL(href, document.baseURI);
           if (!/^https?:$/.test(destination.protocol)) return false;
-          const isLinkedInHost = (hostname) => /^(?:www\.)?linkedin\.com$/.test(hostname);
+          const isLinkedInHost = (hostname) => {
+            const normalized = String(hostname || '').toLowerCase().replace(/\.$/, '');
+            return normalized === 'linkedin.com' || normalized.endsWith('.linkedin.com');
+          };
           const linkedInDestination = isLinkedInHost(destination.hostname);
           const redirectPath = /^\/(?:safety\/go|redir\/redirect)\/?$/.test(destination.pathname);
           let verifiedExternalRedirect = false;
