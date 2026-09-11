@@ -5168,25 +5168,40 @@
       const verifiedLinkedInNavigation = (clicked) => {
         if (params.adapterName !== 'linkedin' || !clicked) return false;
         const link = clicked.closest?.('a[href]');
-        if (!link || !visible(link) || !link.closest?.('nav,[role="navigation"]')) return false;
+        if (!link || !visible(link)) return false;
         // A navigation-looking descendant of a composer/action is not a
         // navigation escape hatch. Keep actual sends and modal controls on
         // the existing recipient-verification path.
         if (clicked.closest?.('button,[role="button"],input,select,textarea,[contenteditable]:not([contenteditable="false"]),[onclick],[data-action]')
-            || link.closest?.('form,dialog,[role="dialog"],[role="alertdialog"]')
+            || link.closest?.('form')
             || link.hasAttribute?.('download')
             || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return false;
         try {
           const href = String(link.getAttribute('href') || '').trim();
           if (!href || href.startsWith('#')) return false;
           const destination = new URL(href, document.baseURI);
-          // Only the site's top-level navigation destinations are known not
-          // to send. Arbitrary action URLs and conversation controls stay
-          // inconclusive, even when their visible label says Home or Jobs.
-          return /^https?:$/.test(destination.protocol)
-            && destination.origin === location.origin
-            && /^(?:www\.)?linkedin\.com$/.test(destination.hostname)
-            && /^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname);
+          if (!/^https?:$/.test(destination.protocol)) return false;
+          const isLinkedInHost = (hostname) => /^(?:www\.)?linkedin\.com$/.test(hostname);
+          const linkedInDestination = isLinkedInHost(destination.hostname);
+          const redirectPath = /^\/(?:safety\/go|redir\/redirect)\/?$/.test(destination.pathname);
+          let verifiedExternalRedirect = false;
+          if (linkedInDestination && redirectPath) {
+            const redirectValue = destination.searchParams.get('url') || '';
+            try {
+              const redirectDestination = new URL(redirectValue);
+              verifiedExternalRedirect = /^https?:$/.test(redirectDestination.protocol)
+                && !isLinkedInHost(redirectDestination.hostname);
+            } catch {}
+          }
+          const modal = link.closest?.('dialog,[role="dialog"],[role="alertdialog"]');
+          if (modal) {
+            const contactInfoOverlay = /^\/in\/[^/]+\/overlay\/contact-info\/?$/.test(location.pathname);
+            if (!contactInfoOverlay || !verifiedExternalRedirect) return false;
+          }
+          if (!linkedInDestination) return true;
+          return verifiedExternalRedirect
+            || /^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname)
+            || /^\/in\/[^/]+\/overlay\/contact-info\/?$/.test(destination.pathname);
         } catch {
           return false;
         }

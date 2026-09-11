@@ -25,6 +25,15 @@ export function registerMessageRecipientNavigationFixtures({
           <a id="jobs" class="destination" href="/jobs/"><span id="jobs-label">Jobs</span></a>
           <a id="messaging" href="/messaging/">Messaging</a>
         </nav>
+        <main>
+          <a id="portfolio" href="https://portfolio.example/"><span id="portfolio-label">View my portfolio</span></a>
+          <a id="contact-info" href="/in/alice/overlay/contact-info/">Contact info</a>
+        </main>
+        <div id="contact-info-dialog" role="dialog" aria-modal="true" hidden>
+          <button id="close-contact-info" type="button">Close</button>
+          <a id="safety-portfolio" href="/safety/go/?url=https%3A%2F%2Fportfolio.example%2F">portfolio.example</a>
+          <a id="legacy-portfolio" href="/redir/redirect?url=https%3A%2F%2Flegacy-portfolio.example%2F">legacy-portfolio.example</a>
+        </div>
         <form id="chat" hidden>
           <h2>Alice</h2><textarea id="body">Hello Alice</textarea><button id="send" type="button">Send</button>
         </form>`, kind);
@@ -65,9 +74,83 @@ export function registerMessageRecipientNavigationFixtures({
       }
     });
 
+    register(`${kind}: LinkedIn ordinary document links bypass the message recipient guard (#3010)`, async (page) => {
+      const { guard, probe } = await setup(page);
+      for (const open of [false, true]) {
+        await page.evaluate(open => { document.querySelector('#chat').hidden = !open; }, open);
+        const portfolioRef = await page.evaluate(
+          () => window.__wb_ax_ref(document.querySelector('#portfolio-label')),
+        );
+        for (const [tool, args, expected] of [
+          ['click', { text: 'View my portfolio', textMatch: 'exact' }, 'portfolio'],
+          ['click_ax', { ref_id: portfolioRef }, 'portfolio'],
+          ['click', { text: 'Contact info', textMatch: 'exact' }, 'contact-info'],
+        ]) {
+          const result = await probe(tool, args);
+          assert.equal(result.conclusive, true, JSON.stringify(result));
+          assert.equal(result.messageSend, false);
+          assert.equal(result.navigation, true);
+          assert.equal(await guard(tool, args), null);
+          const clicked = await call(page, tool, args);
+          assert.equal(clicked.success, true, JSON.stringify(clicked));
+          assert.equal(await page.evaluate(() => window.fixtureClicks.at(-1)), expected);
+        }
+      }
+    });
+
+    register(`${kind}: LinkedIn contact-info safety redirects navigate inside the modal (#3010)`, async (page) => {
+      const { guard, probe } = await setup(page);
+      await page.evaluate(() => {
+        history.replaceState(null, '', '/in/alice/overlay/contact-info/');
+        document.querySelector('#contact-info-dialog').hidden = false;
+      });
+      for (const open of [false, true]) {
+        await page.evaluate(open => { document.querySelector('#chat').hidden = !open; }, open);
+        const safetyRef = await page.evaluate(
+          () => window.__wb_ax_ref(document.querySelector('#safety-portfolio')),
+        );
+        for (const [tool, args, expected] of [
+          ['click', { text: 'portfolio.example', textMatch: 'exact' }, 'safety-portfolio'],
+          ['click_ax', { ref_id: safetyRef }, 'safety-portfolio'],
+          ['click', { text: 'legacy-portfolio.example', textMatch: 'exact' }, 'legacy-portfolio'],
+        ]) {
+          const result = await probe(tool, args);
+          assert.equal(result.conclusive, true, JSON.stringify(result));
+          assert.equal(result.messageSend, false);
+          assert.equal(result.navigation, true);
+          assert.equal(await guard(tool, args), null);
+          const clicked = await call(page, tool, args);
+          assert.equal(clicked.success, true, JSON.stringify(clicked));
+          assert.equal(await page.evaluate(() => window.fixtureClicks.at(-1)), expected);
+        }
+      }
+      for (const href of [
+        'https://portfolio.example/',
+        '/safety/go/',
+        '/safety/go/?url=javascript%3Aalert(1)',
+        '/safety/go/?url=https%3A%2F%2Flinkedin.com%2Fmessaging%2Fsend',
+      ]) {
+        await page.locator('#safety-portfolio').evaluate((el, value) => el.setAttribute('href', value), href);
+        const result = await probe('click', { text: 'portfolio.example', textMatch: 'exact' });
+        assert.notEqual(result.navigation, true, `${href}: ${JSON.stringify(result)}`);
+      }
+    });
+
     register(`${kind}: LinkedIn recipient guard rejects ambiguous navigation and action lookalikes`, async (page) => {
       const { guard } = await setup(page);
-      for (const href of ['#', 'javascript:void(0)', 'https://example.com/jobs/', '/messaging/compose/', '/messaging/send/']) {
+      for (const href of [
+        '#',
+        'javascript:void(0)',
+        'mailto:alice@example.com',
+        '/in/alice/',
+        '/messaging/compose/',
+        '/messaging/send/',
+        'https://linkedin.com/messaging/send/',
+        '/safety/go/',
+        '/safety/go/?url=javascript%3Aalert(1)',
+        '/safety/go/?url=https%3A%2F%2Fwww.linkedin.com%2Fmessaging%2Fsend',
+        '/safety/go/?url=https%3A%2F%2Flinkedin.com%2Fmessaging%2Fsend',
+      ]) {
         await page.locator('#jobs').evaluate((el, href) => el.setAttribute('href', href), href);
         assert.equal((await guard('click', { text: 'Jobs' }))?.noDispatch, true, href);
       }
