@@ -125,6 +125,8 @@ export function registerMessageRecipientNavigationFixtures({
         }
       }
       for (const href of [
+        '#',
+        'mailto:alice@example.com',
         'https://portfolio.example/',
         '/safety/go/',
         '/safety/go/?url=javascript%3Aalert(1)',
@@ -138,6 +140,67 @@ export function registerMessageRecipientNavigationFixtures({
         assert.notEqual(result.navigation, true, `${href}: ${JSON.stringify(result)}`);
         assert.equal((await guard('click', args))?.noDispatch, true, `${href}: recipient guard must fail closed`);
       }
+    });
+
+    register(`${kind}: LinkedIn contact-info redirects honor composed-tree safety boundaries`, async (page) => {
+      const { guard, probe } = await setup(page);
+      const refs = await page.evaluate(() => {
+        history.replaceState(null, '', '/in/alice/overlay/contact-info/');
+        document.querySelector('#chat').hidden = false;
+        const dialog = document.querySelector('#contact-info-dialog');
+        dialog.hidden = false;
+        const addShadowLink = (parent, hostId, text) => {
+          const host = document.createElement('span');
+          host.id = hostId;
+          parent.append(host);
+          const shadow = host.attachShadow({ mode: 'open' });
+          shadow.innerHTML = `<a href="/safety/go/?url=https%3A%2F%2Fportfolio.example%2F" style="display:inline-block;padding:8px">${text}</a>`;
+          return window.__wb_ax_ref(shadow.querySelector('a'));
+        };
+        const form = document.createElement('form');
+        dialog.append(form);
+        const action = document.createElement('span');
+        action.dataset.action = 'send';
+        dialog.append(action);
+        return {
+          safe: addShadowLink(dialog, 'shadow-safe-host', 'Shadow safe link'),
+          form: addShadowLink(form, 'shadow-form-host', 'Shadow form link'),
+          action: addShadowLink(action, 'shadow-action-host', 'Shadow action link'),
+        };
+      });
+      const safeArgs = { ref_id: refs.safe };
+      const safe = await probe('click_ax', safeArgs);
+      assert.equal(safe.navigation, true, JSON.stringify(safe));
+      assert.equal(await guard('click_ax', safeArgs), null);
+      for (const ref_id of [refs.form, refs.action]) {
+        const args = { ref_id };
+        const result = await probe('click_ax', args);
+        assert.equal(result.navigationBlocked, true, JSON.stringify(result));
+        assert.equal(result.conclusive, false, JSON.stringify(result));
+        assert.equal((await guard('click_ax', args))?.noDispatch, true);
+      }
+    });
+
+    register(`${kind}: LinkedIn safety redirects cannot escape a shadow-root modal`, async (page) => {
+      const { guard, probe } = await setup(page);
+      const ref_id = await page.evaluate(() => {
+        document.querySelector('#chat').hidden = false;
+        const modal = document.createElement('div');
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        modal.style.cssText = 'position:fixed;inset:0;background:white';
+        document.body.append(modal);
+        const host = document.createElement('span');
+        modal.append(host);
+        const shadow = host.attachShadow({ mode: 'open' });
+        shadow.innerHTML = '<a href="/safety/go/?url=https%3A%2F%2Fportfolio.example%2F" style="display:inline-block;padding:8px">Shadow modal link</a>';
+        return window.__wb_ax_ref(shadow.querySelector('a'));
+      });
+      const args = { ref_id };
+      const result = await probe('click_ax', args);
+      assert.equal(result.navigationBlocked, true, JSON.stringify(result));
+      assert.equal(result.conclusive, false, JSON.stringify(result));
+      assert.equal((await guard('click_ax', args))?.noDispatch, true);
     });
 
     register(`${kind}: LinkedIn recipient guard rejects ambiguous navigation and action lookalikes`, async (page) => {
