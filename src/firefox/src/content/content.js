@@ -4339,9 +4339,14 @@
             || _composedClosestElement(link, 'form')
             || link.hasAttribute?.('download')
             || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return 'blocked';
-        const modal = blockingModal && _isComposedAncestor(blockingModal, link)
-          ? blockingModal
-          : _composedClosestElement(link, 'dialog,[role="dialog"],[role="alertdialog"]');
+        const composedModal = _composedClosestElement(
+          link,
+          'dialog,[role="dialog"],[role="alertdialog"],[data-overlay],.modal.show,.modal-overlay,.overlay,'
+            + '[class*="modal"][class*="open"],[class*="overlay"][class*="active"],'
+            + '[class*="DialogOverlay"],[class*="ModalOverlay"]',
+        );
+        const modal = composedModal
+          || (blockingModal && _isComposedAncestor(blockingModal, link) ? blockingModal : null);
         const unresolved = () => modal ? 'blocked' : 'none';
         try {
           const href = String(link.getAttribute('href') || '').trim();

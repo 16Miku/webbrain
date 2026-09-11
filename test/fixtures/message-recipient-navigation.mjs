@@ -223,6 +223,27 @@ export function registerMessageRecipientNavigationFixtures({
       assert.equal((await guard('click', args))?.noDispatch, true);
     });
 
+    register(`${kind}: LinkedIn safety redirects cannot escape a shadow-root heuristic modal`, async (page) => {
+      const { guard, probe } = await setup(page);
+      const ref_id = await page.evaluate(() => {
+        history.replaceState(null, '', '/in/alice/overlay/contact-info/');
+        document.querySelector('#chat').hidden = false;
+        const host = document.createElement('div');
+        document.body.append(host);
+        const shadow = host.attachShadow({ mode: 'open' });
+        shadow.innerHTML = `
+          <div class="modal show" style="position:fixed;inset:0;background:white">
+            <a href="/safety/go/?url=https%3A%2F%2Fportfolio.example%2F" style="display:inline-block;padding:8px">Shadow heuristic modal link</a>
+          </div>`;
+        return window.__wb_ax_ref(shadow.querySelector('a'));
+      });
+      const args = { ref_id };
+      const result = await probe('click_ax', args);
+      assert.equal(result.navigationBlocked, true, JSON.stringify(result));
+      assert.equal(result.conclusive, false, JSON.stringify(result));
+      assert.equal((await guard('click_ax', args))?.noDispatch, true);
+    });
+
     register(`${kind}: LinkedIn recipient guard rejects ambiguous navigation and action lookalikes`, async (page) => {
       const { guard } = await setup(page);
       for (const href of [
