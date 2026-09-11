@@ -10226,6 +10226,21 @@ test('report-driven adapter notes remain bounded and do not overfit low-evidence
   assert.equal(getActiveAdapter('https://naukrigulf.com.evil.example/job/1'), null);
 });
 
+test('India payment and Tatkal guidance keeps finance and opening-time safety signals', () => {
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    const paytm = getAdapter('https://paytm.com/recharge');
+    assert.equal(paytm?.name, 'paytm');
+    assert.equal(paytm?.category, 'finance');
+
+    const irctc = getAdapter('https://www.irctc.co.in/nget/train-search');
+    assert.equal(irctc?.name, 'irctc');
+    assert.match(irctc?.notes || '', /10:00 IST for AC classes/);
+    assert.match(irctc?.notes || '', /11:00 IST for non-AC classes/);
+    assert.match(irctc?.notes || '', /departure date at its originating station/);
+    assert.doesNotMatch(irctc?.notes || '', /~24h before departure/);
+  }
+});
+
 test('adapter-match trace metadata is content-free, queued before tracing, and de-duplicated per run', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
