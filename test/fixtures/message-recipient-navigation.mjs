@@ -133,8 +133,10 @@ export function registerMessageRecipientNavigationFixtures({
         '/safety/go/?url=https%3A%2F%2Fm.linkedin.com.%2Fmessaging%2Fsend',
       ]) {
         await page.locator('#safety-portfolio').evaluate((el, value) => el.setAttribute('href', value), href);
-        const result = await probe('click', { text: 'portfolio.example', textMatch: 'exact' });
+        const args = { text: 'portfolio.example', textMatch: 'exact' };
+        const result = await probe('click', args);
         assert.notEqual(result.navigation, true, `${href}: ${JSON.stringify(result)}`);
+        assert.equal((await guard('click', args))?.noDispatch, true, `${href}: recipient guard must fail closed`);
       }
     });
 
