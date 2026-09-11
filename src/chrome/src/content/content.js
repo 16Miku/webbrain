@@ -348,14 +348,23 @@
 
   function _someComposedDescendant(root, selector, predicate, limit = 2000) {
     const pending = [root];
+    const seen = new Set();
     let visited = 0;
     while (pending.length && visited < limit) {
       const scope = pending.shift();
-      const elements = scope?.querySelectorAll?.('*') || [];
+      const descendants = scope?.querySelectorAll?.('*') || [];
+      const elements = scope?.nodeType === Node.ELEMENT_NODE
+        ? [scope, ...descendants]
+        : descendants;
       for (const element of elements) {
+        if (seen.has(element)) continue;
+        seen.add(element);
         visited += 1;
         if (element.matches?.(selector) && predicate(element)) return true;
         if (element.shadowRoot) pending.push(element.shadowRoot);
+        if (element.tagName === 'SLOT') {
+          pending.push(...(element.assignedElements?.({ flatten: true }) || []));
+        }
         if (visited >= limit) break;
       }
     }
