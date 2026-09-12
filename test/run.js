@@ -10265,6 +10265,18 @@ test('Noon adapter covers its primary and Supermall storefronts without trusting
   }
 });
 
+test('LATAM adapters cover OLX mobile and the real Despegar Chile domain', () => {
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    assert.equal(getAdapter('https://m.olx.com.br/anuncio/123')?.name, 'olx');
+    assert.equal(getAdapter('https://www.olx.com.br/autos-e-pecas')?.name, 'olx');
+    assert.notEqual(getAdapter('https://m.olx.com.br.evil.example/anuncio/123')?.name, 'olx');
+
+    assert.equal(getAdapter('https://www.despegar.cl/vuelos/')?.name, 'despegar');
+    assert.equal(getAdapter('https://www.despegar.com.ar/hoteles/')?.name, 'despegar');
+    assert.notEqual(getAdapter('https://www.despegar.cl.evil.example/vuelos/')?.name, 'despegar');
+  }
+});
+
 test('Africa and MENA adapters cover country, mobile, and transactional hosts', () => {
   for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
     assert.equal(getAdapter('https://www.jumia.ci/catalog/')?.name, 'jumia');
