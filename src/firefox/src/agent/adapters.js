@@ -17720,6 +17720,52 @@ const ADAPTERS = [
 - COD vs prepaid: many listings offer Cash on Delivery; prepaid may show extra discount. Confirm the payment choice with the user — do not assume.
 - Sort via "Sort by" (popularity, price low→high) and filter via the left rail (Brand, Price, Size, Ratings) rather than URL edits. Cart lives at /cart; checkout needs login/OTP.`,
   },
+  // ─── Regional — Africa + MENA super-apps (AF/ME) ────────────────
+  // High-priority CONTRIBUTING.md coverage: Jumia, Kilimall, Careem, talabat.
+  // Keep before the federated Mastodon matcher.
+  {
+    name: 'jumia',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?jumia\.(?:com|com\.ng|co\.ke|com\.eg|co\.za|com\.gh|dz|ma|sn|co\.ug|ug)\//.test(url),
+    notes: `
+- Jumia (jumia.com + country stores .com.ng/.co.ke/.com.eg/.co.za/.dz/.ma/.sn/.ug) is Africa's marketplace. "Jumia Express" means Jumia-fulfilled; other sellers are marketplace with separate ratings and returns — check "Sold by" and seller rating before quoting.
+- Variant trap: pick size/color/capacity BEFORE "Add to cart" — required options block the add until chosen. "Add to cart" opens a drawer; cart lives at /cart.
+- Price trap: JumiaPay discounts and coupons apply only at checkout — quote the cart total, not the product card price. Delivery fee and COD surcharge appear at cart; verify before promising total.
+- Location-first: delivery availability and fee depend on city/address set in the header. Set it first or availability is meaningless. Use "Filters" and "Sort by" (price low→high) rather than URL edits.
+- Do NOT click "Proceed to checkout" without explicit user confirmation. Success = order confirmation with order number in "Orders", not cart state.`,
+  },
+  {
+    name: 'kilimall',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?kilimall\.(?:co\.ke|com)\//.test(url),
+    notes: `
+- Kilimall (kilimall.co.ke / kilimall.com) is East Africa (Kenya-focused) marketplace. Marketplace sellers per product — check "Sold by" and store rating; the card price is not the fulfillment total across sellers.
+- Variant trap: pick size/color BEFORE "Add to Cart" — the button is inert until required options are chosen. "Add to Cart" vs "Buy Now" are distinct — use cart for comparison.
+- Price trap: coupons, Kilimall points, and M-Pesa discounts apply at cart/checkout only — quote the cart total, not the product card price. Shipping cost appears at checkout based on origin/weight.
+- Set delivery county/town before quoting availability or ETA; sort via "Sort by" and filter via left rail rather than URL edits. Do NOT pay without explicit user confirmation of seller, variant, and total.`,
+  },
+  {
+    name: 'careem',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?careem\.com\//.test(url),
+    notes: `
+- Careem (careem.com) is MENA super-app — Rides, Food, Quik (grocery), Pay, Shops are SEPARATE verticals with separate carts/flows. Pick the vertical that matches the task — a Food cart does not contain a Ride booking.
+- Location-first trap: set pickup/delivery address (map pin or "Delivery address") BEFORE the catalog or fare is meaningful — restaurants, stores, and ride availability are geo-fenced.
+- Ride trap: "Ride Now" vs "Ride Later" plus car type (Go, Comfort, Max) have different fare estimates and surge. Food trap: single-restaurant cart — cannot mix two restaurants in one order.
+- Pay trap: Careem Pay wallet vs COD vs card are distinct radios at checkout; verify balance before promising wallet payment. Login is phone OTP — surface it and stop.
+- Do NOT place any order/ride without explicit user confirmation of vertical, address, items/route, and total. Success = order/ride confirmation with ID and tracking, not cart state.`,
+  },
+  {
+    name: 'talabat',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?talabat\.com\//.test(url),
+    notes: `
+- talabat.com is MENA food-delivery + grocery (UAE/Saudi/Egypt/Kuwait/Qatar/Bahrain/Oman/Jordan). Set delivery address/area via the header pin ("Deliver to") BEFORE any restaurant list — which restaurants, menus, and fees appear depends on it.
+- Single-restaurant cart trap: talabat allows ONE restaurant per order. Pick a restaurant, then add dishes — you CANNOT combine two restaurants in one checkout. Finish one order before starting another.
+- Availability gates: restaurant may be "Closed" (cannot order now) and has minimum order ("Minimum order") plus delivery fee — check both before promising delivery. Dish customisations (size, add-ons) are required modals — pick them before "Add".
+- Price trap: menu price is NOT total — delivery fee, service fee, and tip are added at checkout. Use on-page search and filters (cuisine, rating, delivery time) rather than URL edits.
+- Do NOT place without explicit user confirmation of restaurant, dishes, quantities, address, and total. Success = order-tracking page with order ID and ETA, not the cart drawer.`,
+  },
   {
     // Mastodon is federated and self-hosted across many domains. Keep this
     // host-agnostic matcher after site-specific adapters so @profile paths on
