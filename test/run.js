@@ -10226,6 +10226,45 @@ test('report-driven adapter notes remain bounded and do not overfit low-evidence
   assert.equal(getActiveAdapter('https://naukrigulf.com.evil.example/job/1'), null);
 });
 
+test('VK adapter covers canonical, mobile, and login hosts without trusting lookalikes', () => {
+  const trustedUrls = [
+    'https://vk.com/feed',
+    'https://www.vk.com/im',
+    'https://m.vk.com/messages',
+    'https://vk.ru/feed',
+    'https://www.vk.ru/im',
+    'https://m.vk.ru/messages',
+    'https://id.vk.ru/auth',
+  ];
+  const lookalikeUrls = [
+    'https://id.vk.com.evil.example/auth',
+    'https://m.vk.ru.evil.example/messages',
+    'https://example.com/?next=https://id.vk.ru/auth',
+  ];
+
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    for (const url of trustedUrls) assert.equal(getAdapter(url)?.name, 'vk', url);
+    for (const url of lookalikeUrls) assert.notEqual(getAdapter(url)?.name, 'vk', url);
+  }
+});
+
+test('Noon adapter covers its primary and Supermall storefronts without trusting lookalikes', () => {
+  const trustedUrls = [
+    'https://noon.com/egypt-en/',
+    'https://www.noon.com/uae-en/',
+    'https://supermall.noon.com/saudi-en/cart/',
+  ];
+  const lookalikeUrls = [
+    'https://supermall.noon.com.evil.example/saudi-en/cart/',
+    'https://example.com/?next=https://supermall.noon.com/saudi-en/cart/',
+  ];
+
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    for (const url of trustedUrls) assert.equal(getAdapter(url)?.name, 'noon', url);
+    for (const url of lookalikeUrls) assert.notEqual(getAdapter(url)?.name, 'noon', url);
+  }
+});
+
 test('India payment and Tatkal guidance keeps finance, timing, and authentication safety signals', () => {
   for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
     const paytm = getAdapter('https://paytm.com/recharge');
