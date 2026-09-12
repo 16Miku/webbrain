@@ -17728,9 +17728,9 @@ const ADAPTERS = [
   {
     name: 'jumia',
     category: 'general',
-    matches: (url) => /^https?:\/\/(?:www\.)?jumia\.(?:com|com\.ng|co\.ke|com\.eg|co\.za|com\.gh|dz|ma|sn|co\.ug|ug)\//.test(url),
+    matches: (url) => /^https?:\/\/(?:www\.)?jumia\.(?:com|com\.ng|co\.ke|com\.eg|co\.za|com\.gh|dz|ma|sn|ci|co\.ug|ug)\//.test(url),
     notes: `
-- Jumia (jumia.com + country stores .com.ng/.co.ke/.com.eg/.co.za/.dz/.ma/.sn/.ug) is Africa's marketplace. "Jumia Express" means Jumia-fulfilled; other sellers are marketplace with separate ratings and returns — check "Sold by" and seller rating before quoting.
+- Jumia (jumia.com + country stores .com.ng/.co.ke/.com.eg/.co.za/.dz/.ma/.sn/.ci/.ug) is Africa's marketplace. "Jumia Express" means Jumia-fulfilled; other sellers are marketplace with separate ratings and returns — check "Sold by" and seller rating before quoting.
 - Variant trap: pick size/color/capacity BEFORE "Add to cart" — required options block the add until chosen. "Add to cart" opens a drawer; cart lives at /cart.
 - Price trap: JumiaPay discounts and coupons apply only at checkout — quote the cart total, not the product card price. Delivery fee and COD surcharge appear at cart; verify before promising total.
 - Location-first: delivery availability and fee depend on city/address set in the header. Set it first or availability is meaningless. Use "Filters" and "Sort by" (price low→high) rather than URL edits.
@@ -17739,9 +17739,9 @@ const ADAPTERS = [
   {
     name: 'kilimall',
     category: 'general',
-    matches: (url) => /^https?:\/\/(?:www\.)?kilimall\.(?:co\.ke|com)\//.test(url),
+    matches: (url) => /^https?:\/\/(?:(?:www\.)?kilimall\.(?:co\.ke|ug|com)|(?:m|h5)\.kilimall\.co\.ke)\//.test(url),
     notes: `
-- Kilimall (kilimall.co.ke / kilimall.com) is East Africa (Kenya-focused) marketplace. Marketplace sellers per product — check "Sold by" and store rating; the card price is not the fulfillment total across sellers.
+- Kilimall (kilimall.co.ke / kilimall.ug / kilimall.com) is an East Africa marketplace. Marketplace sellers per product — check "Sold by" and store rating; the card price is not the fulfillment total across sellers.
 - Variant trap: pick size/color BEFORE "Add to Cart" — the button is inert until required options are chosen. "Add to Cart" vs "Buy Now" are distinct — use cart for comparison.
 - Price trap: coupons, Kilimall points, and M-Pesa discounts apply at cart/checkout only — quote the cart total, not the product card price. Shipping cost appears at checkout based on origin/weight.
 - Set delivery county/town before quoting availability or ETA; sort via "Sort by" and filter via left rail rather than URL edits. Do NOT pay without explicit user confirmation of seller, variant, and total.`,
@@ -17749,7 +17749,7 @@ const ADAPTERS = [
   {
     name: 'careem',
     category: 'general',
-    matches: (url) => /^https?:\/\/(?:www\.)?careem\.com\//.test(url),
+    matches: (url) => /^https?:\/\/(?:(?:www|app|food|pay)\.)?careem\.com\//.test(url),
     notes: `
 - Careem (careem.com) is MENA super-app — Rides, Food, Quik (grocery), Pay, Shops are SEPARATE verticals with separate carts/flows. Pick the vertical that matches the task — a Food cart does not contain a Ride booking.
 - Location-first trap: set pickup/delivery address (map pin or "Delivery address") BEFORE the catalog or fare is meaningful — restaurants, stores, and ride availability are geo-fenced.
