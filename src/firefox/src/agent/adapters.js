@@ -17720,6 +17720,31 @@ const ADAPTERS = [
 - COD vs prepaid: many listings offer Cash on Delivery; prepaid may show extra discount. Confirm the payment choice with the user — do not assume.
 - Sort via "Sort by" (popularity, price low→high) and filter via the left rail (Brand, Price, Size, Ratings) rather than URL edits. Cart lives at /cart; checkout needs login/OTP.`,
   },
+  // ─── Regional — LATAM classifieds + travel (BR/AR/MX) ────────────
+  // High-priority CONTRIBUTING.md coverage: OLX Brasil, Despegar/Decolar.
+  // Keep before the federated Mastodon matcher.
+  {
+    name: 'olx',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?olx\.com\.br\//.test(url),
+    notes: `
+- OLX Brasil (olx.com.br) is Brazil's largest CLASSIFIEDS site (like sahibinden: vehicles, real estate, goods, jobs, services). Most listings are "Fale com o vendedor" / "Chat" / "Mostrar telefone" — NOT a cart checkout. Do NOT hunt for "Adicionar ao carrinho" on a typical listing; read the listing and surface the seller contact path.
+- Contact trap: "Mostrar telefone" or "Conversar por chat" often needs login; phone may be partially masked or require a reveal click. Never promise a revealed number without clicking through and reporting what the page actually shows — masked vs revealed.
+- Filter in the left/top rail: price range, "Localização" (Estado/Cidade/Bairro), category facets, "Com foto" toggle, "Aceita troca" etc. Sort via "Relevância" / "Menor preço" / "Maior preço" / "Mais recentes" rather than URL param edits. Set the location filter before quoting availability — listings are geo-targeted.
+- Paid-placement trap: cards marked "Destaque" / "Patrocinado" are sponsored — do not rank them as organic relevance, best price, or highest quality.
+- Posting ("Anunciar" / "Inserir anúncio") needs login and moderation; new ads show "Em análise" / "Aguardando aprovação", not live. Do not report as published until the status is active.`,
+  },
+  {
+    name: 'despegar',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?(?:despegar\.com(?:\.(?:ar|mx|co|cl|pe|uy|ec|ve))?|decolar\.com)\//.test(url),
+    notes: `
+- Despegar (despegar.com / decolar.com in Brazil) is LATAM's largest OTA — flights, packages (Voo+Hôtel), hotels, cars. Tabs "Passagens"/"Pacotes"/"Hotéis" are SEPARATE flows with separate carts — do not mix a flight search with a hotel add.
+- Search trap: dates, passengers, origem/destino, and cabin class are chosen via the header form. Results URL carries encoded params — set filters via the left rail (escalas, horário, cia aérea, bagagem) and sort ("Menor preço", "Menor duração") instead of editing URL params.
+- Fare-class trap: "Econômica" / "Econômica Premium" / "Executiva" fares for the SAME flight have different bagagem, change/refund rules, and seat choice. Open "Detalhes da tarifa" / "Detalles de la tarifa" before quoting rules — default cheapest may be non-reembolsável / não reembolsável.
+- Price trap: quoted price may be "por pessoa" or total for all passengers. Check "Preço total" / "Precio total" plus taxas y cargos in the cart before stating the payable total; bagagem despachada may be extra.
+- Do NOT click "Comprar" / "Reservar" without explicit user confirmation of flight/hotel, dates, passengers, tarifa, and total. Success = confirmation page with reservation code / "Reserva confirmada", not the cart or payment form. If a "Verificação" / login wall appears, surface it and stop — do not loop.`,
+  },
   {
     // Mastodon is federated and self-hosted across many domains. Keep this
     // host-agnostic matcher after site-specific adapters so @profile paths on
