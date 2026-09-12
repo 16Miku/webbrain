@@ -17722,6 +17722,49 @@ const ADAPTERS = [
 - COD vs prepaid: many listings offer Cash on Delivery; prepaid may show extra discount. Confirm the payment choice with the user — do not assume.
 - Sort via "Sort by" (popularity, price low→high) and filter via the left rail (Brand, Price, Size, Ratings) rather than URL edits. Cart lives at /cart; checkout needs login/OTP.`,
   },
+  // ─── Regional — EU + SEA (NL/DE/AT/ID) ──────────────────────────
+  // High-priority CONTRIBUTING.md coverage: bol.com, otto.de, willhaben.at,
+  // tokopedia.com. Keep before the federated Mastodon matcher.
+  {
+    name: 'bol',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?bol\.com\//.test(url),
+    notes: `
+- bol.com (bol) is Netherlands/Belgium marketplace. Dutch labels: "In winkelwagen" = add to cart, "Winkelwagen" = cart, "Nu kopen" = buy now. Many products have multiple sellers — check "Andere aanbieders" / "Bekijk alle aanbieders" before quoting "the price".
+- Variant trap: pick variant (kleur/maat) BEFORE "In winkelwagen" — required options block the add until chosen. "Gratis verzending" is conditional (often bol-executed, minimum order, or Select membership) — verify at cart instead of promising free shipping from the card.
+- Price trap: "Select" membership pricing or coupons apply only at cart; quote the cart total, not the product card price. Selling via bol vs third-party sellers have different return terms — read the seller line.
+- Sort via "Relevantie" / "Prijs laag - hoog" and filter via left rail rather than URL edits. Cart at /winkelwagen; checkout needs login. "bol Select" benefits are membership-conditional.`,
+  },
+  {
+    name: 'otto',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?otto\.de\//.test(url),
+    notes: `
+- OTTO.de is German marketplace (fashion/home-heavy). Many listings aggregate marketplace sellers — check "Anbieter" / marketplace seller name and rating; the OTTO brand on the page does not prove OTTO is the seller.
+- Variant trap: pick Farbe/Größe (color/size) BEFORE "In den Warenkorb" — required options block the add until chosen. Some listings group variants under "Weitere Varianten".
+- Shipping/coupon trap: Versand via Hermes/DHL cost and delivery estimate depend on seller/warehouse; coupons ("Gutschein") apply at cart only. Quote the cart total, not the product card price, and verify Gutschein applicability.
+- Sort via "Sortierung" (Preis aufsteigend etc.) and filter via left rail rather than URL edits. Do NOT click "Jetzt kaufen" without explicit user confirmation; success = order confirmation with order number.`,
+  },
+  {
+    name: 'willhaben',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?willhaben\.at\//.test(url),
+    notes: `
+- willhaben.at is Austria's largest CLASSIFIEDS (vehicles, real estate, goods, jobs), like sahibinden/OLX — NOT a cart store. Most listings are "Nachricht schreiben" / "Telefonnummer anzeigen" contact-seller, so do NOT hunt for "In den Warenkorb" on a typical auto/property listing.
+- Contact trap: phone reveal ("Telefonnummer anzeigen") or chat may need login; number may be masked before reveal. Never promise a revealed number without clicking through and reporting masked vs revealed.
+- Filter in left/top rail: Preis, "Ort" / Bundesland, category facets. Sort via "Relevanz" / "Preis aufsteigend" rather than URL edits. Paid placements marked "Anzeige" / "Gesponsert" are sponsored — do not rank as organic.
+- Posting ("Anzeige aufgeben") needs login and moderation; new ads show "In Prüfung" / pending, not live. Do not report as published until active. If a "Sicherheitsprüfung" wall appears, surface it and stop.`,
+  },
+  {
+    name: 'tokopedia',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?tokopedia\.com\//.test(url),
+    notes: `
+- Tokopedia (tokopedia.com) is Indonesia's largest marketplace. Many products have multiple sellers — use the product page's seller line; do NOT infer a single seller from search cards.
+- Variant trap: "Wajib pilih varian" (must choose variant) blocks "Keranjang" until size/color/capacity is chosen — pick the exact variant first, then "Masukkan Keranjang" / "Beli Langsung". "Beli Langsung" skips cart, so do not use it for comparison.
+- Store traps: "Official Store" vs "Power Merchant" have different guarantees; check the store badge and rating. "Gratis Ongkir" (free shipping) is conditional (courier choice, minimum spend) — verify at checkout.
+- Filter via left rail (Kategori, Harga, Rating, Lokasi pengiriman) and sort ("Paling Sesuai" / "Harga terendah") rather than URL edits. Set delivery location before quoting availability or ETA. Do NOT pay without explicit user confirmation of store, variant, and total.`,
+  },
   {
     // Mastodon is federated and self-hosted across many domains. Keep this
     // host-agnostic matcher after site-specific adapters so @profile paths on
