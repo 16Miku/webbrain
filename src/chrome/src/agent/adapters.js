@@ -17728,7 +17728,7 @@ const ADAPTERS = [
   {
     name: 'olx',
     category: 'general',
-    matches: (url) => /^https?:\/\/(www\.)?olx\.com\.br\//.test(url),
+    matches: (url) => /^https?:\/\/(?:www\.|m\.)?olx\.com\.br\//.test(url),
     notes: `
 - OLX Brasil (olx.com.br) is Brazil's largest CLASSIFIEDS site (like sahibinden: vehicles, real estate, goods, jobs, services). Most listings are "Fale com o vendedor" / "Chat" / "Mostrar telefone" — NOT a cart checkout. Do NOT hunt for "Adicionar ao carrinho" on a typical listing; read the listing and surface the seller contact path.
 - Contact trap: "Mostrar telefone" or "Conversar por chat" often needs login; phone may be partially masked or require a reveal click. Never promise a revealed number without clicking through and reporting what the page actually shows — masked vs revealed.
@@ -17739,7 +17739,7 @@ const ADAPTERS = [
   {
     name: 'despegar',
     category: 'general',
-    matches: (url) => /^https?:\/\/(www\.)?(?:despegar\.com(?:\.(?:ar|mx|co|cl|pe|uy|ec|ve))?|decolar\.com)\//.test(url),
+    matches: (url) => /^https?:\/\/(www\.)?(?:despegar\.cl|despegar\.com(?:\.(?:ar|mx|co|pe|uy|ec|ve))?|decolar\.com)\//.test(url),
     notes: `
 - Despegar (despegar.com / decolar.com in Brazil) is LATAM's largest OTA — flights, packages (Voo+Hôtel), hotels, cars. Tabs "Passagens"/"Pacotes"/"Hotéis" are SEPARATE flows with separate carts — do not mix a flight search with a hotel add.
 - Search trap: dates, passengers, origem/destino, and cabin class are chosen via the header form. Results URL carries encoded params — set filters via the left rail (escalas, horário, cia aérea, bagagem) and sort ("Menor preço", "Menor duração") instead of editing URL params.
