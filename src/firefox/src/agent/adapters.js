@@ -17720,6 +17720,53 @@ const ADAPTERS = [
 - COD vs prepaid: many listings offer Cash on Delivery; prepaid may show extra discount. Confirm the payment choice with the user — do not assume.
 - Sort via "Sort by" (popularity, price low→high) and filter via the left rail (Brand, Price, Size, Ratings) rather than URL edits. Cart lives at /cart; checkout needs login/OTP.`,
   },
+  // ─── Regional — East Asia + Yandex Market (JP/KR/RU) ────────────
+  // High-priority CONTRIBUTING.md coverage: Mercari, Yahoo! JAPAN, Naver,
+  // Yandex Market. Keep before the federated Mastodon matcher.
+  {
+    name: 'mercari',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?(?:mercari\.com|mercari\.jp|jp\.mercari\.com)\//.test(url),
+    notes: `
+- Mercari (mercari.com / mercari.jp / jp.mercari.com) is Japan/US peer-to-peer marketplace. Most listings are single-item peer sales — NOT retail carts with multiple sellers. "購入手続きへ" / "Buy" proceeds to checkout for that one item; do NOT hunt for a multi-seller cart.
+- Condition/size trap: listings show seller-provided "商品の状態" (condition), size, and brand. Read the listed condition before quoting, or use condition as a search filter when comparing items — there is no buyer-selectable condition on a listing. "美品" vs "未使用" carry different pricing and return expectations.
+- Offer vs Buy trap: "値下げ交渉" / "Make offer" sends a seller offer (not a purchase). Use "購入" / "Buy Now" only when the user wants to buy at the listed price and after confirming shipping.
+- Shipping trap: "送料込み" (seller pays) vs "着払い" (buyer pays) changes the total — read the shipping badge before quoting. Delivery estimate depends on seller dispatch, not a warehouse ETA.
+- Do NOT pay without explicit user confirmation of item, condition, price, and shipping. Success = order confirmation with transaction ID, not the product page. If a "本人確認" / login wall appears, surface it and stop.`,
+  },
+  {
+    name: 'yahoo-jp',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www|shopping|store\.shopping|auctions|page\.auctions|paypayfleamarket)\.yahoo\.co\.jp\//.test(url),
+    notes: `
+- Yahoo! JAPAN (yahoo.co.jp) splits shopping across subdomains: shopping.yahoo.co.jp (Yahoo!ショッピング), auctions.yahoo.co.jp (ヤフオク!), paypayfleamarket.yahoo.co.jp, plus www.yahoo.co.jp portal. Treat each as a separate flow — a shopping cart on shopping.yahoo.co.jp does not contain auction bids.
+- Auction trap: auctions.yahoo.co.jp uses "入札" (bid) vs "即決" (buy now). Bids are commitments — do NOT bid without explicit user confirmation; report only the resulting bid status, not the product page.
+- Points/coupon trap: "PayPayポイント" / "クーポン" and "送料無料" apply conditionally at cart. Quote the cart/payment total, not the product card price, and check expiry/minimum spend.
+- Variant trap: shopping listings require size/color/option selection BEFORE "カートに入れる" — the button is inert until required options are chosen.
+- Login may require Yahoo! JAPAN ID + 2FA / SMS — surface it to the user and stop, do not loop. Sort via "おすすめ順" / "価格が安い順" rather than URL edits.`,
+  },
+  {
+    name: 'naver',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:shopping|m\.shopping|smartstore|pay|m\.pay|order\.pay)\.naver\.com\//.test(url),
+    notes: `
+- Naver Shopping (shopping.naver.com / smartstore.naver.com) aggregates many Smart Stores under one search — it is NOT a single retailer. The buy box is for ONE store; open "다른 판매처" / "판매처 비교" to compare seller, price, and delivery before quoting.
+- Naver Pay vs store checkout trap: "N Pay 구매" routes through Naver Pay with its own total; store-direct "구매하기" may have different shipping. Check which checkout the button triggers before confirming total.
+- Variant trap: pick size/color/option ("옵션 선택") BEFORE "장바구니" / "구매하기" — required options block the add until chosen. Membership ("Naver Plus") free-shipping or points are conditional; verify at cart.
+- Search hosts: m.shopping.naver.com is the mobile storefront — same login/cart/checkout as desktop, so treat www. and m. as the same flow.
+- Sort via "낮은 가격순" / "리뷰 많은 순" and filter via left rail rather than URL edits. Do NOT submit payment without explicit user confirmation of store, variant, and total.`,
+  },
+  {
+    name: 'yandex-market',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:market\.yandex\.(?:ru|com|by|kz)|www\.yandex\.ru\/market)\//.test(url),
+    notes: `
+- Yandex Market (market.yandex.ru / market.yandex.com) is Russia's aggregator marketplace — many sellers under one product card. The card price is NOT the seller's fulfillment total; open "Предложения продавцов" to compare seller, rating, delivery, and return terms before quoting.
+- Variant/delivery trap: pick size/color/config AND delivery method ("Доставка курьером" vs "Пункт выдачи") BEFORE quoting ETA or total — fulfillment speed and cost vary by seller/warehouse and selected method.
+- Bonus/coupon trap: "Плюсы" / Yandex Plus points, coupons, and installment ("Сплит") apply conditionally at cart. Quote cart total, not card price, and verify applicability.
+- Sort via "Сортировка" (price low→high "Дешевле", rating) and filter via left rail rather than URL edits. Anti-bot may show CAPTCHA or 403 with "Доступ ограничен" — surface it and stop, do not loop fetch retries.
+- Do NOT click "Заказать" / "Оформить" without explicit user confirmation of seller, variant, delivery, and total. Success = order confirmation with number in "Заказы", not cart state.`,
+  },
   {
     // Mastodon is federated and self-hosted across many domains. Keep this
     // host-agnostic matcher after site-specific adapters so @profile paths on

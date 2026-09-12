@@ -10265,6 +10265,39 @@ test('Noon adapter covers its primary and Supermall storefronts without trusting
   }
 });
 
+test('East Asia adapters route transactional hosts without overmatching unrelated services', () => {
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    const mercari = getAdapter('https://jp.mercari.com/item/m123');
+    assert.equal(mercari?.name, 'mercari');
+    assert.match(mercari?.notes || '', /seller-provided "商品の状態"/);
+    assert.match(mercari?.notes || '', /there is no buyer-selectable condition/);
+    assert.doesNotMatch(mercari?.notes || '', /Select the exact item state/);
+
+    for (const url of [
+      'https://page.auctions.yahoo.co.jp/jp/auction/x123',
+      'https://store.shopping.yahoo.co.jp/example/item.html',
+      'https://auctions.yahoo.co.jp/',
+    ]) assert.equal(getAdapter(url)?.name, 'yahoo-jp', url);
+    for (const url of [
+      'https://news.yahoo.co.jp/',
+      'https://page.auctions.yahoo.co.jp.evil.example/jp/auction/x123',
+    ]) assert.notEqual(getAdapter(url)?.name, 'yahoo-jp', url);
+
+    for (const url of [
+      'https://shopping.naver.com/',
+      'https://m.shopping.naver.com/',
+      'https://smartstore.naver.com/example',
+      'https://order.pay.naver.com/orderSheet/123',
+    ]) assert.equal(getAdapter(url)?.name, 'naver', url);
+    for (const url of [
+      'https://news.naver.com/',
+      'https://mail.naver.com/',
+      'https://blog.naver.com/',
+      'https://order.pay.naver.com.evil.example/orderSheet/123',
+    ]) assert.notEqual(getAdapter(url)?.name, 'naver', url);
+  }
+});
+
 test('India payment and Tatkal guidance keeps finance, timing, and authentication safety signals', () => {
   for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
     const paytm = getAdapter('https://paytm.com/recharge');
