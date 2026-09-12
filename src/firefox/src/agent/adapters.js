@@ -17756,7 +17756,7 @@ const ADAPTERS = [
   {
     name: 'tokopedia',
     category: 'general',
-    matches: (url) => /^https?:\/\/(?:www\.)?tokopedia\.com\//.test(url),
+    matches: (url) => /^https?:\/\/(?:(?:www|m)\.)?tokopedia\.com\//.test(url),
     notes: `
 - Tokopedia (tokopedia.com) is Indonesia's largest marketplace. Many products have multiple sellers — use the product page's seller line; do NOT infer a single seller from search cards.
 - Variant trap: "Wajib pilih varian" (must choose variant) blocks "Keranjang" until size/color/capacity is chosen — pick the exact variant first, then "Masukkan Keranjang" / "Beli Langsung". "Beli Langsung" skips cart, so do not use it for comparison.

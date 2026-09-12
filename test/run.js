@@ -10265,6 +10265,15 @@ test('Noon adapter covers its primary and Supermall storefronts without trusting
   }
 });
 
+test('Tokopedia adapter covers desktop and mobile storefronts without trusting lookalikes', () => {
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    assert.equal(getAdapter('https://www.tokopedia.com/example/product')?.name, 'tokopedia');
+    assert.equal(getAdapter('https://m.tokopedia.com/example/product')?.name, 'tokopedia');
+    assert.notEqual(getAdapter('https://m.tokopedia.com.evil.example/example/product')?.name, 'tokopedia');
+    assert.notEqual(getAdapter('https://example.com/?next=https://m.tokopedia.com/example/product')?.name, 'tokopedia');
+  }
+});
+
 test('India payment and Tatkal guidance keeps finance, timing, and authentication safety signals', () => {
   for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
     const paytm = getAdapter('https://paytm.com/recharge');
