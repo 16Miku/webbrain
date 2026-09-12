@@ -10265,6 +10265,30 @@ test('Noon adapter covers its primary and Supermall storefronts without trusting
   }
 });
 
+test('Africa and MENA adapters cover country, mobile, and transactional hosts', () => {
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    assert.equal(getAdapter('https://www.jumia.ci/catalog/')?.name, 'jumia');
+    assert.notEqual(getAdapter('https://www.jumia.ci.evil.example/catalog/')?.name, 'jumia');
+
+    for (const url of [
+      'https://www.kilimall.ug/product/123',
+      'https://m.kilimall.co.ke/product/123',
+      'https://h5.kilimall.co.ke/cart',
+    ]) assert.equal(getAdapter(url)?.name, 'kilimall', url);
+    assert.notEqual(getAdapter('https://m.kilimall.co.ke.evil.example/product/123')?.name, 'kilimall');
+
+    for (const url of [
+      'https://app.careem.com/ride',
+      'https://food.careem.com/restaurants',
+      'https://pay.careem.com/',
+    ]) assert.equal(getAdapter(url)?.name, 'careem', url);
+    for (const url of [
+      'https://help.careem.com/',
+      'https://pay.careem.com.evil.example/',
+    ]) assert.notEqual(getAdapter(url)?.name, 'careem', url);
+  }
+});
+
 test('East Asia adapters route transactional hosts without overmatching unrelated services', () => {
   for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
     const mercari = getAdapter('https://jp.mercari.com/item/m123');
