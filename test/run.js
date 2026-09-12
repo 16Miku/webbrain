@@ -10265,6 +10265,15 @@ test('Noon adapter covers its primary and Supermall storefronts without trusting
   }
 });
 
+test('Tokopedia adapter covers desktop and mobile storefronts without trusting lookalikes', () => {
+  for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
+    assert.equal(getAdapter('https://www.tokopedia.com/example/product')?.name, 'tokopedia');
+    assert.equal(getAdapter('https://m.tokopedia.com/example/product')?.name, 'tokopedia');
+    assert.notEqual(getAdapter('https://m.tokopedia.com.evil.example/example/product')?.name, 'tokopedia');
+    assert.notEqual(getAdapter('https://example.com/?next=https://m.tokopedia.com/example/product')?.name, 'tokopedia');
+  }
+});
+
 test('LATAM adapters cover OLX mobile and the real Despegar Chile domain', () => {
   for (const getAdapter of [getActiveAdapter, getActiveAdapterFx]) {
     assert.equal(getAdapter('https://m.olx.com.br/anuncio/123')?.name, 'olx');
