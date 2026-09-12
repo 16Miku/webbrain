@@ -17763,6 +17763,124 @@ const ADAPTERS = [
 - Store traps: "Official Store" vs "Power Merchant" have different guarantees; check the store badge and rating. "Gratis Ongkir" (free shipping) is conditional (courier choice, minimum spend) — verify at checkout.
 - Filter via left rail (Kategori, Harga, Rating, Lokasi pengiriman) and sort ("Paling Sesuai" / "Harga terendah") rather than URL edits. Set delivery location before quoting availability or ETA. Do NOT pay without explicit user confirmation of store, variant, and total.`,
   },
+  // ─── Regional — LATAM classifieds + travel (BR/AR/MX) ────────────
+  // High-priority CONTRIBUTING.md coverage: OLX Brasil, Despegar/Decolar.
+  // Keep before the federated Mastodon matcher.
+  {
+    name: 'olx',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.|m\.)?olx\.com\.br\//.test(url),
+    notes: `
+- OLX Brasil (olx.com.br) is Brazil's largest CLASSIFIEDS site (like sahibinden: vehicles, real estate, goods, jobs, services). Most listings are "Fale com o vendedor" / "Chat" / "Mostrar telefone" — NOT a cart checkout. Do NOT hunt for "Adicionar ao carrinho" on a typical listing; read the listing and surface the seller contact path.
+- Contact trap: "Mostrar telefone" or "Conversar por chat" often needs login; phone may be partially masked or require a reveal click. Never promise a revealed number without clicking through and reporting what the page actually shows — masked vs revealed.
+- Filter in the left/top rail: price range, "Localização" (Estado/Cidade/Bairro), category facets, "Com foto" toggle, "Aceita troca" etc. Sort via "Relevância" / "Menor preço" / "Maior preço" / "Mais recentes" rather than URL param edits. Set the location filter before quoting availability — listings are geo-targeted.
+- Paid-placement trap: cards marked "Destaque" / "Patrocinado" are sponsored — do not rank them as organic relevance, best price, or highest quality.
+- Posting ("Anunciar" / "Inserir anúncio") needs login and moderation; new ads show "Em análise" / "Aguardando aprovação", not live. Do not report as published until the status is active.`,
+  },
+  {
+    name: 'despegar',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?(?:despegar\.cl|despegar\.com(?:\.(?:ar|mx|co|pe|uy|ec|ve))?|decolar\.com)\//.test(url),
+    notes: `
+- Despegar (despegar.com / decolar.com in Brazil) is LATAM's largest OTA — flights, packages (Voo+Hôtel), hotels, cars. Tabs "Passagens"/"Pacotes"/"Hotéis" are SEPARATE flows with separate carts — do not mix a flight search with a hotel add.
+- Search trap: dates, passengers, origem/destino, and cabin class are chosen via the header form. Results URL carries encoded params — set filters via the left rail (escalas, horário, cia aérea, bagagem) and sort ("Menor preço", "Menor duração") instead of editing URL params.
+- Fare-class trap: "Econômica" / "Econômica Premium" / "Executiva" fares for the SAME flight have different bagagem, change/refund rules, and seat choice. Open "Detalhes da tarifa" / "Detalles de la tarifa" before quoting rules — default cheapest may be non-reembolsável / não reembolsável.
+- Price trap: quoted price may be "por pessoa" or total for all passengers. Check "Preço total" / "Precio total" plus taxas y cargos in the cart before stating the payable total; bagagem despachada may be extra.
+- Do NOT click "Comprar" / "Reservar" without explicit user confirmation of flight/hotel, dates, passengers, tarifa, and total. Success = confirmation page with reservation code / "Reserva confirmada", not the cart or payment form. If a "Verificação" / login wall appears, surface it and stop — do not loop.`,
+  },
+  // ─── Regional — Africa + MENA super-apps (AF/ME) ────────────────
+  // High-priority CONTRIBUTING.md coverage: Jumia, Kilimall, Careem, talabat.
+  // Keep before the federated Mastodon matcher.
+  {
+    name: 'jumia',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?jumia\.(?:com|com\.ng|co\.ke|com\.eg|co\.za|com\.gh|dz|ma|sn|ci|co\.ug|ug)\//.test(url),
+    notes: `
+- Jumia (jumia.com + country stores .com.ng/.co.ke/.com.eg/.co.za/.dz/.ma/.sn/.ci/.ug) is Africa's marketplace. "Jumia Express" means Jumia-fulfilled; other sellers are marketplace with separate ratings and returns — check "Sold by" and seller rating before quoting.
+- Variant trap: pick size/color/capacity BEFORE "Add to cart" — required options block the add until chosen. "Add to cart" opens a drawer; cart lives at /cart.
+- Price trap: JumiaPay discounts and coupons apply only at checkout — quote the cart total, not the product card price. Delivery fee and COD surcharge appear at cart; verify before promising total.
+- Location-first: delivery availability and fee depend on city/address set in the header. Set it first or availability is meaningless. Use "Filters" and "Sort by" (price low→high) rather than URL edits.
+- Do NOT click "Proceed to checkout" without explicit user confirmation. Success = order confirmation with order number in "Orders", not cart state.`,
+  },
+  {
+    name: 'kilimall',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www\.)?kilimall\.(?:co\.ke|ug|com)|(?:m|h5)\.kilimall\.co\.ke)\//.test(url),
+    notes: `
+- Kilimall (kilimall.co.ke / kilimall.ug / kilimall.com) is an East Africa marketplace. Marketplace sellers per product — check "Sold by" and store rating; the card price is not the fulfillment total across sellers.
+- Variant trap: pick size/color BEFORE "Add to Cart" — the button is inert until required options are chosen. "Add to Cart" vs "Buy Now" are distinct — use cart for comparison.
+- Price trap: coupons, Kilimall points, and M-Pesa discounts apply at cart/checkout only — quote the cart total, not the product card price. Shipping cost appears at checkout based on origin/weight.
+- Set delivery county/town before quoting availability or ETA; sort via "Sort by" and filter via left rail rather than URL edits. Do NOT pay without explicit user confirmation of seller, variant, and total.`,
+  },
+  {
+    name: 'careem',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|app|food|pay)\.)?careem\.com\//.test(url),
+    notes: `
+- Careem (careem.com) is MENA super-app — Rides, Food, Quik (grocery), Pay, Shops are SEPARATE verticals with separate carts/flows. Pick the vertical that matches the task — a Food cart does not contain a Ride booking.
+- Location-first trap: set pickup/delivery address (map pin or "Delivery address") BEFORE the catalog or fare is meaningful — restaurants, stores, and ride availability are geo-fenced.
+- Ride trap: "Ride Now" vs "Ride Later" plus car type (Go, Comfort, Max) have different fare estimates and surge. Food trap: single-restaurant cart — cannot mix two restaurants in one order.
+- Pay trap: Careem Pay wallet vs COD vs card are distinct radios at checkout; verify balance before promising wallet payment. Login is phone OTP — surface it and stop.
+- Do NOT place any order/ride without explicit user confirmation of vertical, address, items/route, and total. Success = order/ride confirmation with ID and tracking, not cart state.`,
+  },
+  {
+    name: 'talabat',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?talabat\.com\//.test(url),
+    notes: `
+- talabat.com is MENA food-delivery + grocery (UAE/Saudi/Egypt/Kuwait/Qatar/Bahrain/Oman/Jordan). Set delivery address/area via the header pin ("Deliver to") BEFORE any restaurant list — which restaurants, menus, and fees appear depends on it.
+- Single-restaurant cart trap: talabat allows ONE restaurant per order. Pick a restaurant, then add dishes — you CANNOT combine two restaurants in one checkout. Finish one order before starting another.
+- Availability gates: restaurant may be "Closed" (cannot order now) and has minimum order ("Minimum order") plus delivery fee — check both before promising delivery. Dish customisations (size, add-ons) are required modals — pick them before "Add".
+- Price trap: menu price is NOT total — delivery fee, service fee, and tip are added at checkout. Use on-page search and filters (cuisine, rating, delivery time) rather than URL edits.
+- Do NOT place without explicit user confirmation of restaurant, dishes, quantities, address, and total. Success = order-tracking page with order ID and ETA, not the cart drawer.`,
+  },
+  // ─── Regional — East Asia + Yandex Market (JP/KR/RU) ────────────
+  // High-priority CONTRIBUTING.md coverage: Mercari, Yahoo! JAPAN, Naver,
+  // Yandex Market. Keep before the federated Mastodon matcher.
+  {
+    name: 'mercari',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?(?:mercari\.com|mercari\.jp|jp\.mercari\.com)\//.test(url),
+    notes: `
+- Mercari (mercari.com / mercari.jp / jp.mercari.com) is Japan/US peer-to-peer marketplace. Most listings are single-item peer sales — NOT retail carts with multiple sellers. "購入手続きへ" / "Buy" proceeds to checkout for that one item; do NOT hunt for a multi-seller cart.
+- Condition/size trap: listings show seller-provided "商品の状態" (condition), size, and brand. Read the listed condition before quoting, or use condition as a search filter when comparing items — there is no buyer-selectable condition on a listing. "美品" vs "未使用" carry different pricing and return expectations.
+- Offer vs Buy trap: "値下げ交渉" / "Make offer" sends a seller offer (not a purchase). Use "購入" / "Buy Now" only when the user wants to buy at the listed price and after confirming shipping.
+- Shipping trap: "送料込み" (seller pays) vs "着払い" (buyer pays) changes the total — read the shipping badge before quoting. Delivery estimate depends on seller dispatch, not a warehouse ETA.
+- Do NOT pay without explicit user confirmation of item, condition, price, and shipping. Success = order confirmation with transaction ID, not the product page. If a "本人確認" / login wall appears, surface it and stop.`,
+  },
+  {
+    name: 'yahoo-jp',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www|shopping|store\.shopping|auctions|page\.auctions|paypayfleamarket)\.yahoo\.co\.jp\//.test(url),
+    notes: `
+- Yahoo! JAPAN (yahoo.co.jp) splits shopping across subdomains: shopping.yahoo.co.jp (Yahoo!ショッピング), auctions.yahoo.co.jp (ヤフオク!), paypayfleamarket.yahoo.co.jp, plus www.yahoo.co.jp portal. Treat each as a separate flow — a shopping cart on shopping.yahoo.co.jp does not contain auction bids.
+- Auction trap: auctions.yahoo.co.jp uses "入札" (bid) vs "即決" (buy now). Bids are commitments — do NOT bid without explicit user confirmation; report only the resulting bid status, not the product page.
+- Points/coupon trap: "PayPayポイント" / "クーポン" and "送料無料" apply conditionally at cart. Quote the cart/payment total, not the product card price, and check expiry/minimum spend.
+- Variant trap: shopping listings require size/color/option selection BEFORE "カートに入れる" — the button is inert until required options are chosen.
+- Login may require Yahoo! JAPAN ID + 2FA / SMS — surface it to the user and stop, do not loop. Sort via "おすすめ順" / "価格が安い順" rather than URL edits.`,
+  },
+  {
+    name: 'naver',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:shopping|m\.shopping|smartstore|pay|m\.pay|order\.pay)\.naver\.com\//.test(url),
+    notes: `
+- Naver Shopping (shopping.naver.com / smartstore.naver.com) aggregates many Smart Stores under one search — it is NOT a single retailer. The buy box is for ONE store; open "다른 판매처" / "판매처 비교" to compare seller, price, and delivery before quoting.
+- Naver Pay vs store checkout trap: "N Pay 구매" routes through Naver Pay with its own total; store-direct "구매하기" may have different shipping. Check which checkout the button triggers before confirming total.
+- Variant trap: pick size/color/option ("옵션 선택") BEFORE "장바구니" / "구매하기" — required options block the add until chosen. Membership ("Naver Plus") free-shipping or points are conditional; verify at cart.
+- Search hosts: m.shopping.naver.com is the mobile storefront — same login/cart/checkout as desktop, so treat www. and m. as the same flow.
+- Sort via "낮은 가격순" / "리뷰 많은 순" and filter via left rail rather than URL edits. Do NOT submit payment without explicit user confirmation of store, variant, and total.`,
+  },
+  {
+    name: 'yandex-market',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:market\.yandex\.(?:ru|com|by|kz)|www\.yandex\.ru\/market)\//.test(url),
+    notes: `
+- Yandex Market (market.yandex.ru / market.yandex.com) is Russia's aggregator marketplace — many sellers under one product card. The card price is NOT the seller's fulfillment total; open "Предложения продавцов" to compare seller, rating, delivery, and return terms before quoting.
+- Variant/delivery trap: pick size/color/config AND delivery method ("Доставка курьером" vs "Пункт выдачи") BEFORE quoting ETA or total — fulfillment speed and cost vary by seller/warehouse and selected method.
+- Bonus/coupon trap: "Плюсы" / Yandex Plus points, coupons, and installment ("Сплит") apply conditionally at cart. Quote cart total, not card price, and verify applicability.
+- Sort via "Сортировка" (price low→high "Дешевле", rating) and filter via left rail rather than URL edits. Anti-bot may show CAPTCHA or 403 with "Доступ ограничен" — surface it and stop, do not loop fetch retries.
+- Do NOT click "Заказать" / "Оформить" without explicit user confirmation of seller, variant, delivery, and total. Success = order confirmation with number in "Заказы", not cart state.`,
+  },
   {
     // Mastodon is federated and self-hosted across many domains. Keep this
     // host-agnostic matcher after site-specific adapters so @profile paths on
