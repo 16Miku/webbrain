@@ -17731,7 +17731,7 @@ const ADAPTERS = [
     matches: (url) => /^https?:\/\/(?:www\.)?(?:mercari\.com|mercari\.jp|jp\.mercari\.com)\//.test(url),
     notes: `
 - Mercari (mercari.com / mercari.jp / jp.mercari.com) is Japan/US peer-to-peer marketplace. Most listings are single-item peer sales — NOT retail carts with multiple sellers. "購入手続きへ" / "Buy" proceeds to checkout for that one item; do NOT hunt for a multi-seller cart.
-- Condition/size trap: listings show "商品の状態" (condition), size, brand. Select the exact item state before quoting price — "美品" vs "未使用" carry different pricing and return expectations.
+- Condition/size trap: listings show seller-provided "商品の状態" (condition), size, and brand. Read the listed condition before quoting, or use condition as a search filter when comparing items — there is no buyer-selectable condition on a listing. "美品" vs "未使用" carry different pricing and return expectations.
 - Offer vs Buy trap: "値下げ交渉" / "Make offer" sends a seller offer (not a purchase). Use "購入" / "Buy Now" only when the user wants to buy at the listed price and after confirming shipping.
 - Shipping trap: "送料込み" (seller pays) vs "着払い" (buyer pays) changes the total — read the shipping badge before quoting. Delivery estimate depends on seller dispatch, not a warehouse ETA.
 - Do NOT pay without explicit user confirmation of item, condition, price, and shipping. Success = order confirmation with transaction ID, not the product page. If a "本人確認" / login wall appears, surface it and stop.`,
@@ -17739,7 +17739,7 @@ const ADAPTERS = [
   {
     name: 'yahoo-jp',
     category: 'general',
-    matches: (url) => /^https?:\/\/(?:[a-z0-9-]+\.)?yahoo\.co\.jp\//.test(url),
+    matches: (url) => /^https?:\/\/(?:www|shopping|store\.shopping|auctions|page\.auctions|paypayfleamarket)\.yahoo\.co\.jp\//.test(url),
     notes: `
 - Yahoo! JAPAN (yahoo.co.jp) splits shopping across subdomains: shopping.yahoo.co.jp (Yahoo!ショッピング), auctions.yahoo.co.jp (ヤフオク!), paypayfleamarket.yahoo.co.jp, plus www.yahoo.co.jp portal. Treat each as a separate flow — a shopping cart on shopping.yahoo.co.jp does not contain auction bids.
 - Auction trap: auctions.yahoo.co.jp uses "入札" (bid) vs "即決" (buy now). Bids are commitments — do NOT bid without explicit user confirmation; report only the resulting bid status, not the product page.
@@ -17750,7 +17750,7 @@ const ADAPTERS = [
   {
     name: 'naver',
     category: 'general',
-    matches: (url) => /^https?:\/\/(?:[a-z0-9-]+\.)?(?:naver\.com|shopping\.naver\.com|smartstore\.naver\.com|m\.shopping\.naver\.com)\//.test(url),
+    matches: (url) => /^https?:\/\/(?:shopping|m\.shopping|smartstore|pay|m\.pay|order\.pay)\.naver\.com\//.test(url),
     notes: `
 - Naver Shopping (shopping.naver.com / smartstore.naver.com) aggregates many Smart Stores under one search — it is NOT a single retailer. The buy box is for ONE store; open "다른 판매처" / "판매처 비교" to compare seller, price, and delivery before quoting.
 - Naver Pay vs store checkout trap: "N Pay 구매" routes through Naver Pay with its own total; store-direct "구매하기" may have different shipping. Check which checkout the button triggers before confirming total.
