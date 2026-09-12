@@ -249,6 +249,53 @@ export function registerMessageRecipientNavigationFixtures({
       assert.equal(await guard('click_ax', args), null);
     });
 
+    register(`${kind}: LinkedIn Contact info recognizes shadow-root overlay content siblings`, async (page) => {
+      const { guard, probe } = await setup(page);
+      for (const [index, contentClass] of ['DialogContent', 'ModalContent'].entries()) {
+        const ref_id = await page.evaluate(({ contentClass, index }) => {
+          history.replaceState(null, '', '/in/alice/overlay/contact-info/');
+          document.querySelector('#chat').hidden = false;
+          const host = document.createElement('div');
+          host.id = `shadow-sibling-modal-host-${index}`;
+          document.body.append(host);
+          const shadow = host.attachShadow({ mode: 'open' });
+          shadow.innerHTML = `
+            <div class="DialogOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,.5)"></div>
+            <div class="${contentClass}" style="position:fixed;inset:40px;background:white">
+              <a href="/in/alice/">linkedin.com/in/alice</a>
+              <a id="sibling-modal-link" href="/safety/go/?url=https%3A%2F%2Fportfolio.example%2F"
+                style="display:inline-block;padding:8px">Sibling modal link</a>
+            </div>`;
+          return window.__wb_ax_ref(shadow.querySelector('#sibling-modal-link'));
+        }, { contentClass, index });
+        const args = { ref_id };
+        const result = await probe('click_ax', args);
+        assert.equal(result.navigation, true, `${contentClass}: ${JSON.stringify(result)}`);
+        assert.equal(await guard('click_ax', args), null);
+        await page.evaluate((index) => {
+          document.querySelector(`#shadow-sibling-modal-host-${index}`)?.remove();
+        }, index);
+      }
+      const ref_id = await page.evaluate(() => {
+        const host = document.createElement('div');
+        host.id = 'shadow-content-without-overlay-host';
+        document.body.append(host);
+        const shadow = host.attachShadow({ mode: 'open' });
+        shadow.innerHTML = `
+          <div class="DialogContent" style="position:fixed;inset:40px;background:white">
+            <a href="/in/alice/">linkedin.com/in/alice</a>
+            <a id="content-without-overlay-link"
+              href="/safety/go/?url=https%3A%2F%2Fportfolio.example%2F"
+              style="display:inline-block;padding:8px">Unbacked content link</a>
+          </div>`;
+        return window.__wb_ax_ref(shadow.querySelector('#content-without-overlay-link'));
+      });
+      const result = await probe('click_ax', { ref_id });
+      assert.equal(result.navigationBlocked, true, JSON.stringify(result));
+      assert.equal(result.conclusive, false, JSON.stringify(result));
+      assert.equal((await guard('click_ax', { ref_id }))?.noDispatch, true);
+    });
+
     register(`${kind}: LinkedIn non-blocking dialogs cannot claim Contact info redirects`, async (page) => {
       const { guard, probe } = await setup(page);
       await page.evaluate(() => {

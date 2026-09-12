@@ -4367,17 +4367,27 @@
         const heuristicModalSelector = '[data-overlay],.modal.show,.modal-overlay,.overlay,'
           + '[class*="modal"][class*="open"],[class*="overlay"][class*="active"],'
           + '[class*="DialogOverlay"],[class*="ModalOverlay"]';
+        const dialogContentSelector = '[class*="DialogContent"],[class*="ModalContent"]';
         const composedModal = _composedClosestElement(
           link,
-          `dialog,[role="dialog"],[role="alertdialog"],${heuristicModalSelector}`,
+          `dialog,[role="dialog"],[role="alertdialog"],${heuristicModalSelector},${dialogContentSelector}`,
         );
         const modal = composedModal
           || (blockingModal && _isComposedAncestor(blockingModal, link) ? blockingModal : null);
+        const contentHasVisibleOverlaySibling = (() => {
+          if (!modal?.matches?.(dialogContentSelector)) return false;
+          const parent = modal.parentElement || modal.parentNode;
+          if (!parent) return false;
+          return Array.from(parent.children).some((sibling) => sibling !== modal
+            && sibling.matches?.('[class*="DialogOverlay"],[class*="ModalOverlay"]')
+            && _hasVisibleBox(sibling, 100, 100));
+        })();
         const modalIsBlocking = !!modal && (
           modal === blockingModal
           || (modal.tagName === 'DIALOG' && modal.hasAttribute('open') && _isNativeBlockingDialog(modal))
           || (/^(?:dialog|alertdialog)$/.test(modal.getAttribute?.('role') || '')
             && modal.getAttribute?.('aria-modal') === 'true')
+          || contentHasVisibleOverlaySibling
           || (() => {
             if (!modal.matches?.(heuristicModalSelector)) return false;
             const rect = modal.getBoundingClientRect();
