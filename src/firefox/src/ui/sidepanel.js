@@ -1071,6 +1071,7 @@ let retryPayloadSeq = 0;
 const activeChatPayloadsByTab = new Map();
 const retryAttachmentPayloads = new Map();
 const retryAttachmentIdsByTab = new Map();
+const retryPayloadByAssistant = new WeakMap();
 
 function setTabProcessing(tabId, processing) {
   const numericTabId = Number(tabId);
@@ -2368,10 +2369,10 @@ function releaseRetryAttachmentPayload(retryId) {
 
 function releaseRetryAttachmentsInTree(root) {
   if (!root) return;
-  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id]')) {
+  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id], .ask-act-handoff-btn[data-retry-id]')) {
     releaseRetryAttachmentPayload(root.dataset.retryId);
   }
-  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id]').forEach((btn) => {
+  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id], .ask-act-handoff-btn[data-retry-id]').forEach((btn) => {
     releaseRetryAttachmentPayload(btn.dataset.retryId);
   });
 }
@@ -6495,12 +6496,16 @@ function retryPayloadForRunAssistant(assistantEl) {
   const userEl = userMessageForRunAssistant(assistantEl);
   const displayText = String(userEl ? getComposerHistoryTextFromMessage(userEl) : '').trim();
   if (!displayText) return null;
+  const storedRetryPayload = retryPayloadByAssistant.get(assistantEl);
   const internalPrompt = String(assistantEl?.dataset.retryAgentPrompt || '').trim();
   const text = internalPrompt || displayText;
   const sourceGrounding = normalizeSelectionSourceGrounding(assistantEl?.dataset.retrySourceGrounding) || null;
   const selectionAction = sourceGrounding
     ? normalizeSelectionAction(assistantEl?.dataset.retrySelectionAction)
     : '';
+  const attachments = Array.isArray(storedRetryPayload?.attachments)
+    ? storedRetryPayload.attachments.slice()
+    : [];
   return {
     text,
     displayText,
@@ -6511,8 +6516,11 @@ function retryPayloadForRunAssistant(assistantEl) {
     foreground: assistantEl?.dataset.retryForeground === 'true',
     ...(sourceGrounding ? { sourceGrounding } : {}),
     ...(selectionAction ? { selectionAction } : {}),
-    attachments: [],
-    attachmentCount: Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
+    attachments,
+    attachmentCount: Math.max(
+      Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
+      attachments.length,
+    ),
   };
 }
 
@@ -8564,6 +8572,10 @@ async function sendMessage(extraChatParams = {}) {
     assistantEl.dataset.retrySelectionAction = selectionAction;
     assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
     if (agentPrompt) assistantEl.dataset.retryAgentPrompt = agentPrompt;
+    retryPayloadByAssistant.set(assistantEl, {
+      ...retryPayload,
+      attachments: attachmentsForSend.slice(),
+    });
     userEl.dataset.runRequestId = requestId;
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;
@@ -10942,7 +10954,16 @@ function renderAskActHandoffButton(assistantEl, tabId, requestId) {
   const content = assistantEl.querySelector('.message-content');
   if (!content || content.querySelector('.ask-act-handoff-btn')) return;
 
-  const retryPayload = { ...retryPayloadForRunAssistant(assistantEl), mode: 'act' };
+  const baseRetryPayload = activeRetryPayloadForRequest(tabId, requestId)
+    || retryPayloadForRunAssistant(assistantEl);
+  if (!baseRetryPayload) return;
+  const retryPayload = {
+    ...baseRetryPayload,
+    mode: 'act',
+    attachments: Array.isArray(baseRetryPayload.attachments)
+      ? baseRetryPayload.attachments.slice()
+      : [],
+  };
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'ask-act-handoff-btn';

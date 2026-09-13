@@ -11978,11 +11978,15 @@ test('Ask and managed cloud classify communication read scope across languages',
 });
 
 test('Ask mode handoff classification is strict, silent, and mode guarded', async () => {
-  assert.equal(parseAskModeHandoffFromContent('{"mode_handoff":"act"}'), 'act');
-  assert.equal(parseAskModeHandoffFromContent('prefix {"mode_handoff":"none"} suffix'), 'none');
-  assert.equal(parseAskModeHandoffFromContent('{"mode_handoff":"maybe"}'), null);
-  assert.equal(parseAskModeHandoffFromContent('not JSON'), null);
-  assert.equal(parseAskModeHandoffFromContent('{"mode_handoff":"act","extra":true}'), 'act');
+  for (const parse of [parseAskModeHandoffFromContent, parseAskModeHandoffFromContentFx]) {
+    assert.equal(parse('{"mode_handoff":"act"}'), 'act');
+    assert.equal(parse('prefix {"mode_handoff":"none"} suffix'), 'none');
+    assert.equal(parse('{"mode_handoff":"maybe"}'), null);
+    assert.equal(parse('{"mode_handoff":42}'), null);
+    assert.equal(parse('not JSON'), null);
+    assert.equal(parse('{"mode_handoff":"act","extra":true}'), null);
+    assert.equal(parse('{"extra":true,"mode_handoff":"none"}'), null);
+  }
 
   for (const [browserLabel, AgentClass, selectionGrounding] of [
     ['chrome', AgentCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
@@ -46090,12 +46094,14 @@ test('sidepanel restored suggested-action retries preserve hidden prompts', () =
       'normalizeSelectionSourceGrounding',
       'normalizeSelectionAction',
       'agentMode',
+      'retryPayloadByAssistant',
       `${panel.slice(retryStart, retryEnd + 2)}\n${panel.slice(userStart, userEnd + 2)}\nreturn retryPayloadForRunAssistant;`,
     )(
       () => visibleText,
       value => String(value || '').trim(),
       value => String(value || '').trim(),
       'ask',
+      new WeakMap(),
     );
 
     const internalPrompt = 'Read the complete active thread, follow every continuation, then summarize it.';
@@ -114511,6 +114517,35 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     } else {
       assert.ok(source.includes('handleAttachedFiles(fileAttachInput.files, currentTabId)'), `${label} should bind file reads to the current tab`);
     }
+  }
+});
+
+test('sidepanel: Ask-to-Act retries retain attachment payloads', () => {
+  for (const [label, source] of [
+    ['chrome', sidepanelSources[0]],
+    ['firefox', sidepanelSources[1]],
+  ]) {
+    assert.match(source, /const retryPayloadByAssistant = new WeakMap\(\)/, `${label}: assistant retry payload store is missing`);
+    assert.match(
+      source,
+      /retryPayloadByAssistant\.set\(assistantEl, \{[\s\S]*?attachments: attachmentsForSend\.slice\(\)/,
+      `${label}: sent attachment payloads are not retained with the assistant message`,
+    );
+    assert.match(
+      source,
+      /function retryPayloadForRunAssistant\(assistantEl\) \{[\s\S]*?const storedRetryPayload = retryPayloadByAssistant\.get\(assistantEl\)[\s\S]*?const attachments = Array\.isArray\(storedRetryPayload\?\.attachments\)/,
+      `${label}: assistant fallback retries do not restore their attachment payloads`,
+    );
+    assert.match(
+      source,
+      /const baseRetryPayload = activeRetryPayloadForRequest\(tabId, requestId\)[\s\S]*?\|\| retryPayloadForRunAssistant\(assistantEl\)/,
+      `${label}: Ask-to-Act handoff does not prefer the active attachment-aware retry payload`,
+    );
+    assert.match(
+      source,
+      /function releaseRetryAttachmentsInTree\(root\) \{[\s\S]*?ask-act-handoff-btn\[data-retry-id\]/,
+      `${label}: handoff retry attachments are not released with the message tree`,
+    );
   }
 });
 

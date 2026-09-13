@@ -821,6 +821,9 @@ export function buildAskModeHandoffMessages(userMessage, assistantAnswer, pageUr
 
 export function parseAskModeHandoffFromContent(content) {
   const obj = extractFirstJsonObject(content);
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  const keys = Object.keys(obj);
+  if (keys.length !== 1 || keys[0] !== 'mode_handoff') return null;
   const value = obj?.mode_handoff;
   return value === 'act' || value === 'none' ? value : null;
 }
