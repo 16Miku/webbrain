@@ -174,6 +174,8 @@ export default {
 
   'sp.mode.ask': 'Tanong',
   'sp.mode.ask.title': 'Magtanong tungkol sa pahina — walang ginagawang pagbabago',
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': 'Aksyon',
   'sp.mode.act.title': 'Hayaan ang WebBrain na mag-click, mag-type, at mag-navigate para sa iyo',
   'sp.mode.act.warning': 'Aksyon mode: Gamitin sa sariling panganib.',

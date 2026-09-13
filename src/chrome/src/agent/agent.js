@@ -100,8 +100,11 @@ import {
   PLANNER_RESPONSE_JSON_SCHEMA,
   PLANNER_INTENT_RESPONSE_JSON_SCHEMA,
   READ_SCOPE_RESPONSE_JSON_SCHEMA,
+  ASK_MODE_HANDOFF_RESPONSE_JSON_SCHEMA,
+  buildAskModeHandoffMessages,
   parsePlanFromContent,
   parseReadScopeFromContent,
+  parseAskModeHandoffFromContent,
   formatPlanMarkdown,
   formatPlanScratchpad,
   formatResponseLanguagePolicyInstruction,
@@ -19486,7 +19489,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const kind = schemaKind || (intentOnly ? 'intent' : 'planner');
       const schema = kind === 'read_scope'
         ? READ_SCOPE_RESPONSE_JSON_SCHEMA
-        : (kind === 'intent' ? PLANNER_INTENT_RESPONSE_JSON_SCHEMA : PLANNER_RESPONSE_JSON_SCHEMA);
+        : (kind === 'ask_mode_handoff'
+          ? ASK_MODE_HANDOFF_RESPONSE_JSON_SCHEMA
+          : (kind === 'intent' ? PLANNER_INTENT_RESPONSE_JSON_SCHEMA : PLANNER_RESPONSE_JSON_SCHEMA));
       const plannerConfig = {
         ...(provider?.config || {}),
         providerName: provider?.config?.providerName || provider?.name || '',
@@ -19951,6 +19956,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         content: '/no_think\nThe previous attempt did not produce a valid read-scope classification. Output exactly one JSON object with one allowed value: {"read_scope":"complete_thread"}, {"read_scope":"current_message"}, {"read_scope":"visible_page"}, or {"read_scope":"none"}. No prose, markdown, tool calls, or reasoning text.',
       },
     ];
+  }
+
+  async _maybeEmitAskModeHandoff(tabId, mode, userMessage, finalResponse, onUpdate, runOptions = {}) {
+    if (mode !== 'ask'
+        || runOptions?.cloudRun
+        || this._isStandaloneChatRun(runOptions)
+        || typeof finalResponse !== 'string'
+        || finalResponse.trim().length < 8
+        || this._checkAbort(tabId)
+        || isSelectionSourceGrounding(runOptions?.sourceGrounding)) {
+      return;
+    }
+    try {
+      const provider = this._activeProvider(tabId);
+      const { tabUrl, tabTitle } = await this._getTabUrlTitle(tabId);
+      const messages = buildAskModeHandoffMessages(userMessage, finalResponse, tabUrl, tabTitle);
+      const response = await this._chatWithCostAllowance(
+        provider,
+        messages,
+        { ...this._plannerChatOptions(provider, false, true, 'ask_mode_handoff'), temperature: 0, maxTokens: 24 },
+        this.currentCostState.get(tabId) || null,
+        { tabId, generationName: 'ask_mode_handoff' },
+      );
+      if (!this._checkAbort(tabId) && parseAskModeHandoffFromContent(response?.content) === 'act') {
+        onUpdate('ask_mode_handoff', { value: 'act' });
+      }
+    } catch {}
   }
 
   async _runReadScopeClassifier(tabId, enriched, onUpdate, costState, runId = null, historyDigest = '', tabInfo = null, bestEffort = false) {
@@ -40064,7 +40096,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
     }
     try {
-      return await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
+      const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
+      await this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
+      return result;
     } finally {
       this.currentCostState.delete(tabId);
       this._discardProvisionalSelectionGroundingScope(tabId);
@@ -41599,7 +41633,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
     }
     try {
-      return await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
+      const result = await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
+      await this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
+      return result;
     } finally {
       this.currentCostState.delete(tabId);
       this._discardProvisionalSelectionGroundingScope(tabId);

@@ -142,6 +142,8 @@ export default {
 
   'sp.mode.ask': "بپرسید",
   'sp.mode.ask.title': "درباره صفحه سوال بپرسید — هیچ تغییری ایجاد نشده است",
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': "عمل کنید",
   'sp.mode.act.title': "اجازه دهید WebBrain کلیک کند، تایپ کند و برای شما حرکت کند",
   'sp.mode.act.warning': "حالت عمل: با مسئولیت خود استفاده کنید.",

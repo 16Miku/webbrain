@@ -174,6 +174,8 @@ export default {
 
   'sp.mode.ask': '질문',
   'sp.mode.ask.title': '페이지에 대해 질문 — 변경은 하지 않습니다',
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': '실행',
   'sp.mode.act.title': 'WebBrain이 클릭, 입력, 이동을 대신합니다',
   'sp.mode.act.warning': '실행 모드: 위험을 감수하고 사용하세요.',

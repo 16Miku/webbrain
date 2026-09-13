@@ -174,6 +174,8 @@ export default {
 
   'sp.mode.ask': '質問',
   'sp.mode.ask.title': 'ページについて質問する — 変更は行いません',
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': '操作',
   'sp.mode.act.title': 'WebBrain にクリック・入力・操作を任せる',
   'sp.mode.act.warning': '操作モード：自己責任でご利用ください。',

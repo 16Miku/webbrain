@@ -142,6 +142,8 @@ export default {
 
   'sp.mode.ask': "জিজ্ঞাসা করুন",
   'sp.mode.ask.title': "পৃষ্ঠা সম্পর্কে প্রশ্ন জিজ্ঞাসা করুন — কোন পরিবর্তন করা হয়নি",
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': "আইন",
   'sp.mode.act.title': "আপনার জন্য WebBrain ক্লিক করুন, টাইপ করুন এবং নেভিগেট করুন",
   'sp.mode.act.warning': "অ্যাক্ট মোড: আপনার নিজের ঝুঁকিতে ব্যবহার করুন।",

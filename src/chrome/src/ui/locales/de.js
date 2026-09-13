@@ -139,6 +139,8 @@ export default {
   "sp.input.selection_placeholder": "Frage zum ausgewählten Text...",
   'sp.mode.ask': 'Fragen',
   'sp.mode.ask.title': 'Fragen zur Seite stellen — keine Änderungen',
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': 'Handeln',
   'sp.mode.act.title': 'Lassen Sie WebBrain für Sie klicken, tippen und navigieren',
   'sp.mode.act.warning': 'Handeln-Modus: Nutzung auf eigenes Risiko.',

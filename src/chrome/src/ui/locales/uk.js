@@ -174,6 +174,8 @@ export default {
 
   'sp.mode.ask': 'Запитати',
   'sp.mode.ask.title': 'Ставити запитання про сторінку — без жодних змін',
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': 'Діяти',
   'sp.mode.act.title': 'WebBrain натискає, друкує і переходить за вас',
   'sp.mode.act.warning': 'Режим дії: Використовуйте на власний ризик.',

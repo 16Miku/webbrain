@@ -6468,7 +6468,7 @@ function bindErrorRetryButton(btn) {
 }
 
 function rebindRetryButtons() {
-  document.querySelectorAll('.error-retry-btn, .planner-request-failure-retry-btn').forEach(bindErrorRetryButton);
+  document.querySelectorAll('.error-retry-btn, .planner-request-failure-retry-btn, .ask-act-handoff-btn').forEach(bindErrorRetryButton);
 }
 
 function rebindPlanReviewRetryButtons() {
@@ -9188,6 +9188,12 @@ function handleAgentUpdateMessage(msg) {
       applyMessageCompletion(eventAssistantEl || currentAssistantEl, data);
       break;
 
+    case 'ask_mode_handoff':
+      if (data?.value === 'act') {
+        renderAskActHandoffButton(eventAssistantEl || currentAssistantEl, msg.tabId ?? currentTabId, msg.requestId);
+      }
+      break;
+
     case 'error':
       hideActivity();
       if (currentAssistantEl) markLastStepFailed();
@@ -10928,6 +10934,23 @@ function addErrorRetryButton(msgEl, retryPayload) {
   if (configureRetryButton(btn, retryPayload)) {
     msgEl.querySelector('.message-content')?.appendChild(btn);
   }
+}
+
+function renderAskActHandoffButton(assistantEl, tabId, requestId) {
+  if (!assistantEl) return;
+  if (assistantEl.dataset.runMode && assistantEl.dataset.runMode !== 'ask') return;
+  const content = assistantEl.querySelector('.message-content');
+  if (!content || content.querySelector('.ask-act-handoff-btn')) return;
+
+  const retryPayload = { ...retryPayloadForRunAssistant(assistantEl), mode: 'act' };
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ask-act-handoff-btn';
+  btn.innerHTML = `<span>${escapeHtml(t('sp.mode.act_handoff_button'))}</span>`;
+  btn.title = t('sp.mode.act_handoff_hint');
+  btn.setAttribute('aria-label', btn.title);
+  configureRetryButton(btn, retryPayload);
+  content.appendChild(btn);
 }
 
 const MESSAGE_ATTACHMENT_STATES = new Set(['sending', 'included', 'not-sent', 'unknown']);

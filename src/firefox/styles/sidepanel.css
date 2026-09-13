@@ -3732,6 +3732,27 @@ html[data-ui-scale="175"] .conversation-action-label {
   color: var(--text-primary);
 }
 
+.ask-act-handoff-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 10px;
+  padding: 6px 11px;
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  border-radius: 6px;
+  background: rgba(96, 165, 250, 0.12);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.ask-act-handoff-btn:hover,
+.ask-act-handoff-btn:focus-visible {
+  background: rgba(96, 165, 250, 0.22);
+  border-color: rgba(96, 165, 250, 0.7);
+}
+
 /* WebBrain Compass quota / subscribe prompt — bare URL upgraded to a button */
 .message-text.subscribe-error {
   display: flex;

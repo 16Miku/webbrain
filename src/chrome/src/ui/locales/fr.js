@@ -174,6 +174,8 @@ export default {
 
   'sp.mode.ask': 'Demander',
   'sp.mode.ask.title': 'Posez des questions sur la page — aucune modification',
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': 'Agir',
   'sp.mode.act.title': 'Laissez WebBrain cliquer, taper et naviguer à votre place',
   'sp.mode.act.warning': 'Mode Agir : utilisez-le à vos propres risques.',

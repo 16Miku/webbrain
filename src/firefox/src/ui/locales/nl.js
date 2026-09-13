@@ -139,6 +139,8 @@ export default {
   "sp.input.selection_placeholder": "Vraag over de geselecteerde tekst...",
   'sp.mode.ask': 'Vragen',
   'sp.mode.ask.title': 'Vragen stellen over de pagina — er worden geen wijzigingen aangebracht',
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': 'Handelen',
   'sp.mode.act.title': 'Laat WebBrain voor u klikken, typen en navigeren',
   'sp.mode.act.warning': 'Handelingsmodus: Gebruik op eigen risico.',
