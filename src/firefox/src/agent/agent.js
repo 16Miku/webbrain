@@ -17748,7 +17748,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || runOptions?.cloudRun
         || this._isStandaloneChatRun(runOptions)
         || typeof finalResponse !== 'string'
-        || finalResponse.trim().length < 8
+        || !finalResponse.trim()
         || this._checkAbort(tabId)
         || isSelectionSourceGrounding(runOptions?.sourceGrounding)
         || this.selectionGroundingScopes.has(tabId)) {

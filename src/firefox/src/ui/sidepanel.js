@@ -10988,6 +10988,7 @@ function renderAskActHandoffButton(assistantEl, tabId, requestId) {
   btn.setAttribute('aria-label', btn.title);
   configureRetryButton(btn, retryPayload);
   content.appendChild(btn);
+  scrollToBottom();
 }
 
 const MESSAGE_ATTACHMENT_STATES = new Set(['sending', 'included', 'not-sent', 'unknown']);
