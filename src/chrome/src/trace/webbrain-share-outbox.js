@@ -34,11 +34,13 @@ function clampText(value, limit = MAX_MESSAGE_CHARS) {
 function scrubText(value, limit = MAX_MESSAGE_CHARS) {
   if (typeof value !== 'string') return value;
   let text = value;
-  if (text.length > 500 && text.includes('data:')) {
+  // Detect data URIs regardless of surrounding string or payload length: even
+  // a 1x1 canvas/QR thumbnail is image bytes the UI promises to strip.
+  if (text.includes('data:')) {
     // Newlines (but not spaces/words) are allowed inside the payload so
     // wrapped base64 is still removed while surrounding prose survives.
     text = text.replace(
-      /data:(image|audio|video|application|font|model)\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\r\n]{200,}/g,
+      /data:(image|audio|video|application|font|model)\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\r\n]+/g,
       '[embedded base64 data omitted]',
     );
   }
@@ -48,11 +50,10 @@ function scrubText(value, limit = MAX_MESSAGE_CHARS) {
 function containsBinaryBlock(value) {
   // Bare data-URI strings can appear as array items or nested values (e.g.
   // screenshot bytes echoed into a tool result). Check anywhere in the
-  // string, not just at the start, since payloads may be embedded in text.
+  // string, at any length: even tiny thumbnails are image bytes.
   if (typeof value === 'string') {
-    if (value.length > 1000 && value.includes('data:')
-      && /data:(image|audio|video|application)\/[^;]+;base64,/i.test(value)) return true;
-    return false;
+    return value.includes('data:')
+      && /data:(image|audio|video|application)\/[^;]+;base64,/i.test(value);
   }
   if (!value || typeof value !== 'object') return false;
   const type = typeof value.type === 'string' ? value.type.toLowerCase() : '';
@@ -63,11 +64,11 @@ function containsBinaryBlock(value) {
   // across provider contracts but the payload is still raw bytes.
   if (value.source && typeof value.source === 'object') {
     if (value.source.type === 'base64') return true;
-    if (typeof value.source.data === 'string' && value.source.data.length > 500) return true;
+    if (typeof value.source.data === 'string' && value.source.data.length > 50) return true;
   }
   // Generic base64 payload fields (OpenAI input_file, attachments, etc.).
   // Long user text lives in .text, never in .data, so this is safe.
-  if (typeof value.data === 'string' && value.data.length > 500) return true;
+  if (typeof value.data === 'string' && value.data.length > 50) return true;
   if (typeof value.url === 'string' && value.url.length > 1000 && value.url.startsWith('data:')) return true;
   if (Array.isArray(value)) return value.some(containsBinaryBlock);
   return Object.values(value).some(containsBinaryBlock);
@@ -131,22 +132,52 @@ function scrubMessage(message) {
 
 function scrubMessages(messages) {
   if (!Array.isArray(messages)) return null;
-  const scrubbed = [];
-  let budget = MAX_REQUEST_BUDGET;
+  // Scrub every message first (per-message work is order-independent).
+  const scrubbedAll = [];
   for (const message of messages) {
-    if (budget <= 0 || scrubbed.length >= 200) break;
     const copy = scrubMessage(message);
     if (copy == null) continue;
     let serialized;
     try { serialized = JSON.stringify(copy); } catch { continue; }
-    if (serialized == null || serialized.length > budget) {
-      scrubbed.push({ role: 'system', content: '[remaining shared message omitted]' });
-      break;
-    }
-    scrubbed.push(copy);
-    budget -= serialized.length;
+    if (serialized == null) continue;
+    scrubbedAll.push({ copy, size: serialized.length });
   }
-  return scrubbed;
+  if (!scrubbedAll.length) return [];
+  const hasSystemPrompt = scrubbedAll[0].copy.role === 'system';
+  // A single clamped message always fits in practice; guard anyway so one
+  // pathological turn cannot blow the whole-request budget on its own.
+  if (hasSystemPrompt && scrubbedAll[0].size > MAX_REQUEST_BUDGET) {
+    return [{ role: 'system', content: '[earlier shared messages omitted]' }];
+  }
+  // Preserve the tail: the newest user/tool turns directly produced the
+  // uploaded response, while the oldest turns are the least relevant. Keep a
+  // leading system prompt when present, then fill newest-first within the
+  // budget and message cap. Dropped head turns are replaced by one marker so
+  // the gap is explicit instead of silently pairing the answer with stale
+  // context.
+  const MAX_SCRUBBED_MESSAGES = 200;
+  const kept = [];
+  let budget = MAX_REQUEST_BUDGET;
+  if (hasSystemPrompt) budget = Math.max(0, budget - scrubbedAll[0].size);
+  let startIndex = scrubbedAll.length;
+  const reserve = (entry) => {
+    if (kept.length >= MAX_SCRUBBED_MESSAGES || entry.size > budget) return false;
+    kept.push(entry);
+    budget -= entry.size;
+    return true;
+  };
+  for (let index = scrubbedAll.length - 1; index >= 0; index--) {
+    if (index === 0 && scrubbedAll[index].copy.role === 'system') continue;
+    if (!reserve(scrubbedAll[index])) break;
+    startIndex = index;
+  }
+  kept.reverse();
+  const headOmitted = startIndex > (hasSystemPrompt ? 1 : 0);
+  const out = [];
+  if (hasSystemPrompt) out.push(scrubbedAll[0].copy);
+  if (headOmitted) out.push({ role: 'system', content: '[earlier shared messages omitted]' });
+  for (const entry of kept) out.push(entry.copy);
+  return out;
 }
 
 export function buildShareGenerationItem({

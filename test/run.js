@@ -12515,12 +12515,16 @@ test('Share-for-research item drops empty runs and caps the whole request', () =
   }), null, 'blank response must not be shared');
   const item = SHARE_OUTBOX_CH.buildShareGenerationItem({
     runId: 'r', finalContent: 'x',
-    messages: Array.from({ length: 60 }, () => ({ role: 'user', content: 'y'.repeat(9_000) })),
+    messages: Array.from({ length: 60 }, (_, i) => ({ role: 'user', content: `tail${i}-` + 'y'.repeat(9_000) })),
     model: 'm', mode: 'act', provider: 'p', provider_name: 'p',
   });
   const total = JSON.stringify(item.request).length;
   assert.ok(total <= 150_000, `shared request exceeded the byte budget (${total})`);
-  assert.deepEqual(item.request.at(-1), { role: 'system', content: '[remaining shared message omitted]' });
+  // Truncation preserves the tail (the turns that produced the response) and
+  // marks the dropped head up front instead of discarding the newest turns.
+  assert.deepEqual(item.request[0], { role: 'system', content: '[earlier shared messages omitted]' });
+  assert.match(item.request.at(-1).content, /^tail59-/);
+  assert.ok(!item.request.some(m => typeof m.content === 'string' && m.content.startsWith('tail0-')), 'stale head turns kept instead of the tail');
 });
 
 test('Share-for-research item excludes terminal answers and binary document blocks', () => {
@@ -12575,6 +12579,14 @@ test('Share-for-research scrub removes embedded data URIs and keeps repeated-ans
     assert.equal(serialized.includes('iVBORw0KGgoAAAANSUhEUg'), false, `${label}: tool-result data URI escaped the scrub`);
     assert.equal(serialized.includes('ABCD1234abcd'), false, `${label}: array string data URI escaped the scrub`);
     assert.match(serialized, /embedded base64 data omitted/, `${label}: data-URI placeholder missing`);
+    // Tiny thumbnails in short strings must be scrubbed too, not just long payloads.
+    const tiny = outbox.buildShareGenerationItem({
+      runId: `run-share-tiny-${label}`,
+      finalContent: 'ok',
+      messages: [{ role: 'tool', content: 'qr: data:image/png;base64,iVBOR' }],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(JSON.stringify(tiny).includes('iVBOR'), false, `${label}: short data URI escaped the scrub`);
     // Pre-response snapshots must not lose earlier history that repeats the answer.
     const repeat = outbox.buildShareGenerationItem({
       runId: `run-share-repeat-${label}`,
@@ -12719,6 +12731,7 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     assert.match(chromeOutbox, /client_share_id/, `${browser}: outbox flush must send an idempotency key`);
     assert.match(chromeOutbox, /input_file/, `${browser}: binary scrub must cover file/input_file blocks`);
     assert.match(chromeOutbox, /embedded base64 data omitted/, `${browser}: string content must be scrubbed of data URIs`);
+    assert.match(chromeOutbox, /earlier shared messages omitted/, `${browser}: truncation must preserve the tail`);
     assert.match(settings, /shareQueriesForResearch/, `${browser}: share toggle field missing from settings`);
     assert.match(settings, /!input\.checked[\s\S]*?confirm\(/, `${browser}: consent confirmation must guard turning the share toggle on`);
     assert.match(provider, /\/improvement\/generations/, `${browser}: share endpoint missing from the Compass provider transport`);
@@ -44655,6 +44668,18 @@ test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Co
       const providerDisclosure = translatedMessages['st.providers.webbrain_data_use.body'] || '';
       assert.ok(providerDisclosure.includes(translatedMessages['st.display.advanced']), `${label}/${localeFile}: provider disclosure should name the localized Advanced section`);
       assert.match(providerDisclosure, /<u>[^<]+<\/u>/, `${label}/${localeFile}: provider local/BYO exclusion should also be underlined`);
+      // Research-sharing consent must be understandable in the selected locale:
+      // label, hint, and confirmation must be translated (not English).
+      const shareLabel = translatedMessages['st.providers.share_research.label'] || '';
+      const shareHint = translatedMessages['st.providers.share_research.hint'] || '';
+      const shareConfirm = translatedMessages['st.providers.share_research.confirm'] || '';
+      assert.ok(shareLabel.length > 0 && shareHint.length > 0 && shareConfirm.length > 0, `${label}/${localeFile}: share-for-research consent strings missing`);
+      assert.doesNotMatch(shareHint, /anonymized/i, `${label}/${localeFile}: share hint must not promise anonymization`);
+      if (localeFile !== 'en.js') {
+        assert.notEqual(shareLabel, 'Share queries for research', `${label}/${localeFile}: share label not translated`);
+        assert.ok(!shareHint.startsWith('Send prompts and responses from this provider'), `${label}/${localeFile}: share hint not translated`);
+        assert.ok(!shareConfirm.startsWith('Share queries from this provider'), `${label}/${localeFile}: share confirmation not translated`);
+      }
     }
     assert.match(manager, /const HELP_IMPROVE_WEBBRAIN_KEY = 'helpImproveWebBrain';/, `${label}: provider manager setting key missing`);
     assert.match(manager, /helpImproveWebBrain = data\[HELP_IMPROVE_WEBBRAIN_KEY\] !== false/, `${label}: Compass provider config should default improvement use on`);
