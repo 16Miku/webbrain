@@ -21078,6 +21078,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     tools = null,
     toolChoice = null,
     returnResult = false,
+    shareCapture = null,
   } = {}) {
     let modelMessages = this._messagesForSourceGroundedRun(
       messages,
@@ -21106,6 +21107,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...modelMessages.slice(modelMessages[0]?.role === 'system' ? 1 : 0),
     ];
     const prunedMessages = this._pruneOldImages(contextMessages, provider);
+    // Voluntary research sharing needs the exact model-facing request (with
+    // the context-only system prompt). Callers pass a holder when the result
+    // may be shared; recovery phases omit it and are never shared.
+    if (shareCapture) shareCapture.request = prunedMessages;
     const chatOpts = {
       temperature: ['delivery_recovery', 'step_limit_recovery'].includes(phase) ? 0.2 : 0.3,
       maxTokens: this._providerMaxOutputTokens(provider),
@@ -21187,6 +21192,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     runOptions = {},
     currentUserMessage = null,
     priorMessageSet = null,
+    shareCapture = null,
   ) {
     const alreadyStopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (alreadyStopped) return alreadyStopped;
@@ -21196,7 +21202,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       finalResponse = await this._generateContextOnlyResponse(
         tabId, messages, provider, costState, runId,
-        { phase: 'response_only', step: 1, runOptions, currentUserMessage, priorMessageSet },
+        { phase: 'response_only', step: 1, runOptions, currentUserMessage, priorMessageSet, shareCapture },
       );
     } catch (error) {
       status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
@@ -40507,6 +40513,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // 'done' but never hit the provider. Flipped to true once past those
     // guards (or on a successful response-only turn).
     let shareHadProviderCompletion = false;
+    // Exact pruned request of the last provider call in this run (set at each
+    // chatMainTurn invocation and for response-only turns). The persisted
+    // `messages` array is mutated after each call (appended tool calls and
+    // tool results), so reconstructing at finalization would leak
+    // response-side data into the shared request.
+    let currentNonStreamRequestMessages = null;
     let traceFailureCode = null;
     let traceTurnEndExtra = {}; // step-limit handoff outcome; trace status keeps max_steps
     let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
@@ -40631,15 +40643,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       trustedContinuation: runOptions?.trustedContinuation === true,
     });
     if (gateOutcome.responseOnly === true) {
+      const responseOnlyShareCapture = {};
       const responseOnly = await this._completeResponseOnlyTurn(
         tabId, messages, onUpdate, provider, costState, runId,
-        runOptions, enriched, sourceBoundPriorMessages,
+        runOptions, enriched, sourceBoundPriorMessages, responseOnlyShareCapture,
       );
       finalResponse = responseOnly.content;
       _traceStatus = responseOnly.status;
       // Response-only turns do call the model (source-grounded + pruned
-      // inside _generateContextOnlyResponse). Only mark shareable on success.
-      if (responseOnly.status === 'done') shareHadProviderCompletion = true;
+      // inside _generateContextOnlyResponse). Only mark shareable on success,
+      // keeping the exact request (with the context-only system prompt).
+      if (responseOnly.status === 'done') {
+        shareHadProviderCompletion = true;
+        if (Array.isArray(responseOnlyShareCapture.request) && responseOnlyShareCapture.request.length) {
+          currentNonStreamRequestMessages = responseOnlyShareCapture.request;
+        }
+      }
       return finalResponse;
     }
     if (this._consumeSelectionGroundingRestoration(tabId, enriched)) this._persist(tabId);
@@ -40811,6 +40830,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const startedAt = Date.now();
       let result;
       try {
+        // Retain the exact request for voluntary research sharing (see
+        // currentNonStreamRequestMessages). chatMessages is already the
+        // source-grounded, pruned model input for this call.
+        currentNonStreamRequestMessages = chatMessages;
         result = await chatMainTurnRaw(chatMessages, chatOptions, requestContext);
       } catch (error) {
         if (error?.webbrainOutputEmitted === true) throw error;
@@ -40820,6 +40843,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           code: 'vision_local_fallback_retry',
           message: 'The active provider rejected the image; retrying once from the retained capture using a local LiquidAI description.',
         });
+        currentNonStreamRequestMessages = fallbackMessages;
         result = await chatMainTurnRaw(fallbackMessages, chatOptions, requestContext);
       }
       messageCompletion = aggregateMessageCompletion(
@@ -41603,13 +41627,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         lastTraceStep,
         this._traceTurnEndPayload(_traceStatus, traceFailureCode, traceTurnEndExtra),
       );
-      // Share the actual model-facing request (source-grounded filtered +
-      // pruned), not the full persisted history which can contain unrelated
-      // pages/attachments the provider never received.
+      // Share the exact model-facing request captured at the last provider
+      // call. Unlike a reconstruction from the now-mutated `messages` array,
+      // it contains neither the terminal tool call/result appended after the
+      // call nor unrelated history, and response-only turns keep their
+      // context-only system prompt. Falls back to a filtered reconstruction
+      // only when no call was captured (should not happen for shared runs).
       let shareRequest = null;
       try {
-        const rawShare = typeof modelMessagesForRun === 'function' ? modelMessagesForRun() : messages;
-        shareRequest = this._pruneOldImages(rawShare, provider);
+        if (Array.isArray(currentNonStreamRequestMessages) && currentNonStreamRequestMessages.length) {
+          shareRequest = currentNonStreamRequestMessages;
+        } else if (typeof modelMessagesForRun === 'function') {
+          const rawShare = modelMessagesForRun();
+          shareRequest = this._pruneOldImages(rawShare, provider);
+        } else {
+          shareRequest = messages;
+        }
       } catch {}
       await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, hadProviderCompletion: shareHadProviderCompletion });
     }
@@ -41825,6 +41858,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let _traceStatus = 'done';
     // See processMessage: only provider-backed completions may be shared.
     let shareHadProviderCompletion = false;
+    // Exact pruned request of the last streaming provider call (set before
+    // each chatStream invocation; also used for response-only turns, which
+    // return before the loop). Declared here so pre-loop exits can capture.
+    let currentStreamRequestMessages = null;
     let traceFailureCode = null;
     let traceTurnEndExtra = {}; // step-limit handoff outcome; trace status keeps max_steps
     const finish = (response, status = _traceStatus) => {
@@ -41888,11 +41925,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       trustedContinuation: runOptions?.trustedContinuation === true,
     });
     if (gateOutcome.responseOnly === true) {
+      const responseOnlyShareCapture = {};
       const responseOnly = await this._completeResponseOnlyTurn(
         tabId, messages, onUpdate, provider, costState, runId,
-        runOptions, enriched, sourceBoundPriorMessages,
+        runOptions, enriched, sourceBoundPriorMessages, responseOnlyShareCapture,
       );
-      if (responseOnly.status === 'done') shareHadProviderCompletion = true;
+      if (responseOnly.status === 'done') {
+        shareHadProviderCompletion = true;
+        if (Array.isArray(responseOnlyShareCapture.request) && responseOnlyShareCapture.request.length) {
+          currentStreamRequestMessages = responseOnlyShareCapture.request;
+        }
+      }
       return finish(responseOnly.content, responseOnly.status);
     }
     if (this._consumeSelectionGroundingRestoration(tabId, enriched)) this._persist(tabId);
@@ -41957,7 +42000,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let pendingVisionFallbackMessages = null;
     let visionFallbackAttempted = false;
     let streamEmittedOutput = false;
-    let currentStreamRequestMessages = null;
+    // currentStreamRequestMessages is declared at the top of this function so
+    // pre-loop exits (e.g. response-only turns) can capture their request.
 
     const recommendedFirstTool = await this._maybeExecuteRecommendedActionFirstTool(
       tabId, runOptions, messages, onUpdate, provider, allowedToolNames, toolSchemas,

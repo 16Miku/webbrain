@@ -27,11 +27,31 @@ function clampText(value, limit = MAX_MESSAGE_CHARS) {
   return bounded(value, limit);
 }
 
+// Remove embedded binary payloads from free text before clamping. Tool
+// results are plain strings, so a canvas toDataURL(), screenshot bytes, or
+// other base64 blob echoed into `message.content` would otherwise leave the
+// browser unchanged (containsBinaryBlock never sees string content).
+function scrubText(value, limit = MAX_MESSAGE_CHARS) {
+  if (typeof value !== 'string') return value;
+  let text = value;
+  if (text.length > 500 && text.includes('data:')) {
+    // Newlines (but not spaces/words) are allowed inside the payload so
+    // wrapped base64 is still removed while surrounding prose survives.
+    text = text.replace(
+      /data:(image|audio|video|application|font|model)\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\r\n]{200,}/g,
+      '[embedded base64 data omitted]',
+    );
+  }
+  return bounded(text, limit);
+}
+
 function containsBinaryBlock(value) {
-  // Bare data-URI strings can appear as array items (e.g. screenshot bytes
-  // echoed into a tool result). Catch them before the object checks below.
+  // Bare data-URI strings can appear as array items or nested values (e.g.
+  // screenshot bytes echoed into a tool result). Check anywhere in the
+  // string, not just at the start, since payloads may be embedded in text.
   if (typeof value === 'string') {
-    if (value.length > 1000 && value.slice(0, 200).match(/^data:(image|audio|video|application)\/[^;]+;base64,/i)) return true;
+    if (value.length > 1000 && value.includes('data:')
+      && /data:(image|audio|video|application)\/[^;]+;base64,/i.test(value)) return true;
     return false;
   }
   if (!value || typeof value !== 'object') return false;
@@ -54,25 +74,22 @@ function containsBinaryBlock(value) {
 }
 
 function requestMessages(messages, responseContent) {
-  if (!Array.isArray(messages)) return messages;
+  if (!Array.isArray(messages) || !messages.length) return messages;
   const want = String(responseContent ?? '').trim();
   if (!want) return [...messages];
+  // Only ever strip a trailing terminal answer. Pre-response snapshots (e.g.
+  // the streaming path's captured request) contain no terminal message, and a
+  // backward scan could otherwise delete earlier history that happens to
+  // equal the response (asking the model to repeat a prior answer).
   const request = [...messages];
-  for (let index = request.length - 1; index >= 0; index--) {
-    const message = request[index];
-    if (message?.role !== 'assistant') continue;
-    // Normal path: the agent appends the final string answer before _endTraceRun.
-    if (typeof message.content === 'string' && message.content.trim() === want) {
-      request.splice(index, 1);
-      break;
-    }
-    // Multimodal path: single text block echoing the final answer.
-    if (Array.isArray(message.content) && message.content.length === 1
-      && message.content[0]?.type === 'text'
-      && String(message.content[0]?.text ?? '').trim() === want) {
-      request.splice(index, 1);
-      break;
-    }
+  const last = request[request.length - 1];
+  if (last?.role !== 'assistant') return request;
+  if (typeof last.content === 'string' && last.content.trim() === want) {
+    request.pop();
+  } else if (Array.isArray(last.content) && last.content.length === 1
+    && last.content[0]?.type === 'text'
+    && String(last.content[0]?.text ?? '').trim() === want) {
+    request.pop();
   }
   return request;
 }
@@ -84,15 +101,21 @@ function scrubMessage(message) {
   if (Array.isArray(message.content)) {
     const items = [];
     for (const item of message.content) {
+      if (typeof item === 'string') {
+        // Primitive string parts never reach containsBinaryBlock: scrub any
+        // embedded data URIs here before clamping.
+        items.push(scrubText(item));
+        continue;
+      }
       if (!item || typeof item !== 'object') {
         items.push(item);
         continue;
       }
       // Drop images entirely so raw screenshot/data-URI bytes never leave the
-      // browser; text blocks are clamped individually.
+      // browser; text blocks are scrubbed of embedded payloads, then clamped.
       if (containsBinaryBlock(item)) continue;
       if (item.type === 'text' && typeof item.text === 'string') {
-        items.push({ ...item, text: clampText(item.text) });
+        items.push({ ...item, text: scrubText(item.text) });
         continue;
       }
       items.push(item);
@@ -101,7 +124,7 @@ function scrubMessage(message) {
     copy.content = items;
   } else if (typeof message.content === 'string') {
     if (!message.content.length) return null;
-    copy.content = clampText(message.content);
+    copy.content = scrubText(message.content);
   }
   return copy;
 }

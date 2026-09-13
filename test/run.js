@@ -12553,6 +12553,44 @@ test('Share-for-research item excludes terminal answers and binary document bloc
   }
 });
 
+test('Share-for-research scrub removes embedded data URIs and keeps repeated-answer history', () => {
+  for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
+    const bigImage = `canvas snapshot data:image/png;base64,${'iVBORw0KGgoAAAANSUhEUg'.repeat(40)} trailing note`;
+    const item = outbox.buildShareGenerationItem({
+      runId: `run-share-datauri-${label}`,
+      finalContent: 'done here',
+      messages: [
+        { role: 'tool', content: bigImage },
+        {
+          role: 'user',
+          content: [
+            'look at this',
+            `embedded shot data:image/jpeg;base64,${'ABCD1234abcd'.repeat(40)} end`,
+          ],
+        },
+      ],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    const serialized = JSON.stringify(item);
+    assert.equal(serialized.includes('iVBORw0KGgoAAAANSUhEUg'), false, `${label}: tool-result data URI escaped the scrub`);
+    assert.equal(serialized.includes('ABCD1234abcd'), false, `${label}: array string data URI escaped the scrub`);
+    assert.match(serialized, /embedded base64 data omitted/, `${label}: data-URI placeholder missing`);
+    // Pre-response snapshots must not lose earlier history that repeats the answer.
+    const repeat = outbox.buildShareGenerationItem({
+      runId: `run-share-repeat-${label}`,
+      finalContent: 'hello',
+      messages: [
+        { role: 'user', content: 'Say hello' },
+        { role: 'assistant', content: 'hello' },
+        { role: 'user', content: 'Repeat what you said' },
+      ],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(repeat.request.length, 3, `${label}: pre-response history was corrupted by terminal-answer stripping`);
+    assert.equal(repeat.request[1].content, 'hello', `${label}: repeated-answer history lost`);
+  }
+});
+
 test('Share-for-research outbox persists retryable failures and removes acknowledged or rejected entries', async () => {
   const originalChrome = globalThis.chrome;
   const storage = {};
@@ -12671,12 +12709,16 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     const provider = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/openai.js`), 'utf8');
     assert.match(agent, /status === 'done'[\s\S]*hadProviderCompletion === true[\s\S]*shareQueriesForResearch === true[\s\S]*enqueueShareGeneration/, `${browser}: capture must require a provider completion and the per-provider toggle`);
     assert.match(agent, /shareRequest/, `${browser}: capture must prefer the model-facing source-grounded request`);
+    assert.match(agent, /currentNonStreamRequestMessages/, `${browser}: non-streaming turns must retain the exact pruned request`);
+    assert.match(agent, /currentStreamRequestMessages/, `${browser}: streaming turns must retain the exact pruned request`);
+    assert.match(agent, /shareCapture/, `${browser}: response-only turns must keep their context-only request`);
     assert.match(agent, /shareHadProviderCompletion/, `${browser}: local-only fast paths must not be shareable`);
     assert.match(agent, /'webbrain-cloud'/, `${browser}: Compass provider must not route through the share path`);
     assert.match(agent, /void flushShareOutbox\(shareTransport\)/, `${browser}: run-end share flush missing`);
     assert.match(agent, /_shareSessionId\(/, `${browser}: share session id sanitizer missing`);
     assert.match(chromeOutbox, /client_share_id/, `${browser}: outbox flush must send an idempotency key`);
     assert.match(chromeOutbox, /input_file/, `${browser}: binary scrub must cover file/input_file blocks`);
+    assert.match(chromeOutbox, /embedded base64 data omitted/, `${browser}: string content must be scrubbed of data URIs`);
     assert.match(settings, /shareQueriesForResearch/, `${browser}: share toggle field missing from settings`);
     assert.match(settings, /!input\.checked[\s\S]*?confirm\(/, `${browser}: consent confirmation must guard turning the share toggle on`);
     assert.match(provider, /\/improvement\/generations/, `${browser}: share endpoint missing from the Compass provider transport`);
