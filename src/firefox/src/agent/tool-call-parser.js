@@ -485,13 +485,28 @@ export function parseToolCallsFromText(text, allowedNames) {
     if (!allowedNames.has(toolName)) continue;
     const body = minicpmMatch[3] || '';
     const args = {};
+    const paramSpans = [];
     const paramRe = /<(?:param|parameter)(?:\s*=\s*["']?([A-Za-z_]\w*)["']?|\s+name\s*=\s*["']?([A-Za-z_]\w*)["']?)\s*>\s*([\s\S]*?)\s*<\/(?:param|parameter)>/gi;
     let paramMatch;
     while ((paramMatch = paramRe.exec(body)) !== null) {
+      paramSpans.push({ start: paramMatch.index, end: paramMatch.index + paramMatch[0].length });
       const key = paramMatch[1] || paramMatch[2];
       if (!key) continue;
       args[key] = parseXmlParamValue(paramMatch[3]);
     }
+    // A dispatch discards the wrapper's prose outright (the caller sets
+    // result.content = null), so the body must be nothing but recognized
+    // parameters and whitespace. A warning inside the wrapper such as
+    // `<param ...>ref_7</param>Do not execute this example.` must reject the
+    // whole block rather than being excused by the remainder check below.
+    let bodyRemainder = '';
+    let bodyCursor = 0;
+    for (const span of paramSpans) {
+      if (span.start > bodyCursor) bodyRemainder += body.slice(bodyCursor, span.start);
+      bodyCursor = Math.max(bodyCursor, span.end);
+    }
+    bodyRemainder += body.slice(bodyCursor);
+    if (bodyRemainder.trim() !== '') continue;
     minicpmCandidates.push({
       start: minicpmMatch.index,
       end: minicpmMatch.index + minicpmMatch[0].length,

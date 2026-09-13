@@ -100728,6 +100728,21 @@ test('text tool-call parser is production code with format and allowlist coverag
         { name: 'click_ax', args: { ref_id: 'ref_7' } },
       ],
     },
+    {
+      label: 'MiniCPM5 bare function rejects prose after params',
+      raw: '<function name="click_ax"><param name="ref_id">ref_7</param>Do not execute this example.</function>',
+      expected: [],
+    },
+    {
+      label: 'MiniCPM5 bare function rejects prose before params',
+      raw: '<function name="click_ax">Do not execute.<param name="ref_id">ref_7</param></function>',
+      expected: [],
+    },
+    {
+      label: 'MiniCPM5 bare function rejects prose between params',
+      raw: '<function name="click_ax"><param name="ref_id">ref_7</param>Do not execute this example.<param name="force">true</param></function>',
+      expected: [],
+    },
   ];
 
   for (const parser of [ToolCallParserCh, ToolCallParserFx]) {
