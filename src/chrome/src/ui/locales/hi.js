@@ -142,8 +142,8 @@ export default {
 
   'sp.mode.ask': "पूछो",
   'sp.mode.ask.title': "पृष्ठ के बारे में प्रश्न पूछें - कोई परिवर्तन नहीं किया गया",
-  'sp.mode.act_handoff_button': 'Switch to Act & retry',
-  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
+  'sp.mode.act_handoff_button': 'एक्ट पर स्विच करें और फिर कोशिश करें',
+  'sp.mode.act_handoff_hint': 'इसे पूरा करने के लिए एक्ट मोड आवश्यक है। मोड बदलने और अपना अनुरोध फिर भेजने के लिए क्लिक करें।',
   'sp.mode.act': "अधिनियम",
   'sp.mode.act.title': "WebBrain को आपके लिए क्लिक करने, टाइप करने और नेविगेट करने दें",
   'sp.mode.act.warning': "अधिनियम मोड: अपने जोखिम पर उपयोग करें।",

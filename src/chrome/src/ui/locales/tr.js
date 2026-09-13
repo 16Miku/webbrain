@@ -210,8 +210,8 @@ export default {
 
   'sp.mode.ask': 'Sor',
   'sp.mode.ask.title': 'Sayfa hakkında soru sor — hiçbir değişiklik yapılmaz',
-  'sp.mode.act_handoff_button': 'Switch to Act & retry',
-  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
+  'sp.mode.act_handoff_button': "Act'e geç ve yeniden dene",
+  'sp.mode.act_handoff_hint': 'Bunu tamamlamak için Act modu gerekir. Geçiş yapmak ve isteğinizi yeniden göndermek için tıklayın.',
   'sp.mode.act': 'Uygula',
   'sp.mode.act.title': 'WebBrain senin yerine tıklasın, yazsın ve gezinsin',
   'sp.mode.act.warning': 'Uygula modu: Kendi sorumluluğunda kullan.',

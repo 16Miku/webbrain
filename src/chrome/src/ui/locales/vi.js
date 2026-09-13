@@ -142,8 +142,8 @@ export default {
 
   'sp.mode.ask': "Hỏi",
   'sp.mode.ask.title': "Đặt câu hỏi về trang — không thực hiện thay đổi nào",
-  'sp.mode.act_handoff_button': 'Switch to Act & retry',
-  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
+  'sp.mode.act_handoff_button': 'Chuyển sang Act và thử lại',
+  'sp.mode.act_handoff_hint': 'Cần chế độ Act để hoàn tất. Nhấp để chuyển chế độ và gửi lại yêu cầu.',
   'sp.mode.act': "hành động",
   'sp.mode.act.title': "Hãy để WebBrain nhấp, nhập và điều hướng cho bạn",
   'sp.mode.act.warning': "Chế độ hành động: Sử dụng có nguy cơ của riêng bạn.",

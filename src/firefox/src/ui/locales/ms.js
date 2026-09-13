@@ -174,8 +174,8 @@ export default {
 
   'sp.mode.ask': 'Tanya',
   'sp.mode.ask.title': 'Tanya soalan tentang halaman — tiada perubahan dibuat',
-  'sp.mode.act_handoff_button': 'Switch to Act & retry',
-  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
+  'sp.mode.act_handoff_button': 'Tukar ke Act & cuba lagi',
+  'sp.mode.act_handoff_hint': 'Ini memerlukan mod Act untuk diselesaikan. Klik untuk menukar dan hantar semula permintaan anda.',
   'sp.mode.act': 'Lakukan',
   'sp.mode.act.title': 'Biarkan WebBrain mengklik, menaip, dan menavigasi untuk anda',
   'sp.mode.act.warning': 'Mod Lakukan: Gunakan atas risiko anda sendiri.',

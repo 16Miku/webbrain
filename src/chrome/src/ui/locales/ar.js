@@ -174,8 +174,8 @@ export default {
 
   'sp.mode.ask': 'سؤال',
   'sp.mode.ask.title': 'اطرح أسئلة عن الصفحة — دون إجراء أي تغييرات',
-  'sp.mode.act_handoff_button': 'Switch to Act & retry',
-  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
+  'sp.mode.act_handoff_button': 'التبديل إلى التنفيذ وإعادة المحاولة',
+  'sp.mode.act_handoff_hint': 'يتطلب هذا وضع التنفيذ لإكماله. انقر للتبديل وإعادة إرسال طلبك.',
   'sp.mode.act': 'تنفيذ',
   'sp.mode.act.title': 'دع WebBrain ينقر ويكتب ويتنقّل نيابةً عنك',
   'sp.mode.act.warning': 'وضع التنفيذ: استخدمه على مسؤوليتك.',

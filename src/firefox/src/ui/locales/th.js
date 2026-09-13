@@ -174,8 +174,8 @@ export default {
 
   'sp.mode.ask': 'ถาม',
   'sp.mode.ask.title': 'ถามเกี่ยวกับหน้านี้ — ไม่มีการเปลี่ยนแปลง',
-  'sp.mode.act_handoff_button': 'Switch to Act & retry',
-  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
+  'sp.mode.act_handoff_button': 'สลับไปโหมด Act และลองอีกครั้ง',
+  'sp.mode.act_handoff_hint': 'การดำเนินการนี้ต้องใช้โหมด Act คลิกเพื่อสลับโหมดและส่งคำขอของคุณอีกครั้ง',
   'sp.mode.act': 'ทำ',
   'sp.mode.act.title': 'ให้ WebBrain คลิก พิมพ์ และนำทางแทนคุณ',
   'sp.mode.act.warning': 'โหมดทำ: ใช้งานด้วยความเสี่ยงของคุณเอง',

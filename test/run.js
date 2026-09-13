@@ -11997,6 +11997,7 @@ test('Ask mode handoff classification is strict, silent, and mode guarded', asyn
       const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
       const updates = [];
       const deadlineCalls = [];
+      const costState = { spentUsd: 0 };
       let calls = 0;
       agent._getTabUrlTitle = async () => ({
         tabUrl: 'https://example.com/page',
@@ -12009,6 +12010,9 @@ test('Ask mode handoff classification is strict, silent, and mode guarded', asyn
       };
       agent._chatWithCostAllowance = async (_provider, messages, options, _costState, metadata) => {
         calls += 1;
+        if (_costState) {
+          assert.equal(_costState, costState, `${browserLabel}: handoff classifier must use the active cost state`);
+        }
         assert.equal(metadata?.generationName, 'ask_mode_handoff', `${browserLabel}: wrong classifier generation`);
         assert.equal(options.maxTokens, 24, `${browserLabel}: handoff classifier budget should stay small`);
         assert.ok(options.signal, `${browserLabel}: handoff classifier must receive an abort signal`);
@@ -12016,10 +12020,11 @@ test('Ask mode handoff classification is strict, silent, and mode guarded', asyn
         assert.match(messages[1]?.content || '', /<assistant_answer>/, `${browserLabel}: answer was not included in classifier input`);
         return { content: response, usage: {} };
       };
-      return { agent, updates, deadlineCalls, get calls() { return calls; } };
+      return { agent, updates, costState, deadlineCalls, get calls() { return calls; } };
     };
 
     const successful = createAgent();
+    successful.agent.currentCostState.set(53000, successful.costState);
     const finalResponse = 'Ask mode cannot click the button. Switch to Act mode to complete this request.';
     await successful.agent._maybeEmitAskModeHandoff(
       53000, 'ask', 'Click the button', finalResponse,
@@ -12057,6 +12062,13 @@ test('Ask mode handoff classification is strict, silent, and mode guarded', asyn
     await aborted.agent._maybeEmitAskModeHandoff(53004, 'ask', 'Click the button', finalResponse, () => {}, {});
     assert.equal(aborted.calls, 0, `${browserLabel}: cancelled run invoked classifier`);
 
+    const inheritedSelection = createAgent();
+    inheritedSelection.agent.selectionGroundingScopes.set(53008, { anchorIndex: 1 });
+    await inheritedSelection.agent._maybeEmitAskModeHandoff(
+      53008, 'ask', 'Click the button', finalResponse, () => {}, {},
+    );
+    assert.equal(inheritedSelection.calls, 0, `${browserLabel}: inherited selection scope invoked classifier`);
+
     for (const response of ['not JSON', '{"mode_handoff":"maybe"}']) {
       const invalid = createAgent(response);
       const invalidUpdates = [];
@@ -12087,6 +12099,24 @@ test('Ask mode handoff classification is strict, silent, and mode guarded', asyn
       `${browserLabel}: classifier timeout must not block or fail the completed Ask answer`,
     );
     assert.deepEqual(timedOutUpdates, [], `${browserLabel}: timed-out classifier must not emit a handoff`);
+  }
+});
+
+test('Ask mode handoff classification is detached from completion', () => {
+  for (const [browserLabel, source] of [
+    ['chrome', fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8')],
+    ['firefox', fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8')],
+  ]) {
+    assert.match(
+      source,
+      /const result = await this\._processMessageInner\([\s\S]*?\n\s+void this\._maybeEmitAskModeHandoff\(/,
+      `${browserLabel}: non-streaming completion must not await handoff classification`,
+    );
+    assert.match(
+      source,
+      /const result = await this\._processMessageStreamInner\([\s\S]*?\n\s+void this\._maybeEmitAskModeHandoff\(/,
+      `${browserLabel}: streaming completion must not await handoff classification`,
+    );
   }
 });
 

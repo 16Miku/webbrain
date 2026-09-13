@@ -19966,11 +19966,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || typeof finalResponse !== 'string'
         || finalResponse.trim().length < 8
         || this._checkAbort(tabId)
-        || isSelectionSourceGrounding(runOptions?.sourceGrounding)) {
+        || isSelectionSourceGrounding(runOptions?.sourceGrounding)
+        || this.selectionGroundingScopes.has(tabId)) {
       return;
     }
     try {
       const provider = this._activeProvider(tabId);
+      const costState = this.currentCostState.get(tabId) || null;
       const { tabUrl, tabTitle } = await this._getTabUrlTitle(tabId);
       const messages = buildAskModeHandoffMessages(userMessage, finalResponse, tabUrl, tabTitle);
       const response = await this._withContentActionDeadline(
@@ -19983,7 +19985,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             maxTokens: 24,
             signal,
           },
-          this.currentCostState.get(tabId) || null,
+          costState,
           { tabId, generationName: 'ask_mode_handoff' },
         ),
         'ask_mode_handoff',
@@ -40108,7 +40110,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     try {
       const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
-      await this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
+      void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
     } finally {
       this.currentCostState.delete(tabId);
@@ -41579,7 +41581,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       throw error;
     } finally {
-      this.currentCostState.delete(tabId);
       await askStreamingTraceWrite;
       if (runId) await trace.recordTurnEnd(
         runId,
@@ -41645,7 +41646,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     try {
       const result = await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
-      await this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
+      void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
     } finally {
       this.currentCostState.delete(tabId);
