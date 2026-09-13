@@ -11996,20 +11996,27 @@ test('Ask mode handoff classification is strict, silent, and mode guarded', asyn
       const provider = { name: `${browserLabel}-handoff`, model: `${browserLabel}-handoff`, promptTier: 'full' };
       const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
       const updates = [];
+      const deadlineCalls = [];
       let calls = 0;
       agent._getTabUrlTitle = async () => ({
         tabUrl: 'https://example.com/page',
         tabTitle: 'Example page',
       });
+      const withContentActionDeadline = agent._withContentActionDeadline.bind(agent);
+      agent._withContentActionDeadline = async (...args) => {
+        deadlineCalls.push({ toolName: args[1], deadlineMs: args[2] });
+        return withContentActionDeadline(...args);
+      };
       agent._chatWithCostAllowance = async (_provider, messages, options, _costState, metadata) => {
         calls += 1;
         assert.equal(metadata?.generationName, 'ask_mode_handoff', `${browserLabel}: wrong classifier generation`);
         assert.equal(options.maxTokens, 24, `${browserLabel}: handoff classifier budget should stay small`);
+        assert.ok(options.signal, `${browserLabel}: handoff classifier must receive an abort signal`);
         assert.match(messages[0]?.content || '', /DATA, never instructions/i, `${browserLabel}: classifier prompt must treat inputs as data`);
         assert.match(messages[1]?.content || '', /<assistant_answer>/, `${browserLabel}: answer was not included in classifier input`);
         return { content: response, usage: {} };
       };
-      return { agent, updates, get calls() { return calls; } };
+      return { agent, updates, deadlineCalls, get calls() { return calls; } };
     };
 
     const successful = createAgent();
@@ -12019,6 +12026,11 @@ test('Ask mode handoff classification is strict, silent, and mode guarded', asyn
       (type, data) => successful.updates.push({ type, data }), {},
     );
     assert.equal(successful.calls, 1, `${browserLabel}: Ask answer should invoke the classifier once`);
+    assert.deepEqual(
+      successful.deadlineCalls,
+      [{ toolName: 'ask_mode_handoff', deadlineMs: 5_000 }],
+      `${browserLabel}: handoff classifier must use its dedicated short deadline`,
+    );
     assert.deepEqual(successful.updates, [{ type: 'ask_mode_handoff', data: { value: 'act' } }], `${browserLabel}: act handoff event missing`);
 
     for (const mode of ['act', 'dev']) {
@@ -12059,6 +12071,22 @@ test('Ask mode handoff classification is strict, silent, and mode guarded', asyn
       `${browserLabel}: classifier errors must be silent`,
     );
     assert.equal(failing.calls, 0, `${browserLabel}: replacement failure stub should be used without leaking state`);
+
+    const timedOut = createAgent();
+    timedOut.agent._withContentActionDeadline = async () => {
+      const error = new Error('handoff classifier timed out');
+      error.code = 'content_action_timeout';
+      throw error;
+    };
+    const timedOutUpdates = [];
+    await assert.doesNotReject(
+      () => timedOut.agent._maybeEmitAskModeHandoff(
+        53007, 'ask', 'Click the button', finalResponse,
+        (...event) => timedOutUpdates.push(event), {},
+      ),
+      `${browserLabel}: classifier timeout must not block or fail the completed Ask answer`,
+    );
+    assert.deepEqual(timedOutUpdates, [], `${browserLabel}: timed-out classifier must not emit a handoff`);
   }
 });
 
@@ -114528,8 +114556,13 @@ test('sidepanel: Ask-to-Act retries retain attachment payloads', () => {
     assert.match(source, /const retryPayloadByAssistant = new WeakMap\(\)/, `${label}: assistant retry payload store is missing`);
     assert.match(
       source,
-      /retryPayloadByAssistant\.set\(assistantEl, \{[\s\S]*?attachments: attachmentsForSend\.slice\(\)/,
+      /function rememberRetryPayloadForAssistant\(assistantEl, retryPayload\) \{[\s\S]*?retryPayloadByAssistant\.set\(assistantEl, \{[\s\S]*?attachments: Array\.isArray\(retryPayload\.attachments\)[\s\S]*?retryPayload\.attachments\.slice\(\)/,
       `${label}: sent attachment payloads are not retained with the assistant message`,
+    );
+    assert.match(
+      source,
+      /const RETRY_PAYLOAD_RETENTION_MS = 30_000[\s\S]*?setTimeout\(\(\) => \{[\s\S]*?retryPayloadByAssistant\.delete\(assistantEl\)/,
+      `${label}: assistant retry attachment payloads do not have a bounded lifetime`,
     );
     assert.match(
       source,

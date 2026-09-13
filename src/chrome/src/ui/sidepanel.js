@@ -1214,10 +1214,29 @@ let slashCommandSelectedIndex = 0;
 let busySlashNoticeLastShownAt = 0;
 let composerToastTimer = null;
 let retryPayloadSeq = 0;
+const RETRY_PAYLOAD_RETENTION_MS = 30_000;
 const activeChatPayloadsByTab = new Map();
 const retryAttachmentPayloads = new Map();
 const retryAttachmentIdsByTab = new Map();
 const retryPayloadByAssistant = new WeakMap();
+const retryPayloadExpiryTimers = new WeakMap();
+
+function rememberRetryPayloadForAssistant(assistantEl, retryPayload) {
+  if (!assistantEl || !retryPayload) return;
+  const previousTimer = retryPayloadExpiryTimers.get(assistantEl);
+  if (previousTimer != null) clearTimeout(previousTimer);
+  retryPayloadByAssistant.set(assistantEl, {
+    ...retryPayload,
+    attachments: Array.isArray(retryPayload.attachments)
+      ? retryPayload.attachments.slice()
+      : [],
+  });
+  const expiryTimer = setTimeout(() => {
+    retryPayloadByAssistant.delete(assistantEl);
+    retryPayloadExpiryTimers.delete(assistantEl);
+  }, RETRY_PAYLOAD_RETENTION_MS);
+  retryPayloadExpiryTimers.set(assistantEl, expiryTimer);
+}
 
 function setTabProcessing(tabId, processing) {
   const numericTabId = Number(tabId);
@@ -8918,10 +8937,7 @@ async function sendMessage(extraChatParams = {}) {
     assistantEl.dataset.retrySelectionAction = selectionAction;
     assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
     if (agentPrompt) assistantEl.dataset.retryAgentPrompt = agentPrompt;
-    retryPayloadByAssistant.set(assistantEl, {
-      ...retryPayload,
-      attachments: attachmentsForSend.slice(),
-    });
+    rememberRetryPayloadForAssistant(assistantEl, retryPayload);
     userEl.dataset.runRequestId = requestId;
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;

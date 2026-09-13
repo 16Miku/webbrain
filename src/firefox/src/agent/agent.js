@@ -395,6 +395,7 @@ const normalizeAttachmentNegationArticles = value => String(value || '').replace
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
 const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
+const ASK_MODE_HANDOFF_TIMEOUT_MS = 5_000;
 const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap();
 const SAVED_WORKFLOW_MESSAGE_DISPATCH_TOOLS = new Set([
   'click', 'click_ax', 'iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file',
@@ -17756,12 +17757,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const provider = this._activeProvider(tabId);
       const { tabUrl, tabTitle } = await this._getTabUrlTitle(tabId);
       const messages = buildAskModeHandoffMessages(userMessage, finalResponse, tabUrl, tabTitle);
-      const response = await this._chatWithCostAllowance(
-        provider,
-        messages,
-        { ...this._plannerChatOptions(provider, false, true, 'ask_mode_handoff'), temperature: 0, maxTokens: 24 },
-        this.currentCostState.get(tabId) || null,
-        { tabId, generationName: 'ask_mode_handoff' },
+      const response = await this._withContentActionDeadline(
+        signal => this._chatWithCostAllowance(
+          provider,
+          messages,
+          {
+            ...this._plannerChatOptions(provider, false, true, 'ask_mode_handoff'),
+            temperature: 0,
+            maxTokens: 24,
+            signal,
+          },
+          this.currentCostState.get(tabId) || null,
+          { tabId, generationName: 'ask_mode_handoff' },
+        ),
+        'ask_mode_handoff',
+        ASK_MODE_HANDOFF_TIMEOUT_MS,
+        this._runAbortSignal(tabId),
       );
       if (!this._checkAbort(tabId) && parseAskModeHandoffFromContent(response?.content) === 'act') {
         onUpdate('ask_mode_handoff', { value: 'act' });
