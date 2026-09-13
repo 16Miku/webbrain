@@ -63587,6 +63587,12 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'the Settings download control must pass the target model when starting');
   assert.match(settingsScript, /sendToBackground\('stop_webgpu_download', msg\)/,
     'the Settings download control must pass the target model when stopping');
+  assert.match(settingsScript, /removedReadyModel/,
+    'removing a ready WebGPU model must track whether the deleted model was ready');
+  assert.match(settingsScript, /set_active_provider/,
+    'removing the selected WebGPU model must fall back to a usable provider');
+  assert.match(settingsScript, /didFallbackProvider/,
+    'the provider fallback must re-render cards so the Selected badge stays accurate');
   assert.match(settingsScript, /sendToBackground\('get_webgpu_download_status', query\)/,
     'the Settings download control must query the displayed model status');
   assert.match(settingsScript, /data-webgpu-download-status/,
@@ -100529,6 +100535,11 @@ test('text tool-call parser is production code with format and allowlist coverag
     fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/tool-call-parser.js'), 'utf8'),
     'chrome and firefox tool-call parsers must remain byte-identical',
   );
+  const parserSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/tool-call-parser.js'), 'utf8');
+  assert.match(parserSource, /orderedCalls/,
+    'mixed XML call formats must preserve source order when dispatching');
+  assert.match(parserSource, /\.replace\(\/<\/g/,
+    'param sanitization must strip leftover angle brackets so CodeQL sees no HTML injection');
   const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page', 'scroll']);
   const cases = [
     {
@@ -100726,6 +100737,24 @@ test('text tool-call parser is production code with format and allowlist coverag
       expected: [
         { name: 'read_page', args: {} },
         { name: 'click_ax', args: { ref_id: 'ref_7' } },
+      ],
+    },
+    {
+      label: 'MiniCPM5 bare function before wrapper preserves source order',
+      raw: [
+        '<function name="click_ax"><param name="ref_id">ref_7</param></function>',
+        '<tool_call>{"name":"read_page","arguments":{}}</tool_call>',
+      ].join('\n'),
+      expected: [
+        { name: 'click_ax', args: { ref_id: 'ref_7' } },
+        { name: 'read_page', args: {} },
+      ],
+    },
+    {
+      label: 'MiniCPM5 param value strips incomplete script tag',
+      raw: '<function name="click_ax"><param name="ref_id">ref_7<script</param></function>',
+      expected: [
+        { name: 'click_ax', args: { ref_id: 'ref_7script' } },
       ],
     },
     {

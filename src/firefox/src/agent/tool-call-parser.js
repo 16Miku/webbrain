@@ -356,6 +356,10 @@ export function parseToolCallsFromText(text, allowedNames) {
   }
 
   const results = [];
+  // Source offsets for every successfully parsed wrapper/bare call so mixed
+  // responses (e.g. a bare MiniCPM call followed by a wrapped call) dispatch
+  // in document order rather than format-group order.
+  const orderedCalls = [];
   const parseXmlParamValue = (value) => {
     const raw = String(value || '');
     // MiniCPM5 wraps values containing <, &, or newlines in CDATA. Extract
@@ -363,7 +367,10 @@ export function parseToolCallsFromText(text, allowedNames) {
     const cdataMatch = /^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/.exec(raw);
     if (cdataMatch) return cdataMatch[1];
     const cleaned = raw
-      .replace(/<[^>]+>/g, '')
+      .replace(/<[^>]*>/g, '')
+      // Strip any leftover "<" so a malformed tag without ">" (e.g. "<script")
+      // cannot survive sanitization and cause HTML injection downstream.
+      .replace(/</g, '')
       .trim();
     if (!cleaned) return '';
     try {
@@ -404,10 +411,12 @@ export function parseToolCallsFromText(text, allowedNames) {
       const spanStart = match.index;
       const spanEnd = match.index + match[0].length;
       const pushedBefore = results.length;
+      const orderedBefore = orderedCalls.length;
       const inner = match[1].trim();
       const wrappedArray = parseWholeResponseJsonArray(inner, allowedNames);
       if (wrappedArray !== null) {
         results.push(...wrappedArray);
+        for (const entry of wrappedArray) orderedCalls.push({ start: spanStart, call: entry });
         wrapperSpans.push({ start: spanStart, end: spanEnd });
         continue;
       }
@@ -415,6 +424,7 @@ export function parseToolCallsFromText(text, allowedNames) {
         const obj = JSON.parse(inner);
         if (obj && obj.name && allowedNames.has(obj.name)) {
           results.push(obj);
+          orderedCalls.push({ start: spanStart, call: obj });
           wrapperSpans.push({ start: spanStart, end: spanEnd });
           continue;
         }
@@ -425,6 +435,7 @@ export function parseToolCallsFromText(text, allowedNames) {
       const bailingCall = parseBailingToolCall(inner);
       if (bailingCall) {
         results.push(bailingCall);
+        orderedCalls.push({ start: spanStart, call: bailingCall });
         wrapperSpans.push({ start: spanStart, end: spanEnd });
         continue;
       }
@@ -438,10 +449,12 @@ export function parseToolCallsFromText(text, allowedNames) {
         argsBody = quoteBareJsonKeys(argsBody);
         try {
           const args = JSON.parse(`{${argsBody}}`);
-          results.push({ name: toolName, arguments: args });
+          const callEntry = { name: toolName, arguments: args };
+          results.push(callEntry);
+          orderedCalls.push({ start: spanStart, call: callEntry });
         } catch { /* malformed arguments must never dispatch */ }
       }
-      if (results.length > pushedBefore) wrapperSpans.push({ start: spanStart, end: spanEnd });
+      if (results.length > pushedBefore || orderedCalls.length > orderedBefore) wrapperSpans.push({ start: spanStart, end: spanEnd });
     }
   }
 
@@ -465,7 +478,9 @@ export function parseToolCallsFromText(text, allowedNames) {
       args[key] = parseXmlParamValue(paramMatch[3]);
     }
     xmlPushedSpans.push({ start: xmlMatch.index, end: xmlMatch.index + xmlMatch[0].length });
-    results.push({ name: toolName, arguments: args });
+    const xmlCall = { name: toolName, arguments: args };
+    results.push(xmlCall);
+    orderedCalls.push({ start: xmlMatch.index, call: xmlCall });
   }
 
   // MiniCPM5-2B native tool format (no outer <tool_call> wrapper):
@@ -532,8 +547,18 @@ export function parseToolCallsFromText(text, allowedNames) {
     }
     remainder += text.slice(cursor);
     if (remainder.trim() === '') {
-      for (const candidate of minicpmCandidates) results.push(candidate.call);
+      // Preserve document order across formats: a bare call before a wrapped
+      // call must dispatch first since the agent executes in returned order.
+      for (const candidate of minicpmCandidates) {
+        results.push(candidate.call);
+        orderedCalls.push({ start: candidate.start, call: candidate.call });
+      }
     }
+  }
+
+  if (orderedCalls.length > 0) {
+    orderedCalls.sort((a, b) => a.start - b.start);
+    return toFallbackToolCalls(orderedCalls.map((entry) => entry.call));
   }
 
   if (results.length === 0) {

@@ -2807,6 +2807,7 @@ async function handleWebgpuDownloadButton(btn) {
   const id = btn.dataset.provider;
   if (webgpuDownloadActionInFlight) return;
   webgpuDownloadActionInFlight = true;
+  let didFallbackProvider = false;
   try {
     btn.disabled = true;
     // Persist any form changes on the WebGPU card first so the background
@@ -2818,7 +2819,25 @@ async function handleWebgpuDownloadButton(btn) {
     const msg = model ? { model } : {};
     const state = normalizeWebgpuDownloadSnapshot(await sendToBackground('get_webgpu_download_status', msg) || {});
     if (state.ready || ['downloading', 'paused'].includes(state.status)) {
+      const removedReadyModel = state.ready === true;
       await sendToBackground('stop_webgpu_download', msg);
+      // Removing a ready model while WebGPU is the selected chat provider
+      // would leave every subsequent chat failing its readiness check until
+      // the user re-downloads or manually picks another provider. Fall back
+      // to a usable provider so the selection stays functional.
+      if (removedReadyModel && id === activeProviderId) {
+        try {
+          const fallback = providersData?.webbrain_cloud
+            ? 'webbrain_cloud'
+            : Object.keys(providersData || {}).find((candidate) => candidate !== id && providerIsActive(candidate, providersData[candidate])) || 'webbrain_cloud';
+          await sendToBackground('set_active_provider', { providerId: fallback });
+          activeProviderId = fallback;
+          requestedActiveProviderId = fallback;
+          didFallbackProvider = true;
+        } catch {
+          // Keep the current selection; chat will report the missing download.
+        }
+      }
     } else {
       await sendToBackground('start_webgpu_download', msg);
     }
@@ -2828,6 +2847,13 @@ async function handleWebgpuDownloadButton(btn) {
   } finally {
     webgpuDownloadActionInFlight = false;
     await refreshWebgpuDownloadControls();
+    if (didFallbackProvider) {
+      try {
+        renderProviders();
+      } catch {
+        // Card re-render is best-effort; the status line above already updated.
+      }
+    }
   }
 }
 
