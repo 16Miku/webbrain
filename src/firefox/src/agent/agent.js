@@ -6156,10 +6156,16 @@ export class Agent extends LoopDetector {
     });
   }
 
+  // WebBrain Compass collects trace metadata; OpenCode Go needs a stable
+  // session id so its gateway can route and cache prompts per chat.
   _cloudGenerationOptions(provider, options = {}, { tabId = null, conversationId = null, generationName = 'main' } = {}) {
-    if (String(provider?.config?.providerName || '').toLowerCase() !== 'webbrain-cloud') return options;
     const effectiveConversationId = conversationId || (tabId != null ? this.conversationIds.get(tabId) : null);
     if (!effectiveConversationId) return options;
+    const providerName = String(provider?.config?.providerName || '').toLowerCase();
+    if (providerName === 'opencode-go') {
+      return { ...options, providerSessionId: String(effectiveConversationId) };
+    }
+    if (providerName !== 'webbrain-cloud') return options;
     return {
       ...options,
       webbrainSessionId: String(effectiveConversationId),
