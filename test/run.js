@@ -69042,6 +69042,44 @@ test('OpenCode model prefixes and automatic Responses routing are scoped to the 
   }
 });
 
+test('OpenCode Go requests carry a stable x-opencode-session header', () => {
+  for (const [label, Provider] of [
+    ['chrome', OpenAIProviderCh],
+    ['firefox', OpenAIProviderFx],
+  ]) {
+    const go = new Provider({
+      providerName: 'opencode-go',
+      baseUrl: 'https://opencode.ai/zen/go/v1',
+      model: 'deepseek-v4-flash',
+    });
+    assert.equal(
+      go._headers({ providerSessionId: 'conv_tab_1_123' })['x-opencode-session'],
+      'conv_tab_1_123',
+      `${label}: the conversation session id should be forwarded`,
+    );
+
+    // Calls without a conversation (for example Test connection) still need a
+    // session id, and it must stay stable for the provider instance.
+    const fallbackA = go._headers()['x-opencode-session'];
+    const fallbackB = go._headers()['x-opencode-session'];
+    assert.match(fallbackA, /^webbrain-/, `${label}: a fallback session id should be minted`);
+    assert.equal(fallbackA, fallbackB, `${label}: the fallback session id must be stable`);
+
+    for (const config of [
+      { providerName: 'opencode', baseUrl: 'https://opencode.ai/zen/v1', model: 'muse-spark-1.2-contributor-free' },
+      { providerName: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'deepseek-v4-flash' },
+      { providerName: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o' },
+    ]) {
+      const other = new Provider(config);
+      assert.equal(
+        other._headers({ providerSessionId: 'conv_x' })['x-opencode-session'],
+        undefined,
+        `${label}: ${config.providerName} at ${config.baseUrl} must not receive the Go session header`,
+      );
+    }
+  }
+});
+
 test('local OpenAI-compatible servers that require a model throw a clear error when unset', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
     for (const providerName of ['ollama', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
@@ -70947,6 +70985,9 @@ test('WebBrain Compass groups every generation in a stable conversation session 
     assert.deepEqual(byoOptions, { temperature: 0 }, `${label}: BYO provider received Cloud collection fields`);
     const localOptions = agent._cloudGenerationOptions({ config: { providerName: 'llama.cpp' } }, {}, { tabId, generationName: 'main' });
     assert.deepEqual(localOptions, {}, `${label}: local provider received Cloud collection fields`);
+    const goOptions = agent._cloudGenerationOptions({ config: { providerName: 'opencode-go' } }, { temperature: 0 }, { tabId, generationName: 'main' });
+    assert.equal(goOptions.providerSessionId, firstConversationId, `${label}: OpenCode Go should receive the conversation session id`);
+    assert.equal(goOptions.webbrainSessionId, undefined, `${label}: OpenCode Go should not receive Cloud collection fields`);
 
     agent.clearConversation(tabId);
     agent.getConversation(tabId, 'ask');
