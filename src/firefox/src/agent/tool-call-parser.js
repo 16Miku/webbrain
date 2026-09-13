@@ -363,15 +363,14 @@ export function parseToolCallsFromText(text, allowedNames) {
   const parseXmlParamValue = (value) => {
     const raw = String(value || '');
     // MiniCPM5 wraps values containing <, &, or newlines in CDATA. Extract
-    // the literal content first so the tag strip below does not eat it.
+    // the literal content first so markup below does not corrupt it.
     const cdataMatch = /^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/.exec(raw);
     if (cdataMatch) return cdataMatch[1];
-    const cleaned = raw
-      .replace(/<[^>]*>/g, '')
-      // Strip any leftover "<" so a malformed tag without ">" (e.g. "<script")
-      // cannot survive sanitization and cause HTML injection downstream.
-      .replace(/</g, '')
-      .trim();
+    // Non-CDATA values must not contain markup: the spec requires CDATA for
+    // "<", "&", or newlines. Reject markup outright instead of stripping tags,
+    // which leaves "<script" without ">" and risks HTML injection downstream.
+    if (raw.includes('<') || raw.includes('>')) return '';
+    const cleaned = raw.trim();
     if (!cleaned) return '';
     try {
       if (/^(?:"|'.*'|\{|\[|-?\d|true\b|false\b|null\b)/i.test(cleaned)) {

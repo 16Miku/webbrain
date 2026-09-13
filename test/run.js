@@ -100538,8 +100538,8 @@ test('text tool-call parser is production code with format and allowlist coverag
   const parserSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/tool-call-parser.js'), 'utf8');
   assert.match(parserSource, /orderedCalls/,
     'mixed XML call formats must preserve source order when dispatching');
-  assert.match(parserSource, /\.replace\(\/<\/g/,
-    'param sanitization must strip leftover angle brackets so CodeQL sees no HTML injection');
+  assert.doesNotMatch(parserSource, /replace\(\/<\[\^>\]/,
+    'param values must reject markup outright instead of incomplete tag-stripping');
   const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page', 'scroll']);
   const cases = [
     {
@@ -100751,10 +100751,10 @@ test('text tool-call parser is production code with format and allowlist coverag
       ],
     },
     {
-      label: 'MiniCPM5 param value strips incomplete script tag',
+      label: 'MiniCPM5 param value rejects markup outside CDATA',
       raw: '<function name="click_ax"><param name="ref_id">ref_7<script</param></function>',
       expected: [
-        { name: 'click_ax', args: { ref_id: 'ref_7script' } },
+        { name: 'click_ax', args: { ref_id: '' } },
       ],
     },
     {
