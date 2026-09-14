@@ -45,10 +45,10 @@ async function testPdfViewerDefaultsOnWithExplicitAndCapabilityFallbacks() {
   const background = await readFile(path.join(root, 'src', 'chrome', 'src', 'background.js'), 'utf8');
   assert.match(html, /id="toggle-pdf-viewer"/);
   assert.match(settings, /pdfViewerEnabled/);
-  assert.match(settings, /stored\.pdfViewerEnabled !== false/);
+  assert.match(settings, /stored\.pdfViewerEnabled === undefined \|\| stored\.pdfViewerEnabled === true/);
   assert.match(source, /typeof api\?\.mimeHandler\?\.getStreamInfo === 'function'/);
   assert.match(source, /api\.storage\.local\.get\(\{ \[PDF_VIEWER_ENABLED_KEY\]: true \}\)/);
-  assert.match(source, /if \(stored\?\.\[PDF_VIEWER_ENABLED_KEY\] === false\)/);
+  assert.match(source, /if \(stored\?\.\[PDF_VIEWER_ENABLED_KEY\] !== true\)/);
   assert.match(source, /const explicitViewer = Boolean\(explicitUrl && Number\.isInteger\(explicitTabId\) && explicitTabId >= 0\)/);
   assert.match(source, /if \(!explicitViewer\)/);
   assert.match(source, /fallbackToNative\(\);/);
@@ -56,7 +56,47 @@ async function testPdfViewerDefaultsOnWithExplicitAndCapabilityFallbacks() {
   assert.match(source, /MAX_PDF_PAGES/);
   assert.match(background, /mimeHandler\?\.setMimeHandlerOptions/);
   assert.match(background, /syncNativePdfMimeHandlerFromStorage/);
-  assert.match(background, /changes\[PDF_VIEWER_ENABLED_KEY\]\.newValue !== false/);
+  assert.match(background, /const value = changes\[PDF_VIEWER_ENABLED_KEY\]\.newValue;\s*setNativePdfMimeHandlerEnabled\(value === undefined \|\| value === true\)/);
+}
+
+async function testPdfPreferencesRejectMalformedValues() {
+  const background = await readFile(path.join(root, 'src/chrome/src/background.js'), 'utf8');
+  const handler = await readFile(handlerJsPath, 'utf8');
+  const settings = await readFile(settingsJsPath, 'utf8');
+  const syncBlock = background.match(/async function syncNativePdfMimeHandlerFromStorage\(\) \{[\s\S]*?\n\}/)?.[0];
+  const changeBlock = background.match(/if \(areaName === 'local' && changes\[PDF_VIEWER_ENABLED_KEY\]\) \{[\s\S]*?\n  \}/)?.[0];
+  const toggleBlock = settings.match(/pdfViewerToggle\.checked = [^;]+;/)?.[0];
+  const gateStart = handler.indexOf('  if (!explicitViewer) {');
+  const gateEnd = handler.indexOf('  const streamInfo = explicitViewer', gateStart);
+  assert.ok(syncBlock && changeBlock && toggleBlock && gateStart >= 0 && gateEnd > gateStart);
+  for (const [value, expected] of [
+    [undefined, true], [true, true], [false, false], [null, false],
+    ['false', false], ['true', false], [0, false], [1, false], [{}, false], [[], false],
+  ]) {
+    const stored = value === undefined ? {} : { pdfViewerEnabled: value };
+    const api = { storage: { local: { get: async defaults => ({ ...defaults, ...stored }) } } };
+    const updates = [];
+    const setEnabled = async enabled => { updates.push(enabled); };
+    const sync = Function('chrome', 'PDF_VIEWER_ENABLED_KEY', 'setNativePdfMimeHandlerEnabled',
+      `${syncBlock}\nreturn syncNativePdfMimeHandlerFromStorage;`)(api, 'pdfViewerEnabled', setEnabled);
+    await sync();
+    const changes = { pdfViewerEnabled: value === undefined ? { oldValue: true } : { newValue: value } };
+    Function('changes', 'areaName', 'PDF_VIEWER_ENABLED_KEY', 'setNativePdfMimeHandlerEnabled', 'reportPdfMimeHandlerSyncFailure',
+      changeBlock)(changes, 'local', 'pdfViewerEnabled', setEnabled, error => { throw error; });
+    assert.deepEqual(updates, [expected, expected], `PDF runtime: ${JSON.stringify(value)}`);
+    const toggle = { checked: true };
+    Function('stored', 'pdfViewerToggle', toggleBlock)(stored, toggle);
+    assert.equal(toggle.checked, expected);
+    for (const explicitViewer of [false, true]) {
+      let fallbacks = 0;
+      const continued = await Function('api', 'PDF_VIEWER_ENABLED_KEY', 'explicitViewer', 'fallbackToNative',
+        `return (async () => { ${handler.slice(gateStart, gateEnd)} return true; })();`)(
+        api, 'pdfViewerEnabled', explicitViewer, async () => { fallbacks++; },
+      );
+      assert.equal(continued === true, explicitViewer || expected);
+      assert.equal(fallbacks, explicitViewer || expected ? 0 : 1);
+    }
+  }
 }
 
 async function testPdfHandlerProvidesCompleteViewerControls() {
@@ -377,6 +417,7 @@ const tests = [
   ['manifest registers a top-level application/pdf handler', testManifestRegistration],
   ['PDF handler consumes Chrome stream info and renders a text layer', testHandlerUsesChromeStreamAndTextLayer],
   ['PDF viewer defaults on with explicit and capability fallbacks', testPdfViewerDefaultsOnWithExplicitAndCapabilityFallbacks],
+  ['PDF preference validation preserves defaults and explicit viewer entry', testPdfPreferencesRejectMalformedValues],
   ['PDF handler provides complete viewer controls', testPdfHandlerProvidesCompleteViewerControls],
   ['scanned PDF OCR has a bounded handler/background contract', testScannedPdfOcrContract],
   ['OCR normalization keeps bounded normalized text lines', testOcrNormalizationKeepsOnlyBoundedNormalizedLines],

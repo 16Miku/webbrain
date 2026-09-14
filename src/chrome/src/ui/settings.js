@@ -794,7 +794,7 @@ async function init() {
   }
   verboseToggle.checked = stored.verboseMode || false;
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
-  if (pdfViewerToggle) pdfViewerToggle.checked = stored.pdfViewerEnabled !== false;
+  if (pdfViewerToggle) pdfViewerToggle.checked = stored.pdfViewerEnabled === undefined || stored.pdfViewerEnabled === true;
   if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
   if (helpImproveToggle) helpImproveToggle.checked = stored.helpImproveWebBrain !== false; // on by default
   screenshotToggle.checked = stored.screenshotFallback ?? true; // on by default

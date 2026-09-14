@@ -337,7 +337,7 @@ async function setNativePdfMimeHandlerEnabled(enabled) {
 
 async function syncNativePdfMimeHandlerFromStorage() {
   const stored = await chrome.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: true });
-  return setNativePdfMimeHandlerEnabled(stored?.[PDF_VIEWER_ENABLED_KEY] !== false);
+  return setNativePdfMimeHandlerEnabled(stored?.[PDF_VIEWER_ENABLED_KEY] === true);
 }
 
 function reportPdfMimeHandlerSyncFailure(error) {
@@ -710,17 +710,17 @@ async function saveUserMemoryExtractionQueue(queue) {
 }
 
 async function isUserMemoryExtractionEnabled() {
-  const stored = await chrome.storage.local.get([
-    USER_MEMORY_ENABLED_KEY,
-    USER_MEMORY_AUTO_CAPTURE_KEY,
-  ]);
+  const stored = await chrome.storage.local.get({
+    [USER_MEMORY_ENABLED_KEY]: true,
+    [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+  });
   return stored[USER_MEMORY_ENABLED_KEY] !== false
-    && stored[USER_MEMORY_AUTO_CAPTURE_KEY] !== false;
+    && stored[USER_MEMORY_AUTO_CAPTURE_KEY] === true;
 }
 
 async function isUserMemoryFormCaptureEnabled() {
-  const stored = await chrome.storage.local.get(USER_MEMORY_FORM_CAPTURE_KEY);
-  return stored[USER_MEMORY_FORM_CAPTURE_KEY] !== false;
+  const stored = await chrome.storage.local.get({ [USER_MEMORY_FORM_CAPTURE_KEY]: true });
+  return stored[USER_MEMORY_FORM_CAPTURE_KEY] === true;
 }
 
 async function withUserMemoryExtractionQueueLock(task) {
@@ -1179,7 +1179,8 @@ chrome.runtime.onStartup?.addListener(async () => {
 // Listen for setting changes
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && changes[PDF_VIEWER_ENABLED_KEY]) {
-    setNativePdfMimeHandlerEnabled(changes[PDF_VIEWER_ENABLED_KEY].newValue !== false)
+    const value = changes[PDF_VIEWER_ENABLED_KEY].newValue;
+    setNativePdfMimeHandlerEnabled(value === undefined || value === true)
       .catch(reportPdfMimeHandlerSyncFailure);
   }
   if (changes.wbLocale) {
@@ -2958,19 +2959,19 @@ async function handleMessage(msg, sender) {
 
     case 'get_user_memory': {
       const store = await userMemoryStore.load();
-      const settings = await chrome.storage.local.get([
-        USER_MEMORY_ENABLED_KEY,
-        USER_MEMORY_AUTO_CAPTURE_KEY,
-        USER_MEMORY_FORM_CAPTURE_KEY,
-        USER_MEMORY_MAX_PROMPT_CHARS_KEY,
-      ]);
+      const settings = await chrome.storage.local.get({
+        [USER_MEMORY_ENABLED_KEY]: true,
+        [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+        [USER_MEMORY_FORM_CAPTURE_KEY]: true,
+        [USER_MEMORY_MAX_PROMPT_CHARS_KEY]: normalizeUserMemoryMaxPromptChars(),
+      });
       return {
         ok: true,
         store,
         records: store.records,
         enabled: settings[USER_MEMORY_ENABLED_KEY] !== false,
-        autoCaptureEnabled: settings[USER_MEMORY_AUTO_CAPTURE_KEY] !== false,
-        formCaptureEnabled: settings[USER_MEMORY_FORM_CAPTURE_KEY] !== false,
+        autoCaptureEnabled: settings[USER_MEMORY_AUTO_CAPTURE_KEY] === true,
+        formCaptureEnabled: settings[USER_MEMORY_FORM_CAPTURE_KEY] === true,
         maxPromptChars: normalizeUserMemoryMaxPromptChars(settings[USER_MEMORY_MAX_PROMPT_CHARS_KEY]),
       };
     }

@@ -4277,8 +4277,8 @@ test('user memory browser wiring is mirrored and non-blocking', () => {
     assert.doesNotMatch(addMemoryRoute[1], new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ \\[USER_MEMORY_ENABLED_KEY\\]: true \\}\\)`), `${label}: manual memory saves should not re-enable disabled memory`);
     assert.match(background, /case 'delete_user_memory': \{[\s\S]*userMemoryStore\.delete\(String\(msg\.id \|\| ''\)\)[\s\S]*syncAgentUserMemoryFromStorage/, `${label}: user-facing memory delete should hard-delete records`);
     assert.doesNotMatch(background, /case 'delete_user_memory': \{[\s\S]*userMemoryStore\.archive\(String\(msg\.id \|\| ''\)\)/, `${label}: user-facing memory delete should not archive plaintext`);
-    assert.match(background, new RegExp(`${runtime}\\.storage\\.local\\.get\\(\\[\\s*USER_MEMORY_ENABLED_KEY,[\\s\\S]*USER_MEMORY_AUTO_CAPTURE_KEY`), `${label}: extraction should read both memory and auto-capture toggles`);
-    assert.match(background, /async function isUserMemoryExtractionEnabled\(\)[\s\S]*stored\[USER_MEMORY_ENABLED_KEY\] !== false[\s\S]*stored\[USER_MEMORY_AUTO_CAPTURE_KEY\] !== false/, `${label}: extraction should be gated by the main memory toggle`);
+    assert.match(background, new RegExp(`${runtime}\\.storage\\.local\\.get\\(\\{\\s*\\[USER_MEMORY_ENABLED_KEY\\]: true,[\\s\\S]*\\[USER_MEMORY_AUTO_CAPTURE_KEY\\]: true`), `${label}: extraction should apply defaults while reading both memory toggles`);
+    assert.match(background, /async function isUserMemoryExtractionEnabled\(\)[\s\S]*stored\[USER_MEMORY_ENABLED_KEY\] !== false[\s\S]*stored\[USER_MEMORY_AUTO_CAPTURE_KEY\] === true/, `${label}: extraction should require valid auto-capture permission and respect the main memory toggle`);
     assert.match(background, /if \(!await isUserMemoryExtractionEnabled\(\)\) return \{ queued: false, reason: 'disabled' \};/, `${label}: enqueue should not run when memory is disabled`);
     assert.match(background, /const formCompletionTurn = sourceContext === 'form_completion';/, `${label}: form-derived memory should be classified before extraction text is built`);
     assert.match(background, /if \(!await isUserMemoryFormCaptureEnabled\(\)\) \{[\s\S]*return \{ queued: false, reason: 'form_capture_disabled' \};/, `${label}: form-derived memory should be gated by its opt-in setting`);
@@ -4346,6 +4346,50 @@ test('user memory browser wiring is mirrored and non-blocking', () => {
     assert.match(locale, /user memory is stored in plaintext/, `${label}: privacy copy missing`);
   }
 });
+
+for (const [label, memory] of [['chrome', userMemoryCh], ['firefox', userMemoryFx]]) {
+  test(`${label} memory learning defaults on but rejects invalid or unreadable preferences`, async () => {
+    const source = fs.readFileSync(path.join(ROOT, `src/${label}/src/background.js`), 'utf8');
+    const start = source.indexOf('async function isUserMemoryExtractionEnabled()');
+    const end = source.indexOf('async function withUserMemoryExtractionQueueLock(', start);
+    const routeStart = source.indexOf("case 'get_user_memory': {");
+    const routeEnd = source.indexOf("case 'add_user_memory': {", routeStart);
+    assert.ok(start >= 0 && end > start && routeStart >= 0 && routeEnd > routeStart);
+    let preferences = {};
+    let storageError = false;
+    const api = { storage: { local: { get: async defaults => {
+      if (storageError) throw new Error('Storage unavailable');
+      return { ...defaults, ...preferences };
+    } } } };
+    const runtime = vm.runInNewContext(
+      `${source.slice(start, end)}
+       async function getUserMemory() { switch ('get_user_memory') { ${source.slice(routeStart, routeEnd)} } }
+       ({ isUserMemoryExtractionEnabled, isUserMemoryFormCaptureEnabled, getUserMemory });`,
+      { ...memory, [label === 'chrome' ? 'chrome' : 'browser']: api, userMemoryStore: { load: async () => ({ records: [] }) } },
+    );
+    for (const [key, property, getter] of [
+      [memory.USER_MEMORY_AUTO_CAPTURE_KEY, 'autoCaptureEnabled', 'isUserMemoryExtractionEnabled'],
+      [memory.USER_MEMORY_FORM_CAPTURE_KEY, 'formCaptureEnabled', 'isUserMemoryFormCaptureEnabled'],
+    ]) {
+      for (const [value, expected] of [
+        [undefined, true], [true, true], [false, false], [null, false],
+        ['false', false], ['true', false], [0, false], [1, false], [{}, false], [[], false],
+      ]) {
+        preferences = value === undefined ? {} : { [key]: value };
+        const detail = `${key}: ${JSON.stringify(value)}`;
+        assert.equal(await runtime[getter](), expected, `${detail}: extraction gate`);
+        assert.equal((await runtime.getUserMemory())[property], expected, `${detail}: settings response`);
+      }
+    }
+    preferences = { [memory.USER_MEMORY_ENABLED_KEY]: false };
+    assert.equal(await runtime.isUserMemoryExtractionEnabled(), false, 'main memory opt-out must disable learning');
+    assert.equal((await runtime.getUserMemory()).enabled, false);
+    storageError = true;
+    await assert.rejects(runtime.isUserMemoryExtractionEnabled(), /Storage unavailable/);
+    await assert.rejects(runtime.isUserMemoryFormCaptureEnabled(), /Storage unavailable/);
+    await assert.rejects(runtime.getUserMemory(), /Storage unavailable/);
+  });
+}
 
 test('chrome target blank redirect ignores browser new-tab placeholders', async () => {
   const realChrome = globalThis.chrome;

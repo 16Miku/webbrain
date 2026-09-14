@@ -680,7 +680,7 @@ async function initialize() {
   }
   if (!explicitViewer) {
     const stored = await api.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: true });
-    if (stored?.[PDF_VIEWER_ENABLED_KEY] === false) {
+    if (stored?.[PDF_VIEWER_ENABLED_KEY] !== true) {
       await fallbackToNative();
       return;
     }
