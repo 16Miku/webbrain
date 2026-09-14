@@ -118,7 +118,7 @@ jobs:
             --arg ver "$VERSION" \
             --arg dt "$DATE" \
             '{
-              model: "gpt-5.4-nano-2026-03-17",
+              model: "gpt-5.6-luna",
               messages: [
                 {role: "system", content: $sys},
                 {role: "user", content: ($usr | gsub("\\{\\{version\\}\\}"; $ver) | gsub("\\{\\{date\\}\\}"; $dt) | gsub("\\{\\{release_context\\}\\}"; $ctx))}
