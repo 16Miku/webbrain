@@ -12718,6 +12718,43 @@ test('Share-for-research scrubs wrapped bare base64 without counting line breaks
   }
 });
 
+test('Share-for-research strips non-base64 attachment data URLs in text and nested content', () => {
+  for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
+    for (const dataUrl of [
+      'data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3C/svg%3E',
+      'DATA:IMAGE/SVG+XML;charset=utf-8,%3Csvg%3E%3C/svg%3E',
+      'data:application/pdf,%25PDF-1.7%0Aendobj',
+      'data:application/octet-stream,ABC',
+      'data:audio/wav,%52%49%46%46',
+      'data:video/mp4,%00%00%00%20ftyp',
+      'data:font/woff,%77%4F%46%46',
+      'data:model/gltf+json,%7B%22asset%22:%7B%7D%7D',
+    ]) {
+      const content = `before "${dataUrl}" after`;
+      const expected = 'before "[embedded data omitted]" after';
+      const item = outbox.buildShareGenerationItem({
+        finalContent: content,
+        messages: [
+          { role: 'tool', content },
+          { role: 'tool', content: ['caption', dataUrl, { type: 'text', text: dataUrl }] },
+          { role: 'user', content: [{ type: 'text', text: 'Read this.' }, { type: 'other', source: { url: dataUrl } }] },
+        ],
+      });
+      assert.equal(item.request[0].content, expected, `${label}: ${dataUrl}`);
+      assert.deepEqual(item.request[1].content, ['caption', '[embedded data omitted]']);
+      assert.deepEqual(item.request[2].content, [{ type: 'text', text: 'Read this.' }]);
+      assert.equal(item.response.content, expected);
+    }
+    const textUrl = 'data:text/plain,ordinary%20text';
+    const item = outbox.buildShareGenerationItem({
+      finalContent: textUrl,
+      messages: [{ role: 'user', content: textUrl }],
+    });
+    assert.equal(item.request[0].content, textUrl, `${label}: plain text URL changed`);
+    assert.equal(item.response.content, textUrl);
+  }
+});
+
 test('Share-for-research caps count wrapper messages and serialized overhead', () => {
   const messages = [{ role: 'system', content: 'SYS' }];
   for (let i = 0; i < 250; i++) messages.push({ role: 'user', content: `cap${i}-` + 'word '.repeat(150) });

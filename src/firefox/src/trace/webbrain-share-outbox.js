@@ -45,6 +45,13 @@ function scrubText(value, limit = MAX_MESSAGE_CHARS) {
       /data:(image|audio|video|application|font|model)\/[a-zA-Z0-9+.-]+(?:;[a-zA-Z0-9!#$&^_.+-]+(?:=[a-zA-Z0-9!#$&^_.+-]+)?)*;base64,[A-Za-z0-9+/=\r\n]+/gi,
       '[embedded base64 data omitted]',
     );
+    // Data URLs can also carry percent-encoded or unencoded bytes (SVG,
+    // PDFs, etc.). Their media type identifies the attachment regardless of
+    // encoding. Stop at text/JSON delimiters to preserve surrounding prose.
+    text = text.replace(
+      /data:(image|audio|video|application|font|model)\/[^,\s"'<>]+,[^\s"'<>]*/gi,
+      '[embedded data omitted]',
+    );
   }
   // Serialized tool results can contain binaries of any size. Scrub named
   // base64 fields even when their payload is below the bare-blob threshold.
@@ -66,9 +73,9 @@ function containsBinaryBlock(value) {
   // screenshot bytes echoed into a tool result). Check anywhere in the
   // string, at any length: even tiny thumbnails are image bytes.
   if (typeof value === 'string') {
-    // Case-insensitive with optional media-type parameters, matching scrubText.
+    // Match binary media types regardless of data-URL encoding or parameters.
     return /data:/i.test(value)
-      && /data:(image|audio|video|application)\/[^,]+;base64,/i.test(value);
+      && /data:(image|audio|video|application|font|model)\/[^,\s"'<>]+,/i.test(value);
   }
   if (!value || typeof value !== 'object') return false;
   const type = typeof value.type === 'string' ? value.type.toLowerCase() : '';
