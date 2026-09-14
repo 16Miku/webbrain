@@ -4,6 +4,40 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.2.0] - 2026-09-14
+
+### Added
+
+- Added a dedicated DeepSeek provider with preserved router capabilities.
+- Enabled API mutations, observer, memory, and PDF viewer defaults in Chrome and Firefox.
+- Added structured Ask-to-Act handoff signaling and improved native-thinking detection.
+- Added localized enabled-API defaults across supported languages.
+
+### Changed
+
+- Require HTTPS for non-loopback API endpoints to protect bearer credentials; loopback endpoints remain available over HTTP.
+- Improved WebGPU provider fallback, transfer prioritization, runtime cleanup, and Settings synchronization.
+- Updated retry and Act handoff buttons to use the subscribe secondary style.
+- Refined batch invalidation to track the first pass transition.
+
+### Fixed
+
+- Validate memory-learning and PDF viewer preferences.
+- Reject malformed API preferences during startup and live updates.
+- Preserve observer and API mutation opt-outs when storage operations fail.
+- Clear v1 fixture completion state after later edits or failures.
+- Fail v2 episodes when trailing batch actions error after a terminal state.
+- Hardened batch execution, launch fences, Fara schema handling, pilot authorization, and budget persistence.
+- Preserve controllable retained WebGPU transfers in Apocalypse Mode and release runtimes during automatic fallback.
+- Preserve WebGPU tool-result identity and await cache removal before provider fallback.
+- Corrected WebGPU fallback behavior after model edits, removal, device loss, or stale persisted selections.
+- Explicitly authorize held-out calculation submissions and refreshed the v2 handoff manifest.
+
+### Tests
+
+- Expanded lifecycle, fixture, batch-action, handoff, authorization, preference-validation, and WebGPU fallback coverage.
+- Added and refreshed compact-model benchmark artifacts and re-frozen v2 manifest verification.
+
 ## [36.1.0] - 2026-09-14
 
 ### Added
