@@ -792,6 +792,7 @@ export default {
 
   'st.provider.field.server_url': "সার্ভার URL",
   'st.provider.field.api_base_url': "API বেস URL",
+  'st.provider.field.api_format': "API ফরম্যাট",
   'st.provider.field.api_key': "API কী",
   'st.provider.field.model': "মডেল",
   'st.provider.field.model_optional': "মডেল (ঐচ্ছিক)",

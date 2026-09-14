@@ -51,7 +51,7 @@ function pick(source, fields) {
 function projectUsage(usage) {
   return pick(usage, [
     'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens',
-    'cached_tokens', 'cost',
+    'cached_tokens', 'prompt_cache_hit_tokens', 'cost',
   ]);
 }
 

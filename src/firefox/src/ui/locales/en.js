@@ -779,6 +779,7 @@ export default {
 
   'st.provider.field.server_url': 'Server URL',
   'st.provider.field.api_base_url': 'API Base URL',
+  'st.provider.field.api_format': 'API format',
   'st.provider.field.api_key': 'API Key',
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (optional)',

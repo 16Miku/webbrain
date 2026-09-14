@@ -715,6 +715,7 @@ export default {
   'st.providers.compat.value.developer': 'Entwickler',
   'st.provider.field.server_url': 'Server-URL',
   'st.provider.field.api_base_url': 'API-Basis-URL',
+  'st.provider.field.api_format': 'API-Format',
   'st.provider.field.api_key': 'API-Schlüssel',
   'st.provider.field.model': 'Modell',
   'st.provider.field.model_optional': 'Modell (optional)',

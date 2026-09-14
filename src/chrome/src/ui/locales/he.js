@@ -701,6 +701,7 @@ export default {
   "st.skills.error.add_failed": "לא ניתן להוסיף מיומנות.",
   "st.provider.field.server_url": "שרת URL",
   "st.provider.field.api_base_url": "API בָּסִיס URL",
+  "st.provider.field.api_format": "פורמט API",
   "st.provider.field.api_key": "מפתח API",
   "st.provider.field.model": "מודל",
   "st.provider.field.model_optional": "מודל (אופציונלי)",

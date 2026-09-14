@@ -1,3 +1,12 @@
+import {
+  deepSeekPlannerExtras,
+  deepSeekThinkingExtras,
+  deepSeekVisionExtras,
+  isDeepSeekEndpoint,
+  isDeepSeekRootUrl,
+  stripDisabledDeepSeekReasoningEffort,
+} from './deepseek-config.js';
+
 const COMPATIBILITY_PRESETS = new Set(['auto', 'openai', 'qwen', 'deepseek', 'openrouter', 'custom']);
 const REASONING_EFFORTS = new Set(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const SYSTEM_PROMPT_ROLES = new Set(['auto', 'system', 'developer']);
@@ -96,11 +105,7 @@ export function normalizeOpenAICompatibleBaseUrl(value) {
     const url = new URL(trimmed);
     // DeepSeek's OpenAI-compatible endpoint is rooted at the origin, unlike
     // most OpenAI-compatible servers whose API lives below /v1.
-    if (url.hostname.toLowerCase() === 'api.deepseek.com' &&
-        (url.protocol === 'http:' || url.protocol === 'https:') &&
-        url.pathname === '/' && !url.search && !url.hash) {
-      return trimmed;
-    }
+    if (isDeepSeekRootUrl(url)) return trimmed;
     if ((url.protocol === 'http:' || url.protocol === 'https:')
         && url.pathname === '/'
         && !url.search
@@ -128,10 +133,11 @@ export function visionGenerationOptions(maxTokens = 800, {
   const extraBody = {};
   if (reasoningControl) {
     if (isDirectDeepSeekConfig(providerConfig || {})) {
-      // DeepSeek does not use the local Qwen/LM Studio template controls. Its
-      // native Chat Completions switch is a top-level `thinking` object.
-      extraBody.thinking = { type: 'disabled' };
-      return { maxTokens, temperature: 0, extraBody };
+      // DeepSeek does not use the local Qwen/LM Studio template controls; its
+      // native thinking switch is owned by the DeepSeek contract module.
+      return deepSeekVisionExtras(maxTokens, {
+        responses: shouldUseOpenAIResponsesApi(providerConfig || {}),
+      });
     }
     // LM Studio 0.4.8+ honors these fields for Chat Completions. They prevent
     // Qwen vision models from spending the entire output budget in a hidden
@@ -148,15 +154,19 @@ export function unsupportedVisionGenerationControl(error) {
   return /reasoning_effort|reasoning_tokens|chat_template_kwargs|enable_thinking/i.test(message);
 }
 
+/**
+ * Whether a config speaks DeepSeek's own API contract rather than a
+ * DeepSeek-flavoured OpenAI-compatible server. Local servers and the local
+ * runtime provider names are always excluded; an explicit `deepseek` preset in
+ * the Advanced panel opts a custom endpoint in. The DeepSeek-specific endpoint
+ * knowledge lives in `deepseek-config.js`.
+ */
 export function isDirectDeepSeekConfig(config = {}) {
   const providerName = clean(config.providerName);
   if (clean(config.category) === 'local' || LOCAL_OPENAI_COMPAT_PROVIDER_NAMES.has(providerName)) {
     return false;
   }
-  if (providerName === 'deepseek') return true;
-  try {
-    if (new URL(config.baseUrl || '').hostname.toLowerCase() === 'api.deepseek.com') return true;
-  } catch {}
+  if (isDeepSeekEndpoint(config)) return true;
   return normalizeProviderCompatibility(config).preset === 'deepseek';
 }
 
@@ -363,18 +373,13 @@ function mappedReasoningEffort(effort, preset) {
   return effort;
 }
 
-function mappedDeepSeekReasoningEffort(effort) {
-  // DeepSeek's public ladder is low/high/max. Keep the shared UI ladder
-  // expressive while translating values that DeepSeek only accepts for
-  // compatibility (medium and xhigh both mean high in its API).
-  if (effort === 'minimal') return 'low';
-  if (effort === 'medium' || effort === 'xhigh') return 'high';
-  return effort;
-}
-
 export function compatibilityRequestBody(config = {}) {
   const compat = normalizeProviderCompatibility(config);
-  if (compat.reasoningEffort === 'auto') return {};
+  // Direct DeepSeek Responses requests need an explicit effort. Its documented
+  // default is high, unlike the generic OpenAI Responses default of medium.
+  if (compat.reasoningEffort === 'auto' && !(
+    isDirectDeepSeekConfig(config) && shouldUseOpenAIResponsesApi(config)
+  )) return {};
 
   const preset = effectiveCompatibilityPreset(config);
   const enabled = compat.reasoningEffort !== 'off';
@@ -386,14 +391,14 @@ export function compatibilityRequestBody(config = {}) {
     };
   }
   if (preset === 'deepseek') {
-    if (!isDirectDeepSeekConfig(config)) {
-      return { chat_template_kwargs: { thinking: enabled } };
-    }
-    if (!enabled) return { thinking: { type: 'disabled' } };
-    return {
-      thinking: { type: 'enabled' },
-      reasoning_effort: mappedDeepSeekReasoningEffort(compat.reasoningEffort),
-    };
+    // The native contract (thinking object, effort ladder, Responses shape) and
+    // the hosted/local template fallback are both owned by deepseek-config.js.
+    return deepSeekThinkingExtras({
+      direct: isDirectDeepSeekConfig(config),
+      enabled,
+      effort: compat.reasoningEffort,
+      responses: shouldUseOpenAIResponsesApi(config),
+    });
   }
   if (preset === 'openrouter') {
     return enabled
@@ -432,11 +437,22 @@ export function plannerRequestBody(config = {}, {
   const isDirectDeepSeek = isDirectDeepSeekConfig(config) && !isLocalOpenAICompat;
   const body = {};
 
+  if (isDirectDeepSeek) {
+    // DeepSeek owns its classifier controls: the native thinking switch on Chat
+    // Completions (JSON Object mode only) and `reasoning.effort` on Responses.
+    return deepSeekPlannerExtras({
+      direct: true,
+      responses: shouldUseOpenAIResponsesApi(config),
+      includeResponseFormat,
+      disableThinking,
+      schema,
+      schemaName,
+    });
+  }
+
   if (disableThinking) {
     if (preset === 'openrouter') {
       body.reasoning = { enabled: false };
-    } else if (isDirectDeepSeek) {
-      body.thinking = { type: 'disabled' };
     } else if ((preset === 'qwen' && isLocalOpenAICompat) || providerName === 'vllm' || providerName === 'sglang') {
       body.chat_template_kwargs = { enable_thinking: false };
     } else if (preset === 'openai' && shouldUseOpenAIResponsesApi(config)) {
@@ -447,11 +463,6 @@ export function plannerRequestBody(config = {}, {
   }
 
   if (!includeResponseFormat) return body;
-  if (isDirectDeepSeek) {
-    // The direct DeepSeek API supports JSON Object mode, not JSON Schema.
-    body.response_format = { type: 'json_object' };
-    return body;
-  }
   if (schema && STRUCTURED_OUTPUT_PROVIDER_NAMES.has(providerName)) {
     body.response_format = {
       type: 'json_schema',
@@ -485,12 +496,10 @@ export function mergeProviderRequestBody(body, config = {}, perRequestExtraBody 
       result[key] = isPlainObject(value) || Array.isArray(value) ? safeClone(value) : value;
     }
   }
-  // DeepSeek's disabled-thinking contract omits reasoning_effort entirely.
-  // Per-call planner and vision overrides must clear an effort inherited from
-  // the configured compatibility preset.
-  if (isDirectDeepSeekConfig(config) && result.thinking?.type === 'disabled') {
-    delete result.reasoning_effort;
-  }
+  // DeepSeek's disabled-thinking contract omits reasoning_effort entirely, so a
+  // per-call planner/vision override must clear an effort inherited from the
+  // configured compatibility preset (see deepseek-config.js).
+  if (isDirectDeepSeekConfig(config)) stripDisabledDeepSeekReasoningEffort(result);
   return result;
 }
 

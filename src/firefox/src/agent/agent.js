@@ -6333,11 +6333,16 @@ export class Agent extends LoopDetector {
     );
     // OpenAI includes cache reads and writes in its input total. Anthropic and
     // Bedrock report cache reads and writes separately from regular input.
+    // DeepSeek also reports its prompt-cache hits inside the input total, but as
+    // top-level counters (`prompt_tokens = prompt_cache_hit_tokens + miss`)
+    // instead of OpenAI's nested `cached_tokens`.
     let includedCacheReadTokens = positiveNumber(
       usage?.prompt_tokens_details?.cached_tokens ??
       usage?.input_tokens_details?.cached_tokens ??
       usage?.promptTokensDetails?.cachedTokens ??
       usage?.inputTokensDetails?.cachedTokens ??
+      usage?.prompt_cache_hit_tokens ??
+      usage?.promptCacheHitTokens ??
       0
     );
     let includedCacheWriteTokens = positiveNumber(

@@ -331,6 +331,7 @@ export default {
 
   'st.provider.field.server_url': '서버 URL',
   'st.provider.field.api_base_url': 'API 기본 URL',
+  'st.provider.field.api_format': 'API 형식',
   'st.provider.field.api_key': 'API 키',
   'st.provider.field.model': '모델',
   'st.provider.field.model_optional': '모델 (선택)',

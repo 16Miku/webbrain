@@ -2561,9 +2561,17 @@ function renderProviders() {
     deepseek: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-v4-flash',
-          suggestions: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-flash',
+          suggestions: ['deepseek-flash', 'deepseek-v4-flash'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.deepseek.com' },
+        // Chat Completions is the default wire format; DeepSeek's Responses API
+        // is an opt-in that mainly adds JSON-schema structured output.
+        { key: 'apiFormat', labelKey: 'st.provider.field.api_format', type: 'select', collapsed: true,
+          options: [
+            { value: 'auto', label: 'Chat Completions (default)' },
+            { value: 'chat', label: 'Chat Completions' },
+            { value: 'responses', label: 'Responses API' },
+          ] },
         ...COST_ESTIMATE_FIELDS,
       ],
     },

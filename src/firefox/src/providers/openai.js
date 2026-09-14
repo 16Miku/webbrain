@@ -1,7 +1,6 @@
 import { BaseLLMProvider } from './base.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
 import {
-  isDirectDeepSeekConfig,
   isNewOpenAIContractConfig,
   isOfficialOpenAIConfig,
   isOpenCodeZenConfig,
@@ -137,9 +136,21 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     // Otherwise sniff the model name for known vision-capable identifiers.
     // Qwen went natively multimodal starting at 3.5 (no separate -VL
     // checkpoint needed), so qwen3\.[5-9] catches those alongside the
-    // older qwen*vl-suffixed lines.
+    // older qwen*vl-suffixed lines. Vendor-specific families extend
+    // `_modelNameSniffedVision` (see the vendor subclass in this folder)
+    // rather than widening this shared regex.
     const m = (this.config.model || '').toLowerCase();
-    return /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|claude|gemini|grok|minimax-m3|kimi-k(?:-?3|2\.[5-9])|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|qwen3p8-27b|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|step-3|deepseek-v4-flash-vision-exp/.test(m);
+    return this._modelNameSniffedVision(m);
+  }
+
+  /**
+   * Shared model-name vision sniffing. Subclasses override this hook so a
+   * vendor-specific allow/deny list never has to duplicate the explicit
+   * user-override and auto-detection precedence handled by the
+   * `supportsVision` getter above.
+   */
+  _modelNameSniffedVision(model) {
+    return /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|claude|gemini|grok|minimax-m3|kimi-k(?:-?3|2\.[5-9])|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|qwen3p8-27b|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|step-3/.test(String(model || ''));
   }
 
   get useCompactPrompt() {
@@ -367,7 +378,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (!providerName && this.baseUrl === 'https://api.openai.com/v1') return true;
     return providerName === 'openai'
       || providerName === 'openrouter'
-      || providerName === 'deepseek'
       || providerName === 'gemini';
   }
 
@@ -441,12 +451,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   _supportsReasoningContentReplay(options = {}) {
-    if (isDirectDeepSeekConfig({
-      ...this.config,
-      providerName: this.config.providerName || this.name,
-      baseUrl: this.baseUrl,
-      model: this.model,
-    })) return true;
     if (String(this.config.providerName || '').trim().toLowerCase() !== 'kimi') return false;
     const model = String(this.model || '').trim().toLowerCase();
     if (KIMI_PRESERVED_THINKING_MODELS.has(model)) return true;
