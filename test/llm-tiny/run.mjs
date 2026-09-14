@@ -81,6 +81,15 @@ function safeSegment(value) {
   return String(value).replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '') || 'participant';
 }
 
+function isStateChangingBatchAction(action, adapter) {
+  if (adapter === 'fara') {
+    // Read-only/terminal Fara actions cannot undo a completed fixture.
+    return !['mouse_move', 'scroll', 'hscroll', 'wait', 'pause_and_memorize_fact', 'terminate', 'ask_user_question'].includes(action.args?.action);
+  }
+  // Read-only observations, terminal markers and pure scrolling cannot undo a pass.
+  return !['get_page_state', 'get_accessibility_tree', 'dropdown_options', 'done', 'scroll'].includes(action.name);
+}
+
 function percentile(values, fraction) {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -268,7 +277,7 @@ function normalizeFaraKey(key) {
   return normalizeComputerKey(key);
 }
 
-async function performFaraAction(page, action) {
+async function performFaraAction(page, action, expectedUrl) {
   const args = action.args || {};
   switch (args.action) {
     case 'mouse_move': {
@@ -317,10 +326,21 @@ async function performFaraAction(page, action) {
     case 'hscroll':
       await page.mouse.wheel(-(Number(args.pixels) || 0) * VIEWPORT.width / FARA_DISPLAY_SIZE, 0);
       return 'Scrolled horizontally.';
-    case 'visit_url':
-      if (!String(args.url || '').startsWith('http://127.0.0.1:')) throw new Error('Fixture runner rejects navigation outside its local server');
-      await page.goto(args.url, { waitUntil: 'domcontentloaded' });
-      return `Visited ${args.url}.`;
+    case 'visit_url': {
+      // Parse instead of prefix-matching: `http://127.0.0.1:80@external.example/`
+      // passes a prefix test while its real host is external. Require the exact
+      // fixture URL; this lane has no request-routing isolation like v2.
+      let destination, expected;
+      try {
+        destination = new URL(String(args.url || ''));
+        expected = new URL(String(expectedUrl || ''));
+      } catch {
+        throw new Error('Fixture runner rejects navigation outside its local server');
+      }
+      if (destination.username || destination.password || destination.href !== expected.href) throw new Error('Fixture runner rejects navigation outside its local server');
+      await page.goto(destination.href, { waitUntil: 'domcontentloaded' });
+      return `Visited ${destination.href}.`;
+    }
     case 'history_back':
       await page.goBack({ waitUntil: 'domcontentloaded' });
       return 'Returned to the previous page.';
@@ -399,19 +419,22 @@ async function runCase(browser, baseUrl, participant, caseRecord, participantDir
       const actionResults = [];
       // Execute the full batch before judging: later actions in the same model
       // response must still run even if an earlier action completed the UI.
+      // A latch alone is insufficient because the fixture's complete flag never
+      // clears; trailing state-changing actions invalidate an intermediate pass.
       let batchPassed = false;
+      let lastPassIndex = -1;
       let batchEnded = false;
       for (let actionIndex = 0; actionIndex < actions.length; actionIndex += 1) {
        const action = actions[actionIndex];
        try {
         const actionResult = participant.adapter === 'fara'
-          ? await performFaraAction(page, action)
+          ? await performFaraAction(page, action, `${baseUrl}/case/${caseRecord.id}`)
           : participant.adapter === 'browser-use'
             ? await performBrowserUseAction(page, observation, action)
             : await performIndexedAction(page, observation, action.name, action.args);
         actionResults.push(actionResult);
         trace.push({ step, actionIndex, latencyMs: actionIndex === 0 ? latencyMs : 0, action: { name: action.name, args: action.args }, actionResult, content: message.content || null });
-        if (await fixtureCompleted(page)) batchPassed = true;
+        if (await fixtureCompleted(page)) { batchPassed = true; lastPassIndex = actionIndex; }
         if ((participant.adapter === 'fara' && ['terminate', 'ask_user_question'].includes(action.args?.action)) || ['done'].includes(action.name)) {
           batchEnded = true;
         }
@@ -423,7 +446,12 @@ async function runCase(browser, baseUrl, participant, caseRecord, participantDir
         break turns;
       }
       }
-      if (batchPassed) { status = 'passed'; break turns; }
+      if (batchPassed) {
+        const undone = actions.slice(lastPassIndex + 1).some(a => isStateChangingBatchAction(a, participant.adapter));
+        if (!undone) { status = 'passed'; break turns; }
+        // Intermediate pass was undone by trailing actions; require re-verification.
+        batchPassed = false;
+      }
       if (batchEnded) {
         status = 'ended_without_success';
         break turns;
@@ -510,6 +538,9 @@ if (args.config && args.config !== true) {
   }];
 }
 const participants = participantInputs.map(createParticipant);
+if (new Set(participants.map(p => p.name)).size !== participants.length) throw new Error('Participant names must be unique');
+const participantDirs = participants.map(p => safeSegment(p.name));
+if (new Set(participantDirs).size !== participantDirs.length) throw new Error('Participant names map to the same directory; use distinct labels');
 const only = args.only && args.only !== true
   ? new Set(String(args.only).split(',').map(value => String(Number(value)).padStart(2, '0')))
   : null;
