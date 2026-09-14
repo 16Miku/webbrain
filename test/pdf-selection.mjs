@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -105,7 +105,7 @@ async function testScannedPdfOcrContract() {
 }
 
 async function testOcrNormalizationKeepsOnlyBoundedNormalizedLines() {
-  const { normalizePdfOcrResult } = await import(ocrModulePath);
+  const { normalizePdfOcrResult } = await import(pathToFileURL(ocrModulePath).href);
   const result = normalizePdfOcrResult({
     lines: [
       { text: '  Keep this text  ', x: 0.1, y: 0.2, width: 0.7, height: 0.04, confidence: 0.91 },
@@ -152,7 +152,7 @@ async function testPdfResponseStreamingStopsAtTheByteLimit() {
   const firefoxModuleSource = await readFile(firefoxPdfStreamModulePath, 'utf8');
   assert.equal(firefoxModuleSource, chromeModuleSource, 'Chrome and Firefox must share the same streaming limit behavior');
 
-  const { readPdfResponseBytes } = await import(pdfStreamModulePath);
+  const { readPdfResponseBytes } = await import(pathToFileURL(pdfStreamModulePath).href);
   let cancelled = false;
   const oversizedResponse = {
     headers: { get: () => '1' },

@@ -602,7 +602,7 @@ CDP capture → JPEG/PNG data URL
 | User memory auto-learn | Controls whether post-turn extractor calls run |
 | Site adapters toggle | Controls whether site-specific guidance is prepended |
 | Research escalation | Off by default; when enabled, permits per-prompt consent requests for the visible ChatGPT helper flow |
-| `/allow-api` | Controls whether the agent can use API mutations |
+| Always allow API mutations / `/allow-api` | The persistent setting (on by default) or a per-conversation override waives permission prompts for write-method network egress |
 | CapSolver toggle | Controls whether CAPTCHA data is sent to a third-party solver |
 
 ---

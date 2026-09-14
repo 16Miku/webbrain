@@ -2584,7 +2584,8 @@ async function loadApiMutationObserverSetting() {
     const stored = await chrome.storage.local.get({ [API_MUTATION_OBSERVER_KEY]: API_MUTATION_OBSERVER_DEFAULT });
     setApiMutationObserverEnabled(stored[API_MUTATION_OBSERVER_KEY] !== false);
   } catch (e) {
-    setApiMutationObserverEnabled(API_MUTATION_OBSERVER_DEFAULT);
+    // Do not capture requests when a stored opt-out cannot be read.
+    setApiMutationObserverEnabled(false);
   }
 }
 

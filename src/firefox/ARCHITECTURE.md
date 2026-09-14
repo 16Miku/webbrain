@@ -18,7 +18,7 @@ PDF handling is an intentional platform exception: Firefox has no equivalent
 to Chrome's global `mime_types_handler`/`chrome.mimeHandler` route in this
 extension. Firefox therefore keeps its native PDF viewer as the default and
 uses an explicit WebBrain PDF viewer context-menu entry when the user chooses
-it. The Chrome-only automatic PDF viewer opt-in setting does not apply to
+it. The Chrome-only automatic PDF viewer setting (on by default) does not apply to
 Firefox; the explicit Firefox entry remains available independently.
 
 The explicit Firefox route is URL/GET based. It cannot replay an arbitrary

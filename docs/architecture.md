@@ -163,7 +163,7 @@ background.js handleMessage('chat_start')
 _enrichUserMessageWithCurrentPage(tabId, messages, userMessage)
 
   1. Collect URL + title via chrome.tabs.get(tabId)
-  2. If /allow-api set for this tab → inject [USER OVERRIDE] preamble
+  2. If persistent API permission or this tab's /allow-api is active → inject [API ALLOWED] preamble
   3. If site adapters enabled → getActiveAdapter(url) → inject adapter notes
   4. If provider supports vision (or dedicated vision model configured):
      a. Capture viewport screenshot via CDP
@@ -868,15 +868,18 @@ Three independent detectors run after every tool call:
 
 When the API mutation observer is enabled and a repeated `click` /
 `click_ax` loop is detected, `_detectApiShortcut()` checks the per-tab
-webRequest buffer populated by `background.js`. The observer is on by default.
+webRequest buffer populated by `background.js`. The observer is on by default,
+can be disabled in Settings, and stays disabled if its preference cannot be read.
 If each repeated click produced the same exact URL + HTTP method within a
 3-second window, the loop warning includes a `fetch_url({url, method})`
 suggestion. For replayable XHR/fetch mutations, the observer also keeps bounded
 request bodies and a small allowlist of replay-safe headers behind an opaque
 `replayRequestId`; hidden form tokens are reused internally by `fetch_url` only
-for the same tab and origin, not printed into model context. Write methods still
-require the conversation's `/allow-api` state; GET requests and non-network
-capabilities still use the normal permission gate.
+for the same tab and origin, not printed into model context. Write methods are
+authorized by the persistent **Always allow API mutations** setting (on by
+default) or the conversation's `/allow-api` override. An unreadable persistent
+setting grants no authorization. GET requests and non-network capabilities still
+use the normal permission gate.
 
 ### Context Management (`agent.js`)
 
@@ -974,7 +977,7 @@ Key points:
 - No additional auth: the agent IS the user's browser session
 - Ask is read-only; Act and Dev are action modes. Dev adds source/style/page-debugging tools and is blocked for Compact-tier providers.
 - Plan before Act can require human approval before any action-mode tool call
-- `/allow-api` flag gates destructive HTTP methods via `fetch_url`
+- The persistent **Always allow API mutations** setting (on by default) or the conversation's `/allow-api` override waives permission prompts for write-method `fetch_url` / `research_url` calls
 - Tool results capped at 8 KB to limit prompt-injection surface
 - `strictSecretMode` instructs the model not to quote credentials in summaries, redacts known credential values (including short numeric PIN/CVV values) out of everything a cloud run publishes, and fails closed to scalar redaction if its bounded secret registry fills
 - Trace data is local-only (IndexedDB), never transmitted

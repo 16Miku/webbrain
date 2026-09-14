@@ -46648,6 +46648,56 @@ test('API mutation observer setting defaults on and controls the request observe
   }
 });
 
+for (const label of ['chrome', 'firefox']) {
+  for (const { name, stored, storageError, expected } of [
+    { name: 'missing setting defaults on', stored: {}, expected: true },
+    { name: 'explicit opt-in stays on', stored: { apiMutationObserverEnabled: true }, expected: true },
+    { name: 'explicit opt-out stays off', stored: { apiMutationObserverEnabled: false }, expected: false },
+    { name: 'storage read failure keeps capture off', storageError: true, expected: false },
+  ]) {
+    test(`${label} API mutation observer startup: ${name}`, async () => {
+      const source = fs.readFileSync(path.join(ROOT, `src/${label}/src/background.js`), 'utf8');
+      const start = source.indexOf('const API_REQUESTS_PER_TAB_LIMIT =');
+      const end = source.indexOf('\nloadApiMutationObserverSetting();', start);
+      assert.ok(start >= 0 && end > start, `${label}: observer startup block missing`);
+      const requestListeners = new Set();
+      const headerListeners = new Set();
+      const event = (listeners) => ({
+        addListener: (listener) => listeners.add(listener),
+        removeListener: (listener) => listeners.delete(listener),
+      });
+      const api = {
+        storage: {
+          local: {
+            get: async (defaults) => {
+              if (storageError) throw new Error('Storage unavailable');
+              return { ...defaults, ...stored };
+            },
+          },
+        },
+        webRequest: {
+          onBeforeRequest: event(requestListeners),
+          onBeforeSendHeaders: event(headerListeners),
+        },
+      };
+      const context = { [label === 'chrome' ? 'chrome' : 'browser']: api };
+      const ready = vm.runInNewContext(
+        `${source.slice(start, end)}\nloadApiMutationObserverSetting();`,
+        context,
+      );
+      assert.equal(requestListeners.size, 0, 'request capture must wait for storage hydration');
+      assert.equal(headerListeners.size, 0, 'header capture must wait for storage hydration');
+      await ready;
+      assert.equal(requestListeners.size, expected ? 1 : 0);
+      assert.equal(headerListeners.size, expected ? 1 : 0);
+      if (!expected) {
+        assert.equal(context.__webbrainApiRequests.size, 0);
+        assert.equal(context.__webbrainApiRequestReplay.size, 0);
+      }
+    });
+  }
+}
+
 test('persistent API mutation permission defaults on, is portable, and mirrored', () => {
   for (const [label, bgRel, settingsRel, htmlRel, panelRel, configRel] of [
     ['chrome', 'src/chrome/src/background.js', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/config-transfer.js'],
