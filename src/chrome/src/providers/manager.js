@@ -1794,7 +1794,26 @@ export class ProviderManager {
   }
 
   async stopWebgpuDownload(msg) {
-    return this._webgpuProvider().stopDownload(msg);
+    const result = await this._webgpuProvider().stopDownload(msg);
+    // Removing the model (from Settings, Apocalypse Mode, or any other
+    // surface) while WebGPU is selected would leave chats failing readiness.
+    // Fall back centrally so the active selection stays usable without each
+    // UI having to change the global provider (Apocalypse must not do so).
+    if (this.activeProviderId === 'webgpu') {
+      try {
+        const currentModel = this.providers.get('webgpu')?.config?.model;
+        const status = await this._webgpuProvider().downloadStatus({ model: currentModel }).catch(() => null);
+        if (status && status.ready !== true) {
+          this.activeProviderId = this.providers.has(WEBBRAIN_CLOUD_PROVIDER_ID)
+            ? WEBBRAIN_CLOUD_PROVIDER_ID
+            : [...this.providers.keys()].find((candidate) => candidate !== 'webgpu') || WEBBRAIN_CLOUD_PROVIDER_ID;
+          await this.save();
+        }
+      } catch {
+        // Keep the selection; chat will report the missing download.
+      }
+    }
+    return result;
   }
 
   /**

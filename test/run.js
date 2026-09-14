@@ -62540,6 +62540,13 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     await manager.updateProvider('webgpu', { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
     assert.equal(manager.activeProviderId, 'webgpu', 'editing the active WebGPU model to a ready target must keep the selection');
     sentMessages.length = fallbackProbeBase;
+    manager.activeProviderId = 'webgpu';
+    textModelReady = false;
+    const stopProbeBase = sentMessages.length;
+    await manager.stopWebgpuDownload({ model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+    assert.equal(manager.activeProviderId, 'webbrain_cloud', 'removing the active WebGPU model must fall back centrally so Apocalypse removal stays usable');
+    sentMessages.length = stopProbeBase;
+    textModelReady = true;
 
     const provider = await manager.getLocalVisionFallbackProvider();
     assert.ok(provider instanceof WebGPUVisionProvider);
