@@ -21,7 +21,7 @@
     "maxTokens": 4096
   },
   "files": {
-    "cases.mjs": "b366181fd85662f94c91b4f31cf4e8d82c4e10d20de3125fb77cfe24dccc2276",
+    "cases.mjs": "7aa0ed9037c250dc779aac91b9c4a5c7bfad77a64875560b9f64a696dddeae50",
     "models.mjs": "368d696df927960f2ab1c86f5039040bff65e4c8bcebc2283d896d6a127f3999",
     "run.mjs": "887f7e8e4896adce3f97d1d82c28e9874e2a2b5f58b6135b6412124a3c3920fb",
     "compare.mjs": "03094a56e61c322307656e85837f861b0f5ed20285212f2a980bbf4546fdeb12",
@@ -639,7 +639,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "032a3e7b582a6fbebc1b14b377146ef84e4974b0546d8fc9ec8694c63e4119b5"
+      "sha256": "79724edf10fcab9fa4a43c990a9b5ed7361cb8e3aa5c40566ab1ee887b27f082"
     },
     {
       "id": "heldout-calculation-01-s43",
@@ -647,7 +647,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "3cb11701f8d40d994a0d371ef53c96e061f4dd79273795be8d5d6385ff47808a"
+      "sha256": "62450cf7a0f78133e70f1ed78cad55e024ada682e946e5bb956d78ff09ecc9dd"
     },
     {
       "id": "heldout-calculation-01-s89",
@@ -655,7 +655,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "9b776fe4002a82a8bc5b0bcb6fc67236bc9d5817760ef5c7a7ea1a5083533d86"
+      "sha256": "cbb340f7f433545e59336c015a0bfd6369153ab8e430f3de0437dbc13e221db7"
     },
     {
       "id": "heldout-calculation-02-s17",
@@ -663,7 +663,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "87cbaf8b336fa450cb4a20faf435338242d984be5e72bf9e72d9b60720873530"
+      "sha256": "d76548222afc13717be788f51679a28ca6e23a1cad441e5354c874a12e32e80f"
     },
     {
       "id": "heldout-calculation-02-s43",
@@ -671,7 +671,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "b73ab8b667444661ba66b9fee1d3b96d5554cef79b540d27b945beca7c910212"
+      "sha256": "f43639e14e3c7ee95c3b232ff071fcc7404db75d01c350d032d59c72687a1907"
     },
     {
       "id": "heldout-calculation-02-s89",
@@ -679,7 +679,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "1abe439255d24b32815c3e4bead48ce0e7a847a33f4673797d09ad978c4919a9"
+      "sha256": "3845735dade7507f09100fd7a794047b1a004406ef4c32897bb878ddb9bbecde"
     },
     {
       "id": "heldout-calculation-03-s17",
@@ -687,7 +687,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "58a386fb6837d13fda5c26569dae57fe901113aa50ad9fac0cc4d85a10e9950b"
+      "sha256": "45622f8c0caea85b600a65773047283a31cf6171fc844abb4fa456da5e09f8d5"
     },
     {
       "id": "heldout-calculation-03-s43",
@@ -695,7 +695,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "93b86ed2f78a4c396369490eca08688c53b48fc8ac275ddd8713c50b72a4c534"
+      "sha256": "fb334ae3cbc046f0d05ab7fbd068a1e84d5bf6370d90d44cbf7b08daa5840b0b"
     },
     {
       "id": "heldout-calculation-03-s89",
@@ -703,7 +703,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "43ccace08c2c77ce7f85ce8cfe8ba6cd71425a4db01e71244b76b2f3ad6b5dcf"
+      "sha256": "f7a0282d94edc24e8120935cc6582079725abcff12f5267952aca196dc6f8cab"
     },
     {
       "id": "heldout-calculation-04-s17",
@@ -711,7 +711,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "fb9b9ef13872aaf708645730b8cd46dfda77cf68b8dda33beb1579b074c1259f"
+      "sha256": "146c78c3ab75d8c3b941f2c3bac8c3a4863f151f6f583a15235fa7bb8530ea96"
     },
     {
       "id": "heldout-calculation-04-s43",
@@ -719,7 +719,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "c7ca0ef3e090653527d62dfad75284c4face4a500ea3a36859416284568ea5bd"
+      "sha256": "5d2f99c508cdd098341fd5862d38e7a3a4dc1c5e96b1268c89031e721fb71f3d"
     },
     {
       "id": "heldout-calculation-04-s89",
@@ -727,7 +727,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "99cf693a3acc7021390513273bf94c03f0a57e80a5a91edbf2eb454f46eb78ad"
+      "sha256": "12698424b27a02fd609420e55d60e563cd0eba79d5c71a54c0ae9d3a522960f9"
     },
     {
       "id": "heldout-calculation-05-s17",
@@ -735,7 +735,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "1f01e928c0d07a291e38e313c4d2f31c3bb9a74f2d6ffe30ace80e96091b4f7b"
+      "sha256": "58f6c096013b7436a17d559fbed267d0c16bab71da4f880fde389283945d7bb9"
     },
     {
       "id": "heldout-calculation-05-s43",
@@ -743,7 +743,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "6348d54250f7a64671c0a1a34909967b6d5cecfa3ee32ddb8882856449af0eb7"
+      "sha256": "e56053460713ed886a8d17079466fb1e5ca9f4a6819837de4dbf6bceeb39c52a"
     },
     {
       "id": "heldout-calculation-05-s89",
@@ -751,7 +751,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "1a76f891759e7de272ab392dbf8d16e2231a988a454a6f8be9f9448801468df2"
+      "sha256": "8b480bedd0ecfb4787cd9cd3abaaedc704de8dd45bd240857875de2a8e6bf2da"
     },
     {
       "id": "heldout-calculation-06-s17",
@@ -759,7 +759,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "2f15afae6ebad65a7883ff04c9b5226f7f21e0cdd53768dcfbdc0fa9914dd11f"
+      "sha256": "5b01ed410b445145ff501149a1f72b0eaa75e3a427cb70f39c3fd2db1dcc39e8"
     },
     {
       "id": "heldout-calculation-06-s43",
@@ -767,7 +767,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "c87b8b851d6d02c258dd232a0e0cd22177729edbfa05e46683e459d9a2f8cf3e"
+      "sha256": "b240ad2066351f08c4cd2b17112186fea7590e2486d817374759f5d6d65ebf99"
     },
     {
       "id": "heldout-calculation-06-s89",
@@ -775,7 +775,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "27cdc4fab7a72953af0bdc306f5db10f3df14a8c955483360dfcb572a7b54a69"
+      "sha256": "bac248e3e05ef306b3e2dcd007b4bf6757cc58d6737abce39b47e19078359ddf"
     },
     {
       "id": "heldout-calculation-07-s17",
@@ -783,7 +783,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "0fedf12e9e7d499197696b3cd0beb9331df59f67fec6579d43cc27bcab6da066"
+      "sha256": "6c938060696624ab77a621de48fa48ab7d959021648357f931e5bd15f6b01a76"
     },
     {
       "id": "heldout-calculation-07-s43",
@@ -791,7 +791,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "e38dfe2cd18ab46aa36e04f92eea5df5a072e83ec500f821dfda6ac33d8e8b17"
+      "sha256": "22c2717e10a1c500690dc72bcb2f1c4e3cb44e1888f13e71feab05d91f1e8fd8"
     },
     {
       "id": "heldout-calculation-07-s89",
@@ -799,7 +799,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "6e224d9b7a38a3eaa81a0a77f54b43445d3bd81b6b23cfcfdf087003e45c06eb"
+      "sha256": "07c25f5550c7d642db90748b7da824d987216ae603c04b748d298e4ad3ee463c"
     },
     {
       "id": "heldout-calculation-08-s17",
@@ -807,7 +807,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "f61f78cc49912b3ac3daefdd0e66cc8d9caa8cc64b5b3e427f5190b5d091fdf4"
+      "sha256": "00e25f0b6448c7ae3c349bc4f9873a34c356256e895bc7497e3ec9fe4540b13f"
     },
     {
       "id": "heldout-calculation-08-s43",
@@ -815,7 +815,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "efd579a6ddf57fa384a3ba15bb0ef72ebee8992ff2ee5e6c3b8c821981d9760d"
+      "sha256": "0f63cb45d0d5c96aaacfdceaa82764ca0601bc3f081efdb13b759ff19817fd9f"
     },
     {
       "id": "heldout-calculation-08-s89",
@@ -823,7 +823,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "476d359242de1ad00629e30e99eb2b1f35cc8acceac04e5b53ad6dc5f1dde818"
+      "sha256": "d4d84b3d58ea29578daa696ff869363c56c64a396234bca60b5c88cbd7ecbed0"
     },
     {
       "id": "heldout-calculation-09-s17",
@@ -831,7 +831,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "94376130632fb5af5f6fdfb64da4a38fea8aca864cf89461ed04908146ebb112"
+      "sha256": "5fce85463d9a503f5e56054482ae2e4e7af583dd3d96794ac3244e8f5fd78551"
     },
     {
       "id": "heldout-calculation-09-s43",
@@ -839,7 +839,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "168565d2dadd2cf9044e326c3dd10440b0c18e1e60d3b3852828fd68db02257c"
+      "sha256": "db3b5985dc2c777f596d60f731569120bb0463264fdc6f4d2da055c5cba873d3"
     },
     {
       "id": "heldout-calculation-09-s89",
@@ -847,7 +847,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "a3ab6c61575c9a23c94e79ad4eb017da918b5c23a736bdeb292ef642d337f2d0"
+      "sha256": "224951f747e7dc1b433ec4a83ac8d8bf1c99c1a67287c352ef47b24dd04322a2"
     },
     {
       "id": "heldout-calculation-10-s17",
@@ -855,7 +855,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "ef77f446bbc8501144e4d80ad278e2a2a97c940bc6f652f6b472130993b21904"
+      "sha256": "020e0a0c5b2e111727b348bfbeadcb7ab91baf899dcb2d4c62e85b02087dc19c"
     },
     {
       "id": "heldout-calculation-10-s43",
@@ -863,7 +863,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "16e74f0a88c3719c40404199a0a5997d19f296692e92445cd71e96c5630c4849"
+      "sha256": "fb4029fa7c4cd4c9abf651beb1db0cfff2b3c08ce4e72278c7425ead2b55f9d3"
     },
     {
       "id": "heldout-calculation-10-s89",
@@ -871,7 +871,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "0bc57fbf50a2366951c9a8e7b716df9e54cdc78b8f830b768df0c85190513ccd"
+      "sha256": "a30d4669b374f4b4f772135cecfbfba711df43e4465c04a0d2137511d8e34650"
     },
     {
       "id": "heldout-calculation-11-s17",
@@ -879,7 +879,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "1cdb0ae8904dd2ab9eb707385a442cc57f3dc606e1d6dcf2a7052b4deafc98a4"
+      "sha256": "215e7bc8aeab4ad957aa0c435bace4b5cb87c3643ad4c9b171648ed4a18e853b"
     },
     {
       "id": "heldout-calculation-11-s43",
@@ -887,7 +887,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "dfd296cf6474a6e6b780fd1a8b889980bc39b21bd2d512ba0aad09a6d7614d0b"
+      "sha256": "cf3e3b2a78970de0237f438ad2e13ece14a1598e75380b1d574641e7b1de2c7b"
     },
     {
       "id": "heldout-calculation-11-s89",
@@ -895,7 +895,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "a7449c8906d63d937a2bfc1ff2576e424a6c6fcb91d85c8e5a6172e505b34c8f"
+      "sha256": "9d2afbd4ae2e336b4c98a8280401d74e2360198d44ecf2b89a16efcd3c2ad8a4"
     },
     {
       "id": "heldout-calculation-12-s17",
@@ -903,7 +903,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "6062d52cbb58eff9a3a7e95f23fa66e1c82354ca5b4cf41396ac6f1690cceda7"
+      "sha256": "cfc18e1e896b3f84aac3b85011f35312b5028eb32d2b3f8da31327096582f50e"
     },
     {
       "id": "heldout-calculation-12-s43",
@@ -911,7 +911,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "12eaf470cde3c211890092a4aea221332f35a575fe3238232d142c0f8a134c58"
+      "sha256": "61329fe0af017effa59f8c145fe4ce2c35a43534c5f7ec368040c1737ff54f81"
     },
     {
       "id": "heldout-calculation-12-s89",
@@ -919,7 +919,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "9f066fca475c69c9511c0ccc06a75b3dfda1859b1ade1a5c111942c04155f318"
+      "sha256": "8b88ec15f96603600a9a8ac2b51545904a94da0e6d09c6e70ea2b53d3e29a3e7"
     },
     {
       "id": "heldout-calculation-13-s17",
@@ -927,7 +927,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "76d37cd6ca90c2d3787db906de9ebd2343843964f1d720c5bd7a20465be32a1a"
+      "sha256": "322b61e9dc8bd50f4356b942dabe50eebf32f78e658498e8ce52628eb5f8b568"
     },
     {
       "id": "heldout-calculation-13-s43",
@@ -935,7 +935,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "8baadbfbdb2a0507bae0742f37d01ab775ecb7371ac23f5087819032d0eb266c"
+      "sha256": "49ae5d19d283ad55904c0e0eca398289a96a53e49c1bd95ba2a3cc477d3126c6"
     },
     {
       "id": "heldout-calculation-13-s89",
@@ -943,7 +943,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "c41b7be4c2abb405dce32b2d7ec3f99d6cccb7a3416cae74070f1435a6711435"
+      "sha256": "8e328caf20446e0007c6f40014b61cf67b9f6b5ea89ce58f0b7afe7db5b739e1"
     },
     {
       "id": "heldout-calculation-14-s17",
@@ -951,7 +951,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "297f6d8e890cbfb1cc5f7dcc7ffd8ed5156e675481ba3846465134d186fb0ca6"
+      "sha256": "7ace76841c4a6fafe9a286e761bd1d1d1e5cd55e39aa36cb37e23eae10f557bb"
     },
     {
       "id": "heldout-calculation-14-s43",
@@ -959,7 +959,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "92106d9afbb62f1cc589085f01c0997fde1b2f400dd8fcc500288e6f4206a05a"
+      "sha256": "365b282cc4668271004842d44d8a1b3445db1b17360f2425559a4bd42d12ef1c"
     },
     {
       "id": "heldout-calculation-14-s89",
@@ -967,7 +967,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "c371d646362f3beb4b0eeab864a08936f006c00b1b4861fba72d201eeae4aa5b"
+      "sha256": "56cf4dc8d6a3931dbc3c064bd7e21f2854318a33ff6eb49d8ce7d64932a4acb1"
     },
     {
       "id": "heldout-calculation-15-s17",
@@ -975,7 +975,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 17,
-      "sha256": "467aafd4e4f59ac76a5a42e69ad18ca35e85ae73f859cd2b3cfc02fd3939a7fb"
+      "sha256": "6ec982311033e1e34479e828976f4b5b0d056d2a36139fec1f1d691f68bb8e60"
     },
     {
       "id": "heldout-calculation-15-s43",
@@ -983,7 +983,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 43,
-      "sha256": "2487e62b2d1ad1ef55901e29e3e09db459ce2e6f42b5eff06dec0bc391542bbd"
+      "sha256": "80a8667afc8b892ca63558407fd31df5d6056df14e90b8ee8c084a0380ec330e"
     },
     {
       "id": "heldout-calculation-15-s89",
@@ -991,7 +991,7 @@
       "category": "calculation",
       "split": "heldout",
       "seed": 89,
-      "sha256": "e60ff2c772a77e4b3005ef53cf11f82cac39c048f6e6b4eee6a711a955188d2c"
+      "sha256": "73b983c63ab931b15a17f68e31f866ec522729f26249c7fa79dc4be210a8313a"
     },
     {
       "id": "heldout-evidence-01-s17",

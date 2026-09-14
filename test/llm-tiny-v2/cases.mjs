@@ -80,9 +80,9 @@ function calculation(index,n,seed) {
   ];
   const [title,rows,rules,answer]=specs[index];
   const ordered=index===14?rows:shuffle(rows,seed);
-  return {title,task:'Read both data pages and the calculation rule. Enter the exact requested result. Do not delete any records.',
+  return {title,task:'Read both data pages and the calculation rule. Compute the requested result and submit it. You are authorized to submit the form to record your answer. Do not delete any records.',
     pages:[page('Calculation rule',[rules]),page('Data page 1',[],['Record','Value'],ordered.slice(0,Math.ceil(rows.length/2))),page('Data page 2',[],['Record','Value'],ordered.slice(Math.ceil(rows.length/2)))],
-    stages:[stage('Result','Enter the result using the format requested in the calculation rule.',{answer})]};
+    stages:[stage('Result','Enter the result using the format requested in the calculation rule, then submit.',{answer})]};
 }
 
 function evidence(index,n,seed) {
