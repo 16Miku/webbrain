@@ -869,7 +869,8 @@ Three independent detectors run after every tool call:
 When the API mutation observer is enabled and a repeated `click` /
 `click_ax` loop is detected, `_detectApiShortcut()` checks the per-tab
 webRequest buffer populated by `background.js`. The observer is on by default,
-can be disabled in Settings, and stays disabled if its preference cannot be read.
+can be disabled in Settings, and stays disabled if its preference cannot be read
+or contains a non-boolean value.
 If each repeated click produced the same exact URL + HTTP method within a
 3-second window, the loop warning includes a `fetch_url({url, method})`
 suggestion. For replayable XHR/fetch mutations, the observer also keeps bounded

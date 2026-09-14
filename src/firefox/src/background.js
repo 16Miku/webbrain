@@ -144,7 +144,7 @@ const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = browser.storage.local
   .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
   .then((stored) => {
-    agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] !== false);
+    agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
   })
   .catch(() => {
     // An unreadable setting must not bypass a stored opt-out.
@@ -1067,7 +1067,8 @@ browser.storage.onChanged.addListener((changes) => {
   }
   let refreshPrompts = false;
   if (changes[ALWAYS_ALLOW_API_MUTATIONS_KEY]) {
-    agent.setAlwaysAllowApiMutations(changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue !== false);
+    const value = changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue;
+    agent.setAlwaysAllowApiMutations(value === undefined || value === true);
     refreshPrompts = true;
   }
   if (changes.useSiteAdapters) {
@@ -1084,7 +1085,8 @@ browser.storage.onChanged.addListener((changes) => {
     refreshPrompts = true;
   }
   if (changes[API_MUTATION_OBSERVER_KEY]) {
-    setApiMutationObserverEnabled(changes[API_MUTATION_OBSERVER_KEY].newValue !== false);
+    const value = changes[API_MUTATION_OBSERVER_KEY].newValue;
+    setApiMutationObserverEnabled(value === undefined || value === true);
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = !!changes.strictSecretMode.newValue;
@@ -1726,7 +1728,7 @@ function setApiMutationObserverEnabled(enabled) {
 async function loadApiMutationObserverSetting() {
   try {
     const stored = await browser.storage.local.get({ [API_MUTATION_OBSERVER_KEY]: API_MUTATION_OBSERVER_DEFAULT });
-    setApiMutationObserverEnabled(stored[API_MUTATION_OBSERVER_KEY] !== false);
+    setApiMutationObserverEnabled(stored[API_MUTATION_OBSERVER_KEY] === true);
   } catch (e) {
     // Do not capture requests when a stored opt-out cannot be read.
     setApiMutationObserverEnabled(false);

@@ -161,9 +161,9 @@ The primary threat: a malicious page crafts content that, when read by the agent
 
 Set per-conversation via the `/allow-api` slash command in the side panel, or
 persistently with **Always allow API mutations** under **Settings → General →
-Advanced**. The persistent setting is on by default. If it cannot be read from
-storage, it grants no authorization. When either option is active, it waives
-the permission prompt for **write-method network egress only**:
+Advanced**. The persistent setting is on by default when absent. Read failures
+and non-boolean stored values grant no authorization. When either option is
+active, it waives the permission prompt for **write-method network egress only**:
 
 - `fetch_url` / `research_url` with `method: POST/PUT/PATCH/DELETE`
 

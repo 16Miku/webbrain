@@ -841,8 +841,8 @@ async function init() {
   siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
   if (researchEscalationToggle) researchEscalationToggle.checked = stored.researchEscalationEnabled === true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
-  alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations !== false;
-  apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled !== false;
+  alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === undefined || stored.alwaysAllowApiMutations === true;
+  apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === undefined || stored.apiMutationObserverEnabled === true;
   if (webMcpToggle) webMcpToggle.checked = stored.webMcpEnabled === true; // off by default
   if (openAIAskStreamingToggle) openAIAskStreamingToggle.checked = stored.openaiAskStreamingEnabled !== false;
   if (planBeforeActModeSelect) {
