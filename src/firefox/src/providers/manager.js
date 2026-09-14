@@ -1168,6 +1168,13 @@ export class ProviderManager {
     return provider;
   }
 
+  /** Get a provider without changing the user's globally selected provider. */
+  getProvider(id) {
+    const provider = this.providers.get(id);
+    if (!provider) throw new Error(`Provider not found: ${id}`);
+    return provider;
+  }
+
   /**
    * Stable provider-config ids currently opted into voluntary research
    * sharing. The share outbox purges queued entries for any other id before
