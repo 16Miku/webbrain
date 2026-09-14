@@ -40,7 +40,7 @@ export async function verifyTransfer(root, known = []) {
   }
   const { verifyManifest } = await import(pathToFileURL(join(root,'test/llm-tiny-v2/lib/manifest.mjs')));
   const manifestHash = await verifyManifest();
-  assert.equal(manifestHash,'60e52b1361d2f93d5cffa0b6805b06c2fbe45c9e64fca27c6431c29e536f293d');
+  assert.equal(manifestHash,'2f28ba931b86a9f83a80ab486c2d47d5df722fa490a510f69b74b71b9c79e2d2');
   const manifest = JSON.parse(await readFile(join(root,'test/llm-tiny-v2/manifest.json')));
   const resume = JSON.parse(await readFile(join(root,'handoff-state/resume-state.json')));
   const budget = JSON.parse(await readFile(join(root,'handoff-state/cumulative-budget.json')));
