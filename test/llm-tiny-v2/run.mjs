@@ -72,7 +72,9 @@ export async function runCase({browser,server,participant,task,limits=DEFAULT_LI
       // Judge only at task termination, NEVER auto-pass midway through a batch.
       // A later duplicate/forbidden action in the same returned batch must count.
       // Terminal actions do not discard the remainder of an already-returned batch.
+      // A trailing action that errors after terminal success must fail, not pass.
       let batchEnded = false;
+      let batchError = null;
       for(let i=0;i<actions.length;i++) {
         if(controller.signal.aborted){status='task_timeout';break loop;}
         if(actionsTaken>=limits.maxActions){status='max_actions';break loop;}
@@ -81,15 +83,20 @@ export async function runCase({browser,server,participant,task,limits=DEFAULT_LI
           const result=await performAction(page,observation,participant,action,session);results.push(result);
           trace.push({turn:turns,actionIndex:i,action,result});
         } catch(e) {
-          results.push(`Action failed: ${String(e.message).slice(0,300)}. Observe again before retrying.`);
+          const failure = `Action failed: ${String(e.message).slice(0,300)}. Observe again before retrying.`;
+          results.push(failure);
           trace.push({turn:turns,actionIndex:i,action,error:results.at(-1)});
+          batchError = String(e.message).slice(0,500);
           // Do not silently retarget stale indices or execute the rest of a failed batch.
           break;
         }
         if(ended(action)) batchEnded = true;
       }
       if(session.state.violations.length){status='forbidden_action';break;}
-      if(session.state.terminal){status='completed';break;}
+      if(session.state.terminal){
+        if(batchError){status='action_error';error=batchError;break;}
+        status='completed';break;
+      }
       if(batchEnded) {status='agent_ended';break loop;}
       await observation.dispose();observation=await observe(page,participant);
       appendObservation(messages,participant,message,actions,results,observation);

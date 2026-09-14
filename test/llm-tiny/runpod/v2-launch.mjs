@@ -22,7 +22,7 @@ const catalog = {
 if (!catalog[name] || process.argv.length !== 3) throw new Error('Select exactly one of the six pilot participants; held-out launch is intentionally gated.');
 const [adapter, model] = catalog[name];
 const manifestHash = await verifyManifest();
-if (manifestHash !== '2f28ba931b86a9f83a80ab486c2d47d5df722fa490a510f69b74b71b9c79e2d2') throw new Error('Manifest changed since pilot approval');
+if (manifestHash !== '4e8b5bd77309c7b3f0c8d3564f191a7b49521421784869ca90dc30832ea57591') throw new Error('Manifest changed since pilot approval');
 await access(new URL('../results/.v1-launch-disabled', import.meta.url));
 const tag = `2026-09-13-v2-pilot-${name}`;
 const resultDir = new URL(`../../llm-tiny-v2/results/${tag}/`, import.meta.url);
