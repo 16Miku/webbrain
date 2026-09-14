@@ -12618,6 +12618,22 @@ test('Share-for-research scrub removes embedded data URIs and keeps repeated-ans
       model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
     });
     assert.equal(JSON.stringify(answered).includes('iVBORw0K'), false, `${label}: response image bytes escaped the scrub`);
+    // Tool-call arguments can embed raw binary (solve_captcha image_to_text):
+    // multi-step trajectories keep the calls, never the bytes.
+    const captchaBytes = `iVBORw0KGgoAAAANSUhEUg${'A'.repeat(500)}`;
+    const captched = outbox.buildShareGenerationItem({
+      runId: `run-share-captcha-${label}`,
+      finalContent: 'solved it',
+      messages: [
+        { role: 'user', content: 'solve this captcha' },
+        { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'solve_captcha', arguments: JSON.stringify({ type: 'image_to_text', imageBase64: captchaBytes }) } }] },
+        { role: 'tool', tool_call_id: 'c1', content: 'abc123' },
+        { role: 'assistant', content: 'solved it' },
+      ],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(JSON.stringify(captched).includes('iVBORw0KGgo'), false, `${label}: tool-call image bytes escaped the scrub`);
+    assert.ok(captched.request.some(m => Array.isArray(m.tool_calls)), `${label}: scrubbed tool-call turn dropped from request`);
   }
 });
 
@@ -12763,6 +12779,8 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     assert.match(chromeOutbox, /embedded base64 data omitted/, `${browser}: string content must be scrubbed of data URIs`);
     assert.match(chromeOutbox, /earlier shared messages omitted/, `${browser}: truncation must preserve the tail`);
     assert.match(chromeOutbox, /scrubText\(responseContent/, `${browser}: shared responses must get the binary scrub`);
+    assert.match(chromeOutbox, /_attachImage/, `${browser}: binary metadata attachments must be dropped`);
+    assert.match(chromeOutbox, /scrubToolCallArguments/, `${browser}: tool-call arguments must be scrubbed`);
     assert.match(settings, /shareQueriesForResearch/, `${browser}: share toggle field missing from settings`);
     assert.match(settings, /!input\.checked[\s\S]*?confirm\(/, `${browser}: consent confirmation must guard turning the share toggle on`);
     assert.match(provider, /\/improvement\/generations/, `${browser}: share endpoint missing from the Compass provider transport`);

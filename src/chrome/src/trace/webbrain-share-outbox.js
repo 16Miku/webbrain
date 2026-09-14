@@ -104,10 +104,69 @@ function requestMessages(messages, responseContent) {
   return request;
 }
 
+// Fields that by name always carry binary payloads (any length counts:
+// a field literally named imageBase64 is image bytes even when tiny).
+const BINARY_VALUE_KEYS = /^(imageBase64|image_base64|screenshot|screenshotBase64|screenshot_data|imageData|image_data|audioBase64|audio_data|fileData|file_data|imageBytes|base64)$/i;
+
+// Scrub tool-call arguments JSON: raw binary rides in fields like
+// solve_captcha's imageBase64 for image_to_text, which the content scrubber
+// never sees because it lives in tool_calls[].function.arguments.
+function scrubToolCallArguments(args) {
+  if (typeof args !== 'string' || !args) return args;
+  let parsed;
+  try { parsed = JSON.parse(args); } catch { return scrubText(args); }
+  if (!parsed || typeof parsed !== 'object') return scrubText(args);
+  try {
+    const scrubbed = JSON.stringify(scrubValue(parsed));
+    return typeof scrubbed === 'string' ? scrubbed : scrubText(args);
+  } catch { return scrubText(args); }
+}
+
+// Recursively scrub non-content message fields (tool_calls, metadata).
+// Known-binary keys are redacted at any length; other strings go through the
+// data-URI/base64 text scrub so nested blobs cannot leak via copied fields.
+function scrubValue(value) {
+  if (typeof value === 'string') return scrubText(value);
+  if (Array.isArray(value)) return value.map(scrubValue);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (typeof entry === 'string' && BINARY_VALUE_KEYS.test(key)) {
+        out[key] = '[omitted]';
+        continue;
+      }
+      if (key === 'arguments' && typeof entry === 'string') {
+        out[key] = scrubToolCallArguments(entry);
+        continue;
+      }
+      out[key] = scrubValue(entry);
+    }
+    return out;
+  }
+  return value;
+}
+
 function scrubMessage(message) {
   if (!message || typeof message !== 'object') return null;
-  const copy = { ...message };
-  delete copy.image_url;
+  const copy = { role: message.role };
+  if (message.tool_call_id !== undefined) copy.tool_call_id = message.tool_call_id;
+  if (message.name !== undefined) copy.name = message.name;
+  // Assistant tool-call turns carry the trajectory (and, on multi-step runs,
+  // raw binary such as solve_captcha imageBase64 in arguments JSON). Scrub
+  // the calls instead of copying them verbatim.
+  if (Array.isArray(message.tool_calls)) {
+    copy.tool_calls = message.tool_calls.map(call =>
+      (!call || typeof call !== 'object') ? call : scrubValue(call));
+  }
+  // Drop known binary attachments outright; scrub any other metadata rather
+  // than copying it verbatim into the research record.
+  for (const [key, value] of Object.entries(message)) {
+    if (key === 'role' || key === 'content' || key === 'tool_calls'
+      || key === 'tool_call_id' || key === 'name') continue;
+    if (key === 'image_url' || key === '_attachImage' || key === '_attachDocument') continue;
+    const scrubbed = scrubValue(value);
+    if (scrubbed !== undefined) copy[key] = scrubbed;
+  }
   if (Array.isArray(message.content)) {
     const items = [];
     for (const item of message.content) {
@@ -128,13 +187,18 @@ function scrubMessage(message) {
         items.push({ ...item, text: scrubText(item.text) });
         continue;
       }
-      items.push(item);
+      // Unrecognized objects still pass through nested strings (data URIs,
+      // bare base64) and known-binary keys before being shared.
+      items.push(scrubValue(item));
     }
     if (!items.length) return { role: message.role, content: '[binary content omitted]' };
     copy.content = items;
   } else if (typeof message.content === 'string') {
     if (!message.content.length) return null;
     copy.content = scrubText(message.content);
+  } else if (message.content == null && Object.hasOwn(message, 'content')) {
+    // Assistant tool-call turns carry content: null; preserve the marker.
+    copy.content = message.content;
   }
   return copy;
 }
