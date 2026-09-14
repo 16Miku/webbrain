@@ -21,8 +21,22 @@ const COMPASS_TOOLS = [
   ['done', 'Finish after verifying the requested UI change completed.', { summary: { type: 'string' } }, ['summary']],
 ].map(([name, description, properties, required = []]) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } }));
 
+// Only advertise Fara actions the local runner implements. The pinned reference
+// also documents web_search and read_page_answer_question, but run.mjs has no
+// cases for either and throws `Unsupported Fara action`.
+const SUPPORTED_FARA_ACTIONS = new Set(['key','type','mouse_move','left_click','left_click_drag','right_click','double_click','triple_click','scroll','hscroll','visit_url','history_back','pause_and_memorize_fact','ask_user_question','wait','terminate']);
+const FARA_PARAMETERS = (() => {
+  const params = JSON.parse(JSON.stringify(faraReference.parameters));
+  if (Array.isArray(params?.properties?.action?.enum)) params.properties.action.enum = params.properties.action.enum.filter(a => SUPPORTED_FARA_ACTIONS.has(a));
+  if (typeof params?.properties?.action?.description === 'string') params.properties.action.description = params.properties.action.description.split('\n').filter(line => !line.includes('`web_search`') && !line.includes('`read_page_answer_question`')).join('\n');
+  // `query` is only required by web_search; `question` stays for ask_user_question.
+  if (params?.properties) delete params.properties.query;
+  if (params?.properties?.question) params.properties.question.description = 'The question to ask. Required by `action=ask_user_question`.';
+  return params;
+})();
+
 // Pinned Microsoft reference prompt and schema, with its 1000x1000 display space.
-const FARA_SYSTEM = `${faraReference.FARA_QWEN35_IDENTITY}\n\n${faraReference.CRITICAL_POINTS_FARA_1_5}\n\n${faraReference.FN_CALL_FORMAT.replaceAll('{{', '{').replaceAll('}}', '}').replace('{tool_descs}', JSON.stringify({ name: 'computer_use', description: faraReference.description, parameters: faraReference.parameters }))}`;
+const FARA_SYSTEM = `${faraReference.FARA_QWEN35_IDENTITY}\n\n${faraReference.CRITICAL_POINTS_FARA_1_5}\n\n${faraReference.FN_CALL_FORMAT.replaceAll('{{', '{').replaceAll('}}', '}').replace('{tool_descs}', JSON.stringify({ name: 'computer_use', description: faraReference.description, parameters: FARA_PARAMETERS }))}`;
 
 const BROWSER_USE_SYSTEM = `You are a browser-use agent operating in flash mode. You automate browser tasks by outputting structured JSON actions. Respond with valid JSON: {"memory":"Brief evaluation of the previous step and the next goal","action":[{"action_name":{...params}}]}. Return one action per turn. Use only indexed elements from the current browser state. Available actions: click {"index":number}; input {"index":number,"text":string,"clear":true}; dropdown_options {"index":number}; select_dropdown {"index":number,"text":string}; send_keys {"keys":string}; scroll {"down":boolean,"pages":number}; done {"text":string,"success":boolean}. Only report data observed in browser state or tool outputs. Never fabricate values.`;
 

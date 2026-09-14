@@ -397,6 +397,10 @@ async function runCase(browser, baseUrl, participant, caseRecord, participantDir
         break;
       }
       const actionResults = [];
+      // Execute the full batch before judging: later actions in the same model
+      // response must still run even if an earlier action completed the UI.
+      let batchPassed = false;
+      let batchEnded = false;
       for (let actionIndex = 0; actionIndex < actions.length; actionIndex += 1) {
        const action = actions[actionIndex];
        try {
@@ -407,10 +411,9 @@ async function runCase(browser, baseUrl, participant, caseRecord, participantDir
             : await performIndexedAction(page, observation, action.name, action.args);
         actionResults.push(actionResult);
         trace.push({ step, actionIndex, latencyMs: actionIndex === 0 ? latencyMs : 0, action: { name: action.name, args: action.args }, actionResult, content: message.content || null });
-        if (await fixtureCompleted(page)) { status = 'passed'; break turns; }
+        if (await fixtureCompleted(page)) batchPassed = true;
         if ((participant.adapter === 'fara' && ['terminate', 'ask_user_question'].includes(action.args?.action)) || ['done'].includes(action.name)) {
-          status = 'ended_without_success';
-          break turns;
+          batchEnded = true;
         }
         observation = await observe(page, participant);
       } catch (actionError) {
@@ -419,6 +422,11 @@ async function runCase(browser, baseUrl, participant, caseRecord, participantDir
         trace.push({ step, latencyMs, action: { name: action.name, args: action.args }, error, content: message.content || null });
         break turns;
       }
+      }
+      if (batchPassed) { status = 'passed'; break turns; }
+      if (batchEnded) {
+        status = 'ended_without_success';
+        break turns;
       }
       appendAssistantAndObservation(messages, participant, message, actions, actionResults, observation);
     }

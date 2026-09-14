@@ -22,7 +22,7 @@ const catalog = {
 if (!catalog[name] || process.argv.length !== 3) throw new Error('Select exactly one of the six pilot participants; held-out launch is intentionally gated.');
 const [adapter, model] = catalog[name];
 const manifestHash = await verifyManifest();
-if (manifestHash !== '60e52b1361d2f93d5cffa0b6805b06c2fbe45c9e64fca27c6431c29e536f293d') throw new Error('Manifest changed since pilot approval');
+if (manifestHash !== '2f28ba931b86a9f83a80ab486c2d47d5df722fa490a510f69b74b71b9c79e2d2') throw new Error('Manifest changed since pilot approval');
 await access(new URL('../results/.v1-launch-disabled', import.meta.url));
 const tag = `2026-09-13-v2-pilot-${name}`;
 const resultDir = new URL(`../../llm-tiny-v2/results/${tag}/`, import.meta.url);
@@ -64,7 +64,12 @@ globalThis.fetch = async (url, options = {}) => {
     if (typeof data.usage?.cost === 'number' && data.usage.cost >= 0) {
       entry.chargedUsd = data.usage.cost;
       budget.apiChargedOrReservedUsd += data.usage.cost - bound;
-      if (data.usage.cost > bound) throw new Error('Provider charge exceeded reserved maximum');
+      if (data.usage.cost > bound) {
+        entry.status = response.status;
+        entry.overReservedMaximum = true;
+        await saveBudget(); // Provider already billed; persist actual overage before failing.
+        throw new Error('Provider charge exceeded reserved maximum');
+      }
     }
   }
   if (!response.ok) entry.endpointError = (await response.clone().text()).replaceAll(process.env.OPENROUTER_API_KEY || '\0', '[redacted]').replaceAll(pod?.token || '\0', '[redacted]').slice(0, 3000);

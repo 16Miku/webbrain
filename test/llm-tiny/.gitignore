@@ -1,1 +1,3 @@
-results/
+results/*
+!results/.v1-launch-disabled
+!results/.v2-handoff-requested

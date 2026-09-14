@@ -69,6 +69,10 @@ export async function runCase({browser,server,participant,task,limits=DEFAULT_LI
       const message=response.choices?.[0]?.message||{},actions=parseAdapterActions(participant.adapter,message),results=[];
       trace.push({turn:turns,latencyMs,response:message,usage:u});
       if(!actions.length){status='unparseable';break;}
+      // Judge only at task termination, NEVER auto-pass midway through a batch.
+      // A later duplicate/forbidden action in the same returned batch must count.
+      // Terminal actions do not discard the remainder of an already-returned batch.
+      let batchEnded = false;
       for(let i=0;i<actions.length;i++) {
         if(controller.signal.aborted){status='task_timeout';break loop;}
         if(actionsTaken>=limits.maxActions){status='max_actions';break loop;}
@@ -82,12 +86,11 @@ export async function runCase({browser,server,participant,task,limits=DEFAULT_LI
           // Do not silently retarget stale indices or execute the rest of a failed batch.
           break;
         }
-        // Judge only at task termination, NEVER auto-pass midway through a batch.
-        // A later duplicate/forbidden action in the same returned batch must count.
-        if(ended(action)) {status='agent_ended';break loop;}
+        if(ended(action)) batchEnded = true;
       }
       if(session.state.violations.length){status='forbidden_action';break;}
       if(session.state.terminal){status='completed';break;}
+      if(batchEnded) {status='agent_ended';break loop;}
       await observation.dispose();observation=await observe(page,participant);
       appendObservation(messages,participant,message,actions,results,observation);
     }
