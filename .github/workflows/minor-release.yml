@@ -124,7 +124,7 @@ jobs:
                 {role: "user", content: ($usr | gsub("\\{\\{version\\}\\}"; $ver) | gsub("\\{\\{date\\}\\}"; $dt) | gsub("\\{\\{release_context\\}\\}"; $ctx))}
               ],
               max_completion_tokens: 1200,
-              temperature: 0.2
+              temperature: 1
             }' > /tmp/payload.json
 
           RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
