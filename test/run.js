@@ -604,10 +604,10 @@ const { buildPromptTraceProvenance: buildPromptTraceProvenanceFx } = await impor
 
 // anthropic.js imports cleanly under Node (its chrome.* touches are lazy); we
 // only exercise the pure _convertMessages transform here.
-const { AnthropicProvider: AnthropicProviderCh } = await import(
+const { AnthropicProvider: AnthropicProviderCh, AnthropicOAuthProvider: AnthropicOAuthProviderCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/anthropic.js').replace(/\\/g, '/')
 );
-const { AnthropicProvider: AnthropicProviderFx } = await import(
+const { AnthropicProvider: AnthropicProviderFx, AnthropicOAuthProvider: AnthropicOAuthProviderFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/providers/anthropic.js').replace(/\\/g, '/')
 );
 
@@ -12125,6 +12125,62 @@ test('Ask mode handoff classification is strict, silent, and mode guarded', asyn
       `${browserLabel}: classifier timeout must not block or fail the completed Ask answer`,
     );
     assert.deepEqual(timedOutUpdates, [], `${browserLabel}: timed-out classifier must not emit a handoff`);
+  }
+});
+
+test('Ask mode handoff disables native Anthropic thinking only for the classifier request', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [browserLabel, AgentClass, Provider, OAuthProvider, VertexProvider] of [
+      ['chrome', AgentCh, AnthropicProviderCh, AnthropicOAuthProviderCh, VertexAnthropicProviderCh],
+      ['firefox', AgentFx, AnthropicProviderFx, AnthropicOAuthProviderFx, VertexAnthropicProviderFx],
+    ]) {
+      for (const ProviderClass of [Provider, OAuthProvider, VertexProvider]) {
+        for (const thinking of [
+          { type: 'enabled', budget_tokens: 1024 },
+          { type: 'adaptive' },
+        ]) {
+          const provider = new ProviderClass({
+            model: 'claude-sonnet-4-6',
+            apiKey: 'test-key',
+            project: 'sample-project',
+            location: 'us-east5',
+            extraBody: { thinking },
+          });
+          if (provider instanceof OAuthProvider) provider._ensureFreshToken = async () => {};
+          const label = `${browserLabel}/${provider.name}/${thinking.type}`;
+          const requests = [];
+          globalThis.fetch = async (_url, init) => {
+            const body = JSON.parse(init.body);
+            requests.push(body);
+            if (body.thinking?.type === 'enabled' && body.thinking.budget_tokens >= body.max_tokens) {
+              return new Response('thinking.budget_tokens must be less than max_tokens', { status: 400 });
+            }
+            return new Response(JSON.stringify({
+              content: [{ type: 'text', text: '{"mode_handoff":"act"}' }],
+              usage: { input_tokens: 12, output_tokens: 7 },
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          };
+          const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+          agent._getTabUrlTitle = async () => ({ tabUrl: 'https://example.com', tabTitle: 'Example' });
+          const updates = [];
+          await agent._maybeEmitAskModeHandoff(
+            53010, 'ask', 'Click the button', 'Switch to Act mode to click the button.',
+            (type, data) => updates.push({ type, data }), {},
+          );
+          assert.equal(requests.length, 1, `${label}: classifier request missing`);
+          assert.equal(requests[0].max_tokens, 24, `${label}: classifier budget changed`);
+          assert.deepEqual(requests[0].thinking, { type: 'disabled' }, `${label}: classifier retained native thinking`);
+          assert.deepEqual(updates, [{ type: 'ask_mode_handoff', data: { value: 'act' } }], `${label}: handoff event missing`);
+
+          await provider.chat([{ role: 'user', content: 'Continue the task.' }], { maxTokens: 4096 });
+          assert.deepEqual(requests[1].thinking, thinking, `${label}: classifier changed thinking for subsequent requests`);
+          assert.deepEqual(provider.config.extraBody.thinking, thinking, `${label}: saved thinking configuration changed`);
+        }
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

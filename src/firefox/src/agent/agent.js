@@ -17759,12 +17759,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const costState = this.currentCostState.get(tabId) || null;
       const { tabUrl, tabTitle } = await this._getTabUrlTitle(tabId);
       const messages = buildAskModeHandoffMessages(userMessage, finalResponse, tabUrl, tabTitle);
+      const chatOptions = this._plannerChatOptions(provider, false, true, 'ask_mode_handoff');
+      if (['anthropic', 'anthropic-oauth', 'google-vertex-anthropic'].includes(provider?.name)) {
+        // Native thinking cannot share this classifier's 24-token output budget.
+        chatOptions.extraBody = {
+          ...chatOptions.extraBody,
+          thinking: { type: 'disabled' },
+        };
+      }
       const response = await this._withContentActionDeadline(
         signal => this._chatWithCostAllowance(
           provider,
           messages,
           {
-            ...this._plannerChatOptions(provider, false, true, 'ask_mode_handoff'),
+            ...chatOptions,
             temperature: 0,
             maxTokens: 24,
             signal,
