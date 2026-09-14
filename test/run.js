@@ -63510,6 +63510,9 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'cross-worker transfer checks must query active transfers independently of a hard-coded model');
   assert.match(host, /Promise\.all\(probes\)/,
     'active-transfer checks must probe the requested worker as well as the other runtime so same-worker downloads stay stoppable');
+  const managerSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/providers/manager.js'), 'utf8');
+  assert.match(managerSource, /activeProviderId === 'webgpu'[\s\S]*?downloadStatus/,
+    'a persisted WebGPU selection must be revalidated on startup so evicted caches fall back');
   assert.match(worker, /payload\?\.probeActive === true[\s\S]*?textDownloadSnapshot/,
     'text-download-status probes must return the active transfer when requested');
   assert.match(host, /sendTextWorkerMessage\(message\.model, 'text-download-status'/);

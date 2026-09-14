@@ -409,6 +409,20 @@ export class ProviderManager {
     for (const [id, config] of Object.entries(configs)) {
       this.providers.set(id, this._createProvider(id, config));
     }
+    // A persisted WebGPU selection can outlive its cache (Chrome eviction or
+    // manual clear). Revalidate like setActive() does; otherwise chats fail
+    // readiness indefinitely instead of using the Cloud fallback.
+    if (this.activeProviderId === 'webgpu') {
+      try {
+        const download = await this.providers.get('webgpu')?.downloadStatus?.().catch(() => null);
+        if (download && download.ready !== true) {
+          this.activeProviderId = WEBBRAIN_CLOUD_PROVIDER_ID;
+          providerStateMigrated = true;
+        }
+      } catch {
+        // Probe failures must not block startup; chat will report the missing download.
+      }
+    }
     if (providerStateMigrated) await this.save();
   }
 
