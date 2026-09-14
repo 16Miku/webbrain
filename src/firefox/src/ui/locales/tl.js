@@ -323,6 +323,7 @@ export default {
 
   'st.provider.field.server_url': 'Server URL',
   'st.provider.field.api_base_url': 'API Base URL',
+  'st.provider.field.api_format': 'Format ng API',
   'st.provider.field.api_key': 'API Key',
   'st.provider.field.model': 'Modelo',
   'st.provider.field.model_optional': 'Modelo (opsyonal)',

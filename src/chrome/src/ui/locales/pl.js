@@ -540,6 +540,7 @@ export default {
   'st.providers.webbrain_note.privacy_link': 'Polityka prywatności',
   'st.provider.field.server_url': 'Adres URL serwera',
   'st.provider.field.api_base_url': 'Bazowy adres URL API',
+  'st.provider.field.api_format': 'Format API',
   'st.provider.field.api_key': 'Klucz API',
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (opcjonalnie)',

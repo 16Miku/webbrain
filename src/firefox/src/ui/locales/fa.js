@@ -775,6 +775,7 @@ export default {
 
   'st.provider.field.server_url': "آدرس سرور",
   'st.provider.field.api_base_url': "URL پایه API",
+  'st.provider.field.api_format': "قالب API",
   'st.provider.field.api_key': "کلید API",
   'st.provider.field.model': "مدل",
   'st.provider.field.model_optional': "مدل (اختیاری)",

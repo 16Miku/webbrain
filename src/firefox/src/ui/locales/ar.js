@@ -323,6 +323,7 @@ export default {
 
   'st.provider.field.server_url': 'عنوان الخادم',
   'st.provider.field.api_base_url': 'عنوان API الأساسي',
+  'st.provider.field.api_format': 'تنسيق API',
   'st.provider.field.api_key': 'مفتاح API',
   'st.provider.field.model': 'النموذج',
   'st.provider.field.model_optional': 'النموذج (اختياري)',

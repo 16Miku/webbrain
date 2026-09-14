@@ -331,6 +331,7 @@ export default {
 
   'st.provider.field.server_url': 'URL pelayan',
   'st.provider.field.api_base_url': 'URL asas API',
+  'st.provider.field.api_format': 'Format API',
   'st.provider.field.api_key': 'Kunci API',
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (pilihan)',

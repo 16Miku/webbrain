@@ -370,6 +370,7 @@ export default {
 
   'st.provider.field.server_url': 'Sunucu URL\'si',
   'st.provider.field.api_base_url': 'API temel URL\'si',
+  'st.provider.field.api_format': 'API biçimi',
   'st.provider.field.api_key': 'API anahtarı',
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (isteğe bağlı)',
