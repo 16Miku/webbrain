@@ -2789,9 +2789,15 @@ function renderWebgpuDownloadControl(id, state) {
   // newly displayed model is `not-downloaded` while `activeTransfer` still
   // carries the running sibling transfer. Render the running transfer so its
   // Stop control stays visible instead of flipping to Start with no way back.
+  // A distinct active transfer wins even when the displayed model is cached
+  // (ready): otherwise its remove action would delete the cached model while
+  // the sibling download runs hidden.
+  const displayedModel = String(state.modelId || '').trim().toLowerCase();
+  const transferModel = String(state.activeTransfer?.modelId || '').trim().toLowerCase();
+  const distinctTransfer = !!transferModel && transferModel !== displayedModel;
   const transferActive = isActiveWebgpuTransfer(state.activeTransfer)
     && !isActiveWebgpuTransfer(state)
-    && state.ready !== true;
+    && distinctTransfer;
   const display = transferActive ? state.activeTransfer : state;
   if (btn) {
     btn.textContent = webgpuDownloadCardLabel(display);
@@ -2862,12 +2868,17 @@ async function handleWebgpuDownloadButton(btn) {
     const msg = model ? { model } : {};
     const state = normalizeWebgpuDownloadSnapshot(await sendToBackground('get_webgpu_download_status', msg) || {});
     // If the user typed a new model while a sibling transfer runs, the status
-    // for the displayed model is `not-downloaded` with the running transfer in
-    // `activeTransfer`. Stopping must target the running transfer so its Stop
-    // control keeps working instead of attempting to start a blocked download.
+    // for the displayed model is `not-downloaded` (or ready, when switching
+    // to a cached model) with the running transfer in `activeTransfer`.
+    // Stopping must target the running transfer so its Stop control keeps
+    // working instead of attempting to start a blocked download or deleting
+    // the cached displayed model while the sibling runs hidden.
+    const displayedForTransfer = String(state.modelId || model || '').trim().toLowerCase();
+    const siblingTransferModel = String(state.activeTransfer?.modelId || '').trim().toLowerCase();
+    const distinctSibling = !!siblingTransferModel && siblingTransferModel !== displayedForTransfer;
     const siblingActive = isActiveWebgpuTransfer(state.activeTransfer)
       && !isActiveWebgpuTransfer(state)
-      && state.ready !== true;
+      && distinctSibling;
     const stopTarget = siblingActive && state.activeTransfer.modelId
       ? { model: state.activeTransfer.modelId }
       : msg;
@@ -3977,7 +3988,15 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
       setProviderConfigValue(config, input.dataset.key, value);
     });
     apiKeyWarning = providerApiKeyWarning(id, config);
-    await sendToBackground('update_provider', { providerId: id, config, markConfigured });
+    const updateRes = await sendToBackground('update_provider', { providerId: id, config, markConfigured });
+    // updateProvider may fall back to another active provider (e.g. the active
+    // WebGPU model was edited to an undownloaded target). Sync the page-local
+    // selection so the Selected badge does not lie about subsequent chats.
+    if (updateRes && typeof updateRes.activeProviderId === 'string'
+        && updateRes.activeProviderId !== activeProviderId) {
+      activeProviderId = updateRes.activeProviderId;
+      requestedActiveProviderId = updateRes.activeProviderId;
+    }
   } catch (e) {
     if (showFlash) setProviderTestResult(id, 'fail', t('st.providers.failed', { error: e.message }));
     throw e;
@@ -3995,6 +4014,29 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
     if (markConfigured) providersData[id].configured = id !== 'webbrain_cloud';
   }
   if (markConfigured) dirtyProviderIds.delete(id);
+  // If the background fell back to another active provider, re-render all
+  // cards so every Selected badge reflects the persisted selection.
+  if (requestedActiveProviderId === activeProviderId && document.querySelector('.provider-card')) {
+    const selectedCards = [...document.querySelectorAll('.provider-card.selected')].map((card) => card.dataset.providerId);
+    const shouldRerender = selectedCards.length !== 1 || selectedCards[0] !== activeProviderId;
+    if (shouldRerender) {
+      try {
+        syncInputsIntoProvidersData();
+      } catch {
+        // Draft preservation is best-effort; selection accuracy wins.
+      }
+      renderProviders();
+      refreshVisionStatus(id);
+      if (showFlash) {
+        if (apiKeyWarning) setProviderTestResult(id, 'warn', apiKeyWarning);
+        else {
+          const testEl = setProviderTestResult(id, 'ok', t('st.providers.saved'));
+          if (testEl) setTimeout(() => testEl.classList.remove('show'), 2000);
+        }
+      }
+      return;
+    }
+  }
   refreshProviderCardStatus(id);
   refreshVisionStatus(id);
 

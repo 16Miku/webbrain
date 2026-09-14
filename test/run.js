@@ -63617,6 +63617,14 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'the Settings poll must stay alive while a sibling transfer runs');
   assert.match(settingsScript, /stopTarget/,
     'stopping from Settings must target the running transfer when the model field changed');
+  assert.match(settingsScript, /distinctTransfer/,
+    'a cached displayed model must not hide a distinct running transfer');
+  assert.match(settingsScript, /distinctSibling/,
+    'stopping must prefer a distinct running transfer even when the displayed model is ready');
+  assert.match(settingsScript, /activeProviderId = updateRes\.activeProviderId/,
+    'Settings must sync the selected provider after the background fallback');
+  assert.match(background, /case 'update_provider'[\s\S]*?activeProviderId: providerManager\.activeProviderId/,
+    'update_provider must report the persisted active provider so Settings can refresh after fallback');
   assert.match(settingsScript, /sendToBackground\('get_webgpu_download_status', query\)/,
     'the Settings download control must query the displayed model status');
   assert.match(settingsScript, /data-webgpu-download-status/,

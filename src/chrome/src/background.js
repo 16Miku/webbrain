@@ -3971,7 +3971,7 @@ async function handleMessage(msg, sender) {
       await providerManager.updateProvider(msg.providerId, msg.config, {
         markConfigured: msg.markConfigured !== false,
       });
-      return { ok: true };
+      return { ok: true, activeProviderId: providerManager.activeProviderId };
     }
 
     case 'duplicate_provider':
