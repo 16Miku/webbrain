@@ -4,6 +4,34 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.1.0] - 2026-09-14
+
+### Added
+
+- Added site adapters for bol, Otto, Willhaben, Tokopedia, Jumia, Kilimall, Careem, Talabat, Mercari, Yahoo! JAPAN, Naver, Yandex Market, OLX, and Despegar.
+- Added coverage for Wildberries, Avito, VK, Noon, Swiggy, IRCTC, Paytm, and Snapdeal.
+- Added Spanish (Spain) documentation in `README.es-ES.md`.
+- Added OpenCode Go session support.
+
+### Changed
+
+- Expanded adapter routing across Europe, Southeast Asia, Africa, MENA, East Asia, CIS, India, and Latin America in Chrome and Firefox.
+- Updated permission documentation, including notification and HTTP permission mappings.
+- Updated minor-release automation with the current model version, revised temperature settings, and Playwright Chromium installation.
+
+### Fixed
+
+- Fixed OpenCode Go requests not sending the `x-opencode-session` header.
+- Improved LinkedIn contact-dialog detection and navigation safety, including shadow DOM and active-modal handling.
+- Fixed mobile storefront and login-host coverage for Tokopedia and VK.
+- Corrected Paytm and Tatkal adapter safety handling.
+- Documented Tatkal Aadhaar authentication requirements.
+
+### Tests
+
+- Expanded adapter, LinkedIn navigation, social publication, and minor-release workflow coverage.
+- Added and updated compact-model benchmark artifacts and release workflow test coverage.
+
 ## [36.0.4] - 2026-09-10
 
 ### Changed
