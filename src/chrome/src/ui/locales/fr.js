@@ -174,6 +174,8 @@ export default {
 
   'sp.mode.ask': 'Demander',
   'sp.mode.ask.title': 'Posez des questions sur la page — aucune modification',
+  'sp.mode.act_handoff_button': 'Passer à Agir et réessayer',
+  'sp.mode.act_handoff_hint': 'Le mode Agir est nécessaire pour terminer cette tâche. Cliquez pour changer de mode et renvoyer votre demande.',
   'sp.mode.act': 'Agir',
   'sp.mode.act.title': 'Laissez WebBrain cliquer, taper et naviguer à votre place',
   'sp.mode.act.warning': 'Mode Agir : utilisez-le à vos propres risques.',

@@ -174,6 +174,8 @@ export default {
 
   'sp.mode.ask': 'Tanya',
   'sp.mode.ask.title': 'Bertanya tentang halaman — tanpa perubahan',
+  'sp.mode.act_handoff_button': 'Beralih ke Aksi & coba lagi',
+  'sp.mode.act_handoff_hint': 'Ini memerlukan mode Aksi untuk diselesaikan. Klik untuk beralih dan mengirim ulang permintaan Anda.',
   'sp.mode.act': 'Aksi',
   'sp.mode.act.title': 'Biarkan WebBrain mengeklik, mengetik, dan menavigasi untukmu',
   'sp.mode.act.warning': 'Mode aksi: Gunakan dengan risiko Anda sendiri.',

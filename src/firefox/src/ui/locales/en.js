@@ -142,6 +142,8 @@ export default {
 
   'sp.mode.ask': 'Ask',
   'sp.mode.ask.title': 'Ask questions about the page — no changes made',
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': 'Act',
   'sp.mode.act.title': 'Let WebBrain click, type, and navigate for you',
   'sp.mode.act.warning': 'Act mode:  Use at your own risk.',

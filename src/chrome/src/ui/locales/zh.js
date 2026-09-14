@@ -174,6 +174,8 @@ export default {
 
   'sp.mode.ask': '问',
   'sp.mode.ask.title': '就页面提问 — 不做任何修改',
+  'sp.mode.act_handoff_button': '切换到执行并重试',
+  'sp.mode.act_handoff_hint': '完成此操作需要执行模式。点击切换模式并重新发送请求。',
   'sp.mode.act': '执行',
   'sp.mode.act.title': '让 WebBrain 代你点击、输入和导航',
   'sp.mode.act.warning': '执行模式：请自行承担风险。',
