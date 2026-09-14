@@ -337,6 +337,26 @@ export async function enqueueShareGeneration(item) {
   return true;
 }
 
+// Drop queued entries the predicate no longer consents to (e.g. the user
+// revoked "share queries for research" after an offline/failed run queued an
+// entry). Run before every flush so revocation is honored immediately before
+// delivery, not just at enqueue time. Returns the dropped count.
+export async function purgeShareGenerations(shouldDrop) {
+  if (typeof shouldDrop !== 'function') return 0;
+  let removed = 0;
+  await updateOutbox(current => {
+    const kept = [];
+    for (const entry of current) {
+      let drop = false;
+      try { drop = shouldDrop(entry) === true; } catch { drop = false; }
+      if (drop) removed++;
+      else kept.push(entry);
+    }
+    return removed ? kept : current;
+  });
+  return removed;
+}
+
 async function flushShareOutboxNow(transportProvider) {
   if (typeof transportProvider?.sendShareGeneration !== 'function') return 0;
   await storageQueue.catch(() => {});

@@ -71,7 +71,7 @@ import {
 import { normalizePdfOcrResult, PDF_OCR_SYSTEM_PROMPT } from './pdf-ocr.js';
 import * as trace from '../trace/recorder.js';
 import { buildTerminalRuntimeEvent, enqueueCloudRuntimeEvent, flushCloudRuntimeOutbox } from '../trace/cloud-runtime-outbox.js';
-import { buildShareGenerationItem, enqueueShareGeneration, flushShareOutbox } from '../trace/webbrain-share-outbox.js';
+import { buildShareGenerationItem, enqueueShareGeneration, flushShareOutbox, purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
@@ -11237,6 +11237,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // Without this, the child alarm exists but the parent needs reconciliation.
         await settleConsequentialTool();
         this._persist(tabId);
+        // A scheduled resume's summary is synthesized locally by createResumeJob,
+        // not authored by the provider. Report it as scheduled_resume (like the
+        // auto-progress resume paths) so voluntary research sharing and workflow
+        // drafts treat it as a pause, never as an ordinary model generation.
+        if (scheduledResume) return { action: 'return', value: finalResponse, status: 'scheduled_resume' };
         return { action: 'return', value: finalResponse };
       }
 
@@ -16569,7 +16574,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } catch {}
     }
     // Retry delivery of previously queued voluntary shares on every run end,
-    // mirroring the Compass runtime outbox pattern.
+    // mirroring the Compass runtime outbox pattern. Revoked entries are
+    // purged first so opt-out is honored immediately before delivery.
+    try { await this._purgeRevokedShareGenerations(); } catch {}
     void flushShareOutbox(shareTransport);
     if (runId) {
       await this._flushAdapterMatchTraceRun(runId);
@@ -16599,6 +16606,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _shareSessionId(conversationId) {
     const safe = String(conversationId || '').replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 190);
     return safe ? `share_${safe}` : '';
+  }
+
+  /**
+   * Drop queued voluntary shares whose provider is no longer opted in.
+   * Consent is checked against live configs immediately before every flush
+   * (run start and run end), so entries queued while opted in are never
+   * delivered after the user revokes the toggle or removes the provider.
+   */
+  async _purgeRevokedShareGenerations() {
+    try {
+      const consented = this.providerManager?.consentedShareProviderNames?.();
+      if (!(consented instanceof Set)) return;
+      await purgeShareGenerations(entry => !consented.has(String(entry?.provider || '')));
+    } catch {}
   }
 
   /**
@@ -33635,6 +33656,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // to upload; the current run is enqueued at finalization and may complete
     // in the background or on the next Compass run.
     void flushCloudRuntimeOutbox(provider);
+    // Purge shares revoked since they were queued before retrying delivery.
+    void this._purgeRevokedShareGenerations();
     void flushShareOutbox(this.providerManager?.getProvider?.('webbrain_cloud'));
 
     if (typeof runOptions?.isDetachedStartCancelled === 'function'
@@ -34830,6 +34853,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const provider = this.providerManager.getActive();
     void flushCloudRuntimeOutbox(provider);
+    // Purge shares revoked since they were queued before retrying delivery.
+    void this._purgeRevokedShareGenerations();
     void flushShareOutbox(this.providerManager?.getProvider?.('webbrain_cloud'));
 
     // The run claim owns cancellation reset. Stop during setup must survive.

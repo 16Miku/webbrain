@@ -12710,6 +12710,15 @@ test('Share-for-research outbox persists retryable failures and removes acknowle
     releaseSend();
     assert.deepEqual(await Promise.all([firstFlush, secondFlush]), [1, 0]);
     assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 0);
+    // Revoked consent purges queued entries before delivery.
+    const revoked = { id: 'share-revoked-1', session_id: 'share_conv_1', provider: 'ollama', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+    const keptEntry = { id: 'share-kept-1', session_id: 'share_conv_1', provider: 'anthropic', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration(revoked), true);
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration(keptEntry), true);
+    assert.equal(await SHARE_OUTBOX_CH.purgeShareGenerations(e => e.provider === 'ollama'), 1, 'revoked entry not purged');
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 1);
+    assert.equal(await SHARE_OUTBOX_CH.purgeShareGenerations(() => false), 0, 'purge dropped consented entries');
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 1);
   } finally {
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
@@ -12781,6 +12790,10 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     assert.match(chromeOutbox, /scrubText\(responseContent/, `${browser}: shared responses must get the binary scrub`);
     assert.match(chromeOutbox, /_attachImage/, `${browser}: binary metadata attachments must be dropped`);
     assert.match(chromeOutbox, /scrubToolCallArguments/, `${browser}: tool-call arguments must be scrubbed`);
+    const managerSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/manager.js`), 'utf8');
+    assert.match(managerSource, /consentedShareProviderNames\(\)/, `${browser}: provider manager must expose share consent`);
+    assert.match(agent, /_purgeRevokedShareGenerations\(\)/, `${browser}: revoked shares must be purged before delivery`);
+    assert.match(agent, /if \(scheduledResume\) return \{ action: 'return', value: finalResponse, status: 'scheduled_resume' \}/, `${browser}: scheduler-synthesized summaries must not be shared as generations`);
     assert.match(settings, /shareQueriesForResearch/, `${browser}: share toggle field missing from settings`);
     assert.match(settings, /!input\.checked[\s\S]*?confirm\(/, `${browser}: consent confirmation must guard turning the share toggle on`);
     assert.match(provider, /\/improvement\/generations/, `${browser}: share endpoint missing from the Compass provider transport`);
