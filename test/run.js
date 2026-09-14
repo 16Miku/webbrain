@@ -12478,7 +12478,7 @@ test('Share-for-research item scrubs images and clamps oversized content', () =>
           {
             role: 'user',
             content: [
-              { type: 'text', text: 'A'.repeat(12_000) },
+              { type: 'text', text: 'Long prose argument ' + 'lorem ipsum dolor sit amet '.repeat(500) },
               { type: 'image_url', image_url: { url: 'data:image/png;base64,RAWBYTES' } },
             ],
           },
@@ -12497,7 +12497,7 @@ test('Share-for-research item scrubs images and clamps oversized content', () =>
       assert.equal(JSON.stringify(item).includes('RAWBYTES'), false, `${label}: image bytes escaped the scrub`);
       assert.equal(item.request[0].image_url, undefined, `${label}: top-level image_url key survived`);
       assert.equal(item.request[1].content[0].type, 'text', `${label}: text block dropped with the image`);
-      assert.match(item.request[1].content[0].text, /\[… 2000 characters omitted\]/, `${label}: long text block not clamped`);
+      assert.match(item.request[1].content[0].text, /\[… \d+ characters omitted\]/, `${label}: long text block not clamped`);
       assert.equal(item.request[2].content, 'Short reply');
       assert.deepEqual(item.response, { role: 'assistant', content: 'Summary.' });
     } finally {
@@ -12515,7 +12515,7 @@ test('Share-for-research item drops empty runs and caps the whole request', () =
   }), null, 'blank response must not be shared');
   const item = SHARE_OUTBOX_CH.buildShareGenerationItem({
     runId: 'r', finalContent: 'x',
-    messages: Array.from({ length: 60 }, (_, i) => ({ role: 'user', content: `tail${i}-` + 'y'.repeat(9_000) })),
+    messages: Array.from({ length: 60 }, (_, i) => ({ role: 'user', content: `tail${i}-` + 'lorem ipsum dolor sit amet '.repeat(360) })),
     model: 'm', mode: 'act', provider: 'p', provider_name: 'p',
   });
   const total = JSON.stringify(item.request).length;
@@ -12600,7 +12600,37 @@ test('Share-for-research scrub removes embedded data URIs and keeps repeated-ans
     });
     assert.equal(repeat.request.length, 3, `${label}: pre-response history was corrupted by terminal-answer stripping`);
     assert.equal(repeat.request[1].content, 'hello', `${label}: repeated-answer history lost`);
+    // Bare base64 without a data: wrapper (e.g. serialized {"base64":"..."}
+    // tool results) must be scrubbed from request strings too.
+    const bareBlob = 'ABCD1234abcd'.repeat(40);
+    const bare = outbox.buildShareGenerationItem({
+      runId: `run-share-bare-${label}`,
+      finalContent: 'ok',
+      messages: [{ role: 'tool', content: `file bytes {"base64":"${bareBlob}"} end` }],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(JSON.stringify(bare).includes(bareBlob.slice(0, 60)), false, `${label}: bare base64 tool bytes escaped the scrub`);
+    // Responses get the same binary scrub as requests, not just clamping.
+    const answered = outbox.buildShareGenerationItem({
+      runId: `run-share-resp-${label}`,
+      finalContent: `here it is: data:image/png;base64,${'iVBORw0K'.repeat(60)}`,
+      messages: [{ role: 'user', content: 'reproduce the canvas' }],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(JSON.stringify(answered).includes('iVBORw0K'), false, `${label}: response image bytes escaped the scrub`);
   }
+});
+
+test('Share-for-research caps count wrapper messages and serialized overhead', () => {
+  const messages = [{ role: 'system', content: 'SYS' }];
+  for (let i = 0; i < 250; i++) messages.push({ role: 'user', content: `cap${i}-` + 'word '.repeat(150) });
+  const item = SHARE_OUTBOX_CH.buildShareGenerationItem({
+    runId: 'cap-run', finalContent: 'x', messages, model: 'm', mode: 'act', provider: 'p', provider_name: 'p',
+  });
+  assert.ok(item.request.length <= 200, `message cap broken with wrappers (${item.request.length})`);
+  assert.ok(JSON.stringify(item.request).length <= 150_000, `byte budget broken with wrappers (${JSON.stringify(item.request).length})`);
+  assert.equal(item.request[0].content, 'SYS', 'system prompt lost to cap accounting');
+  assert.match(item.request.at(-1).content, /^cap249-/, 'tail lost to cap accounting');
 });
 
 test('Share-for-research outbox persists retryable failures and removes acknowledged or rejected entries', async () => {
@@ -12732,6 +12762,7 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     assert.match(chromeOutbox, /input_file/, `${browser}: binary scrub must cover file/input_file blocks`);
     assert.match(chromeOutbox, /embedded base64 data omitted/, `${browser}: string content must be scrubbed of data URIs`);
     assert.match(chromeOutbox, /earlier shared messages omitted/, `${browser}: truncation must preserve the tail`);
+    assert.match(chromeOutbox, /scrubText\(responseContent/, `${browser}: shared responses must get the binary scrub`);
     assert.match(settings, /shareQueriesForResearch/, `${browser}: share toggle field missing from settings`);
     assert.match(settings, /!input\.checked[\s\S]*?confirm\(/, `${browser}: consent confirmation must guard turning the share toggle on`);
     assert.match(provider, /\/improvement\/generations/, `${browser}: share endpoint missing from the Compass provider transport`);

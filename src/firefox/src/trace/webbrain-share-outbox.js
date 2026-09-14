@@ -34,15 +34,24 @@ function clampText(value, limit = MAX_MESSAGE_CHARS) {
 function scrubText(value, limit = MAX_MESSAGE_CHARS) {
   if (typeof value !== 'string') return value;
   let text = value;
-  // Detect data URIs regardless of surrounding string or payload length: even
-  // a 1x1 canvas/QR thumbnail is image bytes the UI promises to strip.
   if (text.includes('data:')) {
+    // Detect data URIs regardless of surrounding string or payload length:
+    // even a 1x1 canvas/QR thumbnail is image bytes the UI promises to strip.
     // Newlines (but not spaces/words) are allowed inside the payload so
     // wrapped base64 is still removed while surrounding prose survives.
     text = text.replace(
       /data:(image|audio|video|application|font|model)\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\r\n]+/g,
       '[embedded base64 data omitted]',
     );
+  }
+  // Bare base64 blobs without a data: wrapper (e.g. read_downloaded_file
+  // serializes small binaries as {"base64":"..."} into string tool content).
+  // A 200+ run of base64 alphabet characters never occurs in prose, hashes,
+  // or URLs (delimiters break the run), so redact it from research copies.
+  if (/[A-Za-z0-9+/=\r\n]{200,}/.test(text)) {
+    text = text
+      .replace(/"base64"\s*:\s*"[A-Za-z0-9+/=\r\n]+"/g, '"base64":"[omitted]"')
+      .replace(/[A-Za-z0-9+/]{200}[A-Za-z0-9+/=\r\n]*/g, '[embedded base64 data omitted]');
   }
   return bounded(text, limit);
 }
@@ -173,10 +182,33 @@ function scrubMessages(messages) {
   }
   kept.reverse();
   const headOmitted = startIndex > (hasSystemPrompt ? 1 : 0);
+  const omissionMarker = { role: 'system', content: '[earlier shared messages omitted]' };
   const out = [];
   if (hasSystemPrompt) out.push(scrubbedAll[0].copy);
-  if (headOmitted) out.push({ role: 'system', content: '[earlier shared messages omitted]' });
+  if (headOmitted) out.push(omissionMarker);
   for (const entry of kept) out.push(entry.copy);
+  // Charge the wrapper entries and JSON array delimiters, which the
+  // per-message budget above does not count: trim oldest shared turns until
+  // both the message cap and the byte budget hold for the final payload.
+  const wrapperFloor = out.length - kept.length; // system + marker entries
+  let outJson = '';
+  try { outJson = JSON.stringify(out); } catch { outJson = ''; }
+  let trimmed = false;
+  while ((out.length > MAX_SCRUBBED_MESSAGES || (outJson && outJson.length > MAX_REQUEST_BUDGET))
+    && out.length > wrapperFloor) {
+    out.splice(wrapperFloor, 1);
+    trimmed = true;
+    try { outJson = JSON.stringify(out); } catch { break; }
+  }
+  if (trimmed && !headOmitted) {
+    out.splice(hasSystemPrompt ? 1 : 0, 0, omissionMarker);
+    if (out.length > MAX_SCRUBBED_MESSAGES) out.splice(hasSystemPrompt ? 2 : 1, 1);
+    try { outJson = JSON.stringify(out); } catch { /* keep best effort */ }
+    while (outJson && outJson.length > MAX_REQUEST_BUDGET && out.length > (hasSystemPrompt ? 2 : 1)) {
+      out.splice(hasSystemPrompt ? 2 : 1, 1);
+      try { outJson = JSON.stringify(out); } catch { break; }
+    }
+  }
   return out;
 }
 
@@ -202,7 +234,7 @@ export function buildShareGenerationItem({
     model: String(model || '').slice(0, 255),
     mode: String(mode || '').slice(0, 32),
     request,
-    response: { role: 'assistant', content: clampText(responseContent, MAX_RESPONSE_CHARS) },
+    response: { role: 'assistant', content: scrubText(responseContent, MAX_RESPONSE_CHARS) },
   };
 }
 
