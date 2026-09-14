@@ -456,8 +456,9 @@ function anyOtherWebgpuTextPaused() {
 function webgpuDownloadActionState() {
   // The Compass preset remains selected, but controls must follow a retained
   // Settings transfer, including when Compass itself is already cached.
-  return otherWebgpuTextStates().find(state => WEBGPU_TEXT_BUSY_STATUSES.has(state.status))
-    || webgpuDownloadState;
+  const transfers = [webgpuDownloadState, ...otherWebgpuTextStates()]
+    .filter(state => WEBGPU_TEXT_BUSY_STATUSES.has(state.status));
+  return transfers.find(state => state.status !== 'paused') || transfers[0] || webgpuDownloadState;
 }
 
 function setWebgpuDownloadState(state, { syncActiveTransfer = false } = {}) {

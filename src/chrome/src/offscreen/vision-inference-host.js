@@ -360,7 +360,8 @@ async function findActiveTextTransfer(requestedModel) {
       probeExistingTextWorkerStatus('', { probeActive: true }),
     ];
   const results = await Promise.all(probes);
-  return results.find(isActiveTextTransfer) || null;
+  const transfers = results.filter(isActiveTextTransfer);
+  return transfers.find(state => state.status !== 'paused') || transfers[0] || null;
 }
 
 function startExclusiveTextDownload(message) {

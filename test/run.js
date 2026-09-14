@@ -63224,6 +63224,56 @@ test('Apocalypse text download fixes the Compass preset and avoids duplicate sta
   }
 });
 
+test('Settings renders and stops the highest-priority WebGPU transfer', async () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
+  const helpers = source.slice(source.indexOf('function normalizeWebgpuDownloadSnapshot('), source.indexOf('function renderProviders()'));
+  for (const [displayStatus, siblingStatus, useSibling] of [
+    ['paused', 'downloading', true], ['paused', 'stopping', true],
+    ['downloading', 'paused', false], ['queued', 'paused', false],
+    ['ready', 'downloading', true], ['paused', 'paused', false],
+    ['not-downloaded', 'paused', true],
+  ]) {
+    const sibling = { modelId: WEBGPU_BONSAI27_MODEL_ID, dtype: 'q1', status: siblingStatus, ready: false };
+    let snapshot = { modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, dtype: WEBGPU_DTYPE,
+      status: displayStatus, ready: displayStatus === 'ready', activeTransfer: sibling };
+    const expected = useSibling ? sibling : snapshot;
+    const button = { dataset: { provider: 'webgpu' } };
+    const line = {};
+    const commands = [];
+    const context = vm.createContext({
+      WEBGPU_COMPASS_TINY_V2_MODEL_ID, normalizeWebgpuModelId,
+      webgpuDownloadActionInFlight: false, webgpuDownloadPollTimer: null,
+      dirtyProviderIds: new Set(), activeProviderId: 'webbrain_cloud', requestedActiveProviderId: 'webbrain_cloud',
+      providersData: { webgpu: { model: snapshot.modelId } }, t: key => key,
+      setInterval: () => 1, clearInterval() {},
+      document: {
+        querySelector: selector => selector.startsWith('input') ? { value: snapshot.modelId }
+          : selector.startsWith('.btn') ? button : line,
+        querySelectorAll: () => [button],
+      },
+      sendToBackground: async (action, payload) => {
+        commands.push({ action, payload: structuredClone(payload) });
+        if (action === 'stop_webgpu_download') {
+          assert.equal(payload.model, expected.modelId);
+          assert.equal(payload.dtype, expected.dtype);
+          snapshot = { ...snapshot, status: 'not-downloaded', ready: false, activeTransfer: null };
+          return { ok: true };
+        }
+        assert.equal(action, 'get_webgpu_download_status');
+        return snapshot;
+      },
+    });
+    vm.runInContext(helpers, context);
+    const normalized = context.normalizeWebgpuDownloadSnapshot(snapshot);
+    context.renderWebgpuDownloadControl('webgpu', normalized);
+    assert.equal(button.dataset.activeTransferModel, useSibling ? sibling.modelId : undefined);
+    assert.equal(button.disabled, expected.status === 'stopping');
+    if (expected.status === 'stopping') continue;
+    await context.handleWebgpuDownloadButton(button);
+    assert.equal(commands.filter(command => command.action === 'stop_webgpu_download').length, 1);
+  }
+});
+
 test('Apocalypse controls retain Settings transfers while the preset stays on Compass', async () => {
   const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
   const helpers = source.slice(source.indexOf('function normalizeWebgpuDownloadState('), source.indexOf('function setModelTestResult('));
@@ -63281,6 +63331,18 @@ test('Apocalypse controls retain Settings transfers while the preset stays on Co
       assert.ok(node('[data-webgpu-download-detail]').textContent.includes(webgpuModelPreset(modelId)?.label || modelId));
       await context.runWebgpuDownloadAction('pause');
       assert.equal(node('[data-webgpu-download-action="resume"]').hidden, false);
+      context.setWebgpuDownloadState({ modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, status: 'downloading', ready: false });
+      assert.equal(context.webgpuDownloadActionState().modelId, WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+        'a paused sibling must not hide the running Compass transfer');
+      context.setWebgpuDownloadState({ modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, status: 'paused', ready: false });
+      transfer.status = 'downloading';
+      context.setWebgpuDownloadState(transfer);
+      assert.equal(context.webgpuDownloadActionState().modelId, modelId,
+        'a running sibling must take precedence over paused Compass');
+      transfer.status = 'paused';
+      context.setWebgpuDownloadState(transfer);
+      context.setWebgpuDownloadState({ modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, dtype: WEBGPU_DTYPE,
+        status: compassReady ? 'ready' : 'not-downloaded', ready: compassReady });
       await context.runWebgpuDownloadAction('resume');
       assert.equal(configuredModel, WEBGPU_COMPASS_TINY_V2_MODEL_ID, 'resuming a sibling must not change the Compass preset');
       assert.equal(node('[data-webgpu-download-action="pause"]').hidden, false);
@@ -63715,10 +63777,10 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'the Settings poll must stay alive while a sibling transfer runs');
   assert.match(settingsScript, /stopTarget/,
     'stopping from Settings must target the running transfer when the model field changed');
-  assert.match(settingsScript, /distinctTransfer/,
-    'a cached displayed model must not hide a distinct running transfer');
-  assert.match(settingsScript, /distinctSibling/,
-    'stopping must prefer a distinct running transfer even when the displayed model is ready');
+  assert.match(settingsScript, /const display = webgpuDownloadControlState\(state\)/,
+    'rendering must use the shared transfer priority');
+  assert.match(settingsScript, /const control = webgpuDownloadControlState\(state\)/,
+    'stopping must target the same transfer shown in the card');
   assert.match(settingsScript, /activeProviderId = updateRes\.activeProviderId/,
     'Settings must sync the selected provider after the background fallback');
   assert.match(background, /case 'update_provider'[\s\S]*?activeProviderId: providerManager\.activeProviderId/,
@@ -63984,7 +64046,8 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
     };
 
     class FakeWorker {
-      constructor() {
+      constructor(url) {
+        this.url = url;
         this.index = workers.length + 1;
         this.listeners = { message: [], error: [] };
         this.preloadId = null;
@@ -64084,6 +64147,11 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
           }), behavior.textRemovalDelay || 0);
           return;
         }
+        if (type === 'text-download-status') {
+          const state = this.url.includes('bonsai-worker') ? behavior.bonsaiTextState : behavior.onnxTextState;
+          this.emit({ id, ok: true, ...state });
+          return;
+        }
         if (type === 'clear-cache') {
           this.emit({ id, ok: true, modelId: payload.modelId, deletedEntries: 3 });
           return;
@@ -64160,6 +64228,24 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
   assert.equal((await slowStop).status, 'not-downloaded');
   assert.equal(manager.activeProviderId, 'webbrain_cloud', 'late deletion must still trigger the provider fallback');
   assert.equal(savedActive, 'webbrain_cloud', 'late deletion must persist the fallback');
+
+  const transfers = createHarness({
+    onnxTextState: { modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, status: 'downloading', ready: false },
+    bonsaiTextState: { modelId: WEBGPU_BONSAI27_MODEL_ID, status: 'paused', ready: false },
+  });
+  await transfers.dispatch({ type: 'webgpu-download-status', model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+  await transfers.dispatch({ type: 'webgpu-download-status', model: WEBGPU_BONSAI27_MODEL_ID });
+  let status = await transfers.dispatch({ type: 'webgpu-download-status', model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+  assert.equal(status.activeTransfer.modelId, WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+    'a paused other worker must not hide the requested worker download');
+  const rejectedStart = await transfers.dispatch({ type: 'webgpu-download-start', model: WEBGPU_BONSAI27_MODEL_ID });
+  assert.equal(rejectedStart.ok, false, 'paused-first probe order must not bypass download exclusivity');
+  assert.equal(transfers.workerMessages.some(({ message }) => message.type === 'start-download-text'), false);
+  transfers.behavior.onnxTextState.status = 'paused';
+  transfers.behavior.bonsaiTextState.status = 'downloading';
+  status = await transfers.dispatch({ type: 'webgpu-download-status', model: WEBGPU_BONSAI27_MODEL_ID });
+  assert.equal(status.activeTransfer.modelId, WEBGPU_BONSAI27_MODEL_ID,
+    'the running worker must win in either probe order');
 
   const init = createHarness({ hangInitCount: 1 });
   const hungInit = init.dispatch({ type: 'webgpu-vision-probe', model: WEBGPU_VISION_MODEL_ID });
