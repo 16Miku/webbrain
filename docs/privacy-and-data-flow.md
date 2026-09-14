@@ -374,8 +374,8 @@ The only outbound HTTP requests are:
 7. **Encrypted Cloud Sync calls** to `https://api.webbrain.one/v1/sync` (only after a subscriber explicitly enables sync; vault content is encrypted before upload)
 8. **Slash-driven tab/screen recording** creates no outbound traffic (the .webm is saved to the Downloads folder via `chrome.downloads.download`)
 
-The opt-in `webRequest` API shortcut observer is off by default and does not
-create outbound requests; when enabled, it observes replay metadata for requests
+The `webRequest` API shortcut observer is on by default and does not
+create outbound requests; it observes replay metadata for requests
 the page already made so repeated UI mutations can be diagnosed.
 
 ### Bundled Skills

@@ -194,12 +194,12 @@ const agent = new Agent(providerManager);
 agent.setStandaloneOfflineRagService(createOffscreenOfflineRetrievalService());
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = chrome.storage.local
-  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: false })
+  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
   .then((stored) => {
-    agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
+    agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] !== false);
   })
   .catch(() => {
-    agent.setAlwaysAllowApiMutations(false);
+    agent.setAlwaysAllowApiMutations(true);
   });
 agent.setConversationScopeChangeListener((tabId, state) => {
   chrome.runtime.sendMessage({
@@ -335,8 +335,8 @@ async function setNativePdfMimeHandlerEnabled(enabled) {
 }
 
 async function syncNativePdfMimeHandlerFromStorage() {
-  const stored = await chrome.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: false });
-  return setNativePdfMimeHandlerEnabled(stored?.[PDF_VIEWER_ENABLED_KEY] === true);
+  const stored = await chrome.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: true });
+  return setNativePdfMimeHandlerEnabled(stored?.[PDF_VIEWER_ENABLED_KEY] !== false);
 }
 
 function reportPdfMimeHandlerSyncFailure(error) {
@@ -714,12 +714,12 @@ async function isUserMemoryExtractionEnabled() {
     USER_MEMORY_AUTO_CAPTURE_KEY,
   ]);
   return stored[USER_MEMORY_ENABLED_KEY] !== false
-    && stored[USER_MEMORY_AUTO_CAPTURE_KEY] === true;
+    && stored[USER_MEMORY_AUTO_CAPTURE_KEY] !== false;
 }
 
 async function isUserMemoryFormCaptureEnabled() {
   const stored = await chrome.storage.local.get(USER_MEMORY_FORM_CAPTURE_KEY);
-  return stored[USER_MEMORY_FORM_CAPTURE_KEY] === true;
+  return stored[USER_MEMORY_FORM_CAPTURE_KEY] !== false;
 }
 
 async function withUserMemoryExtractionQueueLock(task) {
@@ -1178,7 +1178,7 @@ chrome.runtime.onStartup?.addListener(async () => {
 // Listen for setting changes
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && changes[PDF_VIEWER_ENABLED_KEY]) {
-    setNativePdfMimeHandlerEnabled(changes[PDF_VIEWER_ENABLED_KEY].newValue === true)
+    setNativePdfMimeHandlerEnabled(changes[PDF_VIEWER_ENABLED_KEY].newValue !== false)
       .catch(reportPdfMimeHandlerSyncFailure);
   }
   if (changes.wbLocale) {
@@ -1204,7 +1204,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   // wiping the chat history.
   let refreshPrompts = false;
   if (changes[ALWAYS_ALLOW_API_MUTATIONS_KEY]) {
-    agent.setAlwaysAllowApiMutations(changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue === true);
+    agent.setAlwaysAllowApiMutations(changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue !== false);
     refreshPrompts = true;
   }
   if (changes.useSiteAdapters) {
@@ -1231,7 +1231,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     });
   }
   if (changes[API_MUTATION_OBSERVER_KEY]) {
-    setApiMutationObserverEnabled(changes[API_MUTATION_OBSERVER_KEY].newValue === true);
+    setApiMutationObserverEnabled(changes[API_MUTATION_OBSERVER_KEY].newValue !== false);
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = !!changes.strictSecretMode.newValue;
@@ -2437,7 +2437,7 @@ chrome.tabs.onRemoved.addListener((tabId) => pdfResponseTabs.delete(tabId));
 // tokens and form bodies do not get printed into model context.
 const API_REQUESTS_PER_TAB_LIMIT = 40;
 const API_MUTATION_OBSERVER_KEY = 'apiMutationObserverEnabled';
-const API_MUTATION_OBSERVER_DEFAULT = false;
+const API_MUTATION_OBSERVER_DEFAULT = true;
 const API_REPLAY_BODY_LIMIT = 16000;
 const apiRequestsByTab = new Map(); // tabId -> [{ url, method, ts, replayRequestId, ... }]
 const apiRequestReplayById = new Map(); // replayRequestId -> captured same-origin replay options
@@ -2581,7 +2581,7 @@ function setApiMutationObserverEnabled(enabled) {
 async function loadApiMutationObserverSetting() {
   try {
     const stored = await chrome.storage.local.get({ [API_MUTATION_OBSERVER_KEY]: API_MUTATION_OBSERVER_DEFAULT });
-    setApiMutationObserverEnabled(stored[API_MUTATION_OBSERVER_KEY] === true);
+    setApiMutationObserverEnabled(stored[API_MUTATION_OBSERVER_KEY] !== false);
   } catch (e) {
     setApiMutationObserverEnabled(API_MUTATION_OBSERVER_DEFAULT);
   }
@@ -2965,8 +2965,8 @@ async function handleMessage(msg, sender) {
         store,
         records: store.records,
         enabled: settings[USER_MEMORY_ENABLED_KEY] !== false,
-        autoCaptureEnabled: settings[USER_MEMORY_AUTO_CAPTURE_KEY] === true,
-        formCaptureEnabled: settings[USER_MEMORY_FORM_CAPTURE_KEY] === true,
+        autoCaptureEnabled: settings[USER_MEMORY_AUTO_CAPTURE_KEY] !== false,
+        formCaptureEnabled: settings[USER_MEMORY_FORM_CAPTURE_KEY] !== false,
         maxPromptChars: normalizeUserMemoryMaxPromptChars(settings[USER_MEMORY_MAX_PROMPT_CHARS_KEY]),
       };
     }

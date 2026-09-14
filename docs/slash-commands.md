@@ -90,7 +90,7 @@ is failing. A badge appears while it is active, and it clears on `/reset`.
 
 To keep the same policy active across conversations and browser restarts, turn
 on **Always allow API mutations** under **Settings → General → Advanced**. The
-setting is off by default and remains active until you turn it off. `/reset`
+setting is on by default and remains active until you turn it off. `/reset`
 still clears the conversation-only `/allow-api` override, but does not change
 the persistent setting.
 

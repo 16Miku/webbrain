@@ -654,7 +654,7 @@ same local store from the side panel. Settings -> Profile provides enable,
 auto-learn, edit, delete, clear, export, and import controls for Chrome and
 Firefox.
 
-Optional auto-learning is off by default. After successful `chat`,
+Auto-learning is enabled by default. After successful `chat`,
 `chat_stream`, or `continue` completion, the background script queues a small
 extractor job with only the latest user text, final assistant text, current
 memory list, mode, and success state. The response path does not await this
@@ -866,9 +866,9 @@ Three independent detectors run after every tool call:
 2. **Coordinate click** — 5px-bucketed. Nudge at 5 same-bucket clicks. Stop at 8.
 3. **Navigation** — snapshot URL before click/navigate/iframe_click, compare after.
 
-When the opt-in API mutation observer is enabled and a repeated `click` /
+When the API mutation observer is enabled and a repeated `click` /
 `click_ax` loop is detected, `_detectApiShortcut()` checks the per-tab
-webRequest buffer populated by `background.js`. The observer is off by default.
+webRequest buffer populated by `background.js`. The observer is on by default.
 If each repeated click produced the same exact URL + HTTP method within a
 3-second window, the loop warning includes a `fetch_url({url, method})`
 suggestion. For replayable XHR/fetch mutations, the observer also keeps bounded

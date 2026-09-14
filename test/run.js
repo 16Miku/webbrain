@@ -4278,7 +4278,7 @@ test('user memory browser wiring is mirrored and non-blocking', () => {
     assert.match(background, /case 'delete_user_memory': \{[\s\S]*userMemoryStore\.delete\(String\(msg\.id \|\| ''\)\)[\s\S]*syncAgentUserMemoryFromStorage/, `${label}: user-facing memory delete should hard-delete records`);
     assert.doesNotMatch(background, /case 'delete_user_memory': \{[\s\S]*userMemoryStore\.archive\(String\(msg\.id \|\| ''\)\)/, `${label}: user-facing memory delete should not archive plaintext`);
     assert.match(background, new RegExp(`${runtime}\\.storage\\.local\\.get\\(\\[\\s*USER_MEMORY_ENABLED_KEY,[\\s\\S]*USER_MEMORY_AUTO_CAPTURE_KEY`), `${label}: extraction should read both memory and auto-capture toggles`);
-    assert.match(background, /async function isUserMemoryExtractionEnabled\(\)[\s\S]*stored\[USER_MEMORY_ENABLED_KEY\] !== false[\s\S]*stored\[USER_MEMORY_AUTO_CAPTURE_KEY\] === true/, `${label}: extraction should be gated by the main memory toggle`);
+    assert.match(background, /async function isUserMemoryExtractionEnabled\(\)[\s\S]*stored\[USER_MEMORY_ENABLED_KEY\] !== false[\s\S]*stored\[USER_MEMORY_AUTO_CAPTURE_KEY\] !== false/, `${label}: extraction should be gated by the main memory toggle`);
     assert.match(background, /if \(!await isUserMemoryExtractionEnabled\(\)\) return \{ queued: false, reason: 'disabled' \};/, `${label}: enqueue should not run when memory is disabled`);
     assert.match(background, /const formCompletionTurn = sourceContext === 'form_completion';/, `${label}: form-derived memory should be classified before extraction text is built`);
     assert.match(background, /if \(!await isUserMemoryFormCaptureEnabled\(\)\) \{[\s\S]*return \{ queued: false, reason: 'form_capture_disabled' \};/, `${label}: form-derived memory should be gated by its opt-in setting`);
@@ -46614,7 +46614,7 @@ test('settings scopes WebBrain Compass billing button to provider card only', ()
   }
 });
 
-test('API mutation observer setting is opt-in and controls the request observer', () => {
+test('API mutation observer setting defaults on and controls the request observer', () => {
   for (const [label, bgRel, settingsRel, htmlRel] of [
     ['chrome', 'src/chrome/src/background.js', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html'],
     ['firefox', 'src/firefox/src/background.js', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.html'],
@@ -46624,12 +46624,12 @@ test('API mutation observer setting is opt-in and controls the request observer'
     const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
 
     assert.match(html, /id="toggle-api-mutation-observer"/, `${label}: settings toggle missing`);
-    assert.doesNotMatch(html, /id="toggle-api-mutation-observer"\s+checked/, `${label}: observer toggle should default off`);
+    assert.doesNotMatch(html, /id="toggle-api-mutation-observer"\s+checked/, `${label}: observer toggle state should be set from storage`);
     assert.match(settings, /apiMutationObserverEnabled/, `${label}: settings should persist observer toggle`);
-    assert.match(settings, /apiMutationObserverToggle\.checked = stored\.apiMutationObserverEnabled === true/, `${label}: observer should load off by default`);
+    assert.match(settings, /apiMutationObserverToggle\.checked = stored\.apiMutationObserverEnabled !== false/, `${label}: observer should load on by default`);
     assert.match(settings, /apiMutationObserverEnabled:\s*apiMutationObserverToggle\.checked/, `${label}: observer toggle should save storage`);
     assert.match(bg, /const API_MUTATION_OBSERVER_KEY = 'apiMutationObserverEnabled';/, `${label}: storage key missing`);
-    assert.match(bg, /const API_MUTATION_OBSERVER_DEFAULT = false;/, `${label}: observer default should be explicit and off`);
+    assert.match(bg, /const API_MUTATION_OBSERVER_DEFAULT = true;/, `${label}: observer default should be explicit and on`);
     assert.match(bg, /function setApiMutationObserverEnabled\(enabled\)/, `${label}: observer gate missing`);
     assert.doesNotMatch(bg, /(?:chrome|browser)\.webRequest\.onBeforeRequest\.addListener\(/, `${label}: observer should not register unconditionally`);
     assert.match(bg, /onBeforeRequest\.addListener\(recordApiRequest/, `${label}: observer should register only through the gate`);
@@ -46638,17 +46638,17 @@ test('API mutation observer setting is opt-in and controls the request observer'
     assert.match(bg, /globalThis\.__webbrainApiRequestReplay = apiRequestReplayById/, `${label}: replay store should be available to fetch_url`);
     assert.match(bg, /onBeforeRequest\.removeListener\(recordApiRequest\)/, `${label}: observer should unregister when disabled`);
     assert.match(bg, /onBeforeSendHeaders\?\.removeListener\(recordApiRequestHeaders\)/, `${label}: header observer should unregister when disabled`);
-    assert.match(bg, /storage\.local\.get\(\{ \[API_MUTATION_OBSERVER_KEY\]: API_MUTATION_OBSERVER_DEFAULT \}\)/, `${label}: unset storage should use explicit off default`);
-    assert.match(bg, /setApiMutationObserverEnabled\(stored\[API_MUTATION_OBSERVER_KEY\] === true\)/, `${label}: only explicit true should enable observer`);
+    assert.match(bg, /storage\.local\.get\(\{ \[API_MUTATION_OBSERVER_KEY\]: API_MUTATION_OBSERVER_DEFAULT \}\)/, `${label}: unset storage should use the explicit default`);
+    assert.match(bg, /setApiMutationObserverEnabled\(stored\[API_MUTATION_OBSERVER_KEY\] !== false\)/, `${label}: observer should stay on unless explicitly disabled`);
     assert.match(
       bg,
-      /changes\[API_MUTATION_OBSERVER_KEY\][\s\S]*setApiMutationObserverEnabled\(changes\[API_MUTATION_OBSERVER_KEY\]\.newValue === true\)/,
+      /changes\[API_MUTATION_OBSERVER_KEY\][\s\S]*setApiMutationObserverEnabled\(changes\[API_MUTATION_OBSERVER_KEY\]\.newValue !== false\)/,
       `${label}: storage changes should update observer`,
     );
   }
 });
 
-test('persistent API mutation permission is opt-in, portable, and mirrored', () => {
+test('persistent API mutation permission defaults on, is portable, and mirrored', () => {
   for (const [label, bgRel, settingsRel, htmlRel, panelRel, configRel] of [
     ['chrome', 'src/chrome/src/background.js', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/config-transfer.js'],
     ['firefox', 'src/firefox/src/background.js', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.html', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/config-transfer.js'],
@@ -46663,16 +46663,16 @@ test('persistent API mutation permission is opt-in, portable, and mirrored', () 
     assert.match(html, /id="always-allow-api-mutations-label"[^>]*data-i18n="st\.display\.always_allow_api_mutations\.label"/, `${label}: persistent permission label should expose a stable accessible-name target`);
     assert.match(html, /id="always-allow-api-mutations-desc"[^>]*data-i18n="st\.display\.always_allow_api_mutations\.desc"/, `${label}: persistent permission description should expose a stable accessible-description target`);
     assert.match(html, /id="toggle-always-allow-api-mutations"[^>]*aria-labelledby="always-allow-api-mutations-label"[^>]*aria-describedby="always-allow-api-mutations-desc"/, `${label}: persistent permission toggle should reference its translated label and description`);
-    assert.doesNotMatch(html, /id="toggle-always-allow-api-mutations"\s+checked/, `${label}: persistent permission must default off`);
-    assert.match(settings, /alwaysAllowApiMutationsToggle\.checked = stored\.alwaysAllowApiMutations === true/, `${label}: settings should load only explicit persistent opt-in`);
+    assert.doesNotMatch(html, /id="toggle-always-allow-api-mutations"\s+checked/, `${label}: persistent permission state should be set from storage`);
+    assert.match(settings, /alwaysAllowApiMutationsToggle\.checked = stored\.alwaysAllowApiMutations !== false/, `${label}: settings should load on by default`);
     assert.match(settings, /alwaysAllowApiMutations:\s*alwaysAllowApiMutationsToggle\.checked/, `${label}: settings should save the persistent permission`);
     assert.match(bg, /const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';/, `${label}: background storage key missing`);
-    assert.match(bg, /setAlwaysAllowApiMutations\(stored\[ALWAYS_ALLOW_API_MUTATIONS_KEY\] === true\)/, `${label}: background should initialize the Agent from storage`);
+    assert.match(bg, /setAlwaysAllowApiMutations\(stored\[ALWAYS_ALLOW_API_MUTATIONS_KEY\] !== false\)/, `${label}: background should initialize the Agent from storage`);
     assert.match(bg, /await alwaysAllowApiMutationsReady;/, `${label}: first agent runs should wait for persistent permission hydration`);
-    assert.match(bg, /changes\[ALWAYS_ALLOW_API_MUTATIONS_KEY\][\s\S]*setAlwaysAllowApiMutations\(changes\[ALWAYS_ALLOW_API_MUTATIONS_KEY\]\.newValue === true\)/, `${label}: background should apply live revocation`);
-    assert.match(panel, /alwaysAllowApiMutations = stored\.alwaysAllowApiMutations === true/, `${label}: side panel should load the persistent authorization state`);
+    assert.match(bg, /changes\[ALWAYS_ALLOW_API_MUTATIONS_KEY\][\s\S]*setAlwaysAllowApiMutations\(changes\[ALWAYS_ALLOW_API_MUTATIONS_KEY\]\.newValue !== false\)/, `${label}: background should apply live revocation`);
+    assert.match(panel, /alwaysAllowApiMutations = stored\.alwaysAllowApiMutations !== false/, `${label}: side panel should load the persistent authorization state`);
     assert.match(panel, /alwaysAllowApiMutations \|\| isApiMutationsAllowedForTab\(currentTabId\)/, `${label}: authorization should combine persistent and conversation permission`);
-    assert.match(config, /alwaysAllowApiMutations:\s*false/, `${label}: config export default should remain off`);
+    assert.match(config, /alwaysAllowApiMutations:\s*true/, `${label}: config export default should be on`);
     assert.match(config, /'alwaysAllowApiMutations'/, `${label}: config import should validate the boolean setting`);
   }
 });

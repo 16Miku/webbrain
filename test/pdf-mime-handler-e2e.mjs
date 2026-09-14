@@ -307,7 +307,7 @@ async function main() {
     assert.match(extraction.result?.pages?.[0] || '', /WebBrain PDF MIME handler test/);
     assert.deepEqual(Buffer.from(extraction.result?._pdfBase64 || '', 'base64'), fixture.pdf);
 
-    await waitForNativeHandlerOption(settings, false);
+    await waitForNativeHandlerOption(settings, true);
     // Installation initially registers public MIME handlers as enabled. Allow
     // the post-registration reconciliation pass to settle before navigating.
     await settings.waitForTimeout(750);
@@ -316,19 +316,10 @@ async function main() {
       checked: document.getElementById('toggle-pdf-viewer')?.checked,
     }));
     assert.equal(initialState.stored.pdfViewerEnabled, undefined, 'Fresh installs must preserve an unset WebBrain PDF setting.');
-    assert.equal(initialState.checked, false, 'The PDF viewer toggle must render off by default.');
+    assert.equal(initialState.checked, true, 'The PDF viewer toggle must render on by default.');
 
-    const disabledRouting = await inspectPdfRouting(context, `${fixture.url}?mode=disabled`, extensionId);
-    assert.equal(disabledRouting.sawWebBrainHandler, false, `Disabled PDF handling still entered WebBrain: ${disabledRouting.urls.join(', ')}`);
-    assert.equal(disabledRouting.sawNativeHandler, true, `Disabled PDF handling did not reach Chrome's native viewer: ${disabledRouting.urls.join(', ')}`);
-
-    await setPdfViewerToggle(settings, true);
-    await waitForNativeHandlerOption(settings, true);
-    const enabledStored = await settings.evaluate(async () => chrome.storage.local.get('pdfViewerEnabled'));
-    assert.equal(enabledStored.pdfViewerEnabled, true, 'The enabled toggle was not stored.');
-
-    const enabledRouting = await inspectPdfRouting(context, `${fixture.url}?mode=enabled`, extensionId);
-    assert.equal(enabledRouting.sawWebBrainHandler, true, `Enabled PDF handling did not enter WebBrain: ${enabledRouting.urls.join(', ')}`);
+    const enabledByDefaultRouting = await inspectPdfRouting(context, `${fixture.url}?mode=enabled-by-default`, extensionId);
+    assert.equal(enabledByDefaultRouting.sawWebBrainHandler, true, `Default PDF handling did not enter WebBrain: ${enabledByDefaultRouting.urls.join(', ')}`);
 
     await setPdfViewerToggle(settings, false);
     await waitForNativeHandlerOption(settings, false);

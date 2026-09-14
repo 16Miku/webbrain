@@ -794,7 +794,7 @@ async function init() {
   }
   verboseToggle.checked = stored.verboseMode || false;
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
-  if (pdfViewerToggle) pdfViewerToggle.checked = stored.pdfViewerEnabled === true;
+  if (pdfViewerToggle) pdfViewerToggle.checked = stored.pdfViewerEnabled !== false;
   if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
   if (helpImproveToggle) helpImproveToggle.checked = stored.helpImproveWebBrain !== false; // on by default
   screenshotToggle.checked = stored.screenshotFallback ?? true; // on by default
@@ -841,8 +841,8 @@ async function init() {
   siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
   if (researchEscalationToggle) researchEscalationToggle.checked = stored.researchEscalationEnabled === true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
-  alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === true;
-  apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === true;
+  alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations !== false;
+  apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled !== false;
   if (webMcpToggle) webMcpToggle.checked = stored.webMcpEnabled === true; // off by default
   if (openAIAskStreamingToggle) openAIAskStreamingToggle.checked = stored.openaiAskStreamingEnabled !== false;
   if (planBeforeActModeSelect) {
