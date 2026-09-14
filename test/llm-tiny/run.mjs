@@ -421,8 +421,9 @@ async function runCase(browser, baseUrl, participant, caseRecord, participantDir
       // response must still run even if an earlier action completed the UI.
       // A latch alone is insufficient because the fixture's complete flag never
       // clears; trailing state-changing actions invalidate an intermediate pass.
+      // Track the FIRST transition to complete, not the last observation.
       let batchPassed = false;
-      let lastPassIndex = -1;
+      let firstPassIndex = -1;
       let batchEnded = false;
       for (let actionIndex = 0; actionIndex < actions.length; actionIndex += 1) {
        const action = actions[actionIndex];
@@ -434,7 +435,7 @@ async function runCase(browser, baseUrl, participant, caseRecord, participantDir
             : await performIndexedAction(page, observation, action.name, action.args);
         actionResults.push(actionResult);
         trace.push({ step, actionIndex, latencyMs: actionIndex === 0 ? latencyMs : 0, action: { name: action.name, args: action.args }, actionResult, content: message.content || null });
-        if (await fixtureCompleted(page)) { batchPassed = true; lastPassIndex = actionIndex; }
+        if (await fixtureCompleted(page)) { if (!batchPassed) { batchPassed = true; firstPassIndex = actionIndex; } }
         if ((participant.adapter === 'fara' && ['terminate', 'ask_user_question'].includes(action.args?.action)) || ['done'].includes(action.name)) {
           batchEnded = true;
         }
@@ -447,7 +448,7 @@ async function runCase(browser, baseUrl, participant, caseRecord, participantDir
       }
       }
       if (batchPassed) {
-        const undone = actions.slice(lastPassIndex + 1).some(a => isStateChangingBatchAction(a, participant.adapter));
+        const undone = actions.slice(firstPassIndex + 1).some(a => isStateChangingBatchAction(a, participant.adapter));
         if (!undone) { status = 'passed'; break turns; }
         // Intermediate pass was undone by trailing actions; require re-verification.
         batchPassed = false;
