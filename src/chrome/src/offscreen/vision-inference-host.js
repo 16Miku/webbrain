@@ -451,6 +451,10 @@ async function sendTextWorkerMessage(modelId, type, payload = {}, { exclusive = 
 function defaultVisionWorkerTimeout(type) {
   if (type === 'init') return WORKER_INITIALIZATION_TIMEOUT_MS;
   if (type === 'chat') return VISION_INFERENCE_TIMEOUT_MS;
+  // Cache removal is serialized behind model work and can take longer than
+  // initialization. Keep its caller attached until the worker acknowledges
+  // completion (or fails), so provider fallback cannot miss a late deletion.
+  if (type === 'stop-text-download') return 0;
   if (type === 'preload' || type === 'text-chat' || type === 'multimodal-text-chat' || type === 'download-text' || type === 'start-download-text') return 0;
   return WORKER_INITIALIZATION_TIMEOUT_MS;
 }

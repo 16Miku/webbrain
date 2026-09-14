@@ -63832,6 +63832,28 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'Firefox must not package the Chromium-only bitgpu runtime');
 });
 
+test('WebGPU removal revalidates readiness after cleanup errors without masking the error', async () => {
+  for (const ready of [true, false]) {
+    const manager = new ProviderManagerCh();
+    const removalError = new Error('Cache cleanup failed');
+    let savedActive = null;
+    manager.providers.set('webgpu', {
+      config: { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID },
+    });
+    manager.providers.set('webbrain_cloud', {});
+    manager.activeProviderId = 'webgpu';
+    manager.save = async () => { savedActive = manager.activeProviderId; };
+    manager._webgpuProvider = () => ({
+      stopDownload: async () => { throw removalError; },
+      downloadStatus: async () => ({ ready }),
+    });
+    await assert.rejects(manager.stopWebgpuDownload({ model: WEBGPU_COMPASS_TINY_V2_MODEL_ID }),
+      error => error === removalError);
+    assert.equal(manager.activeProviderId, ready ? 'webgpu' : 'webbrain_cloud');
+    assert.equal(savedActive, ready ? null : 'webbrain_cloud');
+  }
+});
+
 test('vision inference host enforces deadlines and recreates poisoned workers', async () => {
   const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
 
@@ -63972,6 +63994,12 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
           this.emit({ id, ok: true, status: 'not-downloaded', ready: false, deletedEntries: 3 });
           return;
         }
+        if (type === 'stop-text-download') {
+          fakeSetTimeout(() => this.emit({
+            id, ok: true, modelId: payload.modelId, status: 'not-downloaded', ready: false,
+          }), behavior.textRemovalDelay || 0);
+          return;
+        }
         if (type === 'clear-cache') {
           this.emit({ id, ok: true, modelId: payload.modelId, deletedEntries: 3 });
           return;
@@ -64019,6 +64047,35 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
     });
     return { behavior, workers, workerMessages, runtimeMessages, dispatch, advance, drain };
   }
+
+  const removal = createHarness({ textRemovalDelay: 60_000 });
+  const manager = new ProviderManagerCh();
+  const webgpu = new WebGPUProvider({ model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+  let removalFinished = false;
+  let savedActive = null;
+  webgpu._dispatch = async message => {
+    const response = await removal.dispatch(message);
+    removalFinished = true;
+    return response;
+  };
+  webgpu.downloadStatus = async () => ({ ready: !removalFinished });
+  manager.providers.set('webgpu', webgpu);
+  manager.providers.set('webbrain_cloud', {});
+  manager.activeProviderId = 'webgpu';
+  manager.save = async () => { savedActive = manager.activeProviderId; };
+  let stopSettled = false;
+  const slowStop = manager.stopWebgpuDownload({ model: webgpu.model }).then(
+    result => { stopSettled = true; return result; },
+    error => { stopSettled = true; throw error; },
+  );
+  await removal.drain();
+  await removal.advance(15_001);
+  assert.equal(stopSettled, false, 'slow deletion must remain attached past the initialization deadline');
+  assert.equal(removalFinished, false);
+  await removal.advance(45_000);
+  assert.equal((await slowStop).status, 'not-downloaded');
+  assert.equal(manager.activeProviderId, 'webbrain_cloud', 'late deletion must still trigger the provider fallback');
+  assert.equal(savedActive, 'webbrain_cloud', 'late deletion must persist the fallback');
 
   const init = createHarness({ hangInitCount: 1 });
   const hungInit = init.dispatch({ type: 'webgpu-vision-probe', model: WEBGPU_VISION_MODEL_ID });
