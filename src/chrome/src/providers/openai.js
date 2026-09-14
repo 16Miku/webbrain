@@ -181,7 +181,23 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         || (String(this.model || '').trim().startsWith('@cf/') ? 'default' : '');
       if (gatewayId) headers['cf-aig-gateway-id'] = gatewayId;
     }
+    if (providerName === 'opencode-go') {
+      headers['x-opencode-session'] = this._opencodeSessionId(options);
+    }
     return headers;
+  }
+
+  // OpenCode Go rejects requests that omit x-opencode-session. Prefer the
+  // per-conversation id from the agent so routing and prompt caching stay
+  // stable within a chat; fall back to a per-provider id for calls without a
+  // conversation (for example Test connection).
+  _opencodeSessionId(options = {}) {
+    const provided = String(options.providerSessionId || '').trim();
+    if (provided) return provided;
+    if (!this._opencodeSessionFallback) {
+      this._opencodeSessionFallback = `webbrain-${crypto.randomUUID()}`;
+    }
+    return this._opencodeSessionFallback;
   }
 
   async sendRuntimeEvents(sessionId, events, { timeoutMs = 2500 } = {}) {
@@ -825,7 +841,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     try {
       res = await fetchWithFallback(url, {
         method: 'POST',
-        headers: this._headers(),
+        headers: this._headers(options),
         body: JSON.stringify(this._responsesBody(messages, options, false)),
         ...this._chatAbortOptions(options),
       });
@@ -852,7 +868,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     try {
       res = await fetchWithFallback(url, {
         method: 'POST',
-        headers: this._headers(),
+        headers: this._headers(options),
         body: JSON.stringify(this._responsesBody(messages, options, true)),
         signal: options.signal,
       });
@@ -1004,7 +1020,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     try {
       res = await fetchWithFallback(url, {
         method: 'POST',
-        headers: this._headers(),
+        headers: this._headers(options),
         body: JSON.stringify(body),
         ...this._chatAbortOptions(options),
       });
@@ -1047,7 +1063,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     try {
       res = await fetchWithFallback(streamUrl, {
         method: 'POST',
-        headers: this._headers(),
+        headers: this._headers(options),
         body: JSON.stringify(body),
         signal: options.signal,
       });

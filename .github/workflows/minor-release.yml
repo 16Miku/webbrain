@@ -37,6 +37,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Configure git author
         run: |
           git config user.name "github-actions[bot]"
@@ -118,13 +121,13 @@ jobs:
             --arg ver "$VERSION" \
             --arg dt "$DATE" \
             '{
-              model: "gpt-5.4-nano-2026-03-17",
+              model: "gpt-5.6-luna",
               messages: [
                 {role: "system", content: $sys},
                 {role: "user", content: ($usr | gsub("\\{\\{version\\}\\}"; $ver) | gsub("\\{\\{date\\}\\}"; $dt) | gsub("\\{\\{release_context\\}\\}"; $ctx))}
               ],
               max_completion_tokens: 1200,
-              temperature: 0.2
+              temperature: 1
             }' > /tmp/payload.json
 
           RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \

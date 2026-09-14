@@ -21,9 +21,8 @@ import {
 } from './emergency-download-client.js';
 import { createOfflineRagReadinessController } from './offline-rag-readiness.js';
 import {
+  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   WEBGPU_DTYPE,
-  WEBGPU_MODEL_ID,
-  WEBGPU_MODEL_PRESETS,
   WEBGPU_VISION_CONSENT_VERSION,
   WEBGPU_VISION_CONSENT_VERSION_KEY,
   WEBGPU_VISION_ENABLED_KEY,
@@ -89,7 +88,7 @@ let webgpuDownloadStatusRequest = 0;
 let webgpuDownloadState = {
   status: 'checking',
   ready: false,
-  modelId: WEBGPU_MODEL_ID,
+  modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   dtype: WEBGPU_DTYPE,
   file: '',
   loaded: 0,
@@ -216,7 +215,9 @@ async function providerCommand(action, payload = {}) {
 
 function normalizeWebgpuDownloadState(state = {}) {
   const allowedStatuses = new Set(['checking', 'not-downloaded', 'downloading', 'paused', 'stopping', 'ready', 'error']);
-  const status = allowedStatuses.has(state.status) ? state.status : 'not-downloaded';
+  const status = ['starting', 'queued'].includes(state.status)
+    ? 'downloading'
+    : allowedStatuses.has(state.status) ? state.status : 'not-downloaded';
   const loaded = Math.max(0, Number(state.loaded) || 0);
   const total = Math.max(0, Number(state.total) || 0);
   const progress = status === 'ready'
@@ -308,11 +309,7 @@ function updateEmergencyBoxGate(readinessKind) {
 function recordWebgpuTextState(state) {
   const normalized = normalizeWebgpuDownloadState(state);
   if (!normalized.modelId) return normalized;
-  const liveStatus = String(state?.status || normalized.status);
-  webgpuTextStateByModel.set(normalized.modelId, {
-    ...normalized,
-    status: WEBGPU_TEXT_BUSY_STATUSES.has(liveStatus) ? liveStatus : normalized.status,
-  });
+  webgpuTextStateByModel.set(normalized.modelId, normalized);
   return normalized;
 }
 
@@ -376,12 +373,15 @@ function updateOverallModelsReadiness() {
 function updateWebgpuDownloadPanel() {
   const panel = document.querySelector('[data-webgpu-download-panel]');
   if (!panel) return;
-  const state = webgpuDownloadState;
+  const state = webgpuDownloadActionState();
   const progress = Math.round(state.progress);
   panel.dataset.state = state.status;
   panel.dataset.indeterminate = String(state.status === 'downloading' && state.total <= 0);
   panel.querySelector('[data-webgpu-download-status]').textContent = webgpuDownloadStatusText(state);
-  panel.querySelector('[data-webgpu-download-detail]').textContent = webgpuDownloadDetailText(state);
+  const detail = webgpuDownloadDetailText(state);
+  panel.querySelector('[data-webgpu-download-detail]').textContent = state.modelId !== selectedWebgpuModelId()
+    ? `${webgpuModelPreset(state.modelId)?.label || state.modelId} · ${detail}`
+    : detail;
   panel.querySelector('[data-webgpu-download-fill]').style.width = `${progress}%`;
   const track = panel.querySelector('[data-webgpu-download-track]');
   track.hidden = state.status === 'ready';
@@ -414,27 +414,26 @@ function confirmCompletedModelRemoval(action, status, modelTitleKey) {
 
 function selectedWebgpuPreset() {
   const checked = document.querySelector('[data-webgpu-text-preset]:checked');
-  return webgpuModelPreset(checked?.value) || webgpuModelPreset(WEBGPU_MODEL_ID);
+  return webgpuModelPreset(checked?.value) || webgpuModelPreset(WEBGPU_COMPASS_TINY_V2_MODEL_ID);
 }
 
 function selectedWebgpuModelId() {
-  return selectedWebgpuPreset()?.id || WEBGPU_MODEL_ID;
+  return selectedWebgpuPreset()?.id || WEBGPU_COMPASS_TINY_V2_MODEL_ID;
 }
 
 function updateWebgpuTextPresetUi() {
   const preset = selectedWebgpuPreset();
   const size = document.querySelector('[data-webgpu-text-size]');
-  if (size) size.textContent = `${preset?.size || '1.55 GB'} · WebGPU`;
+  if (size) size.textContent = `${preset?.size || '1.87 GB'} · WebGPU`;
   const warning = document.querySelector('[data-webgpu-text-warning]');
-  if (warning) warning.hidden = preset?.id === WEBGPU_MODEL_ID;
+  if (warning) warning.hidden = true;
   const copy = document.querySelector('[data-webgpu-text-copy]');
   if (copy) {
-    const key = preset?.id === WEBGPU_MODEL_ID ? 'ap.webgpu.rag' : 'ap.webgpu.rag.pro';
-    copy.dataset.i18n = key;
-    copy.textContent = t(key);
+    copy.dataset.i18n = 'ap.webgpu.rag';
+    copy.textContent = t('ap.webgpu.rag');
   }
   for (const input of document.querySelectorAll('[data-webgpu-text-preset]')) {
-    input.checked = input.value === (preset?.id || WEBGPU_MODEL_ID);
+    input.checked = input.value === (preset?.id || WEBGPU_COMPASS_TINY_V2_MODEL_ID);
   }
 }
 
@@ -454,10 +453,31 @@ function anyOtherWebgpuTextPaused() {
   return otherWebgpuTextStates().some(state => state.status === 'paused');
 }
 
-function setWebgpuDownloadState(state) {
+function webgpuDownloadActionState() {
+  // The Compass preset remains selected, but controls must follow a retained
+  // Settings transfer, including when Compass itself is already cached.
+  const transfers = [webgpuDownloadState, ...otherWebgpuTextStates()]
+    .filter(state => WEBGPU_TEXT_BUSY_STATUSES.has(state.status));
+  return transfers.find(state => state.status !== 'paused') || transfers[0] || webgpuDownloadState;
+}
+
+function setWebgpuDownloadState(state, { syncActiveTransfer = false } = {}) {
   const normalized = recordWebgpuTextState(state);
+  const transfer = state?.activeTransfer ? recordWebgpuTextState(state.activeTransfer) : null;
+  if (syncActiveTransfer) {
+    // A fresh host snapshot is authoritative after completion or worker reset;
+    // do not keep stale transfers blocking the panel when events were missed.
+    const liveModels = new Set([normalized, transfer]
+      .filter(item => item && WEBGPU_TEXT_BUSY_STATUSES.has(item.status))
+      .map(item => item.modelId));
+    for (const previous of otherWebgpuTextStates()) {
+      if (WEBGPU_TEXT_BUSY_STATUSES.has(previous.status) && !liveModels.has(previous.modelId)) {
+        webgpuTextStateByModel.delete(previous.modelId);
+      }
+    }
+  }
   if (normalized.modelId && normalized.modelId !== selectedWebgpuModelId()) {
-    updateOverallModelsReadiness();
+    updateWebgpuDownloadPanel();
     return;
   }
   webgpuDownloadState = normalized;
@@ -510,7 +530,7 @@ async function runVisionDownloadAction(action) {
 
 async function ensureFixedWebgpuProvider({ markConfigured = false, force = false } = {}) {
   const preset = selectedWebgpuPreset();
-  const model = preset?.id || WEBGPU_MODEL_ID;
+  const model = preset?.id || WEBGPU_COMPASS_TINY_V2_MODEL_ID;
   const dtype = preset?.dtype || webgpuModelDtype(model, WEBGPU_DTYPE);
   if (!force && fixedWebgpuProviderConfigured && (!markConfigured || fixedWebgpuProviderMarkedReady)) {
     const current = webgpuDownloadState?.modelId;
@@ -521,7 +541,7 @@ async function ensureFixedWebgpuProvider({ markConfigured = false, force = false
     config: {
       model,
       dtype,
-      contextWindow: preset.contextWindow,
+      contextWindow: preset?.contextWindow || 32768,
       promptTier: 'compact',
     },
     markConfigured,
@@ -537,11 +557,11 @@ async function refreshWebgpuDownloadStatus({ probeSibling = false } = {}) {
     let state = await providerCommand('get_webgpu_download_status');
     if (requestId !== webgpuDownloadStatusRequest) return;
     let preset = webgpuModelPreset(state?.modelId);
-    if (!preset) {
-      // Apocalypse Mode exposes only shipped presets. Retain an active custom
-      // transfer in the aggregate tracker, then switch the provider to the
-      // checked shipped preset before rendering its controls.
-      setWebgpuDownloadState(state);
+    if (!preset || preset.id !== WEBGPU_COMPASS_TINY_V2_MODEL_ID) {
+      // Only Compass Tiny v2.1 is offered. Retain an active transfer in the
+      // aggregate tracker, then switch the provider to Compass before
+      // rendering its controls.
+      setWebgpuDownloadState(state, { syncActiveTransfer: true });
       await ensureFixedWebgpuProvider({ force: true });
       if (requestId !== webgpuDownloadStatusRequest) return;
       state = await providerCommand('get_webgpu_download_status');
@@ -558,7 +578,7 @@ async function refreshWebgpuDownloadStatus({ probeSibling = false } = {}) {
       }
     }
     updateWebgpuTextPresetUi();
-    setWebgpuDownloadState(state);
+    setWebgpuDownloadState(state, { syncActiveTransfer: true });
     if (probeSibling) await refreshSiblingWebgpuTextStatus(state?.modelId, requestId);
     if (requestId !== webgpuDownloadStatusRequest) return;
     if (state?.ready === true) await ensureFixedWebgpuProvider({ markConfigured: true });
@@ -568,17 +588,9 @@ async function refreshWebgpuDownloadStatus({ probeSibling = false } = {}) {
 }
 
 async function refreshSiblingWebgpuTextStatus(currentModelId, requestId = webgpuDownloadStatusRequest) {
-  const current = String(currentModelId || selectedWebgpuModelId() || '');
-  for (const preset of WEBGPU_MODEL_PRESETS) {
-    if (preset.id === current) continue;
-    if (requestId !== webgpuDownloadStatusRequest) return;
-    const sibling = await providerCommand('get_webgpu_download_status', {
-      model: preset.id,
-      dtype: preset.dtype,
-    }).catch(() => null);
-    if (requestId !== webgpuDownloadStatusRequest) return;
-    if (sibling && !sibling.error) setWebgpuDownloadState(sibling);
-  }
+  // Only Compass Tiny v2.1 is offered, so there are no unselected shipped
+  // text models to probe.
+  return;
 }
 
 async function onWebgpuTextPresetChange() {
@@ -614,21 +626,24 @@ async function runWebgpuDownloadAction(action) {
   };
   const backgroundAction = actionMap[action];
   if (!backgroundAction) return;
-  if (!confirmCompletedModelRemoval(action, webgpuDownloadState.status, 'ap.models.text.title')) return;
+  const state = webgpuDownloadActionState();
+  if (action === 'start' && WEBGPU_TEXT_BUSY_STATUSES.has(state.status)) return;
+  if (!confirmCompletedModelRemoval(action, state.status, 'ap.models.text.title')) return;
+  const target = { model: state.modelId || selectedWebgpuModelId(), dtype: state.dtype };
   try {
-    if (action === 'start' || action === 'resume') {
+    if ((action === 'start' || action === 'resume') && target.model === selectedWebgpuModelId()) {
       await ensureFixedWebgpuProvider({ markConfigured: true });
     }
     if (action === 'start' || action === 'resume') {
-      setWebgpuDownloadState({ ...webgpuDownloadState, status: 'downloading', error: '' });
+      setWebgpuDownloadState({ ...state, status: 'downloading', error: '' });
     } else if (action === 'pause') {
-      setWebgpuDownloadState({ ...webgpuDownloadState, status: 'paused', error: '' });
+      setWebgpuDownloadState({ ...state, status: 'paused', error: '' });
     } else {
-      setWebgpuDownloadState({ ...webgpuDownloadState, status: 'stopping', error: '' });
+      setWebgpuDownloadState({ ...state, status: 'stopping', error: '' });
     }
-    setWebgpuDownloadState(await providerCommand(backgroundAction));
+    setWebgpuDownloadState(await providerCommand(backgroundAction, target));
   } catch (error) {
-    setWebgpuDownloadState({ ...webgpuDownloadState, status: 'error', ready: false, error: error.message });
+    setWebgpuDownloadState({ ...state, status: 'error', ready: false, error: error.message });
   }
 }
 

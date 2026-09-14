@@ -8,6 +8,7 @@ import { AwsBedrockProvider } from './aws-bedrock.js';
 import {
   WebGPUProvider,
   WebGPUVisionProvider,
+  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
   WEBGPU_RUNTIME_BITGPU,
@@ -18,6 +19,7 @@ import {
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
   hasWebgpuVisionCache,
+  normalizeWebgpuModelId,
   webgpuModelDisplayName,
   webgpuModelDtype,
   webgpuModelPreset,
@@ -407,10 +409,6 @@ export class ProviderManager {
     }
     this.activeProviderId = legacyActiveProviderId || WEBBRAIN_CLOUD_PROVIDER_ID;
     if (!configs[this.activeProviderId]) this.activeProviderId = WEBBRAIN_CLOUD_PROVIDER_ID;
-    if (this.activeProviderId === 'webgpu') {
-      this.activeProviderId = WEBBRAIN_CLOUD_PROVIDER_ID;
-      providerStateMigrated = true;
-    }
     if (this.activeProviderId !== WEBBRAIN_CLOUD_PROVIDER_ID && configs[this.activeProviderId]?.configured !== true) {
       this.activeProviderId = WEBBRAIN_CLOUD_PROVIDER_ID;
       providerStateMigrated = true;
@@ -419,6 +417,20 @@ export class ProviderManager {
     this.providers.clear();
     for (const [id, config] of Object.entries(configs)) {
       this.providers.set(id, this._createProvider(id, config));
+    }
+    // A persisted WebGPU selection can outlive its cache (Chrome eviction or
+    // manual clear). Revalidate like setActive() does; otherwise chats fail
+    // readiness indefinitely instead of using the Cloud fallback.
+    if (this.activeProviderId === 'webgpu') {
+      try {
+        const download = await this.providers.get('webgpu')?.downloadStatus?.().catch(() => null);
+        if (download && download.ready !== true) {
+          await this.setActive(WEBBRAIN_CLOUD_PROVIDER_ID);
+          providerStateMigrated = false; // setActive persisted the migrated configs too.
+        }
+      } catch {
+        // Probe failures must not block startup; chat will report the missing download.
+      }
     }
     if (providerStateMigrated) await this.save();
   }
@@ -641,10 +653,10 @@ export class ProviderManager {
         label: 'WebGPU (In-browser)',
         providerName: 'webgpu',
         baseUrl: '',
-        model: WEBGPU_MODEL_ID,
+        model: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
         device: 'webgpu',
         dtype: WEBGPU_DTYPE,
-        contextWindow: 16384,
+        contextWindow: 32768,
         promptTier: 'compact',
         supportsAskStreaming: false,
         supportsVision: false,
@@ -979,6 +991,30 @@ export class ProviderManager {
       migrated.deepseek = {
         ...storedDeepSeek,
         baseUrl: DEEPSEEK_DEFAULT_BASE_URL,
+      };
+    }
+    // WebGPU now ships Compass Tiny v2.1 only (32k). Migrate untouched
+    // LFM2.5 2.6B 16k defaults so fresh and uncustomized installs land on
+    // Compass without wiping an explicitly chosen model.
+    if (migrated.webgpu
+      && String(migrated.webgpu.model || '').trim() === WEBGPU_MODEL_ID
+      && migrated.webgpu.configured !== true
+      && Number(migrated.webgpu.contextWindow) === 16384) {
+      migrated.webgpu = {
+        ...migrated.webgpu,
+        model: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+        contextWindow: 32768,
+      };
+    }
+    // Compass itself shipped at 16k before the 32k default. Bump untouched
+    // Compass 16k configs to 32k.
+    if (migrated.webgpu
+      && String(migrated.webgpu.model || '').trim() === WEBGPU_COMPASS_TINY_V2_MODEL_ID
+      && migrated.webgpu.configured !== true
+      && Number(migrated.webgpu.contextWindow) === 16384) {
+      migrated.webgpu = {
+        ...migrated.webgpu,
+        contextWindow: 32768,
       };
     }
     this._migrateUntouchedShippedDefaults(migrated);
@@ -1755,17 +1791,17 @@ export class ProviderManager {
     return this._webgpuProvider().downloadStatus(msg);
   }
 
-  /** Configure a shipped Apocalypse text preset and start LFM's cache fill. */
+  /** Configure a shipped Apocalypse text preset and start Compass cache fill. */
   async enableAndStartWebgpuTextDownload() {
     try {
       const currentModel = this.getAll().webgpu?.model;
       const preset = webgpuModelPreset(currentModel);
-      const model = preset?.id || WEBGPU_MODEL_ID;
+      const model = preset?.id || WEBGPU_COMPASS_TINY_V2_MODEL_ID;
       const dtype = preset?.dtype || webgpuModelDtype(model, WEBGPU_DTYPE);
       await this.updateProvider('webgpu', {
         model,
         dtype,
-        contextWindow: preset?.contextWindow || 16384,
+        contextWindow: preset?.contextWindow || 32768,
         promptTier: 'compact',
       });
       const provider = this._webgpuProvider();
@@ -1801,7 +1837,27 @@ export class ProviderManager {
   }
 
   async stopWebgpuDownload(msg) {
-    return this._webgpuProvider().stopDownload(msg);
+    try {
+      return await this._webgpuProvider().stopDownload(msg);
+    } finally {
+      // Revalidate after completion or failure: cleanup can remove enough
+      // files to make the model unusable before reporting an error. Keep this
+      // central so Settings and Apocalypse Mode receive the same fallback.
+      if (this.activeProviderId === 'webgpu') {
+        try {
+          const currentModel = this.providers.get('webgpu')?.config?.model;
+          const status = await this._webgpuProvider().downloadStatus({ model: currentModel }).catch(() => null);
+          if (status && status.ready !== true) {
+            const fallback = this.providers.has(WEBBRAIN_CLOUD_PROVIDER_ID)
+              ? WEBBRAIN_CLOUD_PROVIDER_ID
+              : [...this.providers.keys()].find((candidate) => candidate !== 'webgpu') || WEBBRAIN_CLOUD_PROVIDER_ID;
+            await this.setActive(fallback);
+          }
+        } catch {
+          // Keep the selection; chat will report the missing download.
+        }
+      }
+    }
   }
 
   /**
@@ -1816,7 +1872,7 @@ export class ProviderManager {
     if (nextProvider instanceof WebGPUProvider) {
       const download = await nextProvider.downloadStatus();
       if (!download.ready) {
-        throw new Error(`Download ${webgpuModelDisplayName(nextProvider.model)} in Apocalypse Mode > WebGPU before selecting it for chat.`);
+        throw new Error(`Download ${webgpuModelDisplayName(nextProvider.model)} in Settings > Providers > WebGPU or Apocalypse Mode > WebGPU before selecting it for chat.`);
       }
     }
     this.activeProviderId = id;
@@ -1855,6 +1911,20 @@ export class ProviderManager {
       ...updates,
       configured: id !== WEBBRAIN_CLOUD_PROVIDER_ID && (markConfigured || current.configured === true),
     };
+    if (id === 'webgpu' && Object.hasOwn(updates, 'model')) {
+      merged.model = normalizeWebgpuModelId(merged.model);
+      const preset = webgpuModelPreset(merged.model);
+      if (preset?.contextWindow && !Object.hasOwn(updates, 'contextWindow')) {
+        merged.contextWindow = preset.contextWindow;
+      }
+      // A retained Bonsai dtype ('q1') must not leak into a new target: a
+      // custom ONNX repository would otherwise request model_q1.onnx instead
+      // of the documented q4f16 graph. Reset to the preset (or ONNX default)
+      // whenever the model changes unless the update explicitly supplies one.
+      if (!Object.hasOwn(updates, 'dtype')) {
+        merged.dtype = preset?.dtype || WEBGPU_DTYPE;
+      }
+    }
     if (this._providerDefinitionId(id, current) === 'ollama') {
       merged.visionMode = OLLAMA_VISION_MODES.has(merged.visionMode) ? merged.visionMode : 'auto';
       delete merged.supportsVision;
@@ -1891,6 +1961,25 @@ export class ProviderManager {
     // Explicit off updates also retry a previously failed purge.
     if (Object.hasOwn(updates, 'shareQueriesForResearch') && merged.shareQueriesForResearch !== true) {
       await purgeShareGenerations(entry => String(entry?.provider_id || '') === id);
+    }
+    // Editing the model of the active WebGPU provider to an undownloaded
+    // target would leave every chat failing readiness (setActive() guards
+    // selection but not edits). Fall back so the active selection stays usable.
+    if (id === 'webgpu' && this.activeProviderId === 'webgpu' && Object.hasOwn(updates, 'model')) {
+      try {
+        const download = await this.providers.get('webgpu')?.downloadStatus?.();
+        if (download && download.ready !== true) {
+          const fallback = this.providers.has(WEBBRAIN_CLOUD_PROVIDER_ID)
+            ? WEBBRAIN_CLOUD_PROVIDER_ID
+            : [...this.providers.keys()].find((candidate) => candidate !== 'webgpu') || WEBBRAIN_CLOUD_PROVIDER_ID;
+          // Reuse normal switching so the abandoned resident model releases
+          // its GPU allocations as well as persisting the new selection.
+          await this.setActive(fallback);
+          return;
+        }
+      } catch {
+        // Probe failures must not block saving; chat will report the missing download.
+      }
     }
     await this.save();
   }

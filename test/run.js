@@ -970,6 +970,13 @@ const {
   WebGPUVisionProvider,
   WEBGPU_DTYPE,
   WEBGPU_LFM25_MODEL_ID,
+  WEBGPU_LFM25_12B_INSTRUCT_MODEL_ID,
+  WEBGPU_LFM25_12B_THINKING_MODEL_ID,
+  WEBGPU_LFM25_VL_16B_MODEL_ID,
+  WEBGPU_LFM25_VL_3B_MODEL_ID,
+  WEBGPU_NANBEIGE42_3B_MODEL_ID,
+  WEBGPU_MINICPM5_2B_MODEL_ID,
+  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   WEBGPU_BONSAI27_MODEL_ID,
   WEBGPU_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
@@ -983,6 +990,9 @@ const {
   WEBGPU_VISION_MODEL_ID,
   WEBGPU_VISION_READY_MARKER_VERSION,
   normalizeWebgpuModelId,
+  isShippedWebgpuPreset,
+  webgpuModelDtype,
+  webgpuModelPreset,
   webgpuVisionReadyMarkerUrl,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
@@ -36147,7 +36157,7 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
         'chrome: the vision model is missing its icon or Test action');
       assert.match(pageScript, /function confirmCompletedModelRemoval\(action, status, modelTitleKey\)[\s\S]*?action !== 'stop' \|\| status !== 'ready'[\s\S]*?globalThis\.confirm\(t\('ap\.models\.confirm_remove'/,
         'chrome: completed model removal is missing its confirmation guard');
-      assert.match(pageScript, /confirmCompletedModelRemoval\(action, webgpuDownloadState\.status, 'ap\.models\.text\.title'\)/,
+      assert.match(pageScript, /confirmCompletedModelRemoval\(action, state\.status, 'ap\.models\.text\.title'\)/,
         'chrome: completed Text Model removal is not confirmed');
       assert.match(pageScript, /confirmCompletedModelRemoval\(action, visionDownloadState\?\.status, 'ap\.models\.vision\.title'\)/,
         'chrome: completed Vision Model removal is not confirmed');
@@ -36179,9 +36189,10 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
         'chrome: Emergency Box must render locked until basic setup is ready');
       assert.match(pageScript, /function updateEmergencyBoxGate\(readinessKind\)[\s\S]*?const locked = readinessKind !== 'ready'/,
         'chrome: Emergency Box is not gated by aggregate readiness');
-      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\.contextWindow/, 'chrome: Apocalypse Mode does not configure the selected WebGPU download');
+      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\?\.contextWindow/, 'chrome: Apocalypse Mode does not configure the selected WebGPU download');
       assert.match(pageHtml, /data-webgpu-text-preset/, 'chrome: the local text model picker is missing');
-      assert.match(pageHtml, /value="prism-ml\/Bonsai-27B-gguf"/, 'chrome: the Bonsai 27B preset is missing');
+      assert.match(pageHtml, /value="webbrain-one\/webbrain-compass-tiny-v2\.1"/, 'chrome: the Compass Tiny v2.1 preset is missing');
+      assert.doesNotMatch(pageHtml, /value="prism-ml\/Bonsai-27B-gguf"/, 'chrome: only Compass Tiny v2.1 should be offered');
       assert.doesNotMatch(pageScript, /testWebgpuTextModel|providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/,
         'chrome: the removed local text Test action is still wired');
       assert.match(pageScript, /testWebgpuVisionModel[\s\S]*?providerCommand\('test_vision_provider'\)/,
@@ -49673,15 +49684,15 @@ test('standalone WebGPU control uses a per-run provider without changing global 
   assert.match(panel, /providerSelect\.disabled = standaloneWebgpuActive[\s\S]*?providerPickerBtn\.disabled = standaloneWebgpuActive/,
     'the ordinary provider picker should lock while the WebGPU override is active');
   assert.match(panel, /standaloneWebgpuBtn\.disabled = !standaloneWebgpuEnabled/,
-    'the nuclear control should be clickable whenever Apocalypse Mode is enabled');
+    'the nuclear control should be clickable whenever WebGPU is available');
   assert.match(panel, /function standaloneWebgpuRunPayload\(\) \{[\s\S]*?return isStandaloneWindow && standaloneWebgpuActive[\s\S]*?\? \{ providerId: 'webgpu', \.\.\.offlineRagRunPayload\(\) \}[\s\S]*?: \{\};/,
     'standalone WebGPU state is not carried as a run-scoped override');
-  assert.match(background, /case 'get_providers': \{[\s\S]*?delete providers\.webgpu/,
-    'WebGPU must never appear in the ordinary provider picker');
-  assert.match(background, /case 'set_active_provider': \{[\s\S]*?msg\.providerId === 'webgpu'[\s\S]*?nuclear WebGPU control/,
-    'WebGPU must not become the globally active provider');
-  assert.match(background, /case 'get_standalone_webgpu_status': \{[\s\S]*?enabled: apocalypse\?\.enabled === true[\s\S]*?ready:/,
-    'the standalone control should distinguish Apocalypse enablement from model readiness');
+  assert.doesNotMatch(background, /case 'get_providers': \{[\s\S]*?delete providers\.webgpu/,
+    'WebGPU should remain available in the ordinary provider picker');
+  assert.match(background, /case 'set_active_provider': \{\s*await providerManager\.setActive\(msg\.providerId\);/,
+    'WebGPU should use the ordinary global provider activation path');
+  assert.match(background, /case 'get_standalone_webgpu_status': \{[\s\S]*?enabled: true,[\s\S]*?ready:/,
+    'the standalone control should stay enabled independently of Apocalypse Mode and only track model readiness');
   assert.match(background, /type: 'apocalypse-mode-state'[\s\S]*?enabled: snapshot\.enabled === true/,
     'open standalone windows should be notified when Apocalypse Mode changes');
   assert.match(agentSource, /this\._runProviderOverrides = new Map\(\)/);
@@ -49701,23 +49712,19 @@ test('standalone WebGPU control uses a per-run provider without changing global 
   const helperStart = background.indexOf('async function standaloneRunProviderId(msg) {');
   const helperEnd = background.indexOf('\n}', helperStart) + 2;
   assert.ok(helperStart >= 0 && helperEnd > helperStart, 'standalone WebGPU background guard is missing');
-  const apocalypseState = { enabled: true };
   const webgpuState = { ready: true };
-  let webgpuModel = 'LiquidAI/LFM2.5-2.6B-ONNX';
+  let webgpuModel = 'webbrain-one/webbrain-compass-tiny-v2.1';
   const standaloneRunProviderId = vm.runInNewContext(
     `(${background.slice(helperStart, helperEnd)})`,
     {
       WEBGPU_MODEL_ID: 'LiquidAI/LFM2.5-2.6B-ONNX',
       isShippedWebgpuPreset: (model) => [
-        'LiquidAI/LFM2.5-2.6B-ONNX',
+        'webbrain-one/webbrain-compass-tiny-v2.1',
         'prism-ml/Bonsai-27B-gguf',
       ].includes(model),
       webgpuModelDisplayName: (model) => (
-        model === 'prism-ml/Bonsai-27B-gguf' ? 'Bonsai 27B' : 'LFM2.5 2.6B'
+        model === 'prism-ml/Bonsai-27B-gguf' ? 'Bonsai 27B' : 'Compass Tiny v2.1'
       ),
-      apocalypseController: {
-        handle: async () => ({ enabled: apocalypseState.enabled }),
-      },
       providerManager: {
         getAll: () => ({
           webgpu: { model: webgpuModel },
@@ -49734,17 +49741,12 @@ test('standalone WebGPU control uses a per-run provider without changing global 
   assert.equal(
     await standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
     'webgpu',
+    'Compass Tiny v2.1 must work without Apocalypse Mode enabled',
   );
-  apocalypseState.enabled = false;
-  await assert.rejects(
-    standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
-    /Enable Apocalypse Mode/,
-  );
-  apocalypseState.enabled = true;
   webgpuState.ready = false;
   await assert.rejects(
     standaloneRunProviderId({ providerId: 'webgpu', standaloneChat: true }),
-    /Download LFM2\.5 2\.6B/,
+    /Download Compass Tiny v2\.1/,
   );
   webgpuState.ready = true;
   webgpuModel = 'prism-ml/Bonsai-27B-gguf';
@@ -63043,16 +63045,19 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
 
     const manager = new ProviderManagerCh();
     const webgpuConfig = manager._defaultConfigs().webgpu;
+    manager.providers.set('webbrain_cloud', manager._createProvider('webbrain_cloud', manager._defaultConfigs().webbrain_cloud));
     assert.equal(WEBGPU_VISION_MODEL_ID, 'webbrain-one/webbrain-vl-2-450M-onnx');
     assert.equal(WEBGPU_VISION_CONSENT_VERSION, 2,
       'switching the shipped vision model must require explicit consent again');
     assert.equal(WEBGPU_VISION_READY_MARKER_VERSION, 2);
     assert.match(webgpuVisionReadyMarkerUrl(), /\/webgpu-vision-ready\/v2\/webbrain-one%2Fwebbrain-vl-2-450M-onnx$/);
-    assert.equal(webgpuConfig.model, WEBGPU_MODEL_ID);
+    assert.equal(webgpuConfig.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
     assert.equal(WEBGPU_MODEL_ID, WEBGPU_LFM25_MODEL_ID);
     assert.equal(webgpuConfig.baseUrl, '');
     assert.equal(webgpuConfig.dtype, WEBGPU_DTYPE);
+    assert.equal(webgpuConfig.contextWindow, 32768);
     const generalProvider = manager._createProvider('webgpu', webgpuConfig);
+    manager.providers.set('webgpu', generalProvider);
     assert.ok(generalProvider instanceof WebGPUProvider);
     assert.equal(generalProvider.promptTier, 'compact');
     assert.equal(new WebGPUProvider({ model: WEBGPU_MODEL_ID }).promptTier, 'compact');
@@ -63066,17 +63071,37 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       new WebGPUProvider({ model: 'https://huggingface.co/custom-owner/custom-model/' }).model,
       'custom-owner/custom-model',
     );
-    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label, runtime: option.runtime, contextWindow: option.contextWindow })), [
-      { id: WEBGPU_LFM25_MODEL_ID, label: 'Minimal text model', runtime: 'onnx', contextWindow: 16384 },
-      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Basic text model', runtime: 'bitgpu', contextWindow: 4096 },
+    assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label, runtime: option.runtime, contextWindow: option.contextWindow, supportsVision: option.supportsVision })), [
+      { id: WEBGPU_LFM25_MODEL_ID, label: 'Minimal text model', runtime: 'onnx', contextWindow: 16384, supportsVision: false },
+      { id: WEBGPU_LFM25_12B_INSTRUCT_MODEL_ID, label: 'LFM2.5-1.2B-Instruct', runtime: 'onnx', contextWindow: 16384, supportsVision: false },
+      { id: WEBGPU_LFM25_12B_THINKING_MODEL_ID, label: 'LFM2.5-1.2B-Thinking', runtime: 'onnx', contextWindow: 16384, supportsVision: false },
+      { id: WEBGPU_LFM25_VL_16B_MODEL_ID, label: 'LFM2.5-VL-1.6B', runtime: 'onnx-vl', contextWindow: 16384, supportsVision: true },
+      { id: WEBGPU_LFM25_VL_3B_MODEL_ID, label: 'LFM2.5-VL-3B', runtime: 'onnx-vl', contextWindow: 16384, supportsVision: true },
+      { id: WEBGPU_NANBEIGE42_3B_MODEL_ID, label: 'Nanbeige4.2-3B', runtime: 'onnx', contextWindow: 4096, supportsVision: false },
+      { id: WEBGPU_MINICPM5_2B_MODEL_ID, label: 'MiniCPM5-2B', runtime: 'onnx', contextWindow: 16384, supportsVision: false },
+      { id: WEBGPU_COMPASS_TINY_V2_MODEL_ID, label: 'Compass Tiny v2.1', runtime: 'onnx', contextWindow: 32768, supportsVision: false },
+      { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Basic text model', runtime: 'bitgpu', contextWindow: 4096, supportsVision: false },
     ]);
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).dtype, 'q1');
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).requiresToolTemplate, false);
     assert.equal(normalizeWebgpuModelId(' custom-owner/custom-model '), 'custom-owner/custom-model');
+    assert.equal(normalizeWebgpuModelId(''), WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.equal(normalizeWebgpuModelId(null), WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.equal(normalizeWebgpuModelId('   '), WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.equal(new WebGPUProvider({}).model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.equal(new WebGPUProvider({ model: '' }).model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.equal(new WebGPUProvider({ model: '   ' }).model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
     assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
     assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);
     assert.equal(generalProvider.supportsTools, true);
     assert.equal(generalProvider.supportsVision, false);
+    assert.equal(new WebGPUProvider({ model: WEBGPU_LFM25_VL_16B_MODEL_ID }).supportsVision, true);
+    assert.equal(new WebGPUProvider({ model: WEBGPU_LFM25_VL_3B_MODEL_ID }).supportsVision, true);
+    assert.deepEqual(new WebGPUProvider({ model: WEBGPU_LFM25_VL_16B_MODEL_ID }).dtype, {
+      embed_tokens: 'fp16',
+      vision_encoder: 'fp16',
+      decoder_model_merged: 'q4',
+    }, 'VL 1.6B precision must be keyed by runtime session names so it cannot fall back to FP32');
     const probe = await generalProvider.testConnection();
     assert.equal(probe.ok, true);
     assert.equal(probe.libraryVersion, '4.2.0');
@@ -63087,13 +63112,13 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.deepEqual(localResult.toolCalls, returnedToolCalls);
     assert.deepEqual(sentMessages[1], {
       type: 'webgpu-download-status',
-      model: WEBGPU_MODEL_ID,
+      model: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
       runtime: 'onnx',
       dtype: WEBGPU_DTYPE,
     });
     assert.deepEqual(sentMessages[2], {
       type: 'webgpu-chat',
-      model: WEBGPU_MODEL_ID,
+      model: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
       runtime: 'onnx',
       device: 'webgpu',
       dtype: WEBGPU_DTYPE,
@@ -63115,6 +63140,40 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const textDisposed = await generalProvider.dispose();
     assert.deepEqual(textDisposed, { ok: true, disposed: true });
     assert.deepEqual(sentMessages[4], { type: 'webgpu-dispose' });
+
+    await manager.updateProvider('webgpu', { model: 'custom-owner/custom-model' });
+    assert.equal(manager.getAll().webgpu.model, 'custom-owner/custom-model');
+    await manager.updateProvider('webgpu', { model: '' });
+    assert.equal(manager.getAll().webgpu.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.equal(manager.getAll().webgpu.contextWindow, 32768);
+    await manager.updateProvider('webgpu', { model: WEBGPU_BONSAI27_MODEL_ID, dtype: 'q1' });
+    assert.equal(manager.getAll().webgpu.dtype, 'q1');
+    await manager.updateProvider('webgpu', { model: 'custom-owner/custom-model-2' });
+    assert.equal(manager.getAll().webgpu.dtype, WEBGPU_DTYPE, 'switching from Bonsai to a custom ONNX model must reset the stale q1 dtype');
+    await manager.updateProvider('webgpu', { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+    assert.equal(manager.getAll().webgpu.dtype, WEBGPU_DTYPE, 'switching to the Compass preset must restore q4f16');
+    manager.activeProviderId = 'webgpu';
+    textModelReady = false;
+    const fallbackProbeBase = sentMessages.length;
+    await manager.updateProvider('webgpu', { model: 'custom-owner/undownloaded-model' });
+    assert.equal(manager.activeProviderId, 'webbrain_cloud', 'editing the active WebGPU model to an undownloaded target must fall back to a usable provider');
+    assert.equal(sentMessages.at(-1).type, 'webgpu-dispose', 'edit fallback must release the previous resident model');
+    textModelReady = true;
+    manager.activeProviderId = 'webgpu';
+    const disposalsBeforeReadyEdit = sentMessages.filter(message => message.type === 'webgpu-dispose').length;
+    await manager.updateProvider('webgpu', { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+    assert.equal(manager.activeProviderId, 'webgpu', 'editing the active WebGPU model to a ready target must keep the selection');
+    assert.equal(sentMessages.filter(message => message.type === 'webgpu-dispose').length, disposalsBeforeReadyEdit,
+      'a ready edit must not dispose the runtime while WebGPU stays selected');
+    sentMessages.length = fallbackProbeBase;
+    manager.activeProviderId = 'webgpu';
+    textModelReady = false;
+    const stopProbeBase = sentMessages.length;
+    await manager.stopWebgpuDownload({ model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+    assert.equal(manager.activeProviderId, 'webbrain_cloud', 'removing the active WebGPU model must fall back centrally so Apocalypse removal stays usable');
+    assert.equal(sentMessages.at(-1).type, 'webgpu-dispose', 'removal fallback must release any remaining text runtime');
+    sentMessages.length = stopProbeBase;
+    textModelReady = true;
 
     const provider = await manager.getLocalVisionFallbackProvider();
     assert.ok(provider instanceof WebGPUVisionProvider);
@@ -63157,7 +63216,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       generalProvider.chat([{ role: 'user', content: 'Do not download implicitly.' }]),
       /not downloaded/,
     );
-    await assert.rejects(manager.setActive('webgpu'), /Download Minimal/);
+    await assert.rejects(manager.setActive('webgpu'), /Download Compass Tiny/);
     assert.equal(manager.activeProviderId, 'remote', 'an uncached WebGPU provider must not become active');
 
     textModelReady = true;
@@ -63167,7 +63226,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       error => error.isAskStreamTerminalError === true && /OrtRun/.test(error.message),
       'fatal WebGPU execution failures should bypass the generic network retry',
     );
-    webgpuExecutionError = `${WEBGPU_MODEL_ID} used its generation budget before finishing reasoning. Retry with a shorter prompt.`;
+    webgpuExecutionError = `${WEBGPU_COMPASS_TINY_V2_MODEL_ID} used its generation budget before finishing reasoning. Retry with a shorter prompt.`;
     await assert.rejects(
       generalProvider.chat([{ role: 'user', content: 'Exercise the deterministic token limit.' }]),
       error => error.isAskStreamTerminalError === true && /generation budget/.test(error.message),
@@ -63189,6 +63248,25 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.ok(!(preservedRemote instanceof WebGPUVisionProvider));
     assert.equal(preservedRemote.config.baseUrl, 'https://vision.example/v1');
     assert.equal(preservedRemote.config.apiKey, 'preserved-secret');
+
+    webgpuExecutionError = '';
+    const multimodalProvider = new WebGPUProvider({ model: WEBGPU_LFM25_VL_3B_MODEL_ID });
+    const multimodalResult = await multimodalProvider.chat(messages, { maxTokens: 222, tools });
+    assert.equal(multimodalResult.content, 'Local answer.');
+    assert.deepEqual(sentMessages.at(-1), {
+      type: 'webgpu-chat',
+      model: WEBGPU_LFM25_VL_3B_MODEL_ID,
+      runtime: 'onnx-vl',
+      device: 'webgpu',
+      dtype: {
+        embed_tokens: 'fp16',
+        vision_encoder: 'fp16',
+        decoder_model_merged: 'q4',
+      },
+      requireTools: false,
+      messages,
+      options: { maxTokens: 222, tools },
+    });
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
@@ -63662,7 +63740,7 @@ test('local vision readiness probes cache before advertising a ready fallback', 
   }
 });
 
-test('Apocalypse text download fixes the LFM preset and avoids duplicate starts', async () => {
+test('Apocalypse text download fixes the Compass preset and avoids duplicate starts', async () => {
   const previousChrome = globalThis.chrome;
   const sentMessages = [];
   const storageWrites = [];
@@ -63670,7 +63748,7 @@ test('Apocalypse text download fixes the LFM preset and avoids duplicate starts'
   let downloadState = {
     status: 'not-downloaded',
     ready: false,
-    modelId: WEBGPU_MODEL_ID,
+    modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
     dtype: WEBGPU_DTYPE,
   };
   try {
@@ -63728,9 +63806,9 @@ test('Apocalypse text download fixes the LFM preset and avoids duplicate starts'
       'webgpu-download-start',
     ]);
     const config = manager.getAll().webgpu;
-    assert.equal(config.model, WEBGPU_MODEL_ID);
+    assert.equal(config.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
     assert.equal(config.dtype, WEBGPU_DTYPE);
-    assert.equal(config.contextWindow, 16384);
+    assert.equal(config.contextWindow, 32768);
     assert.equal(config.promptTier, 'compact');
     assert.equal(config.configured, true);
     assert.equal(manager.activeProviderId, 'webbrain_cloud', 'automatic download must not select WebGPU for normal chat');
@@ -63744,23 +63822,160 @@ test('Apocalypse text download fixes the LFM preset and avoids duplicate starts'
     assert.deepEqual(sentMessages.map(message => message.type), [
       'webgpu-probe',
       'webgpu-download-status',
-    ], 'an in-progress LFM download must not be queued twice');
+    ], 'an in-progress Compass download must not be queued twice');
 
     sentMessages.length = 0;
     hasWebGPU = false;
     downloadState = {
       status: 'not-downloaded',
       ready: false,
-      modelId: WEBGPU_MODEL_ID,
+      modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
       dtype: WEBGPU_DTYPE,
     };
     const unsupported = await manager.enableAndStartWebgpuTextDownload();
     assert.equal(unsupported.ok, false);
     assert.deepEqual(sentMessages.map(message => message.type), ['webgpu-probe'],
-      'unsupported hardware must fail before starting the LFM download');
+      'unsupported hardware must fail before starting the Compass download');
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
+  }
+});
+
+test('Settings renders and stops the highest-priority WebGPU transfer', async () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
+  const helpers = source.slice(source.indexOf('function normalizeWebgpuDownloadSnapshot('), source.indexOf('function renderProviders()'));
+  for (const [displayStatus, siblingStatus, useSibling] of [
+    ['paused', 'downloading', true], ['paused', 'stopping', true],
+    ['downloading', 'paused', false], ['queued', 'paused', false],
+    ['ready', 'downloading', true], ['paused', 'paused', false],
+    ['not-downloaded', 'paused', true],
+  ]) {
+    const sibling = { modelId: WEBGPU_BONSAI27_MODEL_ID, dtype: 'q1', status: siblingStatus, ready: false };
+    let snapshot = { modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, dtype: WEBGPU_DTYPE,
+      status: displayStatus, ready: displayStatus === 'ready', activeTransfer: sibling };
+    const expected = useSibling ? sibling : snapshot;
+    const button = { dataset: { provider: 'webgpu' } };
+    const line = {};
+    const commands = [];
+    const context = vm.createContext({
+      WEBGPU_COMPASS_TINY_V2_MODEL_ID, normalizeWebgpuModelId,
+      webgpuDownloadActionInFlight: false, webgpuDownloadPollTimer: null,
+      dirtyProviderIds: new Set(), activeProviderId: 'webbrain_cloud', requestedActiveProviderId: 'webbrain_cloud',
+      providersData: { webgpu: { model: snapshot.modelId } }, t: key => key,
+      setInterval: () => 1, clearInterval() {},
+      document: {
+        querySelector: selector => selector.startsWith('input') ? { value: snapshot.modelId }
+          : selector.startsWith('.btn') ? button : line,
+        querySelectorAll: () => [button],
+      },
+      sendToBackground: async (action, payload) => {
+        commands.push({ action, payload: structuredClone(payload) });
+        if (action === 'stop_webgpu_download') {
+          assert.equal(payload.model, expected.modelId);
+          assert.equal(payload.dtype, expected.dtype);
+          snapshot = { ...snapshot, status: 'not-downloaded', ready: false, activeTransfer: null };
+          return { ok: true };
+        }
+        assert.equal(action, 'get_webgpu_download_status');
+        return snapshot;
+      },
+    });
+    vm.runInContext(helpers, context);
+    const normalized = context.normalizeWebgpuDownloadSnapshot(snapshot);
+    context.renderWebgpuDownloadControl('webgpu', normalized);
+    assert.equal(button.dataset.activeTransferModel, useSibling ? sibling.modelId : undefined);
+    assert.equal(button.disabled, expected.status === 'stopping');
+    if (expected.status === 'stopping') continue;
+    await context.handleWebgpuDownloadButton(button);
+    assert.equal(commands.filter(command => command.action === 'stop_webgpu_download').length, 1);
+  }
+});
+
+test('Apocalypse controls retain Settings transfers while the preset stays on Compass', async () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
+  const helpers = source.slice(source.indexOf('function normalizeWebgpuDownloadState('), source.indexOf('function setModelTestResult('));
+  for (const modelId of [WEBGPU_LFM25_MODEL_ID, WEBGPU_LFM25_VL_16B_MODEL_ID, WEBGPU_BONSAI27_MODEL_ID, 'custom/model']) {
+    for (const compassReady of [false, true]) {
+      const dtype = webgpuModelDtype(modelId, 'q8');
+      let configuredModel = modelId;
+      let transfer = { modelId, dtype, status: 'downloading', ready: false, progress: 25 };
+      const commands = [];
+      const nodes = new Map();
+      const node = selector => {
+        if (!nodes.has(selector)) nodes.set(selector, { style: {}, dataset: {}, setAttribute() {} });
+        return nodes.get(selector);
+      };
+      const panel = { dataset: {}, querySelector: node };
+      const radio = { value: WEBGPU_COMPASS_TINY_V2_MODEL_ID, checked: true };
+      const context = vm.createContext({
+        WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_DTYPE, webgpuModelPreset, webgpuModelDtype, isShippedWebgpuPreset,
+        supportsWebgpuVision: true, fixedWebgpuProviderConfigured: false, fixedWebgpuProviderMarkedReady: false,
+        webgpuPresetHydrated: false, webgpuDownloadStatusRequest: 0, webgpuDownloadState: { status: 'checking' },
+        snapshot: { enabled: false }, elements: {}, CSS: { escape: value => value },
+        t: key => key, confirm: () => true,
+        document: {
+          querySelector: selector => selector === '[data-webgpu-download-panel]' ? panel
+            : selector.includes('data-webgpu-text-preset') ? radio : node(selector),
+          querySelectorAll: () => [radio],
+        },
+        providerCommand: async (action, payload = {}) => {
+          commands.push({ action, payload: structuredClone(payload) });
+          if (action === 'update_provider') {
+            configuredModel = payload.config.model;
+            return { ok: true };
+          }
+          if (action === 'get_webgpu_download_status') {
+            if (configuredModel === modelId) return { ...transfer };
+            return { modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, dtype: WEBGPU_DTYPE,
+              status: compassReady ? 'ready' : 'not-downloaded', ready: compassReady,
+              ...(['downloading', 'paused', 'queued'].includes(transfer.status) ? { activeTransfer: { ...transfer } } : {}),
+            };
+          }
+          assert.equal(payload.model, modelId, `${action} must target the retained transfer`);
+          assert.deepEqual(payload.dtype, dtype, `${action} must retain the transfer precision`);
+          transfer = { ...transfer, status: action === 'pause_webgpu_download' ? 'paused'
+            : action === 'stop_webgpu_download' ? 'not-downloaded' : 'downloading' };
+          return { ok: true, ...transfer };
+        },
+      });
+      vm.runInContext(`${helpers}\nupdateOverallModelsReadiness = () => {};`, context);
+      await context.refreshWebgpuDownloadStatus();
+      assert.equal(configuredModel, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+      assert.equal(context.webgpuDownloadActionState().modelId, modelId);
+      assert.equal(node('[data-webgpu-download-action="start"]').hidden, true);
+      assert.equal(node('[data-webgpu-download-action="pause"]').hidden, false);
+      assert.equal(node('[data-webgpu-download-action="stop"]').hidden, false);
+      assert.ok(node('[data-webgpu-download-detail]').textContent.includes(webgpuModelPreset(modelId)?.label || modelId));
+      await context.runWebgpuDownloadAction('pause');
+      assert.equal(node('[data-webgpu-download-action="resume"]').hidden, false);
+      context.setWebgpuDownloadState({ modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, status: 'downloading', ready: false });
+      assert.equal(context.webgpuDownloadActionState().modelId, WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+        'a paused sibling must not hide the running Compass transfer');
+      context.setWebgpuDownloadState({ modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, status: 'paused', ready: false });
+      transfer.status = 'downloading';
+      context.setWebgpuDownloadState(transfer);
+      assert.equal(context.webgpuDownloadActionState().modelId, modelId,
+        'a running sibling must take precedence over paused Compass');
+      transfer.status = 'paused';
+      context.setWebgpuDownloadState(transfer);
+      context.setWebgpuDownloadState({ modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, dtype: WEBGPU_DTYPE,
+        status: compassReady ? 'ready' : 'not-downloaded', ready: compassReady });
+      await context.runWebgpuDownloadAction('resume');
+      assert.equal(configuredModel, WEBGPU_COMPASS_TINY_V2_MODEL_ID, 'resuming a sibling must not change the Compass preset');
+      assert.equal(node('[data-webgpu-download-action="pause"]').hidden, false);
+      await context.runWebgpuDownloadAction('stop');
+      assert.equal(context.webgpuDownloadActionState().modelId, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+      assert.deepEqual(commands.filter(command => /^(pause|start|stop)_webgpu_download$/.test(command.action)).map(command => command.action),
+        ['pause_webgpu_download', 'start_webgpu_download', 'stop_webgpu_download']);
+      transfer.status = 'queued';
+      await context.refreshWebgpuDownloadStatus();
+      assert.equal(node('[data-webgpu-download-action="stop"]').hidden, false);
+      transfer.status = 'not-downloaded'; // Worker reset or a missed completion event.
+      await context.refreshWebgpuDownloadStatus();
+      assert.equal(context.webgpuDownloadActionState().modelId, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+      assert.equal(context.anyOtherWebgpuTextBusy(), false);
+    }
   }
 });
 
@@ -63840,10 +64055,56 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   const firefoxAgent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
   const chromePanel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
   const firefoxPanel = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/sidepanel.js'), 'utf8');
+  const chromeTransformers = fs.readFileSync(path.join(ROOT, 'src/chrome/vendor/transformers/transformers.web.js'), 'utf8');
+  const firefoxTransformers = fs.readFileSync(path.join(ROOT, 'src/firefox/vendor/transformers/transformers.web.js'), 'utf8');
   assert.match(worker, /AutoModelForImageTextToText\.from_pretrained/);
   assert.match(worker, /AutoProcessor\.from_pretrained/);
   assert.match(worker, /apply_chat_template/);
-  assert.match(worker, /load_image\(imageUrl\)/);
+  assert.match(worker, /load_image\(imageUrls\[0\]\)/);
+  assert.match(worker, /type === 'multimodal-text-chat'[\s\S]*?runMultimodalText\(payload\)/);
+  assert.match(host, /message\.runtime === 'onnx-vl'[\s\S]*?'multimodal-text-chat'/);
+  assert.match(worker, /type: 'webgpu-device-dead'/,
+    'the worker must signal the host when its WebGPU device dies');
+  assert.match(host, /type === 'webgpu-device-dead'[\s\S]*?resetVisionWorker/,
+    'the host must recycle the worker on a device-dead signal');
+  assert.match(worker, /session_file_names:[\s\S]*?vision_encoder: 'embed_images'[\s\S]*?decoder_model_merged: 'decoder'/,
+    'the legacy LFM2.5-VL-1.6B ONNX filenames must be mapped into the Transformers.js runtime');
+  assert.match(worker, /image_processor_config_file: 'processor_config\.json'[\s\S]*?chat_template_file: 'chat_template\.jinja'/,
+    'LiquidAI VL repos must use their shipped nested processor config and standalone chat template');
+  assert.match(worker, /clearLegacyLfm25VlWrongPrecisionCache[\s\S]*?wrongPrecisionFile/,
+    'a retry must remove FP32 files cached by the old VL 1.6B dtype mapping');
+  assert.match(worker, /clearLegacyLfm25VlWrongPrecisionCache[\s\S]*?readyTextModelKeys\.delete[\s\S]*?webgpu-model-ready/,
+    'deleting legacy VL precision artifacts must invalidate in-memory and cached readiness markers');
+  assert.match(chromeTransformers, /async function loadImageProcessorConfig[\s\S]*?source\?\.image_processor/,
+    'the browser runtime must normalize nested Transformers v5 image processor metadata');
+  assert.match(chromeTransformers, /options\.chat_template_file[\s\S]*?getModelText/,
+    'the browser runtime must support standalone model chat-template files');
+  assert.match(chromeTransformers, /const sessionKey = session_name \?\? fileName;[\s\S]*?selectDevice\([^;]*sessionKey[\s\S]*?selectDtype\([^;]*sessionKey/,
+    'aliased ONNX files must resolve device and precision by logical session name');
+  assert.equal(chromeTransformers, firefoxTransformers,
+    'the patched Transformers.js browser bundle must stay byte-identical across builds');
+  const ortWasm = fs.readFileSync(path.join(ROOT, 'src/chrome/vendor/transformers/ort-wasm-simd-threaded.asyncify.wasm'));
+  assert.ok(ortWasm.includes(Buffer.from('MatMulNBitsMlp')),
+    'the vendored ONNX Runtime build must keep the WebGPU kernel the Nanbeige graph is fused around');
+  for (const modelId of [
+    WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  ]) {
+    assert.match(apocalypseHtml, new RegExp(modelId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `${modelId} is missing from the Apocalypse WebGPU picker`);
+  }
+  for (const retiredId of [
+    WEBGPU_LFM25_12B_INSTRUCT_MODEL_ID,
+    WEBGPU_LFM25_12B_THINKING_MODEL_ID,
+    WEBGPU_LFM25_VL_16B_MODEL_ID,
+    WEBGPU_LFM25_VL_3B_MODEL_ID,
+    WEBGPU_NANBEIGE42_3B_MODEL_ID,
+    WEBGPU_MINICPM5_2B_MODEL_ID,
+  ]) {
+    assert.doesNotMatch(apocalypseHtml, new RegExp(retiredId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `${retiredId} should no longer be offered in the Apocalypse WebGPU picker`);
+  }
+  assert.equal((apocalypseHtml.match(/class="webgpu-capability"/g) || []).length, 0,
+    'only the text-only Compass preset is offered, so no multimodal badge should remain');
   assert.match(worker, /decoder_model_merged:\s*'q4'/);
   assert.match(worker, /const blocks = \[\.\.\.imageBlocks, \.\.\.textBlocks\]/);
   assert.match(worker, /createVisionProbeImage\(runtime\.library\.RawImage\)/);
@@ -63851,7 +64112,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(worker, /type === 'dispose'[\s\S]*?enqueueModelOperation\(disposeAllRuntimes\)/);
   assert.match(worker, /type === 'preload'[\s\S]*?preloadVisionModel\(payload, request\)/);
   assert.match(worker, /async function getVisionRuntime[\s\S]*?local_files_only: localFilesOnly/);
-  assert.match(worker, /getVisionRuntime\(modelId, dtype, device, \{ localFilesOnly: true \}\)/,
+  assert.match(worker, /getVisionRuntime\(modelId, dtype, device, \{[\s\S]{0,180}localFilesOnly: true,[\s\S]{0,180}owner: 'vision',[\s\S]{0,180}readiness: 'vision'/,
     'automatic screenshot inference must not download missing local vision weights');
   assert.match(worker, /async function markVisionModelReady/);
   assert.match(worker, /WEBGPU_VISION_READY_MARKER_VERSION = 2/);
@@ -63963,17 +64224,22 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   const visionLoader = worker.slice(worker.indexOf('async function getVisionRuntime'), worker.indexOf('async function getTextRuntime'));
   const textLoader = worker.slice(worker.indexOf('async function getTextRuntime'), worker.indexOf('function enqueueModelOperation'));
   assert.match(visionLoader, /disposeVisionRuntime\(\)/);
-  assert.doesNotMatch(visionLoader, /disposeTextRuntime\(\)/);
+  assert.match(visionLoader, /owner === 'text'[\s\S]*?disposeTextRuntime\(\)/,
+    'a multimodal text preset must release the previous text-generation pipeline');
   assert.match(textLoader, /disposeTextRuntime\(\)/);
-  assert.doesNotMatch(textLoader, /disposeVisionRuntime\(\)/);
-  assert.match(worker, /type === 'dispose-vision'[\s\S]*?enqueueModelOperation\(disposeVisionRuntime\)/);
-  assert.match(worker, /type === 'dispose-text'[\s\S]*?enqueueModelOperation\(disposeTextRuntime\)/);
+  assert.match(textLoader, /disposeVisionRuntime\('text'\)/,
+    'a text-only preset must release a previous multimodal text runtime');
+  assert.match(worker, /type === 'dispose-vision'[\s\S]*?enqueueModelOperation\(\(\) => disposeVisionRuntime\('vision'\)\)/);
+  assert.match(worker, /type === 'dispose-text'[\s\S]*?enqueueModelOperation\(\(\) => disposeDownloadedTextRuntime\(\)\)/);
   assert.match(worker, /pipeline\('text-generation', modelId/);
   assert.match(worker, /dtype = payload\?\.dtype \|\| 'q4f16'/);
   assert.match(worker, /function textDtypeKey\(dtype\)/);
   assert.match(worker, /Object\.entries\(dtype\)\.sort/);
   assert.match(worker, /const WEBGPU_TEXT_MAX_NEW_TOKENS = 256/);
   assert.match(worker, /const WEBGPU_LFM25_MAX_NEW_TOKENS = 2048/);
+  assert.match(worker, /\[WEBGPU_NANBEIGE42_3B_MODEL_ID, 'model_webgpu_mlp'\]/,
+    'the Nanbeige export publishes no default model_q4f16.onnx, so its graph file name must be overridden');
+  assert.match(worker, /model_file_name: WEBGPU_TEXT_MODEL_FILE_NAMES\.get\(modelId\)/);
   assert.match(worker, /'ep\.webgpuexecutionprovider\.storageBufferCacheMode': 'simple'/);
   assert.match(worker, /session_options: createWebGpuTextSessionOptions\(\)/);
   assert.match(worker, /addEventListener\?\.\('uncapturederror'/);
@@ -63987,7 +64253,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(host, /function isBitgpuTextModel/);
   assert.match(host, /bonsai-worker\.js/);
   assert.match(host, /sendTextWorkerMessage\(message\.model, 'start-download-text'/);
-  assert.match(host, /sendTextWorkerMessage\(message\.model, 'text-chat'/);
+  assert.match(host, /sendTextWorkerMessage\(message\.model, workerMessageType/);
   assert.match(host, /disposeOtherTextRuntime\('bitgpu'\)/);
   assert.match(host, /exclusive: true, runtime: message\.runtime/);
   assert.match(host, /function startExclusiveTextDownload\(message\)[\s\S]*?findActiveTextTransfer\(message\.model\)[\s\S]*?status \|\| ''\)\.toLowerCase\(\) !== 'paused'[\s\S]*?Pause it before switching models[\s\S]*?sendTextWorkerMessage\(message\.model, 'start-download-text'/,
@@ -64004,6 +64270,19 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(host, /function findActiveTextTransfer/);
   assert.match(host, /activeTransfer/);
   assert.match(host, /probeExistingTextWorkerStatus/);
+  assert.match(host, /probeActive: true/,
+    'cross-worker transfer checks must query active transfers independently of a hard-coded model');
+  assert.match(host, /Promise\.all\(probes\)/,
+    'active-transfer checks must probe the requested worker as well as the other runtime so same-worker downloads stay stoppable');
+  const managerSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/providers/manager.js'), 'utf8');
+  assert.match(managerSource, /activeProviderId === 'webgpu'[\s\S]*?downloadStatus/,
+    'a persisted WebGPU selection must be revalidated on startup so evicted caches fall back');
+  assert.match(worker, /payload\?\.probeActive === true[\s\S]*?textDownloadSnapshot/,
+    'text-download-status probes must return the active transfer when requested');
+  assert.match(worker, /device\.lost\?\.then\(info => \{[\s\S]*?requestWebgpuWorkerRecycle\('device-lost'\)/,
+    'a confirmed device loss without OrtRun must still recycle the worker instead of rebuilding in place');
+  assert.match(worker, /const processor = processorResult\.value;[\s\S]*?bindWebGpuDeviceDiagnostics\(library\)/,
+    'vision-backed runtimes must bind device diagnostics so device loss is observed');
   assert.match(host, /sendTextWorkerMessage\(message\.model, 'text-download-status'/);
   assert.match(host, /'webgpu-dispose'/);
   assert.match(host, /'webgpu-vision-dispose'/);
@@ -64094,25 +64373,68 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(apocalypseScript, /visionFallbackExplicitlyEnabled[\s\S]*?settings\.html#multimodal/,
     'Apocalypse Mode must route first-time local-vision enablement to its dedicated Settings control');
   assert.match(apocalypseScript, /webgpu-text-download-state/);
+  assert.match(settingsScript, /btn-webgpu-download/,
+    'the Settings WebGPU card must offer its own download control so the chat error first path works');
+  assert.match(settingsScript, /saveProvider\(id, \{ showFlash: false \}\)/,
+    'clicking the download button must persist any dirty WebGPU settings first');
+  assert.match(settingsScript, /getDisplayedWebgpuModel/,
+    'Settings download actions must target the currently displayed model');
+  assert.match(settingsScript, /sendToBackground\('start_webgpu_download', msg\)/,
+    'the Settings download control must pass the target model when starting');
+  assert.match(settingsScript, /sendToBackground\('stop_webgpu_download', (msg|stopTarget)\)/,
+    'the Settings download control must pass the target model when stopping');
+  assert.match(settingsScript, /removedReadyModel/,
+    'removing a ready WebGPU model must track whether the deleted model was ready');
+  assert.match(settingsScript, /set_active_provider/,
+    'removing the selected WebGPU model must fall back to a usable provider');
+  assert.match(settingsScript, /didFallbackProvider/,
+    'the provider fallback must re-render cards so the Selected badge stays accurate');
+  assert.match(settingsScript, /activeTransfer/,
+    'the Settings download control must preserve the sibling active transfer instead of hiding Stop');
+  assert.match(settingsScript, /isActiveWebgpuTransfer/,
+    'the Settings poll must stay alive while a sibling transfer runs');
+  assert.match(settingsScript, /stopTarget/,
+    'stopping from Settings must target the running transfer when the model field changed');
+  assert.match(settingsScript, /const display = webgpuDownloadControlState\(state\)/,
+    'rendering must use the shared transfer priority');
+  assert.match(settingsScript, /const control = webgpuDownloadControlState\(state\)/,
+    'stopping must target the same transfer shown in the card');
+  assert.match(settingsScript, /activeProviderId = updateRes\.activeProviderId/,
+    'Settings must sync the selected provider after the background fallback');
+  assert.match(background, /case 'update_provider'[\s\S]*?activeProviderId: providerManager\.activeProviderId/,
+    'update_provider must report the persisted active provider so Settings can refresh after fallback');
+  assert.match(settingsScript, /sendToBackground\('get_webgpu_download_status', query\)/,
+    'the Settings download control must query the displayed model status');
+  assert.match(settingsScript, /data-webgpu-download-status/,
+    'the Settings WebGPU card must render a download status line');
   assert.doesNotMatch(settingsScript, /data-webgpu-download-action=/,
-    'the WebGPU provider download block must live on Apocalypse Mode, not Settings');
+    'the Apocalypse-style download action block must not be duplicated on Settings');
   assert.doesNotMatch(settingsScript, /saveVisionConfig\(\{\s*type:\s*'webgpu'/);
-  assert.match(settingsScript, /Object\.entries\(providersData\)\.filter\(\(\[id\]\) => id !== 'webgpu'\)/,
-    'Settings still renders the WebGPU provider card');
+  assert.match(settingsScript, /let entries = Object\.entries\(providersData\);/,
+    'Settings should render the WebGPU provider card');
+  const webgpuSettingsBlock = settingsScript.slice(
+    settingsScript.indexOf('    webgpu: {'),
+    settingsScript.indexOf('    azure_openai: {'),
+  );
+  assert.match(webgpuSettingsBlock, /WEBGPU_MODEL_PRESETS/);
+  assert.match(webgpuSettingsBlock, /CONTEXT_WINDOW_FIELD/);
+  assert.match(webgpuSettingsBlock, /PROMPT_TIER_FIELD/);
   assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.title"/);
   assert.match(apocalypseHtml, /data-i18n="ap\.models\.vision\.title"/);
   assert.match(apocalypseHtml, /data-i18n="ap\.models\.wikipedia\.title"/);
   assert.match(apocalypseCopy, /'ap\.models\.text\.title': 'Text Model'/);
   assert.match(apocalypseCopy, /'ap\.models\.vision\.title': 'Vision Model'/);
   assert.match(apocalypseCopy, /'ap\.models\.wikipedia\.title': 'Wikipedia in Simple English'/);
-  assert.match(apocalypseHtml, /1\.55 GB · WebGPU/);
+  assert.match(apocalypseHtml, /1\.87 GB · WebGPU/);
   assert.match(apocalypseHtml, /data-webgpu-text-preset/);
-  assert.match(apocalypseHtml, /value="prism-ml\/Bonsai-27B-gguf"/);
+  assert.match(apocalypseHtml, /value="webbrain-one\/webbrain-compass-tiny-v2\.1"/);
+  assert.doesNotMatch(apocalypseHtml, /value="prism-ml\/Bonsai-27B-gguf"/);
   assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.bonsai_warning"/);
   assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'Minimal text model'/);
   assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Basic text model'/);
-  assert.match(apocalypseHtml, />Minimal text model<\/span>/);
-  assert.match(apocalypseHtml, />Basic text model<\/span>/);
+  assert.match(apocalypseHtml, />Compass Tiny v2\.1<\/span>/);
+  assert.doesNotMatch(apocalypseHtml, />Minimal text model<\/span>/);
+  assert.doesNotMatch(apocalypseHtml, />Basic text model<\/span>/);
   assert.doesNotMatch(apocalypseHtml, /· LFM2\.5 2\.6B/);
   assert.doesNotMatch(apocalypseHtml, /· Bonsai 27B/);
   assert.match(emergencyCopy, /Runs LFM2\.5 2\.6B on your GPU/);
@@ -64124,7 +64446,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(apocalypseScript, /function anyOtherWebgpuTextBusy/);
   assert.match(background, /getWebgpuDownloadStatus\(msg\)/,
     'download-status probes must be able to inspect an unselected shipped text model');
-  assert.match(apocalypseScript, /ap\.webgpu\.rag\.pro/);
+  assert.doesNotMatch(apocalypseScript, /ap\.webgpu\.rag\.pro/);
   assert.match(apocalypseHtml, /data-webgpu-text-copy/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-(?:model|context-window|prompt-tier|save|activate)/);
   assert.doesNotMatch(apocalypseHtml, /id="webgpu-test"/);
@@ -64133,14 +64455,14 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.doesNotMatch(apocalypseScript, /normalizeWebgpuModelId|set_active_provider/);
   assert.doesNotMatch(apocalypseScript, /providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/);
   assert.match(apocalypseScript, /providerCommand\('test_vision_provider'\)/);
-  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\.contextWindow[\s\S]*?promptTier: 'compact'/);
+  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\?\.contextWindow [\s\S]*?promptTier: 'compact'/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
   assert.match(englishLocale, /Selecting “Use local fallback” checks WebGPU, records your consent,[\s\S]*Tasks report its status and never wait for it; keep Chrome open/);
   assert.match(apocalypseCopy, /Local vision is optional and never starts automatically/);
   assert.match(apocalypseDocs, /Apocalypse Mode never enables or downloads it/);
   assert.doesNotMatch(apocalypseDocs, /enabling Apocalypse Mode also enables[\s\S]{0,80}vision/i);
-  assert.match(englishLocale, /Download it in Apocalypse Mode, then use the nuclear control in standalone chat[\s\S]*It does not replace your selected provider/);
+  assert.match(englishLocale, /Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat[\s\S]*It does not replace your selected provider/);
 
   const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const multimodal = settings.indexOf('data-panel="multimodal"');
@@ -64184,7 +64506,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(bonsaiWorker, /return \{ content, reasoningContent, toolCalls \}/);
   assert.match(bonsaiWorker, /if \(queuedTextDownload === request\) queuedTextDownload = null/,
     'a completed download request must not clear a newer queued resume for the same model');
-  assert.match(apocalypseScript, /if \(!preset\)[\s\S]*?setWebgpuDownloadState\(state\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,
+  assert.match(apocalypseScript, /if \(!preset \|\| preset\.id !== WEBGPU_COMPASS_TINY_V2_MODEL_ID\)[\s\S]*?setWebgpuDownloadState\(state, \{ syncActiveTransfer: true \}\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,
     'Apocalypse Mode must replace a persisted custom WebGPU model with the checked shipped preset');
   const resumeHelpersStart = bonsaiWorker.indexOf('function parseContentRange');
   const resumeHelpersEnd = bonsaiWorker.indexOf('\n\nasync function fetchGgufForStorage', resumeHelpersStart);
@@ -64274,6 +64596,28 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'Firefox must not package the Chromium-only bitgpu runtime');
 });
 
+test('WebGPU removal revalidates readiness after cleanup errors without masking the error', async () => {
+  for (const ready of [true, false]) {
+    const manager = new ProviderManagerCh();
+    const removalError = new Error('Cache cleanup failed');
+    let savedActive = null;
+    manager.providers.set('webgpu', {
+      config: { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID },
+    });
+    manager.providers.set('webbrain_cloud', {});
+    manager.activeProviderId = 'webgpu';
+    manager.save = async () => { savedActive = manager.activeProviderId; };
+    manager._webgpuProvider = () => ({
+      stopDownload: async () => { throw removalError; },
+      downloadStatus: async () => ({ ready }),
+    });
+    await assert.rejects(manager.stopWebgpuDownload({ model: WEBGPU_COMPASS_TINY_V2_MODEL_ID }),
+      error => error === removalError);
+    assert.equal(manager.activeProviderId, ready ? 'webgpu' : 'webbrain_cloud');
+    assert.equal(savedActive, ready ? null : 'webbrain_cloud');
+  }
+});
+
 test('vision inference host enforces deadlines and recreates poisoned workers', async () => {
   const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
 
@@ -64320,7 +64664,8 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
     };
 
     class FakeWorker {
-      constructor() {
+      constructor(url) {
+        this.url = url;
         this.index = workers.length + 1;
         this.listeners = { message: [], error: [] };
         this.preloadId = null;
@@ -64414,6 +64759,17 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
           this.emit({ id, ok: true, status: 'not-downloaded', ready: false, deletedEntries: 3 });
           return;
         }
+        if (type === 'stop-text-download') {
+          fakeSetTimeout(() => this.emit({
+            id, ok: true, modelId: payload.modelId, status: 'not-downloaded', ready: false,
+          }), behavior.textRemovalDelay || 0);
+          return;
+        }
+        if (type === 'text-download-status') {
+          const state = this.url.includes('bonsai-worker') ? behavior.bonsaiTextState : behavior.onnxTextState;
+          this.emit({ id, ok: true, ...state });
+          return;
+        }
         if (type === 'clear-cache') {
           this.emit({ id, ok: true, modelId: payload.modelId, deletedEntries: 3 });
           return;
@@ -64462,6 +64818,53 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
     return { behavior, workers, workerMessages, runtimeMessages, dispatch, advance, drain };
   }
 
+  const removal = createHarness({ textRemovalDelay: 60_000 });
+  const manager = new ProviderManagerCh();
+  const webgpu = new WebGPUProvider({ model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+  let removalFinished = false;
+  let savedActive = null;
+  webgpu._dispatch = async message => {
+    const response = await removal.dispatch(message);
+    removalFinished = true;
+    return response;
+  };
+  webgpu.downloadStatus = async () => ({ ready: !removalFinished });
+  manager.providers.set('webgpu', webgpu);
+  manager.providers.set('webbrain_cloud', {});
+  manager.activeProviderId = 'webgpu';
+  manager.save = async () => { savedActive = manager.activeProviderId; };
+  let stopSettled = false;
+  const slowStop = manager.stopWebgpuDownload({ model: webgpu.model }).then(
+    result => { stopSettled = true; return result; },
+    error => { stopSettled = true; throw error; },
+  );
+  await removal.drain();
+  await removal.advance(15_001);
+  assert.equal(stopSettled, false, 'slow deletion must remain attached past the initialization deadline');
+  assert.equal(removalFinished, false);
+  await removal.advance(45_000);
+  assert.equal((await slowStop).status, 'not-downloaded');
+  assert.equal(manager.activeProviderId, 'webbrain_cloud', 'late deletion must still trigger the provider fallback');
+  assert.equal(savedActive, 'webbrain_cloud', 'late deletion must persist the fallback');
+
+  const transfers = createHarness({
+    onnxTextState: { modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, status: 'downloading', ready: false },
+    bonsaiTextState: { modelId: WEBGPU_BONSAI27_MODEL_ID, status: 'paused', ready: false },
+  });
+  await transfers.dispatch({ type: 'webgpu-download-status', model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+  await transfers.dispatch({ type: 'webgpu-download-status', model: WEBGPU_BONSAI27_MODEL_ID });
+  let status = await transfers.dispatch({ type: 'webgpu-download-status', model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+  assert.equal(status.activeTransfer.modelId, WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+    'a paused other worker must not hide the requested worker download');
+  const rejectedStart = await transfers.dispatch({ type: 'webgpu-download-start', model: WEBGPU_BONSAI27_MODEL_ID });
+  assert.equal(rejectedStart.ok, false, 'paused-first probe order must not bypass download exclusivity');
+  assert.equal(transfers.workerMessages.some(({ message }) => message.type === 'start-download-text'), false);
+  transfers.behavior.onnxTextState.status = 'paused';
+  transfers.behavior.bonsaiTextState.status = 'downloading';
+  status = await transfers.dispatch({ type: 'webgpu-download-status', model: WEBGPU_BONSAI27_MODEL_ID });
+  assert.equal(status.activeTransfer.modelId, WEBGPU_BONSAI27_MODEL_ID,
+    'the running worker must win in either probe order');
+
   const init = createHarness({ hangInitCount: 1 });
   const hungInit = init.dispatch({ type: 'webgpu-vision-probe', model: WEBGPU_VISION_MODEL_ID });
   await init.drain();
@@ -64488,6 +64891,31 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
   const inferenceRetry = await inference.dispatch({ type: 'webgpu-vision-chat', model: WEBGPU_VISION_MODEL_ID });
   assert.equal(inferenceRetry.content, 'recovered vision',
     'a timed-out inference poisoned the next serialized request');
+
+  const deviceDeath = createHarness({});
+  await deviceDeath.dispatch({ type: 'webgpu-vision-probe', model: WEBGPU_VISION_MODEL_ID });
+  await deviceDeath.drain();
+  assert.equal(deviceDeath.workers.length, 1);
+  deviceDeath.workers[0].emit({ type: 'webgpu-device-dead', reason: 'repeated-execution-failures' });
+  await deviceDeath.drain();
+  assert.equal(deviceDeath.workers[0].terminated, true,
+    'a device-dead signal did not recycle the worker');
+  const afterRecycle = await deviceDeath.dispatch({ type: 'webgpu-vision-chat', model: WEBGPU_VISION_MODEL_ID });
+  assert.equal(deviceDeath.workers.length, 2, 'the next request did not boot a fresh worker');
+  assert.equal(afterRecycle.content, 'recovered vision',
+    'a request after device-death recovery did not succeed');
+  // A second signal within the cooldown must not recycle again (a
+  // persistently poisoned GPU would otherwise reload ~2 GB every attempt).
+  deviceDeath.workers[1].emit({ type: 'webgpu-device-dead', reason: 'certain-device-death' });
+  await deviceDeath.drain();
+  assert.equal(deviceDeath.workers[1].terminated, false,
+    'a device-dead signal inside the cooldown recycled the worker again');
+  assert.equal(deviceDeath.workers.length, 2, 'the cooldown signal booted an extra worker');
+  await deviceDeath.advance(30_000);
+  deviceDeath.workers[1].emit({ type: 'webgpu-device-dead', reason: 'certain-device-death' });
+  await deviceDeath.drain();
+  assert.equal(deviceDeath.workers[1].terminated, true,
+    'a device-dead signal after the cooldown did not recycle the worker');
 
   const queuedInference = createHarness({ hangChatCount: 1, cancelQueued: true });
   const hungQueuedInference = queuedInference.dispatch({ type: 'webgpu-vision-chat', model: WEBGPU_VISION_MODEL_ID });
@@ -64630,6 +65058,8 @@ test('WebGPU worker replays text tool history and applies model-specific generat
   const previousPipelineOptions = globalThis.__webgpuPipelineOptions;
   const previousHoldTextGeneration = globalThis.__holdWebgpuTextGeneration;
   const previousReleaseTextGeneration = globalThis.__releaseWebgpuTextGeneration;
+  const previousInstanceExecutionError = globalThis.__webgpuInstanceExecutionError;
+  const previousVisionExecutionError = globalThis.__webgpuVisionExecutionError;
   let workerListener = null;
   const posted = [];
   try {
@@ -64642,7 +65072,7 @@ test('WebGPU worker replays text tool history and applies model-specific generat
       },
     };
     const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?tool-history-test`;
-    const { prepareTextMessages, splitThinking, tokenizerSupportsTools } = await import(workerUrl);
+    const { prepareTextMessages, prepareMultimodalMessages, splitThinking, tokenizerSupportsTools } = await import(workerUrl);
     const messages = [
       {
         role: 'assistant',
@@ -64664,6 +65094,30 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     assert.equal(prepared[0].content, '');
     assert.equal(prepared[1].content, '{"success":true}');
     assert.equal(messages[0].tool_calls[0].function.arguments, '{"ref_id":"ref_7","force":true}', 'normalization must not mutate persisted history');
+    const multimodalHistory = [
+      { role: 'user', content: [
+        { type: 'text', text: 'Click the target in this screenshot.' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } },
+      ] },
+      messages[0],
+      { ...messages[1], name: 'click_ax' },
+    ];
+    const originalHistory = structuredClone(multimodalHistory);
+    const multimodal = prepareMultimodalMessages(multimodalHistory);
+    assert.deepEqual(multimodal.imageUrls, ['data:image/png;base64,AA==']);
+    assert.deepEqual(multimodal.messages[0].content, [
+      { type: 'image' },
+      { type: 'text', text: 'Click the target in this screenshot.' },
+    ]);
+    assert.equal(multimodal.messages[1].tool_calls[0].id, 'call_1');
+    assert.deepEqual(multimodal.messages[1].tool_calls[0].function.arguments, { ref_id: 'ref_7', force: true });
+    assert.deepEqual(multimodal.messages[2], {
+      role: 'tool',
+      content: [{ type: 'text', text: '{"success":true}' }],
+      tool_call_id: 'call_1',
+      name: 'click_ax',
+    }, 'VL templates must receive the tool result paired with its assistant call');
+    assert.deepEqual(multimodalHistory, originalHistory, 'VL normalization must not mutate persisted history');
     assert.deepEqual(splitThinking('<think>private trace</think>Visible answer'), {
       content: 'Visible answer',
       reasoningContent: 'private trace',
@@ -64713,7 +65167,12 @@ test('WebGPU worker replays text tool history and applies model-specific generat
         async from_pretrained() {
           globalThis.__webgpuRuntimeCounts.visionModelLoads++;
           return {
-            generate: async () => ({ slice: () => ({}) }),
+            generate: async () => {
+              if (globalThis.__webgpuVisionExecutionError) {
+                throw new Error(String(globalThis.__webgpuVisionExecutionError));
+              }
+              return { slice: () => ({}) };
+            },
             dispose: async () => { globalThis.__webgpuRuntimeCounts.visionModelDisposals++; },
           };
         },
@@ -64731,9 +65190,15 @@ test('WebGPU worker replays text tool history and applies model-specific generat
             await new Promise(resolve => { globalThis.__releaseWebgpuTextGeneration = resolve; });
           }
           globalThis.__webgpuGenerationOptions = options;
+          if (globalThis.__webgpuInstanceExecutionError) {
+            throw new Error(String(globalThis.__webgpuInstanceExecutionError));
+          }
           const content = modelId === 'LiquidAI/LFM2.5-2.6B-ONNX'
+            || modelId === 'Michionlion/Nanbeige4.2-3B-ONNX-WebGPU'
             ? 'private model reasoning</think>Hello!'
-            : 'text answer';
+            : modelId === 'RASMUS/MiniCPM5-2B-ONNX'
+              ? '<think>private model reasoning</think>Hello!'
+              : 'text answer';
           return [{ generated_text: [...input, { role: 'assistant', content }] }];
         };
         instance.model = {};
@@ -65012,6 +65477,79 @@ test('WebGPU worker replays text tool history and applies model-specific generat
       tokenizer_encode_kwargs: { preserve_thinking: false },
     }, 'LFM2.5 must use LiquidAI generation settings and its reasoning-template argument');
 
+    const nanbeigePayload = {
+      ...textPayload,
+      modelId: WEBGPU_NANBEIGE42_3B_MODEL_ID,
+    };
+    await dispatch('download-text', nanbeigePayload);
+    assert.equal(
+      globalThis.__webgpuPipelineOptions.options.model_file_name,
+      'model_webgpu_mlp',
+      'Nanbeige publishes onnx/model_webgpu_mlp_q4f16.onnx, not the default model_q4f16.onnx',
+    );
+    const nanbeigeResponse = await dispatch('text-chat', nanbeigePayload);
+    assert.equal(nanbeigeResponse.content, 'Hello!');
+    assert.equal(nanbeigeResponse.reasoningContent, 'private model reasoning',
+      'Nanbeige opens <think> in the generation prompt, so the returned suffix is reasoning');
+    assert.deepEqual(globalThis.__webgpuGenerationOptions, {
+      do_sample: true,
+      temperature: 0.6,
+      top_k: 20,
+      top_p: 0.95,
+      max_new_tokens: 2048,
+      tools: undefined,
+      tokenizer_encode_kwargs: { preserve_thinking: false },
+    }, 'Nanbeige must use its own generation_config sampling and the reasoning-template argument');
+    assert.equal(
+      globalThis.__webgpuPipelineOptions.options.model_file_name,
+      'model_webgpu_mlp',
+      'the chat path must load the same overridden graph file name as the download path',
+    );
+
+    const minicpmPayload = {
+      ...textPayload,
+      modelId: WEBGPU_MINICPM5_2B_MODEL_ID,
+    };
+    await dispatch('download-text', minicpmPayload);
+    assert.equal(globalThis.__webgpuPipelineOptions.options.model_file_name, undefined,
+      'MiniCPM5 publishes the default model_q4f16.onnx graph name');
+    const minicpmResponse = await dispatch('text-chat', minicpmPayload);
+    assert.equal(minicpmResponse.content, 'Hello!');
+    assert.equal(minicpmResponse.reasoningContent, 'private model reasoning',
+      'MiniCPM5 emits a full <think> wrapper, so the closed-think branch is the reasoning path');
+    assert.deepEqual(globalThis.__webgpuGenerationOptions, {
+      do_sample: true,
+      temperature: 1.0,
+      top_p: 0.95,
+      max_new_tokens: 2048,
+      tools: undefined,
+      tokenizer_encode_kwargs: { preserve_thinking: false },
+    }, 'MiniCPM5 must use its quickstart sampling and the reasoning-template argument');
+
+    const compassPayload = {
+      ...textPayload,
+      modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+    };
+    await dispatch('download-text', compassPayload);
+    assert.equal(globalThis.__webgpuPipelineOptions.options.model_file_name, undefined,
+      'Compass Tiny v2 publishes the default model_q4f16.onnx graph name');
+    const compassResponse = await dispatch('text-chat', compassPayload);
+    assert.equal(compassResponse.content, 'text answer');
+    assert.deepEqual(globalThis.__webgpuGenerationOptions, {
+      do_sample: false,
+      max_new_tokens: 256,
+      tools: undefined,
+      tokenizer_encode_kwargs: { enable_thinking: false },
+    }, 'Compass Tiny v2 must stay on the greedy thinking-disabled path from its tested integration');
+
+    const lfmInstructPayload = {
+      ...textPayload,
+      modelId: WEBGPU_LFM25_12B_INSTRUCT_MODEL_ID,
+    };
+    await dispatch('download-text', lfmInstructPayload);
+    assert.equal(globalThis.__webgpuPipelineOptions.options.model_file_name, undefined,
+      'presets that publish the default graph name must not send a file-name override');
+
     const incompatiblePayload = {
       ...textPayload,
       modelId: 'custom-no-tools',
@@ -65024,6 +65562,104 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     const incompatible = posted.find(message => message.id === incompatibleId);
     assert.equal(incompatible.ok, false);
     assert.match(incompatible.error, /chat template that accepts tools/);
+
+    const warmedText = await dispatch('text-chat', textPayload);
+    assert.equal(warmedText.content, 'text answer', 'the healthy text runtime must be resident before simulating a device loss');
+    const textLoadsBeforePoison = globalThis.__webgpuRuntimeCounts.textLoads;
+    const textDisposalsBeforePoison = globalThis.__webgpuRuntimeCounts.textDisposals;
+    globalThis.__webgpuInstanceExecutionError =
+      "failed to call OrtRun(): BufferManager::Download mapAsync GPUBuffer failed: A valid external Instance reference no longer exists";
+    const poisonedTextId = requestId++;
+    await workerListener({
+      data: { id: poisonedTextId, type: 'text-chat', payload: textPayload },
+    });
+    const poisonedText = posted.find(message => message.id === poisonedTextId);
+    assert.equal(poisonedText.ok, false);
+    assert.match(poisonedText.error, /OrtRun|mapAsync/,
+      'a dead WebGPU device must still surface the enriched execution error');
+    assert.match(poisonedText.error, /re-creates the session/,
+      'the enriched error must explain that a retry rebuilds the session');
+    assert.equal(globalThis.__webgpuRuntimeCounts.textDisposals, textDisposalsBeforePoison + 1,
+      'an execution failure must dispose the poisoned text runtime');
+    assert.equal(globalThis.__webgpuRuntimeCounts.textLoads, textLoadsBeforePoison,
+      'the failed turn itself must not trigger a rebuild');
+    globalThis.__webgpuInstanceExecutionError = '';
+    const recoveredText = await dispatch('text-chat', textPayload);
+    assert.equal(recoveredText.content, 'text answer');
+    assert.equal(globalThis.__webgpuRuntimeCounts.textLoads, textLoadsBeforePoison + 1,
+      'the next turn after a device failure must rebuild the session from cache');
+    assert.equal(globalThis.__webgpuRuntimeCounts.textDisposals, textDisposalsBeforePoison + 1,
+      'rebuilding must not dispose again');
+
+    const warmedVisionId = requestId++;
+    await workerListener({
+      data: { id: warmedVisionId, type: 'chat', payload: visionPayload },
+    });
+    assert.equal(posted.find(message => message.id === warmedVisionId)?.ok, true,
+      'the healthy vision session must be resident before simulating a device loss');
+    const visionLoadsBeforePoison = globalThis.__webgpuRuntimeCounts.visionModelLoads;
+    const visionDisposalsBeforePoison = globalThis.__webgpuRuntimeCounts.visionModelDisposals;
+    const textDisposalsBeforeVisionPoison = globalThis.__webgpuRuntimeCounts.textDisposals;
+    globalThis.__webgpuVisionExecutionError = 'failed to call OrtRun(): mapAsync on GPUBuffer failed';
+    const poisonedVisionId = requestId++;
+    await workerListener({
+      data: { id: poisonedVisionId, type: 'chat', payload: visionPayload },
+    });
+    const poisonedVision = posted.find(message => message.id === poisonedVisionId);
+    assert.equal(poisonedVision.ok, false);
+    assert.match(poisonedVision.error, /OrtRun|mapAsync/,
+      'a dead vision device must surface the enriched execution error');
+    assert.equal(globalThis.__webgpuRuntimeCounts.visionModelDisposals, visionDisposalsBeforePoison + 1,
+      'an execution failure must dispose the poisoned vision session');
+    assert.equal(globalThis.__webgpuRuntimeCounts.textDisposals, textDisposalsBeforeVisionPoison + 1,
+      'the shared corrupted device means the co-resident text session goes too');
+    globalThis.__webgpuVisionExecutionError = '';
+    const recoveredVisionId = requestId++;
+    await workerListener({
+      data: { id: recoveredVisionId, type: 'chat', payload: visionPayload },
+    });
+    const recoveredVision = posted.find(message => message.id === recoveredVisionId);
+    assert.equal(recoveredVision.ok, true);
+    assert.equal(recoveredVision.content, 'vision answer');
+    assert.equal(globalThis.__webgpuRuntimeCounts.visionModelLoads, visionLoadsBeforePoison + 1,
+      'the next vision turn after a device failure must rebuild the session');
+
+    const deviceDeadSignals = () => posted.filter(message => message?.type === 'webgpu-device-dead');
+    // The recycle signal is deferred to a later macrotask so the enriched
+    // failure response always delivers first; wait it out before counting.
+    const settleSignals = () => new Promise(resolve => setTimeout(resolve, 25));
+    const failTextChat = async () => {
+      const id = requestId++;
+      await workerListener({ data: { id, type: 'text-chat', payload: textPayload } });
+      await settleSignals();
+      return posted.find(message => message.id === id);
+    };
+    // The text poison above already carried certain device death, so it must
+    // have signalled immediately; the streak is 0 again after the recoveries.
+    await settleSignals();
+    assert.equal(deviceDeadSignals().length, 1, 'certain device death must recycle on the first failure');
+    assert.equal(deviceDeadSignals()[0].reason, 'certain-device-death');
+    globalThis.__webgpuInstanceExecutionError = 'failed to call OrtRun(): transient failure';
+    assert.equal((await failTextChat()).ok, false);
+    assert.equal(deviceDeadSignals().length, 1, 'the first consecutive failure must stay in-worker');
+    // The second consecutive failure proves the device itself is dead: the
+    // worker must ask the host for a fresh context, but only after the
+    // enriched failure response has already been delivered.
+    const secondFailure = await failTextChat();
+    assert.equal(secondFailure.ok, false);
+    assert.match(secondFailure.error, /OrtRun|mapAsync/,
+      'the failing turn must surface the enriched error, not the recycle notice');
+    assert.equal(deviceDeadSignals().length, 2, 'repeated execution failures must request a worker recycle');
+    assert.equal(deviceDeadSignals()[1].reason, 'repeated-execution-failures');
+    assert.ok(posted.indexOf(secondFailure) < posted.indexOf(deviceDeadSignals()[1]),
+      'the enriched error response must deliver before the recycle signal');
+    // A success resets the streak: fail, recover, fail again must not signal.
+    globalThis.__webgpuInstanceExecutionError = '';
+    assert.equal((await dispatch('text-chat', textPayload)).content, 'text answer');
+    globalThis.__webgpuInstanceExecutionError = 'failed to call OrtRun(): another transient failure';
+    assert.equal((await failTextChat()).ok, false);
+    assert.equal(deviceDeadSignals().length, 2, 'a success must reset the failure streak');
+    globalThis.__webgpuInstanceExecutionError = '';
   } finally {
     if (previousSelf === undefined) delete globalThis.self;
     else globalThis.self = previousSelf;
@@ -65041,6 +65677,10 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     else globalThis.__holdWebgpuTextGeneration = previousHoldTextGeneration;
     if (previousReleaseTextGeneration === undefined) delete globalThis.__releaseWebgpuTextGeneration;
     else globalThis.__releaseWebgpuTextGeneration = previousReleaseTextGeneration;
+    if (previousInstanceExecutionError === undefined) delete globalThis.__webgpuInstanceExecutionError;
+    else globalThis.__webgpuInstanceExecutionError = previousInstanceExecutionError;
+    if (previousVisionExecutionError === undefined) delete globalThis.__webgpuVisionExecutionError;
+    else globalThis.__webgpuVisionExecutionError = previousVisionExecutionError;
   }
 });
 
@@ -69660,6 +70300,44 @@ test('OpenCode model prefixes and automatic Responses routing are scoped to the 
   }
 });
 
+test('OpenCode Go requests carry a stable x-opencode-session header', () => {
+  for (const [label, Provider] of [
+    ['chrome', OpenAIProviderCh],
+    ['firefox', OpenAIProviderFx],
+  ]) {
+    const go = new Provider({
+      providerName: 'opencode-go',
+      baseUrl: 'https://opencode.ai/zen/go/v1',
+      model: 'deepseek-v4-flash',
+    });
+    assert.equal(
+      go._headers({ providerSessionId: 'conv_tab_1_123' })['x-opencode-session'],
+      'conv_tab_1_123',
+      `${label}: the conversation session id should be forwarded`,
+    );
+
+    // Calls without a conversation (for example Test connection) still need a
+    // session id, and it must stay stable for the provider instance.
+    const fallbackA = go._headers()['x-opencode-session'];
+    const fallbackB = go._headers()['x-opencode-session'];
+    assert.match(fallbackA, /^webbrain-/, `${label}: a fallback session id should be minted`);
+    assert.equal(fallbackA, fallbackB, `${label}: the fallback session id must be stable`);
+
+    for (const config of [
+      { providerName: 'opencode', baseUrl: 'https://opencode.ai/zen/v1', model: 'muse-spark-1.2-contributor-free' },
+      { providerName: 'custom', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'deepseek-v4-flash' },
+      { providerName: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o' },
+    ]) {
+      const other = new Provider(config);
+      assert.equal(
+        other._headers({ providerSessionId: 'conv_x' })['x-opencode-session'],
+        undefined,
+        `${label}: ${config.providerName} at ${config.baseUrl} must not receive the Go session header`,
+      );
+    }
+  }
+});
+
 test('local OpenAI-compatible servers that require a model throw a clear error when unset', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
     for (const providerName of ['ollama', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy']) {
@@ -71565,6 +72243,9 @@ test('WebBrain Compass groups every generation in a stable conversation session 
     assert.deepEqual(byoOptions, { temperature: 0 }, `${label}: BYO provider received Cloud collection fields`);
     const localOptions = agent._cloudGenerationOptions({ config: { providerName: 'llama.cpp' } }, {}, { tabId, generationName: 'main' });
     assert.deepEqual(localOptions, {}, `${label}: local provider received Cloud collection fields`);
+    const goOptions = agent._cloudGenerationOptions({ config: { providerName: 'opencode-go' } }, { temperature: 0 }, { tabId, generationName: 'main' });
+    assert.equal(goOptions.providerSessionId, firstConversationId, `${label}: OpenCode Go should receive the conversation session id`);
+    assert.equal(goOptions.webbrainSessionId, undefined, `${label}: OpenCode Go should not receive Cloud collection fields`);
 
     agent.clearConversation(tabId);
     agent.getConversation(tabId, 'ask');
@@ -100810,6 +101491,11 @@ test('text tool-call parser is production code with format and allowlist coverag
     fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/tool-call-parser.js'), 'utf8'),
     'chrome and firefox tool-call parsers must remain byte-identical',
   );
+  const parserSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/tool-call-parser.js'), 'utf8');
+  assert.match(parserSource, /orderedCalls/,
+    'mixed XML call formats must preserve source order when dispatching');
+  assert.doesNotMatch(parserSource, /replace\(\/<\[\^>\]/,
+    'param values must reject markup outright instead of incomplete tag-stripping');
   const allowed = new Set(['click', 'click_ax', 'navigate', 'read_page', 'scroll']);
   const cases = [
     {
@@ -100977,6 +101663,71 @@ test('text tool-call parser is production code with format and allowlist coverag
         { name: 'click_ax', args: { ref_id: 'ref_7' } },
       ],
     },
+    {
+      label: 'MiniCPM5 bare function with param tags',
+      raw: [
+        '<function name="click_ax">',
+        '<param name="ref_id">ref_7</param>',
+        '<param name="force">true</param>',
+        '</function>',
+      ].join(''),
+      expected: [{
+        name: 'click_ax',
+        args: { ref_id: 'ref_7', force: true },
+      }],
+    },
+    {
+      label: 'MiniCPM5 bare function with CDATA value',
+      raw: '<function name="read_page"><param name="text"><![CDATA[Keep <b>this</b> & that]]></param></function>',
+      expected: [{
+        name: 'read_page',
+        args: { text: 'Keep <b>this</b> & that' },
+      }],
+    },
+    {
+      label: 'MiniCPM5 bare functions preserve order alongside wrapper',
+      raw: [
+        '<tool_call>{"name":"read_page","arguments":{}}</tool_call>',
+        '<function name="click_ax"><param name="ref_id">ref_7</param></function>',
+      ].join('\n'),
+      expected: [
+        { name: 'read_page', args: {} },
+        { name: 'click_ax', args: { ref_id: 'ref_7' } },
+      ],
+    },
+    {
+      label: 'MiniCPM5 bare function before wrapper preserves source order',
+      raw: [
+        '<function name="click_ax"><param name="ref_id">ref_7</param></function>',
+        '<tool_call>{"name":"read_page","arguments":{}}</tool_call>',
+      ].join('\n'),
+      expected: [
+        { name: 'click_ax', args: { ref_id: 'ref_7' } },
+        { name: 'read_page', args: {} },
+      ],
+    },
+    {
+      label: 'MiniCPM5 param value rejects markup outside CDATA',
+      raw: '<function name="click_ax"><param name="ref_id">ref_7<script</param></function>',
+      expected: [
+        { name: 'click_ax', args: { ref_id: '' } },
+      ],
+    },
+    {
+      label: 'MiniCPM5 bare function rejects prose after params',
+      raw: '<function name="click_ax"><param name="ref_id">ref_7</param>Do not execute this example.</function>',
+      expected: [],
+    },
+    {
+      label: 'MiniCPM5 bare function rejects prose before params',
+      raw: '<function name="click_ax">Do not execute.<param name="ref_id">ref_7</param></function>',
+      expected: [],
+    },
+    {
+      label: 'MiniCPM5 bare function rejects prose between params',
+      raw: '<function name="click_ax"><param name="ref_id">ref_7</param>Do not execute this example.<param name="force">true</param></function>',
+      expected: [],
+    },
   ];
 
   for (const parser of [ToolCallParserCh, ToolCallParserFx]) {
@@ -101069,6 +101820,10 @@ test('text tool-call parser is production code with format and allowlist coverag
       ['inline array after prose', 'Options: [{"name":"click","arguments":{"text":"Yes"}},{"name":"navigate","arguments":{"url":"https://a.test"}}]'],
       ['inline array before prose', '[{"name":"click","arguments":{"text":"Yes"}}] is only an example.'],
       ['array on a labeled response line', 'Options:\n[{"name":"click","arguments":{"text":"Yes"}}]'],
+      ['bare function inline warning', 'Do not call <function name="click_ax"><param name="ref_id">ref_7</param></function> here.'],
+      ['bare function on a labeled line', 'Option A: <function name="click_ax"><param name="ref_id">ref_7</param></function>'],
+      ['bare function with prose header on another line', 'Do not execute this:\n<function name="click_ax"><param name="ref_id">ref_7</param></function>'],
+      ['bare function with trailing prose', '<function name="click_ax"><param name="ref_id">ref_7</param></function>\nis only an example.'],
     ]) {
       assert.deepEqual(
         parser.parseToolCallsFromText(narrated, allowed),

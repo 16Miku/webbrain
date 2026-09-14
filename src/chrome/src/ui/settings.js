@@ -64,10 +64,13 @@ import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 import { AUTO_VISION_PROVIDER_IDS, visionDetectionMatches } from '../providers/vision-capabilities.js';
 import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
 import {
+  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  WEBGPU_MODEL_PRESETS,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_CONSENT_VERSION,
   WEBGPU_VISION_CONSENT_VERSION_KEY,
   WEBGPU_VISION_ENABLED_KEY,
+  normalizeWebgpuModelId,
 } from '../providers/webgpu.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
@@ -83,7 +86,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '36.0.4';
+const EXT_VERSION = '36.1.0';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -2369,6 +2372,11 @@ const CONTEXT_WINDOW_FIELD = {
   step: 1024,
 };
 
+const WEBGPU_CONTEXT_WINDOW_FIELD = {
+  ...CONTEXT_WINDOW_FIELD,
+  placeholder: '32768',
+};
+
 const MAX_OUTPUT_TOKENS_FIELD = {
   key: 'maxOutputTokens',
   labelKey: 'st.provider.field.max_output_tokens',
@@ -2703,6 +2711,224 @@ function providerSubscriptionGuideHtml(definitionId) {
   </aside>`;
 }
 
+// The WebGPU chat error points users at Settings > Providers > WebGPU, so the
+// card needs its own download surface instead of sending everyone to
+// Apocalypse Mode. This drives the same background routes
+// (`start/stop/get_webgpu_download_status`) with a start/stop button and a
+// status line, using only already-translated `webgpu_download` strings.
+let webgpuDownloadPollTimer = null;
+let webgpuDownloadActionInFlight = false;
+
+function normalizeWebgpuDownloadSnapshot(snapshot = {}) {
+  const allowedStatuses = new Set(['checking', 'not-downloaded', 'downloading', 'paused', 'stopping', 'ready', 'error']);
+  const normalizeStatus = status => ['starting', 'queued'].includes(status)
+    ? 'downloading' : allowedStatuses.has(status) ? status : 'not-downloaded';
+  const status = normalizeStatus(snapshot.status);
+  const loaded = Math.max(0, Number(snapshot.loaded) || 0);
+  const total = Math.max(0, Number(snapshot.total) || 0);
+  const progress = status === 'ready'
+    ? 100
+    : Math.max(0, Math.min(100, Number(snapshot.progress) || (total > 0 ? loaded / total * 100 : 0)));
+  const rawTransfer = snapshot.activeTransfer && typeof snapshot.activeTransfer === 'object'
+    ? snapshot.activeTransfer
+    : null;
+  // Preserve the sibling transfer (e.g. Bonsai downloading while the ONNX
+  // card queries Compass): dropping it stops polling and hides Stop control.
+  let activeTransfer = null;
+  if (rawTransfer) {
+    const transferStatus = normalizeStatus(rawTransfer.status);
+    const transferLoaded = Math.max(0, Number(rawTransfer.loaded) || 0);
+    const transferTotal = Math.max(0, Number(rawTransfer.total) || 0);
+    const transferProgress = transferStatus === 'ready'
+      ? 100
+      : Math.max(0, Math.min(100, Number(rawTransfer.progress) || (transferTotal > 0 ? transferLoaded / transferTotal * 100 : 0)));
+    activeTransfer = {
+      status: transferStatus,
+      ready: rawTransfer.ready === true || transferStatus === 'ready',
+      progress: Math.round(transferProgress),
+      error: String(rawTransfer.error || ''),
+      modelId: String(rawTransfer.modelId || rawTransfer.model || ''),
+      dtype: rawTransfer.dtype,
+    };
+  }
+  return {
+    status,
+    ready: snapshot.ready === true || status === 'ready',
+    progress: Math.round(progress),
+    error: String(snapshot.error || ''),
+    modelId: String(snapshot.modelId || snapshot.model || ''),
+    dtype: snapshot.dtype,
+    activeTransfer,
+  };
+}
+
+function isActiveWebgpuTransfer(state) {
+  return !!state && state.ready !== true
+    && ['checking', 'downloading', 'paused', 'stopping'].includes(state.status);
+}
+
+function webgpuDownloadControlState(state) {
+  const sibling = state.activeTransfer;
+  const model = String(state.modelId || '').trim().toLowerCase();
+  const siblingModel = String(sibling?.modelId || '').trim().toLowerCase();
+  if (!siblingModel || siblingModel === model) return state;
+  const priority = item => !isActiveWebgpuTransfer(item) ? 0 : item.status === 'paused' ? 1 : 2;
+  return priority(sibling) > priority(state) ? sibling : state;
+}
+
+function webgpuDownloadCardLabel(state) {
+  if (state.ready || ['downloading', 'paused', 'stopping'].includes(state.status)) {
+    return t('st.providers.webgpu_download.stop');
+  }
+  return t('st.providers.webgpu_download.start');
+}
+
+function webgpuDownloadStatusLine(state) {
+  if (state.ready) return t('st.providers.webgpu_download.ready_detail');
+  switch (state.status) {
+    case 'checking':
+      return t('st.providers.webgpu_download.checking');
+    case 'downloading':
+      return t('st.providers.webgpu_download.downloading', { progress: state.progress });
+    case 'paused':
+      return `${t('st.providers.webgpu_download.paused', { progress: state.progress })} ${t('st.providers.webgpu_download.paused_detail')}`;
+    case 'stopping':
+      return t('st.providers.webgpu_download.stopping');
+    case 'error':
+      return `${t('st.providers.webgpu_download.error')}: ${state.error || t('st.providers.webgpu_download.error_detail')}`;
+    default:
+      return t('st.providers.webgpu_download.required');
+  }
+}
+
+function renderWebgpuDownloadControl(id, state) {
+  const btn = document.querySelector(`.btn-webgpu-download[data-provider="${id}"]`);
+  const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
+  // When the user edits the Model field mid-download, the status for the
+  // newly displayed model is `not-downloaded` while `activeTransfer` still
+  // carries the running sibling transfer. Render the running transfer so its
+  // Stop control stays visible instead of flipping to Start with no way back.
+  // A distinct active transfer wins even when the displayed model is cached
+  // (ready): otherwise its remove action would delete the cached model while
+  // the sibling download runs hidden.
+  const display = webgpuDownloadControlState(state);
+  const transferActive = display !== state;
+  if (btn) {
+    btn.textContent = webgpuDownloadCardLabel(display);
+    btn.disabled = webgpuDownloadActionInFlight || ['checking', 'stopping'].includes(display.status);
+    // Stopping must target the running transfer, not the newly typed model.
+    if (transferActive && display.modelId) btn.dataset.activeTransferModel = display.modelId;
+    else delete btn.dataset.activeTransferModel;
+  }
+  if (line) {
+    line.textContent = transferActive && display.modelId
+      ? `${webgpuDownloadStatusLine(display)} (${display.modelId})`
+      : webgpuDownloadStatusLine(display);
+  }
+}
+
+function getDisplayedWebgpuModel(id = 'webgpu') {
+  const input = document.querySelector(`input[data-provider="${id}"][data-key="model"]`);
+  try {
+    return normalizeWebgpuModelId(input?.value || providersData[id]?.model);
+  } catch {
+    return String(input?.value || providersData[id]?.model || WEBGPU_COMPASS_TINY_V2_MODEL_ID).trim();
+  }
+}
+
+async function refreshWebgpuDownloadControls() {
+  const ids = [...new Set([...document.querySelectorAll('.btn-webgpu-download')].map(btn => btn.dataset.provider))];
+  if (!ids.length) {
+    if (webgpuDownloadPollTimer) {
+      clearInterval(webgpuDownloadPollTimer);
+      webgpuDownloadPollTimer = null;
+    }
+    return;
+  }
+  let active = false;
+  for (const id of ids) {
+    try {
+      const model = getDisplayedWebgpuModel(id);
+      const query = model ? { model } : {};
+      const state = normalizeWebgpuDownloadSnapshot(await sendToBackground('get_webgpu_download_status', query) || {});
+      renderWebgpuDownloadControl(id, state);
+      if (isActiveWebgpuTransfer(state) || isActiveWebgpuTransfer(state.activeTransfer)) active = true;
+    } catch (error) {
+      const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
+      if (line) line.textContent = String(error?.message || error);
+    }
+  }
+  if (active && !webgpuDownloadPollTimer) {
+    webgpuDownloadPollTimer = setInterval(refreshWebgpuDownloadControls, 2000);
+  } else if (!active && webgpuDownloadPollTimer) {
+    clearInterval(webgpuDownloadPollTimer);
+    webgpuDownloadPollTimer = null;
+  }
+}
+
+async function handleWebgpuDownloadButton(btn) {
+  const id = btn.dataset.provider;
+  if (webgpuDownloadActionInFlight) return;
+  webgpuDownloadActionInFlight = true;
+  let didFallbackProvider = false;
+  try {
+    btn.disabled = true;
+    // Persist any form changes on the WebGPU card first so the background
+    // provider configuration stays in sync with the user's selected model.
+    if (dirtyProviderIds.has(id)) {
+      await saveProvider(id, { showFlash: false });
+    }
+    const model = getDisplayedWebgpuModel(id);
+    const msg = model ? { model } : {};
+    const state = normalizeWebgpuDownloadSnapshot(await sendToBackground('get_webgpu_download_status', msg) || {});
+    // If the user typed a new model while a sibling transfer runs, the status
+    // for the displayed model is `not-downloaded` (or ready, when switching
+    // to a cached model) with the running transfer in `activeTransfer`.
+    // Stopping must target the running transfer so its Stop control keeps
+    // working instead of attempting to start a blocked download or deleting
+    // the cached displayed model while the sibling runs hidden.
+    const control = webgpuDownloadControlState(state);
+    const siblingActive = control !== state;
+    const stopTarget = { model: control.modelId || model, ...(control.dtype ? { dtype: control.dtype } : {}) };
+    if (state.ready || ['downloading', 'paused'].includes(state.status) || siblingActive) {
+      const removedReadyModel = state.ready === true && !siblingActive;
+      await sendToBackground('stop_webgpu_download', stopTarget);
+      // Removing a ready model while WebGPU is the selected chat provider
+      // would leave every subsequent chat failing its readiness check until
+      // the user re-downloads or manually picks another provider. Fall back
+      // to a usable provider so the selection stays functional.
+      if (removedReadyModel && id === activeProviderId) {
+        try {
+          const fallback = providersData?.webbrain_cloud
+            ? 'webbrain_cloud'
+            : Object.keys(providersData || {}).find((candidate) => candidate !== id && providerIsActive(candidate, providersData[candidate])) || 'webbrain_cloud';
+          await sendToBackground('set_active_provider', { providerId: fallback });
+          activeProviderId = fallback;
+          requestedActiveProviderId = fallback;
+          didFallbackProvider = true;
+        } catch {
+          // Keep the current selection; chat will report the missing download.
+        }
+      }
+    } else {
+      await sendToBackground('start_webgpu_download', msg);
+    }
+  } catch (error) {
+    const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
+    if (line) line.textContent = String(error?.message || error);
+  } finally {
+    webgpuDownloadActionInFlight = false;
+    await refreshWebgpuDownloadControls();
+    if (didFallbackProvider) {
+      try {
+        renderProviders();
+      } catch {
+        // Card re-render is best-effort; the status line above already updated.
+      }
+    }
+  }
+}
+
 function renderProviders() {
   providersContainer.innerHTML = '';
 
@@ -2811,6 +3037,23 @@ function renderProviders() {
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model loaded in Unsloth Studio' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        PROMPT_TIER_FIELD,
+      ],
+    },
+    webgpu: {
+      fields: [
+        {
+          key: 'model',
+          labelKey: 'st.provider.field.model',
+          type: 'text',
+          placeholder: 'owner/repository',
+          suggestions: [WEBGPU_COMPASS_TINY_V2_MODEL_ID],
+          suggestionLabels: Object.fromEntries(WEBGPU_MODEL_PRESETS.filter(option => option.id === WEBGPU_COMPASS_TINY_V2_MODEL_ID).map(option => [
+            option.id,
+            `${option.label} — ${option.id}${option.supportsVision ? ` — ${t('st.provider.field.supports_vision')}` : ''}`,
+          ])),
+        },
+        WEBGPU_CONTEXT_WINDOW_FIELD,
         PROMPT_TIER_FIELD,
       ],
     },
@@ -3081,7 +3324,7 @@ function renderProviders() {
 
   providersContainer.appendChild(renderProviderFilterBar());
 
-  let entries = Object.entries(providersData).filter(([id]) => id !== 'webgpu');
+  let entries = Object.entries(providersData);
   const providerQuery = normalizeGeneralSearchText(providerSearchQuery);
   if (providerQuery) {
     entries = entries
@@ -3272,12 +3515,14 @@ function renderProviders() {
       <div class="btn-row">
         <button class="btn-primary btn-save" data-provider="${id}">${escapeHtml(t('st.providers.save'))}</button>
         <button class="btn-secondary btn-test" data-provider="${id}">${escapeHtml(t('st.providers.test'))}</button>
+        ${definitionId === 'webgpu' ? `<button class="btn-secondary btn-webgpu-download" data-provider="${id}">${escapeHtml(t('st.providers.webgpu_download.start'))}</button>` : ''}
         ${billingButton}
         ${!isSelected ? `<button class="btn-secondary btn-activate" data-provider="${id}">${escapeHtml(t('st.providers.select_for_chat'))}</button>` : ''}
         ${config.isDuplicate
           ? `<button class="btn-secondary btn-remove-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.remove_duplicate'))}</button>`
           : `<button class="btn-secondary btn-duplicate" data-provider="${id}"${duplicateDisabledKey ? ` disabled title="${escapeHtml(t(duplicateDisabledKey))}"` : ''}>${escapeHtml(t('st.providers.duplicate'))}</button>`}
       </div>
+      ${definitionId === 'webgpu' ? `<div class="webgpu-download-status" data-webgpu-download-status="${id}" style="margin-top:8px;font-size:12px;color:var(--text2);">${escapeHtml(t('st.providers.webgpu_download.checking'))}</div>` : ''}
       <div class="test-result" id="test-${id}"></div>
     `;
 
@@ -3304,6 +3549,10 @@ function renderProviders() {
   document.querySelectorAll('.btn-test').forEach(btn => {
     btn.addEventListener('click', () => testProvider(btn.dataset.provider));
   });
+  document.querySelectorAll('.btn-webgpu-download').forEach(btn => {
+    btn.addEventListener('click', () => handleWebgpuDownloadButton(btn));
+  });
+  refreshWebgpuDownloadControls();
   document.querySelectorAll('.btn-activate').forEach(btn => {
     btn.addEventListener('click', () => activateProvider(btn.dataset.provider));
   });
@@ -3351,10 +3600,19 @@ function renderProviders() {
         input.style.display = 'none';
         input.value = sel.value;
       }
+      if (providerId === 'webgpu' && sel.value !== '__custom__') {
+        const preset = WEBGPU_MODEL_PRESETS.find(option => option.id === sel.value);
+        if (preset?.contextWindow) {
+          const contextInput = document.querySelector(`input[data-provider="${providerId}"][data-key="contextWindow"]`);
+          if (contextInput) contextInput.value = String(preset.contextWindow);
+          if (providersData[providerId]) providersData[providerId].contextWindow = preset.contextWindow;
+        }
+      }
       syncInferredOpenRouterRoutingVariant(providerId, input.value);
       markProviderDirty(providerId);
       refreshProviderCompatibilitySummary(providerId);
       refreshVisionStatus(providerId);
+      if (providerId === 'webgpu') refreshWebgpuDownloadControls();
     });
   });
   document.querySelectorAll('select[data-key="visionMode"]').forEach((select) => {
@@ -3377,6 +3635,7 @@ function renderProviders() {
       refreshProviderCompatibilitySummary(input.dataset.provider);
       refreshVisionStatus(input.dataset.provider);
       if (providerDefinitionId(input.dataset.provider) === 'ollama') refreshVisionStatus(input.dataset.provider);
+      if (input.dataset.provider === 'webgpu' && input.dataset.key === 'model') refreshWebgpuDownloadControls();
     });
   });
   document.querySelectorAll('.btn-reset-compatibility').forEach((button) => {
@@ -3452,7 +3711,6 @@ function renderProviderFilterBar() {
     { key: 'router', labelKey: 'st.providers.filter.router' },
   ];
   const filterCounts = Object.entries(providersData).reduce((counts, [id, config]) => {
-    if (id === 'webgpu') return counts;
     counts.all += 1;
     if (providerIsActive(id, config)) counts.active += 1;
     const category = config.category || 'cloud';
@@ -3588,7 +3846,7 @@ function markProviderDirty(id) {
 
 function refreshActiveProviderFilterCount() {
   const count = Object.entries(providersData)
-    .filter(([id, config]) => id !== 'webgpu' && providerIsActive(id, config))
+    .filter(([id, config]) => providerIsActive(id, config))
     .length;
   const countEl = document.querySelector('.provider-filter-pill[data-filter="active"] .provider-filter-count');
   if (countEl) countEl.textContent = String(count);
@@ -3755,7 +4013,15 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
       setProviderConfigValue(config, input.dataset.key, value);
     });
     apiKeyWarning = providerApiKeyWarning(id, config);
-    await sendToBackground('update_provider', { providerId: id, config, markConfigured });
+    const updateRes = await sendToBackground('update_provider', { providerId: id, config, markConfigured });
+    // updateProvider may fall back to another active provider (e.g. the active
+    // WebGPU model was edited to an undownloaded target). Sync the page-local
+    // selection so the Selected badge does not lie about subsequent chats.
+    if (updateRes && typeof updateRes.activeProviderId === 'string'
+        && updateRes.activeProviderId !== activeProviderId) {
+      activeProviderId = updateRes.activeProviderId;
+      requestedActiveProviderId = updateRes.activeProviderId;
+    }
   } catch (e) {
     if (showFlash) setProviderTestResult(id, 'fail', t('st.providers.failed', { error: e.message }));
     throw e;
@@ -3773,6 +4039,29 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
     if (markConfigured) providersData[id].configured = id !== 'webbrain_cloud';
   }
   if (markConfigured) dirtyProviderIds.delete(id);
+  // If the background fell back to another active provider, re-render all
+  // cards so every Selected badge reflects the persisted selection.
+  if (requestedActiveProviderId === activeProviderId && document.querySelector('.provider-card')) {
+    const selectedCards = [...document.querySelectorAll('.provider-card.selected')].map((card) => card.dataset.providerId);
+    const shouldRerender = selectedCards.length !== 1 || selectedCards[0] !== activeProviderId;
+    if (shouldRerender) {
+      try {
+        syncInputsIntoProvidersData();
+      } catch {
+        // Draft preservation is best-effort; selection accuracy wins.
+      }
+      renderProviders();
+      refreshVisionStatus(id);
+      if (showFlash) {
+        if (apiKeyWarning) setProviderTestResult(id, 'warn', apiKeyWarning);
+        else {
+          const testEl = setProviderTestResult(id, 'ok', t('st.providers.saved'));
+          if (testEl) setTimeout(() => testEl.classList.remove('show'), 2000);
+        }
+      }
+      return;
+    }
+  }
   refreshProviderCardStatus(id);
   refreshVisionStatus(id);
 
