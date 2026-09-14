@@ -990,6 +990,9 @@ const {
   WEBGPU_VISION_MODEL_ID,
   WEBGPU_VISION_READY_MARKER_VERSION,
   normalizeWebgpuModelId,
+  isShippedWebgpuPreset,
+  webgpuModelDtype,
+  webgpuModelPreset,
   webgpuVisionReadyMarkerUrl,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
@@ -35548,7 +35551,7 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
         'chrome: the vision model is missing its icon or Test action');
       assert.match(pageScript, /function confirmCompletedModelRemoval\(action, status, modelTitleKey\)[\s\S]*?action !== 'stop' \|\| status !== 'ready'[\s\S]*?globalThis\.confirm\(t\('ap\.models\.confirm_remove'/,
         'chrome: completed model removal is missing its confirmation guard');
-      assert.match(pageScript, /confirmCompletedModelRemoval\(action, webgpuDownloadState\.status, 'ap\.models\.text\.title'\)/,
+      assert.match(pageScript, /confirmCompletedModelRemoval\(action, state\.status, 'ap\.models\.text\.title'\)/,
         'chrome: completed Text Model removal is not confirmed');
       assert.match(pageScript, /confirmCompletedModelRemoval\(action, visionDownloadState\?\.status, 'ap\.models\.vision\.title'\)/,
         'chrome: completed Vision Model removal is not confirmed');
@@ -63221,6 +63224,81 @@ test('Apocalypse text download fixes the Compass preset and avoids duplicate sta
   }
 });
 
+test('Apocalypse controls retain Settings transfers while the preset stays on Compass', async () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
+  const helpers = source.slice(source.indexOf('function normalizeWebgpuDownloadState('), source.indexOf('function setModelTestResult('));
+  for (const modelId of [WEBGPU_LFM25_MODEL_ID, WEBGPU_LFM25_VL_16B_MODEL_ID, WEBGPU_BONSAI27_MODEL_ID, 'custom/model']) {
+    for (const compassReady of [false, true]) {
+      const dtype = webgpuModelDtype(modelId, 'q8');
+      let configuredModel = modelId;
+      let transfer = { modelId, dtype, status: 'downloading', ready: false, progress: 25 };
+      const commands = [];
+      const nodes = new Map();
+      const node = selector => {
+        if (!nodes.has(selector)) nodes.set(selector, { style: {}, dataset: {}, setAttribute() {} });
+        return nodes.get(selector);
+      };
+      const panel = { dataset: {}, querySelector: node };
+      const radio = { value: WEBGPU_COMPASS_TINY_V2_MODEL_ID, checked: true };
+      const context = vm.createContext({
+        WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_DTYPE, webgpuModelPreset, webgpuModelDtype, isShippedWebgpuPreset,
+        supportsWebgpuVision: true, fixedWebgpuProviderConfigured: false, fixedWebgpuProviderMarkedReady: false,
+        webgpuPresetHydrated: false, webgpuDownloadStatusRequest: 0, webgpuDownloadState: { status: 'checking' },
+        snapshot: { enabled: false }, elements: {}, CSS: { escape: value => value },
+        t: key => key, confirm: () => true,
+        document: {
+          querySelector: selector => selector === '[data-webgpu-download-panel]' ? panel
+            : selector.includes('data-webgpu-text-preset') ? radio : node(selector),
+          querySelectorAll: () => [radio],
+        },
+        providerCommand: async (action, payload = {}) => {
+          commands.push({ action, payload: structuredClone(payload) });
+          if (action === 'update_provider') {
+            configuredModel = payload.config.model;
+            return { ok: true };
+          }
+          if (action === 'get_webgpu_download_status') {
+            if (configuredModel === modelId) return { ...transfer };
+            return { modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, dtype: WEBGPU_DTYPE,
+              status: compassReady ? 'ready' : 'not-downloaded', ready: compassReady,
+              ...(['downloading', 'paused', 'queued'].includes(transfer.status) ? { activeTransfer: { ...transfer } } : {}),
+            };
+          }
+          assert.equal(payload.model, modelId, `${action} must target the retained transfer`);
+          assert.deepEqual(payload.dtype, dtype, `${action} must retain the transfer precision`);
+          transfer = { ...transfer, status: action === 'pause_webgpu_download' ? 'paused'
+            : action === 'stop_webgpu_download' ? 'not-downloaded' : 'downloading' };
+          return { ok: true, ...transfer };
+        },
+      });
+      vm.runInContext(`${helpers}\nupdateOverallModelsReadiness = () => {};`, context);
+      await context.refreshWebgpuDownloadStatus();
+      assert.equal(configuredModel, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+      assert.equal(context.webgpuDownloadActionState().modelId, modelId);
+      assert.equal(node('[data-webgpu-download-action="start"]').hidden, true);
+      assert.equal(node('[data-webgpu-download-action="pause"]').hidden, false);
+      assert.equal(node('[data-webgpu-download-action="stop"]').hidden, false);
+      assert.ok(node('[data-webgpu-download-detail]').textContent.includes(webgpuModelPreset(modelId)?.label || modelId));
+      await context.runWebgpuDownloadAction('pause');
+      assert.equal(node('[data-webgpu-download-action="resume"]').hidden, false);
+      await context.runWebgpuDownloadAction('resume');
+      assert.equal(configuredModel, WEBGPU_COMPASS_TINY_V2_MODEL_ID, 'resuming a sibling must not change the Compass preset');
+      assert.equal(node('[data-webgpu-download-action="pause"]').hidden, false);
+      await context.runWebgpuDownloadAction('stop');
+      assert.equal(context.webgpuDownloadActionState().modelId, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+      assert.deepEqual(commands.filter(command => /^(pause|start|stop)_webgpu_download$/.test(command.action)).map(command => command.action),
+        ['pause_webgpu_download', 'start_webgpu_download', 'stop_webgpu_download']);
+      transfer.status = 'queued';
+      await context.refreshWebgpuDownloadStatus();
+      assert.equal(node('[data-webgpu-download-action="stop"]').hidden, false);
+      transfer.status = 'not-downloaded'; // Worker reset or a missed completion event.
+      await context.refreshWebgpuDownloadStatus();
+      assert.equal(context.webgpuDownloadActionState().modelId, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+      assert.equal(context.anyOtherWebgpuTextBusy(), false);
+    }
+  }
+});
+
 test('Apocalypse enable keeps a selected Bonsai preset and does not auto-download it', async () => {
   const previousChrome = globalThis.chrome;
   const sentMessages = [];
@@ -63748,7 +63826,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(bonsaiWorker, /return \{ content, reasoningContent, toolCalls \}/);
   assert.match(bonsaiWorker, /if \(queuedTextDownload === request\) queuedTextDownload = null/,
     'a completed download request must not clear a newer queued resume for the same model');
-  assert.match(apocalypseScript, /if \(!preset \|\| preset\.id !== WEBGPU_COMPASS_TINY_V2_MODEL_ID\)[\s\S]*?setWebgpuDownloadState\(state\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,
+  assert.match(apocalypseScript, /if \(!preset \|\| preset\.id !== WEBGPU_COMPASS_TINY_V2_MODEL_ID\)[\s\S]*?setWebgpuDownloadState\(state, \{ syncActiveTransfer: true \}\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,
     'Apocalypse Mode must replace a persisted custom WebGPU model with the checked shipped preset');
   const resumeHelpersStart = bonsaiWorker.indexOf('function parseContentRange');
   const resumeHelpersEnd = bonsaiWorker.indexOf('\n\nasync function fetchGgufForStorage', resumeHelpersStart);
