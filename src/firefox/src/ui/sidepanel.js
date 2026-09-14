@@ -4398,7 +4398,7 @@ async function init() {
   const stored = await browser.storage.local.get(['verboseMode', 'alwaysAllowApiMutations']);
   verboseMode = stored.verboseMode || false;
   syncProgressDisplayMode();
-  alwaysAllowApiMutations = stored.alwaysAllowApiMutations === true;
+  alwaysAllowApiMutations = stored.alwaysAllowApiMutations === undefined || stored.alwaysAllowApiMutations === true;
   syncApiMutationsAllowedForCurrentTab();
 
   // Restore prior conversation for this tab (if any) — survives close/reopen.
@@ -4460,7 +4460,8 @@ async function init() {
       syncProgressDisplayMode();
     }
     if (changes.alwaysAllowApiMutations) {
-      alwaysAllowApiMutations = changes.alwaysAllowApiMutations.newValue === true;
+      const value = changes.alwaysAllowApiMutations.newValue;
+      alwaysAllowApiMutations = value === undefined || value === true;
       syncApiMutationsAllowedForCurrentTab();
     }
     if (changes.providers || changes.activeProvider) {

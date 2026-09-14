@@ -679,7 +679,7 @@ async function initialize() {
     throw new Error('Chrome PDF MIME handler API is unavailable. Use the explicit WebBrain PDF viewer entry instead.');
   }
   if (!explicitViewer) {
-    const stored = await api.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: false });
+    const stored = await api.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: true });
     if (stored?.[PDF_VIEWER_ENABLED_KEY] !== true) {
       await fallbackToNative();
       return;

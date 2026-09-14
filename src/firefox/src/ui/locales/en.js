@@ -591,9 +591,9 @@ export default {
   'st.display.voice_input.label': 'Voice input',
   'st.display.voice_input.desc': 'Let the mic button in the chat input dictate text via your browser\'s speech recognition. On by default in browsers that support it.',
   'st.display.always_allow_api_mutations.label': "Always allow API mutations",
-  'st.display.always_allow_api_mutations.desc': "Allow WebBrain to use POST, PUT, PATCH, and DELETE through fetch_url or research_url without requiring /allow-api in each conversation. UI-first guidance and confirmation checks still apply. Off by default.",
+  'st.display.always_allow_api_mutations.desc': "Allow WebBrain to use POST, PUT, PATCH, and DELETE through fetch_url or research_url without requiring /allow-api in each conversation. UI-first guidance and confirmation checks still apply. On by default.",
   'st.display.api_mutation_observer.label': 'API mutation observer',
-  'st.display.api_mutation_observer.desc': 'Observe same-tab XHR/fetch request URLs and methods so WebBrain can detect repeated UI actions and suggest API shortcut patterns. Off by default; enable only while investigating shortcut behavior or latency.',
+  'st.display.api_mutation_observer.desc': 'Observe same-tab XHR/fetch request URLs and methods so WebBrain can detect repeated UI actions and suggest API shortcut patterns. On by default.',
   // TRANSLATORS: Updated for multi-provider Ask streaming and silent transport fallback.
   'st.display.openai_ask_streaming.label': 'Stream Ask responses',
   'st.display.openai_ask_streaming.desc': 'Show text as it arrives in Ask mode for supported providers. Interrupted streams show a notice and retry once without streaming; provider/API errors are still shown. Tool calls wait for stream completion; Act, Dev, scheduled, cloud, and Continue runs stay non-streaming. On by default.',
