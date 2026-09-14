@@ -115,7 +115,7 @@ Our local Node guard was a laptop process making DELETE calls at an absolute tim
 ## Known interpretation limitations: preserve, do not silently repair
 
 - Conference planning wording mixes base/daily dollars and a fee per session; the frozen key charges the base once. Different plausible readings explain some failed totals.
-- Evidence tasks request decision/source ID but not explicitly form submission; the scorer requires submission. Fara's native authorization caution can interact with this mismatch. Source ID is effectively a document title, whereas visible controls also have numeric indices.
+- Evidence tasks explicitly authorize submitting the form to record the decision, as the scorer requires. Source ID is effectively a document title, whereas visible controls also have numeric indices.
 - Fara 4B workflow strict failures were `Draft` vs exact `draft` only, with all other checks passing. Do not call them multi-step reasoning failures.
 - Browser Use workflow-01 omitted Brief evidence and invented values. Fara planning-01 selected a more expensive option; evidence-01 misread source facts. These are separate observed model errors.
 - Fara browser Find shortcuts did not open Find in headless Mac Chromium; typing stayed in the page input. This adapter/browser-surface limitation produced no thrown key-dispatch error. Do not silently add unsupported browser chrome or change its frozen adapter.
