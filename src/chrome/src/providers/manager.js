@@ -24,6 +24,7 @@ import {
   webgpuModelRuntime,
 } from './webgpu.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
+import { purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
 // Static, NOT dynamic: this module runs in the MV3 service worker, where
 // `await import()` throws "import() is disallowed on ServiceWorkerGlobalScope".
 // The provider modules above already import this statically, so it's in the SW
@@ -1885,6 +1886,12 @@ export class ProviderManager {
       }
     }
     this.providers.set(id, this._createProvider(id, merged));
+    // Revocation is permanent for queued data, even if sharing is enabled
+    // again before another agent run. Await deletion before acknowledging it.
+    // Explicit off updates also retry a previously failed purge.
+    if (Object.hasOwn(updates, 'shareQueriesForResearch') && merged.shareQueriesForResearch !== true) {
+      await purgeShareGenerations(entry => String(entry?.provider_id || '') === id);
+    }
     await this.save();
   }
 
@@ -1943,6 +1950,9 @@ export class ProviderManager {
         : WEBBRAIN_CLOUD_PROVIDER_ID;
     }
     try {
+      if (duplicate.config?.shareQueriesForResearch === true) {
+        await purgeShareGenerations(entry => String(entry?.provider_id || '') === id);
+      }
       await this.save();
     } catch (error) {
       this.providers.set(id, duplicate);

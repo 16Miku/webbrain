@@ -37,26 +37,27 @@ function scrubText(value, limit = MAX_MESSAGE_CHARS) {
   // Non-canonical forms count too: uppercase scheme (DATA:...), extra
   // media-type parameters (...;charset=utf-8;base64,...). Case-insensitive.
   if (/data:/i.test(text)) {
+    const headers = text.match(/data:(image|audio|video|application|font|model)\/[^,\s"'<>]+,/gi) || [];
+    // Non-base64 data URLs may contain raw markup, quotes, and whitespace.
+    // Their end cannot be distinguished reliably from surrounding text, so
+    // omit the whole value instead of risking a partial attachment upload.
+    if (headers.some(header => !/;base64,$/i.test(header))) return '[binary content omitted]';
     // Detect data URIs regardless of surrounding string or payload length:
     // even a 1x1 canvas/QR thumbnail is image bytes the UI promises to strip.
     // Newlines (but not spaces/words) are allowed inside the payload so
     // wrapped base64 is still removed while surrounding prose survives.
     text = text.replace(
-      /data:(image|audio|video|application|font|model)\/[a-zA-Z0-9+.-]+(?:;[a-zA-Z0-9!#$&^_.+-]+(?:=[a-zA-Z0-9!#$&^_.+-]+)?)*;base64,[A-Za-z0-9+/=\r\n]+/gi,
+      /data:(image|audio|video|application|font|model)\/[a-zA-Z0-9+.-]+(?:;[a-zA-Z0-9!#$&^_.+-]+(?:=[a-zA-Z0-9!#$&^_.+-]+)?)*;base64,[A-Za-z0-9+/=\r\n]+(?=$|[\s"'<>])/gi,
       '[embedded base64 data omitted]',
     );
-    // Data URLs can also carry percent-encoded or unencoded bytes (SVG,
-    // PDFs, etc.). Their media type identifies the attachment regardless of
-    // encoding. Stop at text/JSON delimiters to preserve surrounding prose.
-    text = text.replace(
-      /data:(image|audio|video|application|font|model)\/[^,\s"'<>]+,[^\s"'<>]*/gi,
-      '[embedded data omitted]',
-    );
+    // Unhandled forms (including escaped base64) must not leave a tail of
+    // bytes behind after a partial match.
+    if (containsBinaryBlock(text)) return '[binary content omitted]';
   }
   // Serialized tool results can contain binaries of any size. Scrub named
   // base64 fields even when their payload is below the bare-blob threshold.
-  if (text.includes('"base64"')) {
-    text = text.replace(/"base64"\s*:\s*"[A-Za-z0-9+/=\r\n]*"/g, '"base64":"[omitted]"');
+  if (/"base64"/i.test(text)) {
+    text = text.replace(/"base64"\s*:\s*"(?:\\[\s\S]|[^"\\])*"/gi, '"base64":"[omitted]"');
   }
   // Bare base64 blobs may wrap at MIME line boundaries. Count encoded
   // characters, including padding, so wrapping cannot bypass the threshold
@@ -390,6 +391,13 @@ async function flushShareOutboxNow(transportProvider, shouldSend) {
   if (!snapshot.length) return 0;
   const removeIds = new Set();
   for (const entry of snapshot) {
+    // A settings change can permanently purge this snapshot's entries, then
+    // re-enable sharing while an earlier send is still pending. Never revive
+    // a deleted entry merely because its provider currently consents again.
+    await storageQueue.catch(() => {});
+    try {
+      if (!(await readOutbox()).some(queued => queued?.id === entry.id)) continue;
+    } catch { break; }
     // Revalidate consent immediately before each delivery: a pre-flush purge
     // cannot cover revocation that lands mid-flush, and this loop otherwise
     // holds a stale snapshot. Revoked entries are dropped, never sent.

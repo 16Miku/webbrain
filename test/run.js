@@ -12729,9 +12729,13 @@ test('Share-for-research strips non-base64 attachment data URLs in text and nest
       'data:video/mp4,%00%00%00%20ftyp',
       'data:font/woff,%77%4F%46%46',
       'data:model/gltf+json,%7B%22asset%22:%7B%7D%7D',
+      'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"><text>PRIVATE_IMAGE_TEXT</text></svg>',
+      'data:image/svg+xml,<?xml version="1.0"?>\n<svg><rect width="10" height="10"/></svg>',
+      'data:image/svg+xml,<svg viewBox="0 0 10 10"/>',
+      'data:image/svg+xml,<svg><text>INCOMPLETE_IMAGE',
     ]) {
       const content = `before "${dataUrl}" after`;
-      const expected = 'before "[embedded data omitted]" after';
+      const expected = '[binary content omitted]';
       const item = outbox.buildShareGenerationItem({
         finalContent: content,
         messages: [
@@ -12741,7 +12745,7 @@ test('Share-for-research strips non-base64 attachment data URLs in text and nest
         ],
       });
       assert.equal(item.request[0].content, expected, `${label}: ${dataUrl}`);
-      assert.deepEqual(item.request[1].content, ['caption', '[embedded data omitted]']);
+      assert.deepEqual(item.request[1].content, ['caption', '[binary content omitted]']);
       assert.deepEqual(item.request[2].content, [{ type: 'text', text: 'Read this.' }]);
       assert.equal(item.response.content, expected);
     }
@@ -12752,6 +12756,19 @@ test('Share-for-research strips non-base64 attachment data URLs in text and nest
     });
     assert.equal(item.request[0].content, textUrl, `${label}: plain text URL changed`);
     assert.equal(item.response.content, textUrl);
+    for (const content of [
+      JSON.stringify({ result: 'data:image/svg+xml,<svg><text>SECRET</text></svg>' }),
+      'data:image/png;base64,QU%4ADRA==',
+      JSON.stringify({ result: 'data:image/png;base64,QUJD\nREVG' }),
+    ]) {
+      const escaped = outbox.buildShareGenerationItem({ finalContent: content, messages: [{ role: 'tool', content }] });
+      assert.equal(escaped.request[0].content, '[binary content omitted]', `${label}: escaped attachment leaked`);
+      assert.equal(escaped.response.content, '[binary content omitted]');
+    }
+    const serialized = JSON.stringify({ base64: 'QUJD\nREVG' });
+    const escapedBase64 = outbox.buildShareGenerationItem({ finalContent: serialized, messages: [{ role: 'tool', content: serialized }] });
+    assert.equal(escapedBase64.request[0].content, '{"base64":"[omitted]"}');
+    assert.equal(escapedBase64.response.content, '{"base64":"[omitted]"}');
   }
 });
 
@@ -12936,6 +12953,76 @@ test('Share-for-research revoke purge is keyed by provider instance', async () =
   } finally {
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Provider settings permanently purge queued shares on opt-out, including active flush snapshots', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const [label, PM, outbox] of [['chrome', ProviderManagerCh, SHARE_OUTBOX_CH], ['firefox', ProviderManagerFx, SHARE_OUTBOX_FX]]) {
+      const storage = {};
+      const runtime = { storage: { local: {
+        async get(keys) { return Object.fromEntries(keys.map(key => [key, structuredClone(storage[key])])); },
+        async set(values) { Object.assign(storage, structuredClone(values)); },
+      } } };
+      globalThis.chrome = runtime;
+      globalThis.browser = runtime;
+      const manager = new PM();
+      const defaults = manager._defaultConfigs();
+      manager.providers.set('openai', manager._createProvider('openai', { ...defaults.openai, configured: true, shareQueriesForResearch: true }));
+      const { providerId: duplicateId } = await manager.duplicateProvider('openai');
+      await manager.updateProvider(duplicateId, { shareQueriesForResearch: true });
+      const enqueue = (id, providerId = 'openai') => outbox.enqueueShareGeneration({
+        id, provider_id: providerId, request: [{ role: 'user', content: id }], response: { role: 'assistant', content: 'ok' },
+      });
+      const queuedIds = () => storage[outbox.SHARE_OUTBOX_STORAGE_KEY].map(entry => entry.id);
+      const consented = entry => manager.consentedShareProviderIds().has(entry.provider_id);
+      await enqueue('old');
+      await enqueue('other', duplicateId);
+      await manager.updateProvider('openai', { shareQueriesForResearch: false });
+      assert.deepEqual(queuedIds(), ['other'], `${label}: disabling sharing did not immediately purge its entries`);
+      await manager.updateProvider('openai', { shareQueriesForResearch: true });
+      const sent = [];
+      const transport = { async sendShareGeneration(sessionId, payload) { sent.push(payload.client_share_id); return { ok: true }; } };
+      await outbox.flushShareOutbox(transport, consented);
+      assert.deepEqual(sent, ['other'], `${label}: re-enabling revived an old share or purged the duplicate`);
+
+      await enqueue('in-flight');
+      await enqueue('stale-snapshot');
+      let releaseSend;
+      let signalStarted;
+      const started = new Promise(resolve => { signalStarted = resolve; });
+      const flush = outbox.flushShareOutbox({
+        async sendShareGeneration(sessionId, payload) {
+          sent.push(payload.client_share_id);
+          if (payload.client_share_id === 'in-flight') {
+            signalStarted();
+            await new Promise(resolve => { releaseSend = resolve; });
+          }
+          return { ok: true };
+        },
+      }, consented);
+      await started;
+      try {
+        await manager.updateProvider('openai', { shareQueriesForResearch: false });
+        await manager.updateProvider('openai', { shareQueriesForResearch: true });
+        await enqueue('new-opt-in');
+      } finally {
+        releaseSend();
+        await flush;
+      }
+      assert.deepEqual(sent, ['other', 'in-flight'], `${label}: an active flush revived purged data`);
+      await outbox.flushShareOutbox(transport, consented);
+      assert.deepEqual(sent, ['other', 'in-flight', 'new-opt-in'], `${label}: new consent did not allow new entries`);
+
+      await enqueue('removed-duplicate', duplicateId);
+      await manager.removeDuplicateProvider(duplicateId);
+      assert.deepEqual(queuedIds(), [], `${label}: removing a provider retained its queued data`);
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
   }
 });
 
