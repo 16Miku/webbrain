@@ -41224,6 +41224,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
+      // Keep provider text before local-search rewrites or display repairs.
+      const rawProviderContent = String(result.content ?? '');
+
       // LFM can emit native Google/Wikipedia search markup even though this
       // profile advertises no tools. Treat it as a request to search the
       // installed archive, never as permission to use the browser or network.
@@ -41609,8 +41612,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: finalResponse });
         break;
       }
-      // Preserve provider text before display repairs and local notices.
-      shareRawResponse = String(result.content ?? '');
+      shareRawResponse = rawProviderContent;
       const repairedFinalContent = repairAssistantDisplayText(result.content);
       finalResponse = result.costAllowanceMessage
         ? `${repairedFinalContent}\n\n${result.costAllowanceMessage}`
@@ -42286,6 +42288,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._throwIfAborted(streamOpts.signal);
 
         fullText = Agent._stripReasoningTags(fullText);
+        // Capture the completion before local-search or presentation rewrites.
+        const rawProviderContent = fullText;
         const streamedToolCalls = hasToolCalls ? Object.values(toolCallsAccumulator) : [];
         const outputDiagnostics = modelOutputDiagnostics({
           content: fullText,
@@ -42648,8 +42652,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           closeTraceStep({ ok: false, code: 'EMPTY_RESPONSE' });
           return finish(incompleteFailure, 'incomplete_output');
         }
-        // Streaming text is still the provider's raw completion at this point.
-        shareRawResponse = fullText;
+        shareRawResponse = rawProviderContent;
         const repairedFullText = repairAssistantDisplayText(fullText);
         if (repairedFullText !== fullText) {
           fullText = repairedFullText;

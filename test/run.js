@@ -69066,6 +69066,44 @@ test('shared completions retain provider text before terminal display repairs', 
   }
 });
 
+test('shared WebGPU completions retain repeated search markup before local replacement', async () => {
+  for (const streaming of [false, true]) {
+    const responses = [
+      "<|tool_call_start|>[google(query='Ada Lovelace')]<|tool_call_end|>",
+      "<|tool_call_start|>[google(query='Ada Lovelace birth date')]<|tool_call_end|>",
+    ];
+    let calls = 0;
+    const provider = {
+      supportsTools: false, supportsVision: false, promptTier: 'full', contextWindow: 128000,
+      model: 'test-webgpu', name: 'WebGPU',
+      async chat() { return { content: responses[calls++], toolCalls: [] }; },
+      async *chatStream() { yield { type: 'text', content: responses[calls++] }; yield { type: 'done' }; },
+    };
+    const agent = new AgentCh({ getActive: () => provider, getProvider: () => provider, getVisionProvider: async () => null });
+    const tabId = 4096;
+    configurePlanOnlyGuardAgent(agent, tabId);
+    agent._startTraceRun = async () => null;
+    agent._applyStandaloneWikipediaRag = async () => ({ attempted: true, status: 'matched', matchCount: 1 });
+    let searches = 0;
+    agent._applyStandaloneWikipediaModelSearch = async () => {
+      searches++;
+      return { attempted: true, status: 'matched', matchCount: 1 };
+    };
+    let capture;
+    agent._endTraceRun = async (_tabId, _runId, status, content, options) => { capture = { status, content, ...options }; };
+    const runOptions = { standaloneChat: true, providerId: 'webgpu' };
+    const final = streaming
+      ? await agent.processMessageStream(tabId, 'When was Ada Lovelace born?', () => {}, 'ask', runOptions)
+      : await agent.processMessage(tabId, 'When was Ada Lovelace born?', () => {}, 'ask', [], runOptions);
+    assert.equal(calls, 2, `streaming=${streaming}: did not exercise the repeated-search terminal path`);
+    assert.equal(searches, 1, 'local search retry must remain bounded');
+    assert.match(final, /could not turn them into a reliable answer/);
+    assert.equal(capture.status, 'done');
+    assert.equal(capture.hadProviderCompletion, true);
+    assert.equal(capture.shareResponse, responses[1], `streaming=${streaming}: local replacement entered the research response`);
+  }
+});
+
 test('terminal display repair normalizes JSON-quoted page title lines', async () => {
   const title = 'Example Domain';
   const malformed = `Verification:\n- Page title: ${JSON.stringify(title)}\n- Timestamp: 3:39 PM`;
