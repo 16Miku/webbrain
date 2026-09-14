@@ -279,6 +279,7 @@ function scrubMessages(messages) {
 export function buildShareGenerationItem({
   runId,
   finalContent,
+  sharedResponse = null,
   messages,
   model,
   mode,
@@ -292,6 +293,12 @@ export function buildShareGenerationItem({
   if (!request?.length) return null;
   const generatedId = globalThis.crypto?.randomUUID?.()
     || `${Date.now().toString(36)}_${(++fallbackRunCounter).toString(36)}`;
+  // The stored response is the raw provider completion when the caller
+  // retained it; terminal stripping above always uses finalContent (the
+  // displayed composite), which is what an appended terminal message holds.
+  const storedResponse = sharedResponse != null && String(sharedResponse).trim()
+    ? String(sharedResponse)
+    : responseContent;
   return {
     id: String(runId || `share_${generatedId}`),
     // Stable provider-config id for consent checks (purge). provider/provider_name
@@ -303,7 +310,7 @@ export function buildShareGenerationItem({
     model: String(model || '').slice(0, 255),
     mode: String(mode || '').slice(0, 32),
     request,
-    response: { role: 'assistant', content: scrubText(responseContent, MAX_RESPONSE_CHARS) },
+    response: { role: 'assistant', content: scrubText(storedResponse, MAX_RESPONSE_CHARS) },
   };
 }
 

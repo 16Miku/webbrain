@@ -16515,7 +16515,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Compass delivery remains active when optional local tracing is disabled.
    * Shared by the streaming and non-streaming message paths. (#9)
    */
-  async _endTraceRun(tabId, runId, status, finalContent, { provider = null, messages = null, mode = '', shareRequest = null, hadProviderCompletion = false } = {}) {
+  async _endTraceRun(tabId, runId, status, finalContent, { provider = null, messages = null, mode = '', shareRequest = null, shareResponse = null, hadProviderCompletion = false } = {}) {
     if (String(provider?.config?.providerName || '').toLowerCase() === 'webbrain-cloud') {
       try {
         const sessionId = this.conversationIds.get(tabId) || null;
@@ -16564,6 +16564,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             runId,
             finalContent,
             messages: Array.isArray(shareRequest) && shareRequest.length ? shareRequest : messages,
+            sharedResponse: shareResponse,
             model: provider?.model,
             mode,
             provider: String(provider?.config?.providerName || '').toLowerCase(),
@@ -33691,6 +33692,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // tool results), so reconstructing at finalization would leak
     // response-side data into the shared request.
     let currentNonStreamRequestMessages = null;
+    // Raw provider completion before local notices are appended (cost,
+    // attribution, caveats). Shared as the generation's response so
+    // application-authored text is never mislabeled as provider output.
+    let shareRawResponse = null;
     let traceFailureCode = null;
     let traceTurnEndExtra = {}; // step-limit handoff outcome; trace status keeps max_steps
     let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
@@ -34053,6 +34058,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     shareHadProviderCompletion = true;
 
     while (steps < this.maxSteps) {
+      // Each turn's raw provider text belongs to that turn only: reset so a
+      // non-terminal final-text pass can never pair stale output with a later
+      // tool-batch result in the shared record.
+      shareRawResponse = null;
       if (this._checkAbort(tabId)) {
         finalResponse = finalResponse || '[Stopped by user]';
         _traceStatus = 'cancelled';
@@ -34595,6 +34604,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
       const repairedFinalContent = repairAssistantDisplayText(result.content);
+      // Retain the provider-authored completion before appending local
+      // notices: voluntary research sharing must label the model provider's
+      // response, not our cost/attribution/caveat text, as the generation.
+      shareRawResponse = repairedFinalContent;
       finalResponse = result.costAllowanceMessage
         ? `${repairedFinalContent}\n\n${result.costAllowanceMessage}`
         : repairedFinalContent;
@@ -34690,7 +34703,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           shareRequest = messages;
         }
       } catch {}
-      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, hadProviderCompletion: shareHadProviderCompletion });
+      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, shareResponse: shareRawResponse, hadProviderCompletion: shareHadProviderCompletion });
     }
   }
 
@@ -34873,6 +34886,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // each chatStream invocation; also used for response-only turns, which
     // return before the loop). Declared here so pre-loop exits can capture.
     let currentStreamRequestMessages = null;
+    // Raw provider completion before local notices are appended (see the
+    // non-streaming path): shared as the generation's response.
+    let shareRawResponse = null;
     let traceFailureCode = null;
     let traceTurnEndExtra = {}; // step-limit handoff outcome; trace status keeps max_steps
     const finish = (response, status = _traceStatus) => {
@@ -35019,6 +35035,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     shareHadProviderCompletion = true;
 
     while (steps < this.maxSteps) {
+      // See the non-streaming loop: raw provider text must not survive into
+      // a later turn's shared record.
+      shareRawResponse = null;
       if (this._checkAbort(tabId)) {
         const content = '[Stopped by user]';
         messages.push(this._localCancellationMessage(content));
@@ -35487,6 +35506,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return finish(planOnlyDecision.failure, planOnlyDecision.status || 'plan_only_output');
         }
         const repairedFullText = repairAssistantDisplayText(fullText);
+        // Retain the provider-authored completion before appending local
+        // cost/attribution notices (see the non-streaming path).
+        shareRawResponse = repairedFullText;
         if (repairedFullText !== fullText) {
           fullText = repairedFullText;
           // Streaming deltas have already displayed the malformed escapes.
@@ -35606,7 +35628,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           shareRequest = this._pruneOldImages(modelMessagesForRun(), provider);
         }
       } catch {}
-      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, hadProviderCompletion: shareHadProviderCompletion });
+      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, shareResponse: shareRawResponse, hadProviderCompletion: shareHadProviderCompletion });
     }
   }
 }

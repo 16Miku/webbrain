@@ -12618,6 +12618,19 @@ test('Share-for-research scrub removes embedded data URIs and keeps repeated-ans
       model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
     });
     assert.equal(JSON.stringify(answered).includes('iVBORw0K'), false, `${label}: response image bytes escaped the scrub`);
+    // The stored response is the raw provider completion: locally appended
+    // notices are displayed but must not be mislabeled as provider output,
+    // while the composite still strips the appended terminal message.
+    const composite = 'Answer.\n\nSpend notice $0.01';
+    const rawShared = outbox.buildShareGenerationItem({
+      runId: `run-share-raw-${label}`,
+      finalContent: composite,
+      sharedResponse: 'Answer.',
+      messages: [{ role: 'user', content: 'go' }, { role: 'assistant', content: composite }],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(rawShared.request.length, 1, `${label}: composite terminal answer not stripped`);
+    assert.deepEqual(rawShared.response, { role: 'assistant', content: 'Answer.' }, `${label}: shared response is not the raw completion`);
     // Tool-call arguments can embed raw binary (solve_captcha image_to_text):
     // multi-step trajectories keep the calls, never the bytes.
     const captchaBytes = `iVBORw0KGgoAAAANSUhEUg${'A'.repeat(500)}`;
@@ -12816,6 +12829,7 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     const provider = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/openai.js`), 'utf8');
     assert.match(agent, /status === 'done'[\s\S]*hadProviderCompletion === true[\s\S]*shareQueriesForResearch === true[\s\S]*enqueueShareGeneration/, `${browser}: capture must require a provider completion and the per-provider toggle`);
     assert.match(agent, /shareRequest/, `${browser}: capture must prefer the model-facing source-grounded request`);
+    assert.match(agent, /shareRawResponse/, `${browser}: shared response must be the raw provider completion`);
     assert.match(agent, /currentNonStreamRequestMessages/, `${browser}: non-streaming turns must retain the exact pruned request`);
     assert.match(agent, /currentStreamRequestMessages/, `${browser}: streaming turns must retain the exact pruned request`);
     assert.match(agent, /shareCapture/, `${browser}: response-only turns must keep their context-only request`);
@@ -12827,7 +12841,8 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     assert.match(chromeOutbox, /input_file/, `${browser}: binary scrub must cover file/input_file blocks`);
     assert.match(chromeOutbox, /embedded base64 data omitted/, `${browser}: string content must be scrubbed of data URIs`);
     assert.match(chromeOutbox, /earlier shared messages omitted/, `${browser}: truncation must preserve the tail`);
-    assert.match(chromeOutbox, /scrubText\(responseContent/, `${browser}: shared responses must get the binary scrub`);
+    assert.match(chromeOutbox, /scrubText\(storedResponse/, `${browser}: shared responses must get the binary scrub`);
+    assert.match(chromeOutbox, /sharedResponse/, `${browser}: raw provider completion must be storable separately`);
     assert.match(chromeOutbox, /_attachImage/, `${browser}: binary metadata attachments must be dropped`);
     assert.match(chromeOutbox, /scrubToolCallArguments/, `${browser}: tool-call arguments must be scrubbed`);
     const managerSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/manager.js`), 'utf8');
