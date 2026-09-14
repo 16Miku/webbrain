@@ -2721,12 +2721,40 @@ function normalizeWebgpuDownloadSnapshot(snapshot = {}) {
   const progress = status === 'ready'
     ? 100
     : Math.max(0, Math.min(100, Number(snapshot.progress) || (total > 0 ? loaded / total * 100 : 0)));
+  const rawTransfer = snapshot.activeTransfer && typeof snapshot.activeTransfer === 'object'
+    ? snapshot.activeTransfer
+    : null;
+  // Preserve the sibling transfer (e.g. Bonsai downloading while the ONNX
+  // card queries Compass): dropping it stops polling and hides Stop control.
+  let activeTransfer = null;
+  if (rawTransfer) {
+    const transferStatus = allowedStatuses.has(rawTransfer.status) ? rawTransfer.status : 'not-downloaded';
+    const transferLoaded = Math.max(0, Number(rawTransfer.loaded) || 0);
+    const transferTotal = Math.max(0, Number(rawTransfer.total) || 0);
+    const transferProgress = transferStatus === 'ready'
+      ? 100
+      : Math.max(0, Math.min(100, Number(rawTransfer.progress) || (transferTotal > 0 ? transferLoaded / transferTotal * 100 : 0)));
+    activeTransfer = {
+      status: transferStatus,
+      ready: rawTransfer.ready === true || transferStatus === 'ready',
+      progress: Math.round(transferProgress),
+      error: String(rawTransfer.error || ''),
+      modelId: String(rawTransfer.modelId || rawTransfer.model || ''),
+    };
+  }
   return {
     status,
     ready: snapshot.ready === true || status === 'ready',
     progress: Math.round(progress),
     error: String(snapshot.error || ''),
+    modelId: String(snapshot.modelId || snapshot.model || ''),
+    activeTransfer,
   };
+}
+
+function isActiveWebgpuTransfer(state) {
+  return !!state && state.ready !== true
+    && ['checking', 'downloading', 'paused', 'stopping'].includes(state.status);
 }
 
 function webgpuDownloadCardLabel(state) {
@@ -2757,11 +2785,26 @@ function webgpuDownloadStatusLine(state) {
 function renderWebgpuDownloadControl(id, state) {
   const btn = document.querySelector(`.btn-webgpu-download[data-provider="${id}"]`);
   const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
+  // When the user edits the Model field mid-download, the status for the
+  // newly displayed model is `not-downloaded` while `activeTransfer` still
+  // carries the running sibling transfer. Render the running transfer so its
+  // Stop control stays visible instead of flipping to Start with no way back.
+  const transferActive = isActiveWebgpuTransfer(state.activeTransfer)
+    && !isActiveWebgpuTransfer(state)
+    && state.ready !== true;
+  const display = transferActive ? state.activeTransfer : state;
   if (btn) {
-    btn.textContent = webgpuDownloadCardLabel(state);
-    btn.disabled = webgpuDownloadActionInFlight || ['checking', 'stopping'].includes(state.status);
+    btn.textContent = webgpuDownloadCardLabel(display);
+    btn.disabled = webgpuDownloadActionInFlight || ['checking', 'stopping'].includes(display.status);
+    // Stopping must target the running transfer, not the newly typed model.
+    if (transferActive && display.modelId) btn.dataset.activeTransferModel = display.modelId;
+    else delete btn.dataset.activeTransferModel;
   }
-  if (line) line.textContent = webgpuDownloadStatusLine(state);
+  if (line) {
+    line.textContent = transferActive && display.modelId
+      ? `${webgpuDownloadStatusLine(display)} (${display.modelId})`
+      : webgpuDownloadStatusLine(display);
+  }
 }
 
 function getDisplayedWebgpuModel(id = 'webgpu') {
@@ -2789,7 +2832,7 @@ async function refreshWebgpuDownloadControls() {
       const query = model ? { model } : {};
       const state = normalizeWebgpuDownloadSnapshot(await sendToBackground('get_webgpu_download_status', query) || {});
       renderWebgpuDownloadControl(id, state);
-      if (!state.ready && ['checking', 'downloading', 'paused', 'stopping'].includes(state.status)) active = true;
+      if (isActiveWebgpuTransfer(state) || isActiveWebgpuTransfer(state.activeTransfer)) active = true;
     } catch (error) {
       const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
       if (line) line.textContent = String(error?.message || error);
@@ -2818,9 +2861,19 @@ async function handleWebgpuDownloadButton(btn) {
     const model = getDisplayedWebgpuModel(id);
     const msg = model ? { model } : {};
     const state = normalizeWebgpuDownloadSnapshot(await sendToBackground('get_webgpu_download_status', msg) || {});
-    if (state.ready || ['downloading', 'paused'].includes(state.status)) {
-      const removedReadyModel = state.ready === true;
-      await sendToBackground('stop_webgpu_download', msg);
+    // If the user typed a new model while a sibling transfer runs, the status
+    // for the displayed model is `not-downloaded` with the running transfer in
+    // `activeTransfer`. Stopping must target the running transfer so its Stop
+    // control keeps working instead of attempting to start a blocked download.
+    const siblingActive = isActiveWebgpuTransfer(state.activeTransfer)
+      && !isActiveWebgpuTransfer(state)
+      && state.ready !== true;
+    const stopTarget = siblingActive && state.activeTransfer.modelId
+      ? { model: state.activeTransfer.modelId }
+      : msg;
+    if (state.ready || ['downloading', 'paused'].includes(state.status) || siblingActive) {
+      const removedReadyModel = state.ready === true && !siblingActive;
+      await sendToBackground('stop_webgpu_download', stopTarget);
       // Removing a ready model while WebGPU is the selected chat provider
       // would leave every subsequent chat failing its readiness check until
       // the user re-downloads or manually picks another provider. Fall back

@@ -62524,6 +62524,12 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     await manager.updateProvider('webgpu', { model: '' });
     assert.equal(manager.getAll().webgpu.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
     assert.equal(manager.getAll().webgpu.contextWindow, 32768);
+    await manager.updateProvider('webgpu', { model: WEBGPU_BONSAI27_MODEL_ID, dtype: 'q1' });
+    assert.equal(manager.getAll().webgpu.dtype, 'q1');
+    await manager.updateProvider('webgpu', { model: 'custom-owner/custom-model-2' });
+    assert.equal(manager.getAll().webgpu.dtype, WEBGPU_DTYPE, 'switching from Bonsai to a custom ONNX model must reset the stale q1 dtype');
+    await manager.updateProvider('webgpu', { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+    assert.equal(manager.getAll().webgpu.dtype, WEBGPU_DTYPE, 'switching to the Compass preset must restore q4f16');
 
     const provider = await manager.getLocalVisionFallbackProvider();
     assert.ok(provider instanceof WebGPUVisionProvider);
@@ -63585,7 +63591,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'Settings download actions must target the currently displayed model');
   assert.match(settingsScript, /sendToBackground\('start_webgpu_download', msg\)/,
     'the Settings download control must pass the target model when starting');
-  assert.match(settingsScript, /sendToBackground\('stop_webgpu_download', msg\)/,
+  assert.match(settingsScript, /sendToBackground\('stop_webgpu_download', (msg|stopTarget)\)/,
     'the Settings download control must pass the target model when stopping');
   assert.match(settingsScript, /removedReadyModel/,
     'removing a ready WebGPU model must track whether the deleted model was ready');
@@ -63593,6 +63599,12 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'removing the selected WebGPU model must fall back to a usable provider');
   assert.match(settingsScript, /didFallbackProvider/,
     'the provider fallback must re-render cards so the Selected badge stays accurate');
+  assert.match(settingsScript, /activeTransfer/,
+    'the Settings download control must preserve the sibling active transfer instead of hiding Stop');
+  assert.match(settingsScript, /isActiveWebgpuTransfer/,
+    'the Settings poll must stay alive while a sibling transfer runs');
+  assert.match(settingsScript, /stopTarget/,
+    'stopping from Settings must target the running transfer when the model field changed');
   assert.match(settingsScript, /sendToBackground\('get_webgpu_download_status', query\)/,
     'the Settings download control must query the displayed model status');
   assert.match(settingsScript, /data-webgpu-download-status/,

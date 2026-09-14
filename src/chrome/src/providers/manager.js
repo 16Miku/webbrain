@@ -1854,6 +1854,13 @@ export class ProviderManager {
       if (preset?.contextWindow && !Object.hasOwn(updates, 'contextWindow')) {
         merged.contextWindow = preset.contextWindow;
       }
+      // A retained Bonsai dtype ('q1') must not leak into a new target: a
+      // custom ONNX repository would otherwise request model_q1.onnx instead
+      // of the documented q4f16 graph. Reset to the preset (or ONNX default)
+      // whenever the model changes unless the update explicitly supplies one.
+      if (!Object.hasOwn(updates, 'dtype')) {
+        merged.dtype = preset?.dtype || WEBGPU_DTYPE;
+      }
     }
     if (this._providerDefinitionId(id, current) === 'ollama') {
       merged.visionMode = OLLAMA_VISION_MODES.has(merged.visionMode) ? merged.visionMode : 'auto';
