@@ -1284,20 +1284,22 @@ export class ProviderManager {
   }
 
   /**
-   * Lowercased provider names currently opted into voluntary research
-   * sharing. The share outbox purges queued entries for any other name
-   * before delivery so revoking the toggle is honored immediately.
+   * Stable provider-config ids currently opted into voluntary research
+   * sharing. The share outbox purges queued entries for any other id before
+   * delivery so revoking the toggle is honored immediately. Keyed by config
+   * id (not providerName): duplicates share one providerName, and some
+   * built-ins have none at all.
    */
-  consentedShareProviderNames() {
-    const names = new Set();
+  consentedShareProviderIds() {
+    const ids = new Set();
     try {
-      for (const provider of this.providers?.values?.() || []) {
+      for (const [id, provider] of this.providers?.entries?.() || []) {
         if (provider?.config?.shareQueriesForResearch !== true) continue;
-        const name = String(provider.config.providerName || '').toLowerCase();
-        if (name && name !== 'webbrain-cloud') names.add(name);
+        const pid = String(provider.config._providerId || id || '');
+        if (pid) ids.add(pid);
       }
     } catch {}
-    return names;
+    return ids;
   }
 
   async _fetchVisionCapability(providerId, provider, identity) {

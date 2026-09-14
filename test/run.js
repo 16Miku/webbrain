@@ -12711,11 +12711,11 @@ test('Share-for-research outbox persists retryable failures and removes acknowle
     assert.deepEqual(await Promise.all([firstFlush, secondFlush]), [1, 0]);
     assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 0);
     // Revoked consent purges queued entries before delivery.
-    const revoked = { id: 'share-revoked-1', session_id: 'share_conv_1', provider: 'ollama', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
-    const keptEntry = { id: 'share-kept-1', session_id: 'share_conv_1', provider: 'anthropic', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+    const revoked = { id: 'share-revoked-1', session_id: 'share_conv_1', provider: 'ollama', provider_name: 'x', provider_id: 'ollama', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+    const keptEntry = { id: 'share-kept-1', session_id: 'share_conv_1', provider: 'anthropic', provider_name: 'x', provider_id: 'anthropic', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
     assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration(revoked), true);
     assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration(keptEntry), true);
-    assert.equal(await SHARE_OUTBOX_CH.purgeShareGenerations(e => e.provider === 'ollama'), 1, 'revoked entry not purged');
+    assert.equal(await SHARE_OUTBOX_CH.purgeShareGenerations(e => e.provider_id === 'ollama'), 1, 'revoked entry not purged');
     assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 1);
     assert.equal(await SHARE_OUTBOX_CH.purgeShareGenerations(() => false), 0, 'purge dropped consented entries');
     assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 1);
@@ -12766,6 +12766,46 @@ test('Firefox Share-for-research outbox uses the promise-based browser storage n
   }
 });
 
+test('Share-for-research revoke purge is keyed by provider instance', async () => {
+  const originalChrome = globalThis.chrome;
+  const storage = {};
+  globalThis.chrome = {
+    storage: {
+      local: {
+        async get(keys) {
+          const key = Array.isArray(keys) ? keys[0] : keys;
+          return { [key]: storage[key] };
+        },
+        async set(values) { Object.assign(storage, values); },
+      },
+    },
+  };
+  try {
+    for (const [label, AgentClass, outbox] of [['chrome', AgentCh, SHARE_OUTBOX_CH], ['firefox', AgentFx, SHARE_OUTBOX_FX]]) {
+      for (const key of Object.keys(storage)) delete storage[key];
+      // A duplicate shares its origin's providerName but has its own id; a
+      // nameless built-in (anthropic-style) stores an empty provider name.
+      // Only entries whose instance id is still consented may survive.
+      const dupRevoked = { id: `share-dup-${label}`, session_id: 's', provider: 'openai', provider_name: 'OpenAI dup', provider_id: 'openai:duplicate:1', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+      const originKept = { id: `share-origin-${label}`, session_id: 's', provider: 'openai', provider_name: 'OpenAI', provider_id: 'openai', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+      const namelessKept = { id: `share-nameless-${label}`, session_id: 's', provider: '', provider_name: '', provider_id: 'anthropic', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+      const legacyDropped = { id: `share-legacy-${label}`, session_id: 's', provider: 'openai', provider_name: 'OpenAI', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+      assert.equal(await outbox.enqueueShareGeneration(dupRevoked), true);
+      assert.equal(await outbox.enqueueShareGeneration(originKept), true);
+      assert.equal(await outbox.enqueueShareGeneration(namelessKept), true);
+      assert.equal(await outbox.enqueueShareGeneration(legacyDropped), true);
+      const agent = new AgentClass({});
+      agent.providerManager = { consentedShareProviderIds: () => new Set(['openai', 'anthropic']) };
+      await agent._purgeRevokedShareGenerations();
+      const remaining = (storage[outbox.SHARE_OUTBOX_STORAGE_KEY] || []).map(e => e.id).sort();
+      assert.deepEqual(remaining, [`share-nameless-${label}`, `share-origin-${label}`].sort(), `${label}: instance-keyed purge kept the wrong entries`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('Share-for-research delivery stays opt-in and mirrored across both builds', () => {
   const chromeOutbox = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/webbrain-share-outbox.js'), 'utf8');
   const firefoxOutbox = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/webbrain-share-outbox.js'), 'utf8');
@@ -12791,8 +12831,9 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     assert.match(chromeOutbox, /_attachImage/, `${browser}: binary metadata attachments must be dropped`);
     assert.match(chromeOutbox, /scrubToolCallArguments/, `${browser}: tool-call arguments must be scrubbed`);
     const managerSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/manager.js`), 'utf8');
-    assert.match(managerSource, /consentedShareProviderNames\(\)/, `${browser}: provider manager must expose share consent`);
+    assert.match(managerSource, /consentedShareProviderIds\(\)/, `${browser}: provider manager must expose instance-keyed share consent`);
     assert.match(agent, /_purgeRevokedShareGenerations\(\)/, `${browser}: revoked shares must be purged before delivery`);
+    assert.match(agent, /provider_id: String\(provider\?\.config\?\._providerId/, `${browser}: queued shares must be keyed by provider instance`);
     assert.match(agent, /if \(scheduledResume\) return \{ action: 'return', value: finalResponse, status: 'scheduled_resume' \}/, `${browser}: scheduler-synthesized summaries must not be shared as generations`);
     assert.match(settings, /shareQueriesForResearch/, `${browser}: share toggle field missing from settings`);
     assert.match(settings, /!input\.checked[\s\S]*?confirm\(/, `${browser}: consent confirmation must guard turning the share toggle on`);

@@ -284,6 +284,7 @@ export function buildShareGenerationItem({
   mode,
   provider,
   provider_name,
+  provider_id,
 }) {
   const responseContent = String(finalContent ?? '');
   if (!responseContent.trim()) return null;
@@ -293,6 +294,10 @@ export function buildShareGenerationItem({
     || `${Date.now().toString(36)}_${(++fallbackRunCounter).toString(36)}`;
   return {
     id: String(runId || `share_${generatedId}`),
+    // Stable provider-config id for consent checks (purge). provider/provider_name
+    // stay human-readable attribution for the backend; the id disambiguates
+    // duplicates and nameless built-ins that share one providerName.
+    provider_id: String(provider_id || ''),
     provider: String(provider || '').slice(0, 64),
     provider_name: String(provider_name || '').slice(0, 128),
     model: String(model || '').slice(0, 255),

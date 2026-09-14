@@ -16568,6 +16568,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             mode,
             provider: String(provider?.config?.providerName || '').toLowerCase(),
             provider_name: String(provider?.config?.label || provider?.name || '').slice(0, 128),
+            provider_id: String(provider?.config?._providerId || ''),
           });
           if (shareItem) await enqueueShareGeneration({ session_id: shareSessionId, ...shareItem });
         }
@@ -16610,15 +16611,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   /**
    * Drop queued voluntary shares whose provider is no longer opted in.
-   * Consent is checked against live configs immediately before every flush
-   * (run start and run end), so entries queued while opted in are never
-   * delivered after the user revokes the toggle or removes the provider.
+   * Consent is keyed by stable provider-config id and checked against live
+   * configs immediately before every flush (run start and run end), so
+   * entries queued while opted in are never delivered after the user revokes
+   * the toggle or removes the provider. Entries without an id predate
+   * instance-keyed consent and are dropped rather than sent unverified.
    */
   async _purgeRevokedShareGenerations() {
     try {
-      const consented = this.providerManager?.consentedShareProviderNames?.();
+      const consented = this.providerManager?.consentedShareProviderIds?.();
       if (!(consented instanceof Set)) return;
-      await purgeShareGenerations(entry => !consented.has(String(entry?.provider || '')));
+      await purgeShareGenerations(entry => !consented.has(String(entry?.provider_id || '')));
     } catch {}
   }
 
