@@ -12687,6 +12687,37 @@ test('Share-for-research scrubs serialized base64 fields at every payload length
   }
 });
 
+test('Share-for-research scrubs wrapped bare base64 without counting line breaks toward the threshold', () => {
+  for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
+    for (const sizeBytes of [147, 148, 149, 150, 300]) {
+      const base64 = Buffer.alloc(sizeBytes, 255).toString('base64');
+      for (const newline of ['\n', '\r\n', '\r', '']) {
+        const wrapped = base64.match(/.{1,76}/g).join(newline);
+        const content = `file bytes: ${wrapped} trailing note`;
+        const expected = base64.length >= 200 ? 'file bytes: [embedded base64 data omitted] trailing note' : content;
+        const item = outbox.buildShareGenerationItem({
+          finalContent: content,
+          messages: [
+            { role: 'tool', content },
+            { role: 'tool', content: [content, { type: 'text', text: content }] },
+          ],
+        });
+        const context = `${label}: ${sizeBytes} bytes, newline ${JSON.stringify(newline)}`;
+        assert.equal(item.request[0].content, expected, context);
+        assert.deepEqual(item.request[1].content, [expected, { type: 'text', text: expected }], context);
+        assert.equal(item.response.content, expected, context);
+      }
+    }
+    const shortLines = 'abc\r\n'.repeat(50);
+    const item = outbox.buildShareGenerationItem({
+      finalContent: shortLines,
+      messages: [{ role: 'user', content: shortLines }],
+    });
+    assert.equal(item.request[0].content, shortLines, `${label}: short text lines were removed`);
+    assert.equal(item.response.content, shortLines, `${label}: short response lines were removed`);
+  }
+});
+
 test('Share-for-research caps count wrapper messages and serialized overhead', () => {
   const messages = [{ role: 'system', content: 'SYS' }];
   for (let i = 0; i < 250; i++) messages.push({ role: 'user', content: `cap${i}-` + 'word '.repeat(150) });

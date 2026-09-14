@@ -51,12 +51,12 @@ function scrubText(value, limit = MAX_MESSAGE_CHARS) {
   if (text.includes('"base64"')) {
     text = text.replace(/"base64"\s*:\s*"[A-Za-z0-9+/=\r\n]*"/g, '"base64":"[omitted]"');
   }
-  // Bare base64 blobs without a data: wrapper (e.g. read_downloaded_file
-  // serializes small binaries as {"base64":"..."} into string tool content).
-  // A 200+ run of base64 alphabet characters never occurs in prose, hashes,
-  // or URLs (delimiters break the run), so redact it from research copies.
+  // Bare base64 blobs may wrap at MIME line boundaries. Count encoded
+  // characters, including padding, so wrapping cannot bypass the threshold
+  // and newlines alone cannot turn short text into a binary payload.
   if (/[A-Za-z0-9+/=\r\n]{200,}/.test(text)) {
-    text = text.replace(/[A-Za-z0-9+/]{200}[A-Za-z0-9+/=\r\n]*/g, '[embedded base64 data omitted]');
+    text = text.replace(/[A-Za-z0-9+/=]+(?:[\r\n]+[A-Za-z0-9+/=]+)*/g, payload =>
+      payload.replace(/[\r\n]/g, '').length >= 200 ? '[embedded base64 data omitted]' : payload);
   }
   return bounded(text, limit);
 }
