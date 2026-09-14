@@ -1893,6 +1893,21 @@ export class ProviderManager {
       }
     }
     this.providers.set(id, this._createProvider(id, merged));
+    // Editing the model of the active WebGPU provider to an undownloaded
+    // target would leave every chat failing readiness (setActive() guards
+    // selection but not edits). Fall back so the active selection stays usable.
+    if (id === 'webgpu' && this.activeProviderId === 'webgpu' && Object.hasOwn(updates, 'model')) {
+      try {
+        const download = await this.providers.get('webgpu')?.downloadStatus?.();
+        if (download && download.ready !== true) {
+          this.activeProviderId = this.providers.has(WEBBRAIN_CLOUD_PROVIDER_ID)
+            ? WEBBRAIN_CLOUD_PROVIDER_ID
+            : [...this.providers.keys()].find((candidate) => candidate !== 'webgpu') || WEBBRAIN_CLOUD_PROVIDER_ID;
+        }
+      } catch {
+        // Probe failures must not block saving; chat will report the missing download.
+      }
+    }
     await this.save();
   }
 

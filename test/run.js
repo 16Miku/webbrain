@@ -62530,6 +62530,16 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.equal(manager.getAll().webgpu.dtype, WEBGPU_DTYPE, 'switching from Bonsai to a custom ONNX model must reset the stale q1 dtype');
     await manager.updateProvider('webgpu', { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
     assert.equal(manager.getAll().webgpu.dtype, WEBGPU_DTYPE, 'switching to the Compass preset must restore q4f16');
+    manager.activeProviderId = 'webgpu';
+    textModelReady = false;
+    const fallbackProbeBase = sentMessages.length;
+    await manager.updateProvider('webgpu', { model: 'custom-owner/undownloaded-model' });
+    assert.equal(manager.activeProviderId, 'webbrain_cloud', 'editing the active WebGPU model to an undownloaded target must fall back to a usable provider');
+    textModelReady = true;
+    manager.activeProviderId = 'webgpu';
+    await manager.updateProvider('webgpu', { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+    assert.equal(manager.activeProviderId, 'webgpu', 'editing the active WebGPU model to a ready target must keep the selection');
+    sentMessages.length = fallbackProbeBase;
 
     const provider = await manager.getLocalVisionFallbackProvider();
     assert.ok(provider instanceof WebGPUVisionProvider);
