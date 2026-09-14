@@ -416,8 +416,8 @@ export class ProviderManager {
       try {
         const download = await this.providers.get('webgpu')?.downloadStatus?.().catch(() => null);
         if (download && download.ready !== true) {
-          this.activeProviderId = WEBBRAIN_CLOUD_PROVIDER_ID;
-          providerStateMigrated = true;
+          await this.setActive(WEBBRAIN_CLOUD_PROVIDER_ID);
+          providerStateMigrated = false; // setActive persisted the migrated configs too.
         }
       } catch {
         // Probe failures must not block startup; chat will report the missing download.
@@ -1819,10 +1819,10 @@ export class ProviderManager {
           const currentModel = this.providers.get('webgpu')?.config?.model;
           const status = await this._webgpuProvider().downloadStatus({ model: currentModel }).catch(() => null);
           if (status && status.ready !== true) {
-            this.activeProviderId = this.providers.has(WEBBRAIN_CLOUD_PROVIDER_ID)
+            const fallback = this.providers.has(WEBBRAIN_CLOUD_PROVIDER_ID)
               ? WEBBRAIN_CLOUD_PROVIDER_ID
               : [...this.providers.keys()].find((candidate) => candidate !== 'webgpu') || WEBBRAIN_CLOUD_PROVIDER_ID;
-            await this.save();
+            await this.setActive(fallback);
           }
         } catch {
           // Keep the selection; chat will report the missing download.
@@ -1934,9 +1934,13 @@ export class ProviderManager {
       try {
         const download = await this.providers.get('webgpu')?.downloadStatus?.();
         if (download && download.ready !== true) {
-          this.activeProviderId = this.providers.has(WEBBRAIN_CLOUD_PROVIDER_ID)
+          const fallback = this.providers.has(WEBBRAIN_CLOUD_PROVIDER_ID)
             ? WEBBRAIN_CLOUD_PROVIDER_ID
             : [...this.providers.keys()].find((candidate) => candidate !== 'webgpu') || WEBBRAIN_CLOUD_PROVIDER_ID;
+          // Reuse normal switching so the abandoned resident model releases
+          // its GPU allocations as well as persisting the new selection.
+          await this.setActive(fallback);
+          return;
         }
       } catch {
         // Probe failures must not block saving; chat will report the missing download.

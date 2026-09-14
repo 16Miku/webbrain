@@ -62424,6 +62424,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
 
     const manager = new ProviderManagerCh();
     const webgpuConfig = manager._defaultConfigs().webgpu;
+    manager.providers.set('webbrain_cloud', manager._createProvider('webbrain_cloud', manager._defaultConfigs().webbrain_cloud));
     assert.equal(WEBGPU_VISION_MODEL_ID, 'webbrain-one/webbrain-vl-2-450M-onnx');
     assert.equal(WEBGPU_VISION_CONSENT_VERSION, 2,
       'switching the shipped vision model must require explicit consent again');
@@ -62535,16 +62536,21 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     const fallbackProbeBase = sentMessages.length;
     await manager.updateProvider('webgpu', { model: 'custom-owner/undownloaded-model' });
     assert.equal(manager.activeProviderId, 'webbrain_cloud', 'editing the active WebGPU model to an undownloaded target must fall back to a usable provider');
+    assert.equal(sentMessages.at(-1).type, 'webgpu-dispose', 'edit fallback must release the previous resident model');
     textModelReady = true;
     manager.activeProviderId = 'webgpu';
+    const disposalsBeforeReadyEdit = sentMessages.filter(message => message.type === 'webgpu-dispose').length;
     await manager.updateProvider('webgpu', { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
     assert.equal(manager.activeProviderId, 'webgpu', 'editing the active WebGPU model to a ready target must keep the selection');
+    assert.equal(sentMessages.filter(message => message.type === 'webgpu-dispose').length, disposalsBeforeReadyEdit,
+      'a ready edit must not dispose the runtime while WebGPU stays selected');
     sentMessages.length = fallbackProbeBase;
     manager.activeProviderId = 'webgpu';
     textModelReady = false;
     const stopProbeBase = sentMessages.length;
     await manager.stopWebgpuDownload({ model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
     assert.equal(manager.activeProviderId, 'webbrain_cloud', 'removing the active WebGPU model must fall back centrally so Apocalypse removal stays usable');
+    assert.equal(sentMessages.at(-1).type, 'webgpu-dispose', 'removal fallback must release any remaining text runtime');
     sentMessages.length = stopProbeBase;
     textModelReady = true;
 
