@@ -365,6 +365,10 @@ function bindWebGpuDeviceDiagnostics(library) {
     // reaching the generate paths, so flag the runtimes dirty now: the next
     // run disposes them and rebuilds instead of burning one failing turn.
     markWebgpuRuntimeDirty();
+    // ONNX Runtime initializes its Dawn device once per worker lifetime, so an
+    // in-worker rebuild still runs against the dead adapter. Ask the host for
+    // a fresh worker so the first request after a confirmed loss recovers.
+    requestWebgpuWorkerRecycle('device-lost');
     console.error('[webgpu] device lost:', lastWebGpuDeviceLost);
   }).catch(() => {});
 }
@@ -642,6 +646,7 @@ async function getVisionRuntime(modelId, dtype, device, {
     }
     const processor = processorResult.value;
     const model = modelResult.value;
+    bindWebGpuDeviceDiagnostics(library);
     visionRuntime = { library, processor, model };
     visionRuntimeKey = key;
     visionRuntimeModelKey = textModelKey(modelId, dtype);

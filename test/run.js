@@ -63515,6 +63515,10 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'a persisted WebGPU selection must be revalidated on startup so evicted caches fall back');
   assert.match(worker, /payload\?\.probeActive === true[\s\S]*?textDownloadSnapshot/,
     'text-download-status probes must return the active transfer when requested');
+  assert.match(worker, /device\.lost\?\.then\(info => \{[\s\S]*?requestWebgpuWorkerRecycle\('device-lost'\)/,
+    'a confirmed device loss without OrtRun must still recycle the worker instead of rebuilding in place');
+  assert.match(worker, /const processor = processorResult\.value;[\s\S]*?bindWebGpuDeviceDiagnostics\(library\)/,
+    'vision-backed runtimes must bind device diagnostics so device loss is observed');
   assert.match(host, /sendTextWorkerMessage\(message\.model, 'text-download-status'/);
   assert.match(host, /'webgpu-dispose'/);
   assert.match(host, /'webgpu-vision-dispose'/);
