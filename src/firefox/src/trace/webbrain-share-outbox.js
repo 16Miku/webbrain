@@ -34,13 +34,15 @@ function clampText(value, limit = MAX_MESSAGE_CHARS) {
 function scrubText(value, limit = MAX_MESSAGE_CHARS) {
   if (typeof value !== 'string') return value;
   let text = value;
-  if (text.includes('data:')) {
+  // Non-canonical forms count too: uppercase scheme (DATA:...), extra
+  // media-type parameters (...;charset=utf-8;base64,...). Case-insensitive.
+  if (/data:/i.test(text)) {
     // Detect data URIs regardless of surrounding string or payload length:
     // even a 1x1 canvas/QR thumbnail is image bytes the UI promises to strip.
     // Newlines (but not spaces/words) are allowed inside the payload so
     // wrapped base64 is still removed while surrounding prose survives.
     text = text.replace(
-      /data:(image|audio|video|application|font|model)\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\r\n]+/g,
+      /data:(image|audio|video|application|font|model)\/[a-zA-Z0-9+.-]+(?:;[a-zA-Z0-9!#$&^_.+-]+(?:=[a-zA-Z0-9!#$&^_.+-]+)?)*;base64,[A-Za-z0-9+/=\r\n]+/gi,
       '[embedded base64 data omitted]',
     );
   }
@@ -61,8 +63,9 @@ function containsBinaryBlock(value) {
   // screenshot bytes echoed into a tool result). Check anywhere in the
   // string, at any length: even tiny thumbnails are image bytes.
   if (typeof value === 'string') {
-    return value.includes('data:')
-      && /data:(image|audio|video|application)\/[^;]+;base64,/i.test(value);
+    // Case-insensitive with optional media-type parameters, matching scrubText.
+    return /data:/i.test(value)
+      && /data:(image|audio|video|application)\/[^,]+;base64,/i.test(value);
   }
   if (!value || typeof value !== 'object') return false;
   const type = typeof value.type === 'string' ? value.type.toLowerCase() : '';
@@ -369,7 +372,7 @@ export async function purgeShareGenerations(shouldDrop) {
   return removed;
 }
 
-async function flushShareOutboxNow(transportProvider) {
+async function flushShareOutboxNow(transportProvider, shouldSend) {
   if (typeof transportProvider?.sendShareGeneration !== 'function') return 0;
   await storageQueue.catch(() => {});
   let snapshot;
@@ -377,6 +380,18 @@ async function flushShareOutboxNow(transportProvider) {
   if (!snapshot.length) return 0;
   const removeIds = new Set();
   for (const entry of snapshot) {
+    // Revalidate consent immediately before each delivery: a pre-flush purge
+    // cannot cover revocation that lands mid-flush, and this loop otherwise
+    // holds a stale snapshot. Revoked entries are dropped, never sent.
+    // Fail-closed: a throwing predicate drops the entry.
+    if (typeof shouldSend === 'function') {
+      let allowed = false;
+      try { allowed = shouldSend(entry) !== false; } catch { allowed = false; }
+      if (!allowed) {
+        removeIds.add(entry.id);
+        continue;
+      }
+    }
     let result;
     try {
       result = await transportProvider.sendShareGeneration(entry.session_id, {
@@ -399,8 +414,8 @@ async function flushShareOutboxNow(transportProvider) {
   return removeIds.size;
 }
 
-export function flushShareOutbox(transportProvider) {
-  const next = flushQueue.catch(() => {}).then(() => flushShareOutboxNow(transportProvider));
+export function flushShareOutbox(transportProvider, shouldSend) {
+  const next = flushQueue.catch(() => {}).then(() => flushShareOutboxNow(transportProvider, shouldSend));
   flushQueue = next;
   return next;
 }

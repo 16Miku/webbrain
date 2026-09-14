@@ -12729,7 +12729,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // auto-progress resume paths) so voluntary research sharing and workflow
         // drafts treat it as a pause, never as an ordinary model generation.
         if (scheduledResume) return { action: 'return', value: finalResponse, status: 'scheduled_resume' };
-        return { action: 'return', value: finalResponse };
+        // rawSummary is the model-authored done text before the progress
+        // ledger is appended for display; research sharing stores it as the
+        // response instead of mislabeling local presentation as provider output.
+        return { action: 'return', value: finalResponse, rawSummary: repairedDoneSummary };
       }
 
       // Loop detection — exact calls, semantic AX reads, and coordinates run
@@ -18785,7 +18788,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // mirroring the Compass runtime outbox pattern. Revoked entries are
     // purged first so opt-out is honored immediately before delivery.
     try { await this._purgeRevokedShareGenerations(); } catch {}
-    void flushShareOutbox(shareTransport);
+    void flushShareOutbox(shareTransport, (entry) => this._shareEntryConsented(entry));
     if (runId) {
       await this._flushAdapterMatchTraceRun(runId);
       try {
@@ -18830,6 +18833,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!(consented instanceof Set)) return;
       await purgeShareGenerations(entry => !consented.has(String(entry?.provider_id || '')));
     } catch {}
+  }
+
+  /**
+   * Live per-entry consent check for an in-flight flush. Re-reads configs on
+   * every send (not once per flush) so revocation mid-flush drops the
+   * remaining snapshot entries instead of delivering them.
+   */
+  _shareEntryConsented(entry) {
+    try {
+      const consented = this.providerManager?.consentedShareProviderIds?.();
+      return consented instanceof Set && consented.has(String(entry?.provider_id || ''));
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -40516,7 +40533,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     void flushCloudRuntimeOutbox(provider);
     // Purge shares revoked since they were queued before retrying delivery.
     void this._purgeRevokedShareGenerations();
-    void flushShareOutbox(this.providerManager?.getProvider?.('webbrain_cloud'));
+    void flushShareOutbox(this.providerManager?.getProvider?.('webbrain_cloud'), (entry) => this._shareEntryConsented(entry));
 
     if (typeof runOptions?.isDetachedStartCancelled === 'function'
         && runOptions.isDetachedStartCancelled()) {
@@ -41292,6 +41309,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
         if (batchResult.action === 'return') {
           finalResponse = batchResult.value;
+          if (typeof batchResult.rawSummary === 'string' && batchResult.rawSummary.trim()) {
+            shareRawResponse = batchResult.rawSummary;
+          }
           if (batchResult.status) {
             _traceStatus = batchResult.status;
             onUpdate('run_status', { status: batchResult.status, message: batchResult.value });
@@ -41887,7 +41907,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     void flushCloudRuntimeOutbox(provider);
     // Purge shares revoked since they were queued before retrying delivery.
     void this._purgeRevokedShareGenerations();
-    void flushShareOutbox(this.providerManager?.getProvider?.('webbrain_cloud'));
+    void flushShareOutbox(this.providerManager?.getProvider?.('webbrain_cloud'), (entry) => this._shareEntryConsented(entry));
 
     // The run claim owns cancellation reset. Stop during setup must survive.
     this._throwIfAborted(this._runAbortSignal(tabId));
@@ -42367,6 +42387,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             tabId, toolCalls, messages, onUpdate, provider, fullText, allowedToolNames, steps, runOptions, toolSchemas
           );
           if (batchResult.action === 'return') {
+            if (typeof batchResult.rawSummary === 'string' && batchResult.rawSummary.trim()) {
+              shareRawResponse = batchResult.rawSummary;
+            }
             if (batchResult.status) {
               onUpdate('run_status', { status: batchResult.status, message: batchResult.value });
             }

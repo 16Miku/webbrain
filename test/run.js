@@ -12587,6 +12587,15 @@ test('Share-for-research scrub removes embedded data URIs and keeps repeated-ans
       model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
     });
     assert.equal(JSON.stringify(tiny).includes('iVBOR'), false, `${label}: short data URI escaped the scrub`);
+    // Non-canonical forms: uppercase scheme and media-type parameters.
+    const odd = outbox.buildShareGenerationItem({
+      runId: `run-share-odduri-${label}`,
+      finalContent: 'ok',
+      messages: [{ role: 'tool', content: 'a DATA:image/png;base64,QUJDRA b data:image/png;charset=utf-8;base64,REVGRA c' }],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(JSON.stringify(odd).includes('QUJDRA'), false, `${label}: uppercase data URI escaped the scrub`);
+    assert.equal(JSON.stringify(odd).includes('REVGRA'), false, `${label}: parameterized data URI escaped the scrub`);
     // Pre-response snapshots must not lose earlier history that repeats the answer.
     const repeat = outbox.buildShareGenerationItem({
       runId: `run-share-repeat-${label}`,
@@ -12732,6 +12741,21 @@ test('Share-for-research outbox persists retryable failures and removes acknowle
     assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 1);
     assert.equal(await SHARE_OUTBOX_CH.purgeShareGenerations(() => false), 0, 'purge dropped consented entries');
     assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 1);
+    // Mid-flush revocation drops the remaining snapshot without sending.
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration({ id: 'share-mid-1', session_id: 's', provider: 'p', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'one' }], response: { role: 'assistant', content: '1' } }), true);
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration({ id: 'share-mid-2', session_id: 's', provider: 'p', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'two' }], response: { role: 'assistant', content: '2' } }), true);
+    const sentIds = [];
+    let consentRevoked = false;
+    const revokingProvider = {
+      async sendShareGeneration(sessionId, payload) {
+        sentIds.push(payload.client_share_id);
+        if (payload.client_share_id === 'share-kept-1') consentRevoked = true;
+        return { ok: true, retryable: false, status: 202 };
+      },
+    };
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(revokingProvider, () => !consentRevoked), 3, 'mid-flush revoke miscounted');
+    assert.deepEqual(sentIds, ['share-kept-1'], 'revoked snapshot entries were delivered');
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 0, 'revoked entries not dropped from storage');
   } finally {
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
@@ -12830,12 +12854,14 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     assert.match(agent, /status === 'done'[\s\S]*hadProviderCompletion === true[\s\S]*shareQueriesForResearch === true[\s\S]*enqueueShareGeneration/, `${browser}: capture must require a provider completion and the per-provider toggle`);
     assert.match(agent, /shareRequest/, `${browser}: capture must prefer the model-facing source-grounded request`);
     assert.match(agent, /shareRawResponse/, `${browser}: shared response must be the raw provider completion`);
+    assert.match(agent, /rawSummary/, `${browser}: done-tool summaries must exclude appended presentation`);
+    assert.match(agent, /_shareEntryConsented/, `${browser}: in-flight flushes must recheck consent per send`);
     assert.match(agent, /currentNonStreamRequestMessages/, `${browser}: non-streaming turns must retain the exact pruned request`);
     assert.match(agent, /currentStreamRequestMessages/, `${browser}: streaming turns must retain the exact pruned request`);
     assert.match(agent, /shareCapture/, `${browser}: response-only turns must keep their context-only request`);
     assert.match(agent, /shareHadProviderCompletion/, `${browser}: local-only fast paths must not be shareable`);
     assert.match(agent, /'webbrain-cloud'/, `${browser}: Compass provider must not route through the share path`);
-    assert.match(agent, /void flushShareOutbox\(shareTransport\)/, `${browser}: run-end share flush missing`);
+    assert.match(agent, /void flushShareOutbox\(shareTransport[^)]*\)/, `${browser}: run-end share flush missing`);
     assert.match(agent, /_shareSessionId\(/, `${browser}: share session id sanitizer missing`);
     assert.match(chromeOutbox, /client_share_id/, `${browser}: outbox flush must send an idempotency key`);
     assert.match(chromeOutbox, /input_file/, `${browser}: binary scrub must cover file/input_file blocks`);
@@ -27069,7 +27095,7 @@ test('completion recovery keeps scoped observations read-only and target-specifi
     );
     assert.deepEqual(
       honestUnavailablePartial,
-      { action: 'return', value: 'Download verification is unavailable.' },
+      { action: 'return', value: 'Download verification is unavailable.', rawSummary: 'Download verification is unavailable.' },
       `${label}: unavailable verification could not return an honest partial`,
     );
     assert.deepEqual(executedUnavailableDone, ['partial'], `${label}: unavailable verification executed the wrong terminal outcome`);
