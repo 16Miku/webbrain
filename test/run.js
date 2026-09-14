@@ -12659,6 +12659,34 @@ test('Share-for-research scrub removes embedded data URIs and keeps repeated-ans
   }
 });
 
+test('Share-for-research scrubs serialized base64 fields at every payload length', () => {
+  for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
+    // Include empty files, padding variants, and both sides of the 200-char
+    // bare-blob threshold. Preserve the tool result's non-binary metadata.
+    for (const sizeBytes of [0, 1, 2, 3, 147, 148, 150]) {
+      const base64 = Buffer.alloc(sizeBytes, 255).toString('base64');
+      const result = { success: true, filename: 'sample.bin', sizeBytes, base64 };
+      const content = JSON.stringify(result);
+      const expected = JSON.stringify({ ...result, base64: '[omitted]' });
+      const item = outbox.buildShareGenerationItem({
+        runId: `run-share-shortbin-${label}-${sizeBytes}`,
+        finalContent: content,
+        messages: [
+          { role: 'tool', content },
+          { role: 'tool', content: [content, { type: 'text', text: content }] },
+          { role: 'tool', content: `before {"base64" : "${base64}"} after {"base64":"QUJD"}` },
+        ],
+        model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+      });
+      assert.equal(item.request[0].content, expected, `${label}: ${sizeBytes}-byte tool result`);
+      assert.deepEqual(item.request[1].content, [expected, { type: 'text', text: expected }]);
+      assert.equal(item.request[2].content, 'before {"base64":"[omitted]"} after {"base64":"[omitted]"}');
+      assert.equal(item.response.content, expected, `${label}: ${sizeBytes}-byte response`);
+      assert.equal(result.base64, base64, `${label}: original tool result changed`);
+    }
+  }
+});
+
 test('Share-for-research caps count wrapper messages and serialized overhead', () => {
   const messages = [{ role: 'system', content: 'SYS' }];
   for (let i = 0; i < 250; i++) messages.push({ role: 'user', content: `cap${i}-` + 'word '.repeat(150) });
