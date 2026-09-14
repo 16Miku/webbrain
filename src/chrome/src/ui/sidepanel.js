@@ -6654,6 +6654,15 @@ function bindErrorRetryButton(btn) {
 }
 
 function rebindRetryButtons() {
+  document.querySelectorAll('.error-retry-btn').forEach((btn) => {
+    // Migrate pre-text-style icon-only buttons restored from chat history.
+    if (!btn.textContent?.trim()) {
+      btn.replaceChildren();
+      btn.textContent = t('sp.retry');
+      if (!btn.getAttribute('aria-label')) btn.setAttribute('aria-label', t('sp.retry'));
+      if (!btn.title) btn.title = t('sp.retry');
+    }
+  });
   document.querySelectorAll('.error-retry-btn, .planner-request-failure-retry-btn, .ask-act-handoff-btn').forEach(bindErrorRetryButton);
 }
 
@@ -11350,13 +11359,9 @@ function addErrorRetryButton(msgEl, retryPayload) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'error-retry-btn';
+  btn.textContent = t('sp.retry');
   btn.title = t('sp.retry');
   btn.setAttribute('aria-label', t('sp.retry'));
-  btn.innerHTML = `
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <polyline points="23 4 23 10 17 10"></polyline>
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-    </svg>`;
   if (configureRetryButton(btn, retryPayload)) {
     msgEl.querySelector('.message-content')?.appendChild(btn);
   }
