@@ -11,6 +11,7 @@ const MAX_OUTBOX_ITEMS = 100;
 const MAX_MESSAGE_CHARS = 10_000;
 const MAX_REQUEST_BUDGET = 150_000;
 const MAX_RESPONSE_CHARS = 40_000;
+const BINARY_DATA_URL = /data:(image|audio|video|application|font|model)\/[^\s;,]+(?:\s*;[^,]*)?\s*,/i;
 let storageQueue = Promise.resolve();
 let flushQueue = Promise.resolve();
 let fallbackRunCounter = 0;
@@ -34,26 +35,10 @@ function clampText(value, limit = MAX_MESSAGE_CHARS) {
 function scrubText(value, limit = MAX_MESSAGE_CHARS) {
   if (typeof value !== 'string') return value;
   let text = value;
-  // Non-canonical forms count too: uppercase scheme (DATA:...), extra
-  // media-type parameters (...;charset=utf-8;base64,...). Case-insensitive.
-  if (/data:/i.test(text)) {
-    const headers = text.match(/data:(image|audio|video|application|font|model)\/[^,\s"'<>]+,/gi) || [];
-    // Non-base64 data URLs may contain raw markup, quotes, and whitespace.
-    // Their end cannot be distinguished reliably from surrounding text, so
-    // omit the whole value instead of risking a partial attachment upload.
-    if (headers.some(header => !/;base64,$/i.test(header))) return '[binary content omitted]';
-    // Detect data URIs regardless of surrounding string or payload length:
-    // even a 1x1 canvas/QR thumbnail is image bytes the UI promises to strip.
-    // Newlines (but not spaces/words) are allowed inside the payload so
-    // wrapped base64 is still removed while surrounding prose survives.
-    text = text.replace(
-      /data:(image|audio|video|application|font|model)\/[a-zA-Z0-9+.-]+(?:;[a-zA-Z0-9!#$&^_.+-]+(?:=[a-zA-Z0-9!#$&^_.+-]+)?)*;base64,[A-Za-z0-9+/=\r\n]+(?=$|[\s"'<>])/gi,
-      '[embedded base64 data omitted]',
-    );
-    // Unhandled forms (including escaped base64) must not leave a tail of
-    // bytes behind after a partial match.
-    if (containsBinaryBlock(text)) return '[binary content omitted]';
-  }
+  // Data URL payloads can contain markup, quotes, whitespace, and escapes,
+  // even with base64 encoding. Omit the entire value: guessing its end can
+  // leave image/file bytes behind. The media type is enough to identify it.
+  if (BINARY_DATA_URL.test(text)) return '[binary content omitted]';
   // Serialized tool results can contain binaries of any size. Scrub named
   // base64 fields even when their payload is below the bare-blob threshold.
   if (/"base64"/i.test(text)) {
@@ -74,9 +59,7 @@ function containsBinaryBlock(value) {
   // screenshot bytes echoed into a tool result). Check anywhere in the
   // string, at any length: even tiny thumbnails are image bytes.
   if (typeof value === 'string') {
-    // Match binary media types regardless of data-URL encoding or parameters.
-    return /data:/i.test(value)
-      && /data:(image|audio|video|application|font|model)\/[^,\s"'<>]+,/i.test(value);
+    return BINARY_DATA_URL.test(value);
   }
   if (!value || typeof value !== 'object') return false;
   const type = typeof value.type === 'string' ? value.type.toLowerCase() : '';

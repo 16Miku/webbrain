@@ -12578,7 +12578,7 @@ test('Share-for-research scrub removes embedded data URIs and keeps repeated-ans
     const serialized = JSON.stringify(item);
     assert.equal(serialized.includes('iVBORw0KGgoAAAANSUhEUg'), false, `${label}: tool-result data URI escaped the scrub`);
     assert.equal(serialized.includes('ABCD1234abcd'), false, `${label}: array string data URI escaped the scrub`);
-    assert.match(serialized, /embedded base64 data omitted/, `${label}: data-URI placeholder missing`);
+    assert.match(serialized, /binary content omitted/, `${label}: data-URI placeholder missing`);
     // Tiny thumbnails in short strings must be scrubbed too, not just long payloads.
     const tiny = outbox.buildShareGenerationItem({
       runId: `run-share-tiny-${label}`,
@@ -12718,7 +12718,7 @@ test('Share-for-research scrubs wrapped bare base64 without counting line breaks
   }
 });
 
-test('Share-for-research strips non-base64 attachment data URLs in text and nested content', () => {
+test('Share-for-research omits text and nested content containing attachment data URLs', () => {
   for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
     for (const dataUrl of [
       'data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3C/svg%3E',
@@ -12733,6 +12733,10 @@ test('Share-for-research strips non-base64 attachment data URLs in text and nest
       'data:image/svg+xml,<?xml version="1.0"?>\n<svg><rect width="10" height="10"/></svg>',
       'data:image/svg+xml,<svg viewBox="0 0 10 10"/>',
       'data:image/svg+xml,<svg><text>INCOMPLETE_IMAGE',
+      'data:image/png;base64,QU JD',
+      'data:image/png;base64,QU\tJD',
+      'data:image/png;name="sample";base64,QUJD',
+      'data:image/png;name="sample,file";base64,QUJD',
     ]) {
       const content = `before "${dataUrl}" after`;
       const expected = '[binary content omitted]';
