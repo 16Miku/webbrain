@@ -137,7 +137,9 @@ export function deepSeekThinkingExtras({
 } = {}) {
   if (!direct) return { chat_template_kwargs: { thinking: enabled } };
   if (responses) {
-    return { reasoning: { effort: enabled ? mappedDeepSeekReasoningEffort(effort) : 'none' } };
+    // Responses API callers need an explicit value. Match DeepSeek's documented
+    // default instead of inheriting the generic OpenAI Responses default.
+    return { reasoning: { effort: enabled ? mappedDeepSeekReasoningEffort(effort === 'auto' ? 'high' : effort) : 'none' } };
   }
   if (!enabled) return { thinking: { type: 'disabled' } };
   return {

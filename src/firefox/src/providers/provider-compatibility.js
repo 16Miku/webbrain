@@ -375,7 +375,11 @@ function mappedReasoningEffort(effort, preset) {
 
 export function compatibilityRequestBody(config = {}) {
   const compat = normalizeProviderCompatibility(config);
-  if (compat.reasoningEffort === 'auto') return {};
+  // Direct DeepSeek Responses requests need an explicit effort. Its documented
+  // default is high, unlike the generic OpenAI Responses default of medium.
+  if (compat.reasoningEffort === 'auto' && !(
+    isDirectDeepSeekConfig(config) && shouldUseOpenAIResponsesApi(config)
+  )) return {};
 
   const preset = effectiveCompatibilityPreset(config);
   const enabled = compat.reasoningEffort !== 'off';

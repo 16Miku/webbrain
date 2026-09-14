@@ -71908,17 +71908,19 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
         'DeepSeekProvider',
         `${PM.name}: a duplicated DeepSeek card keeps the dedicated provider`,
       );
-      assert.equal(
-        manager._createProvider('openrouter', {
+      const routerFlash = manager._createProvider('openrouter', {
           type: 'openai',
           category: 'router',
           providerName: 'openrouter',
           baseUrl: 'https://openrouter.ai/api/v1',
-          model: 'deepseek/deepseek-v4',
-        }).constructor.name,
-        'OpenAICompatibleProvider',
-        `${PM.name}: a router-hosted DeepSeek model stays on the generic provider`,
+          model: 'deepseek/deepseek-v4-flash-vision-exp',
+        });
+      assert.equal(
+        routerFlash.constructor.name,
+        'DeepSeekProvider',
+        `${PM.name}: a router-hosted DeepSeek Flash model uses dedicated capability detection`,
       );
+      assert.equal(routerFlash.supportsVision, true, `${PM.name}: router-hosted DeepSeek Flash aliases retain vision detection`);
       const migrated = manager._migrateStoredProviderConfigs({
         deepseek: {
           model: 'deepseek-v4-flash',
@@ -72000,6 +72002,17 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
       assert.deepEqual(responsesBody.reasoning, { effort: 'high' }, `${label}: Responses must carry reasoning.effort`);
       assert.equal(responsesBody.thinking, undefined, `${label}: Responses must not carry the Chat Completions thinking object`);
       assert.equal(responsesBody.reasoning_effort, undefined, `${label}: Responses must not carry top-level reasoning_effort`);
+
+      const defaultResponsesProvider = new Provider({
+        ...provider.config,
+        compat: { reasoningEffort: 'auto' },
+        apiFormat: 'responses',
+      });
+      assert.deepEqual(
+        defaultResponsesProvider._buildResponsesBody([{ role: 'user', content: 'Read the page' }], {}, false).reasoning,
+        { effort: 'high' },
+        `${label}: DeepSeek Responses uses its documented high default for auto effort`,
+      );
 
       const agent = new AgentClass({});
       const assistant = {

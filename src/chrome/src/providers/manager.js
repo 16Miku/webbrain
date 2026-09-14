@@ -30,6 +30,7 @@ import {
   DEEPSEEK_DEFAULT_MODEL,
   DEEPSEEK_LEGACY_DEFAULT_BASE_URL,
   DEEPSEEK_LEGACY_DEFAULT_MODEL,
+  isDeepSeekModel,
 } from './deepseek-config.js';
 // Static, NOT dynamic: this module runs in the MV3 service worker, where
 // `await import()` throws "import() is disallowed on ServiceWorkerGlobalScope".
@@ -1258,10 +1259,11 @@ export class ProviderManager {
       case 'webgpu':
         return new WebGPUProvider(normalizedConfig);
       case 'openai':
-        // The DeepSeek card (and any card pointed at DeepSeek's own API, or one
-        // that explicitly opts into the `deepseek` preset) gets the dedicated
-        // provider; every other OpenAI-compatible endpoint stays generic.
-        return isDirectDeepSeekConfig(normalizedConfig)
+        // All non-local DeepSeek cards use the dedicated capability hooks. Only
+        // direct cards opt into DeepSeek's native request contract; router cards
+        // retain their existing OpenRouter compatibility preset.
+        return (isDirectDeepSeekConfig(normalizedConfig)
+          || (normalizedConfig.category !== 'local' && isDeepSeekModel(normalizedConfig.model)))
           ? new DeepSeekProvider(normalizedConfig)
           : new OpenAICompatibleProvider(normalizedConfig);
       case 'azure_openai':
