@@ -31,7 +31,7 @@ Raw hidden `.runpod-state.json`, `.v2-budget.json`, private participant configs 
 
 Frozen suite `reasoning-browser-v2.1`; manifest hash:
 
-`a118007336c1550acc2ba0c87db344257c44b33ac28c9b4b73d06a2135ef608b`
+`cdc67c9fe5318997da05640f2345fb932bc4385aa4aca65927e5d0041779c126`
 
 Participants and current pilot coverage:
 

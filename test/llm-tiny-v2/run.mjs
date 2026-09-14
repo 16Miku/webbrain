@@ -141,6 +141,9 @@ No provider provisioning, background monitors, or changes to test/llm-tiny.
     if(!input.name)p.name=p.name.replace(/[^a-zA-Z0-9._-]+/g,'-');
     const url=new URL(p.base);
     if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new Error('Endpoint must be HTTP(S) with no embedded secrets, query, or fragment');
+    // Bearer credentials must never travel over plaintext to a remote host:
+    // HTTP is only allowed for loopback endpoints (local inference).
+    if(url.protocol==='http:'&&!['localhost','127.0.0.1','::1'].includes(url.hostname.toLowerCase()))throw new Error('Remote endpoints must use HTTPS');
     if(!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(p.name))throw new Error('Set a simple unique participant name');
     return p;
   });

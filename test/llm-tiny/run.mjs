@@ -542,6 +542,12 @@ const participants = participantInputs.map(createParticipant);
 if (new Set(participants.map(p => p.name)).size !== participants.length) throw new Error('Participant names must be unique');
 const participantDirs = participants.map(p => safeSegment(p.name));
 if (new Set(participantDirs).size !== participantDirs.length) throw new Error('Participant names map to the same directory; use distinct labels');
+for (const p of participants) {
+  const url = new URL(chatCompletionsUrl(p.base));
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Endpoint must be HTTP(S) with no embedded secrets');
+  // Bearer credentials must never travel over plaintext to a remote host.
+  if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '::1'].includes(url.hostname.toLowerCase())) throw new Error('Remote endpoints must use HTTPS');
+}
 const only = args.only && args.only !== true
   ? new Set(String(args.only).split(',').map(value => String(Number(value)).padStart(2, '0')))
   : null;
