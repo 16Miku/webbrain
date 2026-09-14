@@ -115,7 +115,12 @@ export function renderFixture(caseRecord) {
   const state = { complete: false, attempts: 0 };
   const setStatus = (text, kind = '') => { status.textContent = text; status.className = kind; };
   const pass = () => { state.complete = true; setStatus('Saved successfully.', 'good'); };
-  const fail = () => { state.attempts += 1; setStatus('That change does not match the requested setting.', 'bad'); };
+  const fail = () => { state.complete = false; state.attempts += 1; setStatus('That change does not match the requested setting.', 'bad'); };
+  // A later edit invalidates an earlier pass: completion reflects the current
+  // UI, not a historical latch, so cross-turn done cannot reuse a stale pass.
+  const invalidate = () => { state.complete = false; };
+  for (const input of document.querySelectorAll('input, select, textarea')) input.addEventListener('input', invalidate);
+  for (const input of document.querySelectorAll('input[type="checkbox"], select')) input.addEventListener('change', invalidate);
   for (const button of document.querySelectorAll('button.action')) button.addEventListener('click', () => button.dataset.value === benchmarkCase.target ? pass() : fail());
   document.querySelector('.submit')?.addEventListener('click', () => {
     const input = document.querySelector('input:not([type="checkbox"])');
