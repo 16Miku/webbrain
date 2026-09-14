@@ -138,7 +138,7 @@ The primary threat: a malicious page crafts content that, when read by the agent
 | **Plan before Act** | When enabled, action-mode runs first produce a structured plan and wait for side-panel approval before any browser tool executes. In Try mode, planner JSON that remains invalid after repair degrades that turn to Ask/read-only; Strict stops. Scheduled runs can auto-approve the plan only through scheduler policy. |
 | **Skill import boundary** | Skills can expose read-only HTTP tools and download-job tools through a `webbrain-tools` manifest. Importing or keeping the skill enabled is the trust decision for the declared HTTPS endpoint; declared skill tools use `credentials: "omit"` and should mark third-party results `resultPolicy: "untrusted"`. Download-job skill tools still require an action mode and the normal Downloads permission gate before saving files. |
 | **WebMCP boundary** | Experimental WebMCP is off by default, so its tools and prompt guidance do not enter ordinary model requests unless the user opts in under Settings → General → Advanced. When enabled, Chrome page-registered names, descriptions, schemas, frame URLs, annotations, outputs, and errors are page-controlled and always use the untrusted-content wrapper. Calls use opaque IDs. Ask may list tools but cannot invoke them. Because a callback can run arbitrary page logic, every invocation requires Act/Dev, fresh per-call confirmation, and a permission grant for the actual registration-frame origin; a page-authored `readOnly` hint never bypasses those gates. Missing/opaque frame identity fails closed, and the frame plus effective HTTP(S) security origin are revalidated immediately before dispatch to prevent navigation races from borrowing an old grant. |
-| **API mutation override** | A per-conversation `/allow-api` flag, or the default-off persistent setting under General → Advanced, *waives* the permission prompt for write-method network egress (`fetch_url`/`research_url` with POST/PUT/PATCH/DELETE). Neither option waives GET egress or any other capability. Conversation reset clears only the slash-command override. |
+| **API mutation override** | A per-conversation `/allow-api` flag, or the default-on persistent setting under General → Advanced, *waives* the permission prompt for write-method network egress (`fetch_url`/`research_url` with POST/PUT/PATCH/DELETE). Neither option waives GET egress or any other capability. Conversation reset clears only the slash-command override. |
 | **`done()` blocking** | Before accepting completion, the agent probes for open dialogs/forms. If the summary claims "created"/"saved" but a modal is still open, the agent is forced to continue. |
 | **Duplicate-submit guard** | Clicks on submit-like text (create/save/submit/add/post/publish/send/confirm/sign up/log in/pay/checkout/order, etc.) are blocked within a 45-second window per tab+URL (Chrome). |
 | **CLICK occlusion test** | Before clicking, the resolver calls `elementFromPoint()`. If another element is visually on top, the click is refused. |
@@ -161,8 +161,9 @@ The primary threat: a malicious page crafts content that, when read by the agent
 
 Set per-conversation via the `/allow-api` slash command in the side panel, or
 persistently with **Always allow API mutations** under **Settings → General →
-Advanced**. The persistent setting is on by default. When either option is
-active, it waives the permission prompt for **write-method network egress only**:
+Advanced**. The persistent setting is on by default. If it cannot be read from
+storage, it grants no authorization. When either option is active, it waives
+the permission prompt for **write-method network egress only**:
 
 - `fetch_url` / `research_url` with `method: POST/PUT/PATCH/DELETE`
 

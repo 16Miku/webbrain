@@ -73890,6 +73890,41 @@ test('agent clearConversation drops /allow-api override in both builds', () => {
   }
 });
 
+for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+  for (const { name, stored, storageError, expected } of [
+    { name: 'missing setting defaults on', stored: {}, expected: true },
+    { name: 'explicit opt-in stays on', stored: { alwaysAllowApiMutations: true }, expected: true },
+    { name: 'explicit opt-out stays off', stored: { alwaysAllowApiMutations: false }, expected: false },
+    { name: 'storage read failure keeps authorization off', storageError: true, expected: false },
+  ]) {
+    test(`${label} persistent API mutation startup: ${name}`, async () => {
+      const source = fs.readFileSync(path.join(ROOT, `src/${label}/src/background.js`), 'utf8');
+      const start = source.indexOf('const ALWAYS_ALLOW_API_MUTATIONS_KEY =');
+      const end = source.indexOf('agent.setConversationScopeChangeListener(', start);
+      assert.ok(start >= 0 && end > start, `${label}: persistent permission startup block missing`);
+      const agent = new AgentClass({});
+      const api = {
+        storage: {
+          local: {
+            get: async (defaults) => {
+              if (storageError) throw new Error('Storage unavailable');
+              return { ...defaults, ...stored };
+            },
+          },
+        },
+      };
+      const ready = vm.runInNewContext(
+        `${source.slice(start, end)}\nalwaysAllowApiMutationsReady;`,
+        { agent, [label === 'chrome' ? 'chrome' : 'browser']: api },
+      );
+      const tabId = 4897;
+      assert.equal(agent.isApiMutationsAllowed(tabId), false, 'permission must wait for storage hydration');
+      await ready;
+      assert.equal(agent.isApiMutationsAllowed(tabId), expected);
+    });
+  }
+}
+
 test('persistent API mutation permission is global and independent of /allow-api lifecycle', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({});

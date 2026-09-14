@@ -199,7 +199,8 @@ const alwaysAllowApiMutationsReady = chrome.storage.local
     agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] !== false);
   })
   .catch(() => {
-    agent.setAlwaysAllowApiMutations(true);
+    // An unreadable setting must not bypass a stored opt-out.
+    agent.setAlwaysAllowApiMutations(false);
   });
 agent.setConversationScopeChangeListener((tabId, state) => {
   chrome.runtime.sendMessage({
