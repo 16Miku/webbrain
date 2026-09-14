@@ -64284,7 +64284,7 @@ test('WebGPU worker replays text tool history and applies model-specific generat
       },
     };
     const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?tool-history-test`;
-    const { prepareTextMessages, splitThinking, tokenizerSupportsTools } = await import(workerUrl);
+    const { prepareTextMessages, prepareMultimodalMessages, splitThinking, tokenizerSupportsTools } = await import(workerUrl);
     const messages = [
       {
         role: 'assistant',
@@ -64306,6 +64306,30 @@ test('WebGPU worker replays text tool history and applies model-specific generat
     assert.equal(prepared[0].content, '');
     assert.equal(prepared[1].content, '{"success":true}');
     assert.equal(messages[0].tool_calls[0].function.arguments, '{"ref_id":"ref_7","force":true}', 'normalization must not mutate persisted history');
+    const multimodalHistory = [
+      { role: 'user', content: [
+        { type: 'text', text: 'Click the target in this screenshot.' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } },
+      ] },
+      messages[0],
+      { ...messages[1], name: 'click_ax' },
+    ];
+    const originalHistory = structuredClone(multimodalHistory);
+    const multimodal = prepareMultimodalMessages(multimodalHistory);
+    assert.deepEqual(multimodal.imageUrls, ['data:image/png;base64,AA==']);
+    assert.deepEqual(multimodal.messages[0].content, [
+      { type: 'image' },
+      { type: 'text', text: 'Click the target in this screenshot.' },
+    ]);
+    assert.equal(multimodal.messages[1].tool_calls[0].id, 'call_1');
+    assert.deepEqual(multimodal.messages[1].tool_calls[0].function.arguments, { ref_id: 'ref_7', force: true });
+    assert.deepEqual(multimodal.messages[2], {
+      role: 'tool',
+      content: [{ type: 'text', text: '{"success":true}' }],
+      tool_call_id: 'call_1',
+      name: 'click_ax',
+    }, 'VL templates must receive the tool result paired with its assistant call');
+    assert.deepEqual(multimodalHistory, originalHistory, 'VL normalization must not mutate persisted history');
     assert.deepEqual(splitThinking('<think>private trace</think>Visible answer'), {
       content: 'Visible answer',
       reasoningContent: 'private trace',

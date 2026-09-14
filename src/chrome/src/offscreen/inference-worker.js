@@ -1089,7 +1089,7 @@ function imageUrlFromBlock(block) {
   return '';
 }
 
-function prepareMultimodalMessages(messages) {
+export function prepareMultimodalMessages(messages) {
   const imageUrls = [];
   const prepared = [];
   for (const message of Array.isArray(messages) ? messages : []) {
@@ -1122,6 +1122,8 @@ function prepareMultimodalMessages(messages) {
       prepared.push({
         role,
         content: blocks,
+        ...(typeof message.tool_call_id === 'string' ? { tool_call_id: message.tool_call_id } : {}),
+        ...(typeof message.name === 'string' ? { name: message.name } : {}),
         ...(Array.isArray(message.tool_calls)
           ? { tool_calls: message.tool_calls.map(normalizeTextToolCall) }
           : {}),
