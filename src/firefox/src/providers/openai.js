@@ -10,6 +10,7 @@ import {
   applyOpenRouterRoutingVariant,
 } from './provider-compatibility.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
+import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
 import { canonicalizeOllamaBaseUrl } from './context-windows.js';
 import { AUTO_VISION_PROVIDER_IDS, configuredVisionSupport } from './vision-capabilities.js';
 
@@ -237,6 +238,15 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
    */
   async sendShareGeneration(sessionId, payload, { timeoutMs = 4000 } = {}) {
     if (String(this.config.providerName || '').toLowerCase() !== 'webbrain-cloud') {
+      return { ok: false, retryable: false, status: 0 };
+    }
+    // Persisted opt-ins and queued entries must also honor native permission
+    // revocation from Firefox's extension settings before any upload.
+    try {
+      if (!await browser.permissions.contains({ data_collection: RESEARCH_DATA_COLLECTION })) {
+        return { ok: false, retryable: false, status: 0 };
+      }
+    } catch {
       return { ok: false, retryable: false, status: 0 };
     }
     const controller = typeof AbortController === 'function' ? new AbortController() : null;

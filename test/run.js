@@ -13040,6 +13040,70 @@ test('Provider settings permanently purge queued shares on opt-out, including ac
   }
 });
 
+test('Firefox research opt-in requires native consent and stays off while consent is pending', async () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings.js'), 'utf8');
+  const start = source.indexOf('async function confirmResearchSharing(event) {');
+  const end = source.indexOf('\nfunction providerDefinitionId', start);
+  assert.ok(start >= 0 && end > start);
+  const { RESEARCH_DATA_COLLECTION } = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/trace/research-consent.js')).href);
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'src/firefox/manifest.json'), 'utf8'));
+  assert.deepEqual(RESEARCH_DATA_COLLECTION, manifest.browser_specific_settings.gecko.data_collection_permissions.optional);
+  for (const outcome of ['grant', 'deny', 'error', 'cancel', 'disable', 'detached']) {
+    let settle;
+    let reject;
+    const pendingPermission = new Promise((resolve, rejectPermission) => { settle = resolve; reject = rejectPermission; });
+    const requests = [];
+    const dirty = [];
+    let cancelled = false;
+    const input = { checked: outcome !== 'disable', disabled: false, isConnected: true, dataset: { provider: 'openai' } };
+    const handler = Function('browser', 'window', 't', 'markProviderDirty', 'RESEARCH_DATA_COLLECTION', `${source.slice(start, end)}\nreturn confirmResearchSharing;`)(
+      { permissions: { request: permission => { requests.push(permission); return pendingPermission; } } },
+      { confirm: () => outcome !== 'cancel' }, key => key, id => dirty.push(id), RESEARCH_DATA_COLLECTION,
+    );
+    const completion = handler({ currentTarget: input, preventDefault() { cancelled = true; input.checked = false; } });
+    if (outcome === 'cancel' || outcome === 'disable') {
+      await completion;
+      assert.equal(requests.length, 0, `${outcome}: native consent should not be requested`);
+      assert.equal(cancelled, outcome === 'cancel');
+    } else {
+      assert.deepEqual(requests, [{ data_collection: RESEARCH_DATA_COLLECTION }], 'request must start synchronously in the click handler');
+      assert.equal(input.checked, false, 'an ungranted opt-in became saveable');
+      assert.equal(input.disabled, true);
+      if (outcome === 'detached') input.isConnected = false;
+      if (outcome === 'error') reject(new Error('Permission unavailable'));
+      else settle(outcome !== 'deny');
+      await completion;
+    }
+    assert.equal(input.checked, outcome === 'grant', `${outcome}: incorrect final checkbox state`);
+    assert.equal(input.disabled, false, `${outcome}: checkbox stayed disabled`);
+    assert.deepEqual(dirty, outcome === 'grant' ? ['openai'] : []);
+  }
+});
+
+test('Firefox research transport blocks native permission revocation before uploading', async () => {
+  const originalBrowser = globalThis.browser;
+  const originalFetch = globalThis.fetch;
+  try {
+    const provider = new OpenAIProviderFx({ providerName: 'webbrain-cloud', baseUrl: 'https://share.example.test/v1' });
+    for (const consent of [false, 'error', true]) {
+      const requests = [];
+      globalThis.browser = { permissions: { async contains(permission) {
+        assert.ok(permission.data_collection.includes('websiteContent'));
+        if (consent === 'error') throw new Error('Permission unavailable');
+        return consent;
+      } } };
+      globalThis.fetch = async (url, options) => { requests.push({ url, options }); return new Response('', { status: 202 }); };
+      const result = await provider.sendShareGeneration('share_test', { request: [], response: { content: 'ok' } });
+      assert.equal(requests.length, consent === true ? 1 : 0, `${consent}: native consent was bypassed`);
+      assert.equal(result.ok, consent === true);
+      assert.equal(result.retryable, false);
+    }
+  } finally {
+    globalThis.browser = originalBrowser;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Share-for-research delivery stays opt-in and mirrored across both builds', () => {
   const chromeOutbox = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/webbrain-share-outbox.js'), 'utf8');
   const firefoxOutbox = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/webbrain-share-outbox.js'), 'utf8');
@@ -68956,6 +69020,40 @@ test('provider response path preserves raw assistant content and metadata', asyn
   }
 });
 
+test('shared completions retain provider text before terminal display repairs', async () => {
+  const samples = [
+    ['Verification:\n- Page title: "Example Domain"', 'Verification:\n- Page title: Example Domain'],
+    [JSON.stringify('**Result**\n\n- First\n- Second').slice(1, -1), '**Result**\n\n- First\n- Second'],
+  ];
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const streaming of [false, true]) {
+      for (const responseOnly of [false, true]) {
+        for (const [raw, displayed] of samples) {
+          const provider = {
+            supportsTools: true, supportsVision: false, promptTier: 'full', contextWindow: 128000,
+            model: 'test-model', name: 'test-provider',
+            async chat() { return { content: raw, toolCalls: [] }; },
+            async *chatStream() { yield { type: 'text', content: raw }; yield { type: 'done' }; },
+          };
+          const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+          const tabId = 4095;
+          configurePlanOnlyGuardAgent(agent, tabId);
+          if (responseOnly) agent._maybeRunPlannerGate = async () => ({ proceed: true, responseOnly: true, requestKind: 'respond', requiresStateChange: false });
+          agent._startTraceRun = async () => null;
+          let capture;
+          agent._endTraceRun = async (_tabId, _runId, status, content, options) => { capture = { status, content, ...options }; };
+          const final = await agent[streaming ? 'processMessageStream' : 'processMessage'](tabId, 'Show the result.', () => {}, 'ask');
+          const context = `${label}: streaming=${streaming}, responseOnly=${responseOnly}`;
+          assert.equal(final, displayed, `${context}: display repairs changed`);
+          assert.equal(capture.status, 'done', context);
+          assert.equal(capture.hadProviderCompletion, true, context);
+          assert.equal(capture.shareResponse, raw, `${context}: shared completion was display-repaired`);
+        }
+      }
+    }
+  }
+});
+
 test('terminal display repair normalizes JSON-quoted page title lines', async () => {
   const title = 'Example Domain';
   const malformed = `Verification:\n- Page title: ${JSON.stringify(title)}\n- Timestamp: 3:39 PM`;
@@ -85062,6 +85160,7 @@ test('accepted done repairs only the terminal display summary', async () => {
 
     assert.equal(result.action, 'return', `${AgentClass.name}: accepted done should finish`);
     assert.equal(result.value, expected, `${AgentClass.name}: done summary display was not repaired`);
+    assert.equal(result.rawSummary, malformed, `${AgentClass.name}: shared done summary was display-repaired`);
     const rawUpdate = updates.find(update => update.type === 'tool_result' && update.data?.name === 'done');
     assert.equal(
       rawUpdate?.data?.result?.summary,

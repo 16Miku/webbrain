@@ -12738,7 +12738,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // rawSummary is the model-authored done text before the progress
         // ledger is appended for display; research sharing stores it as the
         // response instead of mislabeling local presentation as provider output.
-        return { action: 'return', value: finalResponse, rawSummary: repairedDoneSummary };
+        return { action: 'return', value: finalResponse, rawSummary: rawDoneSummary };
       }
 
       // Loop detection — exact calls, semantic AX reads, and coordinates run
@@ -21217,6 +21217,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (returnResult) return result;
     if (result?.toolCalls?.length) return '';
+    if (shareCapture) shareCapture.response = String(result?.content ?? '');
     return repairAssistantDisplayText(String(result?.content || '').trim());
   }
 
@@ -40709,6 +40710,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // keeping the exact request (with the context-only system prompt).
       if (responseOnly.status === 'done') {
         shareHadProviderCompletion = true;
+        shareRawResponse = responseOnlyShareCapture.response;
         if (Array.isArray(responseOnlyShareCapture.request) && responseOnlyShareCapture.request.length) {
           currentNonStreamRequestMessages = responseOnlyShareCapture.request;
         }
@@ -41602,11 +41604,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: finalResponse });
         break;
       }
+      // Preserve provider text before display repairs and local notices.
+      shareRawResponse = String(result.content ?? '');
       const repairedFinalContent = repairAssistantDisplayText(result.content);
-      // Retain the provider-authored completion before appending local
-      // notices: voluntary research sharing must label the model provider's
-      // response, not our cost/attribution/caveat text, as the generation.
-      shareRawResponse = repairedFinalContent;
       finalResponse = result.costAllowanceMessage
         ? `${repairedFinalContent}\n\n${result.costAllowanceMessage}`
         : repairedFinalContent;
@@ -42001,6 +42001,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
       if (responseOnly.status === 'done') {
         shareHadProviderCompletion = true;
+        shareRawResponse = responseOnlyShareCapture.response;
         if (Array.isArray(responseOnlyShareCapture.request) && responseOnlyShareCapture.request.length) {
           currentStreamRequestMessages = responseOnlyShareCapture.request;
         }
@@ -42642,6 +42643,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           closeTraceStep({ ok: false, code: 'EMPTY_RESPONSE' });
           return finish(incompleteFailure, 'incomplete_output');
         }
+        // Streaming text is still the provider's raw completion at this point.
+        shareRawResponse = fullText;
         const repairedFullText = repairAssistantDisplayText(fullText);
         if (repairedFullText !== fullText) {
           fullText = repairedFullText;
@@ -42649,9 +42652,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // Replace the transient bubble once with the repaired terminal text.
           onUpdate('text', { content: fullText, replace: true });
         }
-        // Retain the provider-authored completion before appending local
-        // cost/attribution notices (see the non-streaming path).
-        shareRawResponse = repairedFullText;
         if (costStopMessage) {
           onUpdate('text_delta', { content: `\n\n${costStopMessage}` });
           fullText = `${fullText}\n\n${costStopMessage}`;

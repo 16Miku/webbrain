@@ -4,6 +4,7 @@
 
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
 import { escapeHtml } from './utils.js';
+import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 import {
   UI_SCALE_LEVELS,
@@ -1914,6 +1915,33 @@ const SHARE_RESEARCH_FIELD = {
   type: 'checkbox',
 };
 
+async function confirmResearchSharing(event) {
+  const input = event.currentTarget;
+  if (!input.checked) return;
+  if (!window.confirm(t('st.providers.share_research.confirm'))) {
+    event.preventDefault();
+    return;
+  }
+  // Keep the setting off while Firefox asks for native collection consent.
+  // Call request directly in the click handler, before the first await, to
+  // preserve the user gesture required by the permissions API.
+  input.checked = false;
+  input.disabled = true;
+  try {
+    const granted = await browser.permissions.request({
+      data_collection: RESEARCH_DATA_COLLECTION,
+    });
+    if (granted && input.isConnected) {
+      input.checked = true;
+      markProviderDirty(input.dataset.provider);
+    }
+  } catch {
+    // Denied or unavailable native consent leaves research sharing off.
+  } finally {
+    input.disabled = false;
+  }
+}
+
 function providerDefinitionId(id, config = providersData[id]) {
   return String(config?.sourceProviderId || config?.duplicateOf || id || '');
 }
@@ -2907,15 +2935,7 @@ function renderProviders() {
     input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
   });
   document.querySelectorAll('input[data-key="shareQueriesForResearch"]').forEach(input => {
-    input.addEventListener('click', (event) => {
-      // In click handlers, `input.checked` has already updated to the target
-      // state. Only prompt for confirmation when turning the toggle ON.
-      // preventDefault() cancels the click and rolls `checked` back to false.
-      if (!input.checked) return;
-      if (!window.confirm(t('st.providers.share_research.confirm'))) {
-        event.preventDefault();
-      }
-    });
+    input.addEventListener('click', confirmResearchSharing);
   });
   document.querySelectorAll('.btn-remove-duplicate').forEach(btn => {
     btn.addEventListener('click', () => removeDuplicateProvider(btn.dataset.provider));
