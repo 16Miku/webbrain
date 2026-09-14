@@ -331,6 +331,7 @@ export default {
 
   'st.provider.field.server_url': 'URL เซิร์ฟเวอร์',
   'st.provider.field.api_base_url': 'URL ฐานของ API',
+  'st.provider.field.api_format': 'รูปแบบ API',
   'st.provider.field.api_key': 'คีย์ API',
   'st.provider.field.model': 'โมเดล',
   'st.provider.field.model_optional': 'โมเดล (ไม่บังคับ)',

@@ -789,6 +789,7 @@ export default {
 
   'st.provider.field.server_url': "URL máy chủ",
   'st.provider.field.api_base_url': "URL cơ sở API",
+  'st.provider.field.api_format': "Định dạng API",
   'st.provider.field.api_key': "Khóa API",
   'st.provider.field.model': "người mẫu",
   'st.provider.field.model_optional': "Mô hình (tùy chọn)",

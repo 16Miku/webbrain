@@ -54,7 +54,7 @@ class BaseLLMProvider {
 | `gemini` | `openai` | 云端 | `gemini-3.1-flash` | 模型名正则 |
 | `cloudflare` | `openai` | 路由器 | `@cf/zai-org/glm-5.2` | 模型名正则 |
 | `mistral` | `openai` | 云端 | `mistral-large-latest` | 模型名正则 |
-| `deepseek` | `openai` | 云端 | `deepseek-v4-flash` | 模型名正则 |
+| `deepseek` | `openai` | 云端 | `deepseek-flash` | 模型名正则 |
 | `xai`（Grok） | `openai` | 云端 | `grok-4.3` | 模型名正则 |
 | `nvidia`（NIM） | `openai` | 路由器 | `meta/llama-3.1-8b-instruct` | 模型名正则 |
 | `groq` | `openai` | 路由器 | `llama-3.3-70b-versatile` | 模型名正则 |
@@ -201,6 +201,7 @@ Ask 模式忽略提供商层级，保持只读。Act 模式使用所选层级的
 | 提供商 | 机制 |
 |---|---|
 | OpenAI 兼容 | 根据模型名称进行正则匹配（`gpt-4o`、`gpt-5`、`claude-3`、`claude-sonnet-4`、`gemini-2.0-flash` 等） |
+| DeepSeek | `deepseek-flash` 系列（含已退役的 `deepseek-v4-flash` 别名）支持多模态；`deepseek-v4-pro` 与 V3 时代标识为纯文本 |
 | Anthropic | `claude-(3\|sonnet-4\|opus-4)` 模式 |
 | Ollama | `POST /api/show` 的 `capabilities`，并兼容旧版 `projector_info` / `.vision.` 元数据 |
 | llama.cpp | `GET /props` → `modalities.vision`，支持自动 / 强制开启 / 关闭 |
@@ -221,6 +222,30 @@ Ask 模式忽略提供商层级，保持只读。Act 模式使用所选层级的
 | `assistant` + `tool_calls` | `assistant` + `tool_use` 内容块 |
 | `tool` 角色 | `user` + `tool_result` 内容块 |
 | `image_url`（data URL） | `image` 源块 |
+
+### DeepSeek
+
+出厂模型是 `deepseek-flash`（DeepSeek-V4.1-Flash）。已退役的 `deepseek-v4-flash` 与
+`deepseek-v4-flash-vision-exp` 仍由同一模型承接并按 Flash 计费，因此保留完整支持
+（1M 上下文、384K 输出、图片输入）。其他 DeepSeek 标识（包括已退役的
+`deepseek-v4-pro`）保持保守配置（64K 上下文、8K 输出、纯文本），不会继承它未必具备
+的更大容量。
+
+| 方面 | 行为 |
+|---|---|
+| 线路格式 | 默认 Chat Completions（`apiFormat: 'auto'`）；Responses API 需在「高级」面板显式选择 |
+| 思考模式 | 顶层 `thinking` 对象 + `reasoning_effort`；关闭思考时完全省略 `reasoning_effort`。共享 UI 档位把 `minimal` 映射为 `low`、`medium`/`xhigh` 映射为 `high` |
+| 思维链回传 | 跨轮回传 `reasoning_content`，因为带 `tools` 的后续请求丢弃它会返回 400 |
+| 流式 | 每次请求都带 `stream_options.include_usage`；解析器忽略 DeepSeek 的 SSE `: keep-alive` 注释 |
+| 结构化输出 | Chat Completions 使用 JSON Object 模式；Responses API 为规划器使用 `text.format` JSON Schema |
+| 图片 | `deepseek-flash` 接受 `user` 消息中的 `image_url`（data URL 或公网 URL） |
+| 计费 | 空闲时段单价按 1 USD = 7.1 CNY 折算（输入 1、缓存命中 0.02、输出 4；高峰 2 / 0.04 / 8）。缓存命中以顶层 `prompt_cache_hit_tokens` 返回，按缓存读取价计费 |
+| Anthropic 端点 | `https://api.deepseek.com/anthropic` 可通过覆盖内置 `anthropic` 卡片的 base URL 使用 |
+
+契约位于 `providers/deepseek-config.js`（纯函数与常量）与 `providers/deepseek.js`
+（`DeepSeekProvider`）。共享的 `openai.js` 与 `provider-compatibility.js` 不含任何
+DeepSeek 知识；`ProviderManager#_createProvider()` 会把 `deepseek` 卡片、任何指向
+`api.deepseek.com` 的卡片，或显式选择 `deepseek` 兼容性预设的卡片分派给该专用类。
 
 ---
 
@@ -306,4 +331,4 @@ myprovider: {
 },
 ```
 
-视觉能力通过模型名称正则自动检测。如果提供商有已知的视觉模型集，请将它们添加到 `openai.js` 的正则表达式中。仅对接受 OpenAI 风格 `stream_options.include_usage` 的提供商设置 `supportsStreamUsageOptions: true`；当提供商在不接受该请求字段的情况下返回使用量时，请将其保持为 false。
+视觉能力通过模型名称正则自动检测。如果提供商有已知的视觉模型集，请在 `openai.js` 的 `_modelNameSniffedVision()` 中扩展，或像 DeepSeek 那样新增厂商子类（`providers/deepseek.js`）。仅对接受 OpenAI 风格 `stream_options.include_usage` 的提供商设置 `supportsStreamUsageOptions: true`；当提供商在不接受该请求字段的情况下返回使用量时，请将其保持为 false。

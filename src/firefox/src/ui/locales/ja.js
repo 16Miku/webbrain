@@ -323,6 +323,7 @@ export default {
 
   'st.provider.field.server_url': 'サーバー URL',
   'st.provider.field.api_base_url': 'API ベース URL',
+  'st.provider.field.api_format': 'API 形式',
   'st.provider.field.api_key': 'API キー',
   'st.provider.field.model': 'モデル',
   'st.provider.field.model_optional': 'モデル（任意）',

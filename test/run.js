@@ -1039,6 +1039,18 @@ const { OpenAICompatibleProvider: OpenAIProviderCh } = await import(
 const { OpenAICompatibleProvider: OpenAIProviderFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/providers/openai.js').replace(/\\/g, '/')
 );
+const { DeepSeekProvider: DeepSeekProviderCh } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/providers/deepseek.js').replace(/\\/g, '/')
+);
+const { DeepSeekProvider: DeepSeekProviderFx } = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/providers/deepseek.js').replace(/\\/g, '/')
+);
+const DeepSeekConfigCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/providers/deepseek-config.js').replace(/\\/g, '/')
+);
+const DeepSeekConfigFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/providers/deepseek-config.js').replace(/\\/g, '/')
+);
 const { LlamaCppProvider: LlamaCppProviderCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/llamacpp.js').replace(/\\/g, '/')
 );
@@ -71037,7 +71049,6 @@ test('OpenAI-compatible streams request usage metadata only for supporting provi
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
     for (const config of [
       { category: 'cloud', providerName: 'gemini' },
-      { category: 'cloud', providerName: 'deepseek' },
       { category: 'cloud', providerName: 'mistral', supportsStreamUsageOptions: false },
       { category: 'router', providerName: 'openrouter' },
       { providerName: 'openai' },
@@ -71060,6 +71071,20 @@ test('OpenAI-compatible streams request usage metadata only for supporting provi
       provider._addStreamUsageOptions(body);
       assert.equal(body.stream_options, undefined);
     }
+  }
+
+  // DeepSeek always requests usage; the behaviour moved to its dedicated
+  // provider (see deepseek.js) instead of living in the shared class.
+  for (const Provider of [DeepSeekProviderCh, DeepSeekProviderFx]) {
+    const provider = new Provider({
+      category: 'cloud',
+      providerName: 'deepseek',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-flash',
+    });
+    const body = { stream: true, stream_options: { custom: 'keep' } };
+    provider._addStreamUsageOptions(body);
+    assert.deepEqual(body.stream_options, { custom: 'keep', include_usage: true });
   }
 });
 
@@ -71731,10 +71756,35 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
     },
   }];
   try {
-    for (const [label, compatibility] of [
-      ['chrome', ProviderCompatibilityCh],
-      ['firefox', ProviderCompatibilityFx],
+    for (const [label, compatibility, deepSeekConfig] of [
+      ['chrome', ProviderCompatibilityCh, DeepSeekConfigCh],
+      ['firefox', ProviderCompatibilityFx, DeepSeekConfigFx],
     ]) {
+      assert.deepEqual(
+        deepSeekConfig.deepSeekModelCapabilities('deepseek-flash'),
+        { contextWindow: 1000000, maxOutputTokens: 384000, vision: true },
+        `${label}: the current DeepSeek model is 1M / 384K / multimodal`,
+      );
+      assert.deepEqual(
+        deepSeekConfig.deepSeekModelCapabilities('deepseek-v4-flash-vision-exp'),
+        { contextWindow: 1000000, maxOutputTokens: 384000, vision: true },
+        `${label}: retired flash aliases keep the V4.1-Flash capacities`,
+      );
+      assert.deepEqual(
+        deepSeekConfig.deepSeekModelCapabilities('deepseek-v4-pro'),
+        { contextWindow: 65536, maxOutputTokens: 8192, vision: false },
+        `${label}: retired and unknown DeepSeek ids stay conservative`,
+      );
+      assert.equal(
+        deepSeekConfig.deepSeekModelCapabilities('gpt-5.6-terra'),
+        null,
+        `${label}: non-DeepSeek ids keep the generic fallback`,
+      );
+      assert.equal(
+        deepSeekConfig.isDeepSeekRootUrl(new URL('https://api.deepseek.com')),
+        true,
+        `${label}: the DeepSeek origin is a root endpoint`,
+      );
       assert.equal(
         compatibility.normalizeOpenAICompatibleBaseUrl('https://api.deepseek.com'),
         'https://api.deepseek.com',
@@ -71819,14 +71869,56 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
         { thinking: { type: 'disabled' } },
         `${label}: disabling DeepSeek vision thinking must clear configured reasoning effort`,
       );
+      const plannerSchema = { type: 'object', properties: {}, additionalProperties: false };
+      assert.deepEqual(
+        compatibility.plannerRequestBody({ ...deepSeekVisionConfig, apiFormat: 'responses' }, { schema: plannerSchema }),
+        {
+          reasoning: { effort: 'none' },
+          response_format: {
+            type: 'json_schema',
+            json_schema: { name: 'webbrain_planner', strict: true, schema: plannerSchema },
+          },
+        },
+        `${label}: DeepSeek Responses planners disable thinking and keep a strict JSON schema`,
+      );
+      assert.deepEqual(
+        compatibility.visionGenerationOptions(160, {
+          providerConfig: { ...deepSeekVisionConfig, apiFormat: 'responses' },
+        }),
+        { maxTokens: 160, temperature: 0, extraBody: { reasoning: { effort: 'none' } } },
+        `${label}: DeepSeek Responses vision probes disable thinking via reasoning.effort`,
+      );
     }
 
     for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
       const manager = new PM();
       const defaults = manager._defaultConfigs();
       assert.equal(defaults.deepseek.baseUrl, 'https://api.deepseek.com', `${PM.name}: official DeepSeek base URL`);
-      assert.equal(defaults.deepseek.model, 'deepseek-v4-flash', `${PM.name}: current DeepSeek default model`);
+      assert.equal(defaults.deepseek.model, 'deepseek-flash', `${PM.name}: current DeepSeek default model`);
       assert.equal(defaults.deepseek.contextWindow, 1000000, `${PM.name}: DeepSeek context window`);
+      assert.equal(defaults.deepseek.maxOutputTokens, 384000, `${PM.name}: DeepSeek output ceiling`);
+      assert.equal(defaults.deepseek.cacheReadCostPerMillionUsd, 0.0028, `${PM.name}: DeepSeek cache-hit rate`);
+      assert.equal(
+        manager._createProvider('deepseek', defaults.deepseek).constructor.name,
+        'DeepSeekProvider',
+        `${PM.name}: the DeepSeek card must use the dedicated provider`,
+      );
+      assert.equal(
+        manager._createProvider('deepseek__duplicate', { ...defaults.deepseek, duplicateOf: 'deepseek' }).constructor.name,
+        'DeepSeekProvider',
+        `${PM.name}: a duplicated DeepSeek card keeps the dedicated provider`,
+      );
+      assert.equal(
+        manager._createProvider('openrouter', {
+          type: 'openai',
+          category: 'router',
+          providerName: 'openrouter',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          model: 'deepseek/deepseek-v4',
+        }).constructor.name,
+        'OpenAICompatibleProvider',
+        `${PM.name}: a router-hosted DeepSeek model stays on the generic provider`,
+      );
       const migrated = manager._migrateStoredProviderConfigs({
         deepseek: {
           model: 'deepseek-v4-flash',
@@ -71836,23 +71928,51 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
         },
       });
       assert.equal(migrated.deepseek.baseUrl, 'https://api.deepseek.com', `${PM.name}: untouched legacy DeepSeek defaults should migrate`);
+      assert.equal(migrated.deepseek.model, 'deepseek-flash', `${PM.name}: untouched legacy DeepSeek model should be renamed`);
+      assert.equal(migrated.deepseek.inputCostPerMillionUsd, 0.14, `${PM.name}: untouched legacy DeepSeek prices should migrate`);
+      assert.equal(migrated.deepseek.cacheReadCostPerMillionUsd, 0.0028, `${PM.name}: untouched legacy DeepSeek cache-hit price should migrate`);
+      const configured = manager._migrateStoredProviderConfigs({
+        deepseek: {
+          model: 'deepseek-v4-flash',
+          baseUrl: 'https://api.deepseek.com/v1',
+          apiKey: 'sk-live',
+          configured: true,
+        },
+      });
+      assert.equal(configured.deepseek.model, 'deepseek-v4-flash', `${PM.name}: a saved DeepSeek card must not be rewritten`);
+      assert.equal(configured.deepseek.baseUrl, 'https://api.deepseek.com/v1', `${PM.name}: a saved DeepSeek base URL must not be rewritten`);
     }
 
     for (const [label, Provider, AgentClass] of [
-      ['chrome', OpenAIProviderCh, AgentCh],
-      ['firefox', OpenAIProviderFx, AgentFx],
+      ['chrome', DeepSeekProviderCh, AgentCh],
+      ['firefox', DeepSeekProviderFx, AgentFx],
     ]) {
       const provider = new Provider({
         category: 'cloud',
         providerName: 'deepseek',
         baseUrl: 'https://api.deepseek.com',
-        model: 'deepseek-v4-flash',
+        model: 'deepseek-flash',
         compat: { reasoningEffort: 'high' },
         supportsStreamUsageOptions: true,
       });
-      assert.equal(provider.supportsVision, false, `${label}: the text-only DeepSeek model must not advertise vision`);
+      assert.equal(provider.supportsVision, true, `${label}: the V4.1-Flash model must advertise vision`);
       const vision = new Provider({ ...provider.config, model: 'deepseek-v4-flash-vision-exp' });
-      assert.equal(vision.supportsVision, true, `${label}: the official DeepSeek vision model must advertise vision`);
+      assert.equal(vision.supportsVision, true, `${label}: the retired vision alias must advertise vision`);
+      assert.equal(
+        new Provider({ ...provider.config, model: 'deepseek-v4-flash' }).supportsVision,
+        true,
+        `${label}: retired flash ids resolve to the multimodal V4.1-Flash model`,
+      );
+      assert.equal(
+        new Provider({ ...provider.config, model: 'deepseek-v4-pro' }).supportsVision,
+        false,
+        `${label}: the retired V4 Pro id is text-only`,
+      );
+      assert.equal(
+        new Provider({ ...provider.config, model: 'deepseek-chat' }).supportsVision,
+        false,
+        `${label}: V3-era DeepSeek ids are text-only`,
+      );
 
       const body = provider._buildChatCompletionsBody(
         [{ role: 'user', content: 'Read the page' }],
@@ -71866,6 +71986,20 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
       assert.equal(body.chat_template_kwargs, undefined, `${label}: legacy Qwen fields must be absent`);
       assert.deepEqual(body.stream_options, { include_usage: true }, `${label}: DeepSeek streaming should request usage`);
       assert.equal(body.tools.length, 1, `${label}: function tools must be sent`);
+
+      // Chat Completions is the default wire format; the Responses API is an
+      // explicit opt-in through `apiFormat: 'responses'`.
+      assert.equal(provider._usesResponsesApi(), false, `${label}: DeepSeek must default to Chat Completions`);
+      const responsesProvider = new Provider({ ...provider.config, apiFormat: 'responses' });
+      assert.equal(responsesProvider._usesResponsesApi(), true, `${label}: apiFormat=responses must opt into the Responses API`);
+      const responsesBody = responsesProvider._buildResponsesBody(
+        [{ role: 'user', content: 'Read the page' }],
+        { maxTokens: 321, temperature: 0.2 },
+        true,
+      );
+      assert.deepEqual(responsesBody.reasoning, { effort: 'high' }, `${label}: Responses must carry reasoning.effort`);
+      assert.equal(responsesBody.thinking, undefined, `${label}: Responses must not carry the Chat Completions thinking object`);
+      assert.equal(responsesBody.reasoning_effort, undefined, `${label}: Responses must not carry top-level reasoning_effort`);
 
       const agent = new AgentClass({});
       const assistant = {
@@ -71927,6 +72061,32 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
     }
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('DeepSeek knowledge stays inside the dedicated provider modules', () => {
+  for (const [label, browser] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const providersDir = path.join(ROOT, browser, 'src', 'providers');
+    const openai = fs.readFileSync(path.join(providersDir, 'openai.js'), 'utf8');
+    assert.doesNotMatch(
+      openai,
+      /deepseek/i,
+      `${label}: the shared OpenAI-compatible provider must stay vendor-agnostic`,
+    );
+    const compatibility = fs.readFileSync(path.join(providersDir, 'provider-compatibility.js'), 'utf8');
+    for (const pattern of [/api\.deepseek\.com/, /deepseek-flash/, /mappedDeepSeekReasoningEffort/]) {
+      assert.doesNotMatch(
+        compatibility,
+        pattern,
+        `${label}: DeepSeek wire knowledge belongs to deepseek-config.js (${pattern})`,
+      );
+    }
+    for (const module of ['deepseek.js', 'deepseek-config.js']) {
+      assert.ok(
+        fs.existsSync(path.join(providersDir, module)),
+        `${label}: ${module} must own the DeepSeek contract`,
+      );
+    }
   }
 });
 
@@ -72495,6 +72655,32 @@ test('Agent cost estimation discounts OpenAI cached input included in the input 
     };
     assert.equal(agent._estimateUsageCostUsd(provider, chatCompletionsUsage), 0.048);
     assert.equal(agent._estimateUsageCostUsd(provider, responsesUsage), 0.048);
+  }
+});
+
+test('Agent cost estimation prices DeepSeek prompt-cache hits at the cache-read rate', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    const provider = {
+      config: {
+        inputCostPerMillionUsd: 0.14,
+        cacheReadCostPerMillionUsd: 0.0028,
+        outputCostPerMillionUsd: 0.56,
+      },
+    };
+    // DeepSeek reports `prompt_tokens` as hit + miss, so the hit counter is a
+    // subset of the input total: 200 uncached @0.14 + 800 cached @0.0028
+    // + 100 output @0.56.
+    const usage = {
+      prompt_tokens: 1000,
+      completion_tokens: 100,
+      prompt_cache_hit_tokens: 800,
+      prompt_cache_miss_tokens: 200,
+    };
+    assert.equal(
+      agent._estimateUsageCostUsd(provider, usage),
+      (200 * 0.14 + 800 * 0.0028 + 100 * 0.56) / 1000000,
+    );
   }
 });
 

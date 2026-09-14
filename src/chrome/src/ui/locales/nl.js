@@ -702,6 +702,7 @@ export default {
   'st.skills.error.add_failed': 'Vaardigheid kon niet worden toegevoegd.',
   'st.provider.field.server_url': 'Server-URL',
   'st.provider.field.api_base_url': 'API-basis-URL',
+  'st.provider.field.api_format': 'API-formaat',
   'st.provider.field.api_key': 'API-sleutel',
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (optioneel)',

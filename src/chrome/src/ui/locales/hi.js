@@ -789,6 +789,7 @@ export default {
 
   'st.provider.field.server_url': "सर्वर यूआरएल",
   'st.provider.field.api_base_url': "एपीआई बेस यूआरएल",
+  'st.provider.field.api_format': "एपीआई प्रारूप",
   'st.provider.field.api_key': "एपीआई कुंजी",
   'st.provider.field.model': "मॉडल",
   'st.provider.field.model_optional': "मॉडल (वैकल्पिक)",

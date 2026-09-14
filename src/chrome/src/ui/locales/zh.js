@@ -331,6 +331,7 @@ export default {
 
   'st.provider.field.server_url': '服务器 URL',
   'st.provider.field.api_base_url': 'API 基础 URL',
+  'st.provider.field.api_format': 'API 格式',
   'st.provider.field.api_key': 'API 密钥',
   'st.provider.field.model': '模型',
   'st.provider.field.model_optional': '模型（可选）',

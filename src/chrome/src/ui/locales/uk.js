@@ -331,6 +331,7 @@ export default {
 
   'st.provider.field.server_url': 'URL сервера',
   'st.provider.field.api_base_url': 'Базовий URL API',
+  'st.provider.field.api_format': 'Формат API',
   'st.provider.field.api_key': 'API-ключ',
   'st.provider.field.model': 'Модель',
   'st.provider.field.model_optional': 'Модель (необов\'язково)',
