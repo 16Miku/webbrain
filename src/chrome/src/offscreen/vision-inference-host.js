@@ -346,10 +346,21 @@ async function probeExistingTextWorkerStatus(modelId = '', options = {}) {
 }
 
 async function findActiveTextTransfer(requestedModel) {
-  const other = isBitgpuTextModel(requestedModel)
-    ? await probeExistingTextWorkerStatus('', { probeActive: true })
-    : await probeExistingTextWorkerStatus(WEBGPU_BONSAI27_MODEL_ID, { probeActive: true });
-  return isActiveTextTransfer(other) ? other : null;
+  // Probe both runtimes: the other worker (Bonsai vs ONNX) and the requested
+  // worker itself for a different model. Probing only the other runtime misses
+  // same-worker transfers (e.g. ONNX A downloading while status for ONNX B is
+  // requested), leaving Settings with no Stop control for the running transfer.
+  const probes = isBitgpuTextModel(requestedModel)
+    ? [
+      probeExistingTextWorkerStatus('', { probeActive: true }),
+      probeExistingTextWorkerStatus(WEBGPU_BONSAI27_MODEL_ID, { probeActive: true }),
+    ]
+    : [
+      probeExistingTextWorkerStatus(WEBGPU_BONSAI27_MODEL_ID, { probeActive: true }),
+      probeExistingTextWorkerStatus('', { probeActive: true }),
+    ];
+  const results = await Promise.all(probes);
+  return results.find(isActiveTextTransfer) || null;
 }
 
 function startExclusiveTextDownload(message) {
