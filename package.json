@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/browser-dialogs.mjs && npm run test:runtime-lifecycle && npm run test:provider-limits && npm run test:toolbar-guard && npm run test:pdf-read && npm run test:pdf-selection && npm run test:social-contract && node test/run.js && node test/selection-scope-restoration.mjs && node scripts/benchmark-offline-relevance.mjs && npm run test:security",
+    "test": "node --test test/browser-dialogs.mjs && npm run test:firefox-bidi && npm run test:runtime-lifecycle && npm run test:provider-limits && npm run test:toolbar-guard && npm run test:pdf-read && npm run test:pdf-selection && npm run test:social-contract && node test/run.js && node test/selection-scope-restoration.mjs && node scripts/benchmark-offline-relevance.mjs && npm run test:security",
     "test:provider-limits": "node test/provider-model-limits.mjs",
     "test:security": "node test/security/injection-corpus.mjs",
     "test:toolbar-guard": "node test/rich-text-toolbar-guard.mjs",
@@ -39,7 +39,9 @@
     "test:social-contract": "node --test test/social-publish-contract.mjs",
     "test:social-contract:dom": "node test/social-publish-contract-dom.mjs",
     "test:runtime-lifecycle": "node --test test/agent-lifecycle.mjs test/runtime-lifecycle.mjs test/network-lifecycle.mjs test/text-write-cancellation.mjs && node test/ui-content-lifecycle.mjs",
-    "test:rich-text-dom": "node test/ui-content-lifecycle.mjs --dom"
+    "test:rich-text-dom": "node test/ui-content-lifecycle.mjs --dom",
+    "test:firefox-bidi": "node --test test/firefox-bidi.mjs",
+    "test:firefox-bidi:e2e": "node test/firefox-bidi-e2e.mjs"
   },
   "devDependencies": {
     "playwright": "^1.48.0",

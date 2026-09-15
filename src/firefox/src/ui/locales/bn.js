@@ -1,8 +1,10 @@
+import bidiCopy from './bidi-copy.mjs';
 // Bengali — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'এক্সটেনশনের UI জুম',
   'sp.ui_scale.decrease': 'এক্সটেনশনের UI ছোট করুন',
   'sp.ui_scale.increase': 'এক্সটেনশনের UI বড় করুন',
