@@ -243,6 +243,15 @@ test('trusted target validation descends through open shadow roots', async () =>
   assert.match(validation, /shadowRoot\.elementFromPoint/);
   assert.match(validation, /node\.parentNode \|\| node\.host/);
 });
+test('keyboard validation does not require pointer geometry', async () => {
+  const session = new BidiSession(); const runId = id(); const calls = [];
+  session.runs.set(runId, { context: 'tab' });
+  session.locate = async () => ({ context: 'tab', node: { sharedId: 'body' } });
+  session.call = async (_match, fn) => { calls.push(fn); return { result: { value: true } }; };
+  session.send = async () => ({});
+  await session.perform(runId, 'key', { key: 'Escape' });
+  assert.match(calls[0], /action === 'click' \|\| action === 'hover'/);
+});
 test('post-dispatch failure and transport uncertainty are never safe retries', async () => {
   const session = new BidiSession(); const runId = id();
   session.runs.set(runId, {context:'tab'});

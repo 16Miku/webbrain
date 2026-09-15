@@ -142,26 +142,28 @@ export class BidiSession {
       if (!el.isConnected || el.getAttribute('data-webbrain-bidi') !== token || el.disabled) return false;
       el.removeAttribute('data-webbrain-bidi');
       if (action === 'upload') return el.tagName === 'INPUT' && el.type === 'file';
-      const r = el.getBoundingClientRect();
-      const px = x === null ? r.x+r.width/2 : x;
-      const py = y === null ? r.y+r.height/2 : y;
-      if (px < 0 || py < 0 || px >= innerWidth || py >= innerHeight) return false;
-      let hit = document.elementFromPoint(px, py);
-      // elementFromPoint stops at each open shadow host. Descend through those
-      // roots so trusted input accepts the same visible target as content.js.
-      while (hit?.shadowRoot) {
-        const inner = hit.shadowRoot.elementFromPoint(px, py);
-        if (!inner || inner === hit) break;
-        hit = inner;
-      }
-      const reaches = (node, target) => {
-        while (node) {
-          if (node === target) return true;
-          node = node.parentNode || node.host;
+      if (action === 'click' || action === 'hover') {
+        const r = el.getBoundingClientRect();
+        const px = x === null ? r.x+r.width/2 : x;
+        const py = y === null ? r.y+r.height/2 : y;
+        if (px < 0 || py < 0 || px >= innerWidth || py >= innerHeight) return false;
+        let hit = document.elementFromPoint(px, py);
+        // elementFromPoint stops at each open shadow host. Descend through those
+        // roots so trusted input accepts the same visible target as content.js.
+        while (hit?.shadowRoot) {
+          const inner = hit.shadowRoot.elementFromPoint(px, py);
+          if (!inner || inner === hit) break;
+          hit = inner;
         }
-        return false;
-      };
-      if (!r.width || !r.height || !reaches(hit, el)) return false;
+        const reaches = (node, target) => {
+          while (node) {
+            if (node === target) return true;
+            node = node.parentNode || node.host;
+          }
+          return false;
+        };
+        if (!r.width || !r.height || !reaches(hit, el)) return false;
+      }
       if (action === 'type' || action === 'field' || action === 'key') {
         el.focus({preventScroll:true});
         if (el.getRootNode().activeElement !== el) return false;
@@ -259,6 +261,19 @@ export class BidiSession {
         const platform = await this.call(match, '() => navigator.platform');
         await press('a', /Mac/.test(platform.result?.value || '') ? '\uE03D' : '\uE009');
         await press('\uE003');
+      } else {
+        const positioned = await this.call(match, `(el) => {
+          if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
+          if (el.isContentEditable) {
+            const selection = getSelection(); const range = document.createRange();
+            range.selectNodeContents(el); range.collapse(false);
+            selection.removeAllRanges(); selection.addRange(range);
+          } else if (typeof el.setSelectionRange === 'function') {
+            const end = el.value.length; el.setSelectionRange(end, end);
+          } else return false;
+          return true;
+        }`);
+        if (positioned.result?.value !== true) throw new Error('Could not position caret for append; no text sent');
       }
       // One character per dispatch bounds work after Stop and catches focus changes between keys.
       for (const char of payload.text) {

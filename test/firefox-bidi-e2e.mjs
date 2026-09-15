@@ -51,6 +51,10 @@ try {
   const typed = await session.perform(runId, 'field', { ...await mark('#text'), text: 'Hello Firefox', clear: true });
   assert.equal(typed.verified, true);
   assert.equal((await evaluate('document.querySelector("#text").value')).value, 'Hello Firefox');
+  await evaluate(`document.querySelector('#text').setSelectionRange(1, 1)`);
+  const appended = await session.perform(runId, 'type', { ...await mark('#text'), text: ' world' });
+  assert.equal(appended.verified, true);
+  assert.equal((await evaluate('document.querySelector("#text").value')).value, 'Hello Firefox world');
   assert.equal((await evaluate('events.some(e => e[0] === "input" && e[1])')).value, true);
   const uploaded = await session.perform(runId, 'upload', { ...await mark('#file'), filename: 'sample.txt', base64: Buffer.from('upload test').toString('base64') });
   assert.equal(uploaded.success, true);
@@ -93,6 +97,8 @@ try {
   assert.equal(JSON.parse(belowFoldPrepared.value).bidiPrepared, true);
   assert.equal((await session.perform(runId, 'click', { token: belowFoldToken, url })).success, true);
   assert.equal((await evaluate('window.belowFoldTrusted')).value, true);
+  await evaluate(`document.activeElement.blur()`);
+  assert.equal((await session.perform(runId, 'key', { ...await mark('body'), key: 'Escape' })).success, true);
   const shadowToken = crypto.randomUUID();
   await evaluate(`const host=document.createElement('div'); host.id='shadow-host'; host.style.cssText='position:fixed;left:20px;top:300px'; host.attachShadow({mode:'open'}).innerHTML='<button id="shadow-button">Shadow button</button>'; host.shadowRoot.querySelector('button').setAttribute('data-webbrain-bidi', ${JSON.stringify(shadowToken)}); host.shadowRoot.querySelector('button').onclick=e=>window.shadowTrusted=e.isTrusted; document.body.append(host);`);
   const shadowNode = await session.send('script.evaluate', { target: { context }, expression: "document.querySelector('#shadow-host').shadowRoot.querySelector('#shadow-button')", awaitPromise: true });
