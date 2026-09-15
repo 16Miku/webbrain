@@ -1,3 +1,4 @@
+import { firefoxBidi } from './bidi/client.js';
 import { ProviderManager } from './providers/manager.js';
 import { Agent } from './agent/agent.js';
 import {
@@ -3639,4 +3640,15 @@ browser.commands.onCommand.addListener(async (command, tab) => {
   } catch (err) {
     console.error('[WebBrain] failed to dispatch command:', command, err);
   }
+});
+
+// Connection controls belong only to the packaged Settings page, never a tab.
+browser.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type !== 'WB_BIDI_CONNECT' && message?.type !== 'WB_BIDI_DISCONNECT') return;
+  if (sender.id !== browser.runtime.id || sender.url !== browser.runtime.getURL('src/ui/settings.html')) return;
+  if (message.type === 'WB_BIDI_DISCONNECT') { firefoxBidi.disconnect(); return Promise.resolve({ success: true }); }
+  return firefoxBidi.connect().then(() => ({ success: true }), error => ({ success: false, error: error.message }));
+});
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && ['firefoxBidiEnabled', 'firefoxBidiPort'].some(key => changes[key] && changes[key].oldValue !== changes[key].newValue)) firefoxBidi.disconnect();
 });

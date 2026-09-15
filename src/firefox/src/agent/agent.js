@@ -1,3 +1,4 @@
+import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { validateToolArguments } from './tool-arguments.js';
@@ -5688,6 +5689,7 @@ export class Agent extends LoopDetector {
   }
 
   _releaseRunEntry(tabId) {
+    firefoxBidi.stopRun(tabId);
     this._runAbortStates.get(tabId)?.dispose();
     this._runAbortStates.delete(tabId);
     this.abortFlags.delete(tabId);
@@ -12117,7 +12119,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const send = () => {
       throwIfAborted();
       dispatchState.started = true;
-      return browser.tabs.sendMessage(tabId, {
+      return firefoxBidi.sendContent(tabId, {
         target: 'content',
         action: 'click_ax',
         params: contentArgs,
@@ -29029,6 +29031,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._prepareClarificationAuthorizationForRun(tabId);
       this.permissions.beginTurn(tabId);
       this.conversationModes.set(tabId, 'act');
+      await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
       completionRunToken = this._beginCompletionInvariant(tabId);
       startUrl = await this._currentUrl(tabId);
       const conversationId = await this.ensureConversationId(tabId, 'act');
@@ -30170,13 +30173,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
 
       try {
-        await browser.tabs.update(tabId, { url: rawUrl });
+        if (firefoxBidi.runs.has(tabId)) await firefoxBidi.perform(tabId, 'navigate', { url: rawUrl });
+        else await browser.tabs.update(tabId, { url: rawUrl });
       } catch (e) {
         removeNavigationListener();
         return {
           success: false,
           dispatched: false,
           noDispatch: true,
+          ...(firefoxBidi.runs.has(tabId) ? { dispatched: true, noDispatch: false, outcomeUnknown: true, retryable: false } : {}),
           error: `navigate: browser rejected the navigation: ${e?.message || String(e)}`,
         };
       }
@@ -31109,6 +31114,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await downloadFiles(args);
     }
     if (name === 'upload_file') {
+      const bidiUploadOwner = firefoxBidi.runs.get(tabId);
       const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
       try {
         args = args || {};
@@ -31336,6 +31342,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         if (typeof base64 !== 'string') {
           return { success: false, error: 'No file data available to attach' };
+        }
+
+        if (bidiUploadOwner) {
+          if (firefoxBidi.runs.get(tabId) !== bidiUploadOwner || bidiUploadOwner.signal?.aborted) return { success: false, dispatched: false, noDispatch: true, error: 'Upload task stopped before attachment.' };
+          return await firefoxBidi.sendContent(tabId, {
+            target: 'content', action: 'bidi_prepare_upload',
+            params: { selector: args.selector, base64, filename, mimeType },
+          });
         }
 
         const targetProbeCode = `
@@ -33113,7 +33127,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         .map(signal => Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(signal)?.deadlineAt))
         .filter(value => Number.isFinite(value) && value > 0);
       const actionDeadlineAt = deadlines.length ? Math.min(...deadlines) : 0;
-      return browser.tabs.sendMessage(tabId, {
+      return firefoxBidi.sendContent(tabId, {
         target: 'content',
         action,
         params: contentArgs,
@@ -33409,6 +33423,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
     }
     try {
+      if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
       const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
@@ -34837,6 +34852,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
     }
     try {
+      if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
       const result = await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;

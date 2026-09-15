@@ -2097,6 +2097,7 @@
     if (actionDeadlineExpired()) return deadlineFailure();
     const clickedRect = rememberInteractionPoint(el, 'click');
     if (actionDeadlineExpired()) return deadlineFailure();
+    if (params._bidiPrepare) return { ...prepareBidiTarget(el, params._bidiPrepare), _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId };
     dispatched = true;
     const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
     if (filePickerGuard.blocked) {
@@ -2392,6 +2393,8 @@
     const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
     const routeHrefBeforeType = location.href;
 
+    if (params._bidiPrepare && !(el instanceof HTMLSelectElement)) return prepareBidiTarget(el, params._bidiPrepare);
+
     // Rich editors must retain their native node structure and editing events.
     if (el.isContentEditable) {
       return _insertContentEditableText(el, typedText, params.clear === true, actionDeadlineExpired);
@@ -2660,6 +2663,8 @@
     const target = (focusedTarget && focusedTarget !== document.body && focusedTarget !== document.documentElement)
       ? focusedTarget
       : document;
+
+    if (params._bidiPrepare) return prepareBidiTarget(focusedTarget || document.body, params._bidiPrepare);
 
     const moveTabFocus = () => {
       const focusables = Array.from(document.querySelectorAll(
@@ -4059,6 +4064,17 @@
   // conversation before a message can be sent. It deliberately ignores input
   // values and ordinary page text: a searched recipient name is not proof that
   // the corresponding conversation is active.
+  function prepareBidiTarget(el, token) {
+    if (!/^[a-f0-9-]{36}$/.test(token || '') || !el?.isConnected) {
+      return { success: false, dispatched: false, noDispatch: true, error: 'Invalid trusted-input target' };
+    }
+    el.setAttribute('data-webbrain-bidi', token);
+    setTimeout(() => { if (el.getAttribute('data-webbrain-bidi') === token) el.removeAttribute('data-webbrain-bidi'); }, 10000);
+    const rect = el.getBoundingClientRect();
+    return { bidiPrepared: true, success: false, dispatched: false, noDispatch: true, url: location.href,
+      fieldMeta: _fieldMeta(el), rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height } };
+  }
+
   function _probeMessageRecipientGuard(params = {}) {
     try {
       const tool = String(params.tool || '');
@@ -5293,6 +5309,7 @@
               { deadlineExpired: true, retryable: true },
             );
           }
+          if (msg.params?._bidiPrepare) return { ...prepareBidiTarget(el, msg.params._bidiPrepare), _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId };
           dispatched = true;
           const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
           if (filePickerGuard.blocked) {
@@ -5545,6 +5562,15 @@
           return failure(e && e.message || String(e));
         }
       },
+      'bidi_prepare_upload': () => {
+        const params = msg.params || {};
+        let matches;
+        try { matches = document.querySelectorAll(params.selector); } catch { return { success: false, dispatched: false, noDispatch: true, error: 'Invalid file selector' }; }
+        if (matches.length !== 1 || matches[0].tagName !== 'INPUT' || matches[0].type !== 'file' || matches[0].disabled) {
+          return { success: false, dispatched: false, noDispatch: true, error: 'Choose one enabled file input', ambiguous: matches.length > 1, matchCount: matches.length };
+        }
+        return prepareBidiTarget(matches[0], params._bidiPrepare);
+      },
       'type_ax': async () => {
         let dispatched = false;
         const failure = (error, extra = {}) => ({
@@ -5585,6 +5611,10 @@
               return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
             } catch { return null; }
           })();
+          if (msg.params?._bidiPrepare && el.tagName !== 'SELECT') {
+            if (!_isTypeableElement(el)) return failure('Target is not editable');
+            return prepareBidiTarget(el, msg.params._bidiPrepare);
+          }
           const fieldMeta = _fieldMeta(el);
           let previous = '';
           let method = '';
@@ -5772,6 +5802,13 @@
             }
           } else if (!el.isContentEditable && el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT') {
             return failure(`ref_id ${ref_id} is not a text field (tag=${el.tagName}). set_field works on input/textarea/contenteditable only.`);
+          }
+          if (msg.params?._bidiPrepare) {
+            if (submit && msg.params.messageRecipientGuardRequired) {
+              const validation = _consumeMessageRecipientDispatchBinding(msg.params, el);
+              if (validation.success !== true) return validation;
+            }
+            return prepareBidiTarget(el, msg.params._bidiPrepare);
           }
           let prevValue = '';
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -6128,6 +6165,7 @@
           const r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
           const cy = r.top + r.height / 2;
+          if (msg.params?._bidiPrepare) return prepareBidiTarget(el, msg.params._bidiPrepare);
           const eventInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
           const dispatchHover = (EventType, type) => {
             if (actionDeadlineExpired()) return false;

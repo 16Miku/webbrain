@@ -297,6 +297,10 @@
       transition: border-color 0.2s;
     }
     .provider-card.selected { border-color: var(--accent); }
+    #firefox-bidi-card h3 { font-size: 14px; margin-bottom: 8px; }
+    #firefox-bidi-card p { font-size: 12px; line-height: 1.55; color: var(--text2); margin: 8px 0; }
+    #firefox-bidi-card > label { display: block; font-size: 12px; margin: 12px 0; }
+    #firefox-bidi-card code { overflow-wrap: anywhere; }
     .provider-card.collapsed { padding: 12px 16px; }
     .provider-card.collapsed .provider-header { margin-bottom: 0; }
 
@@ -1595,6 +1599,15 @@
             </label>
           </div>
 
+          <div class="provider-card" id="firefox-bidi-card">
+            <h3 data-i18n="st.bidi.title">Firefox trusted automation (experimental)</h3>
+            <p data-i18n="st.bidi.desc">Use a local companion for browser dialogs, trusted clicks and typing, and file uploads. Requires Node.js 22+ and Firefox started with remote automation enabled.</p>
+            <p data-i18n-html="st.bidi.setup_html">Install the companion using <code>node firefox-companion/install.mjs</code> from the WebBrain checkout. Restart Firefox with <code>--remote-debugging-port 9222</code>. Keep the connection on this computer.</p>
+            <label><input type="checkbox" id="firefox-bidi-enabled"> <span data-i18n="st.bidi.enable">Use trusted Firefox automation</span></label>
+            <div class="field"><label for="firefox-bidi-port" data-i18n="st.bidi.port">Local Firefox port</label><input id="firefox-bidi-port" type="number" min="1024" max="65535" value="9222"></div>
+            <button type="button" id="firefox-bidi-connect" class="btn-secondary" data-i18n="st.bidi.test">Test connection</button>
+            <p id="firefox-bidi-status" role="status"></p>
+          </div>
           <div class="provider-card" id="captcha-card">
             <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.captcha.desc_html"></div>
 

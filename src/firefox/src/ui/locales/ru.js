@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Russian (ru).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Масштаб интерфейса расширения',
   'sp.ui_scale.decrease': 'Уменьшить интерфейс расширения',
   'sp.ui_scale.increase': 'Увеличить интерфейс расширения',

@@ -3564,3 +3564,31 @@ async function sendToBackground(action, data = {}) {
 }
 
 init();
+
+// Firefox-only companion controls; kept off by default for extension-only users.
+const bidiEnabled = document.getElementById('firefox-bidi-enabled');
+const bidiPort = document.getElementById('firefox-bidi-port');
+const bidiStatus = document.getElementById('firefox-bidi-status');
+if (bidiEnabled && bidiPort) {
+  browser.storage.local.get(['firefoxBidiEnabled', 'firefoxBidiPort']).then(values => {
+    bidiEnabled.checked = values.firefoxBidiEnabled === true;
+    bidiPort.value = values.firefoxBidiPort || 9222;
+  });
+  const saveBidi = async () => {
+    const port = Number(bidiPort.value);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) { bidiStatus.textContent = t('st.bidi.invalid_port'); return false; }
+    await browser.storage.local.set({ firefoxBidiEnabled: bidiEnabled.checked, firefoxBidiPort: port });
+    bidiStatus.textContent = bidiEnabled.checked ? t('st.bidi.enabled') : t('st.bidi.disabled');
+    return true;
+  };
+  bidiEnabled.addEventListener('change', saveBidi);
+  bidiPort.addEventListener('change', saveBidi);
+  document.getElementById('firefox-bidi-connect').addEventListener('click', async () => {
+    if (!await saveBidi()) return;
+    bidiStatus.textContent = t('st.bidi.connecting');
+    try {
+      const result = await browser.runtime.sendMessage({ type: 'WB_BIDI_CONNECT' });
+      bidiStatus.textContent = result?.success ? t('st.bidi.connected') : result?.error || t('st.bidi.failed');
+    } catch (error) { bidiStatus.textContent = error.message; }
+  });
+}

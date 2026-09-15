@@ -1,0 +1,172 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { FirefoxBidiClient } from '../src/firefox/src/bidi/client.js';
+import { BidiSession } from '../firefox-companion/session.mjs';
+
+const id = () => crypto.randomUUID();
+test('connection loss cannot fall through to synthetic input', async () => {
+  let messages = 0;
+  const client = new FirefoxBidiClient({ tabs: { sendMessage() { messages++; } } });
+  client.runs.set(1, { runId: id(), bound: true });
+  client.disconnect();
+  const result = await client.sendContent(1, { action: 'click' });
+  assert.equal(result.noDispatch, true);
+  assert.equal(messages, 0);
+});
+test('a replacement run cannot inherit prepared input from its predecessor', async () => {
+  let finish;
+  const client = new FirefoxBidiClient({ tabs: { sendMessage: () => new Promise(resolve => { finish = resolve; }) } });
+  client.runs.set(1, { runId: id(), bound: true });
+  let dispatches = 0; client.request = async () => { dispatches++; };
+  const pending = client.sendContent(1, { action: 'click' });
+  await Promise.resolve();
+  client.runs.set(1, { runId: id(), bound: true });
+  finish({ bidiPrepared: true, url: 'https://example.com/' });
+  assert.equal((await pending).noDispatch, true);
+  assert.equal(dispatches, 0);
+});
+test('stopping during native tab binding prevents late ownership', async () => {
+  const session = new BidiSession(); const runId = id();
+  let finish;
+  session.locate = () => new Promise(resolve => { finish = resolve; });
+  session.call = async () => ({});
+  const opening = session.openRun(runId, id(), 'https://example.com/');
+  await session.closeRun(runId);
+  finish({ context: 'tab' });
+  await assert.rejects(opening, /stopped/);
+  assert.equal(session.runs.size, 0);
+});
+test('dialogs are scoped to a live run and navigation permission is single use', () => {
+  const session = new BidiSession(); const replies = [];
+  session.send = async (method, params) => { replies.push({ method, ...params }); };
+  const event = (context, type) => session.receive({ method: 'browsingContext.userPromptOpened', params: { context, type } });
+  event('idle', 'alert'); assert.equal(replies.length, 0);
+  const run = { context: 'owned', navigation: false }; session.runs.set(id(), run);
+  for (const type of ['confirm', 'prompt', 'beforeunload', 'alert']) event('owned', type);
+  assert.deepEqual(replies.map(item => item.accept), [false, false, false, true]);
+  run.navigation = true;
+  event('owned', 'beforeunload'); event('owned', 'beforeunload');
+  assert.deepEqual(replies.slice(-2).map(item => item.accept), [true, false]);
+});
+test('target lookup rejects ambiguity even when URLs match', async () => {
+  const session = new BidiSession();
+  session.send = async method => method === 'browsingContext.getTree'
+    ? { contexts: [{ context: 'a', url: 'https://example.com/' }, { context: 'b', url: 'https://example.com/' }] }
+    : { nodes: [{ sharedId: 'node' }] };
+  await assert.rejects(session.locate(id(), 'https://example.com/'), /ambiguous/);
+});
+test('stop during target preparation prevents input dispatch', async () => {
+  const session = new BidiSession(); const runId = id(); const sent = [];
+  session.runs.set(runId, { context: 'a' });
+  session.locate = async () => ({ context: 'a', node: { sharedId: 'el' } });
+  session.call = async () => { await session.closeRun(runId); return { result: { value: true } }; };
+  session.send = async method => { sent.push(method); return {}; };
+  await assert.rejects(session.perform(runId, 'click', {}), /stopped/);
+  assert.equal(sent.includes('input.performActions'), false);
+});
+test('unsupported commands and modifiers fail before touching the page', async () => {
+  const session = new BidiSession(); const runId = id();
+  session.runs.set(runId, { context: 'a' });
+  await assert.rejects(session.perform(runId, 'rawScript', {}), /Unsupported/);
+  await assert.rejects(session.perform(runId, 'key', { modifiers: ['Control'] }), /modifiers/);
+});
+
+test('installer and native launcher preserve Firefox message framing and command whitelist', async () => {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const directory = await mkdtemp(join(tmpdir(), 'webbrain-native-test-'));
+  try {
+    const install = spawnSync(process.execPath, ['firefox-companion/install.mjs', directory], { encoding: 'utf8' });
+    assert.equal(install.status, 0, install.stderr);
+    const manifest = JSON.parse(await readFile(join(directory, 'one.webbrain.bidi.json'), 'utf8'));
+    assert.deepEqual(manifest.allowed_extensions, ['webbrain@esokullu.com']);
+    const message = Buffer.from(JSON.stringify({ id: 12, command: 'script.evaluate', expression: 'arbitrary code' }));
+    const header = Buffer.alloc(4); header.writeUInt32LE(message.length);
+    const result = spawnSync(manifest.path, [], { input: Buffer.concat([header, message]), timeout: 5000 });
+    assert.equal(result.status, 0, result.stderr?.toString());
+    assert.equal(result.stdout.readUInt32LE(0), result.stdout.length - 4);
+    assert.deepEqual(JSON.parse(result.stdout.subarray(4)), { id: 12, error: 'Unknown companion command' });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('expired action deadline fails before target lookup', async () => {
+  const session = new BidiSession(); const runId = id();
+  session.runs.set(runId, { context: 'a' });
+  session.locate = () => assert.fail('expired actions must not locate a target');
+  await assert.rejects(session.perform(runId, 'click', { deadlineAt: Date.now() - 1 }), /deadline/);
+});
+
+test('blank-tab runs defer binding and retain ownership through navigation', async () => {
+  let url = 'about:blank', injections = 0; const calls = [];
+  const client = new FirefoxBidiClient({
+    storage: { local: { get: async () => ({firefoxBidiEnabled:true}) } },
+    tabs: {
+      get: async () => ({url}),
+      update: async (_id, value) => { url = value.url; },
+      executeScript: async () => { injections++; return [url]; },
+    },
+  });
+  client.connect = async () => ({});
+  client.request = async command => { calls.push(command); return {}; };
+  await client.startRun(1);
+  assert.equal(injections, 0);
+  assert.ok(client.runs.has(1));
+  assert.equal((await client.perform(1, 'navigate', {url:'https://example.com/'})).bindingDeferred, true);
+  await client.bindRun(1, client.runs.get(1));
+  assert.equal(injections, 1);
+  assert.deepEqual(calls, ['openRun']);
+});
+test('pending dialogs are handled only after binding their owner', async () => {
+  const session = new BidiSession(); const calls = [];
+  session.send = async (method, params) => { calls.push({method,params}); return {}; };
+  session.locate = async () => ({context:'tab', node:{sharedId:'html'}});
+  session.receive({method:'browsingContext.userPromptOpened',params:{context:'tab',type:'confirm'}});
+  assert.equal(calls.length, 0);
+  await session.openRun(id(), id(), 'https://example.com/');
+  assert.equal(calls[0].method, 'browsingContext.handleUserPrompt');
+  assert.equal(calls[0].params.accept, false);
+  assert.equal(session.dialogs.size, 0);
+});
+test('closed idle dialogs are not replayed when a task binds', async () => {
+  const session = new BidiSession(); const calls = [];
+  session.send = async method => { calls.push(method); return {}; };
+  session.locate = async () => ({context:'tab', node:{sharedId:'html'}});
+  session.receive({method:'browsingContext.userPromptOpened',params:{context:'tab',type:'alert'}});
+  session.receive({method:'browsingContext.userPromptClosed',params:{context:'tab'}});
+  await session.openRun(id(), id(), 'https://example.com/');
+  assert.deepEqual(calls, ['script.callFunction']);
+});
+test('a focus change blocks key dispatch before any text can leak', async () => {
+  const session = new BidiSession(); const runId = id(); const sent = [];
+  session.runs.set(runId, {context:'tab'});
+  session.locate = async () => ({context:'tab',node:{sharedId:'input'}});
+  session.call = async (_match, fn) => ({result:{value:fn.includes('activeElement === el') ? false : true}});
+  session.send = async method => { sent.push(method); return {}; };
+  await assert.rejects(session.perform(runId, 'type', {text:'secret'}), /Focus changed/);
+  assert.equal(sent.includes('input.performActions'), false);
+});
+test('Stop after one character never queues the remaining text', async () => {
+  const session = new BidiSession(); const runId = id(); const dispatched = [];
+  session.runs.set(runId, {context:'tab'});
+  session.locate = async () => ({context:'tab',node:{sharedId:'input'}});
+  session.call = async () => ({result:{value:true}});
+  session.send = async (method, params) => {
+    if (method === 'input.performActions') { dispatched.push(params); await session.closeRun(runId); }
+    return {};
+  };
+  await assert.rejects(session.perform(runId, 'type', {text:'hello'}), /stopped/);
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0].actions[0].actions.length, 2);
+});
+test('literal newline insertion never dispatches an Enter key', async () => {
+  const session = new BidiSession(); const runId = id(); const dispatched = []; const scripts = [];
+  session.runs.set(runId, {context:'tab'});
+  session.locate = async () => ({context:'tab',node:{sharedId:'input'}});
+  session.call = async (_match, fn) => { scripts.push(fn); return {result:{value:true}}; };
+  session.send = async (method, params) => { if(method==='input.performActions') dispatched.push(params); return {}; };
+  await session.perform(runId, 'type', {text:'a\nb'});
+  assert.ok(scripts.some(fn=>fn.includes("execCommand('insertText'")));
+  assert.deepEqual(dispatched.flatMap(p=>p.actions[0].actions.map(a=>a.value)), ['a','a','b','b']);
+});

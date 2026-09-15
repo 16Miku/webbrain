@@ -1,8 +1,10 @@
+import bidiCopy from './bidi-copy.mjs';
 // Persian — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'بزرگ‌نمایی رابط کاربری افزونه',
   'sp.ui_scale.decrease': 'کاهش بزرگ‌نمایی رابط افزونه',
   'sp.ui_scale.increase': 'افزایش بزرگ‌نمایی رابط افزونه',

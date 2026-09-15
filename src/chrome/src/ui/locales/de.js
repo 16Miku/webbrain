@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // German (de).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Erweiterungsoberfläche zoomen',
   'sp.ui_scale.decrease': 'Erweiterungsoberfläche verkleinern',
   'sp.ui_scale.increase': 'Erweiterungsoberfläche vergrößern',
