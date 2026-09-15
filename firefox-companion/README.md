@@ -22,6 +22,7 @@ The connection test checks the real BiDi session. It does not submit forms or se
 ## First supported scope
 
 - Session connection through Firefox native messaging to loopback BiDi; no arbitrary protocol or script tool exposed to the model.
+- Coordinate clicks preserve the validated CSS viewport point and recheck that point against the bound element before dispatch. Pre-dispatch validation failures retain `noDispatch:true`; transport failures and failures after input remain uncertain and unsafe to replay.
 - Trusted clicks (`click`, `click_ax`), hover, text (`type_text`, `type_ax`, `set_field`), and existing supported `press_keys` keys/repeats. Native selects retain their existing semantic selection path. Drag/drop and dedicated iframe tools retain their existing implementations.
 - Typing dispatches one character at a time, checking run ownership, deadline and focus before each step. Stop prevents the next step; a single already-dispatched character can still arrive. Newlines use a literal editing command, never Enter; single-line fields reject multiline payloads before clearing.
 - Exact value readback after typing. `set_field` submits with Enter only after verification. An uncertain dispatch is not safe to repeat automatically.

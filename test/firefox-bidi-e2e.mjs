@@ -65,6 +65,17 @@ try {
     return result.result;
   };
   const tabId = (await extensionEval(`browser.tabs.query({}).then(tabs => tabs.find(tab => tab.url === ${JSON.stringify(url)}).id)`)).value;
+  await evaluate(`document.body.insertAdjacentHTML('beforeend','<canvas id="point-canvas" style="position:fixed;left:10px;top:200px;width:300px;height:60px"></canvas>'); document.querySelector('#point-canvas').onclick=e=>window.clickedPoint={x:e.clientX,y:e.clientY,trusted:e.isTrusted};`);
+  const pointToken = crypto.randomUUID();
+  const pointResponse = await extensionEval(`browser.tabs.sendMessage(${tabId}, {target:'content',action:'click',params:{x:22,y:210,coordinate_space:'css',_bidiPrepare:${JSON.stringify(pointToken)}}}).then(value=>JSON.stringify(value))`);
+  const pointPrepared = JSON.parse(pointResponse.value);
+  assert.deepEqual(pointPrepared.point,{x:22,y:210});
+  await session.perform(runId,'click',{token:pointToken,url,point:pointPrepared.point});
+  assert.deepEqual(JSON.parse((await evaluate('JSON.stringify(window.clickedPoint)')).value),{x:22,y:210,trusted:true});
+  const obscured = await mark('#point-canvas');
+  await evaluate(`document.body.insertAdjacentHTML('beforeend','<div id="point-cover" style="position:fixed;left:20px;top:205px;width:10px;height:10px;background:red;z-index:99999"></div>')`);
+  await assert.rejects(session.perform(runId,'click',{...obscured,point:{x:22,y:210}}), error=>error.dispatchState.noDispatch===true && /covered/.test(error.message));
+  await evaluate(`document.querySelector('#point-canvas').remove();document.querySelector('#point-cover').remove()`);
   const token = crypto.randomUUID();
   const prepared = await extensionEval(`browser.tabs.sendMessage(${tabId}, {target:'content', action:'type', params:{selector:'#text', text:'Through extension', clear:true, _bidiPrepare:${JSON.stringify(token)}}}).then(value => JSON.stringify(value))`);
   assert.equal(JSON.parse(prepared.value).bidiPrepared, true, 'packaged content script prepares a target');

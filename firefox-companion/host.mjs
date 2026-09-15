@@ -19,7 +19,7 @@ async function dispatch(message) {
       default: throw new Error('Unknown companion command');
     }
     reply({ id, result });
-  } catch (error) { reply({ id, error: error.message }); }
+  } catch (error) { reply({ id, error: error.message, ...(error.dispatchState ? { dispatchState: error.dispatchState } : {}) }); }
 }
 process.stdin.on('data', data => {
   buffer = Buffer.concat([buffer, data]);

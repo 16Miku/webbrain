@@ -2097,7 +2097,12 @@
     if (actionDeadlineExpired()) return deadlineFailure();
     const clickedRect = rememberInteractionPoint(el, 'click');
     if (actionDeadlineExpired()) return deadlineFailure();
-    if (params._bidiPrepare) return { ...prepareBidiTarget(el, params._bidiPrepare), _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId };
+    if (params._bidiPrepare) {
+      const coordinateClick = !params.text && !params.selector && params.index == null && Number.isFinite(params.x) && Number.isFinite(params.y);
+      return { ...prepareBidiTarget(el, params._bidiPrepare),
+        ...(coordinateClick ? { point: { x: Math.round(params.x), y: Math.round(params.y) } } : {}),
+        _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId };
+    }
     dispatched = true;
     const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
     if (filePickerGuard.blocked) {

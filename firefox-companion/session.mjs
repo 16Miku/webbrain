@@ -110,6 +110,15 @@ export class BidiSession {
     return {};
   }
   async perform(id, action, payload) {
+    const dispatch = { started: false };
+    try { return await this.performAction(id, action, payload, dispatch); }
+    catch (error) {
+      error.dispatchState = { dispatched: dispatch.started, noDispatch: !dispatch.started,
+        outcomeUnknown: dispatch.started, retryable: !dispatch.started };
+      throw error;
+    }
+  }
+  async performAction(id, action, payload, dispatch) {
     if (!['navigate', 'click', 'hover', 'type', 'field', 'key', 'upload'].includes(action)) throw new Error('Unsupported BiDi action');
     if (payload.modifiers) throw new Error('Key modifiers are not supported by this tool');
     const run = this.runs.get(id); if (!run) throw new Error('Run stopped or disconnected');
@@ -121,25 +130,30 @@ export class BidiSession {
     if (action === 'navigate') {
       if (!/^https?:\/\//.test(payload.url)) throw new Error('Invalid navigation URL');
       run.navigation = true;
-      try { await this.send('browsingContext.navigate', { context: run.context, url: payload.url, wait: 'interactive' }); }
+      try { dispatch.started = true; await this.send('browsingContext.navigate', { context: run.context, url: payload.url, wait: 'interactive' }); }
       finally { run.navigation = false; }
       return { success: true, dispatched: true };
     }
     const match = await this.locate(payload.token, payload.url, run.context);
     assertLive();
-    const check = await this.call(match, `(el, token, action) => {
+    const point = action === 'click' && payload.point != null ? payload.point : null;
+    if (point && (!Number.isInteger(point.x) || !Number.isInteger(point.y))) throw new Error('Invalid click coordinates');
+    const check = await this.call(match, `(el, token, action, x, y) => {
       if (!el.isConnected || el.getAttribute('data-webbrain-bidi') !== token || el.disabled) return false;
       el.removeAttribute('data-webbrain-bidi');
       if (action === 'upload') return el.tagName === 'INPUT' && el.type === 'file';
       const r = el.getBoundingClientRect();
-      const hit = document.elementFromPoint(r.x+r.width/2, r.y+r.height/2);
+      const px = x === null ? r.x+r.width/2 : x;
+      const py = y === null ? r.y+r.height/2 : y;
+      if (px < 0 || py < 0 || px >= innerWidth || py >= innerHeight) return false;
+      const hit = document.elementFromPoint(px, py);
       if (!r.width || !r.height || !(hit === el || el.contains(hit))) return false;
       if (action === 'type' || action === 'field' || action === 'key') {
         el.focus({preventScroll:true});
         if (el.getRootNode().activeElement !== el) return false;
       }
       return true;
-    }`, [{ type: 'string', value: payload.token }, { type: 'string', value: action }]);
+    }`, [{ type: 'string', value: payload.token }, { type: 'string', value: action }, point ? {type:'number',value:point.x} : {type:'null'}, point ? {type:'number',value:point.y} : {type:'null'}]);
     if (check.result?.value !== true) throw new Error('Target changed or is covered; no input sent');
     assertLive();
     if (action === 'upload') {
@@ -151,6 +165,7 @@ export class BidiSession {
       const path = join(dir, name === '.' || name === '..' ? 'attachment' : name);
       await writeFile(path, bytes, { mode: 0o600 });
       assertLive();
+      dispatch.started = true;
       await this.send('input.setFiles', { context: match.context, element: { sharedId: match.node.sharedId }, files: [path] });
       const attached = await this.call(match, '(el, name, size) => el.isConnected && el.files?.length === 1 && el.files[0].name === name && el.files[0].size === size', [{ type: 'string', value: name }, { type: 'number', value: bytes.length }]);
       if (attached.result?.value !== true) return { success: false, dispatched: true, outcomeUnknown: true, retryable: false, error: 'File input changed after attachment; inspect the page before retrying.' };
@@ -173,17 +188,18 @@ export class BidiSession {
         { type: 'keyDown', value }, { type: 'keyUp', value },
         ...(modifier ? [{ type: 'keyUp', value: modifier }] : []),
       ];
-      try { await this.send('input.performActions', { context: match.context, actions: [{ type: 'key', id: 'webbrain-keyboard', actions }] }); }
+      try { dispatch.started = true; await this.send('input.performActions', { context: match.context, actions: [{ type: 'key', id: 'webbrain-keyboard', actions }] }); }
       finally { await this.send('input.releaseActions', { context: match.context }).catch(() => {}); }
       assertLive();
     };
     if (action === 'click' || action === 'hover') {
       const source = { type: 'pointer', id: 'webbrain-pointer', parameters: { pointerType: 'mouse' }, actions: [
-        { type: 'pointerMove', x: 0, y: 0, origin: { type: 'element', element: { sharedId: match.node.sharedId } } },
+        point ? { type: 'pointerMove', x: point.x, y: point.y, origin: 'viewport' }
+          : { type: 'pointerMove', x: 0, y: 0, origin: { type: 'element', element: { sharedId: match.node.sharedId } } },
         ...(action === 'click' ? [{ type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }] : []),
       ] };
       assertLive();
-      try { await this.send('input.performActions', { context: match.context, actions: [source] }); }
+      try { dispatch.started = true; await this.send('input.performActions', { context: match.context, actions: [source] }); }
       finally { await this.send('input.releaseActions', { context: match.context }).catch(() => {}); }
       assertLive();
     } else if (typing) {
@@ -203,6 +219,7 @@ export class BidiSession {
           await assertFocus();
           // Enter is a submit shortcut on many editors, even with Shift. Insert a literal
           // newline through the editing command instead; never synthesize a submit key.
+          dispatch.started = true;
           const inserted = await this.call(match, `(el, text) => {
             if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
             return document.execCommand('insertText', false, text);

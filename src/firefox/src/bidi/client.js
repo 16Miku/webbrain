@@ -8,7 +8,13 @@ export class FirefoxBidiClient {
       this.port.onMessage.addListener(message => {
         const entry = this.pending.get(message.id); if (!entry) return;
         this.pending.delete(message.id);
-        message.error ? entry.reject(new Error(message.error)) : entry.resolve(message.result);
+        if (message.error) {
+          const error = new Error(message.error);
+          if (message.dispatchState?.dispatched === false && message.dispatchState?.noDispatch === true) {
+            error.dispatchState = { dispatched: false, noDispatch: true, outcomeUnknown: false, retryable: true };
+          }
+          entry.reject(error);
+        } else entry.resolve(message.result);
       });
       const port = this.port;
       this.port.onDisconnect.addListener(() => {
@@ -54,8 +60,8 @@ export class FirefoxBidiClient {
     // Internal/new tabs cannot accept content scripts. Keep ownership but defer
     // document binding so the normal authorized navigation can leave that page.
     if (!/^https?:\/\//.test(tab.url || '')) return;
-    const token = crypto.randomUUID();
-    const [url] = await this.api.tabs.executeScript(tabId, { frameId: 0, code: `(() => { const el = document.documentElement; const token = ${JSON.stringify(token)}; el.setAttribute('data-webbrain-bidi', token); setTimeout(() => { if (el.getAttribute('data-webbrain-bidi') === token) el.removeAttribute('data-webbrain-bidi'); }, 10000); return location.href; })()` });
+    const [binding] = await this.api.tabs.executeScript(tabId, { frameId: 0, file: '/src/bidi/bind.js' });
+    const {token, url} = binding || {};
     if (this.runs.get(tabId) !== owner || owner.disconnected || owner.signal?.aborted) throw new Error('Run stopped');
     await this.request('openRun', { runId: owner.runId, token, url });
     if (this.runs.get(tabId) !== owner || owner.disconnected || owner.signal?.aborted) {
@@ -103,10 +109,10 @@ export class FirefoxBidiClient {
     if (message.actionDeadlineAt && Date.now() >= message.actionDeadlineAt) return { success: false, dispatched: false, noDispatch: true, deadlineExpired: true };
     const metadata = { fieldMeta: prepared.fieldMeta, ...(message.params?.ref_id ? { ref_id: message.params.ref_id } : {}) };
     try {
-      return { ...metadata, ...await this.perform(tabId, action, { ...message.params, token, url: prepared.url, deadlineAt: message.actionDeadlineAt || 0 }), ...(prepared.rect ? { rect: prepared.rect } : {}), ...(prepared._filePickerGuardId ? { _filePickerGuardId: prepared._filePickerGuardId } : {}) };
+      return { ...metadata, ...await this.perform(tabId, action, { ...message.params, token, url: prepared.url, point: prepared.point || null, deadlineAt: message.actionDeadlineAt || 0 }), ...(prepared.rect ? { rect: prepared.rect } : {}), ...(prepared._filePickerGuardId ? { _filePickerGuardId: prepared._filePickerGuardId } : {}) };
     } catch (error) {
       // A transport failure can occur after trusted input was delivered.
-      return { ...metadata, success: false, dispatched: true, outcomeUnknown: true, retryable: false, error: error.message };
+      return { ...metadata, success: false, dispatched: true, outcomeUnknown: true, retryable: false, ...(error.dispatchState || {}), error: error.message };
     }
   }
 }

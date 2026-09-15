@@ -88,6 +88,13 @@ test('installer and native launcher preserve Firefox message framing and command
     assert.equal(result.status, 0, result.stderr?.toString());
     assert.equal(result.stdout.readUInt32LE(0), result.stdout.length - 4);
     assert.deepEqual(JSON.parse(result.stdout.subarray(4)), { id: 12, error: 'Unknown companion command' });
+    const rejected = Buffer.from(JSON.stringify({id:13,command:'perform',runId:id(),action:'click',payload:{}}));
+    const rejectedHeader = Buffer.alloc(4); rejectedHeader.writeUInt32LE(rejected.length);
+    const rejectedResult = spawnSync(manifest.path, [], {input:Buffer.concat([rejectedHeader,rejected]),timeout:5000});
+    assert.equal(rejectedResult.status,0,rejectedResult.stderr?.toString());
+    const failure = JSON.parse(rejectedResult.stdout.subarray(4));
+    assert.equal(failure.id,13);
+    assert.deepEqual(failure.dispatchState,{dispatched:false,noDispatch:true,outcomeUnknown:false,retryable:true});
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -105,7 +112,7 @@ test('blank-tab runs defer binding and retain ownership through navigation', asy
     tabs: {
       get: async () => ({url}),
       update: async (_id, value) => { url = value.url; },
-      executeScript: async () => { injections++; return [url]; },
+      executeScript: async (_tab, options) => { injections++; assert.equal(options.file, '/src/bidi/bind.js'); assert.equal(options.code, undefined); return [{token:id(), url}]; },
     },
   });
   client.connect = async () => ({});
@@ -169,4 +176,60 @@ test('literal newline insertion never dispatches an Enter key', async () => {
   await session.perform(runId, 'type', {text:'a\nb'});
   assert.ok(scripts.some(fn=>fn.includes("execCommand('insertText'")));
   assert.deepEqual(dispatched.flatMap(p=>p.actions[0].actions.map(a=>a.value)), ['a','a','b','b']);
+});
+
+test('validation failures preserve no-dispatch status across the native client', async () => {
+  const session = new BidiSession(); const runId = id();
+  session.runs.set(runId, {context:'tab'});
+  session.locate = async () => { throw new Error('stale target'); };
+  let receive;
+  const client = new FirefoxBidiClient({
+    runtime: { connectNative: () => ({
+      onMessage: {addListener: listener => {receive=listener;}}, onDisconnect: {addListener(){}},
+      postMessage: message => {
+        session.perform(message.runId, message.action, message.payload).then(
+          result => receive({id:message.id,result}),
+          error => receive({id:message.id,error:error.message,dispatchState:error.dispatchState}),
+        );
+      },
+    }) },
+    tabs: {sendMessage: async () => ({bidiPrepared:true,url:'https://example.com/'})},
+  });
+  client.runs.set(1,{runId,bound:true});
+  const result = await client.sendContent(1,{action:'click',params:{}});
+  assert.equal(result.dispatched,false);
+  assert.equal(result.noDispatch,true);
+  assert.equal(result.outcomeUnknown,false);
+  assert.equal(result.retryable,true);
+});
+test('post-dispatch failure and transport uncertainty are never safe retries', async () => {
+  const session = new BidiSession(); const runId = id();
+  session.runs.set(runId, {context:'tab'});
+  session.locate = async () => ({context:'tab',node:{sharedId:'el'}});
+  session.call = async () => ({result:{value:true}});
+  session.send = async method => { if(method==='input.performActions')throw new Error('connection lost'); return {}; };
+  await assert.rejects(session.perform(runId,'click',{}), error => error.dispatchState.dispatched === true && error.dispatchState.retryable === false);
+  const client = new FirefoxBidiClient({tabs:{sendMessage:async()=>({bidiPrepared:true,url:'https://example.com/'})}});
+  client.runs.set(1,{runId,bound:true}); client.request=async()=>{throw new Error('timeout')};
+  const result=await client.sendContent(1,{action:'click',params:{}});
+  assert.equal(result.dispatched,true);
+  assert.equal(result.outcomeUnknown,true);
+  assert.equal(result.retryable,false);
+});
+test('coordinate clicks retain their validated viewport point', async () => {
+  const session = new BidiSession(); const runId = id(); const sent=[];
+  session.runs.set(runId,{context:'tab'});
+  session.locate=async()=>({context:'tab',node:{sharedId:'canvas'}});
+  session.call=async(_match,fn,args)=>{assert.equal(args[2].value,17);assert.equal(args[3].value,23);return {result:{value:true}}};
+  session.send=async(method,params)=>{if(method==='input.performActions')sent.push(params);return {}};
+  await session.perform(runId,'click',{point:{x:17,y:23}});
+  assert.deepEqual(sent[0].actions[0].actions[0],{type:'pointerMove',origin:'viewport',x:17,y:23});
+});
+test('every release workflow running npm test uses the companion runtime', async () => {
+  const {readFile}=await import('node:fs/promises');
+  for(const workflow of ['main','minor-release']) {
+    const source=await readFile(`.github/workflows/${workflow}.yml`,'utf8');
+    assert.match(source,/node-version: 22/);
+    assert.match(source,/run: npm test/);
+  }
 });
