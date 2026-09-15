@@ -26,22 +26,33 @@ try {
       const answer = prompt('Value?', 'default value'); return { confirmed, answer }; })()`,
     returnByValue: true,
   });
-  assert.deepEqual(result.result.value, { confirmed: true, answer: 'default value' });
+  assert.deepEqual(result.result.value, { confirmed: false, answer: null });
+  const timerDialog = await session.send('Runtime.evaluate', {
+    expression: 'new Promise(resolve => setTimeout(() => resolve(confirm("Timer confirmation")), 0))',
+    awaitPromise: true, returnByValue: true,
+  });
+  assert.equal(timerDialog.result.value, false);
   await page.evaluate(() => {
     document.querySelector('#go').onclick = () => {
       window.onbeforeunload = event => { event.preventDefault(); event.returnValue = ''; };
     };
   });
   await page.click('#go');
-  await page.goto('about:blank');
+  const unmatchedClosed = new Promise(resolve => session.once('Page.javascriptDialogClosed', resolve));
+  await assert.rejects(page.goto('data:text/html,unrelated'), /ERR_ABORTED|aborted|canceled/i);
+  await unmatchedClosed;
   assert.equal(page.url(), 'about:blank');
-  assert.deepEqual(answered, ['alert', 'confirm', 'prompt', 'beforeunload']);
+  const release = client.authorizeNavigationDialog(1, page.url());
+  await page.goto('about:blank');
+  release();
+  assert.equal(page.url(), 'about:blank');
+  assert.deepEqual(answered, ['alert', 'confirm', 'prompt', 'confirm', 'beforeunload', 'beforeunload']);
   client.stopDialogHandling(1);
   const opened = new Promise(resolve => session.once('Page.javascriptDialogOpening', resolve));
   const pending = session.send('Runtime.evaluate', { expression: 'confirm("Already open")', returnByValue: true });
   await opened;
   await client.startDialogHandling(1);
-  assert.equal((await pending).result.value, true);
+  assert.equal((await pending).result.value, false);
   client.stopDialogHandling(1);
   console.log('PASS: real Chrome alert, confirm, prompt, and beforeunload resume renderer/navigation.');
 } finally {

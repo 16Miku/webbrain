@@ -12,7 +12,7 @@ function harness() {
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-test('native dialogs continue immediately, preserving prompt defaults and child sessions', async () => {
+test('unmatched dialogs are dismissed, including child sessions and supplied prompt defaults', async () => {
   const { client, calls } = harness();
   const handled = [];
   await client.startDialogHandling(7, { onHandled: type => handled.push(type) });
@@ -26,7 +26,7 @@ test('native dialogs continue immediately, preserving prompt defaults and child 
   assert.deepEqual(handled, ['alert', 'confirm', 'beforeunload', 'prompt']);
   assert.deepEqual(calls.slice(1), ['alert', 'confirm', 'beforeunload', 'prompt'].map(type => [
     7, 'Page.handleJavaScriptDialog',
-    type === 'prompt' ? { accept: true, promptText: 'existing answer' } : { accept: true }, 'child',
+    { accept: type === 'alert' }, 'child',
   ]));
 });
 
@@ -79,7 +79,7 @@ test('a new action run resumes an already-observed dialog exactly once', async (
   assert.equal(calls.length, 0);
   await client.startDialogHandling(7);
   await client.startDialogHandling(7);
-  assert.equal(calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').length, 1);
+  assert.deepEqual(calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').map(call => call[2]), [{ accept: false }]);
   client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogClosed', {});
   assert.equal(client.pendingDialogs.size, 0);
 });
@@ -177,4 +177,34 @@ test('failed workflow setup releases its debugger but preserves a Dev owner', as
     cdpClient.sendCommand = originalSend;
     globalThis.chrome = previousChrome;
   }
+});
+
+test('only a current matching navigation can accept Leave once', async () => {
+  const { client, calls } = harness();
+  await client.startDialogHandling(7);
+  const emit = (type, url = 'https://example.com/') => {
+    client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogOpening', { type, url });
+    client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogClosed', {});
+  };
+  const release = client.authorizeNavigationDialog(7, 'https://example.com/');
+  emit('confirm');
+  emit('prompt');
+  emit('beforeunload', 'https://other.example/');
+  emit('beforeunload');
+  emit('beforeunload');
+  release();
+  assert.deepEqual(calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').map(call => call[2].accept),
+    [false, false, false, true, false]);
+});
+
+test('cached dialogs and ended navigation cannot inherit authorization', async () => {
+  const { client, calls } = harness();
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogOpening', { type: 'beforeunload', url: 'https://example.com/' });
+  await client.startDialogHandling(7);
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogClosed', {});
+  const controller = new AbortController();
+  client.authorizeNavigationDialog(7, 'https://example.com/', controller.signal);
+  controller.abort();
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogOpening', { type: 'beforeunload', url: 'https://example.com/' });
+  assert.ok(calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').every(call => !call[2].accept));
 });

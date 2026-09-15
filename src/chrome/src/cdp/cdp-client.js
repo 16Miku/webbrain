@@ -103,7 +103,7 @@ export class CDPClient {
       if (tabId == null) return;
       if (method === 'Page.javascriptDialogOpening') {
         if (!this.pendingDialogs.has(tabId)) this.pendingDialogs.set(tabId, new Map());
-        const dialog = { type: params?.type, defaultPrompt: params?.defaultPrompt };
+        const dialog = { type: params?.type, navigation: this.dialogRuns.get(tabId)?.navigation, url: params?.url };
         this.pendingDialogs.get(tabId).set(source.sessionId || '', dialog);
         this._continueJavaScriptDialog(tabId, source, dialog);
       } else if (method === 'Page.javascriptDialogClosed') {
@@ -323,9 +323,30 @@ export class CDPClient {
 
   stopDialogHandling(tabId) {
     const owner = this.dialogRuns.get(tabId);
+    owner?.navigation?.release();
     owner?.cancelStartup?.();
     owner?.signal?.removeEventListener('abort', owner.onAbort);
     this.dialogRuns.delete(tabId);
+  }
+
+  // Only the navigation dispatch path may grant a one-use Leave decision.
+  // A click in flight is not proof that a confirm/prompt came from that click.
+  authorizeNavigationDialog(tabId, sourceUrl, signal) {
+    const owner = this.dialogRuns.get(tabId);
+    if (!owner || owner.signal?.aborted || signal?.aborted || !sourceUrl
+        || this.pendingDialogs.get(tabId)?.size) return () => {};
+    owner.navigation?.release();
+    const permit = { sourceUrl };
+    const release = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', release);
+      if (owner.navigation === permit) delete owner.navigation;
+    };
+    const timer = setTimeout(release, 10000);
+    permit.release = release;
+    owner.navigation = permit;
+    signal?.addEventListener('abort', release, { once: true });
+    return release;
   }
 
   _continueJavaScriptDialog(tabId, source, params = {}) {
@@ -333,10 +354,14 @@ export class CDPClient {
     if (!owner || owner.signal?.aborted || params.handling) return;
     if (!['alert', 'confirm', 'prompt', 'beforeunload'].includes(params.type)) return;
     params.handling = true;
-    const response = { accept: true };
-    // Use the site's existing default; never invent answers or interpret dialog
-    // text as instructions. No page-controlled text is sent to status/trace UI.
-    if (params.type === 'prompt') response.promptText = String(params.defaultPrompt ?? '');
+    const navigation = owner.navigation;
+    const allowLeave = params.type === 'beforeunload' && navigation
+      && params.navigation === navigation && params.url === navigation.sourceUrl
+      && !source?.sessionId;
+    if (allowLeave) navigation.release();
+    // Alerts have no confirmation branch. Everything else fails closed unless
+    // it belongs to the current, explicitly dispatched top-level navigation.
+    const response = { accept: params.type === 'alert' || !!allowLeave };
     void this.sendCommand(tabId, 'Page.handleJavaScriptDialog', response, source?.sessionId || '')
       .then(() => {
         if (this.dialogRuns.get(tabId) !== owner) return;
