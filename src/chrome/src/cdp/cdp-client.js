@@ -90,15 +90,27 @@ export class CDPClient {
   constructor() {
     this.sessions = new Map(); // tabId -> debugger session
     this.attachPromises = new Map(); // tabId -> in-flight debugger attach
+    this.attachGenerations = new Map(); // tabId -> current attach generation
     this.eventHandlers = new Map(); // tabId -> { eventName -> [handlers] }
     this.devDiagnostics = new Map(); // tabId -> bounded console/network buffers
     this.webMcpSessions = new Map(); // tabId -> WebMCP tools + pending invocations
     this.runtimeContexts = new Map(); // tabId -> session/context key -> default context
+    this.pendingDialogs = new Map(); // tabId -> sessionId -> current native dialog
+    this.dialogRuns = new Map(); // tabId -> active action-run owner
     this.fileChooserGuards = new Map(); // tabId -> temporary protocol interception
     this._debuggerListenersRegistered = false;
     this._onDebuggerEvent = (source, method, params) => {
       const tabId = source?.tabId;
       if (tabId == null) return;
+      if (method === 'Page.javascriptDialogOpening') {
+        if (!this.pendingDialogs.has(tabId)) this.pendingDialogs.set(tabId, new Map());
+        const dialog = { type: params?.type, navigation: this.dialogRuns.get(tabId)?.navigation, url: params?.url };
+        this.pendingDialogs.get(tabId).set(source.sessionId || '', dialog);
+        this._continueJavaScriptDialog(tabId, source, dialog);
+      } else if (method === 'Page.javascriptDialogClosed') {
+        this.pendingDialogs.get(tabId)?.delete(source.sessionId || '');
+        if (!this.pendingDialogs.get(tabId)?.size) this.pendingDialogs.delete(tabId);
+      }
       this._trackRuntimeContextEvent(tabId, source, method, params);
       const handlers = this.eventHandlers.get(tabId)?.[method];
       if (handlers) {
@@ -108,6 +120,8 @@ export class CDPClient {
     this._onDebuggerDetach = (source, reason) => {
       const tabId = source?.tabId;
       if (tabId == null) return;
+      this.stopDialogHandling(tabId);
+      this.pendingDialogs.delete(tabId);
       this._dropWebMCPSession(tabId, `Debugger detached: ${reason || 'unknown reason'}`);
       this.sessions.delete(tabId);
       this.eventHandlers.delete(tabId);
@@ -173,16 +187,30 @@ export class CDPClient {
     if (this.sessions.has(tabId)) {
       return this.sessions.get(tabId);
     }
-    if (this.attachPromises.has(tabId)) {
-      return this.attachPromises.get(tabId);
+    const existingAttach = this.attachPromises.get(tabId);
+    if (existingAttach && !existingAttach.cancelled) {
+      return existingAttach;
     }
 
     this._ensureDebuggerListeners();
+
+    const generation = (this.attachGenerations.get(tabId) || 0) + 1;
+    this.attachGenerations.set(tabId, generation);
 
     const attachPromise = new Promise((resolve, reject) => {
       chrome.debugger.attach({ tabId }, '1.3', async () => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+
+        const isCurrentGeneration = this.attachGenerations.get(tabId) === generation;
+
+        if (attachPromise.cancelled || !isCurrentGeneration) {
+          if (!this.sessions.has(tabId)) {
+            try { chrome.debugger.detach({ tabId }, () => {}); } catch {}
+          }
+          reject(new Error('Debugger attachment was cancelled'));
           return;
         }
 
@@ -205,9 +233,11 @@ export class CDPClient {
    * Detach debugger from a tab.
    */
   async detach(tabId) {
+    this.stopDialogHandling(tabId);
+    this.pendingDialogs.delete(tabId);
     if (!this.sessions.has(tabId)) {
       const pendingAttach = this.attachPromises.get(tabId);
-      if (!pendingAttach) return;
+      if (!pendingAttach || pendingAttach.cancelled) return;
       try {
         await pendingAttach;
       } catch {
@@ -238,6 +268,7 @@ export class CDPClient {
    * page-owned catalog.
    */
   async cleanupRun(tabId) {
+    this.stopDialogHandling(tabId);
     try { await this.disableWebMCP(tabId); } catch {}
     if (!this.devDiagnostics.has(tabId)) await this.detach(tabId);
   }
@@ -255,6 +286,114 @@ export class CDPClient {
     try { await this.disableDevDiagnostics(tabId); } catch {}
     try { await this.disableWebMCP(tabId); } catch {}
     await this.detach(tabId);
+  }
+
+  /** Native dialogs pause renderer commands, so resolve them from the debugger
+   * event callback rather than queuing behind the click/evaluate they blocked.
+   * Firefox has no equivalent WebExtension API; never patch page JS to fake it.
+   */
+  async startDialogHandling(tabId, { signal, onHandled, timeoutMs = 5000 } = {}) {
+    this.stopDialogHandling(tabId);
+    if (signal?.aborted) return;
+    const owner = { signal, onHandled };
+    owner.onAbort = () => {
+      if (this.dialogRuns.get(tabId) === owner) this.stopDialogHandling(tabId);
+    };
+    this.dialogRuns.set(tabId, owner);
+    signal?.addEventListener('abort', owner.onAbort, { once: true });
+    let timer;
+    const markPendingAttachCancelled = () => {
+      const pendingAttach = this.attachPromises.get(tabId);
+      if (pendingAttach) {
+        pendingAttach.cancelled = true;
+        this.attachPromises.delete(tabId);
+      }
+    };
+    const interrupted = new Promise((_, reject) => {
+      owner.cancelStartup = () => {
+        markPendingAttachCancelled();
+        const error = new Error('Stopped during browser dialog setup');
+        error.name = 'AbortError';
+        reject(error);
+      };
+      timer = setTimeout(() => {
+        markPendingAttachCancelled();
+        const error = new Error('Browser dialog setup timed out. Dismiss any existing browser dialog and try again.');
+        error.code = 'dialog_startup_timeout';
+        reject(error);
+      }, timeoutMs);
+    });
+    try {
+      await Promise.race([this.attach(tabId), interrupted]);
+      if (this.dialogRuns.get(tabId) !== owner) return;
+      // Resolve an already-observed dialog before Page.enable, which itself
+      // can wait for the paused renderer when Dev retained the connection.
+      for (const [sessionId, dialog] of this.pendingDialogs.get(tabId) || []) {
+        this._continueJavaScriptDialog(tabId, { tabId, sessionId }, dialog);
+      }
+      // Page.enable can wait indefinitely behind a pre-existing dialog. Stop
+      // must release the run even when Chrome never answers this command.
+      await Promise.race([this.sendCommand(tabId, 'Page.enable'), interrupted]);
+    } catch (error) {
+      markPendingAttachCancelled();
+      if (this.dialogRuns.get(tabId) === owner) this.stopDialogHandling(tabId);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      delete owner.cancelStartup;
+    }
+  }
+
+  stopDialogHandling(tabId) {
+    const owner = this.dialogRuns.get(tabId);
+    owner?.navigation?.release();
+    owner?.cancelStartup?.();
+    owner?.signal?.removeEventListener('abort', owner.onAbort);
+    this.dialogRuns.delete(tabId);
+  }
+
+  // Only the navigation dispatch path may grant a one-use Leave decision.
+  // A click in flight is not proof that a confirm/prompt came from that click.
+  authorizeNavigationDialog(tabId, sourceUrl, signal) {
+    const owner = this.dialogRuns.get(tabId);
+    if (!owner || owner.signal?.aborted || signal?.aborted || !sourceUrl
+        || this.pendingDialogs.get(tabId)?.size) return () => {};
+    owner.navigation?.release();
+    const permit = { sourceUrl };
+    const release = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', release);
+      if (owner.navigation === permit) delete owner.navigation;
+    };
+    const timer = setTimeout(release, 10000);
+    permit.release = release;
+    owner.navigation = permit;
+    signal?.addEventListener('abort', release, { once: true });
+    return release;
+  }
+
+  _continueJavaScriptDialog(tabId, source, params = {}) {
+    const owner = this.dialogRuns.get(tabId);
+    if (!owner || owner.signal?.aborted || params.handling) return;
+    if (!['alert', 'confirm', 'prompt', 'beforeunload'].includes(params.type)) return;
+    params.handling = true;
+    const navigation = owner.navigation;
+    const allowLeave = params.type === 'beforeunload' && navigation
+      && params.navigation === navigation && params.url === navigation.sourceUrl
+      && !source?.sessionId;
+    if (allowLeave) navigation.release();
+    // Alerts have no confirmation branch. Everything else fails closed unless
+    // it belongs to the current, explicitly dispatched top-level navigation.
+    const response = { accept: params.type === 'alert' || !!allowLeave };
+    void this.sendCommand(tabId, 'Page.handleJavaScriptDialog', response, source?.sessionId || '')
+      .then(() => {
+        if (this.dialogRuns.get(tabId) !== owner) return;
+        try { owner.onHandled?.(params.type); } catch {}
+      })
+      .catch(() => {
+        // The user may have already closed it, navigated, or detached. Do not
+        // retry: a retry could answer a different dialog opened immediately after.
+      });
   }
 
   /**
