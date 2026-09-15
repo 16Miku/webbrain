@@ -329,6 +329,59 @@ test('canceled attachments are evicted immediately and allow fresh retries', asy
   }
 });
 
+test('stale attach success detaches from Chrome when retry has failed', async () => {
+  const previousChrome = globalThis.chrome;
+  const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+  let attachCalls = 0;
+  let detachCalls = 0;
+  let firstAttachCallback = null;
+  globalThis.chrome = {
+    storage: { local: area, session: area },
+    runtime: { getURL: value => value, lastError: null },
+    tabs: { get: async id => ({ id, url: 'https://example.com/' }) },
+    debugger: {
+      attach: (_target, _version, callback) => {
+        attachCalls++;
+        if (attachCalls === 1) {
+          firstAttachCallback = callback;
+        } else {
+          globalThis.chrome.runtime.lastError = { message: 'Another debugger is already attached' };
+          callback?.();
+          globalThis.chrome.runtime.lastError = null;
+        }
+      },
+      detach: (_target, callback) => {
+        detachCalls++;
+        callback?.();
+      },
+      onEvent: { addListener: () => {} },
+      onDetach: { addListener: () => {} },
+    },
+  };
+  const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+
+  try {
+    // 1. First startDialogHandling times out during attach
+    const startup = cdpClient.startDialogHandling(82, { timeoutMs: 20 });
+    await assert.rejects(startup, error => error.code === 'dialog_startup_timeout');
+    assert.equal(attachCalls, 1);
+
+    // 2. Retry fails because debugger was attached by the first attempt
+    await assert.rejects(cdpClient.attach(82), /Another debugger is already attached/);
+    assert.equal(attachCalls, 2);
+    assert.equal(cdpClient.sessions.has(82), false);
+
+    // 3. Stale success callback from first attempt arrives; because no newer session exists, it detaches
+    assert.equal(detachCalls, 0);
+    firstAttachCallback?.();
+    assert.equal(detachCalls, 1);
+    assert.equal(cdpClient.sessions.has(82), false);
+  } finally {
+    cdpClient.stopDialogHandling(82);
+    globalThis.chrome = previousChrome;
+  }
+});
+
 test('go_back authorizes beforeunload for the current page and cleans up on completion and failure', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;

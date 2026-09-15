@@ -207,7 +207,7 @@ export class CDPClient {
         const isCurrentGeneration = this.attachGenerations.get(tabId) === generation;
 
         if (attachPromise.cancelled || !isCurrentGeneration) {
-          if (isCurrentGeneration && !this.sessions.has(tabId)) {
+          if (!this.sessions.has(tabId)) {
             try { chrome.debugger.detach({ tabId }, () => {}); } catch {}
           }
           reject(new Error('Debugger attachment was cancelled'));
