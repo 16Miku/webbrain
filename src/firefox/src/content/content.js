@@ -2037,7 +2037,9 @@
     // Do NOT scrollIntoView on SELECT elements (hidden selects in modals cause scroll jumps)
     if (el.tagName !== 'SELECT') {
       if (actionDeadlineExpired()) return deadlineFailure();
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // BiDi validates the target in the same turn. A smooth scroll leaves a
+      // transient offscreen geometry window where that validation must fail.
+      el.scrollIntoView({ behavior: params._bidiPrepare ? 'instant' : 'smooth', block: 'center' });
     }
 
     // Occlusion hit-test: for text/selector/index clicks, verify that the
@@ -5182,7 +5184,13 @@
           const canonicalTargetName = _axCanonicalName(el);
           const targetName = canonicalTargetName || _axAccessibleName(el);
           if (!_isFullyVisibleForInteraction(el)) {
-            try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+            try {
+              el.scrollIntoView({
+                block: 'center',
+                inline: 'center',
+                ...(msg.params?._bidiPrepare ? { behavior: 'instant' } : {}),
+              });
+            } catch {}
           }
           try { el.focus({ preventScroll: true }); } catch {}
           const rect = el.getBoundingClientRect();
@@ -5314,7 +5322,20 @@
               { deadlineExpired: true, retryable: true },
             );
           }
-          if (msg.params?._bidiPrepare) return { ...prepareBidiTarget(el, msg.params._bidiPrepare), _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId };
+          if (msg.params?._bidiPrepare) {
+            return {
+              ...prepareBidiTarget(el, msg.params._bidiPrepare),
+              ...(nativeCheckable ? {
+                checkable: {
+                  inputType,
+                  checkedBefore,
+                  desiredChecked: inputType === 'radio' ? true : !checkedBefore,
+                  checkboxIdentity: _axCheckboxIdentity(el, ref_id),
+                },
+              } : {}),
+              _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId,
+            };
+          }
           dispatched = true;
           const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
           if (filePickerGuard.blocked) {

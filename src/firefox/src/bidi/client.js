@@ -109,7 +109,14 @@ export class FirefoxBidiClient {
     if (message.actionDeadlineAt && Date.now() >= message.actionDeadlineAt) return { success: false, dispatched: false, noDispatch: true, deadlineExpired: true };
     const metadata = { fieldMeta: prepared.fieldMeta, ...(message.params?.ref_id ? { ref_id: message.params.ref_id } : {}) };
     try {
-      return { ...metadata, ...await this.perform(tabId, action, { ...message.params, token, url: prepared.url, point: prepared.point || null, deadlineAt: message.actionDeadlineAt || 0 }), ...(prepared.rect ? { rect: prepared.rect } : {}), ...(prepared._filePickerGuardId ? { _filePickerGuardId: prepared._filePickerGuardId } : {}) };
+      return { ...metadata, ...await this.perform(tabId, action, {
+        ...message.params,
+        token,
+        url: prepared.url,
+        point: prepared.point || null,
+        checkable: prepared.checkable || null,
+        deadlineAt: message.actionDeadlineAt || 0,
+      }), ...(prepared.rect ? { rect: prepared.rect } : {}), ...(prepared._filePickerGuardId ? { _filePickerGuardId: prepared._filePickerGuardId } : {}) };
     } catch (error) {
       // A transport failure can occur after trusted input was delivered.
       return { ...metadata, success: false, dispatched: true, outcomeUnknown: true, retryable: false, ...(error.dispatchState || {}), error: error.message };

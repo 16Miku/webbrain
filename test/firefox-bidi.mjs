@@ -202,6 +202,37 @@ test('validation failures preserve no-dispatch status across the native client',
   assert.equal(result.outcomeUnknown,false);
   assert.equal(result.retryable,true);
 });
+test('click_ax preparation carries checkable state into trusted input', async () => {
+  const client = new FirefoxBidiClient({
+    tabs: { sendMessage: async () => ({
+      bidiPrepared: true,
+      url: 'https://example.com/',
+      checkable: { inputType: 'checkbox', checkedBefore: false, desiredChecked: true, checkboxIdentity: 'choice' },
+    }) },
+  });
+  client.runs.set(1, { runId: id(), bound: true });
+  let payload;
+  client.perform = async (_tabId, _action, received) => { payload = received; return { success: true, verified: true }; };
+  const result = await client.sendContent(1, { action: 'click_ax', params: { ref_id: 'ax-1' } });
+  assert.equal(result.success, true);
+  assert.deepEqual(payload.checkable, { inputType: 'checkbox', checkedBefore: false, desiredChecked: true, checkboxIdentity: 'choice' });
+});
+test('trusted checkable clicks report a prevented state transition', async () => {
+  const session = new BidiSession(); const runId = id(); const sent = [];
+  session.runs.set(runId, { context: 'tab' });
+  session.locate = async () => ({ context: 'tab', node: { sharedId: 'check' } });
+  session.call = async (_match, fn) => ({ result: { value: fn.includes('checkbox" || el.type') ? false : true } });
+  session.send = async (method, params) => { sent.push({ method, params }); return {}; };
+  const result = await session.perform(runId, 'click', {
+    checkable: { inputType: 'checkbox', checkedBefore: false, desiredChecked: true, checkboxIdentity: 'check' },
+  });
+  assert.equal(sent.some(item => item.method === 'input.performActions'), true);
+  assert.equal(result.success, false);
+  assert.equal(result.verified, false);
+  assert.equal(result.noProgress, true);
+  assert.equal(result.checkedAfter, false);
+  assert.equal(result.checkedChanged, false);
+});
 test('post-dispatch failure and transport uncertainty are never safe retries', async () => {
   const session = new BidiSession(); const runId = id();
   session.runs.set(runId, {context:'tab'});

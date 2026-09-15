@@ -173,6 +173,10 @@ export class BidiSession {
     }
     const typing = action === 'type' || action === 'field';
     const clear = action === 'field' ? payload.clear !== false : payload.clear === true;
+    const checkable = action === 'click' && payload.checkable;
+    if (checkable && (!['checkbox', 'radio'].includes(checkable.inputType) || typeof checkable.desiredChecked !== 'boolean')) {
+      throw new Error('Invalid checkable target metadata');
+    }
     const before = typing ? await this.call(match, '(el) => el.isContentEditable ? el.innerText : el.value') : null;
     const assertFocus = async () => {
       assertLive();
@@ -202,6 +206,35 @@ export class BidiSession {
       try { dispatch.started = true; await this.send('input.performActions', { context: match.context, actions: [source] }); }
       finally { await this.send('input.releaseActions', { context: match.context }).catch(() => {}); }
       assertLive();
+      if (checkable) {
+        await new Promise(resolve => setTimeout(resolve, 80));
+        assertLive();
+        const checked = await this.call(match, '(el) => el.isConnected && (el.type === "checkbox" || el.type === "radio") ? !!el.checked : null');
+        const checkedAfter = checked.result?.value;
+        if (typeof checkedAfter !== 'boolean') {
+          return { success: false, dispatched: true, outcomeUnknown: true, retryable: false,
+            error: 'Checkable target changed after trusted click; inspect the page before retrying.' };
+        }
+        const stateMatchesDesired = checkedAfter === checkable.desiredChecked;
+        return {
+          success: stateMatchesDesired,
+          dispatched: true,
+          verified: stateMatchesDesired,
+          checkedBefore: !!checkable.checkedBefore,
+          checkedAfter,
+          checkedChanged: !!checkable.checkedBefore !== checkedAfter,
+          desiredChecked: checkable.desiredChecked,
+          checkboxIdentity: checkable.checkboxIdentity,
+          checkboxState: { identity: checkable.checkboxIdentity, desiredChecked: checkable.desiredChecked, actualChecked: checkedAfter },
+          ...(stateMatchesDesired ? { observedEffects: ['checked_state'] } : {
+            noProgress: true,
+            error: checkable.inputType === 'checkbox'
+              ? `Checkbox remained ${checkedAfter ? 'checked' : 'unchecked'} after trusted click.`
+              : 'Radio remained unselected after trusted click.',
+          }),
+          method: 'firefox-bidi',
+        };
+      }
     } else if (typing) {
       if (typeof payload.text !== 'string' || payload.text.length > 10000) throw new Error('Trusted text input is limited to 10000 characters per action');
       if (/[\r\n]/.test(payload.text)) {

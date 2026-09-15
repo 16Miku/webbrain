@@ -72,6 +72,27 @@ try {
   assert.deepEqual(pointPrepared.point,{x:22,y:210});
   await session.perform(runId,'click',{token:pointToken,url,point:pointPrepared.point});
   assert.deepEqual(JSON.parse((await evaluate('JSON.stringify(window.clickedPoint)')).value),{x:22,y:210,trusted:true});
+  await evaluate(`document.body.insertAdjacentHTML('beforeend', '<input id="checkable" type="checkbox"><input id="blocked-checkable" type="checkbox">'); document.querySelector('#blocked-checkable').onclick=event=>event.preventDefault();`);
+  const checked = await session.perform(runId, 'click', {
+    ...await mark('#checkable'),
+    checkable: { inputType: 'checkbox', checkedBefore: false, desiredChecked: true, checkboxIdentity: 'checkable' },
+  });
+  assert.equal(checked.success, true);
+  assert.equal(checked.verified, true);
+  assert.equal(checked.checkedAfter, true);
+  const blockedCheck = await session.perform(runId, 'click', {
+    ...await mark('#blocked-checkable'),
+    checkable: { inputType: 'checkbox', checkedBefore: false, desiredChecked: true, checkboxIdentity: 'blocked-checkable' },
+  });
+  assert.equal(blockedCheck.success, false);
+  assert.equal(blockedCheck.verified, false);
+  assert.equal(blockedCheck.noProgress, true);
+  await evaluate(`document.body.style.minHeight='3000px'; document.body.insertAdjacentHTML('beforeend', '<button id="below-fold" style="position:absolute;top:2600px">Below fold</button>'); document.querySelector('#below-fold').onclick=e=>window.belowFoldTrusted=e.isTrusted;`);
+  const belowFoldToken = crypto.randomUUID();
+  const belowFoldPrepared = await extensionEval(`browser.tabs.sendMessage(${tabId}, {target:'content',action:'click',params:{selector:'#below-fold',_bidiPrepare:${JSON.stringify(belowFoldToken)}}}).then(value=>JSON.stringify(value))`);
+  assert.equal(JSON.parse(belowFoldPrepared.value).bidiPrepared, true);
+  assert.equal((await session.perform(runId, 'click', { token: belowFoldToken, url })).success, true);
+  assert.equal((await evaluate('window.belowFoldTrusted')).value, true);
   const obscured = await mark('#point-canvas');
   await evaluate(`document.body.insertAdjacentHTML('beforeend','<div id="point-cover" style="position:fixed;left:20px;top:205px;width:10px;height:10px;background:red;z-index:99999"></div>')`);
   await assert.rejects(session.perform(runId,'click',{...obscured,point:{x:22,y:210}}), error=>error.dispatchState.noDispatch===true && /covered/.test(error.message));
@@ -102,7 +123,7 @@ try {
   // Invoke the real client in the packaged extension with a transport stub; no
   // native manifest is installed in the user's normal Firefox configuration.
   await session.perform(runId, 'key', { ...await mark('#text'), key: 'Tab', repeat: 2 });
-  assert.equal((await evaluate('document.activeElement.id')).value, 'multiline');
+  assert.equal((await evaluate('document.activeElement.id')).value, 'checkable');
   const deferred = await extensionEval(`(async () => {
     const {FirefoxBidiClient} = await import(${JSON.stringify(extensionOrigin + '/src/bidi/client.js')});
     const client = new FirefoxBidiClient(browser);
