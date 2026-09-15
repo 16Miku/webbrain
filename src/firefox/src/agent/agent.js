@@ -16287,7 +16287,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
     if (networkMutation) {
       let platform;
-      try { platform = socialPublicationApiPlatform(args?.url); }
+      try { platform = socialPublicationApiPlatform(args?.url, args?.body); }
       catch {
         return { success: false, dispatched: false, noDispatch: true,
           error: 'The API destination could not be resolved. Use an explicit HTTP(S) URL without embedded credentials.' };

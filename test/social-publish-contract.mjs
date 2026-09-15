@@ -715,7 +715,7 @@ for (const browser of ['chrome', 'firefox']) {
   });
 
   test(`${browser}: publication shortcuts and page callbacks cannot bypass the concrete click contract`,async()=>{
-    for(const [name,args] of [['press_keys',{key:'Space'}],['press_keys',{key:'Enter'}],['execute_js',{code:'publish()'}],['execute_webmcp_tool',{}],['fetch_url',{url:'https://x.com/api/post',method:'POST'}]]){
+    for(const [name,args] of [['press_keys',{key:'Space'}],['press_keys',{key:'Enter'}],['execute_js',{code:'publish()'}],['execute_webmcp_tool',{}],['fetch_url',{url:'https://x.com/i/api/graphql/CreateTweet',method:'POST'}]]){
       const f=setup();
       assert((await f.agent._workflowPreSubmitDispatchBlock(f.tabId,name,args,null,f.provider)).noDispatch);
     }
@@ -747,21 +747,21 @@ for (const browser of ['chrome', 'firefox']) {
   test(`${browser}: social API writes stay guarded independently of the active page`, async () => {
     const f = setup('Call the business in Turkish');
     const destinations = [
-      'https://x.com/i/api/graphql/CreateTweet',
-      'https://api.x.com/2/tweets',
-      'https://api.twitter.com/1.1/statuses/update.json',
-      'https://API.X.COM.:443/2/tweets',
-      'https://bsky.app/api/post',
-      'https://bsky.social/xrpc/com.atproto.repo.createRecord',
-      'https://pds.host.bsky.network/xrpc/com.atproto.repo.putRecord',
-      'https://pds.example/xrpc/com.atproto.repo.applyWrites',
-      'https://pds.example/xrpc/%63om.atproto.repo.createRecord',
+      ['https://x.com/i/api/graphql/CreateTweet', undefined],
+      ['https://api.x.com/2/tweets', undefined],
+      ['https://api.twitter.com/1.1/statuses/update.json', undefined],
+      ['https://API.X.COM.:443/2/tweets', undefined],
+      ['https://bsky.app/api/post', undefined],
+      ['https://bsky.social/xrpc/com.atproto.repo.createRecord', '{"collection":"app.bsky.feed.post"}'],
+      ['https://pds.host.bsky.network/xrpc/com.atproto.repo.putRecord', '{"collection":"app.bsky.feed.post"}'],
+      ['https://pds.example/xrpc/com.atproto.repo.applyWrites', '{"writes":[{"collection":"app.bsky.feed.post"}]}'],
+      ['https://pds.example/xrpc/%63om.atproto.repo.createRecord', '{"collection":"app.bsky.feed.post"}'],
     ];
     for (const page of ['https://x.com/home', 'https://bsky.app/', 'https://phonr.xyz/docs']) {
       f.agent._currentUrl = async () => page;
       for (const name of ['fetch_url', 'research_url']) {
-        for (const url of destinations) {
-          const result = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, name, { url, method: 'POST' }, null, f.provider);
+        for (const [url, body] of destinations) {
+          const result = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, name, { url, body, method: 'POST' }, null, f.provider);
           assert.equal(result?.noDispatch, true, `${page}: ${name} ${url}`);
           assert.equal(result.dispatched, false);
           assert.equal(result.workflowJob, 'publish-post');
@@ -770,6 +770,21 @@ for (const browser of ['chrome', 'firefox']) {
       assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'fetch_url', {
         url: 'https://api.x.com/2/tweets/123', method: 'GET',
       }, null, f.provider), null, 'read-only API access remains available');
+    }
+    assert.equal(f.calls.length, 0);
+  });
+
+  test(`${browser}: non-publication social API writes retain normal API authorization`, async () => {
+    const f = setup('Like the post and update my Bluesky profile');
+    const destinations = [
+      ['https://api.x.com/2/users/123/likes', undefined],
+      ['https://x.com/i/api/graphql/FavoriteTweet', undefined],
+      ['https://bsky.social/xrpc/com.atproto.repo.putRecord', '{"collection":"app.bsky.actor.profile"}'],
+      ['https://pds.example/xrpc/com.atproto.repo.applyWrites', '{"writes":[{"collection":"app.bsky.graph.listitem"}]}'],
+    ];
+    for (const [url, body] of destinations) {
+      const result = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'fetch_url', { url, body, method: 'POST' }, null, f.provider);
+      assert.equal(result, null, url);
     }
     assert.equal(f.calls.length, 0);
   });

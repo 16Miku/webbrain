@@ -3,10 +3,11 @@
 export const SOCIAL_PLATFORMS = Object.freeze(['twitter', 'bluesky']);
 
 // Network tools act on their explicit destination, independently of the open
-// tab. Include API hosts and AT Protocol repository writes on self-hosted PDSes.
+// tab. API hosts can carry unrelated account mutations, so only post creation
+// endpoints and AT Protocol post records select the publication guard.
 // This only selects the publication guard; API permission, SSRF, and redirect
 // checks still belong to the network dispatch path.
-export function socialPublicationApiPlatform(rawUrl) {
+export function socialPublicationApiPlatform(rawUrl, body) {
   if (typeof rawUrl !== 'string') throw new Error('Missing network destination');
   const url = new URL(rawUrl);
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
@@ -14,10 +15,21 @@ export function socialPublicationApiPlatform(rawUrl) {
   }
   const host = url.hostname.toLowerCase().replace(/\.$/, '');
   const within = domain => host === domain || host.endsWith('.' + domain);
-  if (['x.com', 'twitter.com'].some(within)) return 'twitter';
-  if (['bsky.app', 'bsky.social', 'bsky.network'].some(within)
-      || decodeURIComponent(url.pathname).startsWith('/xrpc/com.atproto.repo.')) return 'bluesky';
-  return null;
+  const path = decodeURIComponent(url.pathname).replace(/\/$/, '');
+  if (['x.com', 'twitter.com'].some(within)
+      && (/\/i\/api\/graphql\/(?:[^/]+\/)?CreateTweet$/i.test(path)
+        || /^\/2\/tweets$/i.test(path)
+        || /^\/1\.1\/statuses\/update\.json$/i.test(path))) return 'twitter';
+  if (within('bsky.app') && path === '/api/post') return 'bluesky';
+  if (!path.startsWith('/xrpc/com.atproto.repo.')) return null;
+  let payload;
+  try { payload = typeof body === 'string' ? JSON.parse(body) : body; }
+  catch { return 'bluesky'; }
+  const isPost = value => value?.collection === 'app.bsky.feed.post';
+  if (Array.isArray(payload?.writes)) {
+    return payload.writes.every(write => typeof write?.collection === 'string' && !isPost(write)) ? null : 'bluesky';
+  }
+  return typeof payload?.collection === 'string' && !isPost(payload) ? null : 'bluesky';
 }
 
 const TYPES = ['any', 'image', 'video', 'gif'];
