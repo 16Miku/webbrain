@@ -569,7 +569,7 @@ async function loadStrictSecretMode() {
   const stored = await chrome.storage.local.get('strictSecretMode');
   agent.strictSecretMode = stored.strictSecretMode !== false;
 }
-loadStrictSecretMode();
+const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
 async function loadWebMCPEnabled() {
   const stored = await chrome.storage.local.get('webMcpEnabled');
@@ -2816,6 +2816,7 @@ async function handleMessage(msg, sender) {
     // storage round-trip on every message.
     await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     await webMcpEnabledReady;
     await screenshotRedactionReady;
     await imageBudgetReady;

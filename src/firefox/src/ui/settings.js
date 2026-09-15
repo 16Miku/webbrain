@@ -1079,10 +1079,14 @@ async function addSkillFromText() {
         cancelSkillEdit();
         throw new Error(t('st.skills.error.add_failed'));
       }
+      const isBuiltIn = original.sourceType === 'built-in';
       const updated = {
-        ...original,
+        id: original.id,
         name: (skillNameInput?.value || '').trim() || original.name || '',
+        sourceType: isBuiltIn ? 'text' : (original.sourceType || 'text'),
+        sourceUrl: isBuiltIn ? '' : (original.sourceUrl || ''),
         content,
+        createdAt: original.createdAt || Date.now(),
       };
       const next = customSkills.map((s) => (s.id === editingSkillId ? updated : s));
       await saveCustomSkills(next);

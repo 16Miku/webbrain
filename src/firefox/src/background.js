@@ -451,7 +451,7 @@ async function loadStrictSecretMode() {
   const stored = await browser.storage.local.get('strictSecretMode');
   agent.strictSecretMode = stored.strictSecretMode !== false;
 }
-loadStrictSecretMode();
+const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
 async function loadProfile() {
   const stored = await browser.storage.local.get(['profileEnabled', 'profileText']);
@@ -2447,6 +2447,7 @@ async function handleMessage(msg, sender) {
     // onChanged keeps them in sync afterward.
     await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     await screenshotRedactionReady;
     await imageBudgetReady;
     await researchEscalationReady;
