@@ -522,7 +522,7 @@ export default {
   "st.display.download_directory.placeholder": "Default ng system",
   "st.display.download_directory.error": "Gumamit ng relative na folder tulad ng WebBrain o Work/WebBrain. Hindi pinapayagan ang absolute path at “..”.",
   "st.display.strict_secret.label": "Mahigpit na paghawak ng lihim",
-  "st.display.strict_secret.desc": "Tanggihang i-quote ang mga kredensyal (password, API key, token, OTPs) sa mga summary o teksto ng assistant — kahit hayagan mong hilingin ang mga ito. Mainam kung madalas kang magbahagi ng trace files o screen-share. Naka-off bilang default: tumatakbo ang webbrain sa sarili mong browser, kaya bilang default ay ipinapakita sa iyo ng ahente ang mga value na hiniling mo at pinapanatili lang na malinis ang mga `done` na summary.",
+  "st.display.strict_secret.desc": "Tanggihang i-quote ang mga kredensyal (password, API key, token, OTPs) sa mga summary o teksto ng assistant — kahit hayagan mong hilingin ang mga ito. Mainam kung madalas kang magbahagi ng trace files o screen-share. Naka-on bilang default: tumatakbo ang webbrain sa sarili mong browser, ngunit para sa seguridad ay tumatanggi ang ahente na ulitin ang mga kredensyal at pinapanatiling malinis ang mga `done` na summary.",
   "st.display.request_timeout.label": "Timeout ng LLM request",
   "st.display.request_timeout.desc": "Pinakamatagal na paghihintay sa mga header ng tugon at sa bawat pagitan ng mga bahagi ng streaming na tugon. Default: 120 segundo. Dagdagan ito para sa mababagal na lokal na modelo, lalo na kung gumagamit ng CPU o malaking konteksto.",
   "st.providers.filter.all": "Lahat",

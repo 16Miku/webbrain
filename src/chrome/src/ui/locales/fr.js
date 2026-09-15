@@ -522,7 +522,7 @@ export default {
   "st.display.download_directory.placeholder": "Valeur par défaut du système",
   "st.display.download_directory.error": "Utilisez un dossier relatif comme WebBrain ou Work/WebBrain. Les chemins absolus et « .. » ne sont pas autorisés.",
   "st.display.strict_secret.label": "Gestion stricte des secrets",
-  "st.display.strict_secret.desc": "Refuse de citer les identifiants (mots de passe, clés d'API, jetons, OTPs) dans les résumés ou le texte de l'assistant — même lorsque vous le demandez explicitement. Utile si vous partagez régulièrement des fichiers de trace ou votre écran. Désactivé par défaut : webbrain s'exécute dans votre propre navigateur, donc par défaut l'agent vous montre les valeurs que vous demandez et se contente de garder les résumés `done` propres.",
+  "st.display.strict_secret.desc": "Refuse de citer les identifiants (mots de passe, clés d'API, jetons, OTPs) dans les résumés ou le texte de l'assistant — même lorsque vous le demandez explicitement. Utile si vous partagez régulièrement des fichiers de trace ou votre écran. Activé par défaut : webbrain s'exécute dans votre propre navigateur, mais par précaution l'agent refuse de répéter les identifiants et garde les résumés `done` propres.",
   "st.display.request_timeout.label": "Délai d'attente des requêtes LLM",
   "st.display.request_timeout.desc": "Attente maximale des en-têtes de réponse et de chaque pause entre les fragments de réponse en streaming. Par défaut : 120 s. Augmentez cette durée pour les modèles locaux lents, surtout sur CPU ou avec un contexte volumineux.",
   "st.providers.filter.all": "Tous",

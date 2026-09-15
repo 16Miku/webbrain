@@ -506,7 +506,7 @@ export default {
   "st.display.download_directory.placeholder": "Bawaan sistem",
   "st.display.download_directory.error": "Gunakan folder relatif seperti WebBrain atau Work/WebBrain. Jalur absolut dan “..” tidak diizinkan.",
   "st.display.strict_secret.label": "Penanganan rahasia ketat",
-  "st.display.strict_secret.desc": "Menolak mengutip kredensial (kata sandi, kunci API, token, OTP) dalam ringkasan atau teks asisten — bahkan saat Anda memintanya secara eksplisit. Berguna jika Anda kerap berbagi berkas jejak atau berbagi layar. Nonaktif secara bawaan: webbrain berjalan di peramban Anda sendiri, jadi secara bawaan agen menampilkan nilai yang Anda minta dan hanya menjaga ringkasan `done` tetap rapi.",
+  "st.display.strict_secret.desc": "Menolak mengutip kredensial (kata sandi, kunci API, token, OTP) dalam ringkasan atau teks asisten — bahkan saat Anda memintanya secara eksplisit. Berguna jika Anda kerap berbagi berkas jejak atau berbagi layar. Aktif secara bawaan: webbrain berjalan di peramban Anda sendiri, tetapi demi keamanan agen menolak mengulang kredensial dan menjaga ringkasan `done` tetap rapi.",
   "st.display.request_timeout.label": "Batas waktu permintaan LLM",
   "st.display.request_timeout.desc": "Batas waktu menunggu header respons dan setiap jeda antarbagian respons streaming. Bawaan: 120 detik. Naikkan untuk model lokal yang lambat, terutama pada CPU atau dengan konteks besar.",
   "st.providers.filter.all": "Semua",

@@ -522,7 +522,7 @@ export default {
   "st.display.download_directory.placeholder": "系统默认值",
   "st.display.download_directory.error": "请使用 WebBrain 或 Work/WebBrain 这样的相对文件夹。不允许使用绝对路径或“..”。",
   "st.display.strict_secret.label": "严格的机密处理",
-  "st.display.strict_secret.desc": "拒绝在总结或助手文本中引用凭据（密码、API 密钥、令牌、OTP）—— 即使你明确要求也是如此。如果你经常分享轨迹文件或共享屏幕，这会很有用。默认关闭：webbrain 运行在你自己的浏览器中，因此默认情况下代理会向你展示你索取的值，只是把 `done` 总结保持整洁。",
+  "st.display.strict_secret.desc": "拒绝在总结或助手文本中引用凭据（密码、API 密钥、令牌、OTP）—— 即使你明确要求也是如此。如果你经常分享轨迹文件或共享屏幕，这会很有用。默认开启：webbrain 运行在你自己的浏览器中，但出于安全考虑，代理会拒绝重复显示你的凭据，以保持 `done` 总结整洁。",
   "st.display.request_timeout.label": "LLM 请求超时",
   "st.display.request_timeout.desc": "等待响应头以及流式响应中每次数据块间隔的最长时间。默认：120秒。本地模型较慢时，尤其在CPU上运行或上下文较大时，请延长此时间。",
   "st.providers.filter.all": "全部",
