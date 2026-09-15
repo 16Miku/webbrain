@@ -146,8 +146,22 @@ export class BidiSession {
       const px = x === null ? r.x+r.width/2 : x;
       const py = y === null ? r.y+r.height/2 : y;
       if (px < 0 || py < 0 || px >= innerWidth || py >= innerHeight) return false;
-      const hit = document.elementFromPoint(px, py);
-      if (!r.width || !r.height || !(hit === el || el.contains(hit))) return false;
+      let hit = document.elementFromPoint(px, py);
+      // elementFromPoint stops at each open shadow host. Descend through those
+      // roots so trusted input accepts the same visible target as content.js.
+      while (hit?.shadowRoot) {
+        const inner = hit.shadowRoot.elementFromPoint(px, py);
+        if (!inner || inner === hit) break;
+        hit = inner;
+      }
+      const reaches = (node, target) => {
+        while (node) {
+          if (node === target) return true;
+          node = node.parentNode || node.host;
+        }
+        return false;
+      };
+      if (!r.width || !r.height || !reaches(hit, el)) return false;
       if (action === 'type' || action === 'field' || action === 'key') {
         el.focus({preventScroll:true});
         if (el.getRootNode().activeElement !== el) return false;

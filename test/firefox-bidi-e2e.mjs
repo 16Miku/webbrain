@@ -93,6 +93,14 @@ try {
   assert.equal(JSON.parse(belowFoldPrepared.value).bidiPrepared, true);
   assert.equal((await session.perform(runId, 'click', { token: belowFoldToken, url })).success, true);
   assert.equal((await evaluate('window.belowFoldTrusted')).value, true);
+  const shadowToken = crypto.randomUUID();
+  await evaluate(`const host=document.createElement('div'); host.id='shadow-host'; host.style.cssText='position:fixed;left:20px;top:300px'; host.attachShadow({mode:'open'}).innerHTML='<button id="shadow-button">Shadow button</button>'; host.shadowRoot.querySelector('button').setAttribute('data-webbrain-bidi', ${JSON.stringify(shadowToken)}); host.shadowRoot.querySelector('button').onclick=e=>window.shadowTrusted=e.isTrusted; document.body.append(host);`);
+  const shadowNode = await session.send('script.evaluate', { target: { context }, expression: "document.querySelector('#shadow-host').shadowRoot.querySelector('#shadow-button')", awaitPromise: true });
+  const locate = session.locate;
+  session.locate = async () => ({ context, node: { sharedId: shadowNode.result.sharedId } });
+  assert.equal((await session.perform(runId, 'click', { token: shadowToken, url })).success, true);
+  session.locate = locate;
+  assert.equal((await evaluate('window.shadowTrusted')).value, true);
   const obscured = await mark('#point-canvas');
   await evaluate(`document.body.insertAdjacentHTML('beforeend','<div id="point-cover" style="position:fixed;left:20px;top:205px;width:10px;height:10px;background:red;z-index:99999"></div>')`);
   await assert.rejects(session.perform(runId,'click',{...obscured,point:{x:22,y:210}}), error=>error.dispatchState.noDispatch===true && /covered/.test(error.message));

@@ -233,6 +233,16 @@ test('trusted checkable clicks report a prevented state transition', async () =>
   assert.equal(result.checkedAfter, false);
   assert.equal(result.checkedChanged, false);
 });
+test('trusted target validation descends through open shadow roots', async () => {
+  const session = new BidiSession(); const runId = id(); let validation;
+  session.runs.set(runId, { context: 'tab' });
+  session.locate = async () => ({ context: 'tab', node: { sharedId: 'shadow-button' } });
+  session.call = async (_match, fn) => { validation = fn; return { result: { value: true } }; };
+  session.send = async () => ({});
+  await session.perform(runId, 'click', {});
+  assert.match(validation, /shadowRoot\.elementFromPoint/);
+  assert.match(validation, /node\.parentNode \|\| node\.host/);
+});
 test('post-dispatch failure and transport uncertainty are never safe retries', async () => {
   const session = new BidiSession(); const runId = id();
   session.runs.set(runId, {context:'tab'});
