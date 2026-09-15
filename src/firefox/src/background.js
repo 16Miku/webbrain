@@ -1091,7 +1091,7 @@ browser.storage.onChanged.addListener((changes) => {
     setApiMutationObserverEnabled(value === undefined || value === true);
   }
   if (changes.strictSecretMode) {
-    agent.strictSecretMode = !!changes.strictSecretMode.newValue;
+    agent.strictSecretMode = changes.strictSecretMode.newValue !== false;
     // Strict mode also appends a global system note after enabled skills, so
     // refresh live conversations immediately as well as rebuilding at turn start.
     refreshPrompts = true;
