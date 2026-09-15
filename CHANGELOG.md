@@ -4,6 +4,30 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.5.0] - 2026-09-15
+
+### Added
+
+- Added support for editing custom skills.
+- Added native browser dialog handling for Chrome and Firefox.
+- Added homepage social-proof testimonials.
+
+### Changed
+
+- Enabled strict secret mode by default and updated localized descriptions.
+- Built-in skill edits now create forks, while edited skills are reparsed and default skill removals are recorded.
+
+### Fixed
+
+- Fail closed when strict secrets cannot be hydrated.
+- Dismiss unapproved browser dialogs and authorize navigation-related **Leave** decisions only for dispatched history navigation.
+- Improved debugger attachment cancellation, teardown, retry behavior, and stale-session handling.
+- Preserved newer browser sessions when late attachment cancellations complete.
+
+### Tests
+
+- Added browser-dialog and agent-lifecycle coverage, including navigation authorization and debugger attachment cancellation scenarios.
+
 ## [36.4.0] - 2026-09-15
 
 ### Added
