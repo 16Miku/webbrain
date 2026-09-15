@@ -95,26 +95,30 @@ test('cached dialog is answered before renderer-dependent Page.enable', async ()
   await client.startDialogHandling(7);
 });
 
-for (const action of ['abort', 'stop', 'timeout']) {
-  test(`${action} releases blocked Page.enable startup`, async () => {
-    const { client } = harness();
-    const controller = new AbortController();
-    let entered;
-    const ready = new Promise(resolve => { entered = resolve; });
-    let finish;
-    client.sendCommand = () => { entered(); return new Promise(resolve => { finish = resolve; }); };
-    const startup = client.startDialogHandling(7, { signal: controller.signal, timeoutMs: 20 });
-    const rejected = assert.rejects(startup, error => action === 'timeout'
-      ? error.code === 'dialog_startup_timeout' : error.name === 'AbortError');
-    await ready;
-    if (action === 'abort') controller.abort();
-    if (action === 'stop') client.stopDialogHandling(7);
-    await rejected;
-    assert.equal(client.dialogRuns.has(7), false);
-    finish();
-    await tick();
-    assert.equal(client.dialogRuns.has(7), false);
-  });
+for (const target of ['attach', 'Page.enable']) {
+  for (const action of ['abort', 'stop', 'timeout']) {
+    test(`${action} releases blocked ${target} startup`, async () => {
+      const { client } = harness();
+      const controller = new AbortController();
+      let entered;
+      const ready = new Promise(resolve => { entered = resolve; });
+      let finish;
+      const block = () => { entered(); return new Promise(resolve => { finish = resolve; }); };
+      if (target === 'attach') client.attach = block;
+      else client.sendCommand = block;
+      const startup = client.startDialogHandling(7, { signal: controller.signal, timeoutMs: 20 });
+      const rejected = assert.rejects(startup, error => action === 'timeout'
+        ? error.code === 'dialog_startup_timeout' : error.name === 'AbortError');
+      await ready;
+      if (action === 'abort') controller.abort();
+      if (action === 'stop') client.stopDialogHandling(7);
+      await rejected;
+      assert.equal(client.dialogRuns.has(7), false);
+      finish();
+      await tick();
+      assert.equal(client.dialogRuns.has(7), false);
+    });
+  }
 }
 
 test('failed workflow setup releases its debugger but preserves a Dev owner', async () => {

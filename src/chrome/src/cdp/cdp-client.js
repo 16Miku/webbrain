@@ -286,8 +286,21 @@ export class CDPClient {
     };
     this.dialogRuns.set(tabId, owner);
     signal?.addEventListener('abort', owner.onAbort, { once: true });
+    let timer;
+    const interrupted = new Promise((_, reject) => {
+      owner.cancelStartup = () => {
+        const error = new Error('Stopped during browser dialog setup');
+        error.name = 'AbortError';
+        reject(error);
+      };
+      timer = setTimeout(() => {
+        const error = new Error('Browser dialog setup timed out. Dismiss any existing browser dialog and try again.');
+        error.code = 'dialog_startup_timeout';
+        reject(error);
+      }, timeoutMs);
+    });
     try {
-      await this.attach(tabId);
+      await Promise.race([this.attach(tabId), interrupted]);
       if (this.dialogRuns.get(tabId) !== owner) return;
       // Resolve an already-observed dialog before Page.enable, which itself
       // can wait for the paused renderer when Dev retained the connection.
@@ -296,28 +309,13 @@ export class CDPClient {
       }
       // Page.enable can wait indefinitely behind a pre-existing dialog. Stop
       // must release the run even when Chrome never answers this command.
-      let timer;
-      const interrupted = new Promise((_, reject) => {
-        owner.cancelStartup = () => {
-          const error = new Error('Stopped during browser dialog setup');
-          error.name = 'AbortError';
-          reject(error);
-        };
-        timer = setTimeout(() => {
-          const error = new Error('Browser dialog setup timed out. Dismiss any existing browser dialog and try again.');
-          error.code = 'dialog_startup_timeout';
-          reject(error);
-        }, timeoutMs);
-      });
-      try {
-        await Promise.race([this.sendCommand(tabId, 'Page.enable'), interrupted]);
-      } finally {
-        clearTimeout(timer);
-        delete owner.cancelStartup;
-      }
+      await Promise.race([this.sendCommand(tabId, 'Page.enable'), interrupted]);
     } catch (error) {
       if (this.dialogRuns.get(tabId) === owner) this.stopDialogHandling(tabId);
       throw error;
+    } finally {
+      clearTimeout(timer);
+      delete owner.cancelStartup;
     }
   }
 
