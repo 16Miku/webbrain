@@ -1,4 +1,4 @@
-import { SOCIAL_PLATFORMS, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
+import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
 import { validateToolArguments } from './tool-arguments.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
@@ -18462,11 +18462,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _socialPublicationPreSubmitBlock(tabId, name, args, detected, provider) {
     const guard = this._planExecutionGuards.get(tabId);
+    const networkMutation = isNetworkMutation(name, args);
     const rawKeys = args?.key ?? args?.keys ?? '';
     const activationKey = name === 'press_keys' && (Array.isArray(rawKeys) ? rawKeys : [rawKeys])
       .some(key => typeof key === 'string' && /^(?:enter|return|space|spacebar| )$/i.test(key));
     if (!guard?.enabled || (!this._isFormValidationCandidate(name, args) && !activationKey
-        && name !== 'execute_webmcp_tool' && !isNetworkMutation(name, args))) return null;
+        && name !== 'execute_webmcp_tool' && !networkMutation)) return null;
+    const blocked = error => ({ success: false, dispatched: false, noDispatch: true, repeatBlocked: true,
+      workflowJob: 'publish-post', error,
+      publicationContract: guard.socialPublication?.contract || null,
+      publicationProgress: publicationProgress(guard.socialPublication?.contract, guard.socialPublication?.outcomes),
+      ...(guard.socialPublication?.deniedAudit ? { publicationAudit: guard.socialPublication.deniedAudit } : {}),
+    });
+    if (networkMutation) {
+      let platform;
+      try { platform = socialPublicationApiPlatform(args?.url, args?.body); }
+      catch {
+        return { success: false, dispatched: false, noDispatch: true,
+          error: 'The API destination could not be resolved. Use an explicit HTTP(S) URL without embedded credentials.' };
+      }
+      if (!platform) return null;
+      // A network write cannot supply a verified composer/publish control.
+      // Changing tabs must not let social API writes bypass that requirement.
+      return blocked('Social-site API mutations require a verified publish control. Prepare and verify the draft, then use the site’s publish button.');
+    }
     const pageUrl = await this._currentUrl(tabId);
     const live = resolveAdapterWorkflowJob(pageUrl, 'publish-post');
     if (!SOCIAL_PLATFORMS.includes(live?.adapterName)) return null;
@@ -18476,12 +18495,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // probes, and unresolved controls cannot claim this exemption.
     if (detected?.isSubmit === true && detected.publicationControl === false
         && ['click', 'click_ax', 'iframe_click', 'set_field', 'press_keys'].includes(name)) return null;
-    const blocked = error => ({ success: false, dispatched: false, noDispatch: true, repeatBlocked: true,
-      workflowJob: 'publish-post', error,
-      publicationContract: guard.socialPublication?.contract || null,
-      publicationProgress: publicationProgress(guard.socialPublication?.contract, guard.socialPublication?.outcomes),
-      ...(guard.socialPublication?.deniedAudit ? { publicationAudit: guard.socialPublication.deniedAudit } : {}),
-    });
     if (detected?.isSubmit !== true) return blocked('Publication-capable action could not be identified. Use a resolved page control; do not run arbitrary JavaScript or bundle editing and submission.');
     if (!['click', 'click_ax', 'iframe_click'].includes(name)) return blocked('Write and verify the draft first, then activate its publish control in a separate click.');
     if (detected.publicationControl !== true) return blocked('Publication composer ownership could not be observed. Read the current page and use its resolved publish control.');
