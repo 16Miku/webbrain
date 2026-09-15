@@ -199,6 +199,12 @@ export class CDPClient {
           return;
         }
 
+        if (attachPromise.cancelled) {
+          try { chrome.debugger.detach({ tabId }, () => {}); } catch {}
+          reject(new Error('Debugger attachment was cancelled'));
+          return;
+        }
+
         const session = { tabId, attached: true };
         this.sessions.set(tabId, session);
         resolve(session);
@@ -222,7 +228,7 @@ export class CDPClient {
     this.pendingDialogs.delete(tabId);
     if (!this.sessions.has(tabId)) {
       const pendingAttach = this.attachPromises.get(tabId);
-      if (!pendingAttach) return;
+      if (!pendingAttach || pendingAttach.cancelled) return;
       try {
         await pendingAttach;
       } catch {
@@ -287,13 +293,19 @@ export class CDPClient {
     this.dialogRuns.set(tabId, owner);
     signal?.addEventListener('abort', owner.onAbort, { once: true });
     let timer;
+    const markPendingAttachCancelled = () => {
+      const pendingAttach = this.attachPromises.get(tabId);
+      if (pendingAttach) pendingAttach.cancelled = true;
+    };
     const interrupted = new Promise((_, reject) => {
       owner.cancelStartup = () => {
+        markPendingAttachCancelled();
         const error = new Error('Stopped during browser dialog setup');
         error.name = 'AbortError';
         reject(error);
       };
       timer = setTimeout(() => {
+        markPendingAttachCancelled();
         const error = new Error('Browser dialog setup timed out. Dismiss any existing browser dialog and try again.');
         error.code = 'dialog_startup_timeout';
         reject(error);
@@ -311,6 +323,7 @@ export class CDPClient {
       // must release the run even when Chrome never answers this command.
       await Promise.race([this.sendCommand(tabId, 'Page.enable'), interrupted]);
     } catch (error) {
+      markPendingAttachCancelled();
       if (this.dialogRuns.get(tabId) === owner) this.stopDialogHandling(tabId);
       throw error;
     } finally {

@@ -213,6 +213,63 @@ test('cached dialogs and ended navigation cannot inherit authorization', async (
   assert.ok(calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').every(call => !call[2].accept));
 });
 
+test('cleanupRun and teardown do not re-await timed-out or aborted debugger attachments', async () => {
+  const previousChrome = globalThis.chrome;
+  const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+  let detaches = 0;
+  let attachCallback = null;
+  globalThis.chrome = {
+    storage: { local: area, session: area },
+    runtime: { getURL: value => value },
+    tabs: { get: async id => ({ id, url: 'https://example.com/' }) },
+    debugger: {
+      attach: (_target, _version, callback) => { attachCallback = callback; },
+      detach: (_target, callback) => { detaches++; callback?.(); },
+      onEvent: { addListener: () => {} },
+      onDetach: { addListener: () => {} },
+    },
+  };
+  const { Agent } = await import('../src/chrome/src/agent/agent.js');
+  const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+
+  try {
+    // 1. Direct startDialogHandling timeout on cdpClient
+    const startup = cdpClient.startDialogHandling(71, { timeoutMs: 20 });
+    await assert.rejects(startup, error => error.code === 'dialog_startup_timeout');
+
+    // cleanupRun and detach must NOT hang awaiting the never-settling attach
+    let cleanupCompleted = false;
+    const cleanup = cdpClient.cleanupRun(71).then(() => { cleanupCompleted = true; });
+    await tick();
+    assert.equal(cleanupCompleted, true);
+    await cleanup;
+
+    // Late attach callback execution should immediately detach and not add session
+    if (attachCallback) {
+      attachCallback();
+      assert.equal(cdpClient.sessions.has(71), false);
+    }
+
+    // 2. Saved workflow replay timeout releases run entry and tab
+    const agent = new Agent({ getActive: () => ({ promptTier: 'full' }) });
+    agent._hydrate = async () => {};
+    const origStart = cdpClient.startDialogHandling.bind(cdpClient);
+    cdpClient.startDialogHandling = (tabId, opts = {}) => origStart(tabId, { ...opts, timeoutMs: 20 });
+    try {
+      const workflowRun = agent.replaySavedWorkflow(72, { id: 'test', steps: [{}] });
+      await assert.rejects(workflowRun, error => error.code === 'dialog_startup_timeout');
+      assert.equal(agent.isRunning(72), false);
+      assert.equal(cdpClient.sessions.has(72), false);
+    } finally {
+      cdpClient.startDialogHandling = origStart;
+    }
+  } finally {
+    cdpClient.stopDialogHandling(71);
+    cdpClient.stopDialogHandling(72);
+    globalThis.chrome = previousChrome;
+  }
+});
+
 test('go_back authorizes beforeunload for the current page and cleans up on completion and failure', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
