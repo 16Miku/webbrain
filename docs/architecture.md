@@ -814,6 +814,25 @@ Wraps `chrome.debugger` API for:
   `WebMCP.invokeTool` executes a page-registered structured capability. WebBrain
   exposes opaque `wmcp_*` IDs rather than page-controlled names as call handles.
 
+During active Chrome Act/Dev runs (including saved workflow replay), native
+JavaScript dialogs are continued through `Page.javascriptDialogOpening` and
+`Page.handleJavaScriptDialog`. Alerts and confirmations are accepted;
+`beforeunload` warnings choose Leave; prompts use the site's default text (or
+an empty string when no default exists). This includes accepting confirmation
+of the pending page action and potentially discarding unsaved changes. Dialog
+text is never interpreted as instructions. The event handler runs independently
+of blocked renderer commands, and is removed on Stop, completion, or detach,
+even when Dev diagnostics keep the debugger attached. Ask mode and idle tabs
+do not auto-answer dialogs. Already-observed dialogs are resolved before
+startup commands, so retained Dev connections can resume them. Chrome does not
+expose a dialog opened before debugger attachment to the new session; dismiss
+that existing dialog manually. Dialog setup responds to Stop and times out after
+five seconds rather than holding the run indefinitely. Existing action permission
+checks still apply.
+This does not handle browser permission requests, authentication windows, or
+OS file pickers. Firefox WebExtensions provide no equivalent native-dialog API;
+those dialogs still require manual handling in Firefox.
+
 WebMCP is an experimental Chrome-only fast path that is off by default. The
 user must enable **Experimental WebMCP** under Settings → General → Advanced;
 until then, neither WebMCP tool schemas nor WebMCP prompt guidance enter model
