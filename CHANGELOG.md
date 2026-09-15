@@ -4,6 +4,17 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.6.0] - 2026-09-15
+
+### Changed
+
+- Strict secret handling is now disabled by default.
+- Softened homepage testimonial portraits in dark mode.
+
+### Fixed
+
+- Scoped social API publication guards to prevent unauthorized or out-of-scope publication writes.
+
 ## [36.5.0] - 2026-09-15
 
 ### Added
