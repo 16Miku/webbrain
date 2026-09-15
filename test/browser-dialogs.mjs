@@ -274,8 +274,10 @@ test('canceled attachments are evicted immediately and allow fresh retries', asy
   const previousChrome = globalThis.chrome;
   const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
   let attachCalls = 0;
+  let detachCalls = 0;
   let firstAttachCallback = null;
   let secondAttachCallback = null;
+  let detachListener = null;
   globalThis.chrome = {
     storage: { local: area, session: area },
     runtime: { getURL: value => value },
@@ -286,9 +288,13 @@ test('canceled attachments are evicted immediately and allow fresh retries', asy
         if (attachCalls === 1) firstAttachCallback = callback;
         else secondAttachCallback = callback;
       },
-      detach: (_target, callback) => { callback?.(); },
+      detach: ({ tabId }, callback) => {
+        detachCalls++;
+        callback?.();
+        detachListener?.({ tabId }, 'canceled');
+      },
       onEvent: { addListener: () => {} },
-      onDetach: { addListener: () => {} },
+      onDetach: { addListener: fn => { detachListener = fn; } },
     },
   };
   const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
@@ -309,11 +315,14 @@ test('canceled attachments are evicted immediately and allow fresh retries', asy
     assert.equal(session.tabId, 81);
     assert.equal(cdpClient.sessions.has(81), true);
 
-    // Late callback from the first attach must not corrupt the session
+    // Late callback from the first attach must not detach or corrupt the active retry session
     firstAttachCallback?.();
+    assert.equal(detachCalls, 0);
     assert.equal(cdpClient.sessions.has(81), true);
 
     await cdpClient.detach(81);
+    assert.equal(detachCalls, 1);
+    assert.equal(cdpClient.sessions.has(81), false);
   } finally {
     cdpClient.stopDialogHandling(81);
     globalThis.chrome = previousChrome;

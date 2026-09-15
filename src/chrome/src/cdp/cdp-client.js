@@ -90,6 +90,7 @@ export class CDPClient {
   constructor() {
     this.sessions = new Map(); // tabId -> debugger session
     this.attachPromises = new Map(); // tabId -> in-flight debugger attach
+    this.attachGenerations = new Map(); // tabId -> current attach generation
     this.eventHandlers = new Map(); // tabId -> { eventName -> [handlers] }
     this.devDiagnostics = new Map(); // tabId -> bounded console/network buffers
     this.webMcpSessions = new Map(); // tabId -> WebMCP tools + pending invocations
@@ -193,6 +194,9 @@ export class CDPClient {
 
     this._ensureDebuggerListeners();
 
+    const generation = (this.attachGenerations.get(tabId) || 0) + 1;
+    this.attachGenerations.set(tabId, generation);
+
     const attachPromise = new Promise((resolve, reject) => {
       chrome.debugger.attach({ tabId }, '1.3', async () => {
         if (chrome.runtime.lastError) {
@@ -200,8 +204,12 @@ export class CDPClient {
           return;
         }
 
-        if (attachPromise.cancelled) {
-          try { chrome.debugger.detach({ tabId }, () => {}); } catch {}
+        const isCurrentGeneration = this.attachGenerations.get(tabId) === generation;
+
+        if (attachPromise.cancelled || !isCurrentGeneration) {
+          if (isCurrentGeneration && !this.sessions.has(tabId)) {
+            try { chrome.debugger.detach({ tabId }, () => {}); } catch {}
+          }
           reject(new Error('Debugger attachment was cancelled'));
           return;
         }
