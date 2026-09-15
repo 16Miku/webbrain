@@ -758,6 +758,7 @@ export default {
   'st.skills.item.chars': "کاراکترهای {count}",
   'st.skills.item.tools': "ابزار: {tools}",
   'st.skills.remove': "حذف کنید",
+  'st.skills.edit': 'ویرایش',
   'st.skills.cws.heading': "راه اندازی انتشار Chrome Web Store",
   'st.skills.cws.desc_html': "این تنظیمات فقط زمانی ظاهر می شوند که مهارت انتشار بسته بندی شده فعال باشد. یک Google Cloud OAuth ایجاد کنید <strong>برنامه وب</strong>، Chrome Web Store API را فعال کرده و ثبت نام کنید <code>http://localhost:1457/auth/callback</code> به عنوان یک URI تغییر مسیر مجاز. اعتبارنامه‌ها، نشانه‌ها و بایت‌های ZIP در حافظه محلی داخلی باقی می‌مانند و هرگز در پیام‌ها یا ردیابی‌های مدل گنجانده نمی‌شوند.",
   'st.skills.cws.publisher_id': "شناسه ناشر",

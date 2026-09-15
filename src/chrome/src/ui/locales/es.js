@@ -718,6 +718,7 @@ export default {
   'st.skills.item.chars': '{count} caracteres',
   'st.skills.item.tools': 'Herramientas: {tools}',
   'st.skills.remove': 'Eliminar',
+  'st.skills.edit': 'Editar',
   'st.skills.preview.rendered': 'Vista previa',
   'st.skills.preview.raw': 'Sin formato',
   'st.skills.security_html': '<strong>Atención:</strong> las habilidades personalizadas se almacenan en texto plano en el almacenamiento local del navegador y se envían a tu proveedor de LLM configurado como parte del prompt del sistema. Las herramientas de habilidad importadas pueden enviar sus entradas declaradas a sus endpoints HTTPS declarados sin confirmación por llamada; las herramientas de descarga siguen preguntando a través de la puerta de permisos de Descargas antes de guardar archivos. Solo importa herramientas en las que confíes; el contenido remoto se copia al almacenamiento en el momento de la importación.',

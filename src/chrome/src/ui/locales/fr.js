@@ -718,6 +718,7 @@ export default {
   'st.skills.item.chars': '{count} caractères',
   'st.skills.item.tools': 'Outils : {tools}',
   'st.skills.remove': 'Supprimer',
+  'st.skills.edit': 'Modifier',
   'st.skills.preview.rendered': 'Aperçu',
   'st.skills.preview.raw': 'Brut',
   'st.skills.security_html': '<strong>Attention :</strong> les compétences personnalisées sont stockées en texte brut dans le stockage local du navigateur et envoyées à votre fournisseur LLM configuré dans le prompt système. Les outils de compétence importés peuvent envoyer leurs entrées déclarées à leurs endpoints HTTPS déclarés sans confirmation par appel ; les outils de téléchargement demandent toujours via la porte de permission de Téléchargements avant d\'enregistrer des fichiers. Importez uniquement les outils auxquels vous faites confiance ; le contenu distant est copié dans le stockage au moment de l\'importation.',

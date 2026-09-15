@@ -744,6 +744,7 @@ export default {
   'st.skills.item.chars': "{count} वर्ण",
   'st.skills.item.tools': "उपकरण: {tools}",
   'st.skills.remove': "हटाओ",
+  'st.skills.edit': 'संपादित करें',
   'st.skills.cws.heading': "Chrome Web Store रिलीज़ सेटअप",
   'st.skills.cws.desc_html': "ये सेटिंग्स केवल तभी दिखाई देती हैं जब पैकेज्ड रिलीज़ कौशल सक्षम होता है। एक Google क्लाउड OAuth बनाएं <strong>वेब अनुप्रयोग</strong>, Chrome Web Store API सक्षम करें, और रजिस्टर करें <code>http://localhost:1457/auth/callback</code> एक अधिकृत रीडायरेक्ट यूआरआई के रूप में। क्रेडेंशियल, टोकन और ज़िप बाइट्स एक्सटेंशन-लोकल स्टोरेज में रहते हैं और मॉडल प्रॉम्प्ट या ट्रेस में कभी शामिल नहीं होते हैं।",
   'st.skills.cws.publisher_id': "प्रकाशक आईडी",

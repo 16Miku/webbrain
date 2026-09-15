@@ -693,6 +693,7 @@ export default {
   'st.skills.item.chars': '{count} znaków',
   'st.skills.item.tools': 'Narzędzia: {tools}',
   'st.skills.remove': 'Usuń',
+  'st.skills.edit': 'Edytuj',
   'st.skills.preview.rendered': 'Podgląd',
   'st.skills.preview.raw': 'Surowy tekst',
   'st.skills.security_html': '<strong>Uwaga:</strong> niestandardowe umiejętności są przechowywane w postaci zwykłego tekstu w lokalnym magazynie przeglądarki i wysyłane do skonfigurowanego dostawcy LLM jako część promptu systemowego. Zaimportowane narzędzia umiejętności mogą wysyłać swoje zadeklarowane dane wejściowe do zadeklarowanych punktów końcowych HTTPS bez potwierdzenia na każde wywołanie; narzędzia do pobierania nadal pytają przez normalną bramę uprawnień Pobierania przed zapisaniem plików. Importuj tylko narzędzia, którym ufasz; zdalna treść jest kopiowana do magazynu podczas importu.',

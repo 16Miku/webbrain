@@ -718,6 +718,7 @@ export default {
   'st.skills.item.chars': '{count} 个字符',
   'st.skills.item.tools': '工具：{tools}',
   'st.skills.remove': '移除',
+  'st.skills.edit': '编辑',
   'st.skills.preview.rendered': '预览',
   'st.skills.preview.raw': '原始文本',
   'st.skills.security_html': '<strong>注意：</strong>自定义技能以纯文本形式存储在浏览器本地存储中，并作为系统提示的一部分发送给您配置的 LLM 提供商。导入的技能工具可以在没有每次调用确认的情况下将其声明的输入发送到其声明的 HTTPS 端点；下载工具在保存文件之前仍会通过正常的下载权限门询问。只导入您信任的工具；远程内容在导入时会被复制到存储中。',

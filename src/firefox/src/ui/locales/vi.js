@@ -744,6 +744,7 @@ export default {
   'st.skills.item.chars': "Ký tự {count}",
   'st.skills.item.tools': "Dụng cụ: {tools}",
   'st.skills.remove': "Xóa",
+  'st.skills.edit': 'Chỉnh sửa',
   'st.skills.cws.heading': "Thiết lập phát hành Chrome Web Store",
   'st.skills.cws.desc_html': "Các cài đặt này chỉ xuất hiện khi kỹ năng phát hành đóng gói được bật. Tạo OAuth trên đám mây của Google <strong>Ứng dụng web</strong>, kích hoạt API Chrome Web Store và đăng ký <code>http://localhost:1457/auth/callback</code> dưới dạng URI chuyển hướng được ủy quyền. Thông tin xác thực, mã thông báo và byte ZIP vẫn nằm trong bộ nhớ cục bộ của tiện ích mở rộng và không bao giờ được đưa vào lời nhắc hoặc dấu vết mô hình.",
   'st.skills.cws.publisher_id': "Mã nhà xuất bản",

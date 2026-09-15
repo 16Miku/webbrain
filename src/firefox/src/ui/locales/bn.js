@@ -744,6 +744,7 @@ export default {
   'st.skills.item.chars': "{count} অক্ষর",
   'st.skills.item.tools': "টুল: {tools}",
   'st.skills.remove': "সরান",
+  'st.skills.edit': 'সম্পাদনা',
   'st.skills.cws.heading': "Chrome Web Store রিলিজ সেটআপ",
   'st.skills.cws.desc_html': "প্যাকেজ করা রিলিজ দক্ষতা সক্রিয় থাকাকালীনই এই সেটিংসগুলি উপস্থিত হয়৷ একটি Google Cloud OAuth তৈরি করুন৷ <strong>ওয়েব অ্যাপ্লিকেশন</strong>, Chrome Web Store API সক্ষম করুন এবং নিবন্ধন করুন৷ <code>http://localhost:1457/auth/callback</code> একটি অনুমোদিত পুনঃনির্দেশ URI হিসাবে। শংসাপত্র, টোকেন এবং জিপ বাইটগুলি এক্সটেনশন-স্থানীয় সঞ্চয়স্থানে থাকে এবং কখনই মডেল প্রম্পট বা ট্রেসে অন্তর্ভুক্ত হয় না।",
   'st.skills.cws.publisher_id': "প্রকাশক আইডি",

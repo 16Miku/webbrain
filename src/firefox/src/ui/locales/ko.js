@@ -702,6 +702,7 @@ export default {
   'st.skills.item.chars': '{count}자',
   'st.skills.item.tools': '도구: {tools}',
   'st.skills.remove': '제거',
+  'st.skills.edit': '수정',
   'st.skills.preview.rendered': '미리보기',
   'st.skills.preview.raw': '원문',
   'st.skills.security_html': '<strong>알림:</strong> 사용자 정의 스킬은 브라우저 로컬 스토리지에 일반 텍스트로 저장되며 시스템 프롬프트의 일부로 구성된 LLM 제공업체에 전송됩니다. 가져온 스킬 도구는 호출별 확인 없이 선언된 입력을 선언된 HTTPS 엔드포인트로 보낼 수 있습니다. 다운로드 도구는 파일 저장 전에 일반 다운로드 권한 게이트를 통해 계속 확인합니다. 신뢰하는 도구만 가져오세요. 원격 콘텐츠는 가져올 때 스토리지에 복사됩니다.',

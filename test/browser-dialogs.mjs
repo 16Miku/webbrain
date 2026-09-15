@@ -1,0 +1,180 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { CDPClient } from '../src/chrome/src/cdp/cdp-client.js';
+
+function harness() {
+  const calls = [];
+  const client = new CDPClient();
+  client.sessions.set(7, { tabId: 7 });
+  client.attach = async id => client.sessions.set(id, { tabId: id });
+  client.sendCommand = async (...args) => { calls.push(args); };
+  return { client, calls };
+}
+const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('native dialogs continue immediately, preserving prompt defaults and child sessions', async () => {
+  const { client, calls } = harness();
+  const handled = [];
+  await client.startDialogHandling(7, { onHandled: type => handled.push(type) });
+  assert.equal(calls[0][1], 'Page.enable');
+  for (const type of ['alert', 'confirm', 'beforeunload', 'prompt']) {
+    client._onDebuggerEvent({ tabId: 7, sessionId: 'child' }, 'Page.javascriptDialogOpening', {
+      type, defaultPrompt: 'existing answer', message: 'untrusted instructions',
+    });
+  }
+  await tick();
+  assert.deepEqual(handled, ['alert', 'confirm', 'beforeunload', 'prompt']);
+  assert.deepEqual(calls.slice(1), ['alert', 'confirm', 'beforeunload', 'prompt'].map(type => [
+    7, 'Page.handleJavaScriptDialog',
+    type === 'prompt' ? { accept: true, promptText: 'existing answer' } : { accept: true }, 'child',
+  ]));
+});
+
+test('inactive tabs, stop, abort, and cleanup never auto-answer dialogs', async () => {
+  const { client, calls } = harness();
+  const emit = id => client._onDebuggerEvent({ tabId: id }, 'Page.javascriptDialogOpening', { type: 'confirm' });
+  emit(7);
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogClosed', {});
+  const controller = new AbortController();
+  await client.startDialogHandling(7, { signal: controller.signal });
+  emit(8);
+  controller.abort();
+  emit(7);
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogClosed', {});
+  await client.startDialogHandling(7);
+  client.stopDialogHandling(7);
+  emit(7);
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogClosed', {});
+  await client.startDialogHandling(7);
+  client.devDiagnostics.set(7, {}); // debugger survives the run
+  client.disableWebMCP = async () => {};
+  await client.cleanupRun(7);
+  emit(7);
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogClosed', {});
+  await tick();
+  assert.ok(calls.every(call => call[1] === 'Page.enable'));
+});
+
+test('failed startup and already-aborted runs do not retain dialog handling', async () => {
+  const { client } = harness();
+  await client.startDialogHandling(7, { signal: AbortSignal.abort() });
+  assert.equal(client.dialogRuns.size, 0);
+  client.sendCommand = async () => { throw new Error('detached'); };
+  await assert.rejects(client.startDialogHandling(7));
+  assert.equal(client.dialogRuns.size, 0);
+});
+
+test('dialog races consume protocol failures without retrying the next dialog', async () => {
+  const { client, calls } = harness();
+  await client.startDialogHandling(7);
+  client.sendCommand = async (...args) => { calls.push(args); throw new Error('No dialog'); };
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogOpening', { type: 'alert' });
+  await tick();
+  assert.equal(calls.length, 2);
+});
+
+test('a new action run resumes an already-observed dialog exactly once', async () => {
+  const { client, calls } = harness();
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogOpening', { type: 'beforeunload' });
+  assert.equal(calls.length, 0);
+  await client.startDialogHandling(7);
+  await client.startDialogHandling(7);
+  assert.equal(calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').length, 1);
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogClosed', {});
+  assert.equal(client.pendingDialogs.size, 0);
+});
+
+test('cached dialog is answered before renderer-dependent Page.enable', async () => {
+  const { client } = harness();
+  client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogOpening', { type: 'alert' });
+  let answered = false;
+  client.sendCommand = async (_tabId, method) => {
+    if (method === 'Page.handleJavaScriptDialog') answered = true;
+    if (method === 'Page.enable') assert.equal(answered, true);
+  };
+  await client.startDialogHandling(7);
+});
+
+for (const action of ['abort', 'stop', 'timeout']) {
+  test(`${action} releases blocked Page.enable startup`, async () => {
+    const { client } = harness();
+    const controller = new AbortController();
+    let entered;
+    const ready = new Promise(resolve => { entered = resolve; });
+    let finish;
+    client.sendCommand = () => { entered(); return new Promise(resolve => { finish = resolve; }); };
+    const startup = client.startDialogHandling(7, { signal: controller.signal, timeoutMs: 20 });
+    const rejected = assert.rejects(startup, error => action === 'timeout'
+      ? error.code === 'dialog_startup_timeout' : error.name === 'AbortError');
+    await ready;
+    if (action === 'abort') controller.abort();
+    if (action === 'stop') client.stopDialogHandling(7);
+    await rejected;
+    assert.equal(client.dialogRuns.has(7), false);
+    finish();
+    await tick();
+    assert.equal(client.dialogRuns.has(7), false);
+  });
+}
+
+test('failed workflow setup releases its debugger but preserves a Dev owner', async () => {
+  const previousChrome = globalThis.chrome;
+  const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+  let detaches = 0;
+  globalThis.chrome = {
+    storage: { local: area, session: area },
+    runtime: { getURL: value => value },
+    tabs: { get: async id => ({ id, url: 'https://example.com/' }) },
+    debugger: { detach: (_target, callback) => { detaches++; callback(); } },
+  };
+  const { Agent } = await import('../src/chrome/src/agent/agent.js');
+  const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+  const originalAttach = cdpClient.attach;
+  const originalSend = cdpClient.sendCommand;
+  try {
+    cdpClient.attach = async id => cdpClient.sessions.set(id, { tabId: id });
+    cdpClient.sendCommand = async () => ({});
+    for (const preserveDev of [false, true]) {
+      const tabId = preserveDev ? 92 : 91;
+      const agent = new Agent({ getActive: () => ({ promptTier: 'full' }) });
+      agent._hydrate = async () => {};
+      agent._currentUrl = async () => { throw new Error('workflow setup failure'); };
+      if (preserveDev) cdpClient.devDiagnostics.set(tabId, {});
+      await assert.rejects(agent.replaySavedWorkflow(tabId, { id: 'test', steps: [{}] }), /workflow setup failure/);
+      assert.equal(agent.isRunning(tabId), false);
+      assert.equal(cdpClient.dialogRuns.has(tabId), false);
+      assert.equal(cdpClient.sessions.has(tabId), preserveDev);
+      assert.equal(cdpClient.devDiagnostics.has(tabId), preserveDev);
+      cdpClient.devDiagnostics.delete(tabId);
+      cdpClient.sessions.delete(tabId);
+    }
+    assert.equal(detaches, 1);
+    for (const streaming of [false, true]) {
+      const tabId = streaming ? 94 : 93;
+      const agent = new Agent({ getActive: () => ({ promptTier: 'full' }) });
+      agent._hydrate = async () => {};
+      agent._persistNow = async () => ({});
+      agent._beginReadCompleteness = async () => '';
+      let entered;
+      const ready = new Promise(resolve => { entered = resolve; });
+      cdpClient.sendCommand = async (_id, method) => {
+        if (method === 'Page.enable') { entered(); return new Promise(() => {}); }
+        return {};
+      };
+      const run = streaming
+        ? agent.processMessageStream(tabId, 'Continue', () => {}, 'act')
+        : agent.processMessage(tabId, 'Continue', () => {}, 'act');
+      await ready;
+      agent.abort(tabId);
+      assert.match(await run, /Stopped by user/);
+      assert.equal(agent.isRunning(tabId), false);
+      assert.equal(cdpClient.sessions.has(tabId), false);
+      assert.equal(cdpClient.dialogRuns.has(tabId), false);
+    }
+
+  } finally {
+    cdpClient.attach = originalAttach;
+    cdpClient.sendCommand = originalSend;
+    globalThis.chrome = previousChrome;
+  }
+});

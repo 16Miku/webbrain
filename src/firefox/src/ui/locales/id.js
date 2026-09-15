@@ -702,6 +702,7 @@ export default {
   'st.skills.item.chars': '{count} karakter',
   'st.skills.item.tools': 'Alat: {tools}',
   'st.skills.remove': 'Hapus',
+  'st.skills.edit': 'Edit',
   'st.skills.preview.rendered': 'Pratinjau',
   'st.skills.preview.raw': 'Mentah',
   'st.skills.security_html': '<strong>Perhatian:</strong> keterampilan kustom disimpan dalam teks biasa di penyimpanan lokal browser dan dikirim ke penyedia LLM yang Anda konfigurasi sebagai bagian dari prompt sistem. Alat keterampilan yang diimpor dapat mengirim input yang dideklarasikan ke endpoint HTTPS yang dideklarasikan tanpa konfirmasi per panggilan; alat unduh tetap meminta melalui gerbang izin Unduhan normal sebelum menyimpan file. Hanya impor alat yang Anda percayai; konten jarak jauh disalin ke penyimpanan saat impor.',

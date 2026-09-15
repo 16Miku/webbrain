@@ -1009,12 +1009,10 @@ export class Agent extends LoopDetector {
     // Strict secret-handling mode. When true, the system prompt and `done`
     // tool description add a hard prohibition on quoting credentials, while
     // the post-set_field credential note tells the model to never echo the
-    // value. When false (the default — this is a personal-computer tool,
-    // not a third-party deployment), the model avoids needless echoes but can
-    // deliver a credential it generated for this task or quote one when the
-    // user explicitly asks ("show me my recovery codes", "what's my API key
-    // on this page"). Toggle
-    // lives in Settings → "Strict secret handling". Loaded in background.js.
+    // value. When false, the model avoids needless echoes but can deliver a
+    // credential it generated for this task or quote one when the user explicitly
+    // asks ("show me my recovery codes", "what's my API key on this page").
+    // Defaults to true at extension runtime via background.js and Settings.
     this.strictSecretMode = false;
 
     // Experimental Chrome WebMCP integration. Off by default so ordinary
@@ -5979,6 +5977,7 @@ export class Agent extends LoopDetector {
   }
 
   _releaseRunEntry(tabId) {
+    cdpClient.stopDialogHandling(tabId);
     this._runAbortStates.get(tabId)?.dispose();
     this._runAbortStates.delete(tabId);
     this.abortFlags.delete(tabId);
@@ -16004,6 +16003,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   abort(tabId) {
     for (const id of this._researchEscalationTabIds(tabId)) {
       this.abortFlags.set(id, true);
+      cdpClient.stopDialogHandling(id);
       const controller = this._runAbortStates.get(id)?.controller;
       if (controller && !controller.signal.aborted) {
         const error = new Error('Stopped by user');
@@ -32042,6 +32042,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._prepareClarificationAuthorizationForRun(tabId);
       this.permissions.beginTurn(tabId);
       this.conversationModes.set(tabId, 'act');
+      await cdpClient.startDialogHandling(tabId, { signal: this._runAbortSignal(tabId) })
+        .catch(error => {
+          if (error?.name === 'AbortError' || error?.code === 'dialog_startup_timeout') throw error;
+          // Restricted tabs can still use non-CDP tools.
+        });
       completionRunToken = this._beginCompletionInvariant(tabId);
       previousForegroundCapture = this._configureCapturePolicyForRun(tabId, runOptions);
       capturePolicyConfigured = true;
@@ -32076,7 +32081,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         try {
           if (completionRunToken) this._clearCompletionInvariant(tabId, completionRunToken);
         } finally {
-          this._releaseRunEntry(tabId);
+          try {
+            await cdpClient.cleanupRun(tabId);
+          } catch { /* preserve the original setup failure */ }
+          finally { this._releaseRunEntry(tabId); }
         }
       }
       throw error;
@@ -40225,10 +40233,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
     }
     try {
+      if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) {
+        await cdpClient.startDialogHandling(tabId, {
+          signal: this._runAbortSignal(tabId),
+        }).catch(error => {
+          if (error?.name === 'AbortError' || error?.code === 'dialog_startup_timeout') throw error;
+          // Restricted tabs can still use non-CDP tools.
+        });
+      }
       const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
     } finally {
+      cdpClient.stopDialogHandling(tabId);
       this.currentCostState.delete(tabId);
       this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
@@ -41827,10 +41844,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
     }
     try {
+      if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) {
+        await cdpClient.startDialogHandling(tabId, {
+          signal: this._runAbortSignal(tabId),
+        }).catch(error => {
+          if (error?.name === 'AbortError' || error?.code === 'dialog_startup_timeout') throw error;
+          // Restricted tabs can still use non-CDP tools.
+        });
+      }
       const result = await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
     } finally {
+      cdpClient.stopDialogHandling(tabId);
       this.currentCostState.delete(tabId);
       this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);

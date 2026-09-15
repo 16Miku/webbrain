@@ -718,6 +718,7 @@ export default {
   'st.skills.item.chars': '{count} karakter',
   'st.skills.item.tools': 'Mga tool: {tools}',
   'st.skills.remove': 'Alisin',
+  'st.skills.edit': 'I-edit',
   'st.skills.preview.rendered': 'Paunang tingin',
   'st.skills.preview.raw': 'Hilaw',
   'st.skills.security_html': '<strong>Paalala:</strong> ang mga custom na kasanayan ay naka-store bilang plaintext sa browser local storage at ipinapadala sa iyong na-configure na LLM provider bilang bahagi ng system prompt. Ang mga na-import na tool ng kasanayan ay maaaring magpadala ng kanilang mga declared input sa kanilang declared HTTPS endpoint nang walang per-call confirmation; ang mga download tool ay humihingi pa rin sa pamamagitan ng normal na Downloads permission gate bago mag-save ng mga file. Ang mga tool lang na pinagkakatiwalaan mo ang i-import; ang remote na content ay kinokopya sa storage sa oras ng pag-import.',

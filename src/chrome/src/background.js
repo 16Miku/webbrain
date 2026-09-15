@@ -567,7 +567,7 @@ const imageBudgetReady = loadImageBudget().catch(() => {});
 
 async function loadStrictSecretMode() {
   const stored = await chrome.storage.local.get('strictSecretMode');
-  if (stored.strictSecretMode != null) agent.strictSecretMode = !!stored.strictSecretMode;
+  agent.strictSecretMode = stored.strictSecretMode !== false;
 }
 loadStrictSecretMode();
 

@@ -744,6 +744,7 @@ export default {
   'st.skills.item.chars': "Caracteres {count}",
   'st.skills.item.tools': "Ferramentas: {tools}",
   'st.skills.remove': "Remover",
+  'st.skills.edit': 'Editar',
   'st.skills.cws.heading': "Configuração de versão Chrome Web Store",
   'st.skills.cws.desc_html': "Essas configurações aparecem apenas enquanto a habilidade de liberação do pacote está habilitada. Crie um Google Cloud OAuth <strong>Aplicativo web</strong>, ative a API Chrome Web Store e registre-se <code>http://localhost:1457/auth/callback</code> como um URI de redirecionamento autorizado. Credenciais, tokens e bytes ZIP permanecem no armazenamento local de extensão e nunca são incluídos em prompts ou rastreamentos de modelo.",
   'st.skills.cws.publisher_id': "ID do editor",

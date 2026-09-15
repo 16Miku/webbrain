@@ -151,3 +151,10 @@ python3 -m http.server 8765 -d test/memory
 Then open `http://127.0.0.1:8765/`. The page walks through `/memory --add`,
 form-derived learning, normal auto-learning, replaying saved memories into a
 later form, and Profile auto-fill.
+
+### Native browser dialogs
+
+`node --test test/browser-dialogs.mjs` covers dialog responses, per-tab ownership,
+Stop/abort, retained Dev sessions, and protocol races (included in `npm test`).
+`node test/browser-dialogs-e2e.mjs` uses installed Chrome through Playwright to
+verify real alert/confirm/prompt and beforeunload continuation.

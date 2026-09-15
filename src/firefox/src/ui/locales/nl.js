@@ -678,6 +678,7 @@ export default {
   'st.skills.item.chars': '{count} tekens',
   'st.skills.item.tools': 'Tools: {tools}',
   'st.skills.remove': 'Verwijderen',
+  'st.skills.edit': 'Bewerken',
   'st.skills.preview.rendered': 'Voorbeeld',
   'st.skills.preview.raw': 'Ruw',
   'st.skills.security_html': '<strong>Let op:</strong> aangepaste vaardigheden worden in platte tekst opgeslagen...',
