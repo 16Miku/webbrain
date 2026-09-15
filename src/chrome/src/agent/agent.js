@@ -33338,6 +33338,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // only proves that a navigation started. For a same-URL or round-trip
       // redirect, require a real top-frame document commit before claiming
       // success over the unchanged URL readback.
+      let releaseDialogNavigation = () => {};
       let navigationCommitObserved = false;
       let navigationLoadingObserved = false;
       let navigationTerminalResult = null;
@@ -33345,6 +33346,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const navigationTerminal = new Promise(resolve => { resolveNavigationTerminal = resolve; });
       const finishNavigationTerminal = (result) => {
         if (navigationTerminalResult) return;
+        releaseDialogNavigation();
         navigationTerminalResult = result;
         resolveNavigationTerminal(result);
       };
@@ -33402,6 +33404,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
       const removeNavigationListener = () => {
+        releaseDialogNavigation();
         if (navigationCommitListener) {
           try { navigationEvent.removeListener(navigationCommitListener); } catch {}
         }
@@ -33417,6 +33420,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
 
       try {
+        releaseDialogNavigation = cdpClient.authorizeNavigationDialog(tabId, beforeUrl, earlyCdpAbortSignal);
         await chrome.tabs.update(tabId, { url: rawUrl });
       } catch (e) {
         removeNavigationListener();

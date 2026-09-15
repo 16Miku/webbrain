@@ -816,19 +816,24 @@ Wraps `chrome.debugger` API for:
 
 During active Chrome Act/Dev runs (including saved workflow replay), native
 JavaScript dialogs are continued through `Page.javascriptDialogOpening` and
-`Page.handleJavaScriptDialog`. Alerts and confirmations are accepted;
-`beforeunload` warnings choose Leave; prompts use the site's default text (or
-an empty string when no default exists). This includes accepting confirmation
-of the pending page action and potentially discarding unsaved changes. Dialog
-text is never interpreted as instructions. The event handler runs independently
-of blocked renderer commands, and is removed on Stop, completion, or detach,
-even when Dev diagnostics keep the debugger attached. Ask mode and idle tabs
-do not auto-answer dialogs. Already-observed dialogs are resolved before
-startup commands, so retained Dev connections can resume them. Chrome does not
-expose a dialog opened before debugger attachment to the new session; dismiss
-that existing dialog manually. Dialog setup responds to Stop and times out after
-five seconds rather than holding the run indefinitely. Existing action permission
-checks still apply.
+`Page.handleJavaScriptDialog`. Alerts are acknowledged; confirmations and text
+prompts are dismissed. A dialog event cannot prove which click triggered it,
+so a running task or an input command in flight never grants permission to
+accept a confirmation. Cached dialogs from idle time are also dismissed.
+
+A `beforeunload` warning chooses Leave only for a one-use navigation permission
+created immediately before the navigation tool dispatches, after its existing
+permission and unsaved-change checks. The warning must come from the same
+top-level source URL. The permission expires on the first accepted warning,
+navigation completion/failure, cancellation, or after ten seconds. Other
+navigation warnings choose Stay. Dialog text is never treated as instructions.
+
+The handler runs independently of blocked page commands and is removed on
+Stop, completion, or detach, even when Dev diagnostics retain the debugger.
+Ask mode and idle tabs do not auto-answer dialogs. Already-observed dialogs are
+resolved before startup commands. Dialogs opened before debugger attachment
+may need manual dismissal. Startup responds to Stop and times out after five
+seconds instead of holding the run indefinitely.
 This does not handle browser permission requests, authentication windows, or
 OS file pickers. Firefox WebExtensions provide no equivalent native-dialog API;
 those dialogs still require manual handling in Firefox.
