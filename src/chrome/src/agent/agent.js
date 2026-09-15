@@ -77,6 +77,7 @@ import { isPdfHandlerTabUrl, pdfUrlFromTabUrl } from './pdf-extraction.js';
 import { normalizePdfOcrResult, PDF_OCR_SYSTEM_PROMPT } from './pdf-ocr.js';
 import * as trace from '../trace/recorder.js';
 import { buildTerminalRuntimeEvent, enqueueCloudRuntimeEvent, flushCloudRuntimeOutbox } from '../trace/cloud-runtime-outbox.js';
+import { buildShareGenerationItem, enqueueShareGeneration, flushShareOutbox, purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
@@ -12738,7 +12739,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // Without this, the child alarm exists but the parent needs reconciliation.
         await settleConsequentialTool();
         this._persist(tabId);
-        return { action: 'return', value: finalResponse };
+        // A scheduled resume's summary is synthesized locally by createResumeJob,
+        // not authored by the provider. Report it as scheduled_resume (like the
+        // auto-progress resume paths) so voluntary research sharing and workflow
+        // drafts treat it as a pause, never as an ordinary model generation.
+        if (scheduledResume) return { action: 'return', value: finalResponse, status: 'scheduled_resume' };
+        // rawSummary is the model-authored done text before the progress
+        // ledger is appended for display; research sharing stores it as the
+        // response instead of mislabeling local presentation as provider output.
+        return { action: 'return', value: finalResponse, rawSummary: rawDoneSummary };
       }
 
       // Loop detection — exact calls, semantic AX reads, and coordinates run
@@ -18730,7 +18739,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Compass delivery remains active when optional local tracing is disabled.
    * Shared by the streaming and non-streaming message paths. (#9)
    */
-  async _endTraceRun(tabId, runId, status, finalContent, { provider = null, messages = null, mode = '' } = {}) {
+  async _endTraceRun(tabId, runId, status, finalContent, { provider = null, messages = null, mode = '', shareRequest = null, shareResponse = null, hadProviderCompletion = false } = {}) {
     if (String(provider?.config?.providerName || '').toLowerCase() === 'webbrain-cloud') {
       try {
         const sessionId = this.conversationIds.get(tabId) || null;
@@ -18754,6 +18763,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         void flushCloudRuntimeOutbox(provider);
       } catch {}
     }
+    // Voluntary per-provider research sharing. The WebBrain Compass provider
+    // acts as transport (its API hosts the endpoint); which provider produced
+    // the run only decides whether capture is gated on (the per-provider
+    // toggle) and what attribution to record. Compass itself never goes
+    // through this path. Capture additionally requires a successful provider
+    // completion (hadProviderCompletion): local-only fast paths (recommended
+    // first tool, selection-restoration read, dev guards, attachment rejects)
+    // return with status 'done' but never called the model, and must not be
+    // uploaded as model generations. shareRequest, when provided, is the
+    // actual model-facing request (source-grounded filtered + pruned); the
+    // full persisted `messages` array can contain unrelated history the
+    // provider never received.
+    const shareTransport = this.providerManager?.getProvider?.('webbrain_cloud');
+    if (shareTransport
+        && status === 'done'
+        && hadProviderCompletion === true
+        && provider?.config?.shareQueriesForResearch === true
+        && String(provider?.config?.providerName || '').toLowerCase() !== 'webbrain-cloud') {
+      try {
+        const shareSessionId = this._shareSessionId(this.conversationIds.get(tabId) || null);
+        if (shareSessionId) {
+          const shareItem = buildShareGenerationItem({
+            runId,
+            finalContent,
+            sharedResponse: shareResponse,
+            messages: Array.isArray(shareRequest) && shareRequest.length ? shareRequest : messages,
+            model: provider?.model,
+            mode,
+            provider: String(provider?.config?.providerName || '').toLowerCase(),
+            provider_name: String(provider?.config?.label || provider?.name || '').slice(0, 128),
+            provider_id: String(provider?.config?._providerId || ''),
+          });
+          if (shareItem) await enqueueShareGeneration({ session_id: shareSessionId, ...shareItem });
+        }
+      } catch {}
+    }
+    // Retry delivery of previously queued voluntary shares on every run end,
+    // mirroring the Compass runtime outbox pattern. Revoked entries are
+    // purged first so opt-out is honored immediately before delivery.
+    try { await this._purgeRevokedShareGenerations(); } catch {}
+    void flushShareOutbox(shareTransport, (entry) => this._shareEntryConsented(entry));
     if (runId) {
       await this._flushAdapterMatchTraceRun(runId);
       try {
@@ -18772,6 +18822,46 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // conversation-bound via _takeContinuationTaskToken.
     this._storeContinuationTaskToken(tabId);
     this._taskTokens.delete(tabId);
+  }
+
+  /**
+   * Namespace a conversation id into a backend-valid `share_` session id.
+   * Keeps only the charset the improvement endpoint accepts and stays well
+   * under the 200-char session id cap.
+   */
+  _shareSessionId(conversationId) {
+    const safe = String(conversationId || '').replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 190);
+    return safe ? `share_${safe}` : '';
+  }
+
+  /**
+   * Drop queued voluntary shares whose provider is no longer opted in.
+   * Consent is keyed by stable provider-config id and checked against live
+   * configs immediately before every flush (run start and run end), so
+   * entries queued while opted in are never delivered after the user revokes
+   * the toggle or removes the provider. Entries without an id predate
+   * instance-keyed consent and are dropped rather than sent unverified.
+   */
+  async _purgeRevokedShareGenerations() {
+    try {
+      const consented = this.providerManager?.consentedShareProviderIds?.();
+      if (!(consented instanceof Set)) return;
+      await purgeShareGenerations(entry => !consented.has(String(entry?.provider_id || '')));
+    } catch {}
+  }
+
+  /**
+   * Live per-entry consent check for an in-flight flush. Re-reads configs on
+   * every send (not once per flush) so revocation mid-flush drops the
+   * remaining snapshot entries instead of delivering them.
+   */
+  _shareEntryConsented(entry) {
+    try {
+      const consented = this.providerManager?.consentedShareProviderIds?.();
+      return consented instanceof Set && consented.has(String(entry?.provider_id || ''));
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -21094,6 +21184,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     tools = null,
     toolChoice = null,
     returnResult = false,
+    shareCapture = null,
   } = {}) {
     let modelMessages = this._messagesForSourceGroundedRun(
       messages,
@@ -21122,6 +21213,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...modelMessages.slice(modelMessages[0]?.role === 'system' ? 1 : 0),
     ];
     const prunedMessages = this._pruneOldImages(contextMessages, provider);
+    // Voluntary research sharing needs the exact model-facing request (with
+    // the context-only system prompt). Callers pass a holder when the result
+    // may be shared; recovery phases omit it and are never shared.
+    if (shareCapture) shareCapture.request = prunedMessages;
     const chatOpts = {
       temperature: ['delivery_recovery', 'step_limit_recovery'].includes(phase) ? 0.2 : 0.3,
       maxTokens: this._providerMaxOutputTokens(provider),
@@ -21180,6 +21275,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (returnResult) return result;
     if (result?.toolCalls?.length) return '';
+    if (shareCapture) shareCapture.response = String(result?.content ?? '');
     return repairAssistantDisplayText(String(result?.content || '').trim());
   }
 
@@ -21203,6 +21299,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     runOptions = {},
     currentUserMessage = null,
     priorMessageSet = null,
+    shareCapture = null,
   ) {
     const alreadyStopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (alreadyStopped) return alreadyStopped;
@@ -21212,7 +21309,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try {
       finalResponse = await this._generateContextOnlyResponse(
         tabId, messages, provider, costState, runId,
-        { phase: 'response_only', step: 1, runOptions, currentUserMessage, priorMessageSet },
+        { phase: 'response_only', step: 1, runOptions, currentUserMessage, priorMessageSet, shareCapture },
       );
     } catch (error) {
       status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
@@ -40501,6 +40598,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // to upload; the current run is enqueued at finalization and may complete
     // in the background or on the next Compass run.
     void flushCloudRuntimeOutbox(provider);
+    // Purge shares revoked since they were queued before retrying delivery.
+    void this._purgeRevokedShareGenerations();
+    void flushShareOutbox(this.providerManager?.getProvider?.('webbrain_cloud'), (entry) => this._shareEntryConsented(entry));
 
     if (typeof runOptions?.isDetachedStartCancelled === 'function'
         && runOptions.isDetachedStartCancelled()) {
@@ -40518,6 +40618,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let finalResponse = '';
     let messageCompletion = null;
     let _traceStatus = 'done'; // updated on early exits
+    // Voluntary research sharing must only capture runs where the model was
+    // actually called. Local-only fast paths (recommended first tool,
+    // selection-restoration read, dev/attachment guards) return with status
+    // 'done' but never hit the provider. Flipped to true once past those
+    // guards (or on a successful response-only turn).
+    let shareHadProviderCompletion = false;
+    // Exact pruned request of the last provider call in this run (set at each
+    // chatMainTurn invocation and for response-only turns). The persisted
+    // `messages` array is mutated after each call (appended tool calls and
+    // tool results), so reconstructing at finalization would leak
+    // response-side data into the shared request.
+    let currentNonStreamRequestMessages = null;
+    // Raw provider completion before local notices are appended (cost,
+    // attribution, caveats). Shared as the generation's response so
+    // application-authored text is never mislabeled as provider output.
+    let shareRawResponse = null;
     let traceFailureCode = null;
     let traceTurnEndExtra = {}; // step-limit handoff outcome; trace status keeps max_steps
     let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
@@ -40642,12 +40758,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       trustedContinuation: runOptions?.trustedContinuation === true,
     });
     if (gateOutcome.responseOnly === true) {
+      const responseOnlyShareCapture = {};
       const responseOnly = await this._completeResponseOnlyTurn(
         tabId, messages, onUpdate, provider, costState, runId,
-        runOptions, enriched, sourceBoundPriorMessages,
+        runOptions, enriched, sourceBoundPriorMessages, responseOnlyShareCapture,
       );
       finalResponse = responseOnly.content;
       _traceStatus = responseOnly.status;
+      // Response-only turns do call the model (source-grounded + pruned
+      // inside _generateContextOnlyResponse). Only mark shareable on success,
+      // keeping the exact request (with the context-only system prompt).
+      if (responseOnly.status === 'done') {
+        shareHadProviderCompletion = true;
+        shareRawResponse = responseOnlyShareCapture.response;
+        if (Array.isArray(responseOnlyShareCapture.request) && responseOnlyShareCapture.request.length) {
+          currentNonStreamRequestMessages = responseOnlyShareCapture.request;
+        }
+      }
       return finalResponse;
     }
     if (this._consumeSelectionGroundingRestoration(tabId, enriched)) this._persist(tabId);
@@ -40819,6 +40946,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const startedAt = Date.now();
       let result;
       try {
+        // Retain the exact request for voluntary research sharing (see
+        // currentNonStreamRequestMessages). chatMessages is already the
+        // source-grounded, pruned model input for this call.
+        currentNonStreamRequestMessages = chatMessages;
         result = await chatMainTurnRaw(chatMessages, chatOptions, requestContext);
       } catch (error) {
         if (error?.webbrainOutputEmitted === true) throw error;
@@ -40828,6 +40959,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           code: 'vision_local_fallback_retry',
           message: 'The active provider rejected the image; retrying once from the retained capture using a local LiquidAI description.',
         });
+        currentNonStreamRequestMessages = fallbackMessages;
         result = await chatMainTurnRaw(fallbackMessages, chatOptions, requestContext);
       }
       messageCompletion = aggregateMessageCompletion(
@@ -40878,8 +41010,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finalResponse;
       }
     }
+    // Past all local-only fast paths: the main loop below always calls the
+    // provider before producing a 'done' outcome, so research sharing may
+    // consider this run. Failures/cancels are still excluded via _traceStatus.
+    shareHadProviderCompletion = true;
 
     while (steps < this.maxSteps) {
+      // Each turn's raw provider text belongs to that turn only: reset so a
+      // non-terminal final-text pass can never pair stale output with a later
+      // tool-batch result in the shared record.
+      shareRawResponse = null;
       // Check for abort before each step
       if (this._checkAbort(tabId)) {
         finalResponse = finalResponse || '[Stopped by user]';
@@ -41139,6 +41279,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
+      // Keep provider text before local-search rewrites or display repairs.
+      const rawProviderContent = String(result.content ?? '');
+
       // LFM can emit native Google/Wikipedia search markup even though this
       // profile advertises no tools. Treat it as a request to search the
       // installed archive, never as permission to use the browser or network.
@@ -41237,6 +41380,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
         if (batchResult.action === 'return') {
           finalResponse = batchResult.value;
+          if (typeof batchResult.rawSummary === 'string' && batchResult.rawSummary.trim()) {
+            shareRawResponse = batchResult.rawSummary;
+          }
           if (batchResult.status) {
             _traceStatus = batchResult.status;
             onUpdate('run_status', { status: batchResult.status, message: batchResult.value });
@@ -41521,6 +41667,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: finalResponse });
         break;
       }
+      shareRawResponse = rawProviderContent;
       const repairedFinalContent = repairAssistantDisplayText(result.content);
       finalResponse = result.costAllowanceMessage
         ? `${repairedFinalContent}\n\n${result.costAllowanceMessage}`
@@ -41606,14 +41753,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         lastTraceStep,
         this._traceTurnEndPayload(_traceStatus, traceFailureCode, traceTurnEndExtra),
       );
-      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode });
+      // Share the exact model-facing request captured at the last provider
+      // call. Unlike a reconstruction from the now-mutated `messages` array,
+      // it contains neither the terminal tool call/result appended after the
+      // call nor unrelated history, and response-only turns keep their
+      // context-only system prompt. Falls back to a filtered reconstruction
+      // only when no call was captured (should not happen for shared runs).
+      let shareRequest = null;
+      try {
+        if (Array.isArray(currentNonStreamRequestMessages) && currentNonStreamRequestMessages.length) {
+          shareRequest = currentNonStreamRequestMessages;
+        } else if (typeof modelMessagesForRun === 'function') {
+          const rawShare = modelMessagesForRun();
+          shareRequest = this._pruneOldImages(rawShare, provider);
+        } else {
+          shareRequest = messages;
+        }
+      } catch {}
+      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, shareResponse: shareRawResponse, hadProviderCompletion: shareHadProviderCompletion });
     }
   }
 
   /**
    * Process a message with streaming output.
-   */
-  async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
+   */  async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
     await this._claimRunEntry(tabId, 'interactive', runOptions);
     try {
     let continuationEligible = false;
@@ -41811,6 +41974,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const provider = this._activeProvider(tabId);
     void flushCloudRuntimeOutbox(provider);
+    // Purge shares revoked since they were queued before retrying delivery.
+    void this._purgeRevokedShareGenerations();
+    void flushShareOutbox(this.providerManager?.getProvider?.('webbrain_cloud'), (entry) => this._shareEntryConsented(entry));
 
     // The run claim owns cancellation reset. Stop during setup must survive.
     this._throwIfAborted(this._runAbortSignal(tabId));
@@ -41819,6 +41985,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let finalResponse = '';
     let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
     let _traceStatus = 'done';
+    // See processMessage: only provider-backed completions may be shared.
+    let shareHadProviderCompletion = false;
+    // Exact pruned request of the last streaming provider call (set before
+    // each chatStream invocation; also used for response-only turns, which
+    // return before the loop). Declared here so pre-loop exits can capture.
+    let currentStreamRequestMessages = null;
+    // Raw provider completion before local notices are appended (see the
+    // non-streaming path): shared as the generation's response.
+    let shareRawResponse = null;
     let traceFailureCode = null;
     let traceTurnEndExtra = {}; // step-limit handoff outcome; trace status keeps max_steps
     const finish = (response, status = _traceStatus) => {
@@ -41882,10 +42057,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       trustedContinuation: runOptions?.trustedContinuation === true,
     });
     if (gateOutcome.responseOnly === true) {
+      const responseOnlyShareCapture = {};
       const responseOnly = await this._completeResponseOnlyTurn(
         tabId, messages, onUpdate, provider, costState, runId,
-        runOptions, enriched, sourceBoundPriorMessages,
+        runOptions, enriched, sourceBoundPriorMessages, responseOnlyShareCapture,
       );
+      if (responseOnly.status === 'done') {
+        shareHadProviderCompletion = true;
+        shareRawResponse = responseOnlyShareCapture.response;
+        if (Array.isArray(responseOnlyShareCapture.request) && responseOnlyShareCapture.request.length) {
+          currentStreamRequestMessages = responseOnlyShareCapture.request;
+        }
+      }
       return finish(responseOnly.content, responseOnly.status);
     }
     if (this._consumeSelectionGroundingRestoration(tabId, enriched)) this._persist(tabId);
@@ -41950,7 +42133,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let pendingVisionFallbackMessages = null;
     let visionFallbackAttempted = false;
     let streamEmittedOutput = false;
-    let currentStreamRequestMessages = null;
+    // currentStreamRequestMessages is declared at the top of this function so
+    // pre-loop exits (e.g. response-only turns) can capture their request.
 
     const recommendedFirstTool = await this._maybeExecuteRecommendedActionFirstTool(
       tabId, runOptions, messages, onUpdate, provider, allowedToolNames, toolSchemas,
@@ -41972,8 +42156,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finish(restorationFirstRead.value, 'cancelled');
       }
     }
+    // Past local-only fast paths: the streaming loop below calls the provider.
+    shareHadProviderCompletion = true;
 
     while (steps < this.maxSteps) {
+      // See the non-streaming loop: raw provider text must not survive into
+      // a later turn's shared record.
+      shareRawResponse = null;
       if (this._checkAbort(tabId)) {
         const content = '[Stopped by user]';
         messages.push(this._localCancellationMessage(content));
@@ -42155,6 +42344,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._throwIfAborted(streamOpts.signal);
 
         fullText = Agent._stripReasoningTags(fullText);
+        // Capture the completion before local-search or presentation rewrites.
+        const rawProviderContent = fullText;
         const streamedToolCalls = hasToolCalls ? Object.values(toolCallsAccumulator) : [];
         const outputDiagnostics = modelOutputDiagnostics({
           content: fullText,
@@ -42268,6 +42459,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             tabId, toolCalls, messages, onUpdate, provider, fullText, allowedToolNames, steps, runOptions, toolSchemas
           );
           if (batchResult.action === 'return') {
+            if (typeof batchResult.rawSummary === 'string' && batchResult.rawSummary.trim()) {
+              shareRawResponse = batchResult.rawSummary;
+            }
             if (batchResult.status) {
               onUpdate('run_status', { status: batchResult.status, message: batchResult.value });
             }
@@ -42514,6 +42708,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           closeTraceStep({ ok: false, code: 'EMPTY_RESPONSE' });
           return finish(incompleteFailure, 'incomplete_output');
         }
+        shareRawResponse = rawProviderContent;
         const repairedFullText = repairAssistantDisplayText(fullText);
         if (repairedFullText !== fullText) {
           fullText = repairedFullText;
@@ -42646,7 +42841,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         lastTraceStep,
         this._traceTurnEndPayload(_traceStatus, traceFailureCode, traceTurnEndExtra),
       );
-      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode });
+      // Prefer the last pruned streaming request (exact model input); fall
+      // back to the source-grounded filtered request so unrelated history is
+      // never uploaded as the prompt that produced the response.
+      let shareRequest = null;
+      try {
+        if (Array.isArray(currentStreamRequestMessages) && currentStreamRequestMessages.length) {
+          shareRequest = currentStreamRequestMessages;
+        } else if (typeof modelMessagesForRun === 'function') {
+          shareRequest = this._pruneOldImages(modelMessagesForRun(), provider);
+        }
+      } catch {}
+      await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, shareResponse: shareRawResponse, hadProviderCompletion: shareHadProviderCompletion });
     }
   }
 }

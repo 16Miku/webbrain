@@ -4,6 +4,7 @@
 
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
 import { escapeHtml } from './utils.js';
+import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 import {
   UI_SCALE_LEVELS,
@@ -1907,6 +1908,39 @@ const OPTIONAL_LOCAL_API_KEY_FIELD = {
   placeholder: 'optional',
   collapsed: true,
 };
+const SHARE_RESEARCH_FIELD = {
+  key: 'shareQueriesForResearch',
+  labelKey: 'st.providers.share_research.label',
+  hintKey: 'st.providers.share_research.hint',
+  type: 'checkbox',
+};
+
+async function confirmResearchSharing(event) {
+  const input = event.currentTarget;
+  if (!input.checked) return;
+  if (!window.confirm(t('st.providers.share_research.confirm'))) {
+    event.preventDefault();
+    return;
+  }
+  // Keep the setting off while Firefox asks for native collection consent.
+  // Call request directly in the click handler, before the first await, to
+  // preserve the user gesture required by the permissions API.
+  input.checked = false;
+  input.disabled = true;
+  try {
+    const granted = await browser.permissions.request({
+      data_collection: RESEARCH_DATA_COLLECTION,
+    });
+    if (granted && input.isConnected) {
+      input.checked = true;
+      markProviderDirty(input.dataset.provider);
+    }
+  } catch {
+    // Denied or unavailable native consent leaves research sharing off.
+  } finally {
+    input.disabled = false;
+  }
+}
 
 function providerDefinitionId(id, config = providersData[id]) {
   return String(config?.sourceProviderId || config?.duplicateOf || id || '');
@@ -2673,6 +2707,9 @@ function renderProviders() {
     const keys = new Set(definition.fields.map(field => field.key));
     if (!keys.has('contextWindow')) definition.fields.push(CONTEXT_WINDOW_FIELD);
     if (!keys.has('maxOutputTokens')) definition.fields.push(MAX_OUTPUT_TOKENS_FIELD);
+    // Voluntary research sharing is opt-in per provider and never shown for
+    // WebBrain Compass itself.
+    if (!keys.has('shareQueriesForResearch')) definition.fields.push(SHARE_RESEARCH_FIELD);
   }
 
   providersContainer.appendChild(renderProviderFilterBar());
@@ -2735,6 +2772,9 @@ function renderProviders() {
             <label style="margin:0;cursor:pointer;">${escapeHtml(label)}</label>
           </div>
         `;
+        if (field.hintKey) {
+          fieldHTML += `<div class="field-hint" style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(field.hintKey))}</div>`;
+        }
         } else if (field.suggestions && field.key === 'model') {
         const rawVal = config[field.key] || '';
         const isCustom = rawVal && !field.suggestions.includes(rawVal);
@@ -2901,6 +2941,9 @@ function renderProviders() {
   document.querySelectorAll('input[data-provider], select[data-provider], textarea[data-provider]').forEach(input => {
     const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
     input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
+  });
+  document.querySelectorAll('input[data-key="shareQueriesForResearch"]').forEach(input => {
+    input.addEventListener('click', confirmResearchSharing);
   });
   document.querySelectorAll('.btn-remove-duplicate').forEach(btn => {
     btn.addEventListener('click', () => removeDuplicateProvider(btn.dataset.provider));
