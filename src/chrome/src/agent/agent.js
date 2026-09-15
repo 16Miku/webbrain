@@ -33561,6 +33561,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // SPAs may push several entries with an identical URL and keep their
       // route solely in history.state. Listen before dispatch so those entries
       // can be verified by the browser's navigation events.
+      let releaseDialogNavigation = () => {};
       let navigationTerminalResult = null;
       let resolveNavigationTerminal;
       let navigationLoadingObserved = false;
@@ -33568,6 +33569,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const navigationTerminal = new Promise(resolve => { resolveNavigationTerminal = resolve; });
       const finishNavigationTerminal = (result) => {
         if (navigationTerminalResult) return;
+        releaseDialogNavigation();
         navigationTerminalResult = result;
         resolveNavigationTerminal(result);
       };
@@ -33606,6 +33608,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (changeInfo.status === 'loading') navigationLoadingObserved = true;
       });
       const removeNavigationListeners = () => {
+        releaseDialogNavigation();
         for (const [event, listener] of listenerRecords.splice(0)) {
           try { event.removeListener(listener); } catch {}
         }
@@ -33621,6 +33624,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const delta = direction === 'back' ? -steps : steps;
           historyDispatchArmed = true;
           dispatched = true;
+          releaseDialogNavigation = cdpClient.authorizeNavigationDialog(tabId, beforeUrl, earlyCdpAbortSignal);
           const results = await chrome.scripting.executeScript({
             target: { tabId },
             args: [delta],
