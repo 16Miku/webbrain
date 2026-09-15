@@ -548,7 +548,7 @@ export default {
   "st.display.download_directory.placeholder": "Sistem varsayılanı",
   "st.display.download_directory.error": "WebBrain veya Work/WebBrain gibi göreli bir klasör kullanın. Mutlak yollara ve “..” kullanımına izin verilmez.",
   "st.display.strict_secret.label": "Katı gizli bilgi işleme",
-  "st.display.strict_secret.desc": "Özellikle istesen bile, özetlerde veya asistan metninde kimlik bilgilerini (parolalar, API anahtarları, jetonlar, OTP'ler) aktarmayı reddet. Düzenli olarak iz dosyaları paylaşıyorsan veya ekran paylaşımı yapıyorsan kullanışlıdır. Varsayılan olarak açık: WebBrain kendi tarayıcında çalışır ancak güvenlik nedeniyle aracı kimlik bilgilerini aktarmayı reddeder ve `done` özetlerini derli toplu tutar.",
+  "st.display.strict_secret.desc": "Özellikle istesen bile, özetlerde veya asistan metninde kimlik bilgilerini (parolalar, API anahtarları, jetonlar, OTP'ler) aktarmayı reddet. Düzenli olarak iz dosyaları paylaşıyorsan veya ekran paylaşımı yapıyorsan kullanışlıdır. Varsayılan olarak kapalı: böylece aracı, istediğin tam değeri ihtiyacın olduğunda yineleyebilir. `done` özetlerinin derli toplu kalmasını ve kimlik bilgilerinin asla tekrarlanmamasını istiyorsan aç (Ayarlar → Güvenlik).",
   "st.display.request_timeout.label": "LLM istek zaman aşımı",
   "st.display.request_timeout.desc": "Yanıt başlıkları ve akıştaki yanıt parçaları arasındaki her duraklama için en uzun bekleme süresi. Varsayılan: 120 saniye. Yavaş yerel modellerde, özellikle CPU üzerinde veya büyük bağlamla çalışırken bu süreyi artırın.",
   "st.providers.filter.all": "Tümü",

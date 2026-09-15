@@ -191,7 +191,7 @@ Promise.all([
   console.warn('[WebBrain] Apocalypse Mode startup work could not be restored:', error);
 });
 const agent = new Agent(providerManager);
-agent.strictSecretMode = true;
+agent.strictSecretMode = false;
 agent.setStandaloneOfflineRagService(createOffscreenOfflineRetrievalService());
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = chrome.storage.local
@@ -569,7 +569,7 @@ const imageBudgetReady = loadImageBudget().catch(() => {});
 
 async function loadStrictSecretMode() {
   const stored = await chrome.storage.local.get('strictSecretMode').catch(() => ({}));
-  agent.strictSecretMode = stored?.strictSecretMode !== false;
+  agent.strictSecretMode = stored?.strictSecretMode === true;
 }
 const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
@@ -1240,7 +1240,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     setApiMutationObserverEnabled(value === undefined || value === true);
   }
   if (changes.strictSecretMode) {
-    agent.strictSecretMode = changes.strictSecretMode.newValue !== false;
+    agent.strictSecretMode = changes.strictSecretMode.newValue === true;
     // Strict mode also appends a global system note after enabled skills, so
     // refresh live conversations immediately as well as rebuilding at turn start.
     refreshPrompts = true;

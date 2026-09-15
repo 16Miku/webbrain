@@ -508,7 +508,7 @@ export default {
   "st.display.download_directory.placeholder": "システムの既定値",
   "st.display.download_directory.error": "WebBrain や Work/WebBrain のような相対フォルダーを指定してください。絶対パスと「..」は使用できません。",
   "st.display.strict_secret.label": "資格情報の厳格な取り扱い",
-  "st.display.strict_secret.desc": "要約やアシスタントの文章の中で資格情報（パスワード、API キー、トークン、OTP）を引用することを、たとえ明示的に求めた場合でも拒否します。トレースファイルを共有したり画面を共有したりすることが多い場合に便利です。デフォルトはオン: WebBrain はあなた自身のブラウザ内で動きますが、安全性を重視してエージェントは資格情報の出力を拒否し、`done` の要約をすっきりと保ちます。",
+  "st.display.strict_secret.desc": "要約やアシスタントの文章の中で資格情報（パスワード、API キー、トークン、OTP）を引用することを、たとえ明示的に求めた場合でも拒否します。トレースファイルを共有したり画面を共有したりすることが多い場合に便利です。デフォルトはオフなので、必要なときにエージェントがあなたが求めた正確な値をそのまま返せます。`done` の要約をすっきり保ち、資格情報を決して繰り返さないようにしたい場合は、有効にしてください（設定 → セキュリティ）。",
   "st.display.request_timeout.label": "LLM リクエストのタイムアウト",
   "st.display.request_timeout.desc": "応答ヘッダーの受信と、ストリーミング応答の各部分の間で待機できる最大時間です。デフォルトは120秒です。ローカルモデルが遅い場合、特にCPUで実行する場合やコンテキストが大きい場合は、時間を長くしてください。",
   "st.providers.filter.all": "すべて",
