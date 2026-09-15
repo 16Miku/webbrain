@@ -355,8 +355,6 @@ Source: [`lmstudio-plugin/`](lmstudio-plugin/).
 
 WebBrain 33.0.0 and later is licensed under
 [GPL-3.0-or-later](LICENSE) because the distributed browser extension bundles
-and integrates the GPL-licensed Xapian/libzim WebAssembly runtime. Releases
-before 33.0.0 remain MIT-licensed under the license that applied when they were
-published; that historical text is preserved in [LICENSES/MIT.txt](LICENSES/MIT.txt).
+and integrates the GPL-licensed Xapian/libzim WebAssembly runtime.
 
 Built with ❤️ by [Emre Sokullu](https://emresokullu.com) and [open-source contributors](https://github.com/webbrain-one/webbrain/graphs/contributors).
