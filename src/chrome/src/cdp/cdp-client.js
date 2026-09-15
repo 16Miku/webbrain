@@ -90,6 +90,7 @@ export class CDPClient {
   constructor() {
     this.sessions = new Map(); // tabId -> debugger session
     this.attachPromises = new Map(); // tabId -> in-flight debugger attach
+    this.attachGenerations = new Map(); // tabId -> current attach generation
     this.eventHandlers = new Map(); // tabId -> { eventName -> [handlers] }
     this.devDiagnostics = new Map(); // tabId -> bounded console/network buffers
     this.webMcpSessions = new Map(); // tabId -> WebMCP tools + pending invocations
@@ -186,16 +187,30 @@ export class CDPClient {
     if (this.sessions.has(tabId)) {
       return this.sessions.get(tabId);
     }
-    if (this.attachPromises.has(tabId)) {
-      return this.attachPromises.get(tabId);
+    const existingAttach = this.attachPromises.get(tabId);
+    if (existingAttach && !existingAttach.cancelled) {
+      return existingAttach;
     }
 
     this._ensureDebuggerListeners();
+
+    const generation = (this.attachGenerations.get(tabId) || 0) + 1;
+    this.attachGenerations.set(tabId, generation);
 
     const attachPromise = new Promise((resolve, reject) => {
       chrome.debugger.attach({ tabId }, '1.3', async () => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+
+        const isCurrentGeneration = this.attachGenerations.get(tabId) === generation;
+
+        if (attachPromise.cancelled || !isCurrentGeneration) {
+          if (!this.sessions.has(tabId)) {
+            try { chrome.debugger.detach({ tabId }, () => {}); } catch {}
+          }
+          reject(new Error('Debugger attachment was cancelled'));
           return;
         }
 
@@ -222,7 +237,7 @@ export class CDPClient {
     this.pendingDialogs.delete(tabId);
     if (!this.sessions.has(tabId)) {
       const pendingAttach = this.attachPromises.get(tabId);
-      if (!pendingAttach) return;
+      if (!pendingAttach || pendingAttach.cancelled) return;
       try {
         await pendingAttach;
       } catch {
@@ -286,8 +301,30 @@ export class CDPClient {
     };
     this.dialogRuns.set(tabId, owner);
     signal?.addEventListener('abort', owner.onAbort, { once: true });
+    let timer;
+    const markPendingAttachCancelled = () => {
+      const pendingAttach = this.attachPromises.get(tabId);
+      if (pendingAttach) {
+        pendingAttach.cancelled = true;
+        this.attachPromises.delete(tabId);
+      }
+    };
+    const interrupted = new Promise((_, reject) => {
+      owner.cancelStartup = () => {
+        markPendingAttachCancelled();
+        const error = new Error('Stopped during browser dialog setup');
+        error.name = 'AbortError';
+        reject(error);
+      };
+      timer = setTimeout(() => {
+        markPendingAttachCancelled();
+        const error = new Error('Browser dialog setup timed out. Dismiss any existing browser dialog and try again.');
+        error.code = 'dialog_startup_timeout';
+        reject(error);
+      }, timeoutMs);
+    });
     try {
-      await this.attach(tabId);
+      await Promise.race([this.attach(tabId), interrupted]);
       if (this.dialogRuns.get(tabId) !== owner) return;
       // Resolve an already-observed dialog before Page.enable, which itself
       // can wait for the paused renderer when Dev retained the connection.
@@ -296,28 +333,14 @@ export class CDPClient {
       }
       // Page.enable can wait indefinitely behind a pre-existing dialog. Stop
       // must release the run even when Chrome never answers this command.
-      let timer;
-      const interrupted = new Promise((_, reject) => {
-        owner.cancelStartup = () => {
-          const error = new Error('Stopped during browser dialog setup');
-          error.name = 'AbortError';
-          reject(error);
-        };
-        timer = setTimeout(() => {
-          const error = new Error('Browser dialog setup timed out. Dismiss any existing browser dialog and try again.');
-          error.code = 'dialog_startup_timeout';
-          reject(error);
-        }, timeoutMs);
-      });
-      try {
-        await Promise.race([this.sendCommand(tabId, 'Page.enable'), interrupted]);
-      } finally {
-        clearTimeout(timer);
-        delete owner.cancelStartup;
-      }
+      await Promise.race([this.sendCommand(tabId, 'Page.enable'), interrupted]);
     } catch (error) {
+      markPendingAttachCancelled();
       if (this.dialogRuns.get(tabId) === owner) this.stopDialogHandling(tabId);
       throw error;
+    } finally {
+      clearTimeout(timer);
+      delete owner.cancelStartup;
     }
   }
 

@@ -95,26 +95,30 @@ test('cached dialog is answered before renderer-dependent Page.enable', async ()
   await client.startDialogHandling(7);
 });
 
-for (const action of ['abort', 'stop', 'timeout']) {
-  test(`${action} releases blocked Page.enable startup`, async () => {
-    const { client } = harness();
-    const controller = new AbortController();
-    let entered;
-    const ready = new Promise(resolve => { entered = resolve; });
-    let finish;
-    client.sendCommand = () => { entered(); return new Promise(resolve => { finish = resolve; }); };
-    const startup = client.startDialogHandling(7, { signal: controller.signal, timeoutMs: 20 });
-    const rejected = assert.rejects(startup, error => action === 'timeout'
-      ? error.code === 'dialog_startup_timeout' : error.name === 'AbortError');
-    await ready;
-    if (action === 'abort') controller.abort();
-    if (action === 'stop') client.stopDialogHandling(7);
-    await rejected;
-    assert.equal(client.dialogRuns.has(7), false);
-    finish();
-    await tick();
-    assert.equal(client.dialogRuns.has(7), false);
-  });
+for (const target of ['attach', 'Page.enable']) {
+  for (const action of ['abort', 'stop', 'timeout']) {
+    test(`${action} releases blocked ${target} startup`, async () => {
+      const { client } = harness();
+      const controller = new AbortController();
+      let entered;
+      const ready = new Promise(resolve => { entered = resolve; });
+      let finish;
+      const block = () => { entered(); return new Promise(resolve => { finish = resolve; }); };
+      if (target === 'attach') client.attach = block;
+      else client.sendCommand = block;
+      const startup = client.startDialogHandling(7, { signal: controller.signal, timeoutMs: 20 });
+      const rejected = assert.rejects(startup, error => action === 'timeout'
+        ? error.code === 'dialog_startup_timeout' : error.name === 'AbortError');
+      await ready;
+      if (action === 'abort') controller.abort();
+      if (action === 'stop') client.stopDialogHandling(7);
+      await rejected;
+      assert.equal(client.dialogRuns.has(7), false);
+      finish();
+      await tick();
+      assert.equal(client.dialogRuns.has(7), false);
+    });
+  }
 }
 
 test('failed workflow setup releases its debugger but preserves a Dev owner', async () => {
@@ -207,4 +211,271 @@ test('cached dialogs and ended navigation cannot inherit authorization', async (
   controller.abort();
   client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogOpening', { type: 'beforeunload', url: 'https://example.com/' });
   assert.ok(calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').every(call => !call[2].accept));
+});
+
+test('cleanupRun and teardown do not re-await timed-out or aborted debugger attachments', async () => {
+  const previousChrome = globalThis.chrome;
+  const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+  let detaches = 0;
+  let attachCallback = null;
+  globalThis.chrome = {
+    storage: { local: area, session: area },
+    runtime: { getURL: value => value },
+    tabs: { get: async id => ({ id, url: 'https://example.com/' }) },
+    debugger: {
+      attach: (_target, _version, callback) => { attachCallback = callback; },
+      detach: (_target, callback) => { detaches++; callback?.(); },
+      onEvent: { addListener: () => {} },
+      onDetach: { addListener: () => {} },
+    },
+  };
+  const { Agent } = await import('../src/chrome/src/agent/agent.js');
+  const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+
+  try {
+    // 1. Direct startDialogHandling timeout on cdpClient
+    const startup = cdpClient.startDialogHandling(71, { timeoutMs: 20 });
+    await assert.rejects(startup, error => error.code === 'dialog_startup_timeout');
+
+    // cleanupRun and detach must NOT hang awaiting the never-settling attach
+    let cleanupCompleted = false;
+    const cleanup = cdpClient.cleanupRun(71).then(() => { cleanupCompleted = true; });
+    await tick();
+    assert.equal(cleanupCompleted, true);
+    await cleanup;
+
+    // Late attach callback execution should immediately detach and not add session
+    if (attachCallback) {
+      attachCallback();
+      assert.equal(cdpClient.sessions.has(71), false);
+    }
+
+    // 2. Saved workflow replay timeout releases run entry and tab
+    const agent = new Agent({ getActive: () => ({ promptTier: 'full' }) });
+    agent._hydrate = async () => {};
+    const origStart = cdpClient.startDialogHandling.bind(cdpClient);
+    cdpClient.startDialogHandling = (tabId, opts = {}) => origStart(tabId, { ...opts, timeoutMs: 20 });
+    try {
+      const workflowRun = agent.replaySavedWorkflow(72, { id: 'test', steps: [{}] });
+      await assert.rejects(workflowRun, error => error.code === 'dialog_startup_timeout');
+      assert.equal(agent.isRunning(72), false);
+      assert.equal(cdpClient.sessions.has(72), false);
+    } finally {
+      cdpClient.startDialogHandling = origStart;
+    }
+  } finally {
+    cdpClient.stopDialogHandling(71);
+    cdpClient.stopDialogHandling(72);
+    globalThis.chrome = previousChrome;
+  }
+});
+
+test('canceled attachments are evicted immediately and allow fresh retries', async () => {
+  const previousChrome = globalThis.chrome;
+  const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+  let attachCalls = 0;
+  let detachCalls = 0;
+  let firstAttachCallback = null;
+  let secondAttachCallback = null;
+  let detachListener = null;
+  globalThis.chrome = {
+    storage: { local: area, session: area },
+    runtime: { getURL: value => value },
+    tabs: { get: async id => ({ id, url: 'https://example.com/' }) },
+    debugger: {
+      attach: (_target, _version, callback) => {
+        attachCalls++;
+        if (attachCalls === 1) firstAttachCallback = callback;
+        else secondAttachCallback = callback;
+      },
+      detach: ({ tabId }, callback) => {
+        detachCalls++;
+        callback?.();
+        detachListener?.({ tabId }, 'canceled');
+      },
+      onEvent: { addListener: () => {} },
+      onDetach: { addListener: fn => { detachListener = fn; } },
+    },
+  };
+  const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+
+  try {
+    // 1. First startDialogHandling times out during attach
+    const startup = cdpClient.startDialogHandling(81, { timeoutMs: 20 });
+    await assert.rejects(startup, error => error.code === 'dialog_startup_timeout');
+    assert.equal(attachCalls, 1);
+    assert.equal(cdpClient.attachPromises.has(81), false);
+
+    // 2. Subsequent attach starts a fresh attach attempt instead of returning the hung promise
+    const secondAttach = cdpClient.attach(81);
+    assert.equal(attachCalls, 2);
+
+    secondAttachCallback?.();
+    const session = await secondAttach;
+    assert.equal(session.tabId, 81);
+    assert.equal(cdpClient.sessions.has(81), true);
+
+    // Late callback from the first attach must not detach or corrupt the active retry session
+    firstAttachCallback?.();
+    assert.equal(detachCalls, 0);
+    assert.equal(cdpClient.sessions.has(81), true);
+
+    await cdpClient.detach(81);
+    assert.equal(detachCalls, 1);
+    assert.equal(cdpClient.sessions.has(81), false);
+  } finally {
+    cdpClient.stopDialogHandling(81);
+    globalThis.chrome = previousChrome;
+  }
+});
+
+test('stale attach success detaches from Chrome when retry has failed', async () => {
+  const previousChrome = globalThis.chrome;
+  const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+  let attachCalls = 0;
+  let detachCalls = 0;
+  let firstAttachCallback = null;
+  globalThis.chrome = {
+    storage: { local: area, session: area },
+    runtime: { getURL: value => value, lastError: null },
+    tabs: { get: async id => ({ id, url: 'https://example.com/' }) },
+    debugger: {
+      attach: (_target, _version, callback) => {
+        attachCalls++;
+        if (attachCalls === 1) {
+          firstAttachCallback = callback;
+        } else {
+          globalThis.chrome.runtime.lastError = { message: 'Another debugger is already attached' };
+          callback?.();
+          globalThis.chrome.runtime.lastError = null;
+        }
+      },
+      detach: (_target, callback) => {
+        detachCalls++;
+        callback?.();
+      },
+      onEvent: { addListener: () => {} },
+      onDetach: { addListener: () => {} },
+    },
+  };
+  const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+
+  try {
+    // 1. First startDialogHandling times out during attach
+    const startup = cdpClient.startDialogHandling(82, { timeoutMs: 20 });
+    await assert.rejects(startup, error => error.code === 'dialog_startup_timeout');
+    assert.equal(attachCalls, 1);
+
+    // 2. Retry fails because debugger was attached by the first attempt
+    await assert.rejects(cdpClient.attach(82), /Another debugger is already attached/);
+    assert.equal(attachCalls, 2);
+    assert.equal(cdpClient.sessions.has(82), false);
+
+    // 3. Stale success callback from first attempt arrives; because no newer session exists, it detaches
+    assert.equal(detachCalls, 0);
+    firstAttachCallback?.();
+    assert.equal(detachCalls, 1);
+    assert.equal(cdpClient.sessions.has(82), false);
+  } finally {
+    cdpClient.stopDialogHandling(82);
+    globalThis.chrome = previousChrome;
+  }
+});
+
+test('go_back authorizes beforeunload for the current page and cleans up on completion and failure', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  delete globalThis.browser;
+  const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+  const calls = [];
+  const tabId = 42;
+  const beforeUrl = 'https://example.com/page2';
+  const targetUrl = 'https://example.com/page1';
+  const createEvent = () => {
+    const listeners = new Set();
+    return {
+      addListener(fn) { listeners.add(fn); },
+      removeListener(fn) { listeners.delete(fn); },
+      emit(...args) { for (const fn of [...listeners]) fn(...args); },
+      get listenerCount() { return listeners.size; },
+    };
+  };
+  const events = {
+    history: createEvent(),
+    committed: createEvent(),
+    updated: createEvent(),
+  };
+
+  const { Agent } = await import('../src/chrome/src/agent/agent.js');
+  const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+  const originalAttach = cdpClient.attach;
+  const originalSend = cdpClient.sendCommand;
+
+  try {
+    cdpClient.attach = async id => cdpClient.sessions.set(id, { tabId: id });
+    cdpClient.sendCommand = async (...args) => { calls.push(args); };
+
+    let currentUrl = beforeUrl;
+    let failInjection = false;
+    globalThis.chrome = {
+      storage: { local: area, session: area },
+      runtime: { getURL: value => value },
+      tabs: {
+        get: async id => ({ id, url: currentUrl, status: 'complete' }),
+        onUpdated: events.updated,
+      },
+      webNavigation: {
+        onHistoryStateUpdated: events.history,
+        onCommitted: events.committed,
+      },
+      scripting: {
+        executeScript: async () => {
+          if (failInjection) throw new Error('injection failed');
+          cdpClient._onDebuggerEvent({ tabId }, 'Page.javascriptDialogOpening', {
+            type: 'beforeunload',
+            url: beforeUrl,
+          });
+          cdpClient._onDebuggerEvent({ tabId }, 'Page.javascriptDialogClosed', {});
+          currentUrl = targetUrl;
+          events.committed.emit({
+            tabId,
+            frameId: 0,
+            url: targetUrl,
+            transitionQualifiers: ['forward_back'],
+          });
+          return [{ result: { before: beforeUrl } }];
+        },
+      },
+    };
+
+    await cdpClient.startDialogHandling(tabId);
+    const agent = new Agent({ getActive: () => ({ promptTier: 'full' }) });
+
+    // 1. Successful go_back: authorizes beforeunload dialog and accepts Leave
+    const result = await agent.executeTool(tabId, 'go_back', { force: true });
+    assert.equal(result.success, true);
+    assert.equal(result.verified, true);
+    assert.equal(result.url, targetUrl);
+    const dialogCalls = calls.filter(c => c[1] === 'Page.handleJavaScriptDialog');
+    assert.equal(dialogCalls.length, 1);
+    assert.deepEqual(dialogCalls[0][2], { accept: true });
+    assert.equal(cdpClient.dialogRuns.get(tabId)?.navigation, undefined);
+    assert.equal(events.committed.listenerCount, 0);
+
+    // 2. Failed injection: cleans up the authorization permit
+    failInjection = true;
+    const failedResult = await agent.executeTool(tabId, 'go_back', { force: true });
+    assert.equal(failedResult.success, false);
+    assert.equal(cdpClient.dialogRuns.get(tabId)?.navigation, undefined);
+    assert.equal(events.committed.listenerCount, 0);
+
+    cdpClient.stopDialogHandling(tabId);
+  } finally {
+    cdpClient.stopDialogHandling(tabId);
+    cdpClient.attach = originalAttach;
+    cdpClient.sendCommand = originalSend;
+    globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
 });

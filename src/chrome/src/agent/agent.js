@@ -33402,6 +33402,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
       const removeNavigationListener = () => {
+        releaseDialogNavigation();
         if (navigationCommitListener) {
           try { navigationEvent.removeListener(navigationCommitListener); } catch {}
         }
@@ -33636,9 +33637,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           });
           probe = results?.[0]?.result || null;
         } catch (e) {
+          removeNavigationListeners();
           return { success: false, dispatched, error: `${name}: cannot navigate history on this page (${e.message}).` };
         }
         if (!probe) {
+          removeNavigationListeners();
           return { success: false, dispatched, error: `${name}: history navigation did not run on this page.` };
         }
 
@@ -33653,6 +33656,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             navigationWaitResult = await waitForNavigationTerminal(8500, 'deadline');
           }
         }
+        removeNavigationListeners();
 
         let afterUrl = navigationWaitResult.url || probe.before;
         let finalStatus = '';

@@ -822,11 +822,11 @@ so a running task or an input command in flight never grants permission to
 accept a confirmation. Cached dialogs from idle time are also dismissed.
 
 A `beforeunload` warning chooses Leave only for a one-use navigation permission
-created immediately before the navigate, go_back, or go_forward tool dispatches,
+created immediately before a navigation or history navigation tool dispatches,
 after its existing permission and unsaved-change checks. The warning must come
 from the same top-level source URL. The permission expires on the first accepted
-warning, navigation completion/failure, cancellation, or after ten seconds. Other
-navigation warnings choose Stay. Dialog text is never treated as instructions.
+warning, navigation completion/failure, cancellation, or after ten seconds.
+Other navigation warnings choose Stay. Dialog text is never treated as instructions.
 
 The handler runs independently of blocked page commands and is removed on
 Stop, completion, or detach, even when Dev diagnostics retain the debugger.
