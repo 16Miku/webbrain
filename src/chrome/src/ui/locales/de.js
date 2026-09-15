@@ -898,6 +898,7 @@ export default {
   'st.skills.item.chars': '{count} Zeichen',
   'st.skills.item.tools': 'Tools: {tools}',
   'st.skills.remove': 'Entfernen',
+  'st.skills.edit': 'Bearbeiten',
   'st.skills.preview.rendered': 'Vorschau',
   'st.skills.preview.raw': 'Roh',
   'st.skills.security_html': '<strong>Hinweis:</strong> Benutzerdefinierte Skills werden als Klartext im Browser-Speicher gespeichert...',

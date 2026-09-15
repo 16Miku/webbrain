@@ -1009,12 +1009,10 @@ export class Agent extends LoopDetector {
     // Strict secret-handling mode. When true, the system prompt and `done`
     // tool description add a hard prohibition on quoting credentials, while
     // the post-set_field credential note tells the model to never echo the
-    // value. When false (the default — this is a personal-computer tool,
-    // not a third-party deployment), the model avoids needless echoes but can
-    // deliver a credential it generated for this task or quote one when the
-    // user explicitly asks ("show me my recovery codes", "what's my API key
-    // on this page"). Toggle
-    // lives in Settings → "Strict secret handling". Loaded in background.js.
+    // value. When false, the model avoids needless echoes but can deliver a
+    // credential it generated for this task or quote one when the user explicitly
+    // asks ("show me my recovery codes", "what's my API key on this page").
+    // Defaults to true at extension runtime via background.js and Settings.
     this.strictSecretMode = false;
 
     // Experimental Chrome WebMCP integration. Off by default so ordinary
@@ -33414,6 +33412,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (navigationTabListener) {
           try { tabUpdateEvent.removeListener(navigationTabListener); } catch {}
         }
+        releaseDialogNavigation();
         navigationCommitListener = null;
         navigationErrorListener = null;
         navigationTabListener = null;

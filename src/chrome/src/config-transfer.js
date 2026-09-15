@@ -51,7 +51,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   completionConfetti: true,
   completionFlashTab: true,
   tracingEnabled: false,
-  strictSecretMode: false,
+  strictSecretMode: true,
   agentAllowLocalNetwork: false,
   scheduledTasksEnabled: true,
   scheduledRequireConsequentialConfirmation: true,
