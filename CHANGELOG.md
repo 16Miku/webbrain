@@ -4,6 +4,12 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.3.0] - 2026-09-15
+
+### Added
+
+- Added a voluntary, per-provider "share queries for research" toggle, gated by an opt-in confirmation, with a durable outbox that ships complete generations (request, response, attribution) to the WebBrain Compass improvement endpoint and retries delivery on subsequent runs. The toggle is never offered for the WebBrain Compass provider itself.
+
 ## [36.2.0] - 2026-09-14
 
 ### Added
