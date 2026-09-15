@@ -78,7 +78,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '36.3.2';
+const EXT_VERSION = '36.4.0';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -510,6 +510,7 @@ function boundedMaxAgentSteps(value) {
 let providerFilter = 'all';     // 'all' | 'active' | 'local' | 'cloud' | 'router'
 let providerSearchQuery = '';
 const expandedProviders = new Set();
+let editingSkillId = null;
 let customSkills = [];
 let skillPreviewRequestId = 0;
 const DEFAULT_SKILL_IDS = new Set(DEFAULT_SKILL_SOURCES.map((source) => source.id));
@@ -639,7 +640,7 @@ async function init() {
   if (costSessionLimitInput) costSessionLimitInput.value = sessionLimit.toFixed(2);
   if (costTotalLimitInput) costTotalLimitInput.value = totalLimit.toFixed(2);
   renderCostAllowanceSpent(totalSpent, totalLimit);
-  if (strictSecretToggle) strictSecretToggle.checked = stored.strictSecretMode === true; // off by default
+  if (strictSecretToggle) strictSecretToggle.checked = stored.strictSecretMode !== false; // on by default
   if (allowLocalNetworkToggle) allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true;
   if (scheduledTasksToggle) scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false;
   if (scheduledConfirmToggle) scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false;
@@ -924,7 +925,7 @@ async function saveCustomSkills(nextSkills, opts = {}) {
   const update = { [CUSTOM_SKILLS_STORAGE_KEY]: customSkills };
   const removedSkill = opts.removedSkill;
   const installedSkill = opts.installedSkill;
-  const removedDefault = removedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(removedSkill.id);
+  const removedDefault = (removedSkill?.sourceType === 'built-in' || DEFAULT_SKILL_IDS.has(removedSkill?.id)) && DEFAULT_SKILL_IDS.has(removedSkill.id);
   const installedDefault = installedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(installedSkill.id);
   if (removedDefault || installedDefault) {
     const stored = await browser.storage.local.get(DEFAULT_SKILLS_REMOVED_STORAGE_KEY);
@@ -986,6 +987,7 @@ function renderSkills() {
                   data-skill-preview-id="${escapeHtml(skill.id)}">${escapeHtml(skill.name)}</button>
           <div class="setting-desc skill-source">${escapeHtml(source)} · ${escapeHtml(t('st.skills.item.chars', { count: skill.content.length }))}${escapeHtml(toolSummary)}</div>
         </div>
+        <button class="btn-secondary" data-skill-edit-id="${escapeHtml(skill.id)}">${escapeHtml(t('st.skills.edit'))}</button>
         <button class="btn-secondary" data-skill-id="${escapeHtml(skill.id)}">${escapeHtml(t('st.skills.remove'))}</button>
       </div>`;
   }).join('');
@@ -993,8 +995,17 @@ function renderSkills() {
   skillsList.querySelectorAll('button[data-skill-preview-id]').forEach((btn) => {
     btn.addEventListener('click', () => previewEnabledSkill(btn.dataset.skillPreviewId));
   });
+  skillsList.querySelectorAll('button[data-skill-edit-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const skill = customSkills.find((s) => s.id === btn.dataset.skillEditId);
+      if (skill) startSkillEdit(skill);
+    });
+  });
   skillsList.querySelectorAll('button[data-skill-id]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (editingSkillId === btn.dataset.skillId) {
+        cancelSkillEdit();
+      }
       const removedSkill = customSkills.find((skill) => skill.id === btn.dataset.skillId);
       await saveCustomSkills(
         customSkills.filter((skill) => skill.id !== btn.dataset.skillId),
@@ -1037,6 +1048,24 @@ async function addPackagedSkill(skillId, button) {
   }
 }
 
+function startSkillEdit(skill) {
+  editingSkillId = skill.id;
+  if (skillNameInput) skillNameInput.value = skill.name || '';
+  if (skillTextArea) skillTextArea.value = skill.content || '';
+  if (btnAddSkillText) btnAddSkillText.textContent = t('st.providers.save');
+  flashSkillsResult('ok', skill.name || t('st.skills.edit'));
+  skillNameInput?.focus?.();
+  if (skillTextArea) skillTextArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelSkillEdit() {
+  if (editingSkillId == null) return;
+  editingSkillId = null;
+  if (btnAddSkillText) btnAddSkillText.textContent = t('st.skills.add_text');
+  if (skillNameInput) skillNameInput.value = '';
+  if (skillTextArea) skillTextArea.value = '';
+}
+
 async function addSkillFromText() {
   const content = (skillTextArea?.value || '').trim();
   if (!content) {
@@ -1044,6 +1073,27 @@ async function addSkillFromText() {
     return;
   }
   try {
+    if (editingSkillId) {
+      const original = customSkills.find((s) => s.id === editingSkillId);
+      if (!original) {
+        cancelSkillEdit();
+        throw new Error(t('st.skills.error.add_failed'));
+      }
+      const isBuiltIn = original.sourceType === 'built-in';
+      const updated = {
+        id: original.id,
+        name: (skillNameInput?.value || '').trim() || original.name || '',
+        sourceType: isBuiltIn ? 'text' : (original.sourceType || 'text'),
+        sourceUrl: isBuiltIn ? '' : (original.sourceUrl || ''),
+        content,
+        createdAt: original.createdAt || Date.now(),
+      };
+      const next = customSkills.map((s) => (s.id === editingSkillId ? updated : s));
+      await saveCustomSkills(next);
+      cancelSkillEdit();
+      flashSkillsResult('ok', t('st.providers.saved'));
+      return;
+    }
     await addCustomSkill({
       id: makeSkillId(),
       name: skillNameInput?.value || '',
@@ -1113,6 +1163,7 @@ async function addSkillFromUrl() {
 btnAddSkillText?.addEventListener('click', addSkillFromText);
 btnAddSkillUrl?.addEventListener('click', addSkillFromUrl);
 btnClearSkillForm?.addEventListener('click', () => {
+  cancelSkillEdit();
   if (skillNameInput) skillNameInput.value = '';
   if (skillUrlInput) skillUrlInput.value = '';
   if (skillTextArea) skillTextArea.value = '';

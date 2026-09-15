@@ -873,7 +873,7 @@ export class Agent extends LoopDetector {
     this._continuationExecutionEvidence = new Map(); // tabId → app-owned evidence carried only by continueProcessing()
     this._continuationResponseLanguagePolicies = new Map(); // tabId -> trusted policy carried only by continueProcessing()
     // Strict secret-handling mode — see chrome/agent.js for rationale.
-    // Default off; user opts in via Settings → "Strict secret handling".
+    // Defaults to true at extension runtime via background.js and Settings.
     this.strictSecretMode = false;
     this._lastAxScopes = new Map(); // tabId -> { documentToken, pageUrl }, captured by the latest AX read
     this._uncertainTextMutations = new Map(); // tabId -> Map(target -> unresolved, potentially applied text write; no raw text)

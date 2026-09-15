@@ -4,6 +4,12 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.4.0] - 2026-09-15
+
+### Added
+
+- Added phonr.xyz integration as a skill.
+
 ## [36.3.2] - 2026-09-15
 
 ### Changed
