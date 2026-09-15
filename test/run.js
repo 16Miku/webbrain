@@ -13125,7 +13125,7 @@ test('Share-for-research outbox persists retryable failures and removes acknowle
       },
     };
     assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(listenedProvider), 1);
-    assert.deepEqual(listenedProvider.sent, { sessionId: 'share_conv_1', payload: { client_share_id: 'share-entry-1', provider: 'anthropic', provider_name: 'x', model: 'm', mode: 'act', request: entry.request, response: entry.response } });
+    assert.deepEqual(listenedProvider.sent, { sessionId: 'share_conv_1', payload: { client_share_id: 'share-entry-1', provider: 'anthropic', provider_name: 'x', model: 'm', mode: 'act', request: { messages: entry.request }, response: entry.response } });
     assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 0);
     assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration(entry), true);
     let sendCalls = 0;
@@ -13202,9 +13202,26 @@ test('Firefox Share-for-research outbox uses the promise-based browser storage n
     const entry = { id: 'share-firefox-1', session_id: 'share_firefox', provider: 'anthropic', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
     assert.equal(await SHARE_OUTBOX_FX.enqueueShareGeneration(entry), true);
     assert.equal(storage[SHARE_OUTBOX_FX.SHARE_OUTBOX_STORAGE_KEY].length, 1);
-    assert.equal(await SHARE_OUTBOX_FX.flushShareOutbox({
-      async sendShareGeneration() { return { ok: true, retryable: false, status: 202 }; },
-    }), 1);
+    const listener = {
+      sent: null,
+      async sendShareGeneration(sessionId, payload) {
+        this.sent = { sessionId, payload };
+        return { ok: true, retryable: false, status: 202 };
+      },
+    };
+    assert.equal(await SHARE_OUTBOX_FX.flushShareOutbox(listener), 1);
+    assert.deepEqual(listener.sent, {
+      sessionId: 'share_firefox',
+      payload: {
+        client_share_id: 'share-firefox-1',
+        provider: 'anthropic',
+        provider_name: 'x',
+        model: 'm',
+        mode: 'act',
+        request: { messages: entry.request },
+        response: entry.response,
+      },
+    });
     assert.equal(storage[SHARE_OUTBOX_FX.SHARE_OUTBOX_STORAGE_KEY].length, 0);
     assert.equal(chromeCalls, 0, 'Firefox share outbox touched the callback-based chrome namespace');
   } finally {

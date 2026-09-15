@@ -401,7 +401,10 @@ async function flushShareOutboxNow(transportProvider, shouldSend) {
         provider_name: entry.provider_name,
         model: entry.model,
         mode: entry.mode,
-        request: entry.request,
+        // The Compass intake contract reserves request for an object; persist
+        // the compact message array in the existing outbox shape, then wrap it
+        // only at delivery so queued entries stay backward-compatible.
+        request: { messages: entry.request },
         response: entry.response,
       });
     } catch {
