@@ -4,6 +4,31 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.3.2] - 2026-09-15
+
+### Changed
+- bugfix
+- 36.3.0
+- fix(research): retain model text before local search rewrites
+- fix(providers): honor native consent and preserve raw completions
+- fix(firefox): expose Compass share transport
+- fix(providers): omit complete text values containing attachment URLs
+- fix(providers): fully redact SVG and purge shares on revocation
+- fix(providers): strip non-base64 attachment data URLs
+- fix(providers): redact wrapped base64 in shared generations
+- fix(providers): scrub short serialized base64 research payloads
+- fix(providers): address codex round 10 - per-send consent, canonical URIs, done rawSummary
+- fix(providers): address codex round 9 - share raw provider completion, not appended notices
+- fix(providers): address codex round 8 - instance-keyed share consent
+- fix(providers): address codex round 7 - schedule_resume status, revoke-purge before flush
+- fix(providers): address codex round 6 - scrub binary in tool_calls args and metadata
+- fix(providers): address codex round 5 - bare-base64 scrub, response scrub, wrapper-aware caps
+- fix(providers): address codex round 4 - tail-preserving truncation, length-agnostic scrub, localized consent
+- fix(providers): address codex round 3 - exact share request, data-uri scrub, trailing-only strip
+- fix(providers): address codex review - honest copy, model-facing share request, provider-completion gate
+- fix(providers): harden research share capture
+- feat(providers): add voluntary share queries for research toggle and outbox
+
 ## [36.3.0] - 2026-09-15
 
 ### Added
