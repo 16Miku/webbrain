@@ -191,6 +191,7 @@ Promise.all([
   console.warn('[WebBrain] Apocalypse Mode startup work could not be restored:', error);
 });
 const agent = new Agent(providerManager);
+agent.strictSecretMode = true;
 agent.setStandaloneOfflineRagService(createOffscreenOfflineRetrievalService());
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = chrome.storage.local
@@ -243,6 +244,7 @@ const scheduler = new ScheduledJobManager({
   loadProviders: async () => {
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
   sendUpdate: (tabId, type, data) => {
@@ -566,8 +568,8 @@ async function loadImageBudget() {
 const imageBudgetReady = loadImageBudget().catch(() => {});
 
 async function loadStrictSecretMode() {
-  const stored = await chrome.storage.local.get('strictSecretMode');
-  agent.strictSecretMode = stored.strictSecretMode !== false;
+  const stored = await chrome.storage.local.get('strictSecretMode').catch(() => ({}));
+  agent.strictSecretMode = stored?.strictSecretMode !== false;
 }
 const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 

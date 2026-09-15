@@ -925,7 +925,7 @@ async function saveCustomSkills(nextSkills, opts = {}) {
   const update = { [CUSTOM_SKILLS_STORAGE_KEY]: customSkills };
   const removedSkill = opts.removedSkill;
   const installedSkill = opts.installedSkill;
-  const removedDefault = removedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(removedSkill.id);
+  const removedDefault = (removedSkill?.sourceType === 'built-in' || DEFAULT_SKILL_IDS.has(removedSkill?.id)) && DEFAULT_SKILL_IDS.has(removedSkill.id);
   const installedDefault = installedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(installedSkill.id);
   if (removedDefault || installedDefault) {
     const stored = await browser.storage.local.get(DEFAULT_SKILLS_REMOVED_STORAGE_KEY);

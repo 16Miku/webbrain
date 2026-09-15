@@ -140,6 +140,7 @@ Promise.all([
   console.warn('[WebBrain] Apocalypse Mode schedules could not be restored:', error);
 });
 const agent = new Agent(providerManager);
+agent.strictSecretMode = true;
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = browser.storage.local
   .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
@@ -179,6 +180,7 @@ const scheduler = new ScheduledJobManager({
   loadProviders: async () => {
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
   sendUpdate: (tabId, type, data) => {
@@ -448,8 +450,8 @@ async function loadResearchEscalation() {
 const researchEscalationReady = loadResearchEscalation().catch(() => {});
 
 async function loadStrictSecretMode() {
-  const stored = await browser.storage.local.get('strictSecretMode');
-  agent.strictSecretMode = stored.strictSecretMode !== false;
+  const stored = await browser.storage.local.get('strictSecretMode').catch(() => ({}));
+  agent.strictSecretMode = stored?.strictSecretMode !== false;
 }
 const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
