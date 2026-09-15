@@ -1,6 +1,25 @@
 // Language belongs in the selected provider. This module only validates the
 // resulting contract and compares app-observed values; it never parses prose.
 export const SOCIAL_PLATFORMS = Object.freeze(['twitter', 'bluesky']);
+
+// Network tools act on their explicit destination, independently of the open
+// tab. Include API hosts and AT Protocol repository writes on self-hosted PDSes.
+// This only selects the publication guard; API permission, SSRF, and redirect
+// checks still belong to the network dispatch path.
+export function socialPublicationApiPlatform(rawUrl) {
+  if (typeof rawUrl !== 'string') throw new Error('Missing network destination');
+  const url = new URL(rawUrl);
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
+    throw new Error('Invalid network destination');
+  }
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  const within = domain => host === domain || host.endsWith('.' + domain);
+  if (['x.com', 'twitter.com'].some(within)) return 'twitter';
+  if (['bsky.app', 'bsky.social', 'bsky.network'].some(within)
+      || decodeURIComponent(url.pathname).startsWith('/xrpc/com.atproto.repo.')) return 'bluesky';
+  return null;
+}
+
 const TYPES = ['any', 'image', 'video', 'gif'];
 const FORMATS = ['png', 'jpeg', 'webp', 'avif', 'heic', 'bmp', 'svg', 'gif', 'mp4', 'mov', 'webm', 'mkv'];
 const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);

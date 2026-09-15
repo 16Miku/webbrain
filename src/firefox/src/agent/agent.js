@@ -1,5 +1,5 @@
 import { firefoxBidi } from '../bidi/client.js';
-import { SOCIAL_PLATFORMS, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
+import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { validateToolArguments } from './tool-arguments.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
@@ -9928,6 +9928,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _executeToolBatchInner(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText, allowedToolNames, step, runOptions, toolSchemas, cancellationState) {
     let didStateChange = false;
+    const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true;
+    const apiMutationsAllowedForRun = () =>
+      !apiMutationsDeniedForRun && this.isApiMutationsAllowed(tabId);
     const promptTier = this._resolvePromptTier();
     const readLimits = this._readWindowLimits();
     const completionBatchStartState = this.completionInvariants.get(tabId) || null;
@@ -10296,18 +10299,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message });
         continue;
       }
-      if (isNetworkMutation(fnName, fnArgs) && !this.isApiMutationsAllowed(tabId)) {
+      if (isNetworkMutation(fnName, fnArgs) && !apiMutationsAllowedForRun()) {
+        const askModeError = apiMutationsDeniedForRun
+          ? `API mutations via ${fnName} are not allowed in Ask mode. Do not retry this mutating API call in this run; continue with read-only tools or return what you can observe.`
+          : `API mutations via ${fnName} require the user to enable /allow-api for this conversation. Do not retry this mutating API call unless the user enables /allow-api; continue through the visible UI or ask the user to type /allow-api.`;
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
           content: JSON.stringify({
             success: false,
             denied: true,
-            requiresApiAllow: true,
-            error: `API mutations via ${fnName} require the user to enable /allow-api for this conversation. Do not retry this mutating API call unless the user enables /allow-api; continue through the visible UI or ask the user to type /allow-api.`,
+            requiresApiAllow: !apiMutationsDeniedForRun,
+            error: askModeError,
           }),
         });
-        onUpdate('warning', { message: 'API mutation blocked until /allow-api is enabled.' });
+        onUpdate('warning', {
+          message: apiMutationsDeniedForRun
+            ? 'API mutation blocked because Ask mode is read-only.'
+            : 'API mutation blocked until /allow-api is enabled.',
+        });
         continue;
       }
       const formValidationCandidate = this._isFormValidationCandidate(fnName, fnArgs);
@@ -10491,7 +10501,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         for (const capability of capabilities) {
           if (this._skipPermissionGate) { gateDisabled = true; break; }
           // /allow-api waives ONLY write-method network egress.
-          if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && this.isApiMutationsAllowed(tabId)) continue;
+          if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && apiMutationsAllowedForRun()) continue;
           // Every distinct host the call touches must be granted. Usually one,
           // but download_files takes a urls[] array that can span many hosts.
           const gateArgs = fnName === OTP_EMAIL_TOOL_NAME && otpEmailPermissionArgs
@@ -16263,11 +16273,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _socialPublicationPreSubmitBlock(tabId, name, args, detected, provider) {
     const guard = this._planExecutionGuards.get(tabId);
+    const networkMutation = isNetworkMutation(name, args);
     const rawKeys = args?.key ?? args?.keys ?? '';
     const activationKey = name === 'press_keys' && (Array.isArray(rawKeys) ? rawKeys : [rawKeys])
       .some(key => typeof key === 'string' && /^(?:enter|return|space|spacebar| )$/i.test(key));
     if (!guard?.enabled || (!this._isFormValidationCandidate(name, args) && !activationKey
-        && name !== 'execute_webmcp_tool' && !isNetworkMutation(name, args))) return null;
+        && name !== 'execute_webmcp_tool' && !networkMutation)) return null;
+    const blocked = error => ({ success: false, dispatched: false, noDispatch: true, repeatBlocked: true,
+      workflowJob: 'publish-post', error,
+      publicationContract: guard.socialPublication?.contract || null,
+      publicationProgress: publicationProgress(guard.socialPublication?.contract, guard.socialPublication?.outcomes),
+      ...(guard.socialPublication?.deniedAudit ? { publicationAudit: guard.socialPublication.deniedAudit } : {}),
+    });
+    if (networkMutation) {
+      let platform;
+      try { platform = socialPublicationApiPlatform(args?.url); }
+      catch {
+        return { success: false, dispatched: false, noDispatch: true,
+          error: 'The API destination could not be resolved. Use an explicit HTTP(S) URL without embedded credentials.' };
+      }
+      if (!platform) return null;
+      // A network write cannot supply a verified composer/publish control.
+      // Changing tabs must not let social API writes bypass that requirement.
+      return blocked('Social-site API mutations require a verified publish control. Prepare and verify the draft, then use the site’s publish button.');
+    }
     const pageUrl = await this._currentUrl(tabId);
     const live = resolveAdapterWorkflowJob(pageUrl, 'publish-post');
     if (!SOCIAL_PLATFORMS.includes(live?.adapterName)) return null;
@@ -16277,12 +16306,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // probes, and unresolved controls cannot claim this exemption.
     if (detected?.isSubmit === true && detected.publicationControl === false
         && ['click', 'click_ax', 'iframe_click', 'set_field', 'press_keys'].includes(name)) return null;
-    const blocked = error => ({ success: false, dispatched: false, noDispatch: true, repeatBlocked: true,
-      workflowJob: 'publish-post', error,
-      publicationContract: guard.socialPublication?.contract || null,
-      publicationProgress: publicationProgress(guard.socialPublication?.contract, guard.socialPublication?.outcomes),
-      ...(guard.socialPublication?.deniedAudit ? { publicationAudit: guard.socialPublication.deniedAudit } : {}),
-    });
     if (detected?.isSubmit !== true) return blocked('Publication-capable action could not be identified. Use a resolved page control; do not run arbitrary JavaScript or bundle editing and submission.');
     if (!['click', 'click_ax', 'iframe_click'].includes(name)) return blocked('Write and verify the draft first, then activate its publish control in a separate click.');
     if (detected.publicationControl !== true) return blocked('Publication composer ownership could not be observed. Read the current page and use its resolved publish control.');
