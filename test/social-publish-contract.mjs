@@ -715,9 +715,129 @@ for (const browser of ['chrome', 'firefox']) {
   });
 
   test(`${browser}: publication shortcuts and page callbacks cannot bypass the concrete click contract`,async()=>{
-    for(const [name,args] of [['press_keys',{key:'Space'}],['press_keys',{key:'Enter'}],['execute_js',{code:'publish()'}],['execute_webmcp_tool',{}],['fetch_url',{url:'https://x.com/api/post',method:'POST'}]]){
+    for(const [name,args] of [['press_keys',{key:'Space'}],['press_keys',{key:'Enter'}],['execute_js',{code:'publish()'}],['execute_webmcp_tool',{}],['fetch_url',{url:'https://x.com/i/api/graphql/CreateTweet',method:'POST'}]]){
       const f=setup();
       assert((await f.agent._workflowPreSubmitDispatchBlock(f.tabId,name,args,null,f.provider)).noDispatch);
+    }
+  });
+
+  test(`${browser}: unrelated API writes do not inherit the active social page's publication contract`, async () => {
+    const f = setup('Call the business in Turkish');
+    const destinations = [
+      'https://phonr.xyz/v1/calls',
+      'https://service.example/v1/bookings',
+      'https://x.com.example/v1/calls',
+      'https://service.example/v1/calls?next=https://x.com/api/post',
+    ];
+    for (const page of ['https://x.com/user/status/123/photo/1', 'https://bsky.app/', 'https://phonr.xyz/docs']) {
+      f.agent._currentUrl = async () => page;
+      for (const name of ['fetch_url', 'research_url']) {
+        for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+          for (const url of destinations) {
+            const result = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, name, { url, method }, null, f.provider);
+            assert.equal(result, null, `${page}: ${name} ${method} ${url}`);
+          }
+        }
+      }
+    }
+    assert.equal(f.guard.socialPublication, null);
+    assert.equal(f.calls.length, 0, 'unrelated APIs must not ask a model for social-post authorization');
+  });
+
+  test(`${browser}: social API writes stay guarded independently of the active page`, async () => {
+    const f = setup('Call the business in Turkish');
+    const destinations = [
+      ['https://x.com/i/api/graphql/CreateTweet', undefined],
+      ['https://api.x.com/2/tweets', undefined],
+      ['https://api.twitter.com/1.1/statuses/update.json', undefined],
+      ['https://API.X.COM.:443/2/tweets', undefined],
+      ['https://bsky.app/api/post', undefined],
+      ['https://bsky.social/xrpc/com.atproto.repo.createRecord', '{"collection":"app.bsky.feed.post"}'],
+      ['https://pds.host.bsky.network/xrpc/com.atproto.repo.putRecord', '{"collection":"app.bsky.feed.post"}'],
+      ['https://pds.example/xrpc/com.atproto.repo.applyWrites', '{"writes":[{"collection":"app.bsky.feed.post"}]}'],
+      ['https://pds.example/xrpc/%63om.atproto.repo.createRecord', '{"collection":"app.bsky.feed.post"}'],
+    ];
+    for (const page of ['https://x.com/home', 'https://bsky.app/', 'https://phonr.xyz/docs']) {
+      f.agent._currentUrl = async () => page;
+      for (const name of ['fetch_url', 'research_url']) {
+        for (const [url, body] of destinations) {
+          const result = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, name, { url, body, method: 'POST' }, null, f.provider);
+          assert.equal(result?.noDispatch, true, `${page}: ${name} ${url}`);
+          assert.equal(result.dispatched, false);
+          assert.equal(result.workflowJob, 'publish-post');
+        }
+      }
+      assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'fetch_url', {
+        url: 'https://api.x.com/2/tweets/123', method: 'GET',
+      }, null, f.provider), null, 'read-only API access remains available');
+    }
+    assert.equal(f.calls.length, 0);
+  });
+
+  test(`${browser}: non-publication social API writes retain normal API authorization`, async () => {
+    const f = setup('Like the post and update my Bluesky profile');
+    const destinations = [
+      ['https://api.x.com/2/users/123/likes', undefined],
+      ['https://x.com/i/api/graphql/FavoriteTweet', undefined],
+      ['https://bsky.social/xrpc/com.atproto.repo.putRecord', '{"collection":"app.bsky.actor.profile"}'],
+      ['https://pds.example/xrpc/com.atproto.repo.applyWrites', '{"writes":[{"collection":"app.bsky.graph.listitem"}]}'],
+    ];
+    for (const [url, body] of destinations) {
+      const result = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'fetch_url', { url, body, method: 'POST' }, null, f.provider);
+      assert.equal(result, null, url);
+    }
+    assert.equal(f.calls.length, 0);
+  });
+
+  test(`${browser}: unresolved network destinations cannot claim an unrelated-API exemption`, async () => {
+    const f = setup();
+    for (const page of ['https://x.com/home', 'https://phonr.xyz/docs']) {
+      f.agent._currentUrl = async () => page;
+      for (const url of [undefined, '', '/v1/calls', '//phonr.xyz/v1/calls', 'https://', 'javascript:publish()', 'data:text/plain,post', 'https://user:secret@phonr.xyz/v1/calls']) {
+        const result = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'fetch_url', { url, method: 'POST' }, null, f.provider);
+        assert.equal(result?.noDispatch, true, `${page}: ${url}`);
+        assert.equal(result.dispatched, false);
+        assert.match(result.error, /destination/i);
+      }
+    }
+  });
+
+  test(`${browser}: phone API dispatch retains API permission and Ask-mode gates`, async () => {
+    for (const scenario of ['allowed', 'no-api-permission', 'ask', 'retargeted-to-social']) {
+      const f = setup('Call the business in Turkish');
+      f.agent._skipPermissionGate = true;
+      f.agent._ensureGateSetting = async () => true;
+      f.agent.setApiMutationsAllowed(f.tabId, scenario !== 'no-api-permission');
+      f.agent._recordProgressObservation = async () => null;
+      f.agent._autoRecordProgressAction = () => null;
+      f.agent._progressWarningForAction = () => '';
+      const dispatches = [];
+      f.agent.executeTool = async (_tabId, name, args) => {
+        dispatches.push({ name, args });
+        return { success: true, status: 201, json: '{"call":{"id":"mock-call","status":"dialing"}}' };
+      };
+      if (scenario === 'retargeted-to-social') {
+        f.agent._preflightRichTextToolbarTarget = async (_tabId, _name, args) => {
+          args.url = 'https://api.x.com/2/tweets';
+          return { block: null };
+        };
+      }
+      const args = { url: 'https://phonr.xyz/v1/calls', method: 'POST', body: '{"to":"+14155550123","purpose":"Ask when the shop closes.","language":"English"}' };
+      const messages = [];
+      await f.agent._executeToolBatch(f.tabId, [{ id: 'phone-call', function: {
+        name: 'fetch_url', arguments: JSON.stringify(args),
+      } }], messages, () => {}, f.provider, '', new Set(['fetch_url']), 1, { apiMutationsDenied: scenario === 'ask' });
+      const result = JSON.parse(f.agent._unwrapUntrusted(messages.find(m => m.tool_call_id === 'phone-call').content));
+      assert.equal(dispatches.length, scenario === 'allowed' ? 1 : 0, scenario);
+      if (scenario === 'allowed') {
+        assert.deepEqual(dispatches[0], { name: 'fetch_url', args });
+        assert.equal(result.status, 201);
+      } else if (scenario === 'retargeted-to-social') assert.equal(result.noDispatch, true);
+      else {
+        assert.equal(result.denied, true);
+        assert.equal(result.requiresApiAllow, scenario === 'no-api-permission');
+      }
+      assert.equal(f.calls.length, 0);
     }
   });
 

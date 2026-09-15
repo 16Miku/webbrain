@@ -1,6 +1,37 @@
 // Language belongs in the selected provider. This module only validates the
 // resulting contract and compares app-observed values; it never parses prose.
 export const SOCIAL_PLATFORMS = Object.freeze(['twitter', 'bluesky']);
+
+// Network tools act on their explicit destination, independently of the open
+// tab. API hosts can carry unrelated account mutations, so only post creation
+// endpoints and AT Protocol post records select the publication guard.
+// This only selects the publication guard; API permission, SSRF, and redirect
+// checks still belong to the network dispatch path.
+export function socialPublicationApiPlatform(rawUrl, body) {
+  if (typeof rawUrl !== 'string') throw new Error('Missing network destination');
+  const url = new URL(rawUrl);
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
+    throw new Error('Invalid network destination');
+  }
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  const within = domain => host === domain || host.endsWith('.' + domain);
+  const path = decodeURIComponent(url.pathname).replace(/\/$/, '');
+  if (['x.com', 'twitter.com'].some(within)
+      && (/\/i\/api\/graphql\/(?:[^/]+\/)?CreateTweet$/i.test(path)
+        || /^\/2\/tweets$/i.test(path)
+        || /^\/1\.1\/statuses\/update\.json$/i.test(path))) return 'twitter';
+  if (within('bsky.app') && path === '/api/post') return 'bluesky';
+  if (!path.startsWith('/xrpc/com.atproto.repo.')) return null;
+  let payload;
+  try { payload = typeof body === 'string' ? JSON.parse(body) : body; }
+  catch { return 'bluesky'; }
+  const isPost = value => value?.collection === 'app.bsky.feed.post';
+  if (Array.isArray(payload?.writes)) {
+    return payload.writes.every(write => typeof write?.collection === 'string' && !isPost(write)) ? null : 'bluesky';
+  }
+  return typeof payload?.collection === 'string' && !isPost(payload) ? null : 'bluesky';
+}
+
 const TYPES = ['any', 'image', 'video', 'gif'];
 const FORMATS = ['png', 'jpeg', 'webp', 'avif', 'heic', 'bmp', 'svg', 'gif', 'mp4', 'mov', 'webm', 'mkv'];
 const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);
