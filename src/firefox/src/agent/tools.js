@@ -147,7 +147,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'hover',
-      description: 'Hover the mouse over an element by its ref_id. Use this for menus, tooltips, and "More actions" overlays that only reveal on hover. On Firefox this is synthetic (mouseenter/mouseover/pointerover events) — works on most sites but sites that gate hover-reveal on event.isTrusted will not respond. Re-read the accessibility tree after to find the now-visible items.',
+      description: 'Hover the mouse over an element by its ref_id. Use this for menus, tooltips, and "More actions" overlays that only reveal on hover. On Firefox standard mode this is synthetic (the optional BiDi companion supplies trusted pointer input) — works on most sites but sites that gate hover-reveal on event.isTrusted will not respond. Re-read the accessibility tree after to find the now-visible items.',
       parameters: {
         type: 'object',
         properties: {

@@ -1,3 +1,4 @@
+import { firefoxBidi } from './bidi/client.js';
 import { ProviderManager } from './providers/manager.js';
 import { Agent } from './agent/agent.js';
 import {
@@ -140,13 +141,15 @@ Promise.all([
   console.warn('[WebBrain] Apocalypse Mode schedules could not be restored:', error);
 });
 const agent = new Agent(providerManager);
+agent.strictSecretMode = true;
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = browser.storage.local
-  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: false })
+  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
   .then((stored) => {
     agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
   })
   .catch(() => {
+    // An unreadable setting must not bypass a stored opt-out.
     agent.setAlwaysAllowApiMutations(false);
   });
 agent.setConversationScopeChangeListener((tabId, state) => {
@@ -178,6 +181,7 @@ const scheduler = new ScheduledJobManager({
   loadProviders: async () => {
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
   sendUpdate: (tabId, type, data) => {
@@ -447,10 +451,10 @@ async function loadResearchEscalation() {
 const researchEscalationReady = loadResearchEscalation().catch(() => {});
 
 async function loadStrictSecretMode() {
-  const stored = await browser.storage.local.get('strictSecretMode');
-  if (stored.strictSecretMode != null) agent.strictSecretMode = !!stored.strictSecretMode;
+  const stored = await browser.storage.local.get('strictSecretMode').catch(() => ({}));
+  agent.strictSecretMode = stored?.strictSecretMode !== false;
 }
-loadStrictSecretMode();
+const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
 async function loadProfile() {
   const stored = await browser.storage.local.get(['profileEnabled', 'profileText']);
@@ -598,16 +602,16 @@ async function saveUserMemoryExtractionQueue(queue) {
 }
 
 async function isUserMemoryExtractionEnabled() {
-  const stored = await browser.storage.local.get([
-    USER_MEMORY_ENABLED_KEY,
-    USER_MEMORY_AUTO_CAPTURE_KEY,
-  ]);
+  const stored = await browser.storage.local.get({
+    [USER_MEMORY_ENABLED_KEY]: true,
+    [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+  });
   return stored[USER_MEMORY_ENABLED_KEY] !== false
     && stored[USER_MEMORY_AUTO_CAPTURE_KEY] === true;
 }
 
 async function isUserMemoryFormCaptureEnabled() {
-  const stored = await browser.storage.local.get(USER_MEMORY_FORM_CAPTURE_KEY);
+  const stored = await browser.storage.local.get({ [USER_MEMORY_FORM_CAPTURE_KEY]: true });
   return stored[USER_MEMORY_FORM_CAPTURE_KEY] === true;
 }
 
@@ -1066,7 +1070,8 @@ browser.storage.onChanged.addListener((changes) => {
   }
   let refreshPrompts = false;
   if (changes[ALWAYS_ALLOW_API_MUTATIONS_KEY]) {
-    agent.setAlwaysAllowApiMutations(changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue === true);
+    const value = changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue;
+    agent.setAlwaysAllowApiMutations(value === undefined || value === true);
     refreshPrompts = true;
   }
   if (changes.useSiteAdapters) {
@@ -1083,10 +1088,11 @@ browser.storage.onChanged.addListener((changes) => {
     refreshPrompts = true;
   }
   if (changes[API_MUTATION_OBSERVER_KEY]) {
-    setApiMutationObserverEnabled(changes[API_MUTATION_OBSERVER_KEY].newValue === true);
+    const value = changes[API_MUTATION_OBSERVER_KEY].newValue;
+    setApiMutationObserverEnabled(value === undefined || value === true);
   }
   if (changes.strictSecretMode) {
-    agent.strictSecretMode = !!changes.strictSecretMode.newValue;
+    agent.strictSecretMode = changes.strictSecretMode.newValue !== false;
     // Strict mode also appends a global system note after enabled skills, so
     // refresh live conversations immediately as well as rebuilding at turn start.
     refreshPrompts = true;
@@ -1581,7 +1587,7 @@ browser.webRequest?.onBeforeRequest?.addListener?.(
 // tokens and form bodies do not get printed into model context.
 const API_REQUESTS_PER_TAB_LIMIT = 40;
 const API_MUTATION_OBSERVER_KEY = 'apiMutationObserverEnabled';
-const API_MUTATION_OBSERVER_DEFAULT = false;
+const API_MUTATION_OBSERVER_DEFAULT = true;
 const API_REPLAY_BODY_LIMIT = 16000;
 const apiRequestsByTab = new Map(); // tabId -> [{ url, method, ts, replayRequestId, ... }]
 const apiRequestReplayById = new Map(); // replayRequestId -> captured same-origin replay options
@@ -1727,7 +1733,8 @@ async function loadApiMutationObserverSetting() {
     const stored = await browser.storage.local.get({ [API_MUTATION_OBSERVER_KEY]: API_MUTATION_OBSERVER_DEFAULT });
     setApiMutationObserverEnabled(stored[API_MUTATION_OBSERVER_KEY] === true);
   } catch (e) {
-    setApiMutationObserverEnabled(API_MUTATION_OBSERVER_DEFAULT);
+    // Do not capture requests when a stored opt-out cannot be read.
+    setApiMutationObserverEnabled(false);
   }
 }
 
@@ -2443,6 +2450,7 @@ async function handleMessage(msg, sender) {
     // onChanged keeps them in sync afterward.
     await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     await screenshotRedactionReady;
     await imageBudgetReady;
     await researchEscalationReady;
@@ -2464,12 +2472,12 @@ async function handleMessage(msg, sender) {
     case 'profile_sync_reset': return { ok: true, ...(await profileSync.reset(String(msg.password || ''))) };
     case 'get_user_memory': {
       const store = await userMemoryStore.load();
-      const settings = await browser.storage.local.get([
-        USER_MEMORY_ENABLED_KEY,
-        USER_MEMORY_AUTO_CAPTURE_KEY,
-        USER_MEMORY_FORM_CAPTURE_KEY,
-        USER_MEMORY_MAX_PROMPT_CHARS_KEY,
-      ]);
+      const settings = await browser.storage.local.get({
+        [USER_MEMORY_ENABLED_KEY]: true,
+        [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+        [USER_MEMORY_FORM_CAPTURE_KEY]: true,
+        [USER_MEMORY_MAX_PROMPT_CHARS_KEY]: normalizeUserMemoryMaxPromptChars(),
+      });
       return {
         ok: true,
         store,
@@ -3635,4 +3643,15 @@ browser.commands.onCommand.addListener(async (command, tab) => {
   } catch (err) {
     console.error('[WebBrain] failed to dispatch command:', command, err);
   }
+});
+
+// Connection controls belong only to the packaged Settings page, never a tab.
+browser.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type !== 'WB_BIDI_CONNECT' && message?.type !== 'WB_BIDI_DISCONNECT') return;
+  if (sender.id !== browser.runtime.id || sender.url !== browser.runtime.getURL('src/ui/settings.html')) return;
+  if (message.type === 'WB_BIDI_DISCONNECT') { firefoxBidi.disconnect(); return Promise.resolve({ success: true }); }
+  return firefoxBidi.connect().then(() => ({ success: true }), error => ({ success: false, error: error.message }));
+});
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && ['firefoxBidiEnabled', 'firefoxBidiPort'].some(key => changes[key] && changes[key].oldValue !== changes[key].newValue)) firefoxBidi.disconnect();
 });

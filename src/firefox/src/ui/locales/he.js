@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Hebrew (he).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'הגדלת ממשק התוסף',
   'sp.ui_scale.decrease': 'הקטנת תצוגת ממשק התוסף',
   'sp.ui_scale.increase': 'הגדלת תצוגת ממשק התוסף',
@@ -139,6 +141,8 @@ export default {
   "sp.input.selection_placeholder": "שאלו על הטקסט שנבחר...",
   "sp.mode.ask": "שאל",
   "sp.mode.ask.title": "שאל שאלות על הדף - לא בוצעו שינויים",
+  "sp.mode.act_handoff_button": 'עבור לפעולה ונסה שוב',
+  "sp.mode.act_handoff_hint": 'להשלמת הפעולה הזו נדרש מצב פעולה. לחצו כדי לעבור למצב זה ולשלוח מחדש את הבקשה.',
   "sp.mode.act": "פעולה",
   "sp.mode.act.title": "אפשר ל-WebBrain ללחוץ, להקליד ולנווט עבורך",
   "sp.mode.act.warning": "מצב פעולה: השימוש על אחריותך בלבד.",
@@ -552,9 +556,9 @@ export default {
   "st.display.voice_input.label": "קלט קולי",
   "st.display.voice_input.desc": "תן ללחצן המיקרופון בקלט הצ'אט להכתיב טקסט באמצעות זיהוי הדיבור של הדפדפן שלך. פועל כברירת מחדל בדפדפנים התומכים בו.",
   'st.display.always_allow_api_mutations.label': "לאפשר תמיד שינויי API",
-  'st.display.always_allow_api_mutations.desc': "אפשר ל-WebBrain להשתמש ב-POST, PUT, PATCH ו-DELETE דרך fetch_url או research_url בלי לדרוש /allow-api בכל שיחה. הנחיות להעדפת הממשק ובדיקות אישור עדיין חלות. כבוי כברירת מחדל.",
+  'st.display.always_allow_api_mutations.desc': "אפשר ל-WebBrain להשתמש ב-POST, PUT, PATCH ו-DELETE דרך fetch_url או research_url בלי לדרוש /allow-api בכל שיחה. הנחיות להעדפת הממשק ובדיקות אישור עדיין חלות. מופעל כברירת מחדל.",
   "st.display.api_mutation_observer.label": "מעקב אחר שינויי API",
-  "st.display.api_mutation_observer.desc": "עקוב אחר כתובות URL ושיטות של בקשות XHR/fetch באותה כרטיסייה, כדי ש-WebBrain יוכל לזהות פעולות חוזרות בממשק ולהציע דפוסי קיצור דרך דרך ה-API. כבוי כברירת מחדל; הפעל רק בעת בדיקת קיצורי דרך או זמני תגובה.",
+  "st.display.api_mutation_observer.desc": "עקוב אחר כתובות URL ושיטות של בקשות XHR/fetch באותה כרטיסייה, כדי ש-WebBrain יוכל לזהות פעולות חוזרות בממשק ולהציע דפוסי קיצור דרך דרך ה-API. מופעל כברירת מחדל.",
   'st.display.openai_ask_streaming.label': "הזרמת תשובות במצב Ask",
   'st.display.openai_ask_streaming.desc': "הצג טקסט בזמן הגעתו במצב Ask עבור ספקים נתמכים. זרמים שהופסקו מציגים הודעה ומנסים שוב פעם אחת ללא הזרמה; שגיאות של ספק/API עדיין מוצגות. קריאות לכלים ממתינות להשלמת הזרם; ריצות Act, Dev, מתוזמנות, ענן ו-Continue נותרות ללא הזרמה. מופעל כברירת מחדל.",
   "st.display.plan_before_act.label": "תכנן לפני מעשה",
@@ -585,7 +589,7 @@ export default {
   "st.display.cost_total_limit.desc": "עוקבים מדווחים או ענן משוער/OpenRouter הוצאה של הדגם ברחבי השלוחה ומפסיקה שיחות נוספות בתשלום בקצבה. ספקים מקומיים אינם נספרים.",
   "st.display.cost_reset": "אפס את ההוצאה",
   "st.display.strict_secret.label": "טיפול סודי קפדני",
-  "st.display.strict_secret.desc": "מנע ציטוט של פרטי גישה (סיסמאות, מפתחות API, אסימונים וקודים חד-פעמיים) בסיכומים או בתשובות — גם אם ביקשת אותם במפורש. שימושי בעת שיתוף עקבות או מסך. כבוי כברירת מחדל: WebBrain פועל בדפדפן שלך, ולכן הסוכן מציג ערכים שביקשת אך נמנע מלכלול אותם בסיכומי השלמה.",
+  "st.display.strict_secret.desc": "מנע ציטוט של פרטי גישה (סיסמאות, מפתחות API, אסימונים וקודים חד-פעמיים) בסיכומים או בתשובות — גם אם ביקשת אותם במפורש. שימושי בעת שיתוף עקבות או מסך. מופעל כברירת מחדל: WebBrain פועל בדפדפן שלך, אך מטעמי אבטחה הסוכן נמנע מלחזור על פרטי גישה ושומר על סיכומי `done` מסודרים.",
   "st.display.allow_local_network.label": "אפשר לסוכן לגשת לרשת המקומית",
   "st.display.allow_local_network.desc": "נותן לסוכן fetch_url לולאה חוזרת של כלי הגעה (127.0.0.1, localhost) ו-private/RFC1918 כתובות (10.x, 192.168.x, 172.16–31.x). שימושי עבור שרתי פיתוח מקומיים, כלי אינטראנט או ממשקי API מתארחים בעצמם. כבוי כברירת מחדל - כשהוא מושבת, דפים שהוזרקו הנחיות לא יכולים לכוון את הסוכן לחקור את הרשת המקומית שלך. כתובות מטא נתונים בענן (169.254.169.254) ושמות מארח *.internal/*.local נשארים חסומים גם כשהם מופעלים.",
   "st.display.scheduled_tasks.label": "משימות מתוזמנות",
@@ -668,6 +672,7 @@ export default {
   "st.skills.item.chars": "{count} תווים",
   "st.skills.item.tools": "כְּלֵי עֲבוֹדָה: {tools}",
   "st.skills.remove": "לְהַסִיר",
+  "st.skills.edit": "עריכה",
   "st.skills.preview.rendered": "תצוגה מקדימה",
   "st.skills.preview.raw": "מקור",
   "st.skills.security_html": "<strong>לתשומת לבך:</strong> מיומנויות מותאמות אישית נשמרות כטקסט גלוי באחסון המקומי של הדפדפן ונשלחות לספק ה-LLM שהגדרת כחלק מהנחיית המערכת. כלים שיובאו עם מיומנות יכולים לשלוח את הקלטים המוצהרים שלהם לנקודות הקצה המוצהרות ב-HTTPS ללא אישור לכל קריאה; כלי הורדה עדיין מבקשים אישור רגיל להורדות לפני שמירת קבצים. ייבא רק כלים שאתה בוטח בהם; תוכן מרוחק מועתק לאחסון בזמן הייבוא.",
@@ -680,6 +685,7 @@ export default {
   "st.skills.error.add_failed": "לא ניתן להוסיף מיומנות.",
   "st.provider.field.server_url": "שרת URL",
   "st.provider.field.api_base_url": "API בָּסִיס URL",
+  "st.provider.field.api_format": "פורמט API",
   "st.provider.field.api_key": "מפתח API",
   "st.provider.field.model": "מודל",
   "st.provider.field.model_optional": "מודל (אופציונלי)",
@@ -919,8 +925,11 @@ export default {
   "sp.export_traces.partial": "שרשרת הכלים יוצאה, אך חלק מאירועי התורות לא נקראו.",
   "sp.export_traces.truncated": "שרשרת הכלים יוצאה. תורות ישנות עשויות לחסר אם לשיחה יש הרבה מעקבים.",
   "st.display.help_improve.label": "עזרה בשיפור WebBrain",
-  "st.display.help_improve.desc_html": "אפשרו לשמור אינטראקציות נבחרות עם WebBrain Compass ולהשתמש בהן להערכה, שיפור, כוונון עדין ואימון. מופעל כברירת מחדל. כבו כדי למנוע שימוש באינטראקציות Compass עתידיות למטרות אלה. <u>WebBrain לעולם אינו אוסף בקשות למודלים מקומיים או בקשות שנשלחות ישירות באמצעות פרטי ה-API שלכם.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">מדיניות פרטיות →</a>",
-  "st.providers.webbrain_data_use.body": "שימוש יומי חינמי ב-WebBrain Compass כלול. כאשר ״עזרה בשיפור WebBrain״ מופעלת כברירת מחדל, ייתכן ששיחות Compass נבחרות יישמרו וישמשו להערכה, שיפור, כוונון עדין ואימון. כבו את האפשרות ב״כללי ← מִתקַדֵם״ כדי להחריג אינטראקציות Compass עתידיות משימושים אלה. <u>WebBrain לעולם אינו אוסף בקשות למודלים מקומיים או בקשות שנשלחות ישירות באמצעות פרטי ה-API שלכם.</u> {privacyLink}. לשימוש נוסף, הירשמו דרך {subscribeLink}. נהלו את החיוב דרך {accountLink}.",
+  "st.display.help_improve.desc_html": "אפשרו לשמור אינטראקציות נבחרות עם WebBrain Compass ולהשתמש בהן להערכה, שיפור, כוונון עדין ואימון. מופעל כברירת מחדל. כבו כדי למנוע שימוש באינטראקציות Compass עתידיות למטרות אלה. <u>WebBrain אוסף בקשות למודלים מקומיים ול-API שלכם רק מספקים שבהם הפעלתם את «שיתוף שאילתות למחקר».</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">מדיניות פרטיות →</a>",
+  "st.providers.webbrain_data_use.body": "שימוש יומי חינמי ב-WebBrain Compass כלול. כאשר ״עזרה בשיפור WebBrain״ מופעלת כברירת מחדל, ייתכן ששיחות Compass נבחרות יישמרו וישמשו להערכה, שיפור, כוונון עדין ואימון. כבו את האפשרות ב״כללי ← מִתקַדֵם״ כדי להחריג אינטראקציות Compass עתידיות משימושים אלה. <u>WebBrain אוסף בקשות למודלים מקומיים ול-API שלכם רק כאשר אתם מפעילים את האפשרות «שיתוף שאילתות למחקר» של ספק זה.</u> {privacyLink}. לשימוש נוסף, הירשמו דרך {subscribeLink}. נהלו את החיוב דרך {accountLink}.",
+  'st.providers.share_research.label': "שיתוף שאילתות למחקר",
+  'st.providers.share_research.hint': "שולח את ההנחיות והתשובות של ספק זה ל-WebBrain להערכה ולשיפור, כולל הספק והמודל ששימשו. תמונות וקבצים בינאריים מוסרים והטקסט נחתך לפני השיתוף; הטקסט הנותר נשלח כפי שהוא.",
+  'st.providers.share_research.confirm': "לשתף את השאילתות של ספק זה עם WebBrain למחקר?\n\nכאשר מופעל, ההנחיות, התשובות ואינטראקציות הכלים שלך עם ספק זה יישלחו ל-WebBrain להערכה ולשיפור, יחד עם שם הספק והמודל. הטקסט נשלח כפי שהוא לאחר הסרת תמונות וקיצוץ תוכן ארוך, לכן הימנעו משיתוף מידע אישי רגיש. ניתן לכבות בכל עת כדי להפסיק את השיתוף.",
   'st.providers.compat.title': 'תאימות מתקדמת של המודל',
   'st.providers.compat.blurb': 'השאירו על אוטומטי אלא אם המודל או נקודת הקצה מתעדים חוזה בקשה אחר.',
   'st.providers.compat.preset': 'הגדרת תאימות מוכנה',
@@ -1024,5 +1033,5 @@ export default {
   "st.sync.confirm.reset": "האם להחליף את עותק הענן המוצפן בהגדרות WebBrain הנוכחיות של המכשיר הזה?",
   "st.sync.consent.legacy": "להפעיל סנכרון מוצפן? WebBrain ישדר עותק מוצפן מקצה לקצה של הזיכרונות, המילוי האוטומטי של הפרופיל והגדרות ספק מפתח ה-API שלך ל-WebBrain Compass. היסטוריית הצ'אט וכניסות OAuth אינן מסונכרנות.",
   "st.sync.consent.denied": "הרשאת סנכרון מוצפן לא ניתנה.",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
 };

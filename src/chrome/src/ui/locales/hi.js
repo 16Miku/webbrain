@@ -1,8 +1,10 @@
+import bidiCopy from './bidi-copy.mjs';
 // Hindi — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'एक्सटेंशन UI ज़ूम',
   'sp.ui_scale.decrease': 'एक्सटेंशन UI को छोटा करें',
   'sp.ui_scale.increase': 'एक्सटेंशन UI को बड़ा करें',
@@ -142,6 +144,8 @@ export default {
 
   'sp.mode.ask': "पूछो",
   'sp.mode.ask.title': "पृष्ठ के बारे में प्रश्न पूछें - कोई परिवर्तन नहीं किया गया",
+  'sp.mode.act_handoff_button': 'एक्ट पर स्विच करें और फिर कोशिश करें',
+  'sp.mode.act_handoff_hint': 'इसे पूरा करने के लिए एक्ट मोड आवश्यक है। मोड बदलने और अपना अनुरोध फिर भेजने के लिए क्लिक करें।',
   'sp.mode.act': "अधिनियम",
   'sp.mode.act.title': "WebBrain को आपके लिए क्लिक करने, टाइप करने और नेविगेट करने दें",
   'sp.mode.act.warning': "अधिनियम मोड: अपने जोखिम पर उपयोग करें।",
@@ -583,7 +587,7 @@ export default {
   'st.display.cloud_bridge.status_error': 'कनेक्शन त्रुटि: {error}',
   'st.display.cloud_bridge.status_unreachable': '{url} तक नहीं पहुँचा जा सका। संबंधित स्थानीय ब्रिज सेवा शुरू करें; फिर प्रयास हो रहा है…',
   'st.display.help_improve.label': "WebBrain को बेहतर बनाने में सहायता करें",
-  'st.display.help_improve.desc_html': "योग्य WebBrain Compass टेक्स्ट और टूल इंटरैक्शन को बनाए रखने और मूल्यांकन, सुधार, फाइन-ट्यूनिंग और प्रशिक्षण के लिए उपयोग करने की अनुमति दें। डिफ़ॉल्ट रूप से चालू. इसे बंद करने से वर्तमान वार्तालाप स्थायी रूप से बंद हो जाता है; इसे वापस चालू करना अगली नई बातचीत पर लागू होता है। स्क्रीनशॉट और छवि बाइट्स को WebBrain सुधार डेटाबेस में बरकरार नहीं रखा गया है। <u>स्थानीय-मॉडल और अपनी खुद की एपीआई अनुरोध WebBrain द्वारा कभी एकत्र नहीं किए जाते हैं।</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">गोपनीयता नीति →</a>",
+  'st.display.help_improve.desc_html': "योग्य WebBrain Compass टेक्स्ट और टूल इंटरैक्शन को बनाए रखने और मूल्यांकन, सुधार, फाइन-ट्यूनिंग और प्रशिक्षण के लिए उपयोग करने की अनुमति दें। डिफ़ॉल्ट रूप से चालू. इसे बंद करने से वर्तमान वार्तालाप स्थायी रूप से बंद हो जाता है; इसे वापस चालू करना अगली नई बातचीत पर लागू होता है। स्क्रीनशॉट और छवि बाइट्स को WebBrain सुधार डेटाबेस में बरकरार नहीं रखा गया है। <u>WebBrain स्थानीय-मॉडल और आपके स्वयं के API अनुरोध केवल उन्हीं प्रदाताओं से एकत्र करता है जहाँ आप “अनुसंधान हेतु क्वेरी साझा करें” चालू करते हैं।</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">गोपनीयता नीति →</a>",
   'st.display.clarify_timeout.label': "टाइमआउट स्पष्ट करें",
   'st.display.clarify_timeout.desc': "पहले विकल्प को स्वत: चुनने से पहले स्पष्ट संकेत के उत्तर के लिए कितनी देर तक इंतजार करना होगा (या कोई विकल्प न होने पर समय समाप्त करना होगा)। 0 = तत्काल (हमेशा स्वतः चयन)। 1200 से ऊपर के मान अनिश्चित काल तक प्रतीक्षा करते हैं (बंद)। डिफ़ॉल्ट 60s. अनुमति या फॉर्म-सबमिट पुष्टिकरण पर लागू नहीं होता है।",
   'st.display.clarify_timeout.off': "बंद",
@@ -601,9 +605,9 @@ export default {
   'st.display.voice_input.label': "ध्वनि इनपुट",
   'st.display.voice_input.desc': "चैट इनपुट में माइक बटन को अपने ब्राउज़र की वाक् पहचान के माध्यम से टेक्स्ट निर्देशित करने दें। इसका समर्थन करने वाले ब्राउज़र में डिफ़ॉल्ट रूप से चालू।",
   'st.display.always_allow_api_mutations.label': "API बदलावों को हमेशा अनुमति दें",
-  'st.display.always_allow_api_mutations.desc': "WebBrain को हर बातचीत में /allow-api की आवश्यकता के बिना fetch_url या research_url के माध्यम से POST, PUT, PATCH और DELETE का उपयोग करने दें। UI-प्रथम मार्गदर्शन और पुष्टि जाँचें लागू रहेंगी। डिफ़ॉल्ट रूप से बंद।",
+  'st.display.always_allow_api_mutations.desc': "WebBrain को हर बातचीत में /allow-api की आवश्यकता के बिना fetch_url या research_url के माध्यम से POST, PUT, PATCH और DELETE का उपयोग करने दें। UI-प्रथम मार्गदर्शन और पुष्टि जाँचें लागू रहेंगी। डिफ़ॉल्ट रूप से चालू।",
   'st.display.api_mutation_observer.label': "एपीआई उत्परिवर्तन पर्यवेक्षक",
-  'st.display.api_mutation_observer.desc': "समान-टैब XHR/फ़ेच अनुरोध URL और विधियों का निरीक्षण करें ताकि WebBrain बार-बार होने वाली UI क्रियाओं का पता लगा सके और API शॉर्टकट पैटर्न सुझा सके। डिफ़ॉल्ट रूप से बंद; शॉर्टकट व्यवहार या विलंबता की जांच करते समय ही सक्षम करें।",
+  'st.display.api_mutation_observer.desc': "समान-टैब XHR/फ़ेच अनुरोध URL और विधियों का निरीक्षण करें ताकि WebBrain बार-बार होने वाली UI क्रियाओं का पता लगा सके और API शॉर्टकट पैटर्न सुझा सके। डिफ़ॉल्ट रूप से चालू।",
   'st.display.webmcp.label': "प्रायोगिक वेबएमसीपी",
   'st.display.webmcp.desc': "WebBrain को समर्थित Chrome पृष्ठों द्वारा प्रदर्शित संरचित टूल को खोजने और चलाने की अनुमति दें। इसे सक्षम करने से मॉडल संदर्भ में प्रयोगात्मक WebMCP उपकरण और मार्गदर्शन जुड़ जाता है। डिफ़ॉल्ट रूप से बंद.",
   'st.display.openai_ask_streaming.label': "Ask मोड में उत्तर स्ट्रीम करें",
@@ -636,7 +640,7 @@ export default {
   'st.display.cost_total_limit.desc': "ट्रैक रिपोर्ट किए गए या अनुमानित क्लाउड/OpenRouter मॉडल पूरे एक्सटेंशन में खर्च होते हैं और भत्ते पर आगे भुगतान किए गए कॉल को रोकते हैं। स्थानीय प्रदाताओं की गणना नहीं की जाती है.",
   'st.display.cost_reset': "व्यय रीसेट करें",
   'st.display.strict_secret.label': "सख्त गुप्त संचालन",
-  'st.display.strict_secret.desc': "सारांश या सहायक पाठ में क्रेडेंशियल (पासवर्ड, एपीआई कुंजी, टोकन, ओटीपी) उद्धृत करने से इनकार करें - भले ही आप स्पष्ट रूप से उनके लिए पूछें। उपयोगी यदि आप नियमित रूप से ट्रेस फ़ाइलें या स्क्रीन-शेयर साझा करते हैं। डिफ़ॉल्ट रूप से बंद: वेबब्रेन आपके ब्राउज़र में चलता है, इसलिए डिफ़ॉल्ट रूप से एजेंट आपको आपके द्वारा मांगे गए मान दिखाता है और केवल `done` सारांश को व्यवस्थित रखता है।",
+  'st.display.strict_secret.desc': "सारांश या सहायक पाठ में क्रेडेंशियल (पासवर्ड, एपीआई कुंजी, टोकन, ओटीपी) उद्धृत करने से इनकार करें - भले ही आप स्पष्ट रूप से उनके लिए पूछें। उपयोगी यदि आप नियमित रूप से ट्रेस फ़ाइलें या स्क्रीन-शेयर साझा करते हैं। डिफ़ॉल्ट रूप से चालू: वेबब्रेन आपके ब्राउज़र में चलता है, लेकिन सुरक्षा के लिए एजेंट क्रेडेंशियल दोहराने से इनकार करता है और `done` सारांश को व्यवस्थित रखता है।",
   'st.display.allow_local_network.label': "एजेंट को स्थानीय नेटवर्क तक पहुंचने की अनुमति दें",
   'st.display.allow_local_network.desc': "एजेंट के फ़ेच_यूआरएल टूल को लूपबैक (127.0.0.1, localhost) और निजी/RFC1918 पते (10.x, 192.168.x, 172.16–31.x) तक पहुंचने देता है। स्थानीय डेव सर्वर, इंट्रानेट टूल या स्वयं-होस्टेड एपीआई के लिए उपयोगी। डिफ़ॉल्ट रूप से बंद - बंद होने पर, प्रॉम्प्ट-इंजेक्टेड पेज एजेंट को आपके स्थानीय नेटवर्क की जांच करने के लिए प्रेरित नहीं कर सकते। क्लाउड-मेटाडेटा पते (169.254.169.254) और *.internal/*.local होस्टनाम चालू होने पर भी अवरुद्ध रहते हैं।",
   'st.display.scheduled_tasks.label': "निर्धारित कार्य",
@@ -726,7 +730,10 @@ export default {
   'st.providers.compat.value.max': "अधिकतम",
   'st.providers.compat.value.system': "सिस्टम",
   'st.providers.compat.value.developer': "डेवलपर",
-  'st.providers.webbrain_data_use.body': "मुफ़्त दैनिक WebBrain Compass उपयोग शामिल है। जबकि हेल्प इम्प्रूव WebBrain डिफ़ॉल्ट रूप से चालू है, चयनित Compass वार्तालापों को बनाए रखा जा सकता है और मूल्यांकन, सुधार, फाइन-ट्यूनिंग और प्रशिक्षण के लिए उपयोग किया जा सकता है। उन उपयोगों से भविष्य के Compass इंटरैक्शन को बाहर करने के लिए इसे सामान्य → उन्नत में बंद करें। <u>स्थानीय-मॉडल और अपनी खुद की एपीआई अनुरोध WebBrain द्वारा कभी एकत्र नहीं किए जाते हैं।</u> {privacyLink}. अधिक उपयोग के लिए, {subscribeLink} पर सदस्यता लें। {accountLink} पर बिलिंग प्रबंधित करें।",
+  'st.providers.webbrain_data_use.body': "मुफ़्त दैनिक WebBrain Compass उपयोग शामिल है। जबकि हेल्प इम्प्रूव WebBrain डिफ़ॉल्ट रूप से चालू है, चयनित Compass वार्तालापों को बनाए रखा जा सकता है और मूल्यांकन, सुधार, फाइन-ट्यूनिंग और प्रशिक्षण के लिए उपयोग किया जा सकता है। उन उपयोगों से भविष्य के Compass इंटरैक्शन को बाहर करने के लिए इसे सामान्य → उन्नत में बंद करें। <u>WebBrain स्थानीय-मॉडल और आपके स्वयं के API अनुरोध केवल तभी एकत्र करता है जब आप उस प्रदाता का “अनुसंधान हेतु क्वेरी साझा करें” विकल्प चालू करते हैं।</u> {privacyLink}. अधिक उपयोग के लिए, {subscribeLink} पर सदस्यता लें। {accountLink} पर बिलिंग प्रबंधित करें।",
+  'st.providers.share_research.label': "अनुसंधान हेतु क्वेरी साझा करें",
+  'st.providers.share_research.hint': "इस प्रदाता के प्रॉम्प और प्रतिक्रियाएँ मूल्यांकन और सुधार हेतु WebBrain को भेजता है, जिसमें प्रयुक्त प्रदाता और मॉडल शामिल हैं। साझा करने से पहले चित्र और बाइनरी अनुलग्नक हटाए जाते हैं और पाठ छोटा किया जाता है; शेष पाठ ज्यों-का-त्यों भेजा जाता है।",
+  'st.providers.share_research.confirm': "क्या इस प्रदाता की क्वेरी अनुसंधान हेतु WebBrain के साथ साझा करें?\n\nचालू होने पर, इस प्रदाता के साथ आपके प्रॉम्प, प्रतिक्रियाएँ और टूल इंटरैक्शन प्रदाता और मॉडल के नाम सहित मूल्यांकन और सुधार हेतु WebBrain को भेजे जाएँगे। चित्र हटाने और लंबी सामग्री छोटा करने के बाद पाठ ज्यों-का-त्यों भेजा जाता है, इसलिए संवेदनशील व्यक्तिगत डेटा साझा करने से बचें। भविष्य में साझा करना रोकने हेतु आप इसे कभी भी बंद कर सकते हैं।",
   'st.providers.webbrain_note.body': "मुफ़्त दैनिक WebBrain Compass उपयोग शामिल है। अनुरोध api.webbrain.one से होकर गुजरते हैं; डिफ़ॉल्ट रूप से हम कोटा और डिबगिंग के लिए मेटाडेटा लॉग करते हैं, प्रॉम्प्ट टेक्स्ट, पेज सामग्री, स्क्रीनशॉट या मॉडल प्रतिक्रियाओं के लिए नहीं। {privacyLink}. अधिक उपयोग के लिए, {subscribeLink} पर सदस्यता लें। {accountLink} पर बिलिंग प्रबंधित करें।",
   'st.providers.webbrain_note.privacy_link': "गोपनीयता नीति",
 
@@ -753,6 +760,7 @@ export default {
   'st.skills.item.chars': "{count} वर्ण",
   'st.skills.item.tools': "उपकरण: {tools}",
   'st.skills.remove': "हटाओ",
+  'st.skills.edit': 'संपादित करें',
   'st.skills.cws.heading': "Chrome Web Store रिलीज़ सेटअप",
   'st.skills.cws.desc_html': "ये सेटिंग्स केवल तभी दिखाई देती हैं जब पैकेज्ड रिलीज़ कौशल सक्षम होता है। एक Google क्लाउड OAuth बनाएं <strong>वेब अनुप्रयोग</strong>, Chrome Web Store API सक्षम करें, और रजिस्टर करें <code>http://localhost:1457/auth/callback</code> एक अधिकृत रीडायरेक्ट यूआरआई के रूप में। क्रेडेंशियल, टोकन और ज़िप बाइट्स एक्सटेंशन-लोकल स्टोरेज में रहते हैं और मॉडल प्रॉम्प्ट या ट्रेस में कभी शामिल नहीं होते हैं।",
   'st.skills.cws.publisher_id': "प्रकाशक आईडी",
@@ -789,6 +797,7 @@ export default {
 
   'st.provider.field.server_url': "सर्वर यूआरएल",
   'st.provider.field.api_base_url': "एपीआई बेस यूआरएल",
+  'st.provider.field.api_format': "एपीआई प्रारूप",
   'st.provider.field.api_key': "एपीआई कुंजी",
   'st.provider.field.model': "मॉडल",
   'st.provider.field.model_optional': "मॉडल (वैकल्पिक)",
@@ -1112,8 +1121,8 @@ export default {
   "st.sync.confirm.reset": "क्या एन्क्रिप्टेड क्लाउड कॉपी को इस डिवाइस के मौजूदा WebBrain सेटअप से बदलना है?",
   "st.sync.consent.legacy": "एन्क्रिप्टेड सिंक चालू करें? WebBrain आपकी यादों, प्रोफ़ाइल ऑटोफ़िल और API-कुंजी प्रदाता सेटिंग्स की एंड-टू-एंड एन्क्रिप्टेड कॉपी WebBrain Compass को भेजेगा। चैट इतिहास और OAuth साइन-इन सिंक नहीं किए जाते।",
   "st.sync.consent.denied": "एन्क्रिप्टेड सिंक अनुमति नहीं दी गई थी.",
-  'st.providers.webgpu_note.body': '{modelLink} बिना किसी API एंडपॉइंट के पूरी तरह Chrome में चलता है। पहली जनरेशन लगभग 4.85 GB डाउनलोड करती है और इसे ब्राउज़र में कैश करती है। कनेक्शन जाँच मॉडल डाउनलोड किए बिना पैकेज किए गए रनटाइम और हार्डवेयर अडैप्टर की जाँच करती है।',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} बिना किसी API एंडपॉइंट के पूरी तरह Chrome में चलता है। इसे Settings > Providers > WebGPU या Apocalypse Mode में डाउनलोड करें, फिर standalone chat में nuclear control का उपयोग करें।',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

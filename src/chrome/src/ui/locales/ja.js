@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Japanese (ja).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': '拡張機能 UI のズーム',
   'sp.ui_scale.decrease': '拡張機能 UI を縮小',
   'sp.ui_scale.increase': '拡張機能 UI を拡大',
@@ -174,6 +176,8 @@ export default {
 
   'sp.mode.ask': '質問',
   'sp.mode.ask.title': 'ページについて質問する — 変更は行いません',
+  'sp.mode.act_handoff_button': 'Actに切り替えて再試行',
+  'sp.mode.act_handoff_hint': '完了するにはActモードが必要です。クリックして切り替え、リクエストを再送信してください。',
   'sp.mode.act': '操作',
   'sp.mode.act.title': 'WebBrain にクリック・入力・操作を任せる',
   'sp.mode.act.warning': '操作モード：自己責任でご利用ください。',
@@ -331,6 +335,7 @@ export default {
 
   'st.provider.field.server_url': 'サーバー URL',
   'st.provider.field.api_base_url': 'API ベース URL',
+  'st.provider.field.api_format': 'API 形式',
   'st.provider.field.api_key': 'API キー',
   'st.provider.field.model': 'モデル',
   'st.provider.field.model_optional': 'モデル（任意）',
@@ -519,7 +524,7 @@ export default {
   "st.display.download_directory.placeholder": "システムの既定値",
   "st.display.download_directory.error": "WebBrain や Work/WebBrain のような相対フォルダーを指定してください。絶対パスと「..」は使用できません。",
   "st.display.strict_secret.label": "資格情報の厳格な取り扱い",
-  "st.display.strict_secret.desc": "要約やアシスタントの文章の中で資格情報（パスワード、API キー、トークン、OTP）を引用することを、たとえ明示的に求めた場合でも拒否します。トレースファイルを共有したり画面を共有したりすることが多い場合に便利です。デフォルトはオフ: WebBrain はあなた自身のブラウザ内で動くため、既定ではエージェントは求めた値を表示し、`done` の要約だけをすっきりと保ちます。",
+  "st.display.strict_secret.desc": "要約やアシスタントの文章の中で資格情報（パスワード、API キー、トークン、OTP）を引用することを、たとえ明示的に求めた場合でも拒否します。トレースファイルを共有したり画面を共有したりすることが多い場合に便利です。デフォルトはオン: WebBrain はあなた自身のブラウザ内で動きますが、安全性を重視してエージェントは資格情報の出力を拒否し、`done` の要約をすっきりと保ちます。",
   "st.display.request_timeout.label": "LLM リクエストのタイムアウト",
   "st.display.request_timeout.desc": "応答ヘッダーの受信と、ストリーミング応答の各部分の間で待機できる最大時間です。デフォルトは120秒です。ローカルモデルが遅い場合、特にCPUで実行する場合やコンテキストが大きい場合は、時間を長くしてください。",
   "st.providers.filter.all": "すべて",
@@ -715,6 +720,7 @@ export default {
   'st.skills.item.chars': '{count} 文字',
   'st.skills.item.tools': 'ツール: {tools}',
   'st.skills.remove': '削除',
+  'st.skills.edit': '編集',
   'st.skills.preview.rendered': 'プレビュー',
   'st.skills.preview.raw': 'ソース',
   'st.skills.security_html': '<strong>注意:</strong> カスタムスキルはブラウザのローカルストレージに平文で保存され、システムプロンプトの一部として設定済みのLLMプロバイダーに送信されます。インポートされたスキルツールは、宣言された入力を宣言されたHTTPSエンドポイントに呼び出しごとの確認なしで送信できます。ダウンロードツールはファイル保存前に通常のダウンロード許可ゲートを通じて確認します。信頼するツールのみをインポートしてください。リモートコンテンツはインポート時にストレージにコピーされます。',
@@ -764,9 +770,9 @@ export default {
   'st.display.clarify_timeout.off': 'オフ',
   'st.display.clarify_timeout.instant': '即時',
   'st.display.always_allow_api_mutations.label': "API変更を常に許可",
-  'st.display.always_allow_api_mutations.desc': "会話ごとに /allow-api を必要とせず、WebBrain が fetch_url または research_url で POST、PUT、PATCH、DELETE を使用できるようにします。UI優先の指針と確認チェックは引き続き適用されます。既定ではオフです。",
+  'st.display.always_allow_api_mutations.desc': "会話ごとに /allow-api を必要とせず、WebBrain が fetch_url または research_url で POST、PUT、PATCH、DELETE を使用できるようにします。UI優先の指針と確認チェックは引き続き適用されます。既定ではオンです。",
   'st.display.api_mutation_observer.label': 'API変更オブザーバー',
-  'st.display.api_mutation_observer.desc': '同じタブの XHR/fetch リクエスト URL とメソッドを監視し、WebBrain が繰り返しの UI アクションを検出して API ショートカットパターンを提案できるようにします。デフォルトではオフ。ショートカット動作やレイテンシの調査中のみ有効にしてください。',
+  'st.display.api_mutation_observer.desc': '同じタブの XHR/fetch リクエスト URL とメソッドを監視し、WebBrain が繰り返しの UI アクションを検出して API ショートカットパターンを提案できるようにします。既定ではオンです。',
   'st.display.openai_ask_streaming.label': "Ask モードの応答をストリーミング",
   'st.display.openai_ask_streaming.desc': "対応プロバイダーの Ask モードで、テキストが届いたら表示します。中断されたストリームは通知を表示し、ストリーミングなしで一度だけ再試行します。プロバイダー/API エラーは引き続き表示されます。ツール呼び出しはストリームの完了まで待機し、Act・Dev・スケジュール・クラウド・Continue の実行はストリーミングされません。デフォルトでオン。",
   'st.display.plan_before_act.label': '実行前に計画',
@@ -985,8 +991,11 @@ export default {
   "sp.export_traces.partial": "ツールチェーンを書き出しましたが、一部のターンのイベントを読めませんでした。",
   "sp.export_traces.truncated": "ツールチェーンを書き出しました。この会話にトレースが多い場合、古いターンが欠けることがあります。",
   "st.display.help_improve.label": "WebBrain の改善に協力する",
-  "st.display.help_improve.desc_html": "選択された WebBrain Compass の操作を保持し、評価、改善、微調整、トレーニングに使用することを許可します。既定でオンです。今後の Compass 操作がこれらの目的に使用されないようにするにはオフにしてください。<u>ローカルモデルへのリクエストや、ご自身の API 認証情報で直接送信したリクエストを WebBrain が収集することはありません。</u><a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">プライバシーポリシー →</a>",
-  "st.providers.webbrain_data_use.body": "WebBrain Compass には毎日の無料利用枠が含まれます。「WebBrain の改善に協力する」は既定でオンであり、選択された Compass の会話が保持され、評価、改善、微調整、トレーニングに使用される場合があります。今後の Compass 操作をこれらの用途から除外するには、一般 → 詳細設定でオフにしてください。<u>ローカルモデルへのリクエストや、ご自身の API 認証情報で直接送信したリクエストを WebBrain が収集することはありません。</u>{privacyLink}。追加利用は {subscribeLink} で購読してください。請求は {accountLink} で管理できます。",
+  "st.display.help_improve.desc_html": "選択された WebBrain Compass の操作を保持し、評価、改善、微調整、トレーニングに使用することを許可します。既定でオンです。今後の Compass 操作がこれらの目的に使用されないようにするにはオフにしてください。<u>ローカルモデルやご自身のAPIへのリクエストは、「研究のためにクエリを共有」をオンにしたプロバイダーからのみWebBrainが収集します。</u><a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">プライバシーポリシー →</a>",
+  "st.providers.webbrain_data_use.body": "WebBrain Compass には毎日の無料利用枠が含まれます。「WebBrain の改善に協力する」は既定でオンであり、選択された Compass の会話が保持され、評価、改善、微調整、トレーニングに使用される場合があります。今後の Compass 操作をこれらの用途から除外するには、一般 → 詳細設定でオフにしてください。<u>ローカルモデルやご自身のAPIへのリクエストは、このプロバイダーの「研究のためにクエリを共有」オプションをオンにした場合のみWebBrainが収集します。</u>{privacyLink}。追加利用は {subscribeLink} で購読してください。請求は {accountLink} で管理できます。",
+  'st.providers.share_research.label': "研究のためにクエリを共有",
+  'st.providers.share_research.hint': "このプロバイダーのプロンプトと応答を、使用したプロバイダーとモデル名とともに評価・改善のためWebBrainに送信します。画像やバイナリ添付は共有前に除去され、テキストは切り詰められます。残りのテキストはそのまま送信されます。",
+  'st.providers.share_research.confirm': "このプロバイダーのクエリを研究のためにWebBrainと共有しますか?\n\nオンにすると、このプロバイダーとのプロンプト、応答、ツール操作がプロバイダー名・モデル名とともに評価・改善のためWebBrainに送信されます。テキストは画像除去・長い内容の切り詰め後にそのまま送信されるため、機密の個人情報を共有しないでください。オフにすればいつでも今後の共有を停止できます。",
   'st.providers.compat.title': '高度なモデル互換性',
   'st.providers.compat.blurb': 'モデルまたはエンドポイントが別のリクエスト契約を明記していない限り、Auto のままにしてください。',
   'st.providers.compat.preset': '互換性プリセット',
@@ -1114,8 +1123,8 @@ export default {
   "st.sync.confirm.reset": "暗号化されたクラウド コピーをこのデバイスの現在の WebBrain セットアップに置き換えますか?",
   "st.sync.consent.legacy": "暗号化された同期をオンにしますか? WebBrain は、エンドツーエンドで暗号化された思い出、プロファイルの自動入力、API キー プロバイダー設定のコピーを WebBrain Compass に送信します。チャット履歴と OAuth サインインは同期されません。",
   "st.sync.consent.denied": "暗号化された同期権限が付与されませんでした。",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

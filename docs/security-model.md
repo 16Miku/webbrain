@@ -14,8 +14,8 @@ For vulnerability disclosure, see [SECURITY.md](../SECURITY.md).
 {
   "permissions": [
     "sidePanel", "activeTab", "contextMenus", "tabs", "tabGroups",
-    "scripting", "storage", "webNavigation", "webRequest", "debugger",
-    "downloads", "alarms", "unlimitedStorage", "offscreen",
+    "scripting", "storage", "notifications", "webNavigation", "webRequest",
+    "debugger", "downloads", "alarms", "unlimitedStorage", "offscreen",
     "privateNetworkAccess", "tabCapture",
     "clipboardWrite", "clipboardRead"
   ],
@@ -25,18 +25,31 @@ For vulnerability disclosure, see [SECURITY.md](../SECURITY.md).
 
 (This is the Chrome MV3 manifest. Firefox MV2 grants a narrower set —
 `activeTab`, `menus`, `webNavigation`, `webRequest`, `storage`,
-`unlimitedStorage`, `tabs`, `tabGroups`, `downloads`, `alarms`, `clipboard*`,
-`<all_urls>` — and has no `debugger`/`offscreen`/`tabCapture`, see Firefox
-Differences below.)
+`unlimitedStorage`, `tabs`, `tabGroups`, `notifications`, `downloads`,
+`alarms`, `clipboard*`, `<all_urls>` — and has no
+`debugger`/`offscreen`/`tabCapture`/`sidePanel`/`scripting`/`privateNetworkAccess`,
+see Firefox Differences below.)
 
 | Permission | Risk | Mitigation |
 |---|---|---|
 | `<all_urls>` | Content script injection anywhere — the agent can read and interact with any page the user visits | The user must explicitly switch to an action mode (Act or Dev) before clicks/types/navigation. Ask mode is read-only. General browser-tab creation, enumeration, activation, and run retargeting are not exposed as model-callable tools. The one OTP-skill-gated Mid/Full reader internally selects an already-open supported mailbox and returns only bounded service-matching content; it exposes no tab catalog. Candidate inspection is read-only, while opening a selected message requires Act/Dev and mailbox-host click permission because it may mark mail read. Its disposable inactive clone consumes exact message continuations to completion or fails closed. |
 | `debugger` | CDP access provides trusted events and full DOM/network control on any tab | The debugger is attached only to the target tab while a CDP-backed run or mode-scoped Dev diagnostics own it. Run cleanup closes run-scoped WebMCP state and detaches unless Dev diagnostics remain active; conversation cleanup and tab removal drain all owners and detach. |
-| `webRequest` | Can observe XHR/fetch metadata for requests made by the active page | API mutation observer is off by default; when enabled, it keeps only a bounded in-memory per-tab buffer for repeated-click shortcut hints and opaque same-origin replay. |
+| `webRequest` | Can observe XHR/fetch metadata for requests made by the active page | API mutation observer is on by default; it keeps only a bounded in-memory per-tab buffer for repeated-click shortcut hints and opaque same-origin replay. |
 | `downloads` | Can save files to the user's Downloads folder without prompting | Only the agent's explicit download-capable tool calls (`download_files`, `download_file`, `download_resource_from_page`, `download_social_media`, download-job skill tools) use this, and each is gated by the capability × origin permission prompt. |
 | `alarms` | Can wake scheduled jobs in future browser sessions | `schedule_resume` / `schedule_task` are gated; the user-authored `/watch` slash command can also create a page-bound 30–120 second conditional poll. |
 | `offscreen` | An offscreen document can make HTTP requests immune to user CSP, run local inference, or play audio without an open panel | Used for the localhost LLM proxy, the optional endpoint-free WebGPU text and vision providers, tab recording, validated download staging, the local controller bridge, and successful `/watch /beep` tones. The text provider receives the same bounded conversation and allowlisted tool schemas that would be sent to another active provider; dedicated local vision receives only its screenshot/prompt. Model files are downloaded from Hugging Face, while inference stays in the worker. Watch audio receives only a style selector, never page content or an arbitrary URL. |
+| `sidePanel` | Opens the extension side panel UI | The panel is user-invoked (toolbar click / `Alt+Shift+W`). No model-callable tool opens it silently; it only hosts the chat UI the user already sees. |
+| `activeTab` | Temporary access to the currently active tab when invoked | Scoped to the tab the user invoked the extension on. Reads stay read-only in Ask mode; writes still require Act/Dev plus the capability × origin gate. |
+| `contextMenus` (`menus` on Firefox) | Adds right-click menu entries | Menu entries only surface user-invoked prompts (selection context, page actions). Invoking one still routes through the normal Ask/Act tool gating — it grants no silent capability. |
+| `tabs` / `tabGroups` | Can see tab titles/URLs and group membership | Used for run scoping, tab selection, and conversation recovery. General tab creation, enumeration, activation, and run retargeting are not exposed as model-callable tools. |
+| `scripting` (Chrome only) | Can inject content scripts / execute code in pages | Injection targets the user's own open tabs and runs the same audited content scripts (`accessibility-tree.js`, teacher capture, visual indicator). Arbitrary page JS execution (`execute_js`) is a Dev-only tool and always passes the capability × origin gate. |
+| `storage` / `unlimitedStorage` | Persists settings, traces, workflows, and model files locally | Data stays in `chrome.storage.local` / IndexedDB on the user's machine. Cloud Sync encrypts credentials, autofill, and memory in an AES-GCM envelope before egress; the sync password never leaves the device. |
+| `webNavigation` | Observes navigation events (URL, tab, frame transitions) | Used to scope runs to the current page family, detect navigations mid-run, and invalidate stale element references. It exposes no page content by itself. |
+| `notifications` | Can show OS-level notifications | Used as a completion fallback for restricted or discarded background tabs, including scheduled runs. The message is the current tab title, falling back to its URL, so page-controlled titles and sensitive URL components may appear on OS notification surfaces or in notification history. Run output, page bodies, and trace payloads are not intentionally included. |
+| `tabCapture` (Chrome only) | Can capture tab audio/video | Used only for the explicit slash-driven tab/screen recording flow. Recording starts on a user command and stops on completion; there is no background capture. |
+| `clipboardWrite` / `clipboardRead` | Can write to / read from the clipboard | Writes place agent-produced snippets the user asked for; reads support paste-driven tasks. Clipboard content entering a prompt is treated like other untrusted input and never exfiltrated except as the user's requested result. |
+| `privateNetworkAccess` (Chrome only) | Allows requests to local/private-network LLM endpoints | Required for llama.cpp / Ollama / LM Studio on localhost or LAN. `fetch_url` to private/RFC1918 addresses is blocked by default unless the user enables local-network access; cloud-metadata endpoints (169.254.169.254) are always blocked. |
+| `http://localhost/*`, `http://127.0.0.1/*`, `http://*/*` host permissions | Lets the extension call local-model servers and plain-HTTP endpoints | Localhost entries exist for local LLM servers (llama.cpp, Ollama, LM Studio). Provider inference and discovery requests to a user-configured HTTP endpoint use the provider transport directly and do not pass the agent-tool permission prompt. Model-callable network tools such as `fetch_url` and `research_url` are separately subject to the capability × origin gate; `connect-src *` in the extension CSP does not waive that gate. |
 
 ### Authentication
 
@@ -125,7 +138,7 @@ The primary threat: a malicious page crafts content that, when read by the agent
 | **Plan before Act** | When enabled, action-mode runs first produce a structured plan and wait for side-panel approval before any browser tool executes. In Try mode, planner JSON that remains invalid after repair degrades that turn to Ask/read-only; Strict stops. Scheduled runs can auto-approve the plan only through scheduler policy. |
 | **Skill import boundary** | Skills can expose read-only HTTP tools and download-job tools through a `webbrain-tools` manifest. Importing or keeping the skill enabled is the trust decision for the declared HTTPS endpoint; declared skill tools use `credentials: "omit"` and should mark third-party results `resultPolicy: "untrusted"`. Download-job skill tools still require an action mode and the normal Downloads permission gate before saving files. |
 | **WebMCP boundary** | Experimental WebMCP is off by default, so its tools and prompt guidance do not enter ordinary model requests unless the user opts in under Settings → General → Advanced. When enabled, Chrome page-registered names, descriptions, schemas, frame URLs, annotations, outputs, and errors are page-controlled and always use the untrusted-content wrapper. Calls use opaque IDs. Ask may list tools but cannot invoke them. Because a callback can run arbitrary page logic, every invocation requires Act/Dev, fresh per-call confirmation, and a permission grant for the actual registration-frame origin; a page-authored `readOnly` hint never bypasses those gates. Missing/opaque frame identity fails closed, and the frame plus effective HTTP(S) security origin are revalidated immediately before dispatch to prevent navigation races from borrowing an old grant. |
-| **API mutation override** | A per-conversation `/allow-api` flag, or the default-off persistent setting under General → Advanced, *waives* the permission prompt for write-method network egress (`fetch_url`/`research_url` with POST/PUT/PATCH/DELETE). Neither option waives GET egress or any other capability. Conversation reset clears only the slash-command override. |
+| **API mutation override** | A per-conversation `/allow-api` flag, or the default-on persistent setting under General → Advanced, *waives* the permission prompt for write-method network egress (`fetch_url`/`research_url` with POST/PUT/PATCH/DELETE). Neither option waives GET egress or any other capability. Conversation reset clears only the slash-command override. |
 | **`done()` blocking** | Before accepting completion, the agent probes for open dialogs/forms. If the summary claims "created"/"saved" but a modal is still open, the agent is forced to continue. |
 | **Duplicate-submit guard** | Clicks on submit-like text (create/save/submit/add/post/publish/send/confirm/sign up/log in/pay/checkout/order, etc.) are blocked within a 45-second window per tab+URL (Chrome). |
 | **CLICK occlusion test** | Before clicking, the resolver calls `elementFromPoint()`. If another element is visually on top, the click is refused. |
@@ -148,7 +161,8 @@ The primary threat: a malicious page crafts content that, when read by the agent
 
 Set per-conversation via the `/allow-api` slash command in the side panel, or
 persistently with **Always allow API mutations** under **Settings → General →
-Advanced**. The persistent setting is off by default. When either option is
+Advanced**. The persistent setting is on by default when absent. Read failures
+and non-boolean stored values grant no authorization. When either option is
 active, it waives the permission prompt for **write-method network egress only**:
 
 - `fetch_url` / `research_url` with `method: POST/PUT/PATCH/DELETE`

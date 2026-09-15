@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Dutch (nl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Zoom van extensie-interface',
   'sp.ui_scale.decrease': 'Extensie-interface uitzoomen',
   'sp.ui_scale.increase': 'Extensie-interface inzoomen',
@@ -139,6 +141,8 @@ export default {
   "sp.input.selection_placeholder": "Vraag over de geselecteerde tekst...",
   'sp.mode.ask': 'Vragen',
   'sp.mode.ask.title': 'Vragen stellen over de pagina — er worden geen wijzigingen aangebracht',
+  'sp.mode.act_handoff_button': 'Overschakelen naar Act en opnieuw proberen',
+  'sp.mode.act_handoff_hint': 'Hiervoor is de Act-modus nodig. Klik om over te schakelen en je verzoek opnieuw te verzenden.',
   'sp.mode.act': 'Handelen',
   'sp.mode.act.title': 'Laat WebBrain voor u klikken, typen en navigeren',
   'sp.mode.act.warning': 'Handelingsmodus: Gebruik op eigen risico.',
@@ -548,7 +552,7 @@ export default {
   'st.providers.webgpu_download.stopping': 'Stoppen en bestanden verwijderen…',
   'st.providers.webgpu_download.stop': 'Stoppen en verwijderen',
   'st.display.help_improve.label': 'Help WebBrain verbeteren',
-  'st.display.help_improve.desc_html': 'Sta toe dat geschikte WebBrain Compass-tekst- en toolinteracties worden bewaard en gebruikt voor evaluatie, verbetering, fine-tuning en training. Standaard ingeschakeld. Als u dit uitschakelt, wordt het huidige gesprek permanent uitgesloten; opnieuw inschakelen geldt vanaf het volgende nieuwe gesprek. Screenshots en afbeeldingsbytes worden niet bewaard in de WebBrain-verbeteringsdatabase. <u>Verzoeken aan lokale modellen en verzoeken met uw eigen API worden nooit door WebBrain verzameld.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacybeleid →</a>',
+  'st.display.help_improve.desc_html': 'Sta toe dat geschikte WebBrain Compass-tekst- en toolinteracties worden bewaard en gebruikt voor evaluatie, verbetering, fine-tuning en training. Standaard ingeschakeld. Als u dit uitschakelt, wordt het huidige gesprek permanent uitgesloten; opnieuw inschakelen geldt vanaf het volgende nieuwe gesprek. Screenshots en afbeeldingsbytes worden niet bewaard in de WebBrain-verbeteringsdatabase. <u>Verzoeken aan lokale modellen en je eigen API worden door WebBrain alleen verzameld bij providers waar je “Query’s delen voor onderzoek” inschakelt.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacybeleid →</a>',
   'st.display.clarify_timeout.label': 'Verduidelijkingstime-out',
   'st.display.clarify_timeout.desc': 'Hoelang wachten op een antwoord op een verduidelijkingsprompt...',
   'st.display.clarify_timeout.off': 'Uit',
@@ -566,9 +570,9 @@ export default {
   'st.display.voice_input.label': 'Spraakinvoer',
   'st.display.voice_input.desc': 'Laat de microfoonknop in de chatinvoer tekst dicteren via de spraakherkenning van uw browser...',
   'st.display.always_allow_api_mutations.label': "API-mutaties altijd toestaan",
-  'st.display.always_allow_api_mutations.desc': "Sta WebBrain toe POST, PUT, PATCH en DELETE via fetch_url of research_url te gebruiken zonder /allow-api in elk gesprek. Richtlijnen die de UI vooropstellen en bevestigingscontroles blijven van toepassing. Standaard uit.",
+  'st.display.always_allow_api_mutations.desc': "Sta WebBrain toe POST, PUT, PATCH en DELETE via fetch_url of research_url te gebruiken zonder /allow-api in elk gesprek. Richtlijnen die de UI vooropstellen en bevestigingscontroles blijven van toepassing. Standaard aan.",
   'st.display.api_mutation_observer.label': 'API-wijzigingsobserver',
-  'st.display.api_mutation_observer.desc': 'Observeer XHR/fetch-verzoek-URL\'s en -methoden op hetzelfde tabblad...',
+  'st.display.api_mutation_observer.desc': 'Observeer XHR/fetch-verzoek-URL\'s en -methoden op hetzelfde tabblad, zodat WebBrain herhaalde UI-acties kan herkennen en API-snelkoppelingen kan voorstellen. Standaard aan.',
   'st.display.openai_ask_streaming.label': 'Ask-antwoorden streamen',
   'st.display.openai_ask_streaming.desc': 'Toon tekst van ondersteunde providers zodra deze binnenkomt in Ask-modus. Onderbroken streams tonen een melding en worden eenmaal opnieuw geprobeerd zonder streaming. Toolaanroepen wachten op het einde van de stream; Act-, Dev-, geplande, cloud- en Continue-runs blijven niet-streamend. Standaard ingeschakeld.',
   'st.display.plan_before_act.label': 'Plannen voor Handelen',
@@ -676,6 +680,7 @@ export default {
   'st.skills.item.chars': '{count} tekens',
   'st.skills.item.tools': 'Tools: {tools}',
   'st.skills.remove': 'Verwijderen',
+  'st.skills.edit': 'Bewerken',
   'st.skills.preview.rendered': 'Voorbeeld',
   'st.skills.preview.raw': 'Ruw',
   'st.skills.security_html': '<strong>Let op:</strong> aangepaste vaardigheden worden in platte tekst opgeslagen...',
@@ -688,6 +693,7 @@ export default {
   'st.skills.error.add_failed': 'Vaardigheid kon niet worden toegevoegd.',
   'st.provider.field.server_url': 'Server-URL',
   'st.provider.field.api_base_url': 'API-basis-URL',
+  'st.provider.field.api_format': 'API-formaat',
   'st.provider.field.api_key': 'API-sleutel',
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (optioneel)',
@@ -957,7 +963,10 @@ export default {
   'st.providers.compat.value.max': 'Max',
   'st.providers.compat.value.system': 'Systeem',
   'st.providers.compat.value.developer': 'Ontwikkelaar',
-  'st.providers.webbrain_data_use.body': 'Gratis dagelijks WebBrain Compass-gebruik is inbegrepen. Zolang „Help WebBrain verbeteren“ standaard is ingeschakeld, kunnen geselecteerde Compass-gesprekken worden bewaard en gebruikt voor evaluatie, verbetering, fine-tuning en training. Schakel dit uit onder Algemeen → Geavanceerd om toekomstige Compass-interacties van dit gebruik uit te sluiten. <u>Verzoeken aan lokale modellen en verzoeken met uw eigen API worden nooit door WebBrain verzameld.</u> {privacyLink}. Abonneer u voor meer gebruik via {subscribeLink}. Beheer facturering via {accountLink}.',
+  'st.providers.webbrain_data_use.body': 'Gratis dagelijks WebBrain Compass-gebruik is inbegrepen. Zolang „Help WebBrain verbeteren“ standaard is ingeschakeld, kunnen geselecteerde Compass-gesprekken worden bewaard en gebruikt voor evaluatie, verbetering, fine-tuning en training. Schakel dit uit onder Algemeen → Geavanceerd om toekomstige Compass-interacties van dit gebruik uit te sluiten. <u>Verzoeken aan lokale modellen en je eigen API worden door WebBrain alleen verzameld wanneer je de provideroptie “Query’s delen voor onderzoek” inschakelt.</u> {privacyLink}. Abonneer u voor meer gebruik via {subscribeLink}. Beheer facturering via {accountLink}.',
+  'st.providers.share_research.label': "Query’s delen voor onderzoek",
+  'st.providers.share_research.hint': "Verzendt prompts en antwoorden van deze provider naar WebBrain voor evaluatie en verbetering, inclusief de gebruikte provider en het model. Afbeeldingen en binaire bijlagen worden verwijderd en tekst wordt ingekort vóór het delen; de resterende tekst wordt ongewijzigd verzonden.",
+  'st.providers.share_research.confirm': "Query’s van deze provider delen met WebBrain voor onderzoek?\n\nIndien ingeschakeld worden je prompts, antwoorden en toolinteracties met deze provider samen met de provider- en modelnaam naar WebBrain verzonden voor evaluatie en verbetering. Tekst wordt ongewijzigd verzonden na het verwijderen van afbeeldingen en het inkorten van lange inhoud; deel dus geen gevoelige persoonsgegevens. Je kunt dit op elk moment uitschakelen om verder delen te stoppen.",
   'st.providers.ollama_warning.label': 'Ollama FAQ',
   'st.providers.ollama_warning.title': 'Waarom geeft Ollama op localhost 403 terug?',
   'st.providers.ollama_warning.body': 'Recente Ollama-versies kunnen verzoeken weigeren...',
@@ -1044,5 +1053,5 @@ export default {
   "st.sync.confirm.reset": "De gecodeerde cloudkopie vervangen door de huidige WebBrain-installatie van dit apparaat?",
   "st.sync.consent.legacy": "Versleutelde synchronisatie inschakelen? WebBrain verzendt een end-to-end gecodeerde kopie van uw herinneringen, automatisch aanvullen van profielen en API-sleutelproviderinstellingen naar WebBrain Compass. Chatgeschiedenis en OAuth-aanmeldingen worden niet gesynchroniseerd.",
   "st.sync.consent.denied": "Er is geen versleutelde synchronisatietoestemming verleend.",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
 };

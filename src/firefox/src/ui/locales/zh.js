@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Simplified Chinese (zh).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': '插件界面缩放',
   'sp.ui_scale.decrease': '缩小插件界面',
   'sp.ui_scale.increase': '放大插件界面',
@@ -174,6 +176,8 @@ export default {
 
   'sp.mode.ask': '问',
   'sp.mode.ask.title': '就页面提问 — 不做任何修改',
+  'sp.mode.act_handoff_button': '切换到执行并重试',
+  'sp.mode.act_handoff_hint': '完成此操作需要执行模式。点击切换模式并重新发送请求。',
   'sp.mode.act': '执行',
   'sp.mode.act.title': '让 WebBrain 代你点击、输入和导航',
   'sp.mode.act.warning': '执行模式：请自行承担风险。',
@@ -323,6 +327,7 @@ export default {
 
   'st.provider.field.server_url': '服务器 URL',
   'st.provider.field.api_base_url': 'API 基础 URL',
+  'st.provider.field.api_format': 'API 格式',
   'st.provider.field.api_key': 'API 密钥',
   'st.provider.field.model': '模型',
   'st.provider.field.model_optional': '模型（可选）',
@@ -503,7 +508,7 @@ export default {
   "st.display.download_directory.placeholder": "系统默认值",
   "st.display.download_directory.error": "请使用 WebBrain 或 Work/WebBrain 这样的相对文件夹。不允许使用绝对路径或“..”。",
   "st.display.strict_secret.label": "严格的机密处理",
-  "st.display.strict_secret.desc": "拒绝在总结或助手文本中引用凭据（密码、API 密钥、令牌、OTP）—— 即使你明确要求也是如此。如果你经常分享轨迹文件或共享屏幕，这会很有用。默认关闭：webbrain 运行在你自己的浏览器中，因此默认情况下代理会向你展示你索取的值，只是把 `done` 总结保持整洁。",
+  "st.display.strict_secret.desc": "拒绝在总结或助手文本中引用凭据（密码、API 密钥、令牌、OTP）—— 即使你明确要求也是如此。如果你经常分享轨迹文件或共享屏幕，这会很有用。默认开启：webbrain 运行在你自己的浏览器中，但出于安全考虑，代理会拒绝重复显示你的凭据，以保持 `done` 总结整洁。",
   "st.display.request_timeout.label": "LLM 请求超时",
   "st.display.request_timeout.desc": "等待响应头以及流式响应中每次数据块间隔的最长时间。默认：120秒。本地模型较慢时，尤其在CPU上运行或上下文较大时，请延长此时间。",
   "st.providers.filter.all": "全部",
@@ -699,6 +704,7 @@ export default {
   'st.skills.item.chars': '{count} 个字符',
   'st.skills.item.tools': '工具：{tools}',
   'st.skills.remove': '移除',
+  'st.skills.edit': '编辑',
   'st.skills.preview.rendered': '预览',
   'st.skills.preview.raw': '原始文本',
   'st.skills.security_html': '<strong>注意：</strong>自定义技能以纯文本形式存储在浏览器本地存储中，并作为系统提示的一部分发送给您配置的 LLM 提供商。导入的技能工具可以在没有每次调用确认的情况下将其声明的输入发送到其声明的 HTTPS 端点；下载工具在保存文件之前仍会通过正常的下载权限门询问。只导入您信任的工具；远程内容在导入时会被复制到存储中。',
@@ -739,9 +745,9 @@ export default {
   'st.display.clarify_timeout.off': '关闭',
   'st.display.clarify_timeout.instant': '立即',
   'st.display.always_allow_api_mutations.label': "始终允许 API 变更",
-  'st.display.always_allow_api_mutations.desc': "允许 WebBrain 通过 fetch_url 或 research_url 使用 POST、PUT、PATCH 和 DELETE，无需在每个对话中输入 /allow-api。仍会遵循 UI 优先指引和确认检查。默认关闭。",
+  'st.display.always_allow_api_mutations.desc': "允许 WebBrain 通过 fetch_url 或 research_url 使用 POST、PUT、PATCH 和 DELETE，无需在每个对话中输入 /allow-api。仍会遵循 UI 优先指引和确认检查。默认开启。",
   'st.display.api_mutation_observer.label': 'API 变更观察器',
-  'st.display.api_mutation_observer.desc': '观察同标签页中的 XHR/fetch 请求 URL 和方法，以便 WebBrain 可以检测重复的界面操作并建议 API 快捷模式。默认关闭；仅在调查快捷行为或延迟时启用。',
+  'st.display.api_mutation_observer.desc': '观察同标签页中的 XHR/fetch 请求 URL 和方法，以便 WebBrain 可以检测重复的界面操作并建议 API 快捷模式。默认开启。',
   'st.display.openai_ask_streaming.label': '在 Ask 模式中流式显示回复',
   'st.display.openai_ask_streaming.desc': '对于支持的提供商，在 Ask 模式中随内容到达显示文本。中断的流会显示提示，并自动以非流式方式重试一次；提供商/API 错误仍会显示。工具调用会等待流完成；Act、Dev、计划任务、云端和 Continue 运行保持非流式。默认开启。',
   'st.display.plan_before_act.label': '在执行前规划',
@@ -966,8 +972,11 @@ export default {
   "sp.export_traces.partial": "工具链已导出，但部分回合事件无法读取。",
   "sp.export_traces.truncated": "工具链已导出。如果此对话有很多跟踪记录，较早的回合可能缺失。",
   "st.display.help_improve.label": "帮助改进 WebBrain",
-  "st.display.help_improve.desc_html": "允许保留选定的 WebBrain Compass 交互，并将其用于评估、改进、微调和训练。此选项默认开启。关闭后，未来的 Compass 交互将不会用于这些用途。<u>WebBrain 绝不会收集本地模型请求或使用您自己的 API 凭据直接发送的请求。</u><a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">隐私政策 →</a>",
-  "st.providers.webbrain_data_use.body": "WebBrain Compass 包含每日免费用量。帮助改进 WebBrain 默认开启时，选定的 Compass 对话可能会被保留，并用于评估、改进、微调和训练。可在“常规 → 高级”中关闭，以排除未来的 Compass 交互。<u>WebBrain 绝不会收集本地模型请求或使用您自己的 API 凭据直接发送的请求。</u>{privacyLink}。如需更多用量，请在 {subscribeLink} 订阅。在 {accountLink} 管理账单。",
+  "st.display.help_improve.desc_html": "允许保留选定的 WebBrain Compass 交互，并将其用于评估、改进、微调和训练。此选项默认开启。关闭后，未来的 Compass 交互将不会用于这些用途。<u>WebBrain 仅会收集您开启了“共享查询以用于研究”的服务商的本地模型和自备 API 请求。</u><a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">隐私政策 →</a>",
+  "st.providers.webbrain_data_use.body": "WebBrain Compass 包含每日免费用量。帮助改进 WebBrain 默认开启时，选定的 Compass 对话可能会被保留，并用于评估、改进、微调和训练。可在“常规 → 高级”中关闭，以排除未来的 Compass 交互。<u>仅当您开启此服务商的“共享查询以用于研究”选项时，WebBrain 才会收集本地模型和自备 API 请求。</u>{privacyLink}。如需更多用量，请在 {subscribeLink} 订阅。在 {accountLink} 管理账单。",
+  'st.providers.share_research.label': "共享查询以用于研究",
+  'st.providers.share_research.hint': "将此服务商的提示词和回复连同所用的服务商及模型发送给 WebBrain，用于评估与改进。共享前会去除图片和二进制附件并截断文本；其余文本将按原样发送。",
+  'st.providers.share_research.confirm': "要与 WebBrain 共享此服务商的查询以用于研究吗？\n\n开启后，您与此服务商的提示词、回复和工具交互将连同服务商及模型名称发送给 WebBrain，用于评估与改进。文本在去除图片并截断过长内容后按原样发送，因此请避免共享敏感个人信息。您可以随时关闭以停止今后的共享。",
   'st.providers.compat.title': '高级模型兼容性',
   'st.providers.compat.blurb': '除非模型或接口另有请求约定说明，否则请保持为自动。',
   'st.providers.compat.preset': '兼容性预设',
@@ -1071,5 +1080,5 @@ export default {
   "st.sync.confirm.reset": "使用该设备当前的 WebBrain 设置替换加密的云副本？",
   "st.sync.consent.legacy": "开启加密同步？ WebBrain 会将您的记忆、个人资料自动填充和 API 密钥提供商设置的端到端加密副本传输到 WebBrain Compass。聊天历史记录和 OAuth 登录不同步。",
   "st.sync.consent.denied": "未授予加密同步权限。",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
 };

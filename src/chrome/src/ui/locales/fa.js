@@ -1,8 +1,10 @@
+import bidiCopy from './bidi-copy.mjs';
 // Persian — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'بزرگ‌نمایی رابط کاربری افزونه',
   'sp.ui_scale.decrease': 'کاهش بزرگ‌نمایی رابط افزونه',
   'sp.ui_scale.increase': 'افزایش بزرگ‌نمایی رابط افزونه',
@@ -142,6 +144,8 @@ export default {
 
   'sp.mode.ask': "بپرسید",
   'sp.mode.ask.title': "درباره صفحه سوال بپرسید — هیچ تغییری ایجاد نشده است",
+  'sp.mode.act_handoff_button': 'تغییر به حالت عمل و تلاش مجدد',
+  'sp.mode.act_handoff_hint': 'برای تکمیل این کار به حالت عمل نیاز است. برای تغییر حالت و ارسال دوباره درخواست کلیک کنید.',
   'sp.mode.act': "عمل کنید",
   'sp.mode.act.title': "اجازه دهید WebBrain کلیک کند، تایپ کند و برای شما حرکت کند",
   'sp.mode.act.warning': "حالت عمل: با مسئولیت خود استفاده کنید.",
@@ -583,7 +587,7 @@ export default {
   'st.display.cloud_bridge.status_error': 'خطای اتصال: {error}',
   'st.display.cloud_bridge.status_unreachable': 'دسترسی به {url} ممکن نیست. سرویس پل محلی مربوط را اجرا کنید؛ تلاش دوباره…',
   'st.display.help_improve.label': "به بهبود WebBrain کمک کنید",
-  'st.display.help_improve.desc_html': "اجازه دهید تا تعاملات متن و ابزار واجد شرایط WebBrain Compass حفظ شود و برای ارزیابی، بهبود، تنظیم دقیق و آموزش استفاده شود. به طور پیش فرض روشن است. با خاموش کردن این حالت به طور دائم از مکالمه فعلی انصراف داده می شود. روشن کردن مجدد آن برای مکالمه جدید بعدی اعمال می شود. عکس های صفحه و بایت های تصویر در پایگاه داده بهبود WebBrain حفظ نمی شوند. <u>درخواست‌های API مدل محلی و خود را بیاورید هرگز توسط WebBrain جمع‌آوری نمی‌شوند.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">سیاست حفظ حریم خصوصی →</a>",
+  'st.display.help_improve.desc_html': "اجازه دهید تا تعاملات متن و ابزار واجد شرایط WebBrain Compass حفظ شود و برای ارزیابی، بهبود، تنظیم دقیق و آموزش استفاده شود. به طور پیش فرض روشن است. با خاموش کردن این حالت به طور دائم از مکالمه فعلی انصراف داده می شود. روشن کردن مجدد آن برای مکالمه جدید بعدی اعمال می شود. عکس های صفحه و بایت های تصویر در پایگاه داده بهبود WebBrain حفظ نمی شوند. <u>WebBrain درخواست‌های مدل محلی و API شخصی شما را فقط از ارائه‌دهندگانی جمع‌آوری می‌کند که «اشتراک‌گذاری پرسش‌ها برای پژوهش» را در آن‌ها روشن کنید.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">سیاست حفظ حریم خصوصی →</a>",
   'st.display.clarify_timeout.label': "روشن کردن مهلت زمانی",
   'st.display.clarify_timeout.desc': "قبل از انتخاب خودکار اولین گزینه (یا زمانی که هیچ گزینه ای وجود ندارد) چه مدت باید منتظر پاسخ به یک درخواست شفاف سازی بود. 0 = فوری (همیشه انتخاب خودکار). مقادیر بالای 1200 به طور نامحدود منتظر می مانند (خاموش). پیش فرض دهه 60 برای تأییدیه های مجوز یا ارسال فرم اعمال نمی شود.",
   'st.display.clarify_timeout.off': "خاموش",
@@ -601,9 +605,9 @@ export default {
   'st.display.voice_input.label': "ورودی صوتی",
   'st.display.voice_input.desc': "اجازه دهید دکمه میکروفون در ورودی چت، متن را از طریق تشخیص گفتار مرورگر شما دیکته کند. به طور پیش فرض در مرورگرهایی که از آن پشتیبانی می کنند روشن است.",
   'st.display.always_allow_api_mutations.label': "همیشه تغییرات API مجاز باشد",
-  'st.display.always_allow_api_mutations.desc': "به WebBrain اجازه دهید بدون نیاز به /allow-api در هر گفتگو، از POST، PUT، PATCH و DELETE از طریق fetch_url یا research_url استفاده کند. راهنمای اولویت رابط کاربری و بررسی‌های تأیید همچنان اعمال می‌شوند. به‌طور پیش‌فرض خاموش است.",
+  'st.display.always_allow_api_mutations.desc': "به WebBrain اجازه دهید بدون نیاز به /allow-api در هر گفتگو، از POST، PUT، PATCH و DELETE از طریق fetch_url یا research_url استفاده کند. راهنمای اولویت رابط کاربری و بررسی‌های تأیید همچنان اعمال می‌شوند. به‌طور پیش‌فرض روشن است.",
   'st.display.api_mutation_observer.label': "مشاهده گر جهش API",
-  'st.display.api_mutation_observer.desc': "نشانی‌های وب و روش‌های درخواستی XHR/واکشی همان تب را مشاهده کنید تا WebBrain بتواند اقدامات مکرر UI را تشخیص دهد و الگوهای میانبر API را پیشنهاد کند. خاموش به طور پیش فرض؛ فقط هنگام بررسی رفتار میانبر یا تأخیر فعال شود.",
+  'st.display.api_mutation_observer.desc': "نشانی‌های وب و روش‌های درخواستی XHR/واکشی همان تب را مشاهده کنید تا WebBrain بتواند اقدامات مکرر UI را تشخیص دهد و الگوهای میانبر API را پیشنهاد کند. به‌طور پیش‌فرض روشن است.",
   'st.display.webmcp.label': "WebMCP آزمایشی",
   'st.display.webmcp.desc': "به WebBrain اجازه دهید ابزارهای ساخت یافته ای را که توسط صفحات پشتیبانی شده Chrome در معرض دید قرار گرفته اند را کشف و اجرا کند. فعال کردن این، ابزارهای آزمایشی WebMCP و راهنمایی را به بافت مدل اضافه می کند. به طور پیش فرض خاموش است.",
   'st.display.openai_ask_streaming.label': "پخش پاسخ‌ها در حالت Ask",
@@ -636,7 +640,7 @@ export default {
   'st.display.cost_total_limit.desc': "هزینه‌های گزارش‌شده یا تخمینی مدل ابر/OpenRouter را در سراسر برنامه افزودنی ردیابی می‌کند و تماس‌های پولی بیشتر را با کمک هزینه متوقف می‌کند. ارائه دهندگان محلی به حساب نمی آیند.",
   'st.display.cost_reset': "بازنشانی هزینه",
   'st.display.strict_secret.label': "برخورد محرمانه دقیق",
-  'st.display.strict_secret.desc': "از نقل قول اعتبارنامه ها (گذرواژه، کلیدهای API، نشانه ها، OTPها) در خلاصه ها یا متن دستیار خودداری کنید - حتی زمانی که صریحاً آنها را درخواست می کنید. اگر به طور منظم فایل های ردیابی یا اشتراک گذاری صفحه را به اشتراک می گذارید مفید است. به‌طور پیش‌فرض خاموش: webbrain در مرورگر شما اجرا می‌شود، بنابراین به‌طور پیش‌فرض نماینده مقادیری را که درخواست می‌کنید به شما نشان می‌دهد و فقط خلاصه‌های `done` را مرتب نگه می‌دارد.",
+  'st.display.strict_secret.desc': "از نقل قول اعتبارنامه ها (گذرواژه، کلیدهای API، نشانه ها، OTPها) در خلاصه ها یا متن دستیار خودداری کنید - حتی زمانی که صریحاً آنها را درخواست می کنید. اگر به طور منظم فایل های ردیابی یا اشتراک گذاری صفحه را به اشتراک می گذارید مفید است. به‌طور پیش‌فرض روشن: webbrain در مرورگر شما اجرا می‌شود، اما برای امنیت بیشتر نماینده از بازگو کردن اعتبارنامه‌ها خودداری می‌کند و خلاصه‌های `done` را مرتب نگه می‌دارد.",
   'st.display.allow_local_network.label': "به عامل اجازه دسترسی به شبکه محلی را بدهید",
   'st.display.allow_local_network.desc': "به ابزار fetch_url عامل اجازه می‌دهد به آدرس‌های Loopback (127.0.0.1، localhost) و خصوصی/RFC1918 (10.x، 192.168.x، 172.16–31.x) دسترسی پیدا کند. برای سرورهای توسعه دهنده محلی، ابزارهای اینترانت یا APIهای خود میزبان مفید است. به‌طور پیش‌فرض خاموش است - وقتی خاموش است، صفحاتی که درخواست‌ها تزریق می‌شوند نمی‌توانند عامل را به کاوش در شبکه محلی شما هدایت کنند. آدرس‌های ابرداده (169.254.169.254) و نام‌های میزبان *.internal/*.local حتی در صورت روشن بودن مسدود می‌مانند.",
   'st.display.scheduled_tasks.label': "وظایف برنامه ریزی شده",
@@ -726,7 +730,10 @@ export default {
   'st.providers.compat.value.max': "حداکثر",
   'st.providers.compat.value.system': "سیستم",
   'st.providers.compat.value.developer': "توسعه دهنده",
-  'st.providers.webbrain_data_use.body': "استفاده روزانه رایگان از WebBrain Compass گنجانده شده است. در حالی که Help Improve WebBrain به طور پیش‌فرض روشن است، مکالمات انتخابی Compass ممکن است حفظ شوند و برای ارزیابی، بهبود، تنظیم دقیق و آموزش استفاده شوند. آن را در عمومی ← پیشرفته خاموش کنید تا تعاملات Compass آینده را از این کاربردها حذف کنید. <u>درخواست‌های API مدل محلی و خود را بیاورید هرگز توسط WebBrain جمع‌آوری نمی‌شوند.</u> {privacyLink}. برای استفاده بیشتر، در {subscribeLink} مشترک شوید. صورتحساب را در {accountLink} مدیریت کنید.",
+  'st.providers.webbrain_data_use.body': "استفاده روزانه رایگان از WebBrain Compass گنجانده شده است. در حالی که Help Improve WebBrain به طور پیش‌فرض روشن است، مکالمات انتخابی Compass ممکن است حفظ شوند و برای ارزیابی، بهبود، تنظیم دقیق و آموزش استفاده شوند. آن را در عمومی ← پیشرفته خاموش کنید تا تعاملات Compass آینده را از این کاربردها حذف کنید. <u>WebBrain درخواست‌های مدل محلی و API شخصی شما را فقط زمانی جمع‌آوری می‌کند که گزینه «اشتراک‌گذاری پرسش‌ها برای پژوهش» همین ارائه‌دهنده را روشن کنید.</u> {privacyLink}. برای استفاده بیشتر، در {subscribeLink} مشترک شوید. صورتحساب را در {accountLink} مدیریت کنید.",
+  'st.providers.share_research.label': "اشتراک‌گذاری پرسش‌ها برای پژوهش",
+  'st.providers.share_research.hint': "اعلان‌ها و پاسخ‌های این ارائه‌دهنده را به‌همراه نام ارائه‌دهنده و مدل استفاده‌شده برای ارزیابی و بهبود به WebBrain ارسال می‌کند. تصاویر و پیوست‌های باینری پیش از اشتراک حذف و متن کوتاه می‌شود؛ متن باقی‌مانده بدون تغییر ارسال می‌شود.",
+  'st.providers.share_research.confirm': "پرسش‌های این ارائه‌دهنده برای پژوهش با WebBrain به اشتراک گذاشته شود؟\n\nهنگام فعال بودن، اعلان‌ها، پاسخ‌ها و تعامل‌های ابزار شما با این ارائه‌دهنده به‌همراه نام ارائه‌دهنده و مدل برای ارزیابی و بهبود به WebBrain ارسال می‌شود. متن پس از حذف تصاویر و کوتاه‌سازی محتوای طولانی بدون تغییر ارسال می‌شود، پس از اشتراک داده‌های شخصی حساس خودداری کنید. می‌توانید هر زمان آن را خاموش کنید تا اشتراک آینده متوقف شود.",
   'st.providers.webbrain_note.body': "استفاده روزانه رایگان از WebBrain Compass گنجانده شده است. درخواست ها از طریق api.webbrain.one انجام می شود. به‌طور پیش‌فرض، فراداده‌ها را برای سهمیه و اشکال‌زدایی ثبت می‌کنیم، نه متن درخواستی، محتوای صفحه، عکس‌های صفحه، یا پاسخ‌های مدل. {privacyLink}. برای استفاده بیشتر، در {subscribeLink} مشترک شوید. صورتحساب را در {accountLink} مدیریت کنید.",
   'st.providers.webbrain_note.privacy_link': "سیاست حفظ حریم خصوصی",
 
@@ -753,6 +760,7 @@ export default {
   'st.skills.item.chars': "کاراکترهای {count}",
   'st.skills.item.tools': "ابزار: {tools}",
   'st.skills.remove': "حذف کنید",
+  'st.skills.edit': 'ویرایش',
   'st.skills.cws.heading': "راه اندازی انتشار Chrome Web Store",
   'st.skills.cws.desc_html': "این تنظیمات فقط زمانی ظاهر می شوند که مهارت انتشار بسته بندی شده فعال باشد. یک Google Cloud OAuth ایجاد کنید <strong>برنامه وب</strong>، Chrome Web Store API را فعال کرده و ثبت نام کنید <code>http://localhost:1457/auth/callback</code> به عنوان یک URI تغییر مسیر مجاز. اعتبارنامه‌ها، نشانه‌ها و بایت‌های ZIP در حافظه محلی داخلی باقی می‌مانند و هرگز در پیام‌ها یا ردیابی‌های مدل گنجانده نمی‌شوند.",
   'st.skills.cws.publisher_id': "شناسه ناشر",
@@ -789,6 +797,7 @@ export default {
 
   'st.provider.field.server_url': "آدرس سرور",
   'st.provider.field.api_base_url': "URL پایه API",
+  'st.provider.field.api_format': "قالب API",
   'st.provider.field.api_key': "کلید API",
   'st.provider.field.model': "مدل",
   'st.provider.field.model_optional': "مدل (اختیاری)",
@@ -1112,8 +1121,8 @@ export default {
   "st.sync.confirm.reset": "کپی ابری رمزگذاری شده با راه‌اندازی فعلی WebBrain این دستگاه جایگزین شود؟",
   "st.sync.consent.legacy": "همگام سازی رمزگذاری شده روشن شود؟ WebBrain یک نسخه رمزگذاری شده سرتاسر از خاطرات، تکمیل خودکار نمایه و تنظیمات ارائه دهنده کلید API شما را به WebBrain Compass منتقل می کند. سابقه گپ و ورود به سیستم OAuth همگام سازی نمی شوند.",
   "st.sync.consent.denied": "مجوز همگام‌سازی رمزگذاری شده داده نشد.",
-  'st.providers.webgpu_note.body': '{modelLink} بدون هیچ نقطهٔ پایانی API کاملاً در Chrome اجرا می‌شود. نخستین تولید حدود 4.85 GB دانلود می‌کند و آن را در مرورگر ذخیره می‌کند. آزمایش اتصال، محیط اجرایی بسته‌بندی‌شده و آداپتور سخت‌افزاری را بدون دانلود مدل بررسی می‌کند.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} بدون هیچ نقطهٔ پایانی API کاملاً در Chrome اجرا می‌شود. آن را در Settings > Providers > WebGPU یا حالت Apocalypse دانلود کنید، سپس از کنترل nuclear در standalone chat استفاده کنید.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

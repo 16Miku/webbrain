@@ -47,7 +47,7 @@ class BaseLLMProvider {
 | `gpt4all` | `openai` | local | (loaded model) | Yes (default on) |
 | `local_openai_proxy` | `openai` | local | (required) | Off / manual toggle |
 | `unsloth` | `openai` | local | (required) | Off / manual toggle |
-| `webgpu` (Chromium) | `webgpu` | local | LFM2.5 2.6B (default) or opt-in Bonsai 27B; experimental custom HF ONNX repos | No |
+| `webgpu` (Chromium) | `webgpu` | local | Compass Tiny v2.1 (only preset); experimental custom HF ONNX repos | No |
 | `azure_openai` | `azure_openai` | cloud | (deployment) | Manual toggle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (model id) | No |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Model-name regex |
@@ -55,7 +55,7 @@ class BaseLLMProvider {
 | `gemini` | `openai` | cloud | `gemini-3.1-flash` | Model-name regex |
 | `cloudflare` | `openai` | router | `@cf/zai-org/glm-5.2` | Model-name regex |
 | `mistral` | `openai` | cloud | `mistral-large-latest` | Model-name regex |
-| `deepseek` | `openai` | cloud | `deepseek-v4-flash` | Model-name regex |
+| `deepseek` | `openai` | cloud | `deepseek-flash` | Model-name regex |
 | `xai` (Grok) | `openai` | cloud | `grok-4.3` | Model-name regex |
 | `nvidia` (NIM) | `openai` | router | `meta/llama-3.1-8b-instruct` | Model-name regex |
 | `groq` | `openai` | router | `llama-3.3-70b-versatile` | Model-name regex |
@@ -150,30 +150,33 @@ duplicate request.
 ### Local Providers
 
 On Chromium, **WebGPU (In-browser)** is an endpoint-free local provider. Its
-Apocalypse text picker offers two shipped presets:
+Apocalypse text picker offers a single shipped preset:
 
-- [`LiquidAI/LFM2.5-2.6B-ONNX`](https://huggingface.co/LiquidAI/LFM2.5-2.6B-ONNX/)
-  (`q4f16`, about 1.55 GB) through the packaged Transformers.js 4.2 / ONNX
-  Runtime Web GPU worker. This remains the default. Enabling Apocalypse Mode
-  starts this download automatically.
-- [`prism-ml/Bonsai-27B-gguf`](https://huggingface.co/prism-ml/Bonsai-27B-gguf)
-  (`Q1_0`, about 3.8 GB) through a dedicated vendored [bitgpu](https://github.com/stfurkan/bitgpu)
-  worker. Bonsai is opt-in: WebBrain never auto-downloads the 27B weights.
-  It needs a high-end GPU (16 GB+ RAM/VRAM recommended). GPU-resident LFM and
-  Bonsai sessions are never live at the same time; disk caches may coexist.
+- [`webbrain-one/webbrain-compass-tiny-v2.1`](https://huggingface.co/webbrain-one/webbrain-compass-tiny-v2.1)
+  (`q4f16`, about 1.87 GB across two external-data shards), WebBrain's Compass
+  Tiny v2.1 fine-tune of MiniCPM5-2B for Compact tool routing. It runs greedy
+  with thinking disabled through the packaged Transformers.js 4.2 / ONNX
+  Runtime Web GPU worker, and emits MiniCPM5 XML-style tool calls
+  (`<function name="..."><param name="...">...</param></function>`, CDATA-wrapped
+  when values contain `<`, `&`, or newlines), which the local fallback parser
+  accepts. Enabling Apocalypse Mode starts this download automatically.
 
 Custom Hugging Face repositories have not been tested and are likely not to
 work. They must be compatible with Transformers.js text generation, provide a
 `q4f16` ONNX variant, and use a chat template that accepts `tools`; WebBrain
 validates the template after loading and rejects incompatible repositories.
-Do not point Transformers.js at the Bonsai GGUF — 27B is not an ONNX pipeline.
 
 The provider is text-only and defaults to the Compact prompt tier with a
-conservative 16k practical context setting. LFM2.5 2.6B uses its official pure
-reasoning template; WebBrain keeps text before `</think>` out of the visible
-answer and reports an error if reasoning exhausts the output budget. Bonsai
-uses bitgpu `think: true` with a 128-token think budget and the same
-post-think visible-answer UX. Each repository is cached separately in Chrome.
+32k context window. Budget roughly 4 GB of GPU headroom (about 1.87 GB of
+weights plus KV cache that grows with context length); on constrained GPUs,
+lower the context window on the WebGPU card in Settings → Providers (16384 is
+a safe fallback) and retry with a short prompt. Each repository is cached
+separately in Chrome.
+After downloading Compass in Apocalypse Mode, the WebGPU card in
+**Settings -> Providers** can be configured, tested, and selected as the normal
+chat provider. The nuclear standalone-chat control remains available as a
+per-run override that does not change the global selection. Once its files are
+cached, Compass works without Apocalypse Mode enabled.
 **Test Connection** checks only the packaged runtime and hardware WebGPU
 adapter, so it does not trigger a model download. There is no API key, base
 URL, localhost server, or OpenAI-compatible endpoint. Firefox does not expose
@@ -299,6 +302,7 @@ Ask mode ignores provider tier and stays read-only. Act mode uses the selected t
 | Provider | Mechanism |
 |---|---|
 | OpenAI-compatible | Regex against model name (`gpt-4o`, `gpt-5`, `claude-3`, `claude-sonnet-4`, `gemini-2.0-flash`, etc.) |
+| DeepSeek | The `deepseek-flash` family (including the retired `deepseek-v4-flash` aliases) is multimodal; `deepseek-v4-pro` and the V3-era ids are text-only |
 | Anthropic | `claude-(3\|sonnet-4\|opus-4)` patterns |
 | Ollama | `POST /api/show` `capabilities`, with legacy projector / `.vision.` metadata fallbacks; Auto / Force on / Off |
 | llama.cpp | `GET /props` → `modalities.vision`, with Auto / Force on / Off |
@@ -321,6 +325,33 @@ When the active provider is Anthropic, the agent converts OpenAI-format messages
 | `assistant` + `tool_calls` | `assistant` + `tool_use` content blocks |
 | `tool` role | `user` + `tool_result` content blocks |
 | `image_url` (data URL) | `image` source block |
+
+### DeepSeek
+
+`deepseek-flash` (DeepSeek-V4.1-Flash) is the shipped model. The retired
+`deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` ids still serve the same
+model and are billed as Flash, so they keep full support (1M context, 384K
+output, image input). Every other DeepSeek id — including the retired
+`deepseek-v4-pro` — stays on a conservative profile (64K context, 8K output,
+text-only) rather than inheriting capacities it may not have.
+
+| Aspect | Behaviour |
+|---|---|
+| Wire format | Chat Completions by default (`apiFormat: 'auto'`); the Responses API is an opt-in from the Advanced panel |
+| Thinking | Top-level `thinking` object plus `reasoning_effort`; disabling thinking omits `reasoning_effort` entirely. The shared UI ladder maps `minimal`→`low` and `medium`/`xhigh`→`high` |
+| Reasoning replay | `reasoning_content` is replayed across turns because DeepSeek returns 400 when a tool-carrying follow-up drops it |
+| Streaming | `stream_options.include_usage` on every request; the parser ignores DeepSeek's SSE `: keep-alive` comments |
+| Structured output | Chat Completions uses JSON Object mode; the Responses API uses `text.format` JSON Schema for the planner |
+| Images | `deepseek-flash` accepts `image_url` data URLs and public URLs in `user` messages |
+| Cost | Off-peak list price converted at 1 USD = 7.1 CNY (1 input, 0.02 cached input, 4 output; peak 2 / 0.04 / 8). Cache hits arrive as the top-level `prompt_cache_hit_tokens` counter and are priced at the cache-read rate |
+| Anthropic endpoint | `https://api.deepseek.com/anthropic` works with the built-in `anthropic` card by overriding its base URL |
+
+The contract lives in `providers/deepseek-config.js` (pure helpers and
+constants) and `providers/deepseek.js` (`DeepSeekProvider`). The shared
+`openai.js` and `provider-compatibility.js` modules carry no DeepSeek
+knowledge, and `ProviderManager#_createProvider()` dispatches the `deepseek`
+card — or any card pointed at `api.deepseek.com`, or one that explicitly selects
+the `deepseek` compatibility preset — to the dedicated class.
 
 ---
 
@@ -475,4 +506,4 @@ myprovider: {
 },
 ```
 
-Vision is auto-detected via model-name regex. If the provider has a known set of vision models, add them to the regex in `openai.js`. Set `supportsStreamUsageOptions: true` only for providers that accept OpenAI-style `stream_options.include_usage`; leave it false when a provider returns usage without accepting that request field.
+Vision is auto-detected via model-name regex. If the provider has a known set of vision models, extend `_modelNameSniffedVision()` in `openai.js`, or add a vendor subclass the way `providers/deepseek.js` does. Set `supportsStreamUsageOptions: true` only for providers that accept OpenAI-style `stream_options.include_usage`; leave it false when a provider returns usage without accepting that request field.

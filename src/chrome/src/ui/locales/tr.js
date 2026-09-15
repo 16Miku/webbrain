@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Turkish (tr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Uzantı arayüzü yakınlaştırması',
   'sp.ui_scale.decrease': 'Uzantı arayüzünü uzaklaştır',
   'sp.ui_scale.increase': 'Uzantı arayüzünü yakınlaştır',
@@ -86,6 +88,7 @@ export default {
   'st.skills.item.chars': '{count} karakter',
   'st.skills.item.tools': 'Tool\'lar: {tools}',
   'st.skills.remove': 'Kaldır',
+  'st.skills.edit': 'Düzenle',
   'st.skills.preview.rendered': 'Önizleme',
   'st.skills.preview.raw': 'Ham',
   'st.skills.security_html': '<strong>Dikkat:</strong> özel skill\'ler tarayıcı yerel depolamasında düz metin olarak saklanır. Mid/Full katmanlarında uygun adlar ve özetler küçük bir yükleyici kataloğu olarak yapılandırdığın LLM sağlayıcısına gönderilir; tam talimatlar yalnızca skill o çalışma için yüklendikten sonra gönderilir. İçe aktarılan skill tool\'ları daha sonra, çağrı başına tekrar onay istemeden beyan edilen girdileri beyan edilen HTTPS endpoint\'lerine gönderebilir; download tool\'ları dosya kaydetmeden önce normal Downloads izin akışını kullanır. Yalnızca güvendiğin tool\'ları içe aktar; uzak içerik içe aktarma sırasında depoya kopyalanır.',
@@ -210,6 +213,8 @@ export default {
 
   'sp.mode.ask': 'Sor',
   'sp.mode.ask.title': 'Sayfa hakkında soru sor — hiçbir değişiklik yapılmaz',
+  'sp.mode.act_handoff_button': "Act'e geç ve yeniden dene",
+  'sp.mode.act_handoff_hint': 'Bunu tamamlamak için Act modu gerekir. Geçiş yapmak ve isteğinizi yeniden göndermek için tıklayın.',
   'sp.mode.act': 'Uygula',
   'sp.mode.act.title': 'WebBrain senin yerine tıklasın, yazsın ve gezinsin',
   'sp.mode.act.warning': 'Uygula modu: Kendi sorumluluğunda kullan.',
@@ -370,6 +375,7 @@ export default {
 
   'st.provider.field.server_url': 'Sunucu URL\'si',
   'st.provider.field.api_base_url': 'API temel URL\'si',
+  'st.provider.field.api_format': 'API biçimi',
   'st.provider.field.api_key': 'API anahtarı',
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (isteğe bağlı)',
@@ -558,7 +564,7 @@ export default {
   "st.display.download_directory.placeholder": "Sistem varsayılanı",
   "st.display.download_directory.error": "WebBrain veya Work/WebBrain gibi göreli bir klasör kullanın. Mutlak yollara ve “..” kullanımına izin verilmez.",
   "st.display.strict_secret.label": "Katı gizli bilgi işleme",
-  "st.display.strict_secret.desc": "Özellikle istesen bile, özetlerde veya asistan metninde kimlik bilgilerini (parolalar, API anahtarları, jetonlar, OTP'ler) aktarmayı reddet. Düzenli olarak iz dosyaları paylaşıyorsan veya ekran paylaşımı yapıyorsan kullanışlıdır. Varsayılan olarak kapalı: WebBrain kendi tarayıcında çalışır, bu yüzden varsayılan olarak aracı istediğin değerleri sana gösterir ve yalnızca `done` özetlerini derli toplu tutar.",
+  "st.display.strict_secret.desc": "Özellikle istesen bile, özetlerde veya asistan metninde kimlik bilgilerini (parolalar, API anahtarları, jetonlar, OTP'ler) aktarmayı reddet. Düzenli olarak iz dosyaları paylaşıyorsan veya ekran paylaşımı yapıyorsan kullanışlıdır. Varsayılan olarak açık: WebBrain kendi tarayıcında çalışır ancak güvenlik nedeniyle aracı kimlik bilgilerini aktarmayı reddeder ve `done` özetlerini derli toplu tutar.",
   "st.display.request_timeout.label": "LLM istek zaman aşımı",
   "st.display.request_timeout.desc": "Yanıt başlıkları ve akıştaki yanıt parçaları arasındaki her duraklama için en uzun bekleme süresi. Varsayılan: 120 saniye. Yavaş yerel modellerde, özellikle CPU üzerinde veya büyük bağlamla çalışırken bu süreyi artırın.",
   "st.providers.filter.all": "Tümü",
@@ -769,9 +775,9 @@ export default {
   'st.display.clarify_timeout.off': 'Kapalı',
   'st.display.clarify_timeout.instant': 'Anında',
   'st.display.always_allow_api_mutations.label': "API değişikliklerine her zaman izin ver",
-  'st.display.always_allow_api_mutations.desc': "WebBrain’in her konuşmada /allow-api gerektirmeden fetch_url veya research_url üzerinden POST, PUT, PATCH ve DELETE kullanmasına izin verin. Önce arayüz yaklaşımı ve onay kontrolleri uygulanmaya devam eder. Varsayılan olarak kapalıdır.",
+  'st.display.always_allow_api_mutations.desc': "WebBrain’in her konuşmada /allow-api gerektirmeden fetch_url veya research_url üzerinden POST, PUT, PATCH ve DELETE kullanmasına izin verin. Önce arayüz yaklaşımı ve onay kontrolleri uygulanmaya devam eder. Varsayılan olarak açıktır.",
   'st.display.api_mutation_observer.label': 'API mutasyon gözlemcisi',
-  'st.display.api_mutation_observer.desc': 'WebBrain\'in tekrarlanan UI eylemlerini tespit etmesi ve API kısayol kalıpları önermesi için aynı sekmedeki XHR/fetch istek URL\'lerini ve yöntemlerini gözlemle. Varsayılan olarak kapalı; yalnızca kısayol davranışını veya gecikmeyi araştırırken etkinleştir.',
+  'st.display.api_mutation_observer.desc': 'WebBrain\'in tekrarlanan UI eylemlerini tespit etmesi ve API kısayol kalıpları önermesi için aynı sekmedeki XHR/fetch istek URL\'lerini ve yöntemlerini gözlemle. Varsayılan olarak açıktır.',
   'st.display.openai_ask_streaming.label': 'Ask yanıtlarını akışla',
   'st.display.openai_ask_streaming.desc': 'Desteklenen sağlayıcılarda Ask metnini geldikçe göster. Kesilen akış bir bildirim gösterir ve aynı turu akışsız olarak bir kez yeniden dener; sağlayıcı/API hataları yine gösterilir. Araç çağrıları akış tamamlanana kadar bekler; Act, Dev, zamanlanmış, bulut ve Continue çalıştırmaları akışsız kalır. Varsayılan olarak açık.',
   'st.display.plan_before_act.label': 'Eylemden önce planla',
@@ -984,8 +990,11 @@ export default {
   "sp.export_traces.partial": "Araç zinciri dışa aktarıldı, ancak bazı tur olayları okunamadı.",
   "sp.export_traces.truncated": "Araç zinciri dışa aktarıldı. Bu konuşmanın çok izi varsa eski turlar eksik olabilir.",
   "st.display.help_improve.label": "WebBrain’i İyileştirmeye Yardım Et",
-  "st.display.help_improve.desc_html": "Seçili WebBrain Compass etkileşimlerinin saklanmasına ve değerlendirme, iyileştirme, ince ayar ve eğitim için kullanılmasına izin verin. Varsayılan olarak açıktır. Gelecekteki Compass etkileşimlerinin bu amaçlarla kullanılmasını önlemek için kapatın. <u>Yerel model istekleri ve kendi API kimlik bilgilerinizle gönderilen istekler WebBrain tarafından hiçbir zaman toplanmaz.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Gizlilik politikası →</a>",
-  "st.providers.webbrain_data_use.body": "Ücretsiz günlük WebBrain Compass kullanımı dahildir. WebBrain’i İyileştirmeye Yardım Et varsayılan olarak açıkken, seçili Compass konuşmaları değerlendirme, iyileştirme, ince ayar ve eğitim için saklanabilir ve kullanılabilir. Gelecekteki Compass etkileşimlerini bu kullanımların dışında tutmak için Genel → Gelişmiş bölümünden kapatın. <u>Yerel model istekleri ve kendi API kimlik bilgilerinizle gönderilen istekler WebBrain tarafından hiçbir zaman toplanmaz.</u> {privacyLink}. Daha fazla kullanım için {subscribeLink} adresinden abone olun. Faturalandırmayı {accountLink} adresinden yönetin.",
+  "st.display.help_improve.desc_html": "Seçili WebBrain Compass etkileşimlerinin saklanmasına ve değerlendirme, iyileştirme, ince ayar ve eğitim için kullanılmasına izin verin. Varsayılan olarak açıktır. Gelecekteki Compass etkileşimlerinin bu amaçlarla kullanılmasını önlemek için kapatın. <u>WebBrain, yerel model ve kendi API isteklerinizi yalnızca “Araştırma için sorguları paylaş” seçeneğini açtığınız sağlayıcılardan toplar.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Gizlilik politikası →</a>",
+  "st.providers.webbrain_data_use.body": "Ücretsiz günlük WebBrain Compass kullanımı dahildir. WebBrain’i İyileştirmeye Yardım Et varsayılan olarak açıkken, seçili Compass konuşmaları değerlendirme, iyileştirme, ince ayar ve eğitim için saklanabilir ve kullanılabilir. Gelecekteki Compass etkileşimlerini bu kullanımların dışında tutmak için Genel → Gelişmiş bölümünden kapatın. <u>WebBrain, yerel model ve kendi API isteklerinizi yalnızca ilgili sağlayıcıda “Araştırma için sorguları paylaş” seçeneğini açtığınızda toplar.</u> {privacyLink}. Daha fazla kullanım için {subscribeLink} adresinden abone olun. Faturalandırmayı {accountLink} adresinden yönetin.",
+  'st.providers.share_research.label': "Araştırma için sorguları paylaş",
+  'st.providers.share_research.hint': "Bu sağlayıcının istemlerini ve yanıtlarını, kullanılan sağlayıcı ve model bilgisiyle birlikte değerlendirme ve iyileştirme amacıyla WebBrain’e gönderir. Görseller ve ikili ekler paylaşılmadan önce kaldırılır, metin kısaltılır; kalan metin olduğu gibi gönderilir.",
+  'st.providers.share_research.confirm': "Bu sağlayıcının sorgularını araştırma için WebBrain ile paylaşılsın mı?\n\nAçıkken istemleriniz, yanıtlarınız ve bu sağlayıcıyla araç etkileşimleriniz, sağlayıcı ve model adıyla birlikte değerlendirme ve iyileştirme amacıyla WebBrain’e gönderilir. Metin, görseller kaldırılıp uzun içerikler kısaltıldıktan sonra olduğu gibi gönderilir; bu yüzden hassas kişisel verileri paylaşmaktan kaçının. Gelecekteki paylaşımları durdurmak için bunu istediğiniz zaman kapatabilirsiniz.",
   'st.providers.compat.title': 'Gelişmiş model uyumluluğu',
   'st.providers.compat.blurb': 'Model veya uç nokta farklı bir istek sözleşmesi belgelemedikçe bunları Otomatik bırakın.',
   'st.providers.compat.preset': 'Uyumluluk ön ayarı',
@@ -1113,8 +1122,8 @@ export default {
   "st.sync.confirm.reset": "Şifrelenmiş bulut kopyası bu cihazın mevcut WebBrain kurulumuyla değiştirilsin mi?",
   "st.sync.consent.legacy": "Şifreli senkronizasyon açılsın mı? WebBrain, anılarınızın, profil otomatik doldurmanızın ve API anahtarı sağlayıcı ayarlarınızın uçtan uca şifrelenmiş bir kopyasını WebBrain Compass'a iletecektir. Sohbet geçmişi ve OAuth oturum açma işlemleri senkronize edilmez.",
   "st.sync.consent.denied": "Şifrelenmiş senkronizasyon izni verilmedi.",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

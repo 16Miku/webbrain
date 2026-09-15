@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Thai (th).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'ซูม UI ของส่วนขยาย',
   'sp.ui_scale.decrease': 'ย่อ UI ของส่วนขยาย',
   'sp.ui_scale.increase': 'ขยาย UI ของส่วนขยาย',
@@ -174,6 +176,8 @@ export default {
 
   'sp.mode.ask': 'ถาม',
   'sp.mode.ask.title': 'ถามเกี่ยวกับหน้านี้ — ไม่มีการเปลี่ยนแปลง',
+  'sp.mode.act_handoff_button': 'สลับไปโหมด Act และลองอีกครั้ง',
+  'sp.mode.act_handoff_hint': 'การดำเนินการนี้ต้องใช้โหมด Act คลิกเพื่อสลับโหมดและส่งคำขอของคุณอีกครั้ง',
   'sp.mode.act': 'ทำ',
   'sp.mode.act.title': 'ให้ WebBrain คลิก พิมพ์ และนำทางแทนคุณ',
   'sp.mode.act.warning': 'โหมดทำ: ใช้งานด้วยความเสี่ยงของคุณเอง',
@@ -331,6 +335,7 @@ export default {
 
   'st.provider.field.server_url': 'URL เซิร์ฟเวอร์',
   'st.provider.field.api_base_url': 'URL ฐานของ API',
+  'st.provider.field.api_format': 'รูปแบบ API',
   'st.provider.field.api_key': 'คีย์ API',
   'st.provider.field.model': 'โมเดล',
   'st.provider.field.model_optional': 'โมเดล (ไม่บังคับ)',
@@ -519,7 +524,7 @@ export default {
   "st.display.download_directory.placeholder": "ค่าเริ่มต้นของระบบ",
   "st.display.download_directory.error": "ใช้โฟลเดอร์แบบสัมพัทธ์ เช่น WebBrain หรือ Work/WebBrain ไม่อนุญาตพาธแบบสัมบูรณ์และ “..”",
   "st.display.strict_secret.label": "การจัดการความลับอย่างเข้มงวด",
-  "st.display.strict_secret.desc": "ปฏิเสธการอ้างอิงข้อมูลรับรอง (รหัสผ่าน คีย์ API โทเค็น OTP) ในบทสรุปหรือข้อความของผู้ช่วย — แม้คุณจะขอโดยตรง มีประโยชน์หากคุณแชร์ไฟล์ trace หรือแชร์หน้าจอเป็นประจำ ปิดเป็นค่าเริ่มต้น: WebBrain ทำงานในเบราว์เซอร์ของคุณเอง ดังนั้นโดยค่าเริ่มต้นเอเจนต์จะแสดงค่าที่คุณขอ และเพียงทำให้บทสรุป `done` เป็นระเบียบ",
+  "st.display.strict_secret.desc": "ปฏิเสธการอ้างอิงข้อมูลรับรอง (รหัสผ่าน คีย์ API โทเค็น OTP) ในบทสรุปหรือข้อความของผู้ช่วย — แม้คุณจะขอโดยตรง มีประโยชน์หากคุณแชร์ไฟล์ trace หรือแชร์หน้าจอเป็นประจำ เปิดเป็นค่าเริ่มต้น: WebBrain ทำงานในเบราว์เซอร์ของคุณเอง แต่เพื่อความปลอดภัย เอเจนต์จะปฏิเสธการแสดงข้อมูลรับรองซ้ำ และคงบทสรุป `done` ให้เรียบร้อย",
   "st.display.request_timeout.label": "เวลารอคำขอ LLM",
   "st.display.request_timeout.desc": "เวลารอสูงสุดสำหรับส่วนหัวของการตอบกลับและแต่ละช่วงหยุดระหว่างส่วนของคำตอบแบบสตรีม ค่าเริ่มต้น: 120 วินาที เพิ่มเวลานี้สำหรับโมเดลในเครื่องที่ทำงานช้า โดยเฉพาะเมื่อใช้ CPU หรือบริบทขนาดใหญ่",
   "st.providers.filter.all": "ทั้งหมด",
@@ -715,6 +720,7 @@ export default {
   'st.skills.item.chars': '{count} ตัวอักษร',
   'st.skills.item.tools': 'เครื่องมือ: {tools}',
   'st.skills.remove': 'ลบ',
+  'st.skills.edit': 'แก้ไข',
   'st.skills.preview.rendered': 'ตัวอย่าง',
   'st.skills.preview.raw': 'ต้นฉบับ',
   'st.skills.security_html': '<strong>ข้อควรระวัง:</strong> ทักษะที่กำหนดเองจะถูกเก็บเป็นข้อความธรรมดาในพื้นที่จัดเก็บของเบราว์เซอร์และส่งไปยังผู้ให้บริการ LLM ที่คุณกำหนดค่าไว้เป็นส่วนหนึ่งของระบบพรอมพ์ เครื่องมือทักษะที่นำเข้าสามารถส่งอินพุตที่ประกาศไปยังปลายทาง HTTPS ที่ประกาศไว้โดยไม่ต้องยืนยันทุกครั้ง เครื่องมือดาวน์โหลดยังคงขอผ่านประตูอนุญาตการดาวน์โหลดปกติก่อนบันทึกไฟล์ นำเข้าเฉพาะเครื่องมือที่คุณเชื่อถือ เนื้อหาระยะไกลจะถูกคัดลอกไปยังพื้นที่จัดเก็บเมื่อนำเข้า',
@@ -764,9 +770,9 @@ export default {
   'st.display.clarify_timeout.off': 'ปิด',
   'st.display.clarify_timeout.instant': 'ทันที',
   'st.display.always_allow_api_mutations.label': "อนุญาตการเปลี่ยนแปลง API เสมอ",
-  'st.display.always_allow_api_mutations.desc': "อนุญาตให้ WebBrain ใช้ POST, PUT, PATCH และ DELETE ผ่าน fetch_url หรือ research_url โดยไม่ต้องใช้ /allow-api ในทุกการสนทนา แนวทางที่ให้ความสำคัญกับ UI และการตรวจสอบการยืนยันยังคงมีผล ปิดไว้โดยค่าเริ่มต้น",
+  'st.display.always_allow_api_mutations.desc': "อนุญาตให้ WebBrain ใช้ POST, PUT, PATCH และ DELETE ผ่าน fetch_url หรือ research_url โดยไม่ต้องใช้ /allow-api ในทุกการสนทนา แนวทางที่ให้ความสำคัญกับ UI และการตรวจสอบการยืนยันยังคงมีผล เปิดไว้โดยค่าเริ่มต้น",
   'st.display.api_mutation_observer.label': 'ตัวสังเกตการกลายพันธุ์ของ API',
-  'st.display.api_mutation_observer.desc': 'สังเกต URL และวิธีการของคำขอ XHR/fetch ในแท็บเดียวกัน เพื่อให้ WebBrain ตรวจจับการกระทำ UI ที่ซ้ำและแนะนำรูปแบบทางลัด API ปิดโดยค่าเริ่มต้น เปิดใช้งานเฉพาะเมื่อตรวจสอบพฤติกรรมทางลัดหรือความหน่วง',
+  'st.display.api_mutation_observer.desc': 'สังเกต URL และวิธีการของคำขอ XHR/fetch ในแท็บเดียวกัน เพื่อให้ WebBrain ตรวจจับการกระทำ UI ที่ซ้ำและแนะนำรูปแบบทางลัด API เปิดไว้โดยค่าเริ่มต้น',
   'st.display.openai_ask_streaming.label': "สตรีมการตอบกลับในโหมด Ask",
   'st.display.openai_ask_streaming.desc': "แสดงข้อความทันทีที่ได้รับในโหมด Ask สำหรับผู้ให้บริการที่รองรับ สตรีมที่ถูกขัดจังหวะจะแสดงประกาศแล้วลองใหม่อีกครั้งหนึ่งโดยไม่ใช้การสตรีม และยังคงแสดงข้อผิดพลาดของผู้ให้บริการ/API การเรียกใช้เครื่องมือจะรอให้สตรีมเสร็จสมบูรณ์ ส่วนการรัน Act, Dev, ตามกำหนดเวลา, คลาวด์ และ Continue ไม่ใช้การสตรีม เปิดใช้งานตามค่าเริ่มต้น",
   'st.display.plan_before_act.label': 'วางแผนก่อนดำเนินการ',
@@ -985,8 +991,11 @@ export default {
   "sp.export_traces.partial": "ส่งออกลำดับเครื่องมือแล้ว แต่บางเหตุการณ์ของเทิร์นอ่านไม่ได้",
   "sp.export_traces.truncated": "ส่งออกลำดับเครื่องมือแล้ว เทิร์นเก่าอาจหายถ้าการสนทนานี้มี trace มาก",
   "st.display.help_improve.label": "ช่วยปรับปรุง WebBrain",
-  "st.display.help_improve.desc_html": "อนุญาตให้เก็บการโต้ตอบกับ WebBrain Compass บางรายการและใช้เพื่อการประเมิน การปรับปรุง การปรับละเอียด และการฝึก โดยเปิดไว้เป็นค่าเริ่มต้น ปิดตัวเลือกนี้เพื่อไม่ให้การโต้ตอบกับ Compass ในอนาคตถูกใช้เพื่อวัตถุประสงค์เหล่านี้ <u>WebBrain จะไม่เก็บคำขอของโมเดลภายในเครื่องหรือคำขอที่ส่งโดยตรงด้วยข้อมูลรับรอง API ของคุณเอง</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">นโยบายความเป็นส่วนตัว →</a>",
-  "st.providers.webbrain_data_use.body": "WebBrain Compass มีโควตาใช้งานฟรีรายวัน ขณะที่ “ช่วยปรับปรุง WebBrain” เปิดไว้เป็นค่าเริ่มต้น การสนทนา Compass บางรายการอาจถูกเก็บและใช้เพื่อการประเมิน การปรับปรุง การปรับละเอียด และการฝึก ปิดได้ที่ ทั่วไป → ขั้นสูง เพื่อไม่ให้การโต้ตอบ Compass ในอนาคตถูกใช้ในลักษณะดังกล่าว <u>WebBrain จะไม่เก็บคำขอของโมเดลภายในเครื่องหรือคำขอที่ส่งโดยตรงด้วยข้อมูลรับรอง API ของคุณเอง</u> {privacyLink} หากต้องการใช้งานเพิ่ม สมัครที่ {subscribeLink} จัดการการเรียกเก็บเงินที่ {accountLink}",
+  "st.display.help_improve.desc_html": "อนุญาตให้เก็บการโต้ตอบกับ WebBrain Compass บางรายการและใช้เพื่อการประเมิน การปรับปรุง การปรับละเอียด และการฝึก โดยเปิดไว้เป็นค่าเริ่มต้น ปิดตัวเลือกนี้เพื่อไม่ให้การโต้ตอบกับ Compass ในอนาคตถูกใช้เพื่อวัตถุประสงค์เหล่านี้ <u>WebBrain จะเก็บคำขอโมเดลในเครื่องและ API ของคุณเองเฉพาะจากผู้ให้บริการที่คุณเปิด “แชร์คำค้นเพื่อการวิจัย” เท่านั้น</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">นโยบายความเป็นส่วนตัว →</a>",
+  "st.providers.webbrain_data_use.body": "WebBrain Compass มีโควตาใช้งานฟรีรายวัน ขณะที่ “ช่วยปรับปรุง WebBrain” เปิดไว้เป็นค่าเริ่มต้น การสนทนา Compass บางรายการอาจถูกเก็บและใช้เพื่อการประเมิน การปรับปรุง การปรับละเอียด และการฝึก ปิดได้ที่ ทั่วไป → ขั้นสูง เพื่อไม่ให้การโต้ตอบ Compass ในอนาคตถูกใช้ในลักษณะดังกล่าว <u>WebBrain จะเก็บคำขอโมเดลในเครื่องและ API ของคุณเองเฉพาะเมื่อคุณเปิดตัวเลือก “แชร์คำค้นเพื่อการวิจัย” ของผู้ให้บริการรายนี้</u> {privacyLink} หากต้องการใช้งานเพิ่ม สมัครที่ {subscribeLink} จัดการการเรียกเก็บเงินที่ {accountLink}",
+  'st.providers.share_research.label': "แชร์คำค้นเพื่อการวิจัย",
+  'st.providers.share_research.hint': "ส่งพรอมต์และการตอบกลับจากผู้ให้บริการรายนี้ไปยัง WebBrain เพื่อประเมินและปรับปรุง รวมถึงชื่อผู้ให้บริการและโมเดลที่ใช้ รูปภาพและไฟล์แนบไบนารีจะถูกลบออกและข้อความจะถูกตัดทอนก่อนแชร์ ข้อความที่เหลือจะถูกส่งไปตามที่เป็น",
+  'st.providers.share_research.confirm': "แชร์คำค้นจากผู้ให้บริการรายนี้กับ WebBrain เพื่อการวิจัยหรือไม่?\n\nเมื่อเปิดใช้ พรอมต์ การตอบกลับ และการโต้ตอบเครื่องมือของคุณกับผู้ให้บริการรายนี้จะถูกส่งไปยัง WebBrain เพื่อประเมินและปรับปรุง พร้อมชื่อผู้ให้บริการและโมเดล ข้อความจะถูกส่งตามที่เป็นหลังลบรูปภาพและตัดทอนเนื้อหายาว ดังนั้นโปรดหลีกเลี่ยงการแชร์ข้อมูลส่วนบุคคลที่ละเอียดอ่อน คุณสามารถปิดได้ทุกเมื่อเพื่อหยุดการแชร์ในอนาคต",
   'st.providers.compat.title': 'ความเข้ากันได้ของโมเดลขั้นสูง',
   'st.providers.compat.blurb': 'ปล่อยเป็นอัตโนมัติ เว้นแต่โมเดลหรือเอนด์พอยต์จะระบุสัญญาคำขอที่แตกต่าง',
   'st.providers.compat.preset': 'พรีเซ็ตความเข้ากันได้',
@@ -1114,8 +1123,8 @@ export default {
   "st.sync.confirm.reset": "แทนที่สำเนาบนคลาวด์ที่เข้ารหัสด้วยการตั้งค่า WebBrain ปัจจุบันของอุปกรณ์นี้หรือไม่",
   "st.sync.consent.legacy": "เปิดการซิงค์ที่เข้ารหัสไหม WebBrain จะส่งสำเนาความทรงจำของคุณ การกรอกโปรไฟล์อัตโนมัติ และการตั้งค่าผู้ให้บริการคีย์ API ที่เข้ารหัสจากต้นทางถึงปลายทางไปยัง WebBrain Compass ประวัติการแชทและการลงชื่อเข้าใช้ OAuth จะไม่ซิงค์กัน",
   "st.sync.consent.denied": "ไม่ได้รับสิทธิ์การซิงค์ที่เข้ารหัส",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

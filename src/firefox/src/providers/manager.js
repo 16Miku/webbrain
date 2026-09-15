@@ -1,11 +1,20 @@
 import { LlamaCppProvider } from './llamacpp.js';
 import { OpenAICompatibleProvider } from './openai.js';
+import { DeepSeekProvider } from './deepseek.js';
 import { AzureOpenAIProvider } from './azure-openai.js';
 import { AnthropicProvider, AnthropicOAuthProvider } from './anthropic.js';
 import { VertexAnthropicProvider } from './vertex-anthropic.js';
 import { signOutClaude } from './oauth-claude.js';
 import { AwsBedrockProvider } from './aws-bedrock.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
+import { purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
+import {
+  DEEPSEEK_BASE_URL,
+  DEEPSEEK_DEFAULT_MODEL,
+  DEEPSEEK_LEGACY_DEFAULT_BASE_URL,
+  DEEPSEEK_LEGACY_DEFAULT_MODEL,
+  isDeepSeekModel,
+} from './deepseek-config.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
 import {
   VISION_MODES,
@@ -30,6 +39,7 @@ import {
   shouldApplyDetectedContextWindow,
 } from './context-windows.js';
 import {
+  isDirectDeepSeekConfig,
   normalizeOpenAICompatibleBaseUrl,
   openAiCompatiblePayloadError,
   unsupportedVisionGenerationControl,
@@ -52,9 +62,6 @@ const OPENROUTER_DEFAULT_MODEL = 'openrouter/free';
 const OPENROUTER_LEGACY_DEFAULT_MODEL = 'stepfun/step-3.7-flash';
 const OPENAI_DEFAULT_MODEL = 'gpt-5.6-terra';
 const OPENAI_LEGACY_DEFAULT_MODEL = 'gpt-5.5';
-const DEEPSEEK_DEFAULT_BASE_URL = 'https://api.deepseek.com';
-const DEEPSEEK_LEGACY_DEFAULT_BASE_URL = 'https://api.deepseek.com/v1';
-const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-flash';
 const OPENCODE_LEGACY_DEFAULT_MODEL = 'ring-2.6-1t-free';
 const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'openai', 'azure_openai', 'aws_bedrock', 'anthropic', 'anthropic_oauth', 'vertex_anthropic']);
 const SAFE_PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -319,6 +326,14 @@ export class ProviderManager {
         ...this._storedDefaultOverride(config, storedConfig),
         configured,
       };
+      // Voluntary research sharing is opt-in per provider and default-off
+      // (never on for WebBrain Compass itself, which already shares via its
+      // own outbox). Applied in the field-level merge so existing stored
+      // configs without the key inherit the off state without polluting the
+      // default catalog snapshots.
+      if (id !== WEBBRAIN_CLOUD_PROVIDER_ID && !Object.hasOwn(configs[id], 'shareQueriesForResearch')) {
+        configs[id].shareQueriesForResearch = false;
+      }
       if (Object.hasOwn(configs[id], 'duplicateOf')) {
         delete configs[id].duplicateOf;
         providerStateMigrated = true;
@@ -382,7 +397,7 @@ export class ProviderManager {
   }
 
   _defaultConfigs() {
-    return {
+    const defaults = {
       webbrain_cloud: {
         type: 'openai',
         category: 'cloud',
@@ -665,12 +680,17 @@ export class ProviderManager {
         category: 'cloud',
         label: 'DeepSeek',
         providerName: 'deepseek',
-        baseUrl: DEEPSEEK_DEFAULT_BASE_URL,
+        baseUrl: DEEPSEEK_BASE_URL,
         model: DEEPSEEK_DEFAULT_MODEL,
         contextWindow: 1000000,
         maxOutputTokens: 384000,
-        inputCostPerMillionUsd: 0.27,
-        outputCostPerMillionUsd: 1.1,
+        // `deepseek-flash` off-peak list price, CNY per 1M tokens: 1 input,
+        // 0.02 cache-hit input, 4 output (peak is 2 / 0.04 / 8), converted at
+        // 1 USD = 7.1 CNY.
+        // https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+        inputCostPerMillionUsd: 0.14,
+        cacheReadCostPerMillionUsd: 0.0028,
+        outputCostPerMillionUsd: 0.56,
         supportsStreamUsageOptions: true,
         supportsAskStreaming: true,
         apiKey: '',
@@ -826,6 +846,7 @@ export class ProviderManager {
       },
       ...ADDITIONAL_PROVIDER_DEFAULTS,
     };
+    return defaults;
   }
 
   _migrateStoredProviderConfigs(stored) {
@@ -854,18 +875,26 @@ export class ProviderManager {
         model: OPENROUTER_DEFAULT_MODEL,
       };
     }
+    // DeepSeek renamed its shipped default model to `deepseek-flash`. The
+    // retired `deepseek-v4-flash` id (plus the old /v1 base path and the
+    // pre-V4.1 prices) identifies a card the user never touched, so the rename
+    // and the new price sheet can be applied without overriding a real choice.
     const storedDeepSeek = migrated.deepseek;
     const deepSeekBaseUrl = String(storedDeepSeek?.baseUrl || '').replace(/\/+$/, '');
-    const untouchedDeepSeekDefault = storedDeepSeek?.model === DEEPSEEK_DEFAULT_MODEL
+    const untouchedDeepSeekDefault = storedDeepSeek?.model === DEEPSEEK_LEGACY_DEFAULT_MODEL
       && storedDeepSeek?.configured !== true
       && !String(storedDeepSeek?.apiKey || '').trim()
-      && deepSeekBaseUrl === DEEPSEEK_LEGACY_DEFAULT_BASE_URL
+      && (deepSeekBaseUrl === DEEPSEEK_LEGACY_DEFAULT_BASE_URL || deepSeekBaseUrl === DEEPSEEK_BASE_URL)
       && (storedDeepSeek?.inputCostPerMillionUsd == null || Number(storedDeepSeek.inputCostPerMillionUsd) === 0.27)
       && (storedDeepSeek?.outputCostPerMillionUsd == null || Number(storedDeepSeek.outputCostPerMillionUsd) === 1.1);
     if (untouchedDeepSeekDefault) {
       migrated.deepseek = {
         ...storedDeepSeek,
-        baseUrl: DEEPSEEK_DEFAULT_BASE_URL,
+        baseUrl: DEEPSEEK_BASE_URL,
+        model: DEEPSEEK_DEFAULT_MODEL,
+        inputCostPerMillionUsd: 0.14,
+        cacheReadCostPerMillionUsd: 0.0028,
+        outputCostPerMillionUsd: 0.56,
       };
     }
     this._migrateUntouchedShippedDefaults(migrated);
@@ -1131,7 +1160,13 @@ export class ProviderManager {
       case 'llamacpp':
         return new LlamaCppProvider(normalizedConfig);
       case 'openai':
-        return new OpenAICompatibleProvider(normalizedConfig);
+        // All non-local DeepSeek cards use the dedicated capability hooks. Only
+        // direct cards opt into DeepSeek's native request contract; router cards
+        // retain their existing OpenRouter compatibility preset.
+        return (isDirectDeepSeekConfig(normalizedConfig)
+          || (normalizedConfig.category !== 'local' && isDeepSeekModel(normalizedConfig.model)))
+          ? new DeepSeekProvider(normalizedConfig)
+          : new OpenAICompatibleProvider(normalizedConfig);
       case 'azure_openai':
         return new AzureOpenAIProvider(normalizedConfig);
       case 'aws_bedrock':
@@ -1156,6 +1191,32 @@ export class ProviderManager {
       throw new Error(`No active provider: ${this.activeProviderId}`);
     }
     return provider;
+  }
+
+  /** Get a provider without changing the user's globally selected provider. */
+  getProvider(id) {
+    const provider = this.providers.get(id);
+    if (!provider) throw new Error(`Provider not found: ${id}`);
+    return provider;
+  }
+
+  /**
+   * Stable provider-config ids currently opted into voluntary research
+   * sharing. The share outbox purges queued entries for any other id before
+   * delivery so revoking the toggle is honored immediately. Keyed by config
+   * id (not providerName): duplicates share one providerName, and some
+   * built-ins have none at all.
+   */
+  consentedShareProviderIds() {
+    const ids = new Set();
+    try {
+      for (const [id, provider] of this.providers?.entries?.() || []) {
+        if (provider?.config?.shareQueriesForResearch !== true) continue;
+        const pid = String(provider.config._providerId || id || '');
+        if (pid) ids.add(pid);
+      }
+    } catch {}
+    return ids;
   }
 
   async _fetchVisionCapability(providerId, provider, identity) {
@@ -1485,6 +1546,12 @@ export class ProviderManager {
       }
     }
     this.providers.set(id, this._createProvider(id, merged));
+    // Revocation is permanent for queued data, even if sharing is enabled
+    // again before another agent run. Await deletion before acknowledging it.
+    // Explicit off updates also retry a previously failed purge.
+    if (Object.hasOwn(updates, 'shareQueriesForResearch') && merged.shareQueriesForResearch !== true) {
+      await purgeShareGenerations(entry => String(entry?.provider_id || '') === id);
+    }
     await this.save();
   }
 
@@ -1543,6 +1610,9 @@ export class ProviderManager {
         : WEBBRAIN_CLOUD_PROVIDER_ID;
     }
     try {
+      if (duplicate.config?.shareQueriesForResearch === true) {
+        await purgeShareGenerations(entry => String(entry?.provider_id || '') === id);
+      }
       await this.save();
     } catch (error) {
       this.providers.set(id, duplicate);

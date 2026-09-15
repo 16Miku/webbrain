@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Filipino / Tagalog (tl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Pag-zoom ng UI ng extension',
   'sp.ui_scale.decrease': 'Bawasan ang zoom ng UI ng extension',
   'sp.ui_scale.increase': 'Dagdagan ang zoom ng UI ng extension',
@@ -174,6 +176,8 @@ export default {
 
   'sp.mode.ask': 'Tanong',
   'sp.mode.ask.title': 'Magtanong tungkol sa pahina — walang ginagawang pagbabago',
+  'sp.mode.act_handoff_button': 'Lumipat sa Act at subukan muli',
+  'sp.mode.act_handoff_hint': 'Kailangan ng Act mode para makumpleto ito. I-click upang lumipat at ipadala muli ang iyong kahilingan.',
   'sp.mode.act': 'Aksyon',
   'sp.mode.act.title': 'Hayaan ang WebBrain na mag-click, mag-type, at mag-navigate para sa iyo',
   'sp.mode.act.warning': 'Aksyon mode: Gamitin sa sariling panganib.',
@@ -323,6 +327,7 @@ export default {
 
   'st.provider.field.server_url': 'Server URL',
   'st.provider.field.api_base_url': 'API Base URL',
+  'st.provider.field.api_format': 'Format ng API',
   'st.provider.field.api_key': 'API Key',
   'st.provider.field.model': 'Modelo',
   'st.provider.field.model_optional': 'Modelo (opsyonal)',
@@ -503,7 +508,7 @@ export default {
   "st.display.download_directory.placeholder": "Default ng system",
   "st.display.download_directory.error": "Gumamit ng relative na folder tulad ng WebBrain o Work/WebBrain. Hindi pinapayagan ang absolute path at “..”.",
   "st.display.strict_secret.label": "Mahigpit na paghawak ng lihim",
-  "st.display.strict_secret.desc": "Tanggihang i-quote ang mga kredensyal (password, API key, token, OTPs) sa mga summary o teksto ng assistant — kahit hayagan mong hilingin ang mga ito. Mainam kung madalas kang magbahagi ng trace files o screen-share. Naka-off bilang default: tumatakbo ang webbrain sa sarili mong browser, kaya bilang default ay ipinapakita sa iyo ng ahente ang mga value na hiniling mo at pinapanatili lang na malinis ang mga `done` na summary.",
+  "st.display.strict_secret.desc": "Tanggihang i-quote ang mga kredensyal (password, API key, token, OTPs) sa mga summary o teksto ng assistant — kahit hayagan mong hilingin ang mga ito. Mainam kung madalas kang magbahagi ng trace files o screen-share. Naka-on bilang default: tumatakbo ang webbrain sa sarili mong browser, ngunit para sa seguridad ay tumatanggi ang ahente na ulitin ang mga kredensyal at pinapanatiling malinis ang mga `done` na summary.",
   "st.display.request_timeout.label": "Timeout ng LLM request",
   "st.display.request_timeout.desc": "Pinakamatagal na paghihintay sa mga header ng tugon at sa bawat pagitan ng mga bahagi ng streaming na tugon. Default: 120 segundo. Dagdagan ito para sa mababagal na lokal na modelo, lalo na kung gumagamit ng CPU o malaking konteksto.",
   "st.providers.filter.all": "Lahat",
@@ -699,6 +704,7 @@ export default {
   'st.skills.item.chars': '{count} karakter',
   'st.skills.item.tools': 'Mga tool: {tools}',
   'st.skills.remove': 'Alisin',
+  'st.skills.edit': 'I-edit',
   'st.skills.preview.rendered': 'Paunang tingin',
   'st.skills.preview.raw': 'Hilaw',
   'st.skills.security_html': '<strong>Paalala:</strong> ang mga custom na kasanayan ay naka-store bilang plaintext sa browser local storage at ipinapadala sa iyong na-configure na LLM provider bilang bahagi ng system prompt. Ang mga na-import na tool ng kasanayan ay maaaring magpadala ng kanilang mga declared input sa kanilang declared HTTPS endpoint nang walang per-call confirmation; ang mga download tool ay humihingi pa rin sa pamamagitan ng normal na Downloads permission gate bago mag-save ng mga file. Ang mga tool lang na pinagkakatiwalaan mo ang i-import; ang remote na content ay kinokopya sa storage sa oras ng pag-import.',
@@ -739,9 +745,9 @@ export default {
   'st.display.clarify_timeout.off': 'Naka-off',
   'st.display.clarify_timeout.instant': 'Agad',
   'st.display.always_allow_api_mutations.label': "Palaging payagan ang mga pagbabago sa API",
-  'st.display.always_allow_api_mutations.desc': "Payagan ang WebBrain na gumamit ng POST, PUT, PATCH, at DELETE sa pamamagitan ng fetch_url o research_url nang hindi kailangan ang /allow-api sa bawat usapan. Nalalapat pa rin ang gabay na unahin ang UI at mga pagsusuri sa kumpirmasyon. Naka-off bilang default.",
+  'st.display.always_allow_api_mutations.desc': "Payagan ang WebBrain na gumamit ng POST, PUT, PATCH, at DELETE sa pamamagitan ng fetch_url o research_url nang hindi kailangan ang /allow-api sa bawat usapan. Nalalapat pa rin ang gabay na unahin ang UI at mga pagsusuri sa kumpirmasyon. Naka-on bilang default.",
   'st.display.api_mutation_observer.label': 'Tagamasid ng mutasyon ng API',
-  'st.display.api_mutation_observer.desc': 'Obserbahan ang mga URL at paraan ng XHR/fetch request sa parehong tab upang matukoy ng WebBrain ang mga paulit-ulit na aksyon sa UI at magmungkahi ng mga pattern ng shortcut sa API. Naka-off bilang default; paganahin lamang habang iniimbestigahan ang pag-uugali ng shortcut o latency.',
+  'st.display.api_mutation_observer.desc': 'Obserbahan ang mga URL at paraan ng XHR/fetch request sa parehong tab upang matukoy ng WebBrain ang mga paulit-ulit na aksyon sa UI at magmungkahi ng mga pattern ng shortcut sa API. Naka-on bilang default.',
   'st.display.openai_ask_streaming.label': "I-stream ang mga sagot sa Ask mode",
   'st.display.openai_ask_streaming.desc': "Ipakita ang mga sagot ng provider habang dumarating sa Ask mode. Naghihintay ang mga tool call sa pangwakas na stream event; mananatiling hindi naka-stream ang Act, Dev, scheduled, cloud, at Continue runs. Naka-on bilang default.",
   'st.display.plan_before_act.label': 'Magplano bago Kumilos',
@@ -966,8 +972,11 @@ export default {
   "sp.export_traces.partial": "Na-export ang tool chain, pero may mga turn event na hindi mabasa.",
   "sp.export_traces.truncated": "Na-export ang tool chain. Maaaring mawala ang mga lumang turn kung marami ang trace ng usapang ito.",
   "st.display.help_improve.label": "Tumulong na Pahusayin ang WebBrain",
-  "st.display.help_improve.desc_html": "Payagan ang piling interaksyon sa WebBrain Compass na mapanatili at magamit para sa pagsusuri, pagpapahusay, fine-tuning, at training. Naka-on bilang default. I-off ito upang hindi magamit ang mga susunod na interaksyon sa Compass para sa mga layuning iyon. <u>Hindi kailanman kinokolekta ng WebBrain ang mga request sa lokal na modelo o mga request na direktang ipinadala gamit ang sarili mong API credential.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Patakaran sa privacy →</a>",
-  "st.providers.webbrain_data_use.body": "Kasama ang libreng pang-araw-araw na paggamit ng WebBrain Compass. Habang naka-on bilang default ang Tumulong na Pahusayin ang WebBrain, maaaring panatilihin at gamitin ang piling pag-uusap sa Compass para sa pagsusuri, pagpapahusay, fine-tuning, at training. I-off ito sa General → Advanced upang hindi maisama ang mga susunod na interaksyon sa Compass sa mga paggamit na iyon. <u>Hindi kailanman kinokolekta ng WebBrain ang mga request sa lokal na modelo o mga request na direktang ipinadala gamit ang sarili mong API credential.</u> {privacyLink}. Para sa higit pang paggamit, mag-subscribe sa {subscribeLink}. Pamahalaan ang billing sa {accountLink}.",
+  "st.display.help_improve.desc_html": "Payagan ang piling interaksyon sa WebBrain Compass na mapanatili at magamit para sa pagsusuri, pagpapahusay, fine-tuning, at training. Naka-on bilang default. I-off ito upang hindi magamit ang mga susunod na interaksyon sa Compass para sa mga layuning iyon. <u>Kinokolekta lang ng WebBrain ang mga kahilingan sa lokal na modelo at sarili mong API mula sa mga provider kung saan mo binuksan ang “Ibahagi ang mga query para sa pananaliksik”.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Patakaran sa privacy →</a>",
+  "st.providers.webbrain_data_use.body": "Kasama ang libreng pang-araw-araw na paggamit ng WebBrain Compass. Habang naka-on bilang default ang Tumulong na Pahusayin ang WebBrain, maaaring panatilihin at gamitin ang piling pag-uusap sa Compass para sa pagsusuri, pagpapahusay, fine-tuning, at training. I-off ito sa General → Advanced upang hindi maisama ang mga susunod na interaksyon sa Compass sa mga paggamit na iyon. <u>Kinokolekta lang ng WebBrain ang mga kahilingan sa lokal na modelo at sarili mong API kapag binuksan mo ang opsyong “Ibahagi ang mga query para sa pananaliksik” ng provider na ito.</u> {privacyLink}. Para sa higit pang paggamit, mag-subscribe sa {subscribeLink}. Pamahalaan ang billing sa {accountLink}.",
+  'st.providers.share_research.label': "Ibahagi ang mga query para sa pananaliksik",
+  'st.providers.share_research.hint': "Ipinapadala ang mga prompt at tugon mula sa provider na ito sa WebBrain para sa pagsusuri at pagpapabuti, kabilang ang provider at modelong ginamit. Tinatanggal ang mga larawan at binary na attachment at pinuputol ang teksto bago ibahagi; ang natitirang teksto ay ipinapadala nang apa adanya.",
+  'st.providers.share_research.confirm': "Ibabahagi ba ang mga query mula sa provider na ito sa WebBrain para sa pananaliksik?\n\nKapag naka-on, ang iyong mga prompt, tugon, at interaksyon sa tool sa provider na ito ay ipapadala sa WebBrain para sa pagsusuri at pagpapabuti, kasama ang pangalan ng provider at modelo. Ipinapadala ang teksto nang apa adanya pagkatapos tanggalin ang mga larawan at putulin ang mahahabang nilalaman, kaya iwasang magbahagi ng sensitibong personal na datos. Maaari mo itong patayin anumang oras upang ihinto ang pagbabahagi.",
   'st.providers.compat.title': 'Advanced na compatibility ng modelo',
   'st.providers.compat.blurb': 'Iwanan sa Auto maliban kung ang modelo o endpoint ay may ibang request contract.',
   'st.providers.compat.preset': 'Preset ng compatibility',
@@ -1071,5 +1080,5 @@ export default {
   "st.sync.confirm.reset": "Palitan ang naka-encrypt na cloud copy ng kasalukuyang setup ng WebBrain ng device na ito?",
   "st.sync.consent.legacy": "I-on ang naka-encrypt na pag-sync? Magpapadala ang WebBrain ng end-to-end na naka-encrypt na kopya ng iyong mga alaala, profile autofill, at API-key na mga setting ng provider sa WebBrain Compass. Hindi naka-sync ang history ng chat at OAuth sign-in.",
   "st.sync.consent.denied": "Hindi ibinigay ang naka-encrypt na pahintulot sa pag-sync.",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
 };

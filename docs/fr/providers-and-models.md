@@ -46,7 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | local | (modèle chargé) | Métadonnées auto / surcharge |
 | `gpt4all` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `local_openai_proxy` | `openai` | local | (requis) | Désactivée / bascule manuelle |
-| `webgpu` (Chromium) | `webgpu` | local | LFM2.5 2.6B (valeur par défaut) ou Bonsai 27B en option ; dépôt HF ONNX personnalisé expérimental | Non |
+| `webgpu` (Chromium) | `webgpu` | local | Compass Tiny v2.1 (préréglage unique) ; dépôt HF ONNX personnalisé expérimental | Non |
 | `azure_openai` | `azure_openai` | cloud | (déploiement) | Bascule manuelle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (ID de modèle) | Non |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Regex nom de modèle |
@@ -54,7 +54,7 @@ class BaseLLMProvider {
 | `gemini` | `openai` | cloud | `gemini-3.1-flash` | Regex nom de modèle |
 | `cloudflare` | `openai` | routeur | `@cf/zai-org/glm-5.2` | Regex nom de modèle |
 | `mistral` | `openai` | cloud | `mistral-large-latest` | Regex nom de modèle |
-| `deepseek` | `openai` | cloud | `deepseek-v4-flash` | Regex nom de modèle |
+| `deepseek` | `openai` | cloud | `deepseek-flash` | Regex nom de modèle |
 | `xai` (Grok) | `openai` | cloud | `grok-4.3` | Regex nom de modèle |
 | `nvidia` (NIM) | `openai` | routeur | `meta/llama-3.1-8b-instruct` | Regex nom de modèle |
 | `groq` | `openai` | routeur | `llama-3.3-70b-versatile` | Regex nom de modèle |
@@ -118,13 +118,12 @@ Entrées volontairement exclues : `github-models` (retrait de GitHub Models le
 ### Fournisseurs Locaux
 
 Sur Chromium, **WebGPU (dans le navigateur)** est un fournisseur local sans
-point de terminaison. Le sélecteur Apocalypse propose deux préréglages
-embarqués : **LFM2.5 2.6B** (`q4f16`, environ 1,55 Go) via Transformers.js /
-ONNX, toujours le défaut et téléchargé à l’activation d’Apocalypse ; et
-**Bonsai 27B** (`Q1_0`, environ 3,8 Go) via un worker bitgpu optionnel, jamais
-téléchargé automatiquement. Bonsai exige un GPU haut de gamme (16 Go+ de
-RAM/VRAM recommandés). LFM et Bonsai ne sont jamais résidents GPU en même
-temps. Firefox n’expose pas cette carte.
+point de terminaison. Le sélecteur Apocalypse propose un préréglage embarqué
+unique : **Compass Tiny v2.1** (`q4f16`, environ 1,87 Go) via Transformers.js /
+ONNX, téléchargé à l’activation d’Apocalypse. Une fois en cache, Compass
+fonctionne sans qu’Apocalypse soit activé. Le fournisseur est texte seul, avec
+une fenêtre de contexte de 32k par défaut ; sur les GPU limités, réduisez-la
+dans Settings → Providers si nécessaire. Firefox n’expose pas cette carte.
 
 Neuf fournisseurs à terminaison locale sont activés par défaut. Les moteurs de
 modèles n'exigent pas de clé sauf si le serveur utilise l'authentification ; la
@@ -225,6 +224,7 @@ Le mode Ask ignore le niveau du fournisseur et reste en lecture seule. Le mode A
 | Fournisseur | Mécanisme |
 |---|---|
 | Compatible OpenAI | Regex sur le nom du modèle (`gpt-4o`, `gpt-5`, `claude-3`, `claude-sonnet-4`, `gemini-2.0-flash`, etc.) |
+| DeepSeek | La famille `deepseek-flash` (y compris les alias retirés `deepseek-v4-flash`) est multimodale ; `deepseek-v4-pro` et les identifiants de la génération V3 sont textuels |
 | Anthropic | Patterns `claude-(3\|sonnet-4\|opus-4)` |
 | Ollama | `POST /api/show` `capabilities`, avec replis historiques `projector_info` / `.vision.` |
 | llama.cpp | `GET /props` → `modalities.vision`, avec Automatique / Forcer / Désactivé |
@@ -247,6 +247,33 @@ Lorsque le fournisseur actif est Anthropic, l'agent convertit les messages au fo
 | `assistant` + `tool_calls` | Blocs de contenu `assistant` + `tool_use` |
 | Rôle `tool` | Blocs de contenu `user` + `tool_result` |
 | `image_url` (URL de données) | Bloc source `image` |
+
+### DeepSeek
+
+Le modèle livré est `deepseek-flash` (DeepSeek-V4.1-Flash). Les identifiants retirés
+`deepseek-v4-flash` et `deepseek-v4-flash-vision-exp` sont toujours servis par le même
+modèle et facturés comme Flash : ils conservent donc le support complet (contexte 1M,
+sortie 384K, entrée d'images). Tous les autres identifiants DeepSeek — y compris
+`deepseek-v4-pro`, retiré — restent sur un profil prudent (contexte 64K, sortie 8K,
+texte uniquement) au lieu d'hériter de capacités qu'ils n'ont peut-être pas.
+
+| Aspect | Comportement |
+|---|---|
+| Format de transport | Chat Completions par défaut (`apiFormat: 'auto'`) ; l'API Responses s'active explicitement depuis le panneau Avancé |
+| Mode réflexion | Objet `thinking` au niveau supérieur plus `reasoning_effort` ; désactiver la réflexion omet complètement `reasoning_effort`. L'échelle partagée associe `minimal`→`low` et `medium`/`xhigh`→`high` |
+| Rejeu du raisonnement | `reasoning_content` est rejoué d'un tour à l'autre, car DeepSeek renvoie 400 si une requête avec `tools` l'omet |
+| Streaming | `stream_options.include_usage` à chaque requête ; l'analyseur ignore les commentaires SSE `: keep-alive` de DeepSeek |
+| Sortie structurée | Chat Completions utilise le mode JSON Object ; l'API Responses utilise un schéma JSON `text.format` pour le planificateur |
+| Images | `deepseek-flash` accepte les `image_url` (URL de données ou URL publique) dans les messages `user` |
+| Coût | Tarif hors pointe converti à 1 USD = 7,1 CNY (entrée 1, entrée en cache 0,02, sortie 4 ; pointe 2 / 0,04 / 8). Les hits de cache arrivent via le compteur de premier niveau `prompt_cache_hit_tokens` et sont facturés au tarif de lecture du cache |
+| Point de terminaison Anthropic | `https://api.deepseek.com/anthropic` fonctionne avec la carte `anthropic` intégrée en remplaçant son URL de base |
+
+Le contrat réside dans `providers/deepseek-config.js` (helpers purs et constantes) et
+`providers/deepseek.js` (`DeepSeekProvider`). Les modules partagés `openai.js` et
+`provider-compatibility.js` ne contiennent aucune connaissance DeepSeek, et
+`ProviderManager#_createProvider()` aiguille la carte `deepseek` — ou toute carte
+pointant vers `api.deepseek.com`, ou sélectionnant explicitement le preset `deepseek` —
+vers la classe dédiée.
 
 ---
 
@@ -339,4 +366,4 @@ myprovider: {
 },
 ```
 
-La vision est auto-détectée via une regex sur le nom du modèle. Si le fournisseur a un ensemble connu de modèles de vision, ajoutez-les à la regex dans `openai.js`. Définissez `supportsStreamUsageOptions: true` uniquement pour les fournisseurs qui acceptent `stream_options.include_usage` de style OpenAI ; laissez-le à false lorsqu'un fournisseur retourne l'utilisation sans accepter ce champ de requête.
+La vision est auto-détectée via une regex sur le nom du modèle. Si le fournisseur a un ensemble connu de modèles de vision, étendez `_modelNameSniffedVision()` dans `openai.js`, ou ajoutez une sous-classe dédiée comme le fait `providers/deepseek.js`. Définissez `supportsStreamUsageOptions: true` uniquement pour les fournisseurs qui acceptent `stream_options.include_usage` de style OpenAI ; laissez-le à false lorsqu'un fournisseur retourne l'utilisation sans accepter ce champ de requête.

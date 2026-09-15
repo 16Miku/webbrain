@@ -4,6 +4,7 @@
 
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
 import { escapeHtml } from './utils.js';
+import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 import {
   UI_SCALE_LEVELS,
@@ -77,7 +78,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '36.0.4';
+const EXT_VERSION = '36.5.0';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -509,6 +510,7 @@ function boundedMaxAgentSteps(value) {
 let providerFilter = 'all';     // 'all' | 'active' | 'local' | 'cloud' | 'router'
 let providerSearchQuery = '';
 const expandedProviders = new Set();
+let editingSkillId = null;
 let customSkills = [];
 let skillPreviewRequestId = 0;
 const DEFAULT_SKILL_IDS = new Set(DEFAULT_SKILL_SOURCES.map((source) => source.id));
@@ -610,8 +612,8 @@ async function init() {
   if (siteAdaptersToggle) siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
   if (researchEscalationToggle) researchEscalationToggle.checked = stored.researchEscalationEnabled === true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
-  if (alwaysAllowApiMutationsToggle) alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === true;
-  if (apiMutationObserverToggle) apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === true;
+  if (alwaysAllowApiMutationsToggle) alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === undefined || stored.alwaysAllowApiMutations === true;
+  if (apiMutationObserverToggle) apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === undefined || stored.apiMutationObserverEnabled === true;
   if (openAIAskStreamingToggle) openAIAskStreamingToggle.checked = stored.openaiAskStreamingEnabled !== false;
   if (planBeforeActModeSelect) planBeforeActModeSelect.value = normalizePlanBeforeActMode(stored);
   if (planReviewModeSelect) planReviewModeSelect.value = normalizePlanReviewMode(stored);
@@ -638,7 +640,7 @@ async function init() {
   if (costSessionLimitInput) costSessionLimitInput.value = sessionLimit.toFixed(2);
   if (costTotalLimitInput) costTotalLimitInput.value = totalLimit.toFixed(2);
   renderCostAllowanceSpent(totalSpent, totalLimit);
-  if (strictSecretToggle) strictSecretToggle.checked = stored.strictSecretMode === true; // off by default
+  if (strictSecretToggle) strictSecretToggle.checked = stored.strictSecretMode !== false; // on by default
   if (allowLocalNetworkToggle) allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true;
   if (scheduledTasksToggle) scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false;
   if (scheduledConfirmToggle) scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false;
@@ -923,7 +925,7 @@ async function saveCustomSkills(nextSkills, opts = {}) {
   const update = { [CUSTOM_SKILLS_STORAGE_KEY]: customSkills };
   const removedSkill = opts.removedSkill;
   const installedSkill = opts.installedSkill;
-  const removedDefault = removedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(removedSkill.id);
+  const removedDefault = (removedSkill?.sourceType === 'built-in' || DEFAULT_SKILL_IDS.has(removedSkill?.id)) && DEFAULT_SKILL_IDS.has(removedSkill.id);
   const installedDefault = installedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(installedSkill.id);
   if (removedDefault || installedDefault) {
     const stored = await browser.storage.local.get(DEFAULT_SKILLS_REMOVED_STORAGE_KEY);
@@ -985,6 +987,7 @@ function renderSkills() {
                   data-skill-preview-id="${escapeHtml(skill.id)}">${escapeHtml(skill.name)}</button>
           <div class="setting-desc skill-source">${escapeHtml(source)} · ${escapeHtml(t('st.skills.item.chars', { count: skill.content.length }))}${escapeHtml(toolSummary)}</div>
         </div>
+        <button class="btn-secondary" data-skill-edit-id="${escapeHtml(skill.id)}">${escapeHtml(t('st.skills.edit'))}</button>
         <button class="btn-secondary" data-skill-id="${escapeHtml(skill.id)}">${escapeHtml(t('st.skills.remove'))}</button>
       </div>`;
   }).join('');
@@ -992,8 +995,17 @@ function renderSkills() {
   skillsList.querySelectorAll('button[data-skill-preview-id]').forEach((btn) => {
     btn.addEventListener('click', () => previewEnabledSkill(btn.dataset.skillPreviewId));
   });
+  skillsList.querySelectorAll('button[data-skill-edit-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const skill = customSkills.find((s) => s.id === btn.dataset.skillEditId);
+      if (skill) startSkillEdit(skill);
+    });
+  });
   skillsList.querySelectorAll('button[data-skill-id]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (editingSkillId === btn.dataset.skillId) {
+        cancelSkillEdit();
+      }
       const removedSkill = customSkills.find((skill) => skill.id === btn.dataset.skillId);
       await saveCustomSkills(
         customSkills.filter((skill) => skill.id !== btn.dataset.skillId),
@@ -1036,6 +1048,24 @@ async function addPackagedSkill(skillId, button) {
   }
 }
 
+function startSkillEdit(skill) {
+  editingSkillId = skill.id;
+  if (skillNameInput) skillNameInput.value = skill.name || '';
+  if (skillTextArea) skillTextArea.value = skill.content || '';
+  if (btnAddSkillText) btnAddSkillText.textContent = t('st.providers.save');
+  flashSkillsResult('ok', skill.name || t('st.skills.edit'));
+  skillNameInput?.focus?.();
+  if (skillTextArea) skillTextArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelSkillEdit() {
+  if (editingSkillId == null) return;
+  editingSkillId = null;
+  if (btnAddSkillText) btnAddSkillText.textContent = t('st.skills.add_text');
+  if (skillNameInput) skillNameInput.value = '';
+  if (skillTextArea) skillTextArea.value = '';
+}
+
 async function addSkillFromText() {
   const content = (skillTextArea?.value || '').trim();
   if (!content) {
@@ -1043,6 +1073,27 @@ async function addSkillFromText() {
     return;
   }
   try {
+    if (editingSkillId) {
+      const original = customSkills.find((s) => s.id === editingSkillId);
+      if (!original) {
+        cancelSkillEdit();
+        throw new Error(t('st.skills.error.add_failed'));
+      }
+      const isBuiltIn = original.sourceType === 'built-in';
+      const updated = {
+        id: original.id,
+        name: (skillNameInput?.value || '').trim() || original.name || '',
+        sourceType: isBuiltIn ? 'text' : (original.sourceType || 'text'),
+        sourceUrl: isBuiltIn ? '' : (original.sourceUrl || ''),
+        content,
+        createdAt: original.createdAt || Date.now(),
+      };
+      const next = customSkills.map((s) => (s.id === editingSkillId ? updated : s));
+      await saveCustomSkills(next);
+      cancelSkillEdit();
+      flashSkillsResult('ok', t('st.providers.saved'));
+      return;
+    }
     await addCustomSkill({
       id: makeSkillId(),
       name: skillNameInput?.value || '',
@@ -1112,6 +1163,7 @@ async function addSkillFromUrl() {
 btnAddSkillText?.addEventListener('click', addSkillFromText);
 btnAddSkillUrl?.addEventListener('click', addSkillFromUrl);
 btnClearSkillForm?.addEventListener('click', () => {
+  cancelSkillEdit();
   if (skillNameInput) skillNameInput.value = '';
   if (skillUrlInput) skillUrlInput.value = '';
   if (skillTextArea) skillTextArea.value = '';
@@ -1907,6 +1959,39 @@ const OPTIONAL_LOCAL_API_KEY_FIELD = {
   placeholder: 'optional',
   collapsed: true,
 };
+const SHARE_RESEARCH_FIELD = {
+  key: 'shareQueriesForResearch',
+  labelKey: 'st.providers.share_research.label',
+  hintKey: 'st.providers.share_research.hint',
+  type: 'checkbox',
+};
+
+async function confirmResearchSharing(event) {
+  const input = event.currentTarget;
+  if (!input.checked) return;
+  if (!window.confirm(t('st.providers.share_research.confirm'))) {
+    event.preventDefault();
+    return;
+  }
+  // Keep the setting off while Firefox asks for native collection consent.
+  // Call request directly in the click handler, before the first await, to
+  // preserve the user gesture required by the permissions API.
+  input.checked = false;
+  input.disabled = true;
+  try {
+    const granted = await browser.permissions.request({
+      data_collection: RESEARCH_DATA_COLLECTION,
+    });
+    if (granted && input.isConnected) {
+      input.checked = true;
+      markProviderDirty(input.dataset.provider);
+    }
+  } catch {
+    // Denied or unavailable native consent leaves research sharing off.
+  } finally {
+    input.disabled = false;
+  }
+}
 
 function providerDefinitionId(id, config = providersData[id]) {
   return String(config?.sourceProviderId || config?.duplicateOf || id || '');
@@ -2527,9 +2612,17 @@ function renderProviders() {
     deepseek: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-v4-flash',
-          suggestions: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-flash',
+          suggestions: ['deepseek-flash', 'deepseek-v4-flash'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.deepseek.com' },
+        // Chat Completions is the default wire format; DeepSeek's Responses API
+        // is an opt-in that mainly adds JSON-schema structured output.
+        { key: 'apiFormat', labelKey: 'st.provider.field.api_format', type: 'select', collapsed: true,
+          options: [
+            { value: 'auto', label: 'Chat Completions (default)' },
+            { value: 'chat', label: 'Chat Completions' },
+            { value: 'responses', label: 'Responses API' },
+          ] },
         ...COST_ESTIMATE_FIELDS,
       ],
     },
@@ -2665,6 +2758,9 @@ function renderProviders() {
     const keys = new Set(definition.fields.map(field => field.key));
     if (!keys.has('contextWindow')) definition.fields.push(CONTEXT_WINDOW_FIELD);
     if (!keys.has('maxOutputTokens')) definition.fields.push(MAX_OUTPUT_TOKENS_FIELD);
+    // Voluntary research sharing is opt-in per provider and never shown for
+    // WebBrain Compass itself.
+    if (!keys.has('shareQueriesForResearch')) definition.fields.push(SHARE_RESEARCH_FIELD);
   }
 
   providersContainer.appendChild(renderProviderFilterBar());
@@ -2727,6 +2823,9 @@ function renderProviders() {
             <label style="margin:0;cursor:pointer;">${escapeHtml(label)}</label>
           </div>
         `;
+        if (field.hintKey) {
+          fieldHTML += `<div class="field-hint" style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(field.hintKey))}</div>`;
+        }
         } else if (field.suggestions && field.key === 'model') {
         const rawVal = config[field.key] || '';
         const isCustom = rawVal && !field.suggestions.includes(rawVal);
@@ -2893,6 +2992,9 @@ function renderProviders() {
   document.querySelectorAll('input[data-provider], select[data-provider], textarea[data-provider]').forEach(input => {
     const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
     input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
+  });
+  document.querySelectorAll('input[data-key="shareQueriesForResearch"]').forEach(input => {
+    input.addEventListener('click', confirmResearchSharing);
   });
   document.querySelectorAll('.btn-remove-duplicate').forEach(btn => {
     btn.addEventListener('click', () => removeDuplicateProvider(btn.dataset.provider));
@@ -3513,3 +3615,31 @@ async function sendToBackground(action, data = {}) {
 }
 
 init();
+
+// Firefox-only companion controls; kept off by default for extension-only users.
+const bidiEnabled = document.getElementById('firefox-bidi-enabled');
+const bidiPort = document.getElementById('firefox-bidi-port');
+const bidiStatus = document.getElementById('firefox-bidi-status');
+if (bidiEnabled && bidiPort) {
+  browser.storage.local.get(['firefoxBidiEnabled', 'firefoxBidiPort']).then(values => {
+    bidiEnabled.checked = values.firefoxBidiEnabled === true;
+    bidiPort.value = values.firefoxBidiPort || 9222;
+  });
+  const saveBidi = async () => {
+    const port = Number(bidiPort.value);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) { bidiStatus.textContent = t('st.bidi.invalid_port'); return false; }
+    await browser.storage.local.set({ firefoxBidiEnabled: bidiEnabled.checked, firefoxBidiPort: port });
+    bidiStatus.textContent = bidiEnabled.checked ? t('st.bidi.enabled') : t('st.bidi.disabled');
+    return true;
+  };
+  bidiEnabled.addEventListener('change', saveBidi);
+  bidiPort.addEventListener('change', saveBidi);
+  document.getElementById('firefox-bidi-connect').addEventListener('click', async () => {
+    if (!await saveBidi()) return;
+    bidiStatus.textContent = t('st.bidi.connecting');
+    try {
+      const result = await browser.runtime.sendMessage({ type: 'WB_BIDI_CONNECT' });
+      bidiStatus.textContent = result?.success ? t('st.bidi.connected') : result?.error || t('st.bidi.failed');
+    } catch (error) { bidiStatus.textContent = error.message; }
+  });
+}

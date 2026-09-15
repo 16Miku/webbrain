@@ -1,8 +1,10 @@
+import bidiCopy from './bidi-copy.mjs';
 // Vietnamese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Thu phóng giao diện tiện ích',
   'sp.ui_scale.decrease': 'Thu nhỏ giao diện tiện ích',
   'sp.ui_scale.increase': 'Phóng to giao diện tiện ích',
@@ -142,6 +144,8 @@ export default {
 
   'sp.mode.ask': "Hỏi",
   'sp.mode.ask.title': "Đặt câu hỏi về trang — không thực hiện thay đổi nào",
+  'sp.mode.act_handoff_button': 'Chuyển sang Act và thử lại',
+  'sp.mode.act_handoff_hint': 'Cần chế độ Act để hoàn tất. Nhấp để chuyển chế độ và gửi lại yêu cầu.',
   'sp.mode.act': "hành động",
   'sp.mode.act.title': "Hãy để WebBrain nhấp, nhập và điều hướng cho bạn",
   'sp.mode.act.warning': "Chế độ hành động: Sử dụng có nguy cơ của riêng bạn.",
@@ -583,7 +587,7 @@ export default {
   'st.display.cloud_bridge.status_error': 'Lỗi kết nối: {error}',
   'st.display.cloud_bridge.status_unreachable': 'Không thể truy cập {url}. Hãy khởi động dịch vụ cầu nối cục bộ tương ứng; đang thử lại…',
   'st.display.help_improve.label': "Giúp cải thiện WebBrain",
-  'st.display.help_improve.desc_html': "Cho phép giữ lại và sử dụng các tương tác văn bản và công cụ đủ điều kiện trên WebBrain Compass để đánh giá, cải tiến, tinh chỉnh và đào tạo. Bật theo mặc định. Tắt tính năng này vĩnh viễn sẽ chọn không tham gia cuộc trò chuyện hiện tại; việc bật lại sẽ áp dụng cho cuộc trò chuyện mới tiếp theo. Ảnh chụp màn hình và byte hình ảnh không được giữ lại trong cơ sở dữ liệu cải tiến WebBrain. <u>Các yêu cầu API theo mô hình cục bộ và mang theo của riêng bạn không bao giờ được WebBrain thu thập.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Chính sách bảo mật →</a>",
+  'st.display.help_improve.desc_html': "Cho phép giữ lại và sử dụng các tương tác văn bản và công cụ đủ điều kiện trên WebBrain Compass để đánh giá, cải tiến, tinh chỉnh và đào tạo. Bật theo mặc định. Tắt tính năng này vĩnh viễn sẽ chọn không tham gia cuộc trò chuyện hiện tại; việc bật lại sẽ áp dụng cho cuộc trò chuyện mới tiếp theo. Ảnh chụp màn hình và byte hình ảnh không được giữ lại trong cơ sở dữ liệu cải tiến WebBrain. <u>WebBrain chỉ thu thập yêu cầu mô hình cục bộ và API riêng của bạn từ những nhà cung cấp mà bạn bật “Chia sẻ truy vấn để nghiên cứu”.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Chính sách bảo mật →</a>",
   'st.display.clarify_timeout.label': "Làm rõ thời gian chờ",
   'st.display.clarify_timeout.desc': "Mất bao lâu để chờ phản hồi cho lời nhắc làm rõ trước khi tự động chọn tùy chọn đầu tiên (hoặc hết thời gian chờ nếu không có tùy chọn nào). 0 = Tức thì (luôn tự động chọn). Các giá trị trên 1200 chờ vô thời hạn (Tắt). Mặc định là 60 giây. Không áp dụng cho sự cho phép hoặc xác nhận gửi biểu mẫu.",
   'st.display.clarify_timeout.off': "Tắt",
@@ -601,9 +605,9 @@ export default {
   'st.display.voice_input.label': "Nhập bằng giọng nói",
   'st.display.voice_input.desc': "Để nút micrô trong đầu vào trò chuyện đọc chính tả văn bản thông qua tính năng nhận dạng giọng nói của trình duyệt. Bật theo mặc định trong các trình duyệt hỗ trợ nó.",
   'st.display.always_allow_api_mutations.label': "Luôn cho phép thay đổi qua API",
-  'st.display.always_allow_api_mutations.desc': "Cho phép WebBrain dùng POST, PUT, PATCH và DELETE qua fetch_url hoặc research_url mà không cần /allow-api trong mỗi cuộc trò chuyện. Hướng dẫn ưu tiên giao diện và các bước kiểm tra xác nhận vẫn được áp dụng. Tắt theo mặc định.",
+  'st.display.always_allow_api_mutations.desc': "Cho phép WebBrain dùng POST, PUT, PATCH và DELETE qua fetch_url hoặc research_url mà không cần /allow-api trong mỗi cuộc trò chuyện. Hướng dẫn ưu tiên giao diện và các bước kiểm tra xác nhận vẫn được áp dụng. Bật theo mặc định.",
   'st.display.api_mutation_observer.label': "Người quan sát đột biến API",
-  'st.display.api_mutation_observer.desc': "Quan sát các URL và phương thức yêu cầu XHR/tìm nạp cùng một tab để WebBrain có thể phát hiện các hành động giao diện người dùng lặp lại và đề xuất các mẫu phím tắt API. Tắt theo mặc định; chỉ bật trong khi điều tra hành vi hoặc độ trễ của phím tắt.",
+  'st.display.api_mutation_observer.desc': "Quan sát các URL và phương thức yêu cầu XHR/tìm nạp cùng một tab để WebBrain có thể phát hiện các hành động giao diện người dùng lặp lại và đề xuất các mẫu phím tắt API. Bật theo mặc định.",
   'st.display.webmcp.label': "WebMCP thử nghiệm",
   'st.display.webmcp.desc': "Cho phép WebBrain khám phá và chạy các công cụ có cấu trúc được hiển thị bởi các trang Chrome được hỗ trợ. Việc kích hoạt tính năng này sẽ bổ sung thêm các công cụ và hướng dẫn WebMCP thử nghiệm vào bối cảnh mô hình. Tắt theo mặc định.",
   'st.display.openai_ask_streaming.label': "Truy?n tr?c tuy?n c?u tr? l?i ? ch? ?? Ask",
@@ -636,7 +640,7 @@ export default {
   'st.display.cost_total_limit.desc': "Theo dõi chi tiêu được báo cáo hoặc ước tính trên đám mây/mô hình OpenRouter trên tiện ích mở rộng và dừng các cuộc gọi trả phí tiếp theo ở mức cho phép. Các nhà cung cấp địa phương không được tính.",
   'st.display.cost_reset': "Đặt lại chi tiêu",
   'st.display.strict_secret.label': "Xử lý bí mật nghiêm ngặt",
-  'st.display.strict_secret.desc': "Từ chối trích dẫn thông tin xác thực (mật khẩu, khóa API, mã thông báo, OTP) trong bản tóm tắt hoặc văn bản trợ lý — ngay cả khi bạn yêu cầu chúng một cách rõ ràng. Hữu ích nếu bạn thường xuyên chia sẻ tệp theo dõi hoặc chia sẻ màn hình. Tắt theo mặc định: webbrain chạy trong trình duyệt của riêng bạn, do đó, theo mặc định, tác nhân hiển thị cho bạn các giá trị bạn yêu cầu và chỉ giữ các bản tóm tắt `done` gọn gàng.",
+  'st.display.strict_secret.desc': "Từ chối trích dẫn thông tin xác thực (mật khẩu, khóa API, mã thông báo, OTP) trong bản tóm tắt hoặc văn bản trợ lý — ngay cả khi bạn yêu cầu chúng một cách rõ ràng. Hữu ích nếu bạn thường xuyên chia sẻ tệp theo dõi hoặc chia sẻ màn hình. Bật theo mặc định: webbrain chạy trong trình duyệt của riêng bạn, nhưng để bảo mật, tác nhân từ chối lặp lại thông tin xác thực và giữ các bản tóm tắt `done` gọn gàng.",
   'st.display.allow_local_network.label': "Cho phép đại lý truy cập mạng cục bộ",
   'st.display.allow_local_network.desc': "Cho phép công cụ tìm nạp_url của tác nhân tiếp cận vòng lặp ngược (127.0.0.1, localhost) và các địa chỉ riêng tư/RFC1918 (10.x, 192.168.x, 172.16–31.x). Hữu ích cho các máy chủ phát triển cục bộ, công cụ mạng nội bộ hoặc API tự lưu trữ. Tắt theo mặc định — khi tắt, các trang được chèn lời nhắc không thể hướng tác nhân thăm dò mạng cục bộ của bạn. Địa chỉ siêu dữ liệu đám mây (169.254.169.254) và tên máy chủ *.internal/*.local vẫn bị chặn ngay cả khi bật.",
   'st.display.scheduled_tasks.label': "Nhiệm vụ theo lịch trình",
@@ -726,7 +730,10 @@ export default {
   'st.providers.compat.value.max': "Tối đa",
   'st.providers.compat.value.system': "Hệ thống",
   'st.providers.compat.value.developer': "Nhà phát triển",
-  'st.providers.webbrain_data_use.body': "Đã bao gồm việc sử dụng WebBrain Compass miễn phí hàng ngày. Mặc dù Trợ giúp cải thiện WebBrain được bật theo mặc định, nhưng các cuộc hội thoại Compass đã chọn có thể được giữ lại và sử dụng để đánh giá, cải tiến, tinh chỉnh và đào tạo. Hãy tắt tính năng này trong Chung → Nâng cao để loại trừ các tương tác Compass trong tương lai khỏi những mục đích sử dụng đó. <u>Các yêu cầu API theo mô hình cục bộ và mang theo của riêng bạn không bao giờ được WebBrain thu thập.</u> {privacyLink}. Để sử dụng nhiều hơn, hãy đăng ký tại {subscribeLink}. Quản lý thanh toán tại {accountLink}.",
+  'st.providers.webbrain_data_use.body': "Đã bao gồm việc sử dụng WebBrain Compass miễn phí hàng ngày. Mặc dù Trợ giúp cải thiện WebBrain được bật theo mặc định, nhưng các cuộc hội thoại Compass đã chọn có thể được giữ lại và sử dụng để đánh giá, cải tiến, tinh chỉnh và đào tạo. Hãy tắt tính năng này trong Chung → Nâng cao để loại trừ các tương tác Compass trong tương lai khỏi những mục đích sử dụng đó. <u>WebBrain chỉ thu thập yêu cầu mô hình cục bộ và API riêng của bạn khi bạn bật tùy chọn “Chia sẻ truy vấn để nghiên cứu” của nhà cung cấp này.</u> {privacyLink}. Để sử dụng nhiều hơn, hãy đăng ký tại {subscribeLink}. Quản lý thanh toán tại {accountLink}.",
+  'st.providers.share_research.label': "Chia sẻ truy vấn để nghiên cứu",
+  'st.providers.share_research.hint': "Gửi prompt và phản hồi của nhà cung cấp này tới WebBrain để đánh giá và cải thiện, bao gồm nhà cung cấp và mô hình đã dùng. Hình ảnh và tệp đính kèm nhị phân bị loại bỏ và văn bản bị cắt ngắn trước khi chia sẻ; phần văn bản còn lại được gửi nguyên văn.",
+  'st.providers.share_research.confirm': "Chia sẻ truy vấn của nhà cung cấp này với WebBrain để nghiên cứu?\n\nKhi bật, prompt, phản hồi và tương tác công cụ của bạn với nhà cung cấp này sẽ được gửi tới WebBrain để đánh giá và cải thiện, cùng tên nhà cung cấp và mô hình. Văn bản được gửi nguyên văn sau khi loại ảnh và cắt ngắn nội dung dài, vì vậy hãy tránh chia sẻ dữ liệu cá nhân nhạy cảm. Bạn có thể tắt bất cứ lúc nào để dừng chia sẻ.",
   'st.providers.webbrain_note.body': "Đã bao gồm việc sử dụng WebBrain Compass miễn phí hàng ngày. Yêu cầu đi qua api.webbrain.one; theo mặc định, chúng tôi ghi lại siêu dữ liệu để lấy hạn mức và gỡ lỗi, chứ không phải văn bản nhắc nhở, nội dung trang, ảnh chụp màn hình hoặc phản hồi mô hình. {privacyLink}. Để sử dụng nhiều hơn, hãy đăng ký tại {subscribeLink}. Quản lý thanh toán tại {accountLink}.",
   'st.providers.webbrain_note.privacy_link': "Chính sách bảo mật",
 
@@ -753,6 +760,7 @@ export default {
   'st.skills.item.chars': "Ký tự {count}",
   'st.skills.item.tools': "Dụng cụ: {tools}",
   'st.skills.remove': "Xóa",
+  'st.skills.edit': 'Chỉnh sửa',
   'st.skills.cws.heading': "Thiết lập phát hành Chrome Web Store",
   'st.skills.cws.desc_html': "Các cài đặt này chỉ xuất hiện khi kỹ năng phát hành đóng gói được bật. Tạo OAuth trên đám mây của Google <strong>Ứng dụng web</strong>, kích hoạt API Chrome Web Store và đăng ký <code>http://localhost:1457/auth/callback</code> dưới dạng URI chuyển hướng được ủy quyền. Thông tin xác thực, mã thông báo và byte ZIP vẫn nằm trong bộ nhớ cục bộ của tiện ích mở rộng và không bao giờ được đưa vào lời nhắc hoặc dấu vết mô hình.",
   'st.skills.cws.publisher_id': "Mã nhà xuất bản",
@@ -789,6 +797,7 @@ export default {
 
   'st.provider.field.server_url': "URL máy chủ",
   'st.provider.field.api_base_url': "URL cơ sở API",
+  'st.provider.field.api_format': "Định dạng API",
   'st.provider.field.api_key': "Khóa API",
   'st.provider.field.model': "người mẫu",
   'st.provider.field.model_optional': "Mô hình (tùy chọn)",
@@ -1112,8 +1121,8 @@ export default {
   "st.sync.confirm.reset": "Thay thế bản sao đám mây được mã hóa bằng thiết lập WebBrain hiện tại của thiết bị này?",
   "st.sync.consent.legacy": "Bật đồng bộ hóa được mã hóa? WebBrain sẽ truyền bản sao được mã hóa nối đầu các ký ức của bạn, tự động điền hồ sơ và cài đặt nhà cung cấp khóa API tới WebBrain Compass. Lịch sử trò chuyện và thông tin đăng nhập OAuth không được đồng bộ hóa.",
   "st.sync.consent.denied": "Quyền đồng bộ hóa được mã hóa không được cấp.",
-  'st.providers.webgpu_note.body': '{modelLink} chạy hoàn toàn trong Chrome mà không cần điểm cuối API. Lần tạo đầu tiên tải xuống khoảng 4,85 GB và lưu vào bộ nhớ đệm của trình duyệt. Kiểm tra kết nối xác minh runtime đóng gói và bộ điều hợp phần cứng mà không tải mô hình.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} chạy hoàn toàn trong Chrome mà không cần điểm cuối API. Tải mô hình trong Settings > Providers > WebGPU hoặc Chế độ Apocalypse, rồi dùng nút nuclear trong standalone chat.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

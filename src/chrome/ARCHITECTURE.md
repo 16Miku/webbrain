@@ -1,6 +1,6 @@
 # WebBrain Chrome/Edge Extension — Architecture
 
-> Version 36.0.4 · Manifest V3 · Service Worker background
+> Version 36.5.0 · Manifest V3 · Service Worker background
 
 ## High-Level Overview
 
@@ -103,7 +103,7 @@ src/chrome/
 | Permission | Why |
 |---|---|
 | `debugger` | CDP access — trusted mouse/keyboard, pixel-perfect screenshots, shadow-DOM piercing. The single most important differentiator in the Chrome/Edge build vs Firefox. |
-| `webRequest` | Opt-in, in-memory same-tab XHR/fetch observer for repeated-click API shortcut hints and opaque same-origin replay. Off by default. |
+| `webRequest` | In-memory same-tab XHR/fetch observer for repeated-click API shortcut hints and opaque same-origin replay. On by default; can be disabled in Settings. |
 | `alarms` | Scheduled tasks and scheduled resumes across browser sessions. |
 | `unlimitedStorage` | Optional trace recorder persists agent runs (LLM I/O + screenshots) into IndexedDB. A multi-step run can be 1–10 MB; the default ~10 MB origin cap fills after a few runs. |
 | `offscreen` | Hosts the localhost/PNA fetch proxy, tab recorder, and optional on-device WebGPU model worker. Chrome MV3 service workers cannot provide those document APIs directly. |
@@ -132,8 +132,8 @@ same cost allowance and abort checks as the main loop.
 
 Planner prompts keep optional policy text mechanically gated. The base planner
 prompt includes general repeated-task pacing, but API replay guidance is appended
-only when the tab conversation already has `/allow-api`; unavailable paths should
-not bloat every planner request.
+only when API mutations are authorized by the persistent setting or the tab's
+`/allow-api` override; unavailable paths should not bloat every planner request.
 
 ---
 
@@ -443,11 +443,13 @@ Before any submit-like text `click`, the agent checks a per-tab+URL 45-second wi
 
 When the API mutation observer setting is enabled, `background.js` records the
 last 40 same-tab XHR/fetch requests using `chrome.webRequest.onBeforeRequest`.
-The setting is off by default. When loop detection sees the same `click` /
-`click_ax` repeat, `_detectApiShortcut()` checks whether each click produced the
-same exact URL + method within 3 seconds. If so, the warning suggests
+The setting is on by default and can be disabled in Settings. When loop detection
+sees the same `click` / `click_ax` repeat, `_detectApiShortcut()` checks whether
+each click produced the same exact URL + method within 3 seconds. If so, the warning suggests
 `fetch_url({url, method})` instead of another click. This is advisory only:
-POST/PUT/PATCH/DELETE still depend on the conversation's `/allow-api` state, and
+POST/PUT/PATCH/DELETE still depend on the persistent **Always allow API mutations**
+setting (on by default) or the conversation's `/allow-api` override. If the
+persistent setting cannot be read from storage, it grants no authorization.
 GET/non-network capabilities still follow the normal permission gate.
 
 ### Ambiguous-click CDP enrichment (v3.6.4+)
@@ -834,7 +836,7 @@ Adapters may also opt into narrow runtime enforcement. On Douyin `/chat`, an `ac
 - `debugger` → trusted events on any tab.
 - Cross-origin iframes reachable via content-script injection (extension privilege).
 - Plan before Act can require user approval before any action-mode tool executes.
-- `/allow-api` flag required for API mutations (POST/PUT/PATCH/DELETE via `fetch_url`).
+- The persistent **Always allow API mutations** setting (on by default) or the conversation's `/allow-api` override waives permission prompts for API mutations (POST/PUT/PATCH/DELETE via `fetch_url` / `research_url`).
 - Finance adapters layer extra confirmation guidance.
 - Tool results capped at 8 KB to limit prompt-injection surface.
 - Offscreen proxy only forwards requests the user's own code initiated (provider SDK traffic).

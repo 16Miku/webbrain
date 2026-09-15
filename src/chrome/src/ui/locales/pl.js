@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Polski — translated from en.js. Keys mirror the English canonical file.
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Powiększenie interfejsu rozszerzenia',
   'sp.ui_scale.decrease': 'Pomniejsz interfejs rozszerzenia',
   'sp.ui_scale.increase': 'Powiększ interfejs rozszerzenia',
@@ -117,6 +119,8 @@ export default {
   "sp.input.selection_placeholder": "Zapytaj o zaznaczony tekst...",
   'sp.mode.ask': 'Pytaj',
   'sp.mode.ask.title': 'Zadawaj pytania o stronie — bez wprowadzania zmian',
+  'sp.mode.act_handoff_button': 'Przełącz na Act i spróbuj ponownie',
+  'sp.mode.act_handoff_hint': 'Do ukończenia potrzebny jest tryb Act. Kliknij, aby przełączyć tryb i ponownie wysłać żądanie.',
   'sp.mode.act': 'Działaj',
   'sp.mode.act.title': 'Pozwól WebBrain klikać, pisać i nawigować za Ciebie',
   'sp.mode.act.warning': 'Tryb działania: Używasz na własne ryzyko.',
@@ -450,7 +454,7 @@ export default {
   'st.display.cost_total_limit.desc': 'Śledzi zgłoszone lub szacowane wydatki na modele chmury/OpenRouter w całym rozszerzeniu i zatrzymuje dalsze płatne wywołania po osiągnięciu limitu. Dostawcy lokalni nie są liczeni.',
   'st.display.cost_reset': 'Zresetuj wydatki',
   'st.display.strict_secret.label': 'Ścisłe traktowanie sekretów',
-  'st.display.strict_secret.desc': 'Odmawiaj cytowania poświadczeń (hasła, klucze API, tokeny, kody OTP) w podsumowaniach lub tekście asystenta — nawet gdy o nie wprost poprosisz. Przydatne, jeśli regularnie udostępniasz pliki śladów lub ekran. Domyślnie wyłączone: WebBrain działa w Twojej własnej przeglądarce, więc domyślnie agent pokazuje wartości, o które prosisz, a jedynie utrzymuje porządek w podsumowaniach `done`.',
+  'st.display.strict_secret.desc': 'Odmawiaj cytowania poświadczeń (hasła, klucze API, tokeny, kody OTP) w podsumowaniach lub tekście asystenta — nawet gdy o nie wprost poprosisz. Przydatne, jeśli regularnie udostępniasz pliki śladów lub ekran. Domyślnie włączone: WebBrain działa w Twojej własnej przeglądarce, ale ze względów bezpieczeństwa agent odmawia powtarzania poświadczeń, dbając o porządek w podsumowaniach `done`.',
   'st.display.allow_local_network.label': 'Zezwól agentowi na dostęp do sieci lokalnej',
   'st.display.allow_local_network.desc': 'Pozwala narzędziu fetch_url agenta sięgać do pętli zwrotnej (127.0.0.1, localhost) i adresów prywatnych/RFC1918 (10.x, 192.168.x, 172.16–31.x). Przydatne dla lokalnych serwerów deweloperskich, narzędzi intranetowych lub samodzielnie hostowanych API. Domyślnie wyłączone — gdy wyłączone, strony ze wstrzykniętymi poleceniami nie mogą skierować agenta do sondowania Twojej sieci lokalnej. Adresy metadanych chmury (169.254.169.254) oraz nazwy hostów *.internal/*.local pozostają zablokowane nawet po włączeniu.',
   'st.display.scheduled_tasks.label': 'Zaplanowane zadania',
@@ -540,6 +544,7 @@ export default {
   'st.providers.webbrain_note.privacy_link': 'Polityka prywatności',
   'st.provider.field.server_url': 'Adres URL serwera',
   'st.provider.field.api_base_url': 'Bazowy adres URL API',
+  'st.provider.field.api_format': 'Format API',
   'st.provider.field.api_key': 'Klucz API',
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (opcjonalnie)',
@@ -706,6 +711,7 @@ export default {
   'st.skills.item.chars': '{count} znaków',
   'st.skills.item.tools': 'Narzędzia: {tools}',
   'st.skills.remove': 'Usuń',
+  'st.skills.edit': 'Edytuj',
   'st.skills.preview.rendered': 'Podgląd',
   'st.skills.preview.raw': 'Surowy tekst',
   'st.skills.security_html': '<strong>Uwaga:</strong> niestandardowe umiejętności są przechowywane w postaci zwykłego tekstu w lokalnym magazynie przeglądarki i wysyłane do skonfigurowanego dostawcy LLM jako część promptu systemowego. Zaimportowane narzędzia umiejętności mogą wysyłać swoje zadeklarowane dane wejściowe do zadeklarowanych punktów końcowych HTTPS bez potwierdzenia na każde wywołanie; narzędzia do pobierania nadal pytają przez normalną bramę uprawnień Pobierania przed zapisaniem plików. Importuj tylko narzędzia, którym ufasz; zdalna treść jest kopiowana do magazynu podczas importu.',
@@ -755,9 +761,9 @@ export default {
   'st.display.clarify_timeout.off': 'Wył.',
   'st.display.clarify_timeout.instant': 'Natychmiast',
   'st.display.always_allow_api_mutations.label': "Zawsze zezwalaj na mutacje API",
-  'st.display.always_allow_api_mutations.desc': "Zezwól WebBrain na używanie POST, PUT, PATCH i DELETE przez fetch_url lub research_url bez wymagania /allow-api w każdej rozmowie. Nadal obowiązują wskazówki preferujące interfejs oraz kontrole potwierdzeń. Domyślnie wyłączone.",
+  'st.display.always_allow_api_mutations.desc': "Zezwól WebBrain na używanie POST, PUT, PATCH i DELETE przez fetch_url lub research_url bez wymagania /allow-api w każdej rozmowie. Nadal obowiązują wskazówki preferujące interfejs oraz kontrole potwierdzeń. Domyślnie włączone.",
   'st.display.api_mutation_observer.label': 'Obserwator mutacji API',
-  'st.display.api_mutation_observer.desc': 'Obserwuj URL-e i metody żądań XHR/fetch w tej samej karcie, aby WebBrain mógł wykrywać powtarzające się akcje UI i sugerować wzorce skrótów API. Wyłączone domyślnie; włącz tylko podczas badania zachowania skrótów lub opóźnień.',
+  'st.display.api_mutation_observer.desc': 'Obserwuj URL-e i metody żądań XHR/fetch w tej samej karcie, aby WebBrain mógł wykrywać powtarzające się akcje UI i sugerować wzorce skrótów API. Domyślnie włączone.',
   'st.display.openai_ask_streaming.label': "Strumieniuj odpowiedzi w trybie Ask",
   'st.display.openai_ask_streaming.desc': "Pokazuj odpowiedzi dostawcy w miar? nap?ywania w trybie Ask. Wywo?ania narz?dzi czekaj? na ko?cowe zdarzenie strumienia; Act, Dev, zadania zaplanowane, chmurowe i Continue pozostaj? bez strumieniowania. Domy?lnie w??czone.",
   'st.display.plan_before_act.label': 'Planuj przed działaniem',
@@ -976,8 +982,11 @@ export default {
   "sp.export_traces.partial": "Wyeksportowano łańcuch narzędzi, ale niektórych zdarzeń tury nie udało się odczytać.",
   "sp.export_traces.truncated": "Wyeksportowano łańcuch narzędzi. Starsze tury mogą brakować, jeśli ta rozmowa ma wiele śladów.",
   "st.display.help_improve.label": "Pomóż ulepszać WebBrain",
-  "st.display.help_improve.desc_html": "Zezwól na przechowywanie wybranych interakcji z WebBrain Compass i używanie ich do oceny, ulepszania, dostrajania i trenowania. Domyślnie włączone. Wyłącz, aby przyszłe interakcje Compass nie były używane do tych celów. <u>WebBrain nigdy nie zbiera żądań do modeli lokalnych ani żądań wysyłanych bezpośrednio przy użyciu własnych danych logowania API.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Polityka prywatności →</a>",
-  "st.providers.webbrain_data_use.body": "Darmowe dzienne korzystanie z WebBrain Compass jest wliczone. Gdy opcja „Pomóż ulepszać WebBrain” jest domyślnie włączona, wybrane rozmowy Compass mogą być przechowywane i używane do oceny, ulepszania, dostrajania i trenowania. Wyłącz ją w Ogólne → Zaawansowane, aby wykluczyć przyszłe interakcje Compass z tych zastosowań. <u>WebBrain nigdy nie zbiera żądań do modeli lokalnych ani żądań wysyłanych bezpośrednio przy użyciu własnych danych logowania API.</u> {privacyLink}. Aby korzystać więcej, subskrybuj na {subscribeLink}. Zarządzaj rozliczeniami na {accountLink}.",
+  "st.display.help_improve.desc_html": "Zezwól na przechowywanie wybranych interakcji z WebBrain Compass i używanie ich do oceny, ulepszania, dostrajania i trenowania. Domyślnie włączone. Wyłącz, aby przyszłe interakcje Compass nie były używane do tych celów. <u>WebBrain zbiera żądania modeli lokalnych i własnych API wyłącznie od dostawców, u których włączysz „Udostępniaj zapytania do badań”.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Polityka prywatności →</a>",
+  "st.providers.webbrain_data_use.body": "Darmowe dzienne korzystanie z WebBrain Compass jest wliczone. Gdy opcja „Pomóż ulepszać WebBrain” jest domyślnie włączona, wybrane rozmowy Compass mogą być przechowywane i używane do oceny, ulepszania, dostrajania i trenowania. Wyłącz ją w Ogólne → Zaawansowane, aby wykluczyć przyszłe interakcje Compass z tych zastosowań. <u>WebBrain zbiera żądania modeli lokalnych i własnych API tylko wtedy, gdy włączysz opcję „Udostępniaj zapytania do badań” dla danego dostawcy.</u> {privacyLink}. Aby korzystać więcej, subskrybuj na {subscribeLink}. Zarządzaj rozliczeniami na {accountLink}.",
+  'st.providers.share_research.label': "Udostępniaj zapytania do badań",
+  'st.providers.share_research.hint': "Wysyła prompty i odpowiedzi tego dostawcy do WebBrain w celu oceny i ulepszania, wraz z nazwą dostawcy i modelu. Obrazy i załączniki binarne są usuwane, a tekst jest przycinany przed udostępnieniem; pozostały tekst jest wysyłany bez zmian.",
+  'st.providers.share_research.confirm': "Udostępniać zapytania tego dostawcy WebBrain do badań?\n\nPo włączeniu Twoje prompty, odpowiedzi i interakcje narzędzi z tym dostawcą będą wysyłane do WebBrain w celu oceny i ulepszania, wraz z nazwą dostawcy i modelu. Tekst jest wysyłany bez zmian po usunięciu obrazów i przycięciu długich treści, dlatego unikaj udostępniania wrażliwych danych osobowych. Możesz to w każdej chwili wyłączyć, aby zatrzymać udostępnianie.",
   "sp.slash.export_config": "Eksportuj wszystkie ustawienia, w tym klucze API dostawców",
   "sp.slash.import_config": "Importuj migawkę konfiguracji WebBrain w formacie JSON",
   "sp.slash.import_config_file": "Wybierz plik JSON konfiguracji WebBrain",
@@ -1074,8 +1083,8 @@ export default {
   "st.sync.confirm.reset": "Zastąpić zaszyfrowaną kopię w chmurze bieżącą konfiguracją WebBrain tego urządzenia?",
   "st.sync.consent.legacy": "Włączyć szyfrowaną synchronizację? WebBrain prześle kompleksowo zaszyfrowaną kopię Twoich wspomnień, autouzupełniania profilu i ustawień dostawcy klucza API do WebBrain Compass. Historia czatów i logowania OAuth nie są synchronizowane.",
   "st.sync.consent.denied": "Nie przyznano zezwolenia na szyfrowaną synchronizację.",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

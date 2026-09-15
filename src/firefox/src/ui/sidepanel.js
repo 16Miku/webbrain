@@ -1068,9 +1068,29 @@ let slashCommandSelectedIndex = 0;
 let busySlashNoticeLastShownAt = 0;
 let composerToastTimer = null;
 let retryPayloadSeq = 0;
+const RETRY_PAYLOAD_RETENTION_MS = 30_000;
 const activeChatPayloadsByTab = new Map();
 const retryAttachmentPayloads = new Map();
 const retryAttachmentIdsByTab = new Map();
+const retryPayloadByAssistant = new WeakMap();
+const retryPayloadExpiryTimers = new WeakMap();
+
+function rememberRetryPayloadForAssistant(assistantEl, retryPayload) {
+  if (!assistantEl || !retryPayload) return;
+  const previousTimer = retryPayloadExpiryTimers.get(assistantEl);
+  if (previousTimer != null) clearTimeout(previousTimer);
+  retryPayloadByAssistant.set(assistantEl, {
+    ...retryPayload,
+    attachments: Array.isArray(retryPayload.attachments)
+      ? retryPayload.attachments.slice()
+      : [],
+  });
+  const expiryTimer = setTimeout(() => {
+    retryPayloadByAssistant.delete(assistantEl);
+    retryPayloadExpiryTimers.delete(assistantEl);
+  }, RETRY_PAYLOAD_RETENTION_MS);
+  retryPayloadExpiryTimers.set(assistantEl, expiryTimer);
+}
 
 function setTabProcessing(tabId, processing) {
   const numericTabId = Number(tabId);
@@ -2368,10 +2388,10 @@ function releaseRetryAttachmentPayload(retryId) {
 
 function releaseRetryAttachmentsInTree(root) {
   if (!root) return;
-  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id]')) {
+  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id], .ask-act-handoff-btn[data-retry-id]')) {
     releaseRetryAttachmentPayload(root.dataset.retryId);
   }
-  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id]').forEach((btn) => {
+  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id], .ask-act-handoff-btn[data-retry-id]').forEach((btn) => {
     releaseRetryAttachmentPayload(btn.dataset.retryId);
   });
 }
@@ -4378,7 +4398,7 @@ async function init() {
   const stored = await browser.storage.local.get(['verboseMode', 'alwaysAllowApiMutations']);
   verboseMode = stored.verboseMode || false;
   syncProgressDisplayMode();
-  alwaysAllowApiMutations = stored.alwaysAllowApiMutations === true;
+  alwaysAllowApiMutations = stored.alwaysAllowApiMutations === undefined || stored.alwaysAllowApiMutations === true;
   syncApiMutationsAllowedForCurrentTab();
 
   // Restore prior conversation for this tab (if any) — survives close/reopen.
@@ -4440,7 +4460,8 @@ async function init() {
       syncProgressDisplayMode();
     }
     if (changes.alwaysAllowApiMutations) {
-      alwaysAllowApiMutations = changes.alwaysAllowApiMutations.newValue === true;
+      const value = changes.alwaysAllowApiMutations.newValue;
+      alwaysAllowApiMutations = value === undefined || value === true;
       syncApiMutationsAllowedForCurrentTab();
     }
     if (changes.providers || changes.activeProvider) {
@@ -6468,7 +6489,16 @@ function bindErrorRetryButton(btn) {
 }
 
 function rebindRetryButtons() {
-  document.querySelectorAll('.error-retry-btn, .planner-request-failure-retry-btn').forEach(bindErrorRetryButton);
+  document.querySelectorAll('.error-retry-btn').forEach((btn) => {
+    // Migrate pre-text-style icon-only buttons restored from chat history.
+    if (!btn.textContent?.trim()) {
+      btn.replaceChildren();
+      btn.textContent = t('sp.retry');
+      if (!btn.getAttribute('aria-label')) btn.setAttribute('aria-label', t('sp.retry'));
+      if (!btn.title) btn.title = t('sp.retry');
+    }
+  });
+  document.querySelectorAll('.error-retry-btn, .planner-request-failure-retry-btn, .ask-act-handoff-btn').forEach(bindErrorRetryButton);
 }
 
 function rebindPlanReviewRetryButtons() {
@@ -6495,12 +6525,16 @@ function retryPayloadForRunAssistant(assistantEl) {
   const userEl = userMessageForRunAssistant(assistantEl);
   const displayText = String(userEl ? getComposerHistoryTextFromMessage(userEl) : '').trim();
   if (!displayText) return null;
+  const storedRetryPayload = retryPayloadByAssistant.get(assistantEl);
   const internalPrompt = String(assistantEl?.dataset.retryAgentPrompt || '').trim();
   const text = internalPrompt || displayText;
   const sourceGrounding = normalizeSelectionSourceGrounding(assistantEl?.dataset.retrySourceGrounding) || null;
   const selectionAction = sourceGrounding
     ? normalizeSelectionAction(assistantEl?.dataset.retrySelectionAction)
     : '';
+  const attachments = Array.isArray(storedRetryPayload?.attachments)
+    ? storedRetryPayload.attachments.slice()
+    : [];
   return {
     text,
     displayText,
@@ -6511,8 +6545,11 @@ function retryPayloadForRunAssistant(assistantEl) {
     foreground: assistantEl?.dataset.retryForeground === 'true',
     ...(sourceGrounding ? { sourceGrounding } : {}),
     ...(selectionAction ? { selectionAction } : {}),
-    attachments: [],
-    attachmentCount: Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
+    attachments,
+    attachmentCount: Math.max(
+      Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
+      attachments.length,
+    ),
   };
 }
 
@@ -8564,6 +8601,7 @@ async function sendMessage(extraChatParams = {}) {
     assistantEl.dataset.retrySelectionAction = selectionAction;
     assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
     if (agentPrompt) assistantEl.dataset.retryAgentPrompt = agentPrompt;
+    rememberRetryPayloadForAssistant(assistantEl, retryPayload);
     userEl.dataset.runRequestId = requestId;
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;
@@ -9186,6 +9224,12 @@ function handleAgentUpdateMessage(msg) {
 
     case 'message_info':
       applyMessageCompletion(eventAssistantEl || currentAssistantEl, data);
+      break;
+
+    case 'ask_mode_handoff':
+      if (data?.value === 'act') {
+        renderAskActHandoffButton(eventAssistantEl || currentAssistantEl, msg.tabId ?? currentTabId, msg.requestId);
+      }
       break;
 
     case 'error':
@@ -10918,16 +10962,39 @@ function addErrorRetryButton(msgEl, retryPayload) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'error-retry-btn';
+  btn.textContent = t('sp.retry');
   btn.title = t('sp.retry');
   btn.setAttribute('aria-label', t('sp.retry'));
-  btn.innerHTML = `
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <polyline points="23 4 23 10 17 10"></polyline>
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-    </svg>`;
   if (configureRetryButton(btn, retryPayload)) {
     msgEl.querySelector('.message-content')?.appendChild(btn);
   }
+}
+
+function renderAskActHandoffButton(assistantEl, tabId, requestId) {
+  if (!assistantEl) return;
+  if (assistantEl.dataset.runMode && assistantEl.dataset.runMode !== 'ask') return;
+  const content = assistantEl.querySelector('.message-content');
+  if (!content || content.querySelector('.ask-act-handoff-btn')) return;
+
+  const baseRetryPayload = activeRetryPayloadForRequest(tabId, requestId)
+    || retryPayloadForRunAssistant(assistantEl);
+  if (!baseRetryPayload) return;
+  const retryPayload = {
+    ...baseRetryPayload,
+    mode: 'act',
+    attachments: Array.isArray(baseRetryPayload.attachments)
+      ? baseRetryPayload.attachments.slice()
+      : [],
+  };
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ask-act-handoff-btn';
+  btn.innerHTML = `<span>${escapeHtml(t('sp.mode.act_handoff_button'))}</span>`;
+  btn.title = t('sp.mode.act_handoff_hint');
+  btn.setAttribute('aria-label', btn.title);
+  configureRetryButton(btn, retryPayload);
+  content.appendChild(btn);
+  scrollToBottom();
 }
 
 const MESSAGE_ATTACHMENT_STATES = new Set(['sending', 'included', 'not-sent', 'unknown']);

@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // German (de).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Erweiterungsoberfläche zoomen',
   'sp.ui_scale.decrease': 'Erweiterungsoberfläche verkleinern',
   'sp.ui_scale.increase': 'Erweiterungsoberfläche vergrößern',
@@ -139,6 +141,8 @@ export default {
   "sp.input.selection_placeholder": "Frage zum ausgewählten Text...",
   'sp.mode.ask': 'Fragen',
   'sp.mode.ask.title': 'Fragen zur Seite stellen — keine Änderungen',
+  'sp.mode.act_handoff_button': 'Zu Act wechseln und erneut versuchen',
+  'sp.mode.act_handoff_hint': 'Zum Abschließen wird der Act-Modus benötigt. Klicken Sie, um zu wechseln und Ihre Anfrage erneut zu senden.',
   'sp.mode.act': 'Handeln',
   'sp.mode.act.title': 'Lassen Sie WebBrain für Sie klicken, tippen und navigieren',
   'sp.mode.act.warning': 'Handeln-Modus: Nutzung auf eigenes Risiko.',
@@ -566,7 +570,7 @@ export default {
   'st.providers.webgpu_download.stopping': 'Download wird gestoppt und Dateien werden entfernt…',
   'st.providers.webgpu_download.stop': 'Stoppen und entfernen',
   'st.display.help_improve.label': 'Bei der Verbesserung von WebBrain helfen',
-  'st.display.help_improve.desc_html': 'Ermöglichen Sie, dass geeignete WebBrain Compass-Text- und Tool-Interaktionen gespeichert und für Auswertung, Verbesserung, Feinabstimmung und Training verwendet werden. Standardmäßig aktiviert. Wenn Sie dies deaktivieren, wird die aktuelle Unterhaltung dauerhaft ausgeschlossen; eine erneute Aktivierung gilt ab der nächsten neuen Unterhaltung. Screenshots und Bilddaten werden nicht in der WebBrain-Verbesserungsdatenbank gespeichert. <u>Anfragen an lokale Modelle und mit eigenen APIs werden niemals von WebBrain erfasst.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Datenschutzrichtlinie →</a>',
+  'st.display.help_improve.desc_html': 'Ermöglichen Sie, dass geeignete WebBrain Compass-Text- und Tool-Interaktionen gespeichert und für Auswertung, Verbesserung, Feinabstimmung und Training verwendet werden. Standardmäßig aktiviert. Wenn Sie dies deaktivieren, wird die aktuelle Unterhaltung dauerhaft ausgeschlossen; eine erneute Aktivierung gilt ab der nächsten neuen Unterhaltung. Screenshots und Bilddaten werden nicht in der WebBrain-Verbesserungsdatenbank gespeichert. <u>Anfragen an lokale Modelle und eigene APIs werden von WebBrain nur bei Anbietern erfasst, bei denen Sie „Suchanfragen für Forschung teilen“ aktivieren.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Datenschutzrichtlinie →</a>',
   'st.display.clarify_timeout.label': 'Zeitlimit für Klärungsfragen',
   'st.display.clarify_timeout.desc': 'Wie lange auf eine Antwort auf eine Klärungsfrag gewartet wird, bevor die erste Option automatisch ausgewählt wird.',
   'st.display.clarify_timeout.off': 'Aus',
@@ -584,9 +588,9 @@ export default {
   'st.display.voice_input.label': 'Spracheingabe',
   'st.display.voice_input.desc': 'Ermöglicht dem Mikrofon-Button in der Chat-Eingabe, Text über die Spracherkennung Ihres Browsers zu diktieren.',
   'st.display.always_allow_api_mutations.label': "API-Änderungen immer erlauben",
-  'st.display.always_allow_api_mutations.desc': "WebBrain darf POST, PUT, PATCH und DELETE über fetch_url oder research_url verwenden, ohne dass in jeder Unterhaltung /allow-api erforderlich ist. UI-zuerst-Hinweise und Bestätigungsprüfungen gelten weiterhin. Standardmäßig aus.",
+  'st.display.always_allow_api_mutations.desc': "WebBrain darf POST, PUT, PATCH und DELETE über fetch_url oder research_url verwenden, ohne dass in jeder Unterhaltung /allow-api erforderlich ist. UI-zuerst-Hinweise und Bestätigungsprüfungen gelten weiterhin. Standardmäßig an.",
   'st.display.api_mutation_observer.label': 'API-Mutations-Observer',
-  'st.display.api_mutation_observer.desc': 'Beobachtet XHR/fetch-Anfragen-URLs und Methoden im selben Tab, damit WebBrain wiederkehrende UI-Aktionen erkennen und API-Verknüpfungsmuster vorschlagen kann.',
+  'st.display.api_mutation_observer.desc': 'Beobachtet XHR/fetch-Anfragen-URLs und Methoden im selben Tab, damit WebBrain wiederkehrende UI-Aktionen erkennen und API-Verknüpfungsmuster vorschlagen kann. Standardmäßig an.',
   'st.display.openai_ask_streaming.label': 'Ask-Antworten streamen',
   'st.display.openai_ask_streaming.desc': 'Zeigt Text für unterstützte Anbieter im Ask-Modus während des Empfangs an. Unterbrochene Streams zeigen einen Hinweis und werden einmal ohne Streaming wiederholt. Werkzeugaufrufe warten auf das Stream-Ende; Act-, Dev-, geplante, Cloud- und Continue-Läufe bleiben ohne Streaming. Standardmäßig aktiviert.',
   'st.display.plan_before_act.label': 'Vor dem Handeln planen',
@@ -672,7 +676,10 @@ export default {
   'st.providers.get_api_key': 'API-Schlüssel abrufen',
   'st.providers.webbrain_note.body': 'Kostenlose tägliche WebBrain Compass-Nutzung ist enthalten. Anfragen werden über api.webbrain.one weitergeleitet; standardmäßig protokollieren wir Metadaten für Kontingente und Fehlerbehebung, jedoch keine Prompt-Texte, Seiteninhalte, Screenshots oder Modellantworten. {privacyLink}. Für mehr Nutzung abonnieren Sie unter {subscribeLink}. Verwalten Sie die Abrechnung unter {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Datenschutzrichtlinie',
-  'st.providers.webbrain_data_use.body': 'Kostenlose tägliche WebBrain Compass-Nutzung ist enthalten. Solange „Bei der Verbesserung von WebBrain helfen“ standardmäßig aktiviert ist, können ausgewählte Compass-Unterhaltungen gespeichert und für Auswertung, Verbesserung, Feinabstimmung und Training verwendet werden. Deaktivieren Sie die Option unter „Allgemein → Erweitert“, um zukünftige Compass-Interaktionen davon auszuschließen. <u>Anfragen an lokale Modelle und mit eigenen APIs werden niemals von WebBrain erfasst.</u> {privacyLink}. Für mehr Nutzung abonnieren Sie unter {subscribeLink}. Verwalten Sie die Abrechnung unter {accountLink}.',
+  'st.providers.webbrain_data_use.body': 'Kostenlose tägliche WebBrain Compass-Nutzung ist enthalten. Solange „Bei der Verbesserung von WebBrain helfen“ standardmäßig aktiviert ist, können ausgewählte Compass-Unterhaltungen gespeichert und für Auswertung, Verbesserung, Feinabstimmung und Training verwendet werden. Deaktivieren Sie die Option unter „Allgemein → Erweitert“, um zukünftige Compass-Interaktionen davon auszuschließen. <u>Anfragen an lokale Modelle und eigene APIs werden von WebBrain nur erfasst, wenn Sie die anbieterspezifische Option „Suchanfragen für Forschung teilen“ aktivieren.</u> {privacyLink}. Für mehr Nutzung abonnieren Sie unter {subscribeLink}. Verwalten Sie die Abrechnung unter {accountLink}.',
+  'st.providers.share_research.label': "Suchanfragen für Forschung teilen",
+  'st.providers.share_research.hint': "Sendet Prompts und Antworten dieses Anbieters zur Auswertung und Verbesserung an WebBrain, einschließlich des verwendeten Anbieters und Modells. Bilder und binäre Anhänge werden entfernt und Texte gekürzt; der übrige Text wird unverändert gesendet.",
+  'st.providers.share_research.confirm': "Suchanfragen dieses Anbieters für Forschung mit WebBrain teilen?\n\nWenn aktiviert, werden Ihre Prompts, Antworten und Tool-Interaktionen mit diesem Anbieter zusammen mit Anbieter- und Modellname zur Auswertung und Verbesserung an WebBrain gesendet. Texte werden nach dem Entfernen von Bildern und Kürzen langer Inhalte unverändert gesendet – teilen Sie daher keine sensiblen persönlichen Daten. Sie können dies jederzeit deaktivieren, um die weitere Freigabe zu stoppen.",
   'st.providers.ollama_warning.label': 'Ollama-FAQ',
   'st.providers.ollama_warning.title': 'Warum gibt Ollama auf localhost einen 403-Fehler zurück?',
   'st.providers.ollama_warning.body': 'Neuere Ollama-Versionen können Anfragen aus Browser-Erweiterungs-Origins ablehnen...',
@@ -712,6 +719,7 @@ export default {
   'st.providers.compat.value.developer': 'Entwickler',
   'st.provider.field.server_url': 'Server-URL',
   'st.provider.field.api_base_url': 'API-Basis-URL',
+  'st.provider.field.api_format': 'API-Format',
   'st.provider.field.api_key': 'API-Schlüssel',
   'st.provider.field.model': 'Modell',
   'st.provider.field.model_optional': 'Modell (optional)',
@@ -871,6 +879,7 @@ export default {
   'st.skills.item.chars': '{count} Zeichen',
   'st.skills.item.tools': 'Tools: {tools}',
   'st.skills.remove': 'Entfernen',
+  'st.skills.edit': 'Bearbeiten',
   'st.skills.preview.rendered': 'Vorschau',
   'st.skills.preview.raw': 'Roh',
   'st.skills.security_html': '<strong>Hinweis:</strong> Benutzerdefinierte Skills werden als Klartext im Browser-Speicher gespeichert...',
@@ -1064,5 +1073,5 @@ export default {
   "st.sync.confirm.reset": "Die verschlüsselte Cloud-Kopie durch das aktuelle WebBrain-Setup dieses Geräts ersetzen?",
   "st.sync.consent.legacy": "Verschlüsselte Synchronisierung aktivieren? WebBrain überträgt eine Ende-zu-Ende-verschlüsselte Kopie Ihrer Erinnerungen, des automatischen Ausfüllens Ihres Profils und der Einstellungen des API-Schlüsselanbieters an die WebBrain Compass. Chatverlauf und OAuth-Anmeldungen werden nicht synchronisiert.",
   "st.sync.consent.denied": "Die Berechtigung zur verschlüsselten Synchronisierung wurde nicht erteilt.",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
 };

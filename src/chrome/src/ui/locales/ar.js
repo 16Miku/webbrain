@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Arabic (ar).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'تكبير واجهة الإضافة',
   'sp.ui_scale.decrease': 'تصغير واجهة الإضافة',
   'sp.ui_scale.increase': 'تكبير واجهة الإضافة',
@@ -174,6 +176,8 @@ export default {
 
   'sp.mode.ask': 'سؤال',
   'sp.mode.ask.title': 'اطرح أسئلة عن الصفحة — دون إجراء أي تغييرات',
+  'sp.mode.act_handoff_button': 'التبديل إلى التنفيذ وإعادة المحاولة',
+  'sp.mode.act_handoff_hint': 'يتطلب هذا وضع التنفيذ لإكماله. انقر للتبديل وإعادة إرسال طلبك.',
   'sp.mode.act': 'تنفيذ',
   'sp.mode.act.title': 'دع WebBrain ينقر ويكتب ويتنقّل نيابةً عنك',
   'sp.mode.act.warning': 'وضع التنفيذ: استخدمه على مسؤوليتك.',
@@ -331,6 +335,7 @@ export default {
 
   'st.provider.field.server_url': 'عنوان الخادم',
   'st.provider.field.api_base_url': 'عنوان API الأساسي',
+  'st.provider.field.api_format': 'تنسيق API',
   'st.provider.field.api_key': 'مفتاح API',
   'st.provider.field.model': 'النموذج',
   'st.provider.field.model_optional': 'النموذج (اختياري)',
@@ -519,7 +524,7 @@ export default {
   "st.display.download_directory.placeholder": "الإعداد الافتراضي للنظام",
   "st.display.download_directory.error": "استخدم مجلدًا نسبيًا مثل WebBrain أو Work/WebBrain. لا يُسمح بالمسارات المطلقة أو “..”.",
   "st.display.strict_secret.label": "المعالجة الصارمة للأسرار",
-  "st.display.strict_secret.desc": "رفض اقتباس بيانات الاعتماد (كلمات المرور، مفاتيح API، الرموز، رموز OTP) في الملخّصات أو نص المساعد — حتى عندما تطلبها صراحةً. مفيد إذا كنت تشارك ملفات التتبّع أو تشارك شاشتك بانتظام. مُعطّل افتراضيًا: يعمل WebBrain داخل متصفّحك الخاص، لذا يُظهر لك الوكيل افتراضيًا القيم التي تطلبها ويُبقي ملخّصات `done` مرتّبة فقط.",
+  "st.display.strict_secret.desc": "رفض اقتباس بيانات الاعتماد (كلمات المرور، مفاتيح API، الرموز، رموز OTP) في الملخّصات أو نص المساعد — حتى عندما تطلبها صراحةً. مفيد إذا كنت تشارك ملفات التتبّع أو تشارك شاشتك بانتظام. مُفعّل افتراضيًا: يعمل WebBrain داخل متصفّحك الخاص، لكن من باب الحرص الشديد يرفض الوكيل تكرار بيانات الاعتماد، مع إبقاء ملخّصات `done` مرتّبة.",
   "st.display.request_timeout.label": "مهلة طلب LLM",
   "st.display.request_timeout.desc": "الحد الأقصى لانتظار ترويسات الاستجابة ولكل فترة توقف بين أجزاء الاستجابة المتدفقة. الافتراضي: 120 ثانية. زِد المدة للنماذج المحلية البطيئة، خاصة عند تشغيلها على المعالج أو مع سياق كبير.",
   "st.providers.filter.all": "الكل",
@@ -715,6 +720,7 @@ export default {
   'st.skills.item.chars': '{count} حرف',
   'st.skills.item.tools': 'الأدوات: {tools}',
   'st.skills.remove': 'إزالة',
+  'st.skills.edit': 'تعديل',
   'st.skills.preview.rendered': 'معاينة',
   'st.skills.preview.raw': 'خام',
   'st.skills.security_html': '<strong>تنبيه:</strong> يتم تخزين المهارات المخصصة كنص عادي في التخزين المحلي للمتصفح وإرسالها إلى مزود LLM الذي قمت بتكوينه كجزء من الموجه النظامي. يمكن لأدوات المهارات المستوردة إرسال مدخلاتها المعلنة إلى نقاط نهاية HTTPS المعلنة دون تأكيد لكل استدعاء؛ أدوات التنزيل لا تزال تطلب عبر بوابة أذونات التنزيلات العادية قبل حفظ الملفات. استورد فقط الأدوات التي تثق بها؛ يتم نسخ المحتوى البعيد إلى التخزين عند الاستيراد.',
@@ -764,9 +770,9 @@ export default {
   'st.display.clarify_timeout.off': 'إيقاف',
   'st.display.clarify_timeout.instant': 'فوري',
   'st.display.always_allow_api_mutations.label': "السماح دائمًا بتعديلات API",
-  'st.display.always_allow_api_mutations.desc': "اسمح لـ WebBrain باستخدام POST وPUT وPATCH وDELETE عبر fetch_url أو research_url دون الحاجة إلى /allow-api في كل محادثة. تظل إرشادات أولوية واجهة المستخدم وفحوصات التأكيد سارية. معطّل افتراضيًا.",
+  'st.display.always_allow_api_mutations.desc': "اسمح لـ WebBrain باستخدام POST وPUT وPATCH وDELETE عبر fetch_url أو research_url دون الحاجة إلى /allow-api في كل محادثة. تظل إرشادات أولوية واجهة المستخدم وفحوصات التأكيد سارية. مفعّل افتراضيًا.",
   'st.display.api_mutation_observer.label': 'مراقب تحولات API',
-  'st.display.api_mutation_observer.desc': 'مراقبة عناوين URL وطرق طلبات XHR/fetch في نفس التبويب ليتمكن WebBrain من اكتشاف إجراءات الواجهة المتكررة واقتراح أنماط اختصارات API. معطل افتراضياً؛ قم بتفعيله فقط أثناء التحقيق في سلوك الاختصار أو زمن الاستجابة.',
+  'st.display.api_mutation_observer.desc': 'مراقبة عناوين URL وطرق طلبات XHR/fetch في نفس التبويب ليتمكن WebBrain من اكتشاف إجراءات الواجهة المتكررة واقتراح أنماط اختصارات API. مفعّل افتراضيًا.',
   'st.display.openai_ask_streaming.label': "بث استجابات وضع Ask",
   'st.display.openai_ask_streaming.desc': "يعرض النص فور وصوله في وضع Ask لدى المزوّدين المدعومين. تُظهر التدفّقات المنقطعة إشعارًا وتُعاد المحاولة مرة واحدة دون تدفّق، مع بقاء أخطاء المزوّد/واجهة البرمجة (API) ظاهرة. تنتظر استدعاءات الأدوات اكتمال التدفّق؛ بينما تبقى عمليات Act وDev والمجدولة والسحاب وContinue دون تدفّق. مفعّل افتراضيًا.",
   'st.display.plan_before_act.label': 'التخطيط قبل التنفيذ',
@@ -985,8 +991,11 @@ export default {
   "sp.export_traces.partial": "تم تصدير سلسلة الأدوات، لكن تعذّر قراءة بعض أحداث الجولات.",
   "sp.export_traces.truncated": "تم تصدير سلسلة الأدوات. قد تُفقد الجولات الأقدم إذا كان لهذه المحادثة كثير من التتبعات.",
   "st.display.help_improve.label": "المساعدة في تحسين WebBrain",
-  "st.display.help_improve.desc_html": "السماح بالاحتفاظ بتفاعلات محددة مع WebBrain Compass واستخدامها للتقييم والتحسين والضبط الدقيق والتدريب. مفعّل افتراضيًا. عطّله لمنع استخدام تفاعلات Compass المستقبلية لهذه الأغراض. <u>لا يجمع WebBrain أبدًا طلبات النماذج المحلية أو الطلبات المرسلة مباشرة باستخدام بيانات اعتماد API الخاصة بك.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">سياسة الخصوصية →</a>",
-  "st.providers.webbrain_data_use.body": "يتضمن WebBrain Compass استخدامًا يوميًا مجانيًا. عندما تكون «المساعدة في تحسين WebBrain» مفعّلة افتراضيًا، قد يتم الاحتفاظ بمحادثات Compass محددة واستخدامها للتقييم والتحسين والضبط الدقيق والتدريب. عطّلها من عام ← متقدم لاستبعاد تفاعلات Compass المستقبلية من هذه الاستخدامات. <u>لا يجمع WebBrain أبدًا طلبات النماذج المحلية أو الطلبات المرسلة مباشرة باستخدام بيانات اعتماد API الخاصة بك.</u> {privacyLink}. لمزيد من الاستخدام، اشترك عبر {subscribeLink}. أدِر الفوترة عبر {accountLink}.",
+  "st.display.help_improve.desc_html": "السماح بالاحتفاظ بتفاعلات محددة مع WebBrain Compass واستخدامها للتقييم والتحسين والضبط الدقيق والتدريب. مفعّل افتراضيًا. عطّله لمنع استخدام تفاعلات Compass المستقبلية لهذه الأغراض. <u>لا يجمع WebBrain طلبات النماذج المحلية أو طلبات واجهة API الخاصة بك إلا من المورّدين الذين تفعّل لديهم «مشاركة الاستعلامات لأغراض البحث».</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">سياسة الخصوصية →</a>",
+  "st.providers.webbrain_data_use.body": "يتضمن WebBrain Compass استخدامًا يوميًا مجانيًا. عندما تكون «المساعدة في تحسين WebBrain» مفعّلة افتراضيًا، قد يتم الاحتفاظ بمحادثات Compass محددة واستخدامها للتقييم والتحسين والضبط الدقيق والتدريب. عطّلها من عام ← متقدم لاستبعاد تفاعلات Compass المستقبلية من هذه الاستخدامات. <u>لا يجمع WebBrain طلبات النماذج المحلية أو طلبات واجهة API الخاصة بك إلا عند تفعيل خيار «مشاركة الاستعلامات لأغراض البحث» الخاص بهذا المورّد.</u> {privacyLink}. لمزيد من الاستخدام، اشترك عبر {subscribeLink}. أدِر الفوترة عبر {accountLink}.",
+  'st.providers.share_research.label': "مشاركة الاستعلامات لأغراض البحث",
+  'st.providers.share_research.hint': "يرسل المطالبات والردود من هذا المورّد إلى WebBrain للتقييم والتحسين، بما في ذلك المورّد والنموذج المستخدَمين. تُحذف الصور والمرفقات الثنائية ويُقتطع النص قبل المشاركة؛ ويُرسَل النص المتبقي كما هو.",
+  'st.providers.share_research.confirm': "مشاركة استعلامات هذا المورّد مع WebBrain لأغراض البحث؟\n\nعند التفعيل، ستُرسَل مطالباتك وردودك وتفاعلات الأدوات مع هذا المورّد إلى WebBrain للتقييم والتحسين، مع اسم المورّد والنموذج. يُرسَل النص كما هو بعد حذف الصور واقتطاع المحتوى الطويل، لذا تجنّب مشاركة البيانات الشخصية الحساسة. يمكنك إيقاف ذلك في أي وقت لإيقاف المشاركة مستقبلاً.",
   'st.providers.compat.title': 'توافق متقدم للنموذج',
   'st.providers.compat.blurb': 'اترك هذه الخيارات على «تلقائي» ما لم يوثّق النموذج أو نقطة النهاية عقد طلب مختلفًا.',
   'st.providers.compat.preset': 'إعداد مسبق للتوافق',
@@ -1114,8 +1123,8 @@ export default {
   "st.sync.confirm.reset": "هل تريد استبدال النسخة السحابية المشفرة بإعداد WebBrain الحالي لهذا الجهاز؟",
   "st.sync.consent.legacy": "هل تريد تفعيل المزامنة المشفرة؟ سيرسل WebBrain نسخة مشفرة من طرف إلى طرف من ذكرياتك، والملء التلقائي لملفك الشخصي، وإعدادات موفر مفتاح واجهة برمجة التطبيقات (API) إلى WebBrain Compass. لا تتم مزامنة سجل الدردشة وتسجيلات الدخول عبر OAuth.",
   "st.sync.consent.denied": "لم يتم منح إذن المزامنة المشفرة.",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

@@ -374,8 +374,8 @@ The only outbound HTTP requests are:
 7. **Encrypted Cloud Sync calls** to `https://api.webbrain.one/v1/sync` (only after a subscriber explicitly enables sync; vault content is encrypted before upload)
 8. **Slash-driven tab/screen recording** creates no outbound traffic (the .webm is saved to the Downloads folder via `chrome.downloads.download`)
 
-The opt-in `webRequest` API shortcut observer is off by default and does not
-create outbound requests; when enabled, it observes replay metadata for requests
+The `webRequest` API shortcut observer is on by default and does not
+create outbound requests; it observes replay metadata for requests
 the page already made so repeated UI mutations can be diagnosed.
 
 ### Bundled Skills
@@ -468,6 +468,17 @@ in the skill manifest — not browsing history or unrelated chat — and treat
 responses as untrusted unless the manifest says otherwise. Removing or
 disabling a skill stops that data flow. See [Skills](skills.md#bundled-skills)
 for the full packaged catalog.
+
+The opt-in **Phone calls (Phonr)** skill uses ordinary `fetch_url` requests to
+`https://phonr.xyz/v1`. The selected phone number, purpose, language, and optional
+system message go to Phonr; Phonr uses its configured OpenAI and telephone
+provider accounts to conduct the call and retain call history and configured
+recordings. The bearer key is supplied by the user and included in tool arguments,
+which can be present in the configured LLM conversation and enabled traces; this
+skill does not provide a separate credential vault. Returned call details and
+transcripts enter the conversation as untrusted data. The skill ships without a
+key and does not send unrelated browsing content. POST requests keep WebBrain's
+existing API-mutation permission gate; merely enabling the skill does not dial.
 
 The packaged Wikipedia skill does not silently create an offline corpus.
 Apocalypse Mode is disabled by default and requires a separate opt-in under
@@ -602,7 +613,7 @@ CDP capture → JPEG/PNG data URL
 | User memory auto-learn | Controls whether post-turn extractor calls run |
 | Site adapters toggle | Controls whether site-specific guidance is prepended |
 | Research escalation | Off by default; when enabled, permits per-prompt consent requests for the visible ChatGPT helper flow |
-| `/allow-api` | Controls whether the agent can use API mutations |
+| Always allow API mutations / `/allow-api` | The persistent setting (on by default) or a per-conversation override waives permission prompts for write-method network egress |
 | CapSolver toggle | Controls whether CAPTCHA data is sent to a third-party solver |
 
 ---

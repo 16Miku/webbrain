@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Ukrainian (uk).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Масштаб інтерфейсу розширення',
   'sp.ui_scale.decrease': 'Зменшити інтерфейс розширення',
   'sp.ui_scale.increase': 'Збільшити інтерфейс розширення',
@@ -174,6 +176,8 @@ export default {
 
   'sp.mode.ask': 'Запитати',
   'sp.mode.ask.title': 'Ставити запитання про сторінку — без жодних змін',
+  'sp.mode.act_handoff_button': 'Перейти в режим дії та повторити',
+  'sp.mode.act_handoff_hint': 'Для завершення потрібен режим дії. Натисніть, щоб перемкнутися й повторно надіслати запит.',
   'sp.mode.act': 'Діяти',
   'sp.mode.act.title': 'WebBrain натискає, друкує і переходить за вас',
   'sp.mode.act.warning': 'Режим дії: Використовуйте на власний ризик.',
@@ -323,6 +327,7 @@ export default {
 
   'st.provider.field.server_url': 'URL сервера',
   'st.provider.field.api_base_url': 'Базовий URL API',
+  'st.provider.field.api_format': 'Формат API',
   'st.provider.field.api_key': 'API-ключ',
   'st.provider.field.model': 'Модель',
   'st.provider.field.model_optional': 'Модель (необов\'язково)',
@@ -503,7 +508,7 @@ export default {
   "st.display.download_directory.placeholder": "Системне значення",
   "st.display.download_directory.error": "Використовуйте відносну папку, наприклад WebBrain або Work/WebBrain. Абсолютні шляхи та «..» заборонені.",
   "st.display.strict_secret.label": "Суворе поводження з секретами",
-  "st.display.strict_secret.desc": "Відмовлятися наводити облікові дані (паролі, API-ключі, токени, OTP) у підсумках чи тексті асистента — навіть коли ви явно про них просите. Корисно, якщо ви регулярно ділитеся файлами трас або демонструєте екран. Вимкнено за замовчуванням: webbrain працює у вашому власному браузері, тож за замовчуванням агент показує вам значення, про які ви просите, і лише тримає підсумки `done` охайними.",
+  "st.display.strict_secret.desc": "Відмовлятися наводити облікові дані (паролі, API-ключі, токени, OTP) у підсумках чи тексті асистента — навіть коли ви явно про них просите. Корисно, якщо ви регулярно ділитеся файлами трас або демонструєте екран. Увімкнено за замовчуванням: webbrain працює у вашому власному браузері, але з міркувань безпеки агент відмовляється повторювати облікові дані та тримає підсумки `done` охайними.",
   "st.display.request_timeout.label": "Тайм-аут запиту до LLM",
   "st.display.request_timeout.desc": "Максимальний час очікування заголовків відповіді та кожної паузи між частинами потокової відповіді. За замовчуванням: 120 с. Збільште його для повільних локальних моделей, особливо на CPU або з великим контекстом.",
   "st.providers.filter.all": "Усі",
@@ -699,6 +704,7 @@ export default {
   'st.skills.item.chars': '{count} символів',
   'st.skills.item.tools': 'Інструменти: {tools}',
   'st.skills.remove': 'Видалити',
+  'st.skills.edit': 'Редагувати',
   'st.skills.preview.rendered': 'Перегляд',
   'st.skills.preview.raw': 'Оригінал',
   'st.skills.security_html': '<strong>Увага:</strong> власні навички зберігаються у відкритому тексті в локальному сховищі браузера та надсилаються вашому налаштованому LLM-провайдеру як частина системного промпту. Імпортовані інструменти навичок можуть надсилати свої оголошені вхідні дані на свої оголошені HTTPS-ендпоінти без підтвердження кожного виклику; інструменти завантаження все одно запитують через звичайний шлюз дозволів Завантажень перед збереженням файлів. Імпортуйте лише ті інструменти, яким ви довіряєте; віддалений вміст копіюється в сховище під час імпорту.',
@@ -739,9 +745,9 @@ export default {
   'st.display.clarify_timeout.off': 'Вимк.',
   'st.display.clarify_timeout.instant': 'Миттєво',
   'st.display.always_allow_api_mutations.label': "Завжди дозволяти зміни через API",
-  'st.display.always_allow_api_mutations.desc': "Дозволити WebBrain використовувати POST, PUT, PATCH і DELETE через fetch_url або research_url без команди /allow-api в кожній розмові. Правило пріоритету інтерфейсу та перевірки підтвердження залишаються чинними. Типово вимкнено.",
+  'st.display.always_allow_api_mutations.desc': "Дозволити WebBrain використовувати POST, PUT, PATCH і DELETE через fetch_url або research_url без команди /allow-api в кожній розмові. Правило пріоритету інтерфейсу та перевірки підтвердження залишаються чинними. Типово ввімкнено.",
   'st.display.api_mutation_observer.label': 'Спостерігач мутацій API',
-  'st.display.api_mutation_observer.desc': 'Спостерігайте за URL-адресами та методами запитів XHR/fetch на тій самій вкладці, щоб WebBrain міг виявляти повторювані дії інтерфейсу та пропонувати шаблони API-скорочень. Вимкнено за замовчуванням; вмикайте лише під час дослідження поведінки скорочень або затримки.',
+  'st.display.api_mutation_observer.desc': 'Спостерігайте за URL-адресами та методами запитів XHR/fetch на тій самій вкладці, щоб WebBrain міг виявляти повторювані дії інтерфейсу та пропонувати шаблони API-скорочень. Типово ввімкнено.',
   'st.display.openai_ask_streaming.label': "Потокове відображення відповідей у режимі Ask",
   'st.display.openai_ask_streaming.desc': "Показує текст у міру надходження в режимі Ask для підтримуваних провайдерів. Перервані потоки показують сповіщення та один раз повторюються без потокової передачі; помилки провайдера/API все одно відображаються. Виклики інструментів чекають на завершення потоку; запуски Act, Dev, за розкладом, у хмарі та Continue залишаються без потокової передачі. Увімкнено за замовчуванням.",
   'st.display.plan_before_act.label': 'Планувати перед дією',
@@ -966,8 +972,11 @@ export default {
   "sp.export_traces.partial": "Ланцюг інструментів експортовано, але деякі події ходу не вдалося прочитати.",
   "sp.export_traces.truncated": "Ланцюг інструментів експортовано. Старі ходи можуть бути відсутні, якщо в розмові багато трасувань.",
   "st.display.help_improve.label": "Допомагати вдосконалювати WebBrain",
-  "st.display.help_improve.desc_html": "Дозволити зберігати вибрані взаємодії з WebBrain Compass і використовувати їх для оцінювання, вдосконалення, тонкого налаштування та навчання. Увімкнено за замовчуванням. Вимкніть, щоб майбутні взаємодії з Compass не використовувалися для цих цілей. <u>WebBrain ніколи не збирає запити до локальних моделей і запити, надіслані з вашими власними обліковими даними API.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Політика конфіденційності →</a>",
-  "st.providers.webbrain_data_use.body": "Безкоштовне щоденне використання WebBrain Compass включено. Поки параметр «Допомагати вдосконалювати WebBrain» увімкнено за замовчуванням, вибрані розмови Compass можуть зберігатися й використовуватися для оцінювання, вдосконалення, тонкого налаштування та навчання. Вимкніть його в розділі «Загальні → Розширені», щоб виключити майбутні взаємодії з Compass із такого використання. <u>WebBrain ніколи не збирає запити до локальних моделей і запити, надіслані з вашими власними обліковими даними API.</u> {privacyLink}. Для більшого обсягу оформіть підписку на {subscribeLink}. Керуйте оплатою на {accountLink}.",
+  "st.display.help_improve.desc_html": "Дозволити зберігати вибрані взаємодії з WebBrain Compass і використовувати їх для оцінювання, вдосконалення, тонкого налаштування та навчання. Увімкнено за замовчуванням. Вимкніть, щоб майбутні взаємодії з Compass не використовувалися для цих цілей. <u>WebBrain збирає запити до локальних моделей і ваших власних API лише від провайдерів, у яких ви ввімкнули «Ділитися запитами для досліджень».</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Політика конфіденційності →</a>",
+  "st.providers.webbrain_data_use.body": "Безкоштовне щоденне використання WebBrain Compass включено. Поки параметр «Допомагати вдосконалювати WebBrain» увімкнено за замовчуванням, вибрані розмови Compass можуть зберігатися й використовуватися для оцінювання, вдосконалення, тонкого налаштування та навчання. Вимкніть його в розділі «Загальні → Розширені», щоб виключити майбутні взаємодії з Compass із такого використання. <u>WebBrain збирає запити до локальних моделей і ваших власних API, лише коли ви вмикаєте опцію «Ділитися запитами для досліджень» для цього провайдера.</u> {privacyLink}. Для більшого обсягу оформіть підписку на {subscribeLink}. Керуйте оплатою на {accountLink}.",
+  'st.providers.share_research.label': "Ділитися запитами для досліджень",
+  'st.providers.share_research.hint': "Надсилає запити й відповіді цього провайдера до WebBrain для оцінювання та вдосконалення, включно з відомостями про провайдера та модель. Зображення й бінарні вкладення вилучаються, а текст скорочується перед надсиланням; решта тексту надсилається без змін.",
+  'st.providers.share_research.confirm': "Ділитися запитами цього провайдера з WebBrain для досліджень?\n\nЯкщо ввімкнено, ваші запити, відповіді та взаємодії з інструментами цього провайдера надсилатимуться до WebBrain для оцінювання та вдосконалення разом із назвою провайдера й моделі. Текст надсилається без змін після вилучення зображень і скорочення довгого вмісту, тому не передавайте чутливі персональні дані. Ви можете вимкнути це будь-коли, щоб припинити надсилання.",
   'st.providers.compat.title': 'Розширена сумісність моделі',
   'st.providers.compat.blurb': 'Залишайте «Авто», якщо модель або endpoint не описують інший формат запиту.',
   'st.providers.compat.preset': 'Пресет сумісності',
@@ -1071,5 +1080,5 @@ export default {
   "st.sync.confirm.reset": "Замінити зашифровану хмарну копію на поточні налаштування WebBrain цього пристрою?",
   "st.sync.consent.legacy": "Увімкнути зашифровану синхронізацію? WebBrain передасть наскрізну зашифровану копію ваших спогадів, автозаповнення профілю та налаштувань постачальника ключа API до WebBrain Compass. Історія чату та вхід OAuth не синхронізуються.",
   "st.sync.consent.denied": "Дозвіл на зашифровану синхронізацію не надано.",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
 };

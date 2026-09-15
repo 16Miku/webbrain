@@ -1,8 +1,10 @@
+import bidiCopy from './bidi-copy.mjs';
 // Portuguese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Zoom da interface da extensão',
   'sp.ui_scale.decrease': 'Reduzir o zoom da interface',
   'sp.ui_scale.increase': 'Aumentar o zoom da interface',
@@ -142,6 +144,8 @@ export default {
 
   'sp.mode.ask': "Pergunte",
   'sp.mode.ask.title': "Faça perguntas sobre a página – nenhuma alteração feita",
+  'sp.mode.act_handoff_button': 'Mudar para Agir e tentar novamente',
+  'sp.mode.act_handoff_hint': 'Para concluir, é necessário o modo Agir. Clique para mudar de modo e enviar novamente o pedido.',
   'sp.mode.act': "Agir",
   'sp.mode.act.title': "Deixe WebBrain clicar, digitar e navegar para você",
   'sp.mode.act.warning': "Modo de ação: use por sua própria conta e risco.",
@@ -583,7 +587,7 @@ export default {
   'st.display.cloud_bridge.status_error': 'Erro de conexão: {error}',
   'st.display.cloud_bridge.status_unreachable': 'Não foi possível acessar {url}. Inicie o serviço de ponte local correspondente; tentando novamente…',
   'st.display.help_improve.label': "Ajude a melhorar WebBrain",
-  'st.display.help_improve.desc_html': "Permitir que textos qualificados do WebBrain Compass e interações de ferramentas sejam retidos e usados para avaliação, melhoria, ajuste fino e treinamento. Ativado por padrão. Desativar isso permanentemente desativa a conversa atual; ativá-lo novamente se aplica à próxima nova conversa. Capturas de tela e bytes de imagem não são retidos no banco de dados de melhorias WebBrain. <u>Solicitações de API de modelo local e de criação própria nunca são coletadas por WebBrain.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Política de privacidade →</a>",
+  'st.display.help_improve.desc_html': "Permitir que textos qualificados do WebBrain Compass e interações de ferramentas sejam retidos e usados para avaliação, melhoria, ajuste fino e treinamento. Ativado por padrão. Desativar isso permanentemente desativa a conversa atual; ativá-lo novamente se aplica à próxima nova conversa. Capturas de tela e bytes de imagem não são retidos no banco de dados de melhorias WebBrain. <u>A WebBrain só coleta solicitações de modelos locais e de suas próprias APIs dos provedores em que você ativar “Compartilhar consultas para pesquisa”.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Política de privacidade →</a>",
   'st.display.clarify_timeout.label': "Esclarecer o tempo limite",
   'st.display.clarify_timeout.desc': "Quanto tempo esperar por uma resposta a um prompt de esclarecimento antes de selecionar automaticamente a primeira opção (ou expirar se não houver opções). 0 = Instantâneo (sempre seleção automática). Valores acima de 1200 aguardam indefinidamente (Desligado). Padrão dos anos 60. Não se aplica a permissões ou confirmações de envio de formulário.",
   'st.display.clarify_timeout.off': "Desligado",
@@ -601,9 +605,9 @@ export default {
   'st.display.voice_input.label': "Entrada de voz",
   'st.display.voice_input.desc': "Deixe o botão do microfone na entrada do bate-papo ditar o texto por meio do reconhecimento de fala do seu navegador. Ativado por padrão em navegadores compatíveis.",
   'st.display.always_allow_api_mutations.label': "Sempre permitir mutações de API",
-  'st.display.always_allow_api_mutations.desc': "Permita que o WebBrain use POST, PUT, PATCH e DELETE por fetch_url ou research_url sem exigir /allow-api em cada conversa. As orientações de priorizar a interface e as verificações de confirmação continuam válidas. Desativado por padrão.",
+  'st.display.always_allow_api_mutations.desc': "Permita que o WebBrain use POST, PUT, PATCH e DELETE por fetch_url ou research_url sem exigir /allow-api em cada conversa. As orientações de priorizar a interface e as verificações de confirmação continuam válidas. Ativado por padrão.",
   'st.display.api_mutation_observer.label': "Observador de mutação de API",
-  'st.display.api_mutation_observer.desc': "Observe URLs e métodos de solicitação de busca/XHR na mesma guia para que WebBrain possa detectar ações repetidas da interface do usuário e sugerir padrões de atalho de API. Desativado por padrão; habilite apenas ao investigar o comportamento ou a latência do atalho.",
+  'st.display.api_mutation_observer.desc': "Observe URLs e métodos de solicitação de busca/XHR na mesma guia para que WebBrain possa detectar ações repetidas da interface do usuário e sugerir padrões de atalho de API. Ativado por padrão.",
   'st.display.webmcp.label': "WebMCP Experimental",
   'st.display.webmcp.desc': "Permitir que WebBrain descubra e execute ferramentas estruturadas expostas pelas páginas Chrome suportadas. Habilitar isso adiciona ferramentas experimentais do WebMCP e orientação ao contexto do modelo. Desativado por padrão.",
   'st.display.openai_ask_streaming.label': "Transmitir respostas no modo Ask",
@@ -636,7 +640,7 @@ export default {
   'st.display.cost_total_limit.desc': "Rastreia os gastos relatados ou estimados do modelo de nuvem/OpenRouter em todo o ramal e interrompe outras chamadas pagas no limite. Os provedores locais não são contabilizados.",
   'st.display.cost_reset': "Redefinir gastos",
   'st.display.strict_secret.label': "Tratamento estrito de segredos",
-  'st.display.strict_secret.desc': "Recuse-se a citar credenciais (senhas, chaves de API, tokens, OTPs) em resumos ou textos de assistente – mesmo quando você as solicitar explicitamente. Útil se você compartilha regularmente arquivos de rastreamento ou compartilhamento de tela. Desativado por padrão: o webbrain é executado em seu próprio navegador, portanto, por padrão, o agente mostra os valores solicitados e apenas mantém os resumos `done` organizados.",
+  'st.display.strict_secret.desc': "Recuse-se a citar credenciais (senhas, chaves de API, tokens, OTPs) em resumos ou textos de assistente – mesmo quando você as solicitar explicitamente. Útil se você compartilha regularmente arquivos de rastreamento ou compartilhamento de tela. Ativado por padrão: o webbrain é executado em seu próprio navegador, mas por precaução o agente recusa-se a repetir credenciais e mantém os resumos `done` organizados.",
   'st.display.allow_local_network.label': "Permitir que o agente acesse a rede local",
   'st.display.allow_local_network.desc': "Permite que a ferramenta fetch_url do agente alcance loopback (127.0.0.1, localhost) e endereços privados/RFC1918 (10.x, 192.168.x, 172.16–31.x). Útil para servidores de desenvolvimento locais, ferramentas de intranet ou APIs auto-hospedadas. Desativado por padrão — quando desativado, as páginas injetadas por prompt não podem orientar o agente a investigar sua rede local. Endereços de metadados de nuvem (169.254.169.254) e nomes de host *.internal/*.local permanecem bloqueados mesmo quando ativados.",
   'st.display.scheduled_tasks.label': "Tarefas agendadas",
@@ -726,7 +730,10 @@ export default {
   'st.providers.compat.value.max': "Máx.",
   'st.providers.compat.value.system': "Sistema",
   'st.providers.compat.value.developer': "Desenvolvedor",
-  'st.providers.webbrain_data_use.body': "O uso diário gratuito do WebBrain Compass está incluído. Embora Ajudar a melhorar WebBrain esteja ativado por padrão, conversas selecionadas no Compass podem ser retidas e usadas para avaliação, melhoria, ajuste fino e treinamento. Desative-o em Geral → Avançado para excluir futuras interações no Compass desses usos. <u>Solicitações de API de modelo local e de criação própria nunca são coletadas por WebBrain.</u> {privacyLink}. Para mais uso, assine em {subscribeLink}. Gerencie o faturamento em {accountLink}.",
+  'st.providers.webbrain_data_use.body': "O uso diário gratuito do WebBrain Compass está incluído. Embora Ajudar a melhorar WebBrain esteja ativado por padrão, conversas selecionadas no Compass podem ser retidas e usadas para avaliação, melhoria, ajuste fino e treinamento. Desative-o em Geral → Avançado para excluir futuras interações no Compass desses usos. <u>A WebBrain só coleta solicitações de modelos locais e de suas próprias APIs quando você ativa a opção “Compartilhar consultas para pesquisa” desse provedor.</u> {privacyLink}. Para mais uso, assine em {subscribeLink}. Gerencie o faturamento em {accountLink}.",
+  'st.providers.share_research.label': "Compartilhar consultas para pesquisa",
+  'st.providers.share_research.hint': "Envia os prompts e respostas deste provedor à WebBrain para avaliação e melhoria, incluindo o provedor e o modelo usados. Imagens e anexos binários são removidos e o texto é truncado antes do compartilhamento; o restante do texto é enviado como está.",
+  'st.providers.share_research.confirm': "Compartilhar as consultas deste provedor com a WebBrain para pesquisa?\n\nQuando ativado, seus prompts, respostas e interações de ferramentas com este provedor serão enviados à WebBrain para avaliação e melhoria, junto com o nome do provedor e do modelo. O texto é enviado como está após remover imagens e truncar conteúdos longos, portanto evite compartilhar dados pessoais sensíveis. Você pode desativar a qualquer momento para interromper o compartilhamento.",
   'st.providers.webbrain_note.body': "O uso diário gratuito do WebBrain Compass está incluído. As solicitações passam por api.webbrain.one; por padrão, registramos metadados para cota e depuração, e não texto de prompt, conteúdo de página, capturas de tela ou respostas de modelo. {privacyLink}. Para mais uso, assine em {subscribeLink}. Gerencie o faturamento em {accountLink}.",
   'st.providers.webbrain_note.privacy_link': "Política de privacidade",
 
@@ -753,6 +760,7 @@ export default {
   'st.skills.item.chars': "Caracteres {count}",
   'st.skills.item.tools': "Ferramentas: {tools}",
   'st.skills.remove': "Remover",
+  'st.skills.edit': 'Editar',
   'st.skills.cws.heading': "Configuração de versão Chrome Web Store",
   'st.skills.cws.desc_html': "Essas configurações aparecem apenas enquanto a habilidade de liberação do pacote está habilitada. Crie um Google Cloud OAuth <strong>Aplicativo web</strong>, ative a API Chrome Web Store e registre-se <code>http://localhost:1457/auth/callback</code> como um URI de redirecionamento autorizado. Credenciais, tokens e bytes ZIP permanecem no armazenamento local de extensão e nunca são incluídos em prompts ou rastreamentos de modelo.",
   'st.skills.cws.publisher_id': "ID do editor",
@@ -789,6 +797,7 @@ export default {
 
   'st.provider.field.server_url': "URL do servidor",
   'st.provider.field.api_base_url': "URL base da API",
+  'st.provider.field.api_format': "Formato da API",
   'st.provider.field.api_key': "Chave de API",
   'st.provider.field.model': "Modelo",
   'st.provider.field.model_optional': "Modelo (opcional)",
@@ -1112,8 +1121,8 @@ export default {
   "st.sync.confirm.reset": "Substituir a cópia criptografada na nuvem pela configuração atual do WebBrain deste dispositivo?",
   "st.sync.consent.legacy": "Ativar a sincronização criptografada? O WebBrain transmitirá uma cópia criptografada de ponta a ponta de suas memórias, preenchimento automático de perfil e configurações do provedor de chave API para o WebBrain Compass. O histórico de bate-papo e os logins do OAuth não são sincronizados.",
   "st.sync.consent.denied": "A permissão de sincronização criptografada não foi concedida.",
-  'st.providers.webgpu_note.body': '{modelLink} é executado inteiramente no Chrome, sem endpoint de API. A primeira geração baixa cerca de 4,85 GB e armazena o modelo no cache do navegador. Testar conexão verifica o runtime incluído e o adaptador de hardware sem baixar o modelo.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} é executado inteiramente no Chrome, sem endpoint de API. Baixe-o em Settings > Providers > WebGPU ou no Modo Apocalipse e use o controle nuclear no standalone chat.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

@@ -569,6 +569,31 @@
     return null;
   }
 
+  function _someComposedDescendant(root, selector, predicate, limit = 2000) {
+    const pending = [root];
+    const seen = new Set();
+    let visited = 0;
+    while (pending.length && visited < limit) {
+      const scope = pending.shift();
+      const descendants = scope?.querySelectorAll?.('*') || [];
+      const elements = scope?.nodeType === Node.ELEMENT_NODE
+        ? [scope, ...descendants]
+        : descendants;
+      for (const element of elements) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        visited += 1;
+        if (element.matches?.(selector) && predicate(element)) return true;
+        if (element.shadowRoot) pending.push(element.shadowRoot);
+        if (element.tagName === 'SLOT') {
+          pending.push(...(element.assignedElements?.({ flatten: true }) || []));
+        }
+        if (visited >= limit) break;
+      }
+    }
+    return false;
+  }
+
   function isVisiblyInteractive(el) {
     if (!el || el.tagName === 'BODY' || el.tagName === 'HTML') return false;
     if (_hasComposedClosest(el, '[aria-hidden="true"], [inert]')) return false;
@@ -2012,7 +2037,9 @@
     // Do NOT scrollIntoView on SELECT elements (hidden selects in modals cause scroll jumps)
     if (el.tagName !== 'SELECT') {
       if (actionDeadlineExpired()) return deadlineFailure();
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // BiDi validates the target in the same turn. A smooth scroll leaves a
+      // transient offscreen geometry window where that validation must fail.
+      el.scrollIntoView({ behavior: params._bidiPrepare ? 'instant' : 'smooth', block: 'center' });
     }
 
     // Occlusion hit-test: for text/selector/index clicks, verify that the
@@ -2072,6 +2099,12 @@
     if (actionDeadlineExpired()) return deadlineFailure();
     const clickedRect = rememberInteractionPoint(el, 'click');
     if (actionDeadlineExpired()) return deadlineFailure();
+    if (params._bidiPrepare) {
+      const coordinateClick = !params.text && !params.selector && params.index == null && Number.isFinite(params.x) && Number.isFinite(params.y);
+      return { ...prepareBidiTarget(el, params._bidiPrepare),
+        ...(coordinateClick ? { point: { x: Math.round(params.x), y: Math.round(params.y) } } : {}),
+        _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId };
+    }
     dispatched = true;
     const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
     if (filePickerGuard.blocked) {
@@ -2367,6 +2400,8 @@
     const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
     const routeHrefBeforeType = location.href;
 
+    if (params._bidiPrepare && !(el instanceof HTMLSelectElement)) return prepareBidiTarget(el, params._bidiPrepare);
+
     // Rich editors must retain their native node structure and editing events.
     if (el.isContentEditable) {
       return _insertContentEditableText(el, typedText, params.clear === true, actionDeadlineExpired);
@@ -2635,6 +2670,8 @@
     const target = (focusedTarget && focusedTarget !== document.body && focusedTarget !== document.documentElement)
       ? focusedTarget
       : document;
+
+    if (params._bidiPrepare) return prepareBidiTarget(focusedTarget || document.body, params._bidiPrepare);
 
     const moveTabFocus = () => {
       const focusables = Array.from(document.querySelectorAll(
@@ -4034,6 +4071,17 @@
   // conversation before a message can be sent. It deliberately ignores input
   // values and ordinary page text: a searched recipient name is not proof that
   // the corresponding conversation is active.
+  function prepareBidiTarget(el, token) {
+    if (!/^[a-f0-9-]{36}$/.test(token || '') || !el?.isConnected) {
+      return { success: false, dispatched: false, noDispatch: true, error: 'Invalid trusted-input target' };
+    }
+    el.setAttribute('data-webbrain-bidi', token);
+    setTimeout(() => { if (el.getAttribute('data-webbrain-bidi') === token) el.removeAttribute('data-webbrain-bidi'); }, 10000);
+    const rect = el.getBoundingClientRect();
+    return { bidiPrepared: true, success: false, dispatched: false, noDispatch: true, url: location.href,
+      fieldMeta: _fieldMeta(el), rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height } };
+  }
+
   function _probeMessageRecipientGuard(params = {}) {
     try {
       const tool = String(params.tool || '');
@@ -4328,30 +4376,93 @@
           && railRect.right <= composerRect.left + 64;
       };
 
-      const verifiedLinkedInNavigation = (clicked) => {
-        if (params.adapterName !== 'linkedin' || !clicked) return false;
-        const link = clicked.closest?.('a[href]');
-        if (!link || !visible(link) || !link.closest?.('nav,[role="navigation"]')) return false;
+      const classifyLinkedInNavigation = (clicked, blockingModal = null) => {
+        if (params.adapterName !== 'linkedin' || !clicked) return 'none';
+        const link = _composedClosestElement(clicked, 'a[href]');
+        if (!link || !visible(link)) return 'none';
         // A navigation-looking descendant of a composer/action is not a
         // navigation escape hatch. Keep actual sends and modal controls on
         // the existing recipient-verification path.
-        if (clicked.closest?.('button,[role="button"],input,select,textarea,[contenteditable]:not([contenteditable="false"]),[onclick],[data-action]')
-            || link.closest?.('form,dialog,[role="dialog"],[role="alertdialog"]')
+        if (_composedClosestElement(clicked, 'button,[role="button"],input,select,textarea,[contenteditable]:not([contenteditable="false"]),[onclick],[data-action]')
+            || _composedClosestElement(link, 'form')
             || link.hasAttribute?.('download')
-            || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return false;
+            || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return 'blocked';
+        const heuristicModalSelector = '[data-overlay],.modal.show,.modal-overlay,.overlay,'
+          + '[class*="modal"][class*="open"],[class*="overlay"][class*="active"],'
+          + '[class*="DialogOverlay"],[class*="ModalOverlay"]';
+        const dialogContentSelector = '[class*="DialogContent"],[class*="ModalContent"]';
+        const composedModal = _composedClosestElement(
+          link,
+          `dialog,[role="dialog"],[role="alertdialog"],${heuristicModalSelector},${dialogContentSelector}`,
+        );
+        const modal = composedModal
+          || (blockingModal && _isComposedAncestor(blockingModal, link) ? blockingModal : null);
+        const contentHasVisibleOverlaySibling = (() => {
+          if (!modal?.matches?.(dialogContentSelector)) return false;
+          const parent = modal.parentElement || modal.parentNode;
+          if (!parent) return false;
+          return Array.from(parent.children).some((sibling) => sibling !== modal
+            && sibling.matches?.('[class*="DialogOverlay"],[class*="ModalOverlay"]')
+            && _hasVisibleBox(sibling, 100, 100));
+        })();
+        const modalIsBlocking = !!modal && (
+          modal === blockingModal
+          || (modal.tagName === 'DIALOG' && modal.hasAttribute('open') && _isNativeBlockingDialog(modal))
+          || (/^(?:dialog|alertdialog)$/.test(modal.getAttribute?.('role') || '')
+            && modal.getAttribute?.('aria-modal') === 'true')
+          || contentHasVisibleOverlaySibling
+          || (() => {
+            if (!modal.matches?.(heuristicModalSelector)) return false;
+            const rect = modal.getBoundingClientRect();
+            return rect.width > 100 && rect.height > 100;
+          })()
+        );
+        const unresolved = () => modal ? 'blocked' : 'none';
         try {
           const href = String(link.getAttribute('href') || '').trim();
-          if (!href || href.startsWith('#')) return false;
+          if (!href || href.startsWith('#')) return unresolved();
           const destination = new URL(href, document.baseURI);
-          // Only the site's top-level navigation destinations are known not
-          // to send. Arbitrary action URLs and conversation controls stay
-          // inconclusive, even when their visible label says Home or Jobs.
-          return /^https?:$/.test(destination.protocol)
-            && destination.origin === location.origin
-            && /^(?:www\.)?linkedin\.com$/.test(destination.hostname)
-            && /^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname);
+          if (!/^https?:$/.test(destination.protocol)) return unresolved();
+          const isLinkedInHost = (hostname) => {
+            const normalized = String(hostname || '').toLowerCase().replace(/\.$/, '');
+            return normalized === 'linkedin.com' || normalized.endsWith('.linkedin.com');
+          };
+          const linkedInDestination = isLinkedInHost(destination.hostname);
+          const redirectPath = /^\/(?:safety\/go|redir\/redirect)\/?$/.test(destination.pathname);
+          let verifiedExternalRedirect = false;
+          if (linkedInDestination && redirectPath) {
+            const redirectValue = destination.searchParams.get('url') || '';
+            try {
+              const redirectDestination = new URL(redirectValue);
+              verifiedExternalRedirect = /^https?:$/.test(redirectDestination.protocol)
+                && !isLinkedInHost(redirectDestination.hostname);
+            } catch {}
+          }
+          if (modal) {
+            const contactInfoOverlay = /^\/in\/([^/]+)\/overlay\/contact-info\/?$/.exec(location.pathname);
+            const profilePath = contactInfoOverlay ? `/in/${contactInfoOverlay[1]}` : '';
+            const ownsContactInfoRoute = modalIsBlocking && !!profilePath
+              && _someComposedDescendant(modal, 'a[href]', (candidate) => {
+                try {
+                  const candidateUrl = new URL(candidate.getAttribute('href'), document.baseURI);
+                  return isLinkedInHost(candidateUrl.hostname)
+                    && candidateUrl.pathname.replace(/\/+$/, '') === profilePath;
+                } catch {
+                  return false;
+                }
+              });
+            if (!ownsContactInfoRoute || !verifiedExternalRedirect) return 'blocked';
+            return 'navigation';
+          }
+          if (!linkedInDestination) return 'navigation';
+          if (redirectPath) return 'blocked';
+          if (/^\/messaging\/(?:send|compose)\/?$/.test(destination.pathname)) return 'blocked';
+          return (/^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname)
+            || /^\/in\/[^/]+\/overlay\/contact-info\/?$/.test(destination.pathname))
+            ? 'navigation'
+            : 'none';
         } catch {
-          return false;
+          return unresolved();
         }
       };
 
@@ -4395,8 +4506,18 @@
         if (!visible(control) || (modal && !_isComposedAncestor(modal, target))) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
-        if (verifiedLinkedInNavigation(target)) {
+        const linkedInNavigation = classifyLinkedInNavigation(target, modal);
+        if (linkedInNavigation === 'navigation') {
           return { success: true, messageSend: false, conclusive: true, navigation: true, identityCandidates: [] };
+        }
+        if (linkedInNavigation === 'blocked') {
+          return {
+            success: true,
+            messageSend: null,
+            conclusive: false,
+            navigationBlocked: true,
+            identityCandidates: [],
+          };
         }
         composer = layoutComposer;
         if (!composer) {
@@ -5063,7 +5184,13 @@
           const canonicalTargetName = _axCanonicalName(el);
           const targetName = canonicalTargetName || _axAccessibleName(el);
           if (!_isFullyVisibleForInteraction(el)) {
-            try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+            try {
+              el.scrollIntoView({
+                block: 'center',
+                inline: 'center',
+                ...(msg.params?._bidiPrepare ? { behavior: 'instant' } : {}),
+              });
+            } catch {}
           }
           try { el.focus({ preventScroll: true }); } catch {}
           const rect = el.getBoundingClientRect();
@@ -5194,6 +5321,20 @@
               'The page action deadline expired before click dispatch.',
               { deadlineExpired: true, retryable: true },
             );
+          }
+          if (msg.params?._bidiPrepare) {
+            return {
+              ...prepareBidiTarget(el, msg.params._bidiPrepare),
+              ...(nativeCheckable ? {
+                checkable: {
+                  inputType,
+                  checkedBefore,
+                  desiredChecked: inputType === 'radio' ? true : !checkedBefore,
+                  checkboxIdentity: _axCheckboxIdentity(el, ref_id),
+                },
+              } : {}),
+              _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId,
+            };
           }
           dispatched = true;
           const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
@@ -5447,6 +5588,15 @@
           return failure(e && e.message || String(e));
         }
       },
+      'bidi_prepare_upload': () => {
+        const params = msg.params || {};
+        let matches;
+        try { matches = document.querySelectorAll(params.selector); } catch { return { success: false, dispatched: false, noDispatch: true, error: 'Invalid file selector' }; }
+        if (matches.length !== 1 || matches[0].tagName !== 'INPUT' || matches[0].type !== 'file' || matches[0].disabled) {
+          return { success: false, dispatched: false, noDispatch: true, error: 'Choose one enabled file input', ambiguous: matches.length > 1, matchCount: matches.length };
+        }
+        return prepareBidiTarget(matches[0], params._bidiPrepare);
+      },
       'type_ax': async () => {
         let dispatched = false;
         const failure = (error, extra = {}) => ({
@@ -5487,6 +5637,10 @@
               return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
             } catch { return null; }
           })();
+          if (msg.params?._bidiPrepare && el.tagName !== 'SELECT') {
+            if (!_isTypeableElement(el)) return failure('Target is not editable');
+            return prepareBidiTarget(el, msg.params._bidiPrepare);
+          }
           const fieldMeta = _fieldMeta(el);
           let previous = '';
           let method = '';
@@ -5674,6 +5828,13 @@
             }
           } else if (!el.isContentEditable && el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT') {
             return failure(`ref_id ${ref_id} is not a text field (tag=${el.tagName}). set_field works on input/textarea/contenteditable only.`);
+          }
+          if (msg.params?._bidiPrepare) {
+            if (submit && msg.params.messageRecipientGuardRequired) {
+              const validation = _consumeMessageRecipientDispatchBinding(msg.params, el);
+              if (validation.success !== true) return validation;
+            }
+            return prepareBidiTarget(el, msg.params._bidiPrepare);
           }
           let prevValue = '';
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -6030,6 +6191,7 @@
           const r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
           const cy = r.top + r.height / 2;
+          if (msg.params?._bidiPrepare) return prepareBidiTarget(el, msg.params._bidiPrepare);
           const eventInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
           const dispatchHover = (EventType, type) => {
             if (actionDeadlineExpired()) return false;

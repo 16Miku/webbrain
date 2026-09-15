@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Malay (ms).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Zum UI sambungan',
   'sp.ui_scale.decrease': 'Kecilkan UI sambungan',
   'sp.ui_scale.increase': 'Besarkan UI sambungan',
@@ -174,6 +176,8 @@ export default {
 
   'sp.mode.ask': 'Tanya',
   'sp.mode.ask.title': 'Tanya soalan tentang halaman — tiada perubahan dibuat',
+  'sp.mode.act_handoff_button': 'Tukar ke Act & cuba lagi',
+  'sp.mode.act_handoff_hint': 'Ini memerlukan mod Act untuk diselesaikan. Klik untuk menukar dan hantar semula permintaan anda.',
   'sp.mode.act': 'Lakukan',
   'sp.mode.act.title': 'Biarkan WebBrain mengklik, menaip, dan menavigasi untuk anda',
   'sp.mode.act.warning': 'Mod Lakukan: Gunakan atas risiko anda sendiri.',
@@ -331,6 +335,7 @@ export default {
 
   'st.provider.field.server_url': 'URL pelayan',
   'st.provider.field.api_base_url': 'URL asas API',
+  'st.provider.field.api_format': 'Format API',
   'st.provider.field.api_key': 'Kunci API',
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (pilihan)',
@@ -519,7 +524,7 @@ export default {
   "st.display.download_directory.placeholder": "Lalai sistem",
   "st.display.download_directory.error": "Gunakan folder relatif seperti WebBrain atau Work/WebBrain. Laluan mutlak dan “..” tidak dibenarkan.",
   "st.display.strict_secret.label": "Pengendalian rahsia ketat",
-  "st.display.strict_secret.desc": "Enggan memetik kelayakan (kata laluan, kunci API, token, OTP) dalam ringkasan atau teks pembantu — walaupun apabila anda secara jelas memintanya. Berguna jika anda kerap berkongsi fail jejak atau berkongsi skrin. Dimatikan secara lalai: webbrain berjalan dalam pelayar anda sendiri, jadi secara lalai ejen menunjukkan kepada anda nilai yang anda minta dan hanya memastikan ringkasan `done` kemas.",
+  "st.display.strict_secret.desc": "Enggan memetik kelayakan (kata laluan, kunci API, token, OTP) dalam ringkasan atau teks pembantu — walaupun apabila anda secara jelas memintanya. Berguna jika anda kerap berkongsi fail jejak atau berkongsi skrin. Dihidupkan secara lalai: webbrain berjalan dalam pelayar anda sendiri, tetapi atas dasar keselamatan ejen enggan mengulangi kelayakan dan memastikan ringkasan `done` kemas.",
   "st.display.request_timeout.label": "Tamat masa permintaan LLM",
   "st.display.request_timeout.desc": "Masa menunggu maksimum untuk pengepala respons dan setiap jeda antara bahagian respons penstriman. Lalai: 120 saat. Tambahkan masa ini untuk model tempatan yang perlahan, terutamanya pada CPU atau dengan konteks besar.",
   "st.providers.filter.all": "Semua",
@@ -715,6 +720,7 @@ export default {
   'st.skills.item.chars': '{count} aksara',
   'st.skills.item.tools': 'Alatan: {tools}',
   'st.skills.remove': 'Alih keluar',
+  'st.skills.edit': 'Edit',
   'st.skills.preview.rendered': 'Pratonton',
   'st.skills.preview.raw': 'Mentah',
   'st.skills.security_html': '<strong>Awas:</strong> kemahiran tersuai disimpan dalam teks biasa dalam storan tempatan pelayar dan dihantar kepada pembekal LLM yang anda konfigurasikan sebagai sebahagian daripada prompt sistem. Alatan kemahiran yang diimport boleh menghantar input yang diisytiharkan ke titik akhir HTTPS yang diisytiharkan tanpa pengesahan setiap panggilan; alatan muat turun masih meminta melalui gerbang kebenaran Muat Turun biasa sebelum menyimpan fail. Hanya import alatan yang anda percayai; kandungan jauh disalin ke storan semasa import.',
@@ -764,9 +770,9 @@ export default {
   'st.display.clarify_timeout.off': 'Mati',
   'st.display.clarify_timeout.instant': 'Segera',
   'st.display.always_allow_api_mutations.label': "Sentiasa benarkan mutasi API",
-  'st.display.always_allow_api_mutations.desc': "Benarkan WebBrain menggunakan POST, PUT, PATCH dan DELETE melalui fetch_url atau research_url tanpa memerlukan /allow-api dalam setiap perbualan. Panduan mengutamakan UI dan semakan pengesahan masih terpakai. Dimatikan secara lalai.",
+  'st.display.always_allow_api_mutations.desc': "Benarkan WebBrain menggunakan POST, PUT, PATCH dan DELETE melalui fetch_url atau research_url tanpa memerlukan /allow-api dalam setiap perbualan. Panduan mengutamakan UI dan semakan pengesahan masih terpakai. Dihidupkan secara lalai.",
   'st.display.api_mutation_observer.label': 'Pemerhati mutasi API',
-  'st.display.api_mutation_observer.desc': 'Perhatikan URL dan metode permintaan XHR/fetch tab yang sama supaya WebBrain dapat mengesan tindakan UI berulang dan mencadangkan corak pintasan API. Dimatikan secara lalai; aktifkan hanya semasa menyiasat tingkah laku pintasan atau kependaman.',
+  'st.display.api_mutation_observer.desc': 'Perhatikan URL dan metode permintaan XHR/fetch tab yang sama supaya WebBrain dapat mengesan tindakan UI berulang dan mencadangkan corak pintasan API. Dihidupkan secara lalai.',
   'st.display.openai_ask_streaming.label': "Strim respons dalam mod Ask",
   'st.display.openai_ask_streaming.desc': "Paparkan respons penyedia sebaik sahaja diterima dalam mod Ask. Panggilan alat menunggu peristiwa akhir strim; tugas Act, Dev, berjadual, awan dan Continue kekal tanpa penstriman. Dihidupkan secara lalai.",
   'st.display.plan_before_act.label': 'Rancang sebelum Bertindak',
@@ -985,8 +991,11 @@ export default {
   "sp.export_traces.partial": "Rantaian alat dieksport, tetapi sesetengah peristiwa giliran tidak dapat dibaca.",
   "sp.export_traces.truncated": "Rantaian alat dieksport. Giliran lama mungkin hilang jika perbualan ini mempunyai banyak jejak.",
   "st.display.help_improve.label": "Bantu Tingkatkan WebBrain",
-  "st.display.help_improve.desc_html": "Benarkan interaksi WebBrain Compass terpilih disimpan dan digunakan untuk penilaian, penambahbaikan, penalaan halus dan latihan. Dihidupkan secara lalai. Matikan untuk menghalang interaksi Compass pada masa hadapan daripada digunakan bagi tujuan tersebut. <u>WebBrain tidak pernah mengumpul permintaan model setempat atau permintaan yang dihantar terus menggunakan kelayakan API anda sendiri.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Dasar privasi →</a>",
-  "st.providers.webbrain_data_use.body": "Penggunaan harian percuma WebBrain Compass disertakan. Semasa Bantu Tingkatkan WebBrain dihidupkan secara lalai, perbualan Compass terpilih mungkin disimpan dan digunakan untuk penilaian, penambahbaikan, penalaan halus dan latihan. Matikan di Umum → Lanjutan untuk mengecualikan interaksi Compass pada masa hadapan daripada penggunaan tersebut. <u>WebBrain tidak pernah mengumpul permintaan model setempat atau permintaan yang dihantar terus menggunakan kelayakan API anda sendiri.</u> {privacyLink}. Untuk penggunaan tambahan, langgan di {subscribeLink}. Urus pengebilan di {accountLink}.",
+  "st.display.help_improve.desc_html": "Benarkan interaksi WebBrain Compass terpilih disimpan dan digunakan untuk penilaian, penambahbaikan, penalaan halus dan latihan. Dihidupkan secara lalai. Matikan untuk menghalang interaksi Compass pada masa hadapan daripada digunakan bagi tujuan tersebut. <u>WebBrain hanya mengumpul permintaan model setempat dan API anda sendiri daripada penyedia yang anda hidupkan “Kongsi pertanyaan untuk penyelidikan”.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Dasar privasi →</a>",
+  "st.providers.webbrain_data_use.body": "Penggunaan harian percuma WebBrain Compass disertakan. Semasa Bantu Tingkatkan WebBrain dihidupkan secara lalai, perbualan Compass terpilih mungkin disimpan dan digunakan untuk penilaian, penambahbaikan, penalaan halus dan latihan. Matikan di Umum → Lanjutan untuk mengecualikan interaksi Compass pada masa hadapan daripada penggunaan tersebut. <u>WebBrain hanya mengumpul permintaan model setempat dan API anda sendiri jika anda menghidupkan opsyen “Kongsi pertanyaan untuk penyelidikan” penyedia ini.</u> {privacyLink}. Untuk penggunaan tambahan, langgan di {subscribeLink}. Urus pengebilan di {accountLink}.",
+  'st.providers.share_research.label': "Kongsi pertanyaan untuk penyelidikan",
+  'st.providers.share_research.hint': "Menghantar gesaan dan respons daripada penyedia ini kepada WebBrain untuk penilaian dan penambahbaikan, termasuk penyedia dan model yang digunakan. Imej dan lampiran binari dibuang dan teks dipangkas sebelum dikongsi; baki teks dihantar seadanya.",
+  'st.providers.share_research.confirm': "Kongsi pertanyaan daripada penyedia ini dengan WebBrain untuk penyelidikan?\n\nJika dihidupkan, gesaan, respons dan interaksi alat anda dengan penyedia ini akan dihantar kepada WebBrain untuk penilaian dan penambahbaikan, berserta nama penyedia dan model. Teks dihantar seadanya selepas imej dibuang dan kandungan panjang dipangkas, jadi elakkan berkongsi data peribadi yang sensitif. Anda boleh mematikannya pada bila-bila masa untuk menghentikan perkongsian.",
   'st.providers.compat.title': 'Keserasian model lanjutan',
   'st.providers.compat.blurb': 'Biarkan pada Auto melainkan model atau titik akhir mendokumentasikan kontrak permintaan yang berbeza.',
   'st.providers.compat.preset': 'Praset keserasian',
@@ -1114,8 +1123,8 @@ export default {
   "st.sync.confirm.reset": "Gantikan salinan awan yang disulitkan dengan persediaan WebBrain semasa peranti ini?",
   "st.sync.consent.legacy": "Hidupkan penyegerakan yang disulitkan? WebBrain akan menghantar salinan memori anda yang disulitkan hujung ke hujung, autolengkap profil dan tetapan pembekal kunci API ke WebBrain Compass. Sejarah sembang dan log masuk OAuth tidak disegerakkan.",
   "st.sync.consent.denied": "Kebenaran penyegerakan yang disulitkan tidak diberikan.",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. LFM2.5 2.6B is the only tested model. Other models entered through Custom are untested and likely will not work. Custom repositories must support Transformers.js text generation, include a q4f16 ONNX graph, and provide a chat template that accepts tools. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
+'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

@@ -1,12 +1,12 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 36.0.4 · Manifest V2 · Background Page
+> Version 36.5.0 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
 Firefox uses Manifest V2 (background page, not service worker) and has **no access to the Chrome DevTools Protocol (CDP)**. Starting with v3.6.x, the Firefox build has been brought to functional parity with Chrome for the accessibility-tree (AX) subsystem — the same tree builder, the same four AX tools (`get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`), and the same ref_id registry. What Firefox still lacks:
 
-- **No trusted events** — clicks and key presses are synthetic (`el.click()`, `new KeyboardEvent()`), and some sites reject `event.isTrusted === false`. All AX-tool click/type paths use synthetic dispatch in Firefox; the CDP-backed trusted-event path in Chrome has no Firefox equivalent.
+- **Optional trusted events** — standard mode uses synthetic events. The experimental [BiDi companion](../../firefox-companion/README.md) adds trusted click, hover, text, supported keys, file-input attachment, and native JavaScript-dialog handling. It requires a local helper and Firefox remote automation; other tools retain their existing implementations. This is a Firefox-specific transport, not a Chrome CDP adapter.
 - **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureTab()` instead of CDP `Page.captureScreenshot`; it can capture the run tab while that tab is inactive. Firefox has exposed `tabs.captureTab()` since Firefox 59, before WebBrain's current minimum, and the manifest declares the required `<all_urls>` permission.
 - **No shadow DOM piercing** — content script can read open shadow roots via `element.shadowRoot`, but cannot pierce closed roots.
 - **No offscreen document** — no HTTP fetch proxy for localhost LLM servers with Private Network Access / CORS issues. User must ensure their local LLM server sends permissive CORS headers.
@@ -18,7 +18,7 @@ PDF handling is an intentional platform exception: Firefox has no equivalent
 to Chrome's global `mime_types_handler`/`chrome.mimeHandler` route in this
 extension. Firefox therefore keeps its native PDF viewer as the default and
 uses an explicit WebBrain PDF viewer context-menu entry when the user chooses
-it. The Chrome-only automatic PDF viewer opt-in setting does not apply to
+it. The Chrome-only automatic PDF viewer setting (on by default) does not apply to
 Firefox; the explicit Firefox entry remains available independently.
 
 The explicit Firefox route is URL/GET based. It cannot replay an arbitrary
@@ -132,7 +132,7 @@ Notably **missing** vs Chrome: `debugger`, `sidePanel`, `scripting`, `offscreen`
 - No `debugger` → no CDP, no trusted events
 - No `offscreen` → no HTTP fetch proxy; direct fetch from background page only
 - No `privateNetworkAccess` → localhost LLM servers must send CORS headers themselves
-- `webRequest` is used for the same opt-in in-memory API shortcut observer as Chrome. The setting is off by default.
+- `webRequest` is used for the same in-memory API shortcut observer as Chrome. The setting is on by default and can be disabled in Settings.
 - Uses `sidebar_action` (MV2) instead of `side_panel` (MV3)
 - Uses `browser.tabs.executeScript()` / `browser.tabs.sendMessage()` instead of `chrome.scripting.executeScript()`
 
@@ -573,9 +573,10 @@ Same end-to-end shape as Chrome, minus the CDP-trusted-event path and the offscr
 
 Planner prompts follow Chrome's token-minimal gating: the base planner prompt
 includes general repeated-task pacing, while API replay guidance is appended only
-when the tab conversation already has `/allow-api`. Both compact and full
-planner schemas carry a language-neutral messaging target only when the trusted
-request authorizes an external message.
+when API mutations are authorized by the persistent setting or the tab's
+`/allow-api` override. Both compact and full planner schemas carry a
+language-neutral messaging target only when the trusted request authorizes an
+external message.
 
 ---
 
@@ -603,8 +604,8 @@ Same as Chrome, minus CDP:
 - Cross-origin iframes accessible via extension privilege
 - Ask is read-only; Act and Dev are action modes. Dev adds source/style/page-inspection tools and is blocked for Compact-tier providers.
 - Plan before Act can require user approval before any action-mode tool executes
-- API shortcut observer is off by default; when enabled, it records bounded same-tab XHR/fetch replay metadata in memory only
-- `/allow-api` flag required for API mutations (POST/PUT/PATCH/DELETE via `fetch_url`)
+- API shortcut observer is on by default and can be disabled in Settings; when enabled, it records bounded same-tab XHR/fetch replay metadata in memory only
+- The persistent **Always allow API mutations** setting (on by default) or the conversation's `/allow-api` override waives permission prompts for API mutations (POST/PUT/PATCH/DELETE via `fetch_url` / `research_url`). If the persistent setting cannot be read from storage, it grants no authorization.
 - Finance adapters get extra safety warnings
 - Tool results capped at 8KB
 - No remote code execution: all providers called via `fetch()` with user-supplied keys; no eval of LLM responses

@@ -1,8 +1,10 @@
+import bidiCopy from './bidi-copy.mjs';
 // English — canonical locale. Other locales inherit key names from this file.
 import apocalypseModeCopy from './apocalypse-copy.mjs';
 import emergencyCopy from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Extension UI zoom',
   'sp.ui_scale.decrease': 'Zoom extension UI out',
   'sp.ui_scale.increase': 'Zoom extension UI in',
@@ -142,6 +144,8 @@ export default {
 
   'sp.mode.ask': 'Ask',
   'sp.mode.ask.title': 'Ask questions about the page — no changes made',
+  'sp.mode.act_handoff_button': 'Switch to Act & retry',
+  'sp.mode.act_handoff_hint': 'This needs Act mode to complete. Click to switch and resend your request.',
   'sp.mode.act': 'Act',
   'sp.mode.act.title': 'Let WebBrain click, type, and navigate for you',
   'sp.mode.act.warning': 'Act mode:  Use at your own risk.',
@@ -571,7 +575,7 @@ export default {
   'st.providers.webgpu_download.stopping': 'Stopping and removing files…',
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.display.help_improve.label': 'Help Improve WebBrain',
-  'st.display.help_improve.desc_html': 'Allow eligible WebBrain Compass text and tool interactions to be retained and used for evaluation, improvement, fine-tuning, and training. On by default. Turning this off permanently opts out the current conversation; turning it back on applies to the next new conversation. Screenshots and image bytes are not retained in the WebBrain improvement database. <u>Local-model and bring-your-own API requests are never collected by WebBrain.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacy policy →</a>',
+  'st.display.help_improve.desc_html': 'Allow eligible WebBrain Compass text and tool interactions to be retained and used for evaluation, improvement, fine-tuning, and training. On by default. Turning this off permanently opts out the current conversation; turning it back on applies to the next new conversation. Screenshots and image bytes are not retained in the WebBrain improvement database. <u>Local-model and bring-your-own API requests are only collected by WebBrain from providers where you turn on “Share queries for research”.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacy policy →</a>',
   'st.display.clarify_timeout.label': 'Clarify timeout',
   'st.display.clarify_timeout.desc': 'How long to wait for a reply to a clarify prompt before auto-selecting the first option (or timing out if there are no options). 0 = Instant (always auto-select). Values above 1200s wait indefinitely (Off). Default 60s. Does not apply to permission or form-submit confirmations.',
   'st.display.clarify_timeout.off': 'Off',
@@ -589,9 +593,9 @@ export default {
   'st.display.voice_input.label': 'Voice input',
   'st.display.voice_input.desc': 'Let the mic button in the chat input dictate text via your browser\'s speech recognition. On by default in browsers that support it.',
   'st.display.always_allow_api_mutations.label': "Always allow API mutations",
-  'st.display.always_allow_api_mutations.desc': "Allow WebBrain to use POST, PUT, PATCH, and DELETE through fetch_url or research_url without requiring /allow-api in each conversation. UI-first guidance and confirmation checks still apply. Off by default.",
+  'st.display.always_allow_api_mutations.desc': "Allow WebBrain to use POST, PUT, PATCH, and DELETE through fetch_url or research_url without requiring /allow-api in each conversation. UI-first guidance and confirmation checks still apply. On by default.",
   'st.display.api_mutation_observer.label': 'API mutation observer',
-  'st.display.api_mutation_observer.desc': 'Observe same-tab XHR/fetch request URLs and methods so WebBrain can detect repeated UI actions and suggest API shortcut patterns. Off by default; enable only while investigating shortcut behavior or latency.',
+  'st.display.api_mutation_observer.desc': 'Observe same-tab XHR/fetch request URLs and methods so WebBrain can detect repeated UI actions and suggest API shortcut patterns. On by default.',
   // TRANSLATORS: Updated for multi-provider Ask streaming and silent transport fallback.
   'st.display.openai_ask_streaming.label': 'Stream Ask responses',
   'st.display.openai_ask_streaming.desc': 'Show text as it arrives in Ask mode for supported providers. Interrupted streams show a notice and retry once without streaming; provider/API errors are still shown. Tool calls wait for stream completion; Act, Dev, scheduled, cloud, and Continue runs stay non-streaming. On by default.',
@@ -623,7 +627,7 @@ export default {
   'st.display.cost_total_limit.desc': 'Tracks reported or estimated spend for eligible cloud and router model calls across the extension and stops further paid calls at the allowance.',
   'st.display.cost_reset': 'Reset spend',
   'st.display.strict_secret.label': 'Strict secret handling',
-  'st.display.strict_secret.desc': 'Refuse to quote credentials (passwords, API keys, tokens, OTPs) in summaries or assistant text — even when you explicitly ask for them. Useful if you regularly share trace files or screen-share. Off by default: webbrain runs in your own browser, so by default the agent shows you values you ask for and just keeps `done` summaries tidy.',
+  'st.display.strict_secret.desc': 'Refuse to quote credentials (passwords, API keys, tokens, OTPs) in summaries or assistant text — even when you explicitly ask for them. Useful if you regularly share trace files or screen-share. On by default: webbrain runs in your own browser, but out of an abundance of care the agent refuses to echo credentials you hold, keeping `done` summaries tidy. Turn it off (Settings → Security) if you sometimes need the agent to echo the exact value you ask for.',
   'st.display.allow_local_network.label': 'Allow agent to access local network',
   'st.display.allow_local_network.desc': 'Lets the agent\'s fetch_url tool reach loopback (127.0.0.1, localhost) and private/RFC1918 addresses (10.x, 192.168.x, 172.16–31.x). Useful for local dev servers, intranet tools, or self-hosted APIs. Off by default — when off, prompt-injected pages can\'t steer the agent into probing your local network. Cloud-metadata addresses (169.254.169.254) and *.internal/*.local hostnames stay blocked even when on.',
   'st.display.scheduled_tasks.label': 'Scheduled tasks',
@@ -713,7 +717,10 @@ export default {
   'st.providers.compat.value.max': 'Max',
   'st.providers.compat.value.system': 'System',
   'st.providers.compat.value.developer': 'Developer',
-  'st.providers.webbrain_data_use.body': 'Free daily WebBrain Compass usage is included. While Help Improve WebBrain is on by default, selected Compass conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General → Advanced to exclude future Compass interactions from those uses. <u>Local-model and bring-your-own API requests are never collected by WebBrain.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
+  'st.providers.webbrain_data_use.body': 'Free daily WebBrain Compass usage is included. While Help Improve WebBrain is on by default, selected Compass conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General → Advanced to exclude future Compass interactions from those uses. <u>Local-model and bring-your-own API requests are only collected by WebBrain when you turn on the per-provider “Share queries for research” option.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
+  'st.providers.share_research.label': 'Share queries for research',
+  'st.providers.share_research.hint': 'Send prompts and responses from this provider to WebBrain for evaluation and improvement, including the provider and model used. Images and binary attachments are stripped and text is truncated before sharing; remaining text is sent as-is.',
+  'st.providers.share_research.confirm': 'Share queries from this provider with WebBrain for research?\n\nWhen on, your prompts, responses, and tool interactions with this provider will be sent to WebBrain for evaluation and improvement, together with the provider and model name. Text is sent as-is after stripping images and truncating long content, so avoid sharing sensitive personal data. You can turn this off at any time to stop future sharing.',
   'st.providers.webbrain_note.body': 'Free daily WebBrain Compass usage is included. Requests go through api.webbrain.one; by default we log metadata for quota and debugging, not prompt text, page content, screenshots, or model responses. {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Privacy policy',
 
@@ -740,6 +747,7 @@ export default {
   'st.skills.item.chars': '{count} chars',
   'st.skills.item.tools': 'Tools: {tools}',
   'st.skills.remove': 'Remove',
+  'st.skills.edit': 'Edit',
   'st.skills.cws.heading': 'Chrome Web Store release setup',
   'st.skills.cws.desc_html': 'These settings appear only while the packaged release skill is enabled. Create a Google Cloud OAuth <strong>Web application</strong>, enable the Chrome Web Store API, and register <code>http://localhost:1457/auth/callback</code> as an authorized redirect URI. Credentials, tokens, and ZIP bytes stay in extension-local storage and are never included in model prompts or traces.',
   'st.skills.cws.publisher_id': 'Publisher ID',
@@ -776,6 +784,7 @@ export default {
 
   'st.provider.field.server_url': 'Server URL',
   'st.provider.field.api_base_url': 'API Base URL',
+  'st.provider.field.api_format': 'API format',
   'st.provider.field.api_key': 'API Key',
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (optional)',
@@ -1093,5 +1102,5 @@ export default {
   'st.sync.confirm.reset': 'Replace the encrypted cloud copy with this device’s current WebBrain setup?',
   'st.sync.consent.legacy': 'Turn on encrypted sync? WebBrain will transmit an end-to-end encrypted copy of your memories, profile autofill, and API-key provider settings to WebBrain Compass. Chat history and OAuth sign-ins are not synced.',
   'st.sync.consent.denied': 'Encrypted sync permission was not granted.',
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
 };

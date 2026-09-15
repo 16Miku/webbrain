@@ -1,6 +1,6 @@
 import { ProviderManager } from './providers/manager.js';
 import {
-  WEBGPU_MODEL_ID,
+  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_MODEL_ID,
@@ -191,14 +191,16 @@ Promise.all([
   console.warn('[WebBrain] Apocalypse Mode startup work could not be restored:', error);
 });
 const agent = new Agent(providerManager);
+agent.strictSecretMode = true;
 agent.setStandaloneOfflineRagService(createOffscreenOfflineRetrievalService());
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = chrome.storage.local
-  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: false })
+  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
   .then((stored) => {
     agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
   })
   .catch(() => {
+    // An unreadable setting must not bypass a stored opt-out.
     agent.setAlwaysAllowApiMutations(false);
   });
 agent.setConversationScopeChangeListener((tabId, state) => {
@@ -242,6 +244,7 @@ const scheduler = new ScheduledJobManager({
   loadProviders: async () => {
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
   sendUpdate: (tabId, type, data) => {
@@ -335,7 +338,7 @@ async function setNativePdfMimeHandlerEnabled(enabled) {
 }
 
 async function syncNativePdfMimeHandlerFromStorage() {
-  const stored = await chrome.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: false });
+  const stored = await chrome.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: true });
   return setNativePdfMimeHandlerEnabled(stored?.[PDF_VIEWER_ENABLED_KEY] === true);
 }
 
@@ -565,10 +568,10 @@ async function loadImageBudget() {
 const imageBudgetReady = loadImageBudget().catch(() => {});
 
 async function loadStrictSecretMode() {
-  const stored = await chrome.storage.local.get('strictSecretMode');
-  if (stored.strictSecretMode != null) agent.strictSecretMode = !!stored.strictSecretMode;
+  const stored = await chrome.storage.local.get('strictSecretMode').catch(() => ({}));
+  agent.strictSecretMode = stored?.strictSecretMode !== false;
 }
-loadStrictSecretMode();
+const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
 async function loadWebMCPEnabled() {
   const stored = await chrome.storage.local.get('webMcpEnabled');
@@ -709,16 +712,16 @@ async function saveUserMemoryExtractionQueue(queue) {
 }
 
 async function isUserMemoryExtractionEnabled() {
-  const stored = await chrome.storage.local.get([
-    USER_MEMORY_ENABLED_KEY,
-    USER_MEMORY_AUTO_CAPTURE_KEY,
-  ]);
+  const stored = await chrome.storage.local.get({
+    [USER_MEMORY_ENABLED_KEY]: true,
+    [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+  });
   return stored[USER_MEMORY_ENABLED_KEY] !== false
     && stored[USER_MEMORY_AUTO_CAPTURE_KEY] === true;
 }
 
 async function isUserMemoryFormCaptureEnabled() {
-  const stored = await chrome.storage.local.get(USER_MEMORY_FORM_CAPTURE_KEY);
+  const stored = await chrome.storage.local.get({ [USER_MEMORY_FORM_CAPTURE_KEY]: true });
   return stored[USER_MEMORY_FORM_CAPTURE_KEY] === true;
 }
 
@@ -1178,7 +1181,8 @@ chrome.runtime.onStartup?.addListener(async () => {
 // Listen for setting changes
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && changes[PDF_VIEWER_ENABLED_KEY]) {
-    setNativePdfMimeHandlerEnabled(changes[PDF_VIEWER_ENABLED_KEY].newValue === true)
+    const value = changes[PDF_VIEWER_ENABLED_KEY].newValue;
+    setNativePdfMimeHandlerEnabled(value === undefined || value === true)
       .catch(reportPdfMimeHandlerSyncFailure);
   }
   if (changes.wbLocale) {
@@ -1204,7 +1208,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   // wiping the chat history.
   let refreshPrompts = false;
   if (changes[ALWAYS_ALLOW_API_MUTATIONS_KEY]) {
-    agent.setAlwaysAllowApiMutations(changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue === true);
+    const value = changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue;
+    agent.setAlwaysAllowApiMutations(value === undefined || value === true);
     refreshPrompts = true;
   }
   if (changes.useSiteAdapters) {
@@ -1231,10 +1236,11 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     });
   }
   if (changes[API_MUTATION_OBSERVER_KEY]) {
-    setApiMutationObserverEnabled(changes[API_MUTATION_OBSERVER_KEY].newValue === true);
+    const value = changes[API_MUTATION_OBSERVER_KEY].newValue;
+    setApiMutationObserverEnabled(value === undefined || value === true);
   }
   if (changes.strictSecretMode) {
-    agent.strictSecretMode = !!changes.strictSecretMode.newValue;
+    agent.strictSecretMode = changes.strictSecretMode.newValue !== false;
     // Strict mode also appends a global system note after enabled skills, so
     // refresh live conversations immediately as well as rebuilding at turn start.
     refreshPrompts = true;
@@ -2173,14 +2179,12 @@ async function standaloneRunProviderId(msg) {
   if (providerId !== 'webgpu' || msg.standaloneChat !== true) {
     throw new Error('WebGPU is available only through the standalone chat control.');
   }
-  const apocalypse = await apocalypseController.handle('status');
-  if (apocalypse?.enabled !== true) {
-    throw new Error('Enable Apocalypse Mode before using WebGPU in standalone chat.');
-  }
+  // Compass Tiny v2.1 works independently of Apocalypse Mode: Apocalypse can
+  // still host the download, but its enabled toggle is no longer required.
   const config = providerManager.getAll().webgpu;
   const download = await providerManager.getWebgpuDownloadStatus().catch(() => null);
   if (!isShippedWebgpuPreset(config?.model) || download?.ready !== true) {
-    throw new Error(`Download ${webgpuModelDisplayName(config?.model || WEBGPU_MODEL_ID)} in Apocalypse Mode before using WebGPU in standalone chat.`);
+    throw new Error(`Download ${webgpuModelDisplayName(config?.model || WEBGPU_COMPASS_TINY_V2_MODEL_ID)} in Settings > Providers > WebGPU or Apocalypse Mode > WebGPU before using WebGPU in standalone chat.`);
   }
   return providerId;
 }
@@ -2439,7 +2443,7 @@ chrome.tabs.onRemoved.addListener((tabId) => pdfResponseTabs.delete(tabId));
 // tokens and form bodies do not get printed into model context.
 const API_REQUESTS_PER_TAB_LIMIT = 40;
 const API_MUTATION_OBSERVER_KEY = 'apiMutationObserverEnabled';
-const API_MUTATION_OBSERVER_DEFAULT = false;
+const API_MUTATION_OBSERVER_DEFAULT = true;
 const API_REPLAY_BODY_LIMIT = 16000;
 const apiRequestsByTab = new Map(); // tabId -> [{ url, method, ts, replayRequestId, ... }]
 const apiRequestReplayById = new Map(); // replayRequestId -> captured same-origin replay options
@@ -2585,7 +2589,8 @@ async function loadApiMutationObserverSetting() {
     const stored = await chrome.storage.local.get({ [API_MUTATION_OBSERVER_KEY]: API_MUTATION_OBSERVER_DEFAULT });
     setApiMutationObserverEnabled(stored[API_MUTATION_OBSERVER_KEY] === true);
   } catch (e) {
-    setApiMutationObserverEnabled(API_MUTATION_OBSERVER_DEFAULT);
+    // Do not capture requests when a stored opt-out cannot be read.
+    setApiMutationObserverEnabled(false);
   }
 }
 
@@ -2813,6 +2818,7 @@ async function handleMessage(msg, sender) {
     // storage round-trip on every message.
     await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     await webMcpEnabledReady;
     await screenshotRedactionReady;
     await imageBudgetReady;
@@ -2956,12 +2962,12 @@ async function handleMessage(msg, sender) {
 
     case 'get_user_memory': {
       const store = await userMemoryStore.load();
-      const settings = await chrome.storage.local.get([
-        USER_MEMORY_ENABLED_KEY,
-        USER_MEMORY_AUTO_CAPTURE_KEY,
-        USER_MEMORY_FORM_CAPTURE_KEY,
-        USER_MEMORY_MAX_PROMPT_CHARS_KEY,
-      ]);
+      const settings = await chrome.storage.local.get({
+        [USER_MEMORY_ENABLED_KEY]: true,
+        [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+        [USER_MEMORY_FORM_CAPTURE_KEY]: true,
+        [USER_MEMORY_MAX_PROMPT_CHARS_KEY]: normalizeUserMemoryMaxPromptChars(),
+      });
       return {
         ok: true,
         store,
@@ -3938,17 +3944,17 @@ async function handleMessage(msg, sender) {
 
     case 'get_providers': {
       const providers = providerManager.getAll();
-      delete providers.webgpu;
       return { providers, active: providerManager.activeProviderId };
     }
 
     case 'get_standalone_webgpu_status': {
-      const apocalypse = await apocalypseController.handle('status');
       const config = providerManager.getAll().webgpu;
       const download = await providerManager.getWebgpuDownloadStatus().catch(() => null);
       return {
         ok: true,
-        enabled: apocalypse?.enabled === true,
+        // Compass Tiny v2.1 is usable without Apocalypse Mode; the control
+        // stays enabled and only tracks download readiness.
+        enabled: true,
         ready: isShippedWebgpuPreset(config?.model) && download?.ready === true,
         status: download?.status || 'not-downloaded',
       };
@@ -3965,9 +3971,6 @@ async function handleMessage(msg, sender) {
     }
 
     case 'set_active_provider': {
-      if (msg.providerId === 'webgpu') {
-        throw new Error('Use the nuclear WebGPU control in standalone chat.');
-      }
       await providerManager.setActive(msg.providerId);
       return { ok: true };
     }
@@ -3976,7 +3979,7 @@ async function handleMessage(msg, sender) {
       await providerManager.updateProvider(msg.providerId, msg.config, {
         markConfigured: msg.markConfigured !== false,
       });
-      return { ok: true };
+      return { ok: true, activeProviderId: providerManager.activeProviderId };
     }
 
     case 'duplicate_provider':

@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Spanish (es).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Zoom de la interfaz de la extensión',
   'sp.ui_scale.decrease': 'Reducir el zoom de la interfaz',
   'sp.ui_scale.increase': 'Aumentar el zoom de la interfaz',
@@ -174,6 +176,8 @@ export default {
 
   'sp.mode.ask': 'Preguntar',
   'sp.mode.ask.title': 'Haz preguntas sobre la página — sin hacer cambios',
+  'sp.mode.act_handoff_button': 'Cambiar a Actuar y reintentar',
+  'sp.mode.act_handoff_hint': 'Esto requiere el modo Actuar para completarse. Haz clic para cambiar y reenviar tu solicitud.',
   'sp.mode.act': 'Actuar',
   'sp.mode.act.title': 'Deja que WebBrain haga clic, escriba y navegue por ti',
   'sp.mode.act.warning': 'Modo Actuar: Úsalo bajo tu propia responsabilidad.',
@@ -323,6 +327,7 @@ export default {
 
   'st.provider.field.server_url': 'URL del servidor',
   'st.provider.field.api_base_url': 'URL base de la API',
+  'st.provider.field.api_format': 'Formato de API',
   'st.provider.field.api_key': 'Clave de API',
   'st.provider.field.model': 'Modelo',
   'st.provider.field.model_optional': 'Modelo (opcional)',
@@ -503,7 +508,7 @@ export default {
   "st.display.download_directory.placeholder": "Predeterminado del sistema",
   "st.display.download_directory.error": "Usa una carpeta relativa como WebBrain o Work/WebBrain. No se permiten rutas absolutas ni “..”.",
   "st.display.strict_secret.label": "Manejo estricto de secretos",
-  "st.display.strict_secret.desc": "Se niega a citar credenciales (contraseñas, claves de API, tokens, OTPs) en resúmenes o texto del asistente, incluso cuando se las pidas explícitamente. Útil si compartes a menudo archivos de traza o tu pantalla. Desactivado por defecto: WebBrain se ejecuta en tu propio navegador, así que por defecto el agente te muestra los valores que pides y solo mantiene ordenados los resúmenes de `done`.",
+  "st.display.strict_secret.desc": "Se niega a citar credenciales (contraseñas, claves de API, tokens, OTPs) en resúmenes o texto del asistente, incluso cuando se las pidas explícitamente. Útil si compartes a menudo archivos de traza o tu pantalla. Activado por defecto: WebBrain se ejecuta en tu propio navegador, pero por precaución el agente se niega a repetir tus credenciales y mantiene limpios los resúmenes de `done`.",
   "st.display.request_timeout.label": "Tiempo de espera de la petición al LLM",
   "st.display.request_timeout.desc": "Tiempo máximo de espera para recibir las cabeceras y para cada pausa entre fragmentos de la respuesta en streaming. Por defecto: 120 s. Auméntalo para modelos locales lentos, especialmente en CPU o con contextos grandes.",
   "st.providers.filter.all": "Todos",
@@ -699,6 +704,7 @@ export default {
   'st.skills.item.chars': '{count} caracteres',
   'st.skills.item.tools': 'Herramientas: {tools}',
   'st.skills.remove': 'Eliminar',
+  'st.skills.edit': 'Editar',
   'st.skills.preview.rendered': 'Vista previa',
   'st.skills.preview.raw': 'Sin formato',
   'st.skills.security_html': '<strong>Atención:</strong> las habilidades personalizadas se almacenan en texto plano en el almacenamiento local del navegador y se envían a tu proveedor de LLM configurado como parte del prompt del sistema. Las herramientas de habilidad importadas pueden enviar sus entradas declaradas a sus endpoints HTTPS declarados sin confirmación por llamada; las herramientas de descarga siguen preguntando a través de la puerta de permisos de Descargas antes de guardar archivos. Solo importa herramientas en las que confíes; el contenido remoto se copia al almacenamiento en el momento de la importación.',
@@ -739,9 +745,9 @@ export default {
   'st.display.clarify_timeout.off': 'Desactivado',
   'st.display.clarify_timeout.instant': 'Instantáneo',
   'st.display.always_allow_api_mutations.label': "Permitir siempre mutaciones de API",
-  'st.display.always_allow_api_mutations.desc': "Permite que WebBrain use POST, PUT, PATCH y DELETE mediante fetch_url o research_url sin requerir /allow-api en cada conversación. Las directrices de priorizar la interfaz y las comprobaciones de confirmación siguen vigentes. Desactivado de forma predeterminada.",
+  'st.display.always_allow_api_mutations.desc': "Permite que WebBrain use POST, PUT, PATCH y DELETE mediante fetch_url o research_url sin requerir /allow-api en cada conversación. Las directrices de priorizar la interfaz y las comprobaciones de confirmación siguen vigentes. Activado de forma predeterminada.",
   'st.display.api_mutation_observer.label': 'Observador de mutaciones de API',
-  'st.display.api_mutation_observer.desc': 'Observa las URLs y métodos de peticiones XHR/fetch en la misma pestaña para que WebBrain pueda detectar acciones repetidas de la interfaz y sugerir patrones de acceso directo por API. Desactivado por defecto; actívalo solo mientras investigas comportamientos de acceso directo o latencia.',
+  'st.display.api_mutation_observer.desc': 'Observa las URLs y métodos de peticiones XHR/fetch en la misma pestaña para que WebBrain pueda detectar acciones repetidas de la interfaz y sugerir patrones de acceso directo por API. Activado de forma predeterminada.',
   'st.display.openai_ask_streaming.label': "Transmitir respuestas en modo Ask",
   'st.display.openai_ask_streaming.desc': "Muestra las respuestas del proveedor a medida que llegan en modo Ask. Las llamadas a herramientas esperan un evento final del flujo; Act, Dev, las ejecuciones programadas, en la nube y Continue siguen sin transmisi?n. Activado por defecto.",
   'st.display.plan_before_act.label': 'Planificar antes de actuar',
@@ -966,8 +972,11 @@ export default {
   "sp.export_traces.partial": "Cadena de herramientas exportada, pero no se pudieron leer algunos eventos de turno.",
   "sp.export_traces.truncated": "Cadena de herramientas exportada. Puede faltar turnos antiguos si esta conversación tiene muchas trazas.",
   "st.display.help_improve.label": "Ayuda a mejorar WebBrain",
-  "st.display.help_improve.desc_html": "Permite conservar determinadas interacciones de WebBrain Compass y utilizarlas para evaluación, mejora, ajuste fino y entrenamiento. Activado de forma predeterminada. Desactívalo para impedir que futuras interacciones de Compass se utilicen con esos fines. <u>WebBrain nunca recopila solicitudes de modelos locales ni solicitudes enviadas con tus propias credenciales de API.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Política de privacidad →</a>",
-  "st.providers.webbrain_data_use.body": "Se incluye uso diario gratuito de WebBrain Compass. Mientras Ayuda a mejorar WebBrain está activado de forma predeterminada, algunas conversaciones de Compass pueden conservarse y utilizarse para evaluación, mejora, ajuste fino y entrenamiento. Desactívalo en General → Avanzado para excluir futuras interacciones de Compass de esos usos. <u>WebBrain nunca recopila solicitudes de modelos locales ni solicitudes enviadas con tus propias credenciales de API.</u> {privacyLink}. Para obtener más uso, suscríbete en {subscribeLink}. Gestiona la facturación en {accountLink}.",
+  "st.display.help_improve.desc_html": "Permite conservar determinadas interacciones de WebBrain Compass y utilizarlas para evaluación, mejora, ajuste fino y entrenamiento. Activado de forma predeterminada. Desactívalo para impedir que futuras interacciones de Compass se utilicen con esos fines. <u>WebBrain solo recopila las solicitudes de modelos locales y de tus propias API de los proveedores donde actives «Compartir consultas para investigación».</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Política de privacidad →</a>",
+  "st.providers.webbrain_data_use.body": "Se incluye uso diario gratuito de WebBrain Compass. Mientras Ayuda a mejorar WebBrain está activado de forma predeterminada, algunas conversaciones de Compass pueden conservarse y utilizarse para evaluación, mejora, ajuste fino y entrenamiento. Desactívalo en General → Avanzado para excluir futuras interacciones de Compass de esos usos. <u>WebBrain solo recopila las solicitudes de modelos locales y de tus propias API cuando activas la opción «Compartir consultas para investigación» de ese proveedor.</u> {privacyLink}. Para obtener más uso, suscríbete en {subscribeLink}. Gestiona la facturación en {accountLink}.",
+  'st.providers.share_research.label': "Compartir consultas para investigación",
+  'st.providers.share_research.hint': "Envía los prompts y respuestas de este proveedor a WebBrain para evaluación y mejora, incluidos el proveedor y el modelo utilizados. Las imágenes y los adjuntos binarios se eliminan y el texto se trunca antes de compartir; el resto del texto se envía tal cual.",
+  'st.providers.share_research.confirm': "¿Compartir las consultas de este proveedor con WebBrain para investigación?\n\nSi se activa, tus prompts, respuestas e interacciones de herramientas con este proveedor se enviarán a WebBrain para evaluación y mejora, junto con el nombre del proveedor y del modelo. El texto se envía tal cual tras eliminar imágenes y truncar contenidos largos, así que evita compartir datos personales sensibles. Puedes desactivarlo en cualquier momento para detener el intercambio.",
   'st.providers.compat.title': 'Compatibilidad avanzada del modelo',
   'st.providers.compat.blurb': 'Déjalos en Auto a menos que el modelo o el endpoint documenten un contrato de solicitud distinto.',
   'st.providers.compat.preset': 'Preajuste de compatibilidad',
@@ -1071,5 +1080,5 @@ export default {
   "st.sync.confirm.reset": "¿Reemplazar la copia cifrada en la nube con la configuración actual de WebBrain de este dispositivo?",
   "st.sync.consent.legacy": "¿Activar sincronización cifrada? WebBrain transmitirá una copia cifrada de extremo a extremo de sus recuerdos, el autocompletado de perfiles y la configuración del proveedor de claves API a WebBrain Compass. El historial de chat y los inicios de sesión de OAuth no están sincronizados.",
   "st.sync.consent.denied": "No se concedió el permiso de sincronización cifrada.",
-  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. The first generation downloads about 4.85 GB and caches it in the browser. Test Connection checks the packaged runtime and hardware adapter without downloading the model.',
+  'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
 };

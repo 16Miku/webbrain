@@ -1,7 +1,6 @@
 import { BaseLLMProvider } from './base.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
 import {
-  isDirectDeepSeekConfig,
   isNewOpenAIContractConfig,
   isOfficialOpenAIConfig,
   isOpenCodeZenConfig,
@@ -10,6 +9,7 @@ import {
   applyOpenRouterRoutingVariant,
 } from './provider-compatibility.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
+import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
 import { canonicalizeOllamaBaseUrl } from './context-windows.js';
 import { AUTO_VISION_PROVIDER_IDS, configuredVisionSupport } from './vision-capabilities.js';
 
@@ -136,9 +136,21 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     // Otherwise sniff the model name for known vision-capable identifiers.
     // Qwen went natively multimodal starting at 3.5 (no separate -VL
     // checkpoint needed), so qwen3\.[5-9] catches those alongside the
-    // older qwen*vl-suffixed lines.
+    // older qwen*vl-suffixed lines. Vendor-specific families extend
+    // `_modelNameSniffedVision` (see the vendor subclass in this folder)
+    // rather than widening this shared regex.
     const m = (this.config.model || '').toLowerCase();
-    return /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|claude|gemini|grok|minimax-m3|kimi-k(?:-?3|2\.[5-9])|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|qwen3p8-27b|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|step-3|deepseek-v4-flash-vision-exp/.test(m);
+    return this._modelNameSniffedVision(m);
+  }
+
+  /**
+   * Shared model-name vision sniffing. Subclasses override this hook so a
+   * vendor-specific allow/deny list never has to duplicate the explicit
+   * user-override and auto-detection precedence handled by the
+   * `supportsVision` getter above.
+   */
+  _modelNameSniffedVision(model) {
+    return /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|claude|gemini|grok|minimax-m3|kimi-k(?:-?3|2\.[5-9])|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|qwen3p8-27b|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|step-3/.test(String(model || ''));
   }
 
   get useCompactPrompt() {
@@ -149,7 +161,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     return options.signal ? { signal: options.signal } : {};
   }
 
-  _headers() {
+  _headers(options = {}) {
     const headers = { 'Content-Type': 'application/json' };
     const providerName = (this.config.providerName || '').toLowerCase();
     if (this.config.requiresApiKey && !String(this.config.apiKey || '').trim()) {
@@ -167,7 +179,8 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (providerName === 'webbrain-cloud') {
       if (this.config.deviceGuid) headers['X-WebBrain-Device-Id'] = this.config.deviceGuid;
       headers['X-WebBrain-Client'] = 'extension';
-      headers['X-WebBrain-Help-Improve'] = this.config.helpImproveWebBrain === false ? '0' : '1';
+      const helpImprove = options.helpImprove ?? (this.config.helpImproveWebBrain === false ? '0' : '1');
+      headers['X-WebBrain-Help-Improve'] = helpImprove;
     }
     // OpenRouter-specific headers
     if (providerName === 'openrouter') {
@@ -180,7 +193,23 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         || (String(this.model || '').trim().startsWith('@cf/') ? 'default' : '');
       if (gatewayId) headers['cf-aig-gateway-id'] = gatewayId;
     }
+    if (providerName === 'opencode-go') {
+      headers['x-opencode-session'] = this._opencodeSessionId(options);
+    }
     return headers;
+  }
+
+  // OpenCode Go rejects requests that omit x-opencode-session. Prefer the
+  // per-conversation id from the agent so routing and prompt caching stay
+  // stable within a chat; fall back to a per-provider id for calls without a
+  // conversation (for example Test connection).
+  _opencodeSessionId(options = {}) {
+    const provided = String(options.providerSessionId || '').trim();
+    if (provided) return provided;
+    if (!this._opencodeSessionFallback) {
+      this._opencodeSessionFallback = `webbrain-${crypto.randomUUID()}`;
+    }
+    return this._opencodeSessionFallback;
   }
 
   async sendRuntimeEvents(sessionId, events, { timeoutMs = 2500 } = {}) {
@@ -194,6 +223,50 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         method: 'POST',
         headers: this._headers(),
         body: JSON.stringify({ session_id: String(sessionId || ''), events }),
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (response.ok) return { ok: true, retryable: false, status: response.status };
+      try { await response.text(); } catch {}
+      return {
+        ok: false,
+        retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+        status: response.status,
+      };
+    } catch {
+      return { ok: false, retryable: true, status: 0 };
+    } finally {
+      if (timer != null) clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Transport for the voluntary per-provider "share queries for research"
+   * outbox. Only ever called on the WebBrain Compass provider instance (the
+   * share outbox routes through it because the backend lives on the WebBrain
+   * API). Consent is forced on for this call: the share_ session is what the
+   * user opted into by enabling the per-provider toggle, independent of the
+   * global Help Improve WebBrain switch.
+   */
+  async sendShareGeneration(sessionId, payload, { timeoutMs = 4000 } = {}) {
+    if (String(this.config.providerName || '').toLowerCase() !== 'webbrain-cloud') {
+      return { ok: false, retryable: false, status: 0 };
+    }
+    // Persisted opt-ins and queued entries must also honor native permission
+    // revocation from Firefox's extension settings before any upload.
+    try {
+      if (!await browser.permissions.contains({ data_collection: RESEARCH_DATA_COLLECTION })) {
+        return { ok: false, retryable: false, status: 0 };
+      }
+    } catch {
+      return { ok: false, retryable: false, status: 0 };
+    }
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), Math.max(250, timeoutMs)) : null;
+    try {
+      const response = await fetchWithTimeout(`${this.baseUrl}/improvement/generations`, {
+        method: 'POST',
+        headers: this._headers({ helpImprove: '1' }),
+        body: JSON.stringify({ session_id: String(sessionId || ''), ...payload }),
         ...(controller ? { signal: controller.signal } : {}),
       });
       if (response.ok) return { ok: true, retryable: false, status: response.status };
@@ -305,7 +378,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (!providerName && this.baseUrl === 'https://api.openai.com/v1') return true;
     return providerName === 'openai'
       || providerName === 'openrouter'
-      || providerName === 'deepseek'
       || providerName === 'gemini';
   }
 
@@ -379,12 +451,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   _supportsReasoningContentReplay(options = {}) {
-    if (isDirectDeepSeekConfig({
-      ...this.config,
-      providerName: this.config.providerName || this.name,
-      baseUrl: this.baseUrl,
-      model: this.model,
-    })) return true;
     if (String(this.config.providerName || '').trim().toLowerCase() !== 'kimi') return false;
     const model = String(this.model || '').trim().toLowerCase();
     if (KIMI_PRESERVED_THINKING_MODELS.has(model)) return true;
@@ -789,7 +855,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     try {
       res = await fetchWithTimeout(url, {
         method: 'POST',
-        headers: this._headers(),
+        headers: this._headers(options),
         body: JSON.stringify(this._responsesBody(messages, options, false)),
         ...this._chatAbortOptions(options),
       });
@@ -816,7 +882,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     try {
       res = await fetchWithTimeout(url, {
         method: 'POST',
-        headers: this._headers(),
+        headers: this._headers(options),
         body: JSON.stringify(this._responsesBody(messages, options, true)),
         signal: options.signal,
       });
@@ -968,7 +1034,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     try {
       res = await fetchWithTimeout(url, {
         method: 'POST',
-        headers: this._headers(),
+        headers: this._headers(options),
         body: JSON.stringify(body),
         ...this._chatAbortOptions(options),
       });
@@ -1011,7 +1077,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     try {
       res = await fetchWithTimeout(streamUrl, {
         method: 'POST',
-        headers: this._headers(),
+        headers: this._headers(options),
         body: JSON.stringify(body),
         signal: options.signal,
       });

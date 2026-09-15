@@ -4,6 +4,129 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.5.0] - 2026-09-15
+
+### Added
+
+- Added support for editing custom skills.
+- Added native browser dialog handling for Chrome and Firefox.
+- Added homepage social-proof testimonials.
+
+### Changed
+
+- Enabled strict secret mode by default and updated localized descriptions.
+- Built-in skill edits now create forks, while edited skills are reparsed and default skill removals are recorded.
+
+### Fixed
+
+- Fail closed when strict secrets cannot be hydrated.
+- Dismiss unapproved browser dialogs and authorize navigation-related **Leave** decisions only for dispatched history navigation.
+- Improved debugger attachment cancellation, teardown, retry behavior, and stale-session handling.
+- Preserved newer browser sessions when late attachment cancellations complete.
+
+### Tests
+
+- Added browser-dialog and agent-lifecycle coverage, including navigation authorization and debugger attachment cancellation scenarios.
+
+## [36.4.0] - 2026-09-15
+
+### Added
+
+- Added phonr.xyz integration as a skill.
+
+## [36.3.2] - 2026-09-15
+
+### Changed
+- bugfix
+- 36.3.0
+- fix(research): retain model text before local search rewrites
+- fix(providers): honor native consent and preserve raw completions
+- fix(firefox): expose Compass share transport
+- fix(providers): omit complete text values containing attachment URLs
+- fix(providers): fully redact SVG and purge shares on revocation
+- fix(providers): strip non-base64 attachment data URLs
+- fix(providers): redact wrapped base64 in shared generations
+- fix(providers): scrub short serialized base64 research payloads
+- fix(providers): address codex round 10 - per-send consent, canonical URIs, done rawSummary
+- fix(providers): address codex round 9 - share raw provider completion, not appended notices
+- fix(providers): address codex round 8 - instance-keyed share consent
+- fix(providers): address codex round 7 - schedule_resume status, revoke-purge before flush
+- fix(providers): address codex round 6 - scrub binary in tool_calls args and metadata
+- fix(providers): address codex round 5 - bare-base64 scrub, response scrub, wrapper-aware caps
+- fix(providers): address codex round 4 - tail-preserving truncation, length-agnostic scrub, localized consent
+- fix(providers): address codex round 3 - exact share request, data-uri scrub, trailing-only strip
+- fix(providers): address codex review - honest copy, model-facing share request, provider-completion gate
+- fix(providers): harden research share capture
+- feat(providers): add voluntary share queries for research toggle and outbox
+
+## [36.3.0] - 2026-09-15
+
+### Added
+
+- Added a voluntary, per-provider "share queries for research" toggle, gated by an opt-in confirmation, with a durable outbox that ships complete generations (request, response, attribution) to the WebBrain Compass improvement endpoint and retries delivery on subsequent runs. The toggle is never offered for the WebBrain Compass provider itself.
+
+## [36.2.0] - 2026-09-14
+
+### Added
+
+- Added a dedicated DeepSeek provider with preserved router capabilities.
+- Enabled API mutations, observer, memory, and PDF viewer defaults in Chrome and Firefox.
+- Added structured Ask-to-Act handoff signaling and improved native-thinking detection.
+- Added localized enabled-API defaults across supported languages.
+
+### Changed
+
+- Require HTTPS for non-loopback API endpoints to protect bearer credentials; loopback endpoints remain available over HTTP.
+- Improved WebGPU provider fallback, transfer prioritization, runtime cleanup, and Settings synchronization.
+- Updated retry and Act handoff buttons to use the subscribe secondary style.
+- Refined batch invalidation to track the first pass transition.
+
+### Fixed
+
+- Validate memory-learning and PDF viewer preferences.
+- Reject malformed API preferences during startup and live updates.
+- Preserve observer and API mutation opt-outs when storage operations fail.
+- Clear v1 fixture completion state after later edits or failures.
+- Fail v2 episodes when trailing batch actions error after a terminal state.
+- Hardened batch execution, launch fences, Fara schema handling, pilot authorization, and budget persistence.
+- Preserve controllable retained WebGPU transfers in Apocalypse Mode and release runtimes during automatic fallback.
+- Preserve WebGPU tool-result identity and await cache removal before provider fallback.
+- Corrected WebGPU fallback behavior after model edits, removal, device loss, or stale persisted selections.
+- Explicitly authorize held-out calculation submissions and refreshed the v2 handoff manifest.
+
+### Tests
+
+- Expanded lifecycle, fixture, batch-action, handoff, authorization, preference-validation, and WebGPU fallback coverage.
+- Added and refreshed compact-model benchmark artifacts and re-frozen v2 manifest verification.
+
+## [36.1.0] - 2026-09-14
+
+### Added
+
+- Added site adapters for bol, Otto, Willhaben, Tokopedia, Jumia, Kilimall, Careem, Talabat, Mercari, Yahoo! JAPAN, Naver, Yandex Market, OLX, and Despegar.
+- Added coverage for Wildberries, Avito, VK, Noon, Swiggy, IRCTC, Paytm, and Snapdeal.
+- Added Spanish (Spain) documentation in `README.es-ES.md`.
+- Added OpenCode Go session support.
+
+### Changed
+
+- Expanded adapter routing across Europe, Southeast Asia, Africa, MENA, East Asia, CIS, India, and Latin America in Chrome and Firefox.
+- Updated permission documentation, including notification and HTTP permission mappings.
+- Updated minor-release automation with the current model version, revised temperature settings, and Playwright Chromium installation.
+
+### Fixed
+
+- Fixed OpenCode Go requests not sending the `x-opencode-session` header.
+- Improved LinkedIn contact-dialog detection and navigation safety, including shadow DOM and active-modal handling.
+- Fixed mobile storefront and login-host coverage for Tokopedia and VK.
+- Corrected Paytm and Tatkal adapter safety handling.
+- Documented Tatkal Aadhaar authentication requirements.
+
+### Tests
+
+- Expanded adapter, LinkedIn navigation, social publication, and minor-release workflow coverage.
+- Added and updated compact-model benchmark artifacts and release workflow test coverage.
+
 ## [36.0.4] - 2026-09-10
 
 ### Changed
@@ -821,13 +944,20 @@ This changelog was generated from the repository Git history and release tags. V
 
 ### Added
 - Added OpenRouter routing variant controls, including support for encoding **Exacto** as an OpenRouter model variant
+- Added WebBrain Compass Tiny v2.1 (`webbrain-one/webbrain-compass-tiny-v2.1`, ~1.87 GB) with a 32k context window as the sole exposed Chromium WebGPU text model
+- Added runtime support for LFM2.5 text/VL and Nanbeige ONNX exports in the underlying WebGPU worker
 
 ### Changed
 - Restored the **default compact activity history** behavior
+- Restored the Chromium WebGPU text provider in Settings and the normal chat provider picker with direct download controls and standalone operation outside Apocalypse Mode
 - Preserved OpenRouter model variants when routing, and synced routing after loaded model selection (Chrome + Firefox)
 - Updated provider compatibility handling for DeepSeek support
 
 ### Fixed
+- Fixed LFM2.5-VL downloads selecting FP32 artifacts, failing to mount the
+  corresponding external ONNX data, and probing LiquidAI's nonexistent legacy
+  processor filename; retries now discard obsolete wrong-precision cache
+  entries before fetching the intended FP16-encoder/Q4-decoder files
 - Improved completion recovery behavior around verification availability:
   - Allowed honest exit after failed verification
   - Preserved honest completion when verification is unavailable

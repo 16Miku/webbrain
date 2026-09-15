@@ -1,3 +1,5 @@
+import { deepSeekModelCapabilities } from './deepseek-config.js';
+
 export const DEFAULT_LOCAL_CONTEXT_WINDOW = 16384;
 export const DEFAULT_CLOUD_CONTEXT_WINDOW = 128000;
 export const MIN_CONTEXT_WINDOW = 4096;
@@ -294,8 +296,11 @@ export function inferContextWindow(config = {}) {
   // Mistral
   if (/mistral-medium-(?:3\.5|2604)/.test(model)) return K256;
 
-  // DeepSeek
-  if (model.includes('deepseek-v4')) return M1;
+  // DeepSeek: 1M for the V4.1-Flash family (including the retired
+  // `deepseek-v4-flash` aliases), a conservative 64K for retired and unknown
+  // DeepSeek ids. Numbers live in deepseek-config.js.
+  const deepSeek = deepSeekModelCapabilities(model);
+  if (deepSeek) return deepSeek.contextWindow;
 
   // xAI
   if (/grok-4\.[56](?:$|[^0-9])/.test(model)) return 500000;
@@ -363,9 +368,10 @@ export function inferMaxOutputTokens(config = {}) {
   if (/claude-3/.test(model)) return 4096;
   if (model.includes('claude-')) return 64000;
 
-  // DeepSeek
-  if (model.includes('deepseek-v4')) return 384000;
-  if (model.includes('deepseek')) return 8192;
+  // DeepSeek: 384K for the V4.1-Flash family, 8K for the retired ids (and the
+  // unsupported V4 Pro id). Numbers live in deepseek-config.js.
+  const deepSeek = deepSeekModelCapabilities(model);
+  if (deepSeek) return deepSeek.maxOutputTokens;
 
   return null;
 }

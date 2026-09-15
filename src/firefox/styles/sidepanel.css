@@ -3693,43 +3693,45 @@ html[data-ui-scale="175"] .conversation-action-label {
 }
 
 .message.error.retryable .message-content {
-  position: relative;
-  padding-right: 42px;
-  min-height: 42px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
 }
 
-.error-retry-btn {
-  position: absolute;
-  right: 8px;
-  bottom: 7px;
-  width: 24px;
-  height: 24px;
+.error-retry-btn,
+.ask-act-handoff-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(244, 67, 54, 0.35);
+  padding: 8px 22px;
   border-radius: 6px;
-  background: rgba(244, 67, 54, 0.08);
-  color: var(--error-soft);
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
 }
 
-.error-retry-btn svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.ask-act-handoff-btn {
+  margin-top: 10px;
+  max-width: 100%;
+  white-space: normal;
 }
 
 .error-retry-btn:hover,
-.error-retry-btn:focus-visible {
-  background: rgba(244, 67, 54, 0.18);
-  border-color: rgba(244, 67, 54, 0.55);
+.ask-act-handoff-btn:hover {
+  background: var(--accent-dim);
   color: var(--text-primary);
+}
+
+.error-retry-btn:focus-visible,
+.ask-act-handoff-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* WebBrain Compass quota / subscribe prompt — bare URL upgraded to a button */

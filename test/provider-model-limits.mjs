@@ -21,6 +21,8 @@ for (const browser of ['chrome', 'firefox']) {
   assert.equal(inferMaxOutputTokens({ model: 'gpt-5.6-terra' }), 128000, `${browser}: GPT-5.6 output ceiling`);
   assert.equal(inferMaxOutputTokens({ model: 'gpt-4o' }), 16384, `${browser}: GPT-4o output ceiling`);
   assert.equal(inferMaxOutputTokens({ model: 'deepseek-v4-flash' }), 384000, `${browser}: DeepSeek V4 output ceiling`);
+  assert.equal(inferMaxOutputTokens({ model: 'deepseek-flash' }), 384000, `${browser}: current DeepSeek output ceiling`);
+  assert.equal(inferMaxOutputTokens({ model: 'deepseek-v4-pro' }), 8192, `${browser}: retired DeepSeek Pro stays conservative`);
   assert.equal(inferMaxOutputTokens({ model: 'deepseek-chat' }), 8192, `${browser}: legacy DeepSeek chat output ceiling`);
   assert.equal(
     resolveMaxOutputTokens({ model: 'claude-haiku-4-5', maxOutputTokens: 128000 }),
