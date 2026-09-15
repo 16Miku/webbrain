@@ -186,8 +186,9 @@ export class CDPClient {
     if (this.sessions.has(tabId)) {
       return this.sessions.get(tabId);
     }
-    if (this.attachPromises.has(tabId)) {
-      return this.attachPromises.get(tabId);
+    const existingAttach = this.attachPromises.get(tabId);
+    if (existingAttach && !existingAttach.cancelled) {
+      return existingAttach;
     }
 
     this._ensureDebuggerListeners();
@@ -295,7 +296,10 @@ export class CDPClient {
     let timer;
     const markPendingAttachCancelled = () => {
       const pendingAttach = this.attachPromises.get(tabId);
-      if (pendingAttach) pendingAttach.cancelled = true;
+      if (pendingAttach) {
+        pendingAttach.cancelled = true;
+        this.attachPromises.delete(tabId);
+      }
     };
     const interrupted = new Promise((_, reject) => {
       owner.cancelStartup = () => {

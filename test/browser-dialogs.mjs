@@ -270,6 +270,56 @@ test('cleanupRun and teardown do not re-await timed-out or aborted debugger atta
   }
 });
 
+test('canceled attachments are evicted immediately and allow fresh retries', async () => {
+  const previousChrome = globalThis.chrome;
+  const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+  let attachCalls = 0;
+  let firstAttachCallback = null;
+  let secondAttachCallback = null;
+  globalThis.chrome = {
+    storage: { local: area, session: area },
+    runtime: { getURL: value => value },
+    tabs: { get: async id => ({ id, url: 'https://example.com/' }) },
+    debugger: {
+      attach: (_target, _version, callback) => {
+        attachCalls++;
+        if (attachCalls === 1) firstAttachCallback = callback;
+        else secondAttachCallback = callback;
+      },
+      detach: (_target, callback) => { callback?.(); },
+      onEvent: { addListener: () => {} },
+      onDetach: { addListener: () => {} },
+    },
+  };
+  const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+
+  try {
+    // 1. First startDialogHandling times out during attach
+    const startup = cdpClient.startDialogHandling(81, { timeoutMs: 20 });
+    await assert.rejects(startup, error => error.code === 'dialog_startup_timeout');
+    assert.equal(attachCalls, 1);
+    assert.equal(cdpClient.attachPromises.has(81), false);
+
+    // 2. Subsequent attach starts a fresh attach attempt instead of returning the hung promise
+    const secondAttach = cdpClient.attach(81);
+    assert.equal(attachCalls, 2);
+
+    secondAttachCallback?.();
+    const session = await secondAttach;
+    assert.equal(session.tabId, 81);
+    assert.equal(cdpClient.sessions.has(81), true);
+
+    // Late callback from the first attach must not corrupt the session
+    firstAttachCallback?.();
+    assert.equal(cdpClient.sessions.has(81), true);
+
+    await cdpClient.detach(81);
+  } finally {
+    cdpClient.stopDialogHandling(81);
+    globalThis.chrome = previousChrome;
+  }
+});
+
 test('go_back authorizes beforeunload for the current page and cleans up on completion and failure', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
