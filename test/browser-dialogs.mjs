@@ -208,3 +208,101 @@ test('cached dialogs and ended navigation cannot inherit authorization', async (
   client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogOpening', { type: 'beforeunload', url: 'https://example.com/' });
   assert.ok(calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').every(call => !call[2].accept));
 });
+
+test('go_back authorizes beforeunload for the current page and cleans up on completion and failure', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  delete globalThis.browser;
+  const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+  const calls = [];
+  const tabId = 42;
+  const beforeUrl = 'https://example.com/page2';
+  const targetUrl = 'https://example.com/page1';
+  const createEvent = () => {
+    const listeners = new Set();
+    return {
+      addListener(fn) { listeners.add(fn); },
+      removeListener(fn) { listeners.delete(fn); },
+      emit(...args) { for (const fn of [...listeners]) fn(...args); },
+      get listenerCount() { return listeners.size; },
+    };
+  };
+  const events = {
+    history: createEvent(),
+    committed: createEvent(),
+    updated: createEvent(),
+  };
+
+  const { Agent } = await import('../src/chrome/src/agent/agent.js');
+  const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+  const originalAttach = cdpClient.attach;
+  const originalSend = cdpClient.sendCommand;
+
+  try {
+    cdpClient.attach = async id => cdpClient.sessions.set(id, { tabId: id });
+    cdpClient.sendCommand = async (...args) => { calls.push(args); };
+
+    let currentUrl = beforeUrl;
+    let failInjection = false;
+    globalThis.chrome = {
+      storage: { local: area, session: area },
+      runtime: { getURL: value => value },
+      tabs: {
+        get: async id => ({ id, url: currentUrl, status: 'complete' }),
+        onUpdated: events.updated,
+      },
+      webNavigation: {
+        onHistoryStateUpdated: events.history,
+        onCommitted: events.committed,
+      },
+      scripting: {
+        executeScript: async () => {
+          if (failInjection) throw new Error('injection failed');
+          cdpClient._onDebuggerEvent({ tabId }, 'Page.javascriptDialogOpening', {
+            type: 'beforeunload',
+            url: beforeUrl,
+          });
+          cdpClient._onDebuggerEvent({ tabId }, 'Page.javascriptDialogClosed', {});
+          currentUrl = targetUrl;
+          events.committed.emit({
+            tabId,
+            frameId: 0,
+            url: targetUrl,
+            transitionQualifiers: ['forward_back'],
+          });
+          return [{ result: { before: beforeUrl } }];
+        },
+      },
+    };
+
+    await cdpClient.startDialogHandling(tabId);
+    const agent = new Agent({ getActive: () => ({ promptTier: 'full' }) });
+
+    // 1. Successful go_back: authorizes beforeunload dialog and accepts Leave
+    const result = await agent.executeTool(tabId, 'go_back', { force: true });
+    assert.equal(result.success, true);
+    assert.equal(result.verified, true);
+    assert.equal(result.url, targetUrl);
+    const dialogCalls = calls.filter(c => c[1] === 'Page.handleJavaScriptDialog');
+    assert.equal(dialogCalls.length, 1);
+    assert.deepEqual(dialogCalls[0][2], { accept: true });
+    assert.equal(cdpClient.dialogRuns.get(tabId)?.navigation, undefined);
+    assert.equal(events.committed.listenerCount, 0);
+
+    // 2. Failed injection: cleans up the authorization permit
+    failInjection = true;
+    const failedResult = await agent.executeTool(tabId, 'go_back', { force: true });
+    assert.equal(failedResult.success, false);
+    assert.equal(cdpClient.dialogRuns.get(tabId)?.navigation, undefined);
+    assert.equal(events.committed.listenerCount, 0);
+
+    cdpClient.stopDialogHandling(tabId);
+  } finally {
+    cdpClient.stopDialogHandling(tabId);
+    cdpClient.attach = originalAttach;
+    cdpClient.sendCommand = originalSend;
+    globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
