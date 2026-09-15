@@ -1,3 +1,4 @@
+import bidiCopy from './bidi-copy.mjs';
 // Turkish (tr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Uzantı arayüzü yakınlaştırması',
   'sp.ui_scale.decrease': 'Uzantı arayüzünü uzaklaştır',
   'sp.ui_scale.increase': 'Uzantı arayüzünü yakınlaştır',

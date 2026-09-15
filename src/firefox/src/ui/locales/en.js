@@ -1,8 +1,10 @@
+import bidiCopy from './bidi-copy.mjs';
 // English — canonical locale. Other locales inherit key names from this file.
 import apocalypseModeCopy from './apocalypse-copy.mjs';
 import emergencyCopy from './emergency-copy.mjs';
 
 export default {
+  ...bidiCopy,
   'sp.ui_scale.label': 'Extension UI zoom',
   'sp.ui_scale.decrease': 'Zoom extension UI out',
   'sp.ui_scale.increase': 'Zoom extension UI in',
