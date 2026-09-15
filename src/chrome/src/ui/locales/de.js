@@ -635,7 +635,7 @@ export default {
   'st.display.cost_total_limit.desc': 'Verfolgt gemeldete oder geschätzte Cloud/OpenRouter-Modellausgaben in der gesamten Erweiterung und stoppt weitere kostenpflichtige Aufrufe am Kontingent.',
   'st.display.cost_reset': 'Ausgaben zurücksetzen',
   'st.display.strict_secret.label': 'Strenge Geheimnisverwaltung',
-  'st.display.strict_secret.desc': 'Weigert sich, Anmeldeinformationen in Zusammenfassungen oder Assistententext zu zitieren — auch wenn Sie ausdrücklich danach fragen.',
+  'st.display.strict_secret.desc': 'Weigert sich, Anmeldeinformationen (Passwörter, API-Schlüssel, Token, OTPs) in Zusammenfassungen oder Assistententext zu zitieren — auch wenn Sie ausdrücklich danach fragen. Nützlich, wenn Sie regelmäßig Trace-Dateien teilen oder den Bildschirm freigeben. Standardmäßig deaktiviert, damit der Agent den exakten Wert, den Sie anfordern, bei Bedarf wiedergeben kann. Aktivieren Sie es (Einstellungen → Sicherheit), wenn `done`-Zusammenfassungen ordentlich bleiben und Anmeldeinformationen nie wiederholt werden sollen.',
   'st.display.allow_local_network.label': 'Agenten den Zugriff auf das lokale Netzwerk erlauben',
   'st.display.allow_local_network.desc': 'Ermöglicht es dem fetch_url-Tool des Agents, Loopback- und private/RFC1918-Adressen zu erreichen.',
   'st.display.scheduled_tasks.label': 'Geplante Aufgaben',

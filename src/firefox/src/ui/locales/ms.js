@@ -508,7 +508,7 @@ export default {
   "st.display.download_directory.placeholder": "Lalai sistem",
   "st.display.download_directory.error": "Gunakan folder relatif seperti WebBrain atau Work/WebBrain. Laluan mutlak dan “..” tidak dibenarkan.",
   "st.display.strict_secret.label": "Pengendalian rahsia ketat",
-  "st.display.strict_secret.desc": "Enggan memetik kelayakan (kata laluan, kunci API, token, OTP) dalam ringkasan atau teks pembantu — walaupun apabila anda secara jelas memintanya. Berguna jika anda kerap berkongsi fail jejak atau berkongsi skrin. Dihidupkan secara lalai: webbrain berjalan dalam pelayar anda sendiri, tetapi atas dasar keselamatan ejen enggan mengulangi kelayakan dan memastikan ringkasan `done` kemas.",
+  "st.display.strict_secret.desc": "Enggan memetik kelayakan (kata laluan, kunci API, token, OTP) dalam ringkasan atau teks pembantu — walaupun apabila anda secara jelas memintanya. Berguna jika anda kerap berkongsi fail jejak atau berkongsi skrin. Dimatikan secara lalai supaya ejen boleh mengulangi nilai tepat yang anda minta apabila anda memerlukannya. Hidupkannya (Tetapan → Keselamatan) apabila anda mahu ringkasan `done` kekal kemas dan kelayakan tidak pernah diulangi.",
   "st.display.request_timeout.label": "Tamat masa permintaan LLM",
   "st.display.request_timeout.desc": "Masa menunggu maksimum untuk pengepala respons dan setiap jeda antara bahagian respons penstriman. Lalai: 120 saat. Tambahkan masa ini untuk model tempatan yang perlahan, terutamanya pada CPU atau dengan konteks besar.",
   "st.providers.filter.all": "Semua",

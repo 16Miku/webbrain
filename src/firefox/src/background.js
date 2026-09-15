@@ -141,7 +141,7 @@ Promise.all([
   console.warn('[WebBrain] Apocalypse Mode schedules could not be restored:', error);
 });
 const agent = new Agent(providerManager);
-agent.strictSecretMode = true;
+agent.strictSecretMode = false;
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = browser.storage.local
   .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
@@ -452,7 +452,7 @@ const researchEscalationReady = loadResearchEscalation().catch(() => {});
 
 async function loadStrictSecretMode() {
   const stored = await browser.storage.local.get('strictSecretMode').catch(() => ({}));
-  agent.strictSecretMode = stored?.strictSecretMode !== false;
+  agent.strictSecretMode = stored?.strictSecretMode === true;
 }
 const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
@@ -1092,7 +1092,7 @@ browser.storage.onChanged.addListener((changes) => {
     setApiMutationObserverEnabled(value === undefined || value === true);
   }
   if (changes.strictSecretMode) {
-    agent.strictSecretMode = changes.strictSecretMode.newValue !== false;
+    agent.strictSecretMode = changes.strictSecretMode.newValue === true;
     // Strict mode also appends a global system note after enabled skills, so
     // refresh live conversations immediately as well as rebuilding at turn start.
     refreshPrompts = true;

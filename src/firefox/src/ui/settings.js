@@ -640,7 +640,7 @@ async function init() {
   if (costSessionLimitInput) costSessionLimitInput.value = sessionLimit.toFixed(2);
   if (costTotalLimitInput) costTotalLimitInput.value = totalLimit.toFixed(2);
   renderCostAllowanceSpent(totalSpent, totalLimit);
-  if (strictSecretToggle) strictSecretToggle.checked = stored.strictSecretMode !== false; // on by default
+  if (strictSecretToggle) strictSecretToggle.checked = stored.strictSecretMode === true; // off by default
   if (allowLocalNetworkToggle) allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true;
   if (scheduledTasksToggle) scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false;
   if (scheduledConfirmToggle) scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false;

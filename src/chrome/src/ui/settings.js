@@ -874,7 +874,7 @@ async function init() {
   if (costTotalLimitInput) costTotalLimitInput.value = totalLimit.toFixed(2);
   renderCostAllowanceSpent(totalSpent, totalLimit);
   if (strictSecretToggle) {
-    strictSecretToggle.checked = stored.strictSecretMode !== false; // on by default
+    strictSecretToggle.checked = stored.strictSecretMode === true; // off by default
   }
   if (allowLocalNetworkToggle) {
     allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true; // off by default

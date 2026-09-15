@@ -617,7 +617,7 @@ export default {
   'st.display.cost_total_limit.desc': 'Volgt gerapporteerde of geschatte cloud-/OpenRouter-modeluitgaven...',
   'st.display.cost_reset': 'Uitgaven resetten',
   'st.display.strict_secret.label': 'Strikte geheimhouding',
-  'st.display.strict_secret.desc': 'Weiger om inloggegevens te citeren in samenvattingen of assistenttekst...',
+  'st.display.strict_secret.desc': 'Weiger om inloggegevens (wachtwoorden, API-sleutels, tokens, OTP\'s) te citeren in samenvattingen of assistenttekst — zelfs wanneer je er expliciet om vraagt. Handig als je regelmatig tracebestanden deelt of het scherm deelt. Standaard uit, zodat de agent de exacte waarde kan herhalen die je opvraagt wanneer je die nodig hebt. Schakel het in (Instellingen → Beveiliging) wanneer je wilt dat `done`-samenvattingen netjes blijven en inloggegevens nooit worden herhaald.',
   'st.display.allow_local_network.label': 'Sta agent toe om lokaal netwerk te bereiken',
   'st.display.allow_local_network.desc': 'Staat het fetch_url-gereedschap van de agent toe om loopback- en privé-/RFC1918-adressen te bereiken...',
   'st.display.scheduled_tasks.label': 'Geplande taken',

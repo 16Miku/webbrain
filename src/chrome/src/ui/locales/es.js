@@ -524,7 +524,7 @@ export default {
   "st.display.download_directory.placeholder": "Predeterminado del sistema",
   "st.display.download_directory.error": "Usa una carpeta relativa como WebBrain o Work/WebBrain. No se permiten rutas absolutas ni “..”.",
   "st.display.strict_secret.label": "Manejo estricto de secretos",
-  "st.display.strict_secret.desc": "Se niega a citar credenciales (contraseñas, claves de API, tokens, OTPs) en resúmenes o texto del asistente, incluso cuando se las pidas explícitamente. Útil si compartes a menudo archivos de traza o tu pantalla. Activado por defecto: WebBrain se ejecuta en tu propio navegador, pero por precaución el agente se niega a repetir tus credenciales y mantiene limpios los resúmenes de `done`.",
+  "st.display.strict_secret.desc": "Se niega a citar credenciales (contraseñas, claves de API, tokens, OTPs) en resúmenes o texto del asistente, incluso cuando se las pidas explícitamente. Útil si compartes a menudo archivos de traza o tu pantalla. Desactivado por defecto para que el agente pueda repetir el valor exacto que pidas cuando lo necesites. Actívalo (Ajustes → Seguridad) cuando quieras mantener limpios los resúmenes de `done` y que las credenciales nunca se repitan.",
   "st.display.request_timeout.label": "Tiempo de espera de la petición al LLM",
   "st.display.request_timeout.desc": "Tiempo máximo de espera para recibir las cabeceras y para cada pausa entre fragmentos de la respuesta en streaming. Por defecto: 120 s. Auméntalo para modelos locales lentos, especialmente en CPU o con contextos grandes.",
   "st.providers.filter.all": "Todos",
