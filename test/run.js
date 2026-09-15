@@ -12287,6 +12287,8 @@ const TRACE_PRIVACY_CH = await import('file://' + path.join(ROOT, 'src/chrome/sr
 const TRACE_PRIVACY_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/privacy.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
 const CLOUD_RUNTIME_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/cloud-runtime-outbox.js').replace(/\\/g, '/'));
+const SHARE_OUTBOX_CH = await import('file://' + path.join(ROOT, 'src/chrome/src/trace/webbrain-share-outbox.js').replace(/\\/g, '/'));
+const SHARE_OUTBOX_FX = await import('file://' + path.join(ROOT, 'src/firefox/src/trace/webbrain-share-outbox.js').replace(/\\/g, '/'));
 
 test('trace event model: catalog covers every kind the recorder writes', () => {
   const kinds = EVENT_MODEL_CH.EVENT_KINDS;
@@ -12755,6 +12757,691 @@ test('Cloud runtime delivery stays consent-gated and mirrored across both builds
     assert.match(agent, /void flushCloudRuntimeOutbox\(provider\)/);
     assert.match(provider, /\/improvement\/runtime-events/);
     assert.match(provider, /retryable: response\.status === 408 \|\| response\.status === 429 \|\| response\.status >= 500/);
+  }
+});
+
+test('Share-for-research item scrubs images and clamps oversized content', () => {
+  for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
+    const itemsBefore = globalThis.crypto?.randomUUID;
+    if (itemsBefore) globalThis.crypto.randomUUID = () => `uuid-${label}`;
+    try {
+      const item = outbox.buildShareGenerationItem({
+        runId: `run-share-${label}`,
+        finalContent: 'Summary.',
+        messages: [
+          { role: 'user', content: 'tag', image_url: 'data:image/png;base64,RAWBYTES' },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Long prose argument ' + 'lorem ipsum dolor sit amet '.repeat(500) },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,RAWBYTES' } },
+            ],
+          },
+          { role: 'assistant', content: 'Short reply' },
+        ],
+        model: 'some-model',
+        mode: 'act',
+        provider: 'anthropic',
+        provider_name: 'Anthropic Claude',
+      });
+      assert.equal(item.id, `run-share-${label}`, `${label}: run id not carried`);
+      assert.equal(item.provider, 'anthropic');
+      assert.equal(item.provider_name, 'Anthropic Claude');
+      assert.equal(item.model, 'some-model');
+      assert.equal(item.mode, 'act');
+      assert.equal(JSON.stringify(item).includes('RAWBYTES'), false, `${label}: image bytes escaped the scrub`);
+      assert.equal(item.request[0].image_url, undefined, `${label}: top-level image_url key survived`);
+      assert.equal(item.request[1].content[0].type, 'text', `${label}: text block dropped with the image`);
+      assert.match(item.request[1].content[0].text, /\[… \d+ characters omitted\]/, `${label}: long text block not clamped`);
+      assert.equal(item.request[2].content, 'Short reply');
+      assert.deepEqual(item.response, { role: 'assistant', content: 'Summary.' });
+    } finally {
+      if (itemsBefore) globalThis.crypto.randomUUID = itemsBefore;
+    }
+  }
+});
+
+test('Share-for-research item drops empty runs and caps the whole request', () => {
+  assert.equal(SHARE_OUTBOX_CH.buildShareGenerationItem({
+    runId: 'r', finalContent: 'x', messages: [], model: 'm', mode: 'act', provider: 'p', provider_name: 'p',
+  }), null, 'empty message list must not be shared');
+  assert.equal(SHARE_OUTBOX_CH.buildShareGenerationItem({
+    runId: 'r', finalContent: '   ', messages: [{ role: 'user', content: 'hi' }], model: 'm', mode: 'act', provider: 'p', provider_name: 'p',
+  }), null, 'blank response must not be shared');
+  const item = SHARE_OUTBOX_CH.buildShareGenerationItem({
+    runId: 'r', finalContent: 'x',
+    messages: Array.from({ length: 60 }, (_, i) => ({ role: 'user', content: `tail${i}-` + 'lorem ipsum dolor sit amet '.repeat(360) })),
+    model: 'm', mode: 'act', provider: 'p', provider_name: 'p',
+  });
+  const total = JSON.stringify(item.request).length;
+  assert.ok(total <= 150_000, `shared request exceeded the byte budget (${total})`);
+  // Truncation preserves the tail (the turns that produced the response) and
+  // marks the dropped head up front instead of discarding the newest turns.
+  assert.deepEqual(item.request[0], { role: 'system', content: '[earlier shared messages omitted]' });
+  assert.match(item.request.at(-1).content, /^tail59-/);
+  assert.ok(!item.request.some(m => typeof m.content === 'string' && m.content.startsWith('tail0-')), 'stale head turns kept instead of the tail');
+});
+
+test('Share-for-research item excludes terminal answers and binary document blocks', () => {
+  for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
+    const item = outbox.buildShareGenerationItem({
+      runId: `run-share-binary-${label}`,
+      finalContent: 'Final answer',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Read this attachment' },
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'SECRET_PDF_BYTES' } },
+            { type: 'other', payload: { source: { type: 'base64', data: 'UNKNOWN_BINARY_BYTES' } } },
+            { type: 'file', source: { data: 'LONG_FILE_BLOB_BYTES' } },
+            { type: 'input_file', data: 'INPUT_FILE_BLOB_BYTES' },
+          ],
+        },
+        { role: 'assistant', content: 'Final answer' },
+      ],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(item.request.length, 1, `${label}: terminal answer stayed in the shared request`);
+    assert.deepEqual(item.request[0].content, [{ type: 'text', text: 'Read this attachment' }]);
+    const serialized = JSON.stringify(item);
+    assert.equal(serialized.includes('SECRET_PDF_BYTES'), false, `${label}: document bytes escaped the scrub`);
+    assert.equal(serialized.includes('UNKNOWN_BINARY_BYTES'), false, `${label}: nested base64 bytes escaped the scrub`);
+    assert.equal(serialized.includes('LONG_FILE_BLOB_BYTES'), false, `${label}: file source.data bytes escaped the scrub`);
+    assert.equal(serialized.includes('INPUT_FILE_BLOB_BYTES'), false, `${label}: input_file data bytes escaped the scrub`);
+  }
+});
+
+test('Share-for-research scrub removes embedded data URIs and keeps repeated-answer history', () => {
+  for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
+    const bigImage = `canvas snapshot data:image/png;base64,${'iVBORw0KGgoAAAANSUhEUg'.repeat(40)} trailing note`;
+    const item = outbox.buildShareGenerationItem({
+      runId: `run-share-datauri-${label}`,
+      finalContent: 'done here',
+      messages: [
+        { role: 'tool', content: bigImage },
+        {
+          role: 'user',
+          content: [
+            'look at this',
+            `embedded shot data:image/jpeg;base64,${'ABCD1234abcd'.repeat(40)} end`,
+          ],
+        },
+      ],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    const serialized = JSON.stringify(item);
+    assert.equal(serialized.includes('iVBORw0KGgoAAAANSUhEUg'), false, `${label}: tool-result data URI escaped the scrub`);
+    assert.equal(serialized.includes('ABCD1234abcd'), false, `${label}: array string data URI escaped the scrub`);
+    assert.match(serialized, /binary content omitted/, `${label}: data-URI placeholder missing`);
+    // Tiny thumbnails in short strings must be scrubbed too, not just long payloads.
+    const tiny = outbox.buildShareGenerationItem({
+      runId: `run-share-tiny-${label}`,
+      finalContent: 'ok',
+      messages: [{ role: 'tool', content: 'qr: data:image/png;base64,iVBOR' }],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(JSON.stringify(tiny).includes('iVBOR'), false, `${label}: short data URI escaped the scrub`);
+    // Non-canonical forms: uppercase scheme and media-type parameters.
+    const odd = outbox.buildShareGenerationItem({
+      runId: `run-share-odduri-${label}`,
+      finalContent: 'ok',
+      messages: [{ role: 'tool', content: 'a DATA:image/png;base64,QUJDRA b data:image/png;charset=utf-8;base64,REVGRA c' }],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(JSON.stringify(odd).includes('QUJDRA'), false, `${label}: uppercase data URI escaped the scrub`);
+    assert.equal(JSON.stringify(odd).includes('REVGRA'), false, `${label}: parameterized data URI escaped the scrub`);
+    // Pre-response snapshots must not lose earlier history that repeats the answer.
+    const repeat = outbox.buildShareGenerationItem({
+      runId: `run-share-repeat-${label}`,
+      finalContent: 'hello',
+      messages: [
+        { role: 'user', content: 'Say hello' },
+        { role: 'assistant', content: 'hello' },
+        { role: 'user', content: 'Repeat what you said' },
+      ],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(repeat.request.length, 3, `${label}: pre-response history was corrupted by terminal-answer stripping`);
+    assert.equal(repeat.request[1].content, 'hello', `${label}: repeated-answer history lost`);
+    // Bare base64 without a data: wrapper (e.g. serialized {"base64":"..."}
+    // tool results) must be scrubbed from request strings too.
+    const bareBlob = 'ABCD1234abcd'.repeat(40);
+    const bare = outbox.buildShareGenerationItem({
+      runId: `run-share-bare-${label}`,
+      finalContent: 'ok',
+      messages: [{ role: 'tool', content: `file bytes {"base64":"${bareBlob}"} end` }],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(JSON.stringify(bare).includes(bareBlob.slice(0, 60)), false, `${label}: bare base64 tool bytes escaped the scrub`);
+    // Responses get the same binary scrub as requests, not just clamping.
+    const answered = outbox.buildShareGenerationItem({
+      runId: `run-share-resp-${label}`,
+      finalContent: `here it is: data:image/png;base64,${'iVBORw0K'.repeat(60)}`,
+      messages: [{ role: 'user', content: 'reproduce the canvas' }],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(JSON.stringify(answered).includes('iVBORw0K'), false, `${label}: response image bytes escaped the scrub`);
+    // The stored response is the raw provider completion: locally appended
+    // notices are displayed but must not be mislabeled as provider output,
+    // while the composite still strips the appended terminal message.
+    const composite = 'Answer.\n\nSpend notice $0.01';
+    const rawShared = outbox.buildShareGenerationItem({
+      runId: `run-share-raw-${label}`,
+      finalContent: composite,
+      sharedResponse: 'Answer.',
+      messages: [{ role: 'user', content: 'go' }, { role: 'assistant', content: composite }],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(rawShared.request.length, 1, `${label}: composite terminal answer not stripped`);
+    assert.deepEqual(rawShared.response, { role: 'assistant', content: 'Answer.' }, `${label}: shared response is not the raw completion`);
+    // Tool-call arguments can embed raw binary (solve_captcha image_to_text):
+    // multi-step trajectories keep the calls, never the bytes.
+    const captchaBytes = `iVBORw0KGgoAAAANSUhEUg${'A'.repeat(500)}`;
+    const captched = outbox.buildShareGenerationItem({
+      runId: `run-share-captcha-${label}`,
+      finalContent: 'solved it',
+      messages: [
+        { role: 'user', content: 'solve this captcha' },
+        { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'solve_captcha', arguments: JSON.stringify({ type: 'image_to_text', imageBase64: captchaBytes }) } }] },
+        { role: 'tool', tool_call_id: 'c1', content: 'abc123' },
+        { role: 'assistant', content: 'solved it' },
+      ],
+      model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+    });
+    assert.equal(JSON.stringify(captched).includes('iVBORw0KGgo'), false, `${label}: tool-call image bytes escaped the scrub`);
+    assert.ok(captched.request.some(m => Array.isArray(m.tool_calls)), `${label}: scrubbed tool-call turn dropped from request`);
+  }
+});
+
+test('Share-for-research scrubs serialized base64 fields at every payload length', () => {
+  for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
+    // Include empty files, padding variants, and both sides of the 200-char
+    // bare-blob threshold. Preserve the tool result's non-binary metadata.
+    for (const sizeBytes of [0, 1, 2, 3, 147, 148, 150]) {
+      const base64 = Buffer.alloc(sizeBytes, 255).toString('base64');
+      const result = { success: true, filename: 'sample.bin', sizeBytes, base64 };
+      const content = JSON.stringify(result);
+      const expected = JSON.stringify({ ...result, base64: '[omitted]' });
+      const item = outbox.buildShareGenerationItem({
+        runId: `run-share-shortbin-${label}-${sizeBytes}`,
+        finalContent: content,
+        messages: [
+          { role: 'tool', content },
+          { role: 'tool', content: [content, { type: 'text', text: content }] },
+          { role: 'tool', content: `before {"base64" : "${base64}"} after {"base64":"QUJD"}` },
+        ],
+        model: 'some-model', mode: 'act', provider: 'anthropic', provider_name: 'Anthropic Claude',
+      });
+      assert.equal(item.request[0].content, expected, `${label}: ${sizeBytes}-byte tool result`);
+      assert.deepEqual(item.request[1].content, [expected, { type: 'text', text: expected }]);
+      assert.equal(item.request[2].content, 'before {"base64":"[omitted]"} after {"base64":"[omitted]"}');
+      assert.equal(item.response.content, expected, `${label}: ${sizeBytes}-byte response`);
+      assert.equal(result.base64, base64, `${label}: original tool result changed`);
+    }
+  }
+});
+
+test('Share-for-research scrubs wrapped bare base64 without counting line breaks toward the threshold', () => {
+  for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
+    for (const sizeBytes of [147, 148, 149, 150, 300]) {
+      const base64 = Buffer.alloc(sizeBytes, 255).toString('base64');
+      for (const newline of ['\n', '\r\n', '\r', '']) {
+        const wrapped = base64.match(/.{1,76}/g).join(newline);
+        const content = `file bytes: ${wrapped} trailing note`;
+        const expected = base64.length >= 200 ? 'file bytes: [embedded base64 data omitted] trailing note' : content;
+        const item = outbox.buildShareGenerationItem({
+          finalContent: content,
+          messages: [
+            { role: 'tool', content },
+            { role: 'tool', content: [content, { type: 'text', text: content }] },
+          ],
+        });
+        const context = `${label}: ${sizeBytes} bytes, newline ${JSON.stringify(newline)}`;
+        assert.equal(item.request[0].content, expected, context);
+        assert.deepEqual(item.request[1].content, [expected, { type: 'text', text: expected }], context);
+        assert.equal(item.response.content, expected, context);
+      }
+    }
+    const shortLines = 'abc\r\n'.repeat(50);
+    const item = outbox.buildShareGenerationItem({
+      finalContent: shortLines,
+      messages: [{ role: 'user', content: shortLines }],
+    });
+    assert.equal(item.request[0].content, shortLines, `${label}: short text lines were removed`);
+    assert.equal(item.response.content, shortLines, `${label}: short response lines were removed`);
+  }
+});
+
+test('Share-for-research omits text and nested content containing attachment data URLs', () => {
+  for (const [label, outbox] of [['chrome', SHARE_OUTBOX_CH], ['firefox', SHARE_OUTBOX_FX]]) {
+    for (const dataUrl of [
+      'data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3C/svg%3E',
+      'DATA:IMAGE/SVG+XML;charset=utf-8,%3Csvg%3E%3C/svg%3E',
+      'data:application/pdf,%25PDF-1.7%0Aendobj',
+      'data:application/octet-stream,ABC',
+      'data:audio/wav,%52%49%46%46',
+      'data:video/mp4,%00%00%00%20ftyp',
+      'data:font/woff,%77%4F%46%46',
+      'data:model/gltf+json,%7B%22asset%22:%7B%7D%7D',
+      'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"><text>PRIVATE_IMAGE_TEXT</text></svg>',
+      'data:image/svg+xml,<?xml version="1.0"?>\n<svg><rect width="10" height="10"/></svg>',
+      'data:image/svg+xml,<svg viewBox="0 0 10 10"/>',
+      'data:image/svg+xml,<svg><text>INCOMPLETE_IMAGE',
+      'data:image/png;base64,QU JD',
+      'data:image/png;base64,QU\tJD',
+      'data:image/png;name="sample";base64,QUJD',
+      'data:image/png;name="sample,file";base64,QUJD',
+    ]) {
+      const content = `before "${dataUrl}" after`;
+      const expected = '[binary content omitted]';
+      const item = outbox.buildShareGenerationItem({
+        finalContent: content,
+        messages: [
+          { role: 'tool', content },
+          { role: 'tool', content: ['caption', dataUrl, { type: 'text', text: dataUrl }] },
+          { role: 'user', content: [{ type: 'text', text: 'Read this.' }, { type: 'other', source: { url: dataUrl } }] },
+        ],
+      });
+      assert.equal(item.request[0].content, expected, `${label}: ${dataUrl}`);
+      assert.deepEqual(item.request[1].content, ['caption', '[binary content omitted]']);
+      assert.deepEqual(item.request[2].content, [{ type: 'text', text: 'Read this.' }]);
+      assert.equal(item.response.content, expected);
+    }
+    const textUrl = 'data:text/plain,ordinary%20text';
+    const item = outbox.buildShareGenerationItem({
+      finalContent: textUrl,
+      messages: [{ role: 'user', content: textUrl }],
+    });
+    assert.equal(item.request[0].content, textUrl, `${label}: plain text URL changed`);
+    assert.equal(item.response.content, textUrl);
+    for (const content of [
+      JSON.stringify({ result: 'data:image/svg+xml,<svg><text>SECRET</text></svg>' }),
+      'data:image/png;base64,QU%4ADRA==',
+      JSON.stringify({ result: 'data:image/png;base64,QUJD\nREVG' }),
+    ]) {
+      const escaped = outbox.buildShareGenerationItem({ finalContent: content, messages: [{ role: 'tool', content }] });
+      assert.equal(escaped.request[0].content, '[binary content omitted]', `${label}: escaped attachment leaked`);
+      assert.equal(escaped.response.content, '[binary content omitted]');
+    }
+    const serialized = JSON.stringify({ base64: 'QUJD\nREVG' });
+    const escapedBase64 = outbox.buildShareGenerationItem({ finalContent: serialized, messages: [{ role: 'tool', content: serialized }] });
+    assert.equal(escapedBase64.request[0].content, '{"base64":"[omitted]"}');
+    assert.equal(escapedBase64.response.content, '{"base64":"[omitted]"}');
+  }
+});
+
+test('Share-for-research caps count wrapper messages and serialized overhead', () => {
+  const messages = [{ role: 'system', content: 'SYS' }];
+  for (let i = 0; i < 250; i++) messages.push({ role: 'user', content: `cap${i}-` + 'word '.repeat(150) });
+  const item = SHARE_OUTBOX_CH.buildShareGenerationItem({
+    runId: 'cap-run', finalContent: 'x', messages, model: 'm', mode: 'act', provider: 'p', provider_name: 'p',
+  });
+  assert.ok(item.request.length <= 200, `message cap broken with wrappers (${item.request.length})`);
+  assert.ok(JSON.stringify(item.request).length <= 150_000, `byte budget broken with wrappers (${JSON.stringify(item.request).length})`);
+  assert.equal(item.request[0].content, 'SYS', 'system prompt lost to cap accounting');
+  assert.match(item.request.at(-1).content, /^cap249-/, 'tail lost to cap accounting');
+});
+
+test('Share-for-research outbox persists retryable failures and removes acknowledged or rejected entries', async () => {
+  const originalChrome = globalThis.chrome;
+  const storage = {};
+  globalThis.chrome = {
+    storage: {
+      local: {
+        async get(keys) {
+          const key = Array.isArray(keys) ? keys[0] : keys;
+          return { [key]: storage[key] };
+        },
+        async set(values) { Object.assign(storage, values); },
+      },
+    },
+  };
+  const entry = { id: 'share-entry-1', session_id: 'share_conv_1', provider: 'anthropic', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+  try {
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration(entry), true);
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 1);
+    let calls = 0;
+    const provider = {
+      async sendShareGeneration() {
+        calls++;
+        return calls === 1
+          ? { ok: false, retryable: true, status: 503 }
+          : calls === 2
+            ? { ok: false, retryable: false, status: 400 }
+            : { ok: true, retryable: false, status: 202 };
+      },
+    };
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(provider), 0, 'retryable failure must stay queued');
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 1);
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(provider), 1, 'rejected entry must be dropped without retry');
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 0);
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration(entry), true);
+    const listenedProvider = {
+      sent: null,
+      async sendShareGeneration(sessionId, payload) {
+        this.sent = { sessionId, payload };
+        return { ok: true, retryable: false, status: 202 };
+      },
+    };
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(listenedProvider), 1);
+    assert.deepEqual(listenedProvider.sent, { sessionId: 'share_conv_1', payload: { client_share_id: 'share-entry-1', provider: 'anthropic', provider_name: 'x', model: 'm', mode: 'act', request: { messages: entry.request }, response: entry.response } });
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 0);
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration(entry), true);
+    let sendCalls = 0;
+    let releaseSend;
+    const overlappingProvider = {
+      async sendShareGeneration() {
+        sendCalls++;
+        await new Promise(resolve => { releaseSend = resolve; });
+        return { ok: true, retryable: false, status: 202 };
+      },
+    };
+    const firstFlush = SHARE_OUTBOX_CH.flushShareOutbox(overlappingProvider);
+    const secondFlush = SHARE_OUTBOX_CH.flushShareOutbox(overlappingProvider);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(sendCalls, 1, 'overlapping flushes must not send one entry twice');
+    releaseSend();
+    assert.deepEqual(await Promise.all([firstFlush, secondFlush]), [1, 0]);
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 0);
+    // Revoked consent purges queued entries before delivery.
+    const revoked = { id: 'share-revoked-1', session_id: 'share_conv_1', provider: 'ollama', provider_name: 'x', provider_id: 'ollama', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+    const keptEntry = { id: 'share-kept-1', session_id: 'share_conv_1', provider: 'anthropic', provider_name: 'x', provider_id: 'anthropic', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration(revoked), true);
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration(keptEntry), true);
+    assert.equal(await SHARE_OUTBOX_CH.purgeShareGenerations(e => e.provider_id === 'ollama'), 1, 'revoked entry not purged');
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 1);
+    assert.equal(await SHARE_OUTBOX_CH.purgeShareGenerations(() => false), 0, 'purge dropped consented entries');
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 1);
+    // Mid-flush revocation drops the remaining snapshot without sending.
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration({ id: 'share-mid-1', session_id: 's', provider: 'p', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'one' }], response: { role: 'assistant', content: '1' } }), true);
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareGeneration({ id: 'share-mid-2', session_id: 's', provider: 'p', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'two' }], response: { role: 'assistant', content: '2' } }), true);
+    const sentIds = [];
+    let consentRevoked = false;
+    const revokingProvider = {
+      async sendShareGeneration(sessionId, payload) {
+        sentIds.push(payload.client_share_id);
+        if (payload.client_share_id === 'share-kept-1') consentRevoked = true;
+        return { ok: true, retryable: false, status: 202 };
+      },
+    };
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(revokingProvider, () => !consentRevoked), 3, 'mid-flush revoke miscounted');
+    assert.deepEqual(sentIds, ['share-kept-1'], 'revoked snapshot entries were delivered');
+    assert.equal(storage[SHARE_OUTBOX_CH.SHARE_OUTBOX_STORAGE_KEY].length, 0, 'revoked entries not dropped from storage');
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Firefox Share-for-research outbox uses the promise-based browser storage namespace', async () => {
+  const originalBrowser = globalThis.browser;
+  const originalChrome = globalThis.chrome;
+  const storage = {};
+  let chromeCalls = 0;
+  globalThis.browser = {
+    storage: {
+      local: {
+        async get(keys) {
+          const key = Array.isArray(keys) ? keys[0] : keys;
+          return { [key]: storage[key] };
+        },
+        async set(values) { Object.assign(storage, values); },
+      },
+    },
+  };
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get() { chromeCalls++; throw new Error('callback-only chrome namespace used'); },
+        set() { chromeCalls++; throw new Error('callback-only chrome namespace used'); },
+      },
+    },
+  };
+  try {
+    const entry = { id: 'share-firefox-1', session_id: 'share_firefox', provider: 'anthropic', provider_name: 'x', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+    assert.equal(await SHARE_OUTBOX_FX.enqueueShareGeneration(entry), true);
+    assert.equal(storage[SHARE_OUTBOX_FX.SHARE_OUTBOX_STORAGE_KEY].length, 1);
+    const listener = {
+      sent: null,
+      async sendShareGeneration(sessionId, payload) {
+        this.sent = { sessionId, payload };
+        return { ok: true, retryable: false, status: 202 };
+      },
+    };
+    assert.equal(await SHARE_OUTBOX_FX.flushShareOutbox(listener), 1);
+    assert.deepEqual(listener.sent, {
+      sessionId: 'share_firefox',
+      payload: {
+        client_share_id: 'share-firefox-1',
+        provider: 'anthropic',
+        provider_name: 'x',
+        model: 'm',
+        mode: 'act',
+        request: { messages: entry.request },
+        response: entry.response,
+      },
+    });
+    assert.equal(storage[SHARE_OUTBOX_FX.SHARE_OUTBOX_STORAGE_KEY].length, 0);
+    assert.equal(chromeCalls, 0, 'Firefox share outbox touched the callback-based chrome namespace');
+  } finally {
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Share-for-research revoke purge is keyed by provider instance', async () => {
+  const originalChrome = globalThis.chrome;
+  const storage = {};
+  globalThis.chrome = {
+    storage: {
+      local: {
+        async get(keys) {
+          const key = Array.isArray(keys) ? keys[0] : keys;
+          return { [key]: storage[key] };
+        },
+        async set(values) { Object.assign(storage, values); },
+      },
+    },
+  };
+  try {
+    for (const [label, AgentClass, outbox] of [['chrome', AgentCh, SHARE_OUTBOX_CH], ['firefox', AgentFx, SHARE_OUTBOX_FX]]) {
+      for (const key of Object.keys(storage)) delete storage[key];
+      // A duplicate shares its origin's providerName but has its own id; a
+      // nameless built-in (anthropic-style) stores an empty provider name.
+      // Only entries whose instance id is still consented may survive.
+      const dupRevoked = { id: `share-dup-${label}`, session_id: 's', provider: 'openai', provider_name: 'OpenAI dup', provider_id: 'openai:duplicate:1', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+      const originKept = { id: `share-origin-${label}`, session_id: 's', provider: 'openai', provider_name: 'OpenAI', provider_id: 'openai', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+      const namelessKept = { id: `share-nameless-${label}`, session_id: 's', provider: '', provider_name: '', provider_id: 'anthropic', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+      const legacyDropped = { id: `share-legacy-${label}`, session_id: 's', provider: 'openai', provider_name: 'OpenAI', model: 'm', mode: 'act', request: [{ role: 'user', content: 'hi' }], response: { role: 'assistant', content: 'yo' } };
+      assert.equal(await outbox.enqueueShareGeneration(dupRevoked), true);
+      assert.equal(await outbox.enqueueShareGeneration(originKept), true);
+      assert.equal(await outbox.enqueueShareGeneration(namelessKept), true);
+      assert.equal(await outbox.enqueueShareGeneration(legacyDropped), true);
+      const agent = new AgentClass({});
+      agent.providerManager = { consentedShareProviderIds: () => new Set(['openai', 'anthropic']) };
+      await agent._purgeRevokedShareGenerations();
+      const remaining = (storage[outbox.SHARE_OUTBOX_STORAGE_KEY] || []).map(e => e.id).sort();
+      assert.deepEqual(remaining, [`share-nameless-${label}`, `share-origin-${label}`].sort(), `${label}: instance-keyed purge kept the wrong entries`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+test('Provider settings permanently purge queued shares on opt-out, including active flush snapshots', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    for (const [label, PM, outbox] of [['chrome', ProviderManagerCh, SHARE_OUTBOX_CH], ['firefox', ProviderManagerFx, SHARE_OUTBOX_FX]]) {
+      const storage = {};
+      const runtime = { storage: { local: {
+        async get(keys) { return Object.fromEntries(keys.map(key => [key, structuredClone(storage[key])])); },
+        async set(values) { Object.assign(storage, structuredClone(values)); },
+      } } };
+      globalThis.chrome = runtime;
+      globalThis.browser = runtime;
+      const manager = new PM();
+      const defaults = manager._defaultConfigs();
+      manager.providers.set('openai', manager._createProvider('openai', { ...defaults.openai, configured: true, shareQueriesForResearch: true }));
+      const { providerId: duplicateId } = await manager.duplicateProvider('openai');
+      await manager.updateProvider(duplicateId, { shareQueriesForResearch: true });
+      const enqueue = (id, providerId = 'openai') => outbox.enqueueShareGeneration({
+        id, provider_id: providerId, request: [{ role: 'user', content: id }], response: { role: 'assistant', content: 'ok' },
+      });
+      const queuedIds = () => storage[outbox.SHARE_OUTBOX_STORAGE_KEY].map(entry => entry.id);
+      const consented = entry => manager.consentedShareProviderIds().has(entry.provider_id);
+      await enqueue('old');
+      await enqueue('other', duplicateId);
+      await manager.updateProvider('openai', { shareQueriesForResearch: false });
+      assert.deepEqual(queuedIds(), ['other'], `${label}: disabling sharing did not immediately purge its entries`);
+      await manager.updateProvider('openai', { shareQueriesForResearch: true });
+      const sent = [];
+      const transport = { async sendShareGeneration(sessionId, payload) { sent.push(payload.client_share_id); return { ok: true }; } };
+      await outbox.flushShareOutbox(transport, consented);
+      assert.deepEqual(sent, ['other'], `${label}: re-enabling revived an old share or purged the duplicate`);
+
+      await enqueue('in-flight');
+      await enqueue('stale-snapshot');
+      let releaseSend;
+      let signalStarted;
+      const started = new Promise(resolve => { signalStarted = resolve; });
+      const flush = outbox.flushShareOutbox({
+        async sendShareGeneration(sessionId, payload) {
+          sent.push(payload.client_share_id);
+          if (payload.client_share_id === 'in-flight') {
+            signalStarted();
+            await new Promise(resolve => { releaseSend = resolve; });
+          }
+          return { ok: true };
+        },
+      }, consented);
+      await started;
+      try {
+        await manager.updateProvider('openai', { shareQueriesForResearch: false });
+        await manager.updateProvider('openai', { shareQueriesForResearch: true });
+        await enqueue('new-opt-in');
+      } finally {
+        releaseSend();
+        await flush;
+      }
+      assert.deepEqual(sent, ['other', 'in-flight'], `${label}: an active flush revived purged data`);
+      await outbox.flushShareOutbox(transport, consented);
+      assert.deepEqual(sent, ['other', 'in-flight', 'new-opt-in'], `${label}: new consent did not allow new entries`);
+
+      await enqueue('removed-duplicate', duplicateId);
+      await manager.removeDuplicateProvider(duplicateId);
+      assert.deepEqual(queuedIds(), [], `${label}: removing a provider retained its queued data`);
+    }
+  } finally {
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
+test('Firefox research opt-in requires native consent and stays off while consent is pending', async () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings.js'), 'utf8');
+  const start = source.indexOf('async function confirmResearchSharing(event) {');
+  const end = source.indexOf('\nfunction providerDefinitionId', start);
+  assert.ok(start >= 0 && end > start);
+  const { RESEARCH_DATA_COLLECTION } = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/trace/research-consent.js')).href);
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'src/firefox/manifest.json'), 'utf8'));
+  assert.deepEqual(RESEARCH_DATA_COLLECTION, manifest.browser_specific_settings.gecko.data_collection_permissions.optional);
+  for (const outcome of ['grant', 'deny', 'error', 'cancel', 'disable', 'detached']) {
+    let settle;
+    let reject;
+    const pendingPermission = new Promise((resolve, rejectPermission) => { settle = resolve; reject = rejectPermission; });
+    const requests = [];
+    const dirty = [];
+    let cancelled = false;
+    const input = { checked: outcome !== 'disable', disabled: false, isConnected: true, dataset: { provider: 'openai' } };
+    const handler = Function('browser', 'window', 't', 'markProviderDirty', 'RESEARCH_DATA_COLLECTION', `${source.slice(start, end)}\nreturn confirmResearchSharing;`)(
+      { permissions: { request: permission => { requests.push(permission); return pendingPermission; } } },
+      { confirm: () => outcome !== 'cancel' }, key => key, id => dirty.push(id), RESEARCH_DATA_COLLECTION,
+    );
+    const completion = handler({ currentTarget: input, preventDefault() { cancelled = true; input.checked = false; } });
+    if (outcome === 'cancel' || outcome === 'disable') {
+      await completion;
+      assert.equal(requests.length, 0, `${outcome}: native consent should not be requested`);
+      assert.equal(cancelled, outcome === 'cancel');
+    } else {
+      assert.deepEqual(requests, [{ data_collection: RESEARCH_DATA_COLLECTION }], 'request must start synchronously in the click handler');
+      assert.equal(input.checked, false, 'an ungranted opt-in became saveable');
+      assert.equal(input.disabled, true);
+      if (outcome === 'detached') input.isConnected = false;
+      if (outcome === 'error') reject(new Error('Permission unavailable'));
+      else settle(outcome !== 'deny');
+      await completion;
+    }
+    assert.equal(input.checked, outcome === 'grant', `${outcome}: incorrect final checkbox state`);
+    assert.equal(input.disabled, false, `${outcome}: checkbox stayed disabled`);
+    assert.deepEqual(dirty, outcome === 'grant' ? ['openai'] : []);
+  }
+});
+
+test('Firefox research transport blocks native permission revocation before uploading', async () => {
+  const originalBrowser = globalThis.browser;
+  const originalFetch = globalThis.fetch;
+  try {
+    const provider = new OpenAIProviderFx({ providerName: 'webbrain-cloud', baseUrl: 'https://share.example.test/v1' });
+    for (const consent of [false, 'error', true]) {
+      const requests = [];
+      globalThis.browser = { permissions: { async contains(permission) {
+        assert.ok(permission.data_collection.includes('websiteContent'));
+        if (consent === 'error') throw new Error('Permission unavailable');
+        return consent;
+      } } };
+      globalThis.fetch = async (url, options) => { requests.push({ url, options }); return new Response('', { status: 202 }); };
+      const result = await provider.sendShareGeneration('share_test', { request: [], response: { content: 'ok' } });
+      assert.equal(requests.length, consent === true ? 1 : 0, `${consent}: native consent was bypassed`);
+      assert.equal(result.ok, consent === true);
+      assert.equal(result.retryable, false);
+    }
+  } finally {
+    globalThis.browser = originalBrowser;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Share-for-research delivery stays opt-in and mirrored across both builds', () => {
+  const chromeOutbox = fs.readFileSync(path.join(ROOT, 'src/chrome/src/trace/webbrain-share-outbox.js'), 'utf8');
+  const firefoxOutbox = fs.readFileSync(path.join(ROOT, 'src/firefox/src/trace/webbrain-share-outbox.js'), 'utf8');
+  assert.equal(chromeOutbox, firefoxOutbox, 'Chrome/Firefox share outboxes drifted');
+  for (const browser of ['chrome', 'firefox']) {
+    const agent = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
+    const settings = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/settings.js`), 'utf8');
+    const provider = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/openai.js`), 'utf8');
+    assert.match(agent, /status === 'done'[\s\S]*hadProviderCompletion === true[\s\S]*shareQueriesForResearch === true[\s\S]*enqueueShareGeneration/, `${browser}: capture must require a provider completion and the per-provider toggle`);
+    assert.match(agent, /shareRequest/, `${browser}: capture must prefer the model-facing source-grounded request`);
+    assert.match(agent, /shareRawResponse/, `${browser}: shared response must be the raw provider completion`);
+    assert.match(agent, /rawSummary/, `${browser}: done-tool summaries must exclude appended presentation`);
+    assert.match(agent, /_shareEntryConsented/, `${browser}: in-flight flushes must recheck consent per send`);
+    assert.match(agent, /currentNonStreamRequestMessages/, `${browser}: non-streaming turns must retain the exact pruned request`);
+    assert.match(agent, /currentStreamRequestMessages/, `${browser}: streaming turns must retain the exact pruned request`);
+    assert.match(agent, /shareCapture/, `${browser}: response-only turns must keep their context-only request`);
+    assert.match(agent, /shareHadProviderCompletion/, `${browser}: local-only fast paths must not be shareable`);
+    assert.match(agent, /'webbrain-cloud'/, `${browser}: Compass provider must not route through the share path`);
+    assert.match(agent, /void flushShareOutbox\(shareTransport[^)]*\)/, `${browser}: run-end share flush missing`);
+    assert.match(agent, /_shareSessionId\(/, `${browser}: share session id sanitizer missing`);
+    assert.match(chromeOutbox, /client_share_id/, `${browser}: outbox flush must send an idempotency key`);
+    assert.match(chromeOutbox, /input_file/, `${browser}: binary scrub must cover file/input_file blocks`);
+    assert.match(chromeOutbox, /embedded base64 data omitted/, `${browser}: string content must be scrubbed of data URIs`);
+    assert.match(chromeOutbox, /earlier shared messages omitted/, `${browser}: truncation must preserve the tail`);
+    assert.match(chromeOutbox, /scrubText\(storedResponse/, `${browser}: shared responses must get the binary scrub`);
+    assert.match(chromeOutbox, /sharedResponse/, `${browser}: raw provider completion must be storable separately`);
+    assert.match(chromeOutbox, /_attachImage/, `${browser}: binary metadata attachments must be dropped`);
+    assert.match(chromeOutbox, /scrubToolCallArguments/, `${browser}: tool-call arguments must be scrubbed`);
+    const managerSource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/manager.js`), 'utf8');
+    assert.match(managerSource, /consentedShareProviderIds\(\)/, `${browser}: provider manager must expose instance-keyed share consent`);
+    assert.match(agent, /_purgeRevokedShareGenerations\(\)/, `${browser}: revoked shares must be purged before delivery`);
+    assert.match(agent, /provider_id: String\(provider\?\.config\?\._providerId/, `${browser}: queued shares must be keyed by provider instance`);
+    assert.match(agent, /if \(scheduledResume\) return \{ action: 'return', value: finalResponse, status: 'scheduled_resume' \}/, `${browser}: scheduler-synthesized summaries must not be shared as generations`);
+    assert.match(settings, /shareQueriesForResearch/, `${browser}: share toggle field missing from settings`);
+    assert.match(settings, /!input\.checked[\s\S]*?confirm\(/, `${browser}: consent confirmation must guard turning the share toggle on`);
+    assert.match(provider, /\/improvement\/generations/, `${browser}: share endpoint missing from the Compass provider transport`);
   }
 });
 
@@ -26971,7 +27658,7 @@ test('completion recovery keeps scoped observations read-only and target-specifi
     );
     assert.deepEqual(
       honestUnavailablePartial,
-      { action: 'return', value: 'Download verification is unavailable.' },
+      { action: 'return', value: 'Download verification is unavailable.', rawSummary: 'Download verification is unavailable.' },
       `${label}: unavailable verification could not return an honest partial`,
     );
     assert.deepEqual(executedUnavailableDone, ['partial'], `${label}: unavailable verification executed the wrong terminal outcome`);
@@ -44681,7 +45368,7 @@ test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Co
     assert.match(settings, /helpImproveToggle\.checked = stored\.helpImproveWebBrain !== false/, `${label}: missing default-on storage hydration`);
     assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: helpImproveToggle\\.checked \\}\\)`), `${label}: setting should persist`);
     assert.match(locale, /'st\.display\.help_improve\.label': 'Help Improve WebBrain'/, `${label}: setting label missing`);
-    assert.match(locale, /On by default[^']*<u>Local-model and bring-your-own API requests are never collected by WebBrain\.<\/u>/, `${label}: setting disclosure should explain and emphasize its default and scope`);
+    assert.match(locale, /On by default[^']*<u>Local-model and bring-your-own API requests are only collected by WebBrain from providers where you turn on “Share queries for research”\.<\/u>/, `${label}: setting disclosure should explain and emphasize its default and scope`);
     assert.match(locale, /Turn it off in General → Advanced to exclude future Compass interactions/, `${label}: provider disclosure should point to General > Advanced`);
     for (const localeFile of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const translatedLocale = fs.readFileSync(path.join(localeDir, localeFile), 'utf8');
@@ -44690,6 +45377,18 @@ test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Co
       const providerDisclosure = translatedMessages['st.providers.webbrain_data_use.body'] || '';
       assert.ok(providerDisclosure.includes(translatedMessages['st.display.advanced']), `${label}/${localeFile}: provider disclosure should name the localized Advanced section`);
       assert.match(providerDisclosure, /<u>[^<]+<\/u>/, `${label}/${localeFile}: provider local/BYO exclusion should also be underlined`);
+      // Research-sharing consent must be understandable in the selected locale:
+      // label, hint, and confirmation must be translated (not English).
+      const shareLabel = translatedMessages['st.providers.share_research.label'] || '';
+      const shareHint = translatedMessages['st.providers.share_research.hint'] || '';
+      const shareConfirm = translatedMessages['st.providers.share_research.confirm'] || '';
+      assert.ok(shareLabel.length > 0 && shareHint.length > 0 && shareConfirm.length > 0, `${label}/${localeFile}: share-for-research consent strings missing`);
+      assert.doesNotMatch(shareHint, /anonymized/i, `${label}/${localeFile}: share hint must not promise anonymization`);
+      if (localeFile !== 'en.js') {
+        assert.notEqual(shareLabel, 'Share queries for research', `${label}/${localeFile}: share label not translated`);
+        assert.ok(!shareHint.startsWith('Send prompts and responses from this provider'), `${label}/${localeFile}: share hint not translated`);
+        assert.ok(!shareConfirm.startsWith('Share queries from this provider'), `${label}/${localeFile}: share confirmation not translated`);
+      }
     }
     assert.match(manager, /const HELP_IMPROVE_WEBBRAIN_KEY = 'helpImproveWebBrain';/, `${label}: provider manager setting key missing`);
     assert.match(manager, /helpImproveWebBrain = data\[HELP_IMPROVE_WEBBRAIN_KEY\] !== false/, `${label}: Compass provider config should default improvement use on`);
@@ -68742,6 +69441,78 @@ test('provider response path preserves raw assistant content and metadata', asyn
   }
 });
 
+test('shared completions retain provider text before terminal display repairs', async () => {
+  const samples = [
+    ['Verification:\n- Page title: "Example Domain"', 'Verification:\n- Page title: Example Domain'],
+    [JSON.stringify('**Result**\n\n- First\n- Second').slice(1, -1), '**Result**\n\n- First\n- Second'],
+  ];
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const streaming of [false, true]) {
+      for (const responseOnly of [false, true]) {
+        for (const [raw, displayed] of samples) {
+          const provider = {
+            supportsTools: true, supportsVision: false, promptTier: 'full', contextWindow: 128000,
+            model: 'test-model', name: 'test-provider',
+            async chat() { return { content: raw, toolCalls: [] }; },
+            async *chatStream() { yield { type: 'text', content: raw }; yield { type: 'done' }; },
+          };
+          const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+          const tabId = 4095;
+          configurePlanOnlyGuardAgent(agent, tabId);
+          if (responseOnly) agent._maybeRunPlannerGate = async () => ({ proceed: true, responseOnly: true, requestKind: 'respond', requiresStateChange: false });
+          agent._startTraceRun = async () => null;
+          let capture;
+          agent._endTraceRun = async (_tabId, _runId, status, content, options) => { capture = { status, content, ...options }; };
+          const final = await agent[streaming ? 'processMessageStream' : 'processMessage'](tabId, 'Show the result.', () => {}, 'ask');
+          const context = `${label}: streaming=${streaming}, responseOnly=${responseOnly}`;
+          assert.equal(final, displayed, `${context}: display repairs changed`);
+          assert.equal(capture.status, 'done', context);
+          assert.equal(capture.hadProviderCompletion, true, context);
+          assert.equal(capture.shareResponse, raw, `${context}: shared completion was display-repaired`);
+        }
+      }
+    }
+  }
+});
+
+test('shared WebGPU completions retain repeated search markup before local replacement', async () => {
+  for (const streaming of [false, true]) {
+    const responses = [
+      "<|tool_call_start|>[google(query='Ada Lovelace')]<|tool_call_end|>",
+      "<|tool_call_start|>[google(query='Ada Lovelace birth date')]<|tool_call_end|>",
+    ];
+    let calls = 0;
+    const provider = {
+      supportsTools: false, supportsVision: false, promptTier: 'full', contextWindow: 128000,
+      model: 'test-webgpu', name: 'WebGPU',
+      async chat() { return { content: responses[calls++], toolCalls: [] }; },
+      async *chatStream() { yield { type: 'text', content: responses[calls++] }; yield { type: 'done' }; },
+    };
+    const agent = new AgentCh({ getActive: () => provider, getProvider: () => provider, getVisionProvider: async () => null });
+    const tabId = 4096;
+    configurePlanOnlyGuardAgent(agent, tabId);
+    agent._startTraceRun = async () => null;
+    agent._applyStandaloneWikipediaRag = async () => ({ attempted: true, status: 'matched', matchCount: 1 });
+    let searches = 0;
+    agent._applyStandaloneWikipediaModelSearch = async () => {
+      searches++;
+      return { attempted: true, status: 'matched', matchCount: 1 };
+    };
+    let capture;
+    agent._endTraceRun = async (_tabId, _runId, status, content, options) => { capture = { status, content, ...options }; };
+    const runOptions = { standaloneChat: true, providerId: 'webgpu' };
+    const final = streaming
+      ? await agent.processMessageStream(tabId, 'When was Ada Lovelace born?', () => {}, 'ask', runOptions)
+      : await agent.processMessage(tabId, 'When was Ada Lovelace born?', () => {}, 'ask', [], runOptions);
+    assert.equal(calls, 2, `streaming=${streaming}: did not exercise the repeated-search terminal path`);
+    assert.equal(searches, 1, 'local search retry must remain bounded');
+    assert.match(final, /could not turn them into a reliable answer/);
+    assert.equal(capture.status, 'done');
+    assert.equal(capture.hadProviderCompletion, true);
+    assert.equal(capture.shareResponse, responses[1], `streaming=${streaming}: local replacement entered the research response`);
+  }
+});
+
 test('terminal display repair normalizes JSON-quoted page title lines', async () => {
   const title = 'Example Domain';
   const malformed = `Verification:\n- Page title: ${JSON.stringify(title)}\n- Timestamp: 3:39 PM`;
@@ -70795,7 +71566,7 @@ test('Ask streaming lifecycle tracing is wired through recorder, agent, and Trac
     assert.match(agentSource, /status: 'attempted'[\s\S]*?status: 'completed'[\s\S]*?status: fallbackSafe \? 'fallback' : 'failed'/, `${browser}: lifecycle outcomes missing`);
     assert.match(agentSource, /if \(shouldOrderInteractiveAskTrace\) queueAskStreamingTraceWrite\(writeRequestTrace\)/, `${browser}: request trace must lead the streaming lifecycle queue`);
     assert.match(agentSource, /if \(shouldOrderInteractiveAskTrace\) await queueAskStreamingTraceWrite\(writeResponseTrace\)/, `${browser}: response trace must flush after streaming lifecycle events`);
-    assert.match(agentSource, /finally \{[\s\S]{0,120}?await askStreamingTraceWrite;[\s\S]{0,200}?_endTraceRun/, `${browser}: run finalization must wait for streaming lifecycle traces`);
+    assert.match(agentSource, /finally \{[\s\S]{0,1200}?await askStreamingTraceWrite;[\s\S]{0,1200}?_endTraceRun/, `${browser}: run finalization must wait for streaming lifecycle traces`);
     assert.match(tracesSource, /case 'streaming':[\s\S]*?t\('st\.display\.openai_ask_streaming\.label'\)/, `${browser}: localized Traces UI renderer missing`);
     assert.doesNotMatch(tracesSource, /Ask stream:|text delta|first delta|ms total|tool call/, `${browser}: streaming trace copy should not be hard-coded in English`);
     assert.match(tracesHtml, /\.event\.streaming \{ border-left:/, `${browser}: Traces UI styling missing`);
@@ -85078,6 +85849,7 @@ test('accepted done repairs only the terminal display summary', async () => {
 
     assert.equal(result.action, 'return', `${AgentClass.name}: accepted done should finish`);
     assert.equal(result.value, expected, `${AgentClass.name}: done summary display was not repaired`);
+    assert.equal(result.rawSummary, malformed, `${AgentClass.name}: shared done summary was display-repaired`);
     const rawUpdate = updates.find(update => update.type === 'tool_result' && update.data?.name === 'done');
     assert.equal(
       rawUpdate?.data?.result?.summary,

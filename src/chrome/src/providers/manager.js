@@ -27,6 +27,7 @@ import {
   webgpuModelRuntime,
 } from './webgpu.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
+import { purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
 import {
   DEEPSEEK_BASE_URL,
   DEEPSEEK_DEFAULT_MODEL,
@@ -369,6 +370,14 @@ export class ProviderManager {
         ...this._storedDefaultOverride(config, storedConfig),
         configured,
       };
+      // Voluntary research sharing is opt-in per provider and default-off
+      // (never on for WebBrain Compass itself, which already shares via its
+      // own outbox). Applied in the field-level merge so existing stored
+      // configs without the key inherit the off state without polluting the
+      // default catalog snapshots.
+      if (id !== WEBBRAIN_CLOUD_PROVIDER_ID && !Object.hasOwn(configs[id], 'shareQueriesForResearch')) {
+        configs[id].shareQueriesForResearch = false;
+      }
       if (Object.hasOwn(configs[id], 'duplicateOf')) {
         delete configs[id].duplicateOf;
         providerStateMigrated = true;
@@ -479,7 +488,7 @@ export class ProviderManager {
   }
 
   _defaultConfigs() {
-    return {
+    const defaults = {
       webbrain_cloud: {
         type: 'openai',
         category: 'cloud',
@@ -952,6 +961,7 @@ export class ProviderManager {
       },
       ...ADDITIONAL_PROVIDER_DEFAULTS,
     };
+    return defaults;
   }
 
   _migrateStoredProviderConfigs(stored) {
@@ -1333,6 +1343,25 @@ export class ProviderManager {
     const provider = this.providers.get(id);
     if (!provider) throw new Error(`Provider not found: ${id}`);
     return provider;
+  }
+
+  /**
+   * Stable provider-config ids currently opted into voluntary research
+   * sharing. The share outbox purges queued entries for any other id before
+   * delivery so revoking the toggle is honored immediately. Keyed by config
+   * id (not providerName): duplicates share one providerName, and some
+   * built-ins have none at all.
+   */
+  consentedShareProviderIds() {
+    const ids = new Set();
+    try {
+      for (const [id, provider] of this.providers?.entries?.() || []) {
+        if (provider?.config?.shareQueriesForResearch !== true) continue;
+        const pid = String(provider.config._providerId || id || '');
+        if (pid) ids.add(pid);
+      }
+    } catch {}
+    return ids;
   }
 
   async _fetchVisionCapability(providerId, provider, identity) {
@@ -1952,6 +1981,12 @@ export class ProviderManager {
       }
     }
     this.providers.set(id, this._createProvider(id, merged));
+    // Revocation is permanent for queued data, even if sharing is enabled
+    // again before another agent run. Await deletion before acknowledging it.
+    // Explicit off updates also retry a previously failed purge.
+    if (Object.hasOwn(updates, 'shareQueriesForResearch') && merged.shareQueriesForResearch !== true) {
+      await purgeShareGenerations(entry => String(entry?.provider_id || '') === id);
+    }
     // Editing the model of the active WebGPU provider to an undownloaded
     // target would leave every chat failing readiness (setActive() guards
     // selection but not edits). Fall back so the active selection stays usable.
@@ -2029,6 +2064,9 @@ export class ProviderManager {
         : WEBBRAIN_CLOUD_PROVIDER_ID;
     }
     try {
+      if (duplicate.config?.shareQueriesForResearch === true) {
+        await purgeShareGenerations(entry => String(entry?.provider_id || '') === id);
+      }
       await this.save();
     } catch (error) {
       this.providers.set(id, duplicate);
