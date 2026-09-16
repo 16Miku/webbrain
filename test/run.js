@@ -68823,7 +68823,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     evroc fastrouter friendli google-vertex google-vertex-anthropic helicone
     iflowcn inception inference io-net jiekou kilo kimi-for-coding
     kuae-cloud-coding-plan llama lucidquery meganova minimax-cn-coding-plan
-    minimax-coding-plan moark modelscope morph nano-gpt nebius nova novita-ai
+    minimax-coding-plan moark modelscope morph nano-gpt nearai nebius nova novita-ai
     ollama-cloud opencode opencode-go orcarouter ovhcloud perplexity
     perplexity-agent poe pollinations privatemode-ai qihang-ai qiniu-ai requesty scaleway siliconflow
     siliconflow-cn stackit stepfun submodel synthetic tencent-coding-plan
@@ -68832,7 +68832,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 78);
+  assert.equal(expectedIds.length, 79);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -68846,7 +68846,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 109 : 108;
+    const expectedDefaultCount = label === 'chrome' ? 110 : 109;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -68944,6 +68944,30 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
       supportsAskStreaming: true,
       apiKeyUrl: 'https://www.orcarouter.ai/console',
     },
+  );
+  assert.deepEqual(
+    {
+      baseUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.nearai.baseUrl,
+      model: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.nearai.model,
+      contextWindow: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.nearai.contextWindow,
+      supportsVision: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.nearai.supportsVision,
+      supportsTools: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.nearai.supportsTools,
+      supportsAskStreaming: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.nearai.supportsAskStreaming,
+      apiKeyUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.nearai.apiKeyUrl,
+    },
+    {
+      baseUrl: 'https://cloud-api.near.ai/v1',
+      model: 'z-ai/glm-5.3-flash',
+      contextWindow: 1048576,
+      supportsVision: true,
+      supportsTools: true,
+      supportsAskStreaming: true,
+      apiKeyUrl: 'https://cloud.near.ai/',
+    },
+  );
+  assert.deepEqual(
+    ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.nearai.suggestions,
+    ['z-ai/glm-5.3-flash', 'Qwen/Qwen3.8-27B'],
   );
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['kimi-for-coding'].suggestions,
