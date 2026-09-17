@@ -2988,6 +2988,21 @@ const TOOL_KEYS = {
   carousel_navigate: 'tool.navigate',
 };
 
+const SENSITIVE_URL_PARAM_RE = /([#?&][^#&?=]*?(?:token|auth|api[_-]?key|secret|password|passwd|pwd|session|otp)[^#&?=]*=)[^#&\s]*/gi;
+
+// Strip credentials (userinfo, sensitive query/fragment values) before a URL
+// is shown in the always-visible step label. The full value stays behind the
+// expandable details panel.
+function redactUrlForLabel(url) {
+  return String(url || '')
+    .replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/i, '$1')
+    .replace(SENSITIVE_URL_PARAM_RE, '$1…');
+}
+
+function isTerminalDoneTool(name) {
+  return name === 'done' || name === 'done_json';
+}
+
 function friendlyToolLabel(name, args) {
   // Add context from args where it makes sense
   if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.selector) {
@@ -3005,13 +3020,13 @@ function friendlyToolLabel(name, args) {
   if (name === 'type_text' && args?.text) {
     return t('tool.type_text.text', { text: truncate(args.text, 25) });
   }
-  if (name === 'navigate' && args?.url) return t('tool.navigate.url', { url: truncate(args.url, 35) });
-  if (name === 'promote_iframe' && args?.urlFilter) return t('tool.navigate.url', { url: truncate(args.urlFilter, 35) });
+  if (name === 'navigate' && args?.url) return t('tool.navigate.url', { url: truncate(redactUrlForLabel(args.url), 35) });
+  if (name === 'promote_iframe' && args?.urlFilter) return t('tool.navigate.url', { url: truncate(redactUrlForLabel(args.urlFilter), 35) });
   if (name === 'fetch_url' && args?.url) {
-    return t('tool.fetch_url.url', { url: truncate(args.url, 35) });
+    return t('tool.fetch_url.url', { url: truncate(redactUrlForLabel(args.url), 35) });
   }
   if (name === 'research_url' && args?.url) {
-    return t('tool.research_url.url', { url: truncate(args.url, 35) });
+    return t('tool.research_url.url', { url: truncate(redactUrlForLabel(args.url), 35) });
   }
   if (name === 'find_text' && args?.text) return t('tool.find_text.text', { text: truncate(args.text, 25) });
   if (name === 'press_keys' && (args?.key || args?.keys)) return t('tool.press_keys.keys', { keys: truncate(args.key || args.keys, 25) });
@@ -10871,9 +10886,9 @@ function appendCompactStep(toolName, args) {
     if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
   }
 
-  if (toolName === 'done') {
+  if (isTerminalDoneTool(toolName)) {
     const rejectedSteps = currentAssistantEl?.querySelectorAll?.(
-      '.step-item[data-tool="done"][data-rejected-completion="true"]',
+      '.step-item[data-tool="done"][data-rejected-completion="true"], .step-item[data-tool="done_json"][data-rejected-completion="true"]',
     ) || [];
     const priorRejected = rejectedSteps[rejectedSteps.length - 1];
     if (priorRejected) {
@@ -10956,8 +10971,8 @@ function markLastStepDone(toolName, result) {
   if (active) {
     active.classList.remove('active');
     active.classList.add('done');
-    const rejectedCompletion = toolName === 'done' && result?.blockedDone === true;
-    if (toolName === 'done') {
+    const rejectedCompletion = isTerminalDoneTool(toolName) && result?.blockedDone === true;
+    if (isTerminalDoneTool(toolName)) {
       active.dataset.rejectedCompletion = rejectedCompletion ? 'true' : 'false';
     }
     const failed = rejectedCompletion
@@ -10969,7 +10984,7 @@ function markLastStepDone(toolName, result) {
       icon.className = failed ? 'step-icon fail' : 'step-icon check';
       icon.textContent = failed ? '\u2717' : '\u2713';
     }
-    if (toolName === 'done') {
+    if (isTerminalDoneTool(toolName)) {
       const label = active.querySelector('.step-label');
       if (label) {
         const key = rejectedCompletion
@@ -10979,6 +10994,21 @@ function markLastStepDone(toolName, result) {
         active.dataset.doneLabelKey = key;
         active.dataset.labelSource = 'done-terminal';
       }
+    } else {
+      // A transient tool_progress message may have overwritten the friendly
+      // label; restore the localized label now that the result arrived so a
+      // later locale change or transcript restore shows the right text.
+      const label = active.querySelector('.step-label');
+      if (label) {
+        let stepArgs = null;
+        try {
+          stepArgs = active.dataset.args ? JSON.parse(active.dataset.args) : null;
+        } catch {
+          stepArgs = null;
+        }
+        label.textContent = friendlyToolLabel(toolName, stepArgs);
+      }
+      active.dataset.labelSource = 'friendly';
     }
 
     // Append result to the details panel
