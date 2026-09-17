@@ -87,7 +87,7 @@ import {
   cloudflareManagedChallengeStorageKey,
   normalizeCloudflareManagedChallengeState,
 } from './cloudflare-managed-challenge.js';
-import { Capability, CAPABILITY_LABEL, capabilitiesFor, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
+import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
   buildPlannerIntentMessages,
@@ -10323,6 +10323,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const formValidationCandidate = this._isFormValidationCandidate(fnName, fnArgs);
       let formValidationAllFrames = false;
       let detectedSubmitAction = null;
+      let groupedSearchForm = null;
       let formValidationBefore = [];
       let validationBlock = null;
       if (formValidationCandidate) {
@@ -10420,8 +10421,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const scheduledPolicy = this.scheduledRunPolicies.get(tabId);
       const scheduledBypassesGate = scheduledPolicy?.requireConsequentialConfirmation === false;
+      if (
+        !this._skipPermissionGate
+        && !scheduledBypassesGate
+        && this.permissions.hasIntentCandidate(tabId)
+        && ['type_ax', 'type_text', 'iframe_type'].includes(fnName)
+      ) {
+        try {
+          const resolvedForm = await detectSubmitWithDeadline();
+          if (resolvedForm?.resolvedForm === true) groupedSearchForm = resolvedForm;
+        } catch (error) {
+          if (error?.code !== 'content_action_timeout') throw error;
+          const loopStop = await recordPagePreparationTimeout(error, 'grouped-search form detection');
+          if (loopStop) return loopStop;
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
+      }
       if (!this._skipPermissionGate && !scheduledBypassesGate) {
-        let submitConfirmation = detectedSubmitAction;
+        let submitConfirmation = detectedSubmitAction || groupedSearchForm;
         if (!submitConfirmation) {
           try {
             submitConfirmation = await detectSubmitWithDeadline();
@@ -10432,10 +10450,51 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
             continue;
           }
+          if (
+            submitConfirmation?.resolvedForm === true
+            && ['type_ax', 'type_text', 'iframe_type'].includes(fnName)
+          ) {
+            groupedSearchForm = submitConfirmation;
+          }
         }
         detectedSubmitAction = submitConfirmation;
         if (submitConfirmation?.isSubmit) {
-          const choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
+          const submitRisk = classifySubmitRisk(submitConfirmation, submitConfirmation.url);
+          const canGroupSearch = submitRisk.risk === SubmitRisk.LOW_RISK_SEARCH
+            && ['click', 'click_ax', 'press_keys'].includes(fnName);
+          let choice = null;
+          if (canGroupSearch) {
+            const intentKey = submitActionKey(submitConfirmation, submitConfirmation.url);
+            const intentVerdict = this.permissions.checkIntent(intentKey, tabId);
+            if (intentVerdict.allowed) {
+              choice = 'once';
+            } else if (intentVerdict.needsPrompt) {
+              choice = await this._promptGroupedSearchPermission(tabId, submitRisk.host, onUpdate);
+              if (choice === null) {
+                const value = '[Stopped by user before executing requested tool calls.]';
+                this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+                  success: false,
+                  cancelled: true,
+                  error: value,
+                }));
+                onUpdate('warning', { message: 'Stopped by user.' });
+                return { action: 'abort', value };
+              }
+              this.permissions.recordIntent(
+                intentKey,
+                [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK],
+                choice === 'once' ? 'allow' : 'deny',
+                tabId,
+              );
+            } else {
+              choice = 'deny';
+            }
+            if (choice === 'once') {
+              capabilities = capabilities.filter(capability => capability !== Capability.CLICK);
+            }
+          } else {
+            choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
+          }
           if (choice === null) {
             const value = '[Stopped by user before executing requested tool calls.]';
             this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
@@ -10453,11 +10512,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               content: JSON.stringify({
                 success: false,
                 denied: true,
-                submitConfirmationRequired: true,
-                error: `The user did not confirm submitting the form on ${submitConfirmation.host || 'this site'}. Do NOT retry this submit action unless the user explicitly confirms it.`,
+                ...(canGroupSearch ? { permissionRequired: true, groupedPermission: true } : { submitConfirmationRequired: true }),
+                error: canGroupSearch
+                  ? `The user did not allow the grouped low-risk search actions on ${submitRisk.host || submitConfirmation.host || 'this site'}. Do NOT retry this unchanged search unless the user explicitly allows it.`
+                  : `The user did not confirm submitting the form on ${submitConfirmation.host || 'this site'}. Do NOT retry this submit action unless the user explicitly confirms it.`,
               }),
             });
-            onUpdate('warning', { message: 'Form submission blocked until the user confirms.' });
+            onUpdate('warning', { message: canGroupSearch ? 'Low-risk search blocked until the user allows the grouped actions.' : 'Form submission blocked until the user confirms.' });
             if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
             continue;
           }
@@ -10467,9 +10528,57 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // card for same-frame submissions. iframe_click is different: the
           // generic gate is what identifies and fail-closes the target frame host
           // when urlFilter is missing, so keep CLICK for that tool.
-          if (fnName !== 'iframe_click') {
+          if (!canGroupSearch && fnName !== 'iframe_click') {
             capabilities = capabilities.filter(capability => capability !== Capability.CLICK);
           }
+        }
+      }
+      if (
+        groupedSearchForm
+        && capabilities.includes(Capability.TYPE)
+        && !this._skipPermissionGate
+        && !scheduledBypassesGate
+      ) {
+        const groupedRisk = classifySubmitRisk(
+          { ...groupedSearchForm, isSubmit: true },
+          groupedSearchForm.url,
+        );
+        if (groupedRisk.risk === SubmitRisk.LOW_RISK_SEARCH) {
+          const intentKey = submitActionKey(groupedSearchForm, groupedSearchForm.url);
+          const choice = await this._authorizeGroupedSearch(
+            tabId,
+            groupedRisk.host,
+            intentKey,
+            [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK],
+            onUpdate,
+          );
+          if (choice === null) {
+            const value = '[Stopped by user before executing requested tool calls.]';
+            this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+              success: false,
+              cancelled: true,
+              error: value,
+            }));
+            onUpdate('warning', { message: 'Stopped by user.' });
+            return { action: 'abort', value };
+          }
+          if (choice !== 'once') {
+            messages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: JSON.stringify({
+                success: false,
+                denied: true,
+                permissionRequired: true,
+                groupedPermission: true,
+                error: `The user did not allow the grouped low-risk search actions on ${groupedRisk.host || 'this site'}. Do NOT retry this unchanged search unless the user explicitly allows it.`,
+              }),
+            });
+            onUpdate('warning', { message: 'Low-risk search blocked until the user allows the grouped actions.' });
+            if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+            continue;
+          }
+          capabilities = capabilities.filter(capability => capability !== Capability.TYPE);
         }
       }
       if (
@@ -10494,6 +10603,46 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (capabilities.length && !this._skipPermissionGate && !scheduledBypassesGate) {
         await this.permissions.hydrate();
         const curUrl = await this._currentUrl(tabId);
+        if (fnName === 'navigate' && capabilities.includes(Capability.NAVIGATE)) {
+          const navigationRisk = classifySearchNavigation(fnArgs?.url, curUrl);
+          if (navigationRisk.risk === SubmitRisk.LOW_RISK_SEARCH) {
+            const choice = await this._authorizeGroupedSearch(
+              tabId,
+              navigationRisk.host,
+              '',
+              [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK],
+              onUpdate,
+              { candidateOnly: true },
+            );
+            if (choice === null) {
+              const value = '[Stopped by user before executing requested tool calls.]';
+              this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+                success: false,
+                cancelled: true,
+                error: value,
+              }));
+              onUpdate('warning', { message: 'Stopped by user.' });
+              return { action: 'abort', value };
+            }
+            if (choice !== 'once') {
+              messages.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: JSON.stringify({
+                  success: false,
+                  denied: true,
+                  permissionRequired: true,
+                  groupedPermission: true,
+                  error: `The user did not allow the grouped low-risk search actions on ${navigationRisk.host || 'this site'}. Do NOT retry this unchanged search unless the user explicitly allows it.`,
+                }),
+              });
+              onUpdate('warning', { message: 'Low-risk search blocked until the user allows the grouped actions.' });
+              if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+              continue;
+            }
+            capabilities = capabilities.filter(capability => capability !== Capability.NAVIGATE);
+          }
+        }
         let blocked = null;     // { capability, host }
         let aborted = false;
         let failClosed = false;
@@ -19191,6 +19340,77 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return 'deny'; // 'deny', or anything unexpected → fail safe
   }
 
+  /**
+   * Ask once for the narrowly scoped, same-site GET-search bundle. This is a
+   * task grant, never an "always" permission, and its form fingerprint lives
+   * in PermissionManager so an unchanged retry does not reopen the card.
+   */
+  async _promptGroupedSearchPermission(tabId, host, onUpdate) {
+    const clarifyId = `perm_group_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const tabPending = this._pendingClarifications.get(tabId) || new Map();
+    this._pendingClarifications.set(tabId, tabPending);
+    const responsePromise = new Promise((resolve) => {
+      tabPending.set(clarifyId, { resolve, ts: Date.now() });
+    });
+
+    if (typeof onUpdate === 'function') {
+      try {
+        onUpdate('clarify', {
+          promptKind: 'permission',
+          clarifyId,
+          permission: {
+            capability: Capability.CLICK,
+            host,
+            grouped: true,
+            groupedCapabilities: [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK],
+          },
+          question: `WebBrain wants to run a same-site, read-only GET search on ${host}. Allow this task-scoped bundle to navigate, type the query, and submit the search once?`,
+          options: ['once', 'deny'],
+        });
+      } catch { /* UI emit must never break the run */ }
+    }
+
+    const response = await responsePromise;
+    tabPending.delete(clarifyId);
+    if (tabPending.size === 0) this._pendingClarifications.delete(tabId);
+    if (response && response.cancelled) return null;
+    return String(response?.answer || '').trim().toLowerCase() === 'once' ? 'once' : 'deny';
+  }
+
+  async _authorizeGroupedSearch(tabId, host, intentKey, capabilities, onUpdate, { candidateOnly = false } = {}) {
+    let verdict = candidateOnly
+      ? this.permissions.checkIntentCandidate(host, tabId)
+      : this.permissions.checkIntent(intentKey, tabId);
+    if (!candidateOnly && !verdict.allowed && verdict.needsPrompt) {
+      const candidateVerdict = this.permissions.checkIntentCandidate(host, tabId);
+      if (candidateVerdict.allowed) {
+        this.permissions.recordIntent(intentKey, capabilities, 'allow', tabId);
+        return 'once';
+      }
+      if (!candidateVerdict.needsPrompt) return 'deny';
+    }
+    if (verdict.allowed) return 'once';
+    if (!verdict.needsPrompt) return 'deny';
+    const choice = await this._promptGroupedSearchPermission(tabId, host, onUpdate);
+    if (choice === null) return null;
+    if (candidateOnly) {
+      this.permissions.recordIntentCandidate(
+        host,
+        capabilities,
+        choice === 'once' ? 'allow' : 'deny',
+        tabId,
+      );
+    } else {
+      this.permissions.recordIntent(
+        intentKey,
+        capabilities,
+        choice === 'once' ? 'allow' : 'deny',
+        tabId,
+      );
+    }
+    return choice;
+  }
+
   _isFormValidationCandidate(toolName, args = {}) {
     const name = String(toolName || '');
     if (name === 'click' || name === 'click_ax' || name === 'iframe_click' || name === 'execute_js') return true;
@@ -20533,7 +20753,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _detectLikelySubmitAction(tabId, toolName, args = {}) {
     const name = String(toolName || '');
-    const submitCapableTools = new Set(['click', 'click_ax', 'iframe_click', 'set_field', 'press_keys', 'execute_js']);
+    const submitCapableTools = new Set(['click', 'click_ax', 'iframe_click', 'type_ax', 'type_text', 'iframe_type', 'set_field', 'press_keys', 'execute_js']);
     if (!submitCapableTools.has(name)) return null;
 
     if (name === 'set_field' && !args?.submit) return null;
@@ -20558,7 +20778,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     try {
-      const allFrames = name === 'iframe_click' || name === 'press_keys';
+      let allFrames = name === 'iframe_click' || name === 'press_keys';
+      if (name === 'iframe_type') allFrames = true;
       let rawResults = [];
       if (globalThis.chrome?.scripting?.executeScript) {
         rawResults = await chrome.scripting.executeScript({
@@ -20572,7 +20793,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!/^\s*(?:async\s+)?function\b/.test(probeSource)) {
           probeSource = `function ${probeSource}`;
         }
-        const safeName = ['click', 'click_ax', 'iframe_click', 'set_field', 'press_keys', 'execute_js'].includes(name) ? name : '';
+        const safeName = ['click', 'click_ax', 'iframe_click', 'type_ax', 'type_text', 'iframe_type', 'set_field', 'press_keys', 'execute_js'].includes(name) ? name : '';
         const serializedSafeName = JSON.stringify(safeName).replace(/[<>\u2028\u2029/]/g, ch => (
           ch === '<' ? '\\u003C'
             : ch === '>' ? '\\u003E'
@@ -20597,12 +20818,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return {
           isSubmit: true,
           host,
+          url: String(detected.url || '').slice(0, 300),
           tool: name,
           reason: String(detected.reason || 'likely form submission').slice(0, 200),
           validationSubmitEvidence: detected.validationSubmitEvidence === 'strong' ? 'strong' : 'heuristic',
           summary: String(detected.summary || '').slice(0, 1200),
           fields: Array.isArray(detected.fields) ? detected.fields.slice(0, 12) : [],
           changedFields: Array.isArray(detected.changedFields) ? detected.changedFields.slice(0, 8) : [],
+          method: String(detected.method || 'GET').slice(0, 20).toUpperCase(),
+          action: String(detected.action || '').slice(0, 300),
+          actionUrl: String(detected.actionUrl || detected.action || '').slice(0, 300),
           githubCommitDialogLauncher: detected.githubCommitDialogLauncher === true,
           ...(Array.isArray(detected.publicationResourceUrls) ? { publicationResourceUrls: detected.publicationResourceUrls.slice(0, 200) } : {}),
           publicationResourceUrlsComplete: detected.publicationResourceUrlsComplete === true,
@@ -20618,6 +20843,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             ? detected.transactionPageOrderIds.slice(0, 20)
             : [],
           transactionPageOrderIdsComplete: detected.transactionPageOrderIdsComplete === true,
+        };
+      }
+      const resolvedForm = rawResults.find(item => item?.resolvedForm === true);
+      if (resolvedForm) {
+        return {
+          isSubmit: false,
+          resolvedForm: true,
+          host: normalizeHost(resolvedForm.host || resolvedForm.url || currentUrl) || 'this site',
+          url: String(resolvedForm.url || '').slice(0, 300),
+          tool: name,
+          summary: String(resolvedForm.summary || '').slice(0, 1200),
+          fields: Array.isArray(resolvedForm.fields) ? resolvedForm.fields.slice(0, 12) : [],
+          changedFields: Array.isArray(resolvedForm.changedFields) ? resolvedForm.changedFields.slice(0, 8) : [],
+          method: String(resolvedForm.method || 'GET').slice(0, 20).toUpperCase(),
+          action: String(resolvedForm.action || '').slice(0, 300),
+          actionUrl: String(resolvedForm.actionUrl || resolvedForm.action || '').slice(0, 300),
         };
       }
       const nonSubmit = rawResults.find(item => item?.resolvedNonSubmitTarget === true);
@@ -20784,14 +21025,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const summarizeForm = (form, pendingEl = null, pendingValue = null) => {
       if (!form) return { summary: '', fields: [], changedFields: [] };
       const method = compact(form.getAttribute('method') || form.method || 'GET', 20).toUpperCase();
-      const action = (() => {
+      const actionUrl = (() => {
         try {
           const actionUrl = new URL(form.getAttribute('action') || location.href, location.href);
-          actionUrl.search = '';
-          actionUrl.hash = '';
-          return compact(actionUrl.href, 160);
+          return compact(actionUrl.href, 300);
         } catch {
           return compact(form.getAttribute('action') || location.href, 160);
+        }
+      })();
+      const action = (() => {
+        try {
+          const displayUrl = new URL(actionUrl, location.href);
+          displayUrl.search = '';
+          displayUrl.hash = '';
+          return compact(displayUrl.href, 160);
+        } catch {
+          return actionUrl;
         }
       })();
       const controls = Array.from(form.querySelectorAll('input, textarea, select, [contenteditable="true"]'))
@@ -20806,6 +21055,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const changed = el === pendingEl || (!!value && value !== before);
         return {
           label: labelFor(el),
+          name: compact(el.getAttribute?.('name') || '', 80),
+          id: compact(el.getAttribute?.('id') || '', 80),
+          autocomplete: compact(el.getAttribute?.('autocomplete') || '', 80),
+          ariaLabel: compact(el.getAttribute?.('aria-label') || '', 120),
+          placeholder: compact(el.getAttribute?.('placeholder') || '', 120),
           type: compact(el.type || el.tagName || '', 40),
           value,
           changed,
@@ -20824,6 +21078,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         summary: `${origin} ${changedText}`,
         fields: fields.slice(0, 12),
         changedFields,
+        method,
+        action,
+        actionUrl,
       };
     };
     const transactionOrderScan = (root) => {
@@ -21367,7 +21624,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       'a, button, [role="button"], [role="link"], [role="tab"], [role="menuitem"], input:not([type="hidden"]), textarea, select, input[type="button"], input[type="submit"], summary, label, [onclick], [data-action]'
     )).filter(isVisible);
     const resolveClickTarget = () => {
-      if (toolName === 'click_ax' || toolName === 'set_field') {
+      if (toolName === 'click_ax' || toolName === 'set_field' || toolName === 'type_ax') {
         try {
           if (typeof window.__wb_ax_lookup === 'function' && typeof args.ref_id === 'string') {
             return window.__wb_ax_lookup(args.ref_id);
@@ -21376,7 +21633,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return null;
       }
       if (toolName === 'press_keys') return doc.activeElement;
-      if (toolName === 'iframe_click') {
+      if (toolName === 'iframe_click' || toolName === 'iframe_type') {
         const filter = compact(args.urlFilter || '', 300).toLowerCase();
         const frameUrl = url.toLowerCase();
         const frameHost = host.toLowerCase();
@@ -21392,6 +21649,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           try { return doc.elementFromPoint(Number(args.x), Number(args.y)); } catch { return null; }
         }
         return null;
+      }
+      if (toolName === 'type_text') {
+        if (args.selector) return deepQuerySelector(doc, args.selector);
+        if (args.index != null) {
+          const index = Number(args.index);
+          const all = interactiveElements();
+          return Number.isFinite(index) ? all[index] || null : null;
+        }
+        return isFormField(doc.activeElement) ? doc.activeElement : null;
       }
       if (toolName !== 'click') return null;
       if (args.selector) {
@@ -21428,6 +21694,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     try {
       const target = resolveClickTarget();
+      if (['type_ax', 'type_text', 'iframe_type'].includes(toolName)) {
+        const form = target?.form || target?.closest?.('form') || null;
+        if (form) {
+          return {
+            resolvedForm: true,
+            host,
+            url,
+            ...summarizeForm(form, target, args.text || ''),
+          };
+        }
+      }
       if (toolName === 'set_field' && args.submit) {
         const form = target?.form || target?.closest?.('form') || null;
         return submitInfo(form, 'set_field({submit:true})', target, args.text || '', 'strong', target);

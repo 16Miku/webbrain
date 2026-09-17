@@ -101,6 +101,10 @@ function normalizePendingClarify(data, now = Date.now()) {
     pending.permission = {
       capability: String(permission.capability || '').slice(0, 80),
       host: String(permission.host || '').slice(0, 300),
+      ...(permission.grouped === true ? { grouped: true } : {}),
+      ...(Array.isArray(permission.groupedCapabilities)
+        ? { groupedCapabilities: permission.groupedCapabilities.map(value => String(value).slice(0, 80)).slice(0, 6) }
+        : {}),
     };
   }
   const submitConfirmation = asObject(obj.submitConfirmation);
