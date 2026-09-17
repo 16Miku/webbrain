@@ -45021,6 +45021,28 @@ test('sidepanel activity-step labels treat tool names as text', () => {
   }
 });
 
+test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions across browsers', () => {
+  for (const [label, panelRel, localeDir] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/locales'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/locales'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    assert.match(panel, /get_accessibility_tree:\s*['"]tool\.get_accessibility_tree['"]/, `${label}: TOOL_KEYS must map get_accessibility_tree`);
+    assert.match(panel, /click_ax:\s*['"]tool\.click['"]/, `${label}: TOOL_KEYS must map click_ax`);
+    assert.match(panel, /type_ax:\s*['"]tool\.type_text['"]/, `${label}: TOOL_KEYS must map type_ax`);
+    assert.match(panel, /set_field:\s*['"]tool\.type_text['"]/, `${label}: TOOL_KEYS must map set_field`);
+    assert.match(panel, /wait_for_stable:\s*['"]tool\.wait_for_stable['"]/, `${label}: TOOL_KEYS must map wait_for_stable`);
+    assert.match(panel, /fetch_url:\s*['"]tool\.fetch_url['"]/, `${label}: TOOL_KEYS must map fetch_url`);
+
+    const files = fs.readdirSync(path.join(ROOT, localeDir)).filter(f => f.endsWith('.js'));
+    assert.ok(files.length > 0, `${label}: expected at least one locale file`);
+    for (const file of files) {
+      const localeSrc = fs.readFileSync(path.join(ROOT, localeDir, file), 'utf8');
+      assert.match(localeSrc, /['"]tool\.get_accessibility_tree['"]/, `${label}/${file} missing tool.get_accessibility_tree`);
+    }
+  }
+});
+
 test('sidepanel suppresses streamed raw tool-call text before rendering tool steps', () => {
   for (const [label, panelRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],

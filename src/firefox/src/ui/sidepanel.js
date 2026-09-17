@@ -2771,10 +2771,15 @@ async function renderClearedConversationForTab(tabId, { allowCacheClearFailure =
 // Tool names → i18n key for the human-friendly label. Resolved at render
 // time so language changes take effect without a reload.
 const TOOL_KEYS = {
+  get_accessibility_tree: 'tool.get_accessibility_tree',
   read_page: 'tool.read_page',
   get_interactive_elements: 'tool.get_interactive_elements',
   click: 'tool.click',
+  click_ax: 'tool.click',
   type_text: 'tool.type_text',
+  type_ax: 'tool.type_text',
+  set_field: 'tool.type_text',
+  set_checked: 'tool.set_checked',
   scroll: 'tool.scroll',
   navigate: 'tool.navigate',
   go_back: 'tool.go_back',
@@ -2782,28 +2787,100 @@ const TOOL_KEYS = {
   extract_data: 'tool.extract_data',
   inspect_element_styles: 'tool.inspect_element_styles',
   read_page_source: 'tool.read_page_source',
-  wait_for_element: 'tool.wait_for_element',
-  get_selection: 'tool.get_selection',
+  inject_css: 'tool.inject_css',
+  remove_injected_css: 'tool.remove_injected_css',
+  patch_element: 'tool.patch_element',
+  revert_patch: 'tool.revert_patch',
   execute_js: 'tool.execute_js',
+  read_console: 'tool.read_console',
+  inspect_network_requests: 'tool.inspect_network_requests',
+  inspect_event_listeners: 'tool.inspect_event_listeners',
+  highlight_element: 'tool.highlight_element',
+  wait_for_element: 'tool.wait_for_element',
+  wait_for_stable: 'tool.wait_for_stable',
+  get_selection: 'tool.get_selection',
+  find_text: 'tool.find_text',
+  hover: 'tool.hover',
+  drag_drop: 'tool.drag_drop',
+  press_keys: 'tool.press_keys',
+  fetch_url: 'tool.fetch_url',
+  research_url: 'tool.research_url',
+  read_pdf: 'tool.read_pdf',
+  read_youtube_transcript: 'tool.read_youtube_transcript',
+  screenshot: 'tool.screenshot',
+  full_page_screenshot: 'tool.screenshot',
+  auto_screenshot: 'tool.screenshot',
+  staged_screenshot: 'tool.screenshot',
+  upload_file: 'tool.upload_file',
+  download_resource_from_page: 'tool.download_media',
+  download_files: 'tool.download_files',
+  download_social_media: 'tool.download_media',
+  download_public_media: 'tool.download_media',
+  list_downloads: 'tool.check_downloads',
+  read_downloaded_file: 'tool.read_downloaded_file',
+  scratchpad_write: 'tool.scratchpad_write',
+  progress_update: 'tool.progress_update',
+  progress_read: 'tool.progress_read',
+  verify_form: 'tool.verify_form',
+  solve_captcha: 'tool.solve_captcha',
+  clarify: 'tool.clarify',
+  get_window_info: 'tool.get_window_info',
+  resize_window: 'tool.resize_window',
+  inspect_viewport: 'tool.inspect_viewport',
+  get_shadow_dom: 'tool.inspect_element_styles',
+  shadow_dom_query: 'tool.get_interactive_elements',
+  get_frames: 'tool.read_frame',
+  iframe_read: 'tool.read_frame',
+  iframe_click: 'tool.click',
+  iframe_type: 'tool.type_text',
+  chat_observe: 'tool.chat_observe',
+  chat_send: 'tool.chat_send',
   delegate_research: 'tool.delegate_research',
   promote_iframe: 'tool.navigate',
   schedule_resume: 'tool.schedule_resume',
   schedule_task: 'tool.schedule_task',
   done: 'tool.done',
+  done_json: 'tool.done',
+  load_skill: 'tool.load_skill',
+  execute_webmcp_tool: 'tool.execute_webmcp_tool',
+  list_webmcp_tools: 'tool.execute_webmcp_tool',
+  beep: 'tool.beep',
+  gmail_count_results: 'tool.read_page',
+  carousel_navigate: 'tool.navigate',
 };
 
 function friendlyToolLabel(name, args) {
   // Add context from args where it makes sense
-  if (name === 'click' && args?.selector) return t('tool.click.selector', { selector: truncate(args.selector, 30) });
-  if (name === 'click' && args?.index != null) return t('tool.click.index', { index: args.index });
-  if (name === 'type_text' && args?.text) return t('tool.type_text.text', { text: truncate(args.text, 25) });
+  if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.selector) {
+    return t('tool.click.selector', { selector: truncate(args.selector, 30) });
+  }
+  if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.index != null) {
+    return t('tool.click.index', { index: args.index });
+  }
+  if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.text) {
+    return t('tool.click.selector', { selector: truncate(args.text, 30) });
+  }
+  if ((name === 'type_text' || name === 'type_ax' || name === 'set_field' || name === 'iframe_type') && args?.text) {
+    return t('tool.type_text.text', { text: truncate(args.text, 25) });
+  }
   if (name === 'navigate' && args?.url) return t('tool.navigate.url', { url: truncate(args.url, 35) });
   if (name === 'promote_iframe' && args?.urlFilter) return t('tool.navigate.url', { url: truncate(args.urlFilter, 35) });
+  if ((name === 'fetch_url' || name === 'research_url') && args?.url) {
+    return t('tool.fetch_url.url', { url: truncate(args.url, 35) });
+  }
+  if (name === 'find_text' && args?.text) return t('tool.find_text.text', { text: truncate(args.text, 25) });
+  if (name === 'press_keys' && args?.keys) return t('tool.press_keys.keys', { keys: truncate(args.keys, 25) });
   if (name === 'scroll') return t('tool.scroll.direction', { direction: args?.direction || 'down' });
   if (name === 'extract_data') return t('tool.extract_data.type', { type: args?.type || 'data' });
   if (name === 'wait_for_element' && args?.selector) return t('tool.wait_for_element.selector', { selector: truncate(args.selector, 30) });
-  const key = TOOL_KEYS[name];
-  return key ? t(key) : name;
+  const key = TOOL_KEYS[name] || `tool.${name}`;
+  const translated = t(key);
+  if (translated && translated !== key) return translated;
+  if (typeof name === 'string' && name.trim()) {
+    const cleaned = name.replace(/_ax$/, '').replace(/[_-]+/g, ' ').trim();
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+  return name || '';
 }
 
 function formatScheduledTime(value) {
