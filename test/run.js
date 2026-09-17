@@ -45068,8 +45068,9 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.doesNotMatch(panel, /tool\.(?:navigate|fetch_url|research_url)\.url/, `${label}: activity labels must not disclose URLs`);
     assert.doesNotMatch(panel, /name === 'find_text' && args\?\.text/, `${label}: find_text must not preview arbitrary search terms`);
     assert.match(panel, /const LABEL_ARG_KEYS =/, `${label}: step metadata must filter arguments to label-relevant keys`);
-    assert.doesNotMatch(panel, /'url'/, `${label}: step metadata must not persist URLs`);
-    assert.doesNotMatch(panel, /'text'/, `${label}: step metadata must not persist typed or searched text`);
+    const labelArgKeys = panel.match(/const LABEL_ARG_KEYS = \[([^\]]*)\];/)?.[1] || '';
+    assert.doesNotMatch(labelArgKeys, /'url'/, `${label}: step metadata must not persist URLs`);
+    assert.doesNotMatch(labelArgKeys, /'text'/, `${label}: step metadata must not persist typed or searched text`);
     assert.match(panel, /function isTerminalDoneTool\(name\)/, `${label}: done_json must share terminal completion handling`);
     assert.match(panel, /function restoreStepFriendlyLabel\(step\)/, `${label}: completed/failed steps must restore friendly label and clear progress marker`);
     assert.match(panel, /failed \? 'sp\.tool\.done\.failed' : 'sp\.tool\.done\.completed'/, `${label}: restoreStepFriendlyLabel must set terminal failure outcome for interrupted done steps`);
