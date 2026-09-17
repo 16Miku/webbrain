@@ -4,6 +4,31 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.7.0] - 2026-09-17
+
+### Added
+
+- Added drag-and-drop attachment support, including Markdown files, to the side panel.
+- Added localized, human-readable tool-action labels with distinct labels for screenshots, frame listings, downloads, research, WebMCP discovery, Gmail actions, and shadow DOM queries.
+
+### Changed
+
+- Improved activity labels and refreshed them after transcript restoration, locale changes, and progress updates.
+- Kept URLs, credentials, tokens, OAuth codes, signatures, and typed secrets out of stored and displayed activity labels.
+
+### Fixed
+
+- Expanded URL redaction to cover nested URLs, userinfo, credentials, sensitive path tokens, encoded parameter names, protocol-relative URLs, and URLs without query markers.
+- Failed closed when nested URL redaction exceeded its supported depth.
+- Correctly marked interrupted and aborted terminal steps as failed.
+- Restored friendly action labels when a step fails.
+- Trimmed URLs before redacting embedded userinfo.
+
+### Tests
+
+- Added and updated activity-label, URL-redaction, lifecycle, attachment drop, and accessibility-tree benchmark coverage.
+- Updated lifecycle harnesses and research URL expectations for the generic, privacy-preserving labels.
+
 ## [36.6.2] - 2026-09-16
 
 ### Changed
