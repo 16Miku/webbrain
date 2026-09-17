@@ -45044,6 +45044,9 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
       assert.match(localeSrc, /['"]tool\.get_shadow_dom['"]/, `${label}/${file} missing tool.get_shadow_dom`);
       assert.match(localeSrc, /['"]tool\.shadow_dom_query['"]/, `${label}/${file} missing tool.shadow_dom_query`);
       assert.match(localeSrc, /['"]tool\.gmail_count_results['"]/, `${label}/${file} missing tool.gmail_count_results`);
+      assert.match(localeSrc, /['"]tool\.staged_screenshot['"]/, `${label}/${file} missing tool.staged_screenshot`);
+      assert.match(localeSrc, /['"]tool\.get_frames['"]/, `${label}/${file} missing tool.get_frames`);
+      assert.match(localeSrc, /['"]tool\.download_resource['"]/, `${label}/${file} missing tool.download_resource`);
     }
     assert.match(panel, /if \(name === 'press_keys' && \(args\?\.key \|\| args\?\.keys\)\)/, `${label}: press_keys label must read schema-valid args.key`);
     assert.match(panel, /if \(name === 'research_url' && args\?\.url\)[\s\S]*?tool\.research_url\.url/, `${label}: research_url must keep its own label`);
@@ -45051,6 +45054,9 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /get_shadow_dom:\s*['"]tool\.get_shadow_dom['"]/, `${label}: get_shadow_dom must keep its own discovery label`);
     assert.match(panel, /shadow_dom_query:\s*['"]tool\.shadow_dom_query['"]/, `${label}: shadow_dom_query must keep its own query label`);
     assert.match(panel, /gmail_count_results:\s*['"]tool\.gmail_count_results['"]/, `${label}: gmail_count_results must keep its own counting label`);
+    assert.match(panel, /staged_screenshot:\s*['"]tool\.staged_screenshot['"]/, `${label}: staged_screenshot must keep its own inspection label`);
+    assert.match(panel, /get_frames:\s*['"]tool\.get_frames['"]/, `${label}: get_frames must keep its own discovery label`);
+    assert.match(panel, /download_resource_from_page:\s*['"]tool\.download_resource['"]/, `${label}: download_resource_from_page must keep its own file label`);
     assert.doesNotMatch(panel, /name === 'type_ax'[^;]*?tool\.type_text\.text/, `${label}: type_ax must not preview typed text (credential exposure)`);
     assert.doesNotMatch(panel, /name === 'set_field'[^;]*?tool\.type_text\.text/, `${label}: set_field must not preview typed text (credential exposure)`);
     assert.match(panel, /function refreshRenderedStepLabels\(root\)/, `${label}: rendered step labels must be refreshable on locale change`);
