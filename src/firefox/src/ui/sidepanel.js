@@ -2851,7 +2851,7 @@ const TOOL_KEYS = {
   carousel_navigate: 'tool.navigate',
 };
 
-const SENSITIVE_PARAM_WORDS_RE = /(?:^|[_-])(?:key|api[_-]?key|token|secret|password|passwd|pwd|session|otp|signature|sig|auth|authorization)(?:[_-]|$)/i;
+const SENSITIVE_PARAM_WORDS_RE = /(?:^|[^a-z0-9])(?:key|api[_-]?key|token|secret|password|passwd|pwd|session|otp|signature|sig|auth|authorization|code)(?:[^a-z0-9]|$)/i;
 
 // Strip credentials (userinfo, sensitive query/fragment values) before a URL
 // is shown in the always-visible step label. The full value stays behind the

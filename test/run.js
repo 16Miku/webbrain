@@ -45068,6 +45068,7 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /decodeURIComponent/, `${label}: URL credential redaction must decode parameter names`);
     assert.match(panel, /SENSITIVE_PARAM_WORDS_RE/, `${label}: URL credential redaction must inspect sensitive parameter names`);
     assert.match(panel, /signature\|sig/, `${label}: URL credential redaction must cover signatures`);
+    assert.match(panel, /authorization\|code/, `${label}: URL credential redaction must cover auth code`);
     assert.match(panel, /redactUrlForLabel\(args\.url\)/, `${label}: fetch/research labels must redact URL credentials`);
     assert.match(panel, /function isTerminalDoneTool\(name\)/, `${label}: done_json must share terminal completion handling`);
     assert.match(panel, /function restoreStepFriendlyLabel\(step\)/, `${label}: completed/failed steps must restore friendly label and clear progress marker`);
