@@ -2857,16 +2857,29 @@ const SENSITIVE_PARAM_WORDS_RE = /(?:^|[^a-z0-9])(?:key|api[_-]?key|token|secret
 // is shown in the always-visible step label. The full value stays behind the
 // expandable details panel. Handles bare (key), snake_case (api_key, auth_token),
 // kebab-case (x-amz-signature), and camelCase (authToken, sessionToken) names.
-function redactUrlForLabel(url) {
+function redactUrlForLabel(url, depth = 0) {
+  if (depth > 3) return String(url || '');
   return String(url || '')
     .replace(/^([a-z][a-z0-9+.-]*:\/\/)(?:[^/?#\s]*@)+/i, '$1')
-    .replace(/([?&#])([^=&#\s]+)=([^&#\s]*)/g, (match, prefix, param) => {
+    .replace(/([?&#])([^=&#\s]+)=([^&#\s]*)/g, (match, prefix, param, val) => {
       let decoded = param;
       try {
         decoded = decodeURIComponent(param);
       } catch {}
       const norm = String(decoded || '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
-      return SENSITIVE_PARAM_WORDS_RE.test(norm) ? `${prefix}${param}=…` : match;
+      if (SENSITIVE_PARAM_WORDS_RE.test(norm)) {
+        return `${prefix}${param}=…`;
+      }
+      if (val && (val.includes('%3D') || val.includes('%3d') || val.includes('=') || val.includes('%3F') || val.includes('%3f') || val.includes('?'))) {
+        try {
+          const decodedVal = decodeURIComponent(val);
+          const redactedVal = redactUrlForLabel(decodedVal, depth + 1);
+          if (redactedVal !== decodedVal) {
+            return `${prefix}${param}=${encodeURIComponent(redactedVal)}`;
+          }
+        } catch {}
+      }
+      return match;
     });
 }
 
@@ -2914,15 +2927,27 @@ function friendlyToolLabel(name, args) {
   return name || '';
 }
 
+const LABEL_ARG_KEYS = ['selector', 'index', 'text', 'url', 'urlFilter', 'key', 'keys', 'direction', 'type'];
+
 // Persisted step labels are plain textContent, so a later locale change would
 // otherwise leave old steps in the previous language (applyDOMTranslations only
-// touches data-i18n elements). Steps store their tool + args in dataset so the
-// locale-change handler can recompute them via refreshRenderedStepLabels().
+// touches data-i18n elements). Steps store their tool + label-relevant args in
+// dataset so the locale-change handler can recompute them via refreshRenderedStepLabels().
+// Large tool payloads (e.g. 100k CSS in inject_css) are omitted to preserve the
+// tab-chat persistence budget.
 function safeLabelArgs(args) {
+  if (!args || typeof args !== 'object') return '';
+  const filtered = {};
+  for (const k of LABEL_ARG_KEYS) {
+    if (args[k] != null) {
+      filtered[k] = typeof args[k] === 'string' ? args[k].slice(0, 80) : args[k];
+    }
+  }
   try {
-    return JSON.stringify(args ?? {});
+    const json = JSON.stringify(filtered);
+    return json === '{}' ? '' : json;
   } catch {
-    return '{}';
+    return '';
   }
 }
 
@@ -2930,20 +2955,17 @@ function refreshRenderedStepLabels(root) {
   const scope = root || document;
   scope.querySelectorAll('.step-item[data-tool] .step-label').forEach((labelEl) => {
     const step = labelEl.closest('.step-item');
-    if (!step || step.dataset.labelSource === 'progress') return;
+    if (!step || !step.dataset.labelSource) return;
     if (step.dataset.labelSource === 'done-terminal' && step.dataset.doneLabelKey) {
       labelEl.textContent = String(t(step.dataset.doneLabelKey)).trim();
       return;
     }
-    // Legacy cached steps rendered before label metadata existed carry no
-    // dataset.args — leave their text untouched rather than recomputing with
-    // empty args (which would lose e.g. the original scroll direction).
-    if (!step.dataset.args) return;
+    if (step.dataset.labelSource !== 'friendly') return;
     let args = null;
     try {
-      args = JSON.parse(step.dataset.args);
+      args = step.dataset.args ? JSON.parse(step.dataset.args) : null;
     } catch {
-      return;
+      args = null;
     }
     labelEl.textContent = friendlyToolLabel(step.dataset.tool || '', args);
   });
