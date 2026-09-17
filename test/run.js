@@ -45064,6 +45064,7 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /refreshRenderedStepLabels\(\);/, `${label}: locale-change handler must refresh rendered step labels`);
     assert.ok((panel.match(/refreshRenderedStepLabels\(\);/g) || []).length >= 4, `${label}: restored transcripts must refresh step labels on every restore path`);
     assert.match(panel, /function redactUrlForLabel\(url\)/, `${label}: URL step labels must redact credentials`);
+    assert.match(panel, /signature\|sig/, `${label}: URL credential redaction must cover signatures`);
     assert.match(panel, /redactUrlForLabel\(args\.url\)/, `${label}: fetch/research labels must redact URL credentials`);
     assert.match(panel, /function isTerminalDoneTool\(name\)/, `${label}: done_json must share terminal completion handling`);
     assert.match(panel, /label\.textContent = friendlyToolLabel\(toolName, stepArgs\);/, `${label}: completed steps must restore the friendly label after progress`);
@@ -52835,6 +52836,8 @@ test('activity results settle matching steps and preserve completion outcomes', 
         escapeHtml: (value) => String(value),
         truncate: (value) => String(value),
         t: (key) => key,
+        isTerminalDoneTool: (name) => name === 'done' || name === 'done_json',
+        friendlyToolLabel: (name, args) => name,
       },
     );
 
