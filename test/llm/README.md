@@ -197,6 +197,40 @@ node test/llm/run-llamacpp.mjs --no-save-request
 The runner captures only the first model turn. It does not execute tool
 calls or step the agent.
 
+## Accessibility-tree representation benchmark
+
+`accessibility-tree-benchmark.mjs` compares the shipped line-oriented tree
+with a short-key compact NDJSON candidate and a conventional full-JSON
+baseline. It uses the provenance-tagged fixture at
+`fixtures/accessibility-tree-benchmark.json`, validates record-safe
+round-trips, checks stable `ref_id` reuse, exercises exact continuation pages,
+and measures both tree-content and model-facing wire tokens.
+
+Run the deterministic benchmark with an exact `o200k_base` count when Python
+`tiktoken` is installed:
+
+```
+node test/llm/accessibility-tree-benchmark.mjs \
+  --out test/llm/analysis/accessibility-tree-benchmark/report.json \
+  --emit-prompts test/llm/analysis/accessibility-tree-benchmark/selection-prompts.jsonl
+```
+
+The generated selection prompts can be sent to any OpenAI-compatible endpoint
+for a provider/model A/B run. Keep temperature, seed, prompt, and tool policy
+fixed while changing only `format`; label runs as `compact` or `frontier` so
+the results remain comparable:
+
+```
+node test/llm/accessibility-tree-benchmark.mjs --infer \
+  --base http://127.0.0.1:1234 --model local-model \
+  --model-class compact --out compact.json
+```
+
+`--no-exact-tokenizer` is available for a dependency-free structural check,
+but its bytes/4 values are estimates and must not be reported as tokenizer
+measurements. The benchmark is opt-in: it does not alter the shipped Chrome or
+Firefox representation or existing line-format consumers.
+
 ## Regenerating
 
 Edit `_generate.mjs`'s `CASES` array, then:
