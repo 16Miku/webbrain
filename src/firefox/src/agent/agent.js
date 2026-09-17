@@ -87,7 +87,7 @@ import {
   cloudflareManagedChallengeStorageKey,
   normalizeCloudflareManagedChallengeState,
 } from './cloudflare-managed-challenge.js';
-import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
+import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
   buildPlannerIntentMessages,
@@ -10465,29 +10465,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           let choice = null;
           if (canGroupSearch) {
             const intentKey = submitActionKey(submitConfirmation, submitConfirmation.url);
-            const intentVerdict = this.permissions.checkIntent(intentKey, tabId);
-            if (intentVerdict.allowed) {
-              choice = 'once';
-            } else if (intentVerdict.needsPrompt) {
-              choice = await this._promptGroupedSearchPermission(tabId, submitRisk.host, onUpdate);
-              if (choice === null) {
-                const value = '[Stopped by user before executing requested tool calls.]';
-                this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
-                  success: false,
-                  cancelled: true,
-                  error: value,
-                }));
-                onUpdate('warning', { message: 'Stopped by user.' });
-                return { action: 'abort', value };
-              }
-              this.permissions.recordIntent(
-                intentKey,
-                [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK],
-                choice === 'once' ? 'allow' : 'deny',
-                tabId,
-              );
-            } else {
-              choice = 'deny';
+            choice = await this._authorizeGroupedSearch(
+              tabId,
+              submitRisk.host,
+              intentKey,
+              [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK],
+              onUpdate,
+              { actionUrl: submitRisk.action },
+            );
+            if (choice === null) {
+              const value = '[Stopped by user before executing requested tool calls.]';
+              this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+                success: false,
+                cancelled: true,
+                error: value,
+              }));
+              onUpdate('warning', { message: 'Stopped by user.' });
+              return { action: 'abort', value };
             }
             if (choice === 'once') {
               capabilities = capabilities.filter(capability => capability !== Capability.CLICK);
@@ -10544,41 +10538,48 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           groupedSearchForm.url,
         );
         if (groupedRisk.risk === SubmitRisk.LOW_RISK_SEARCH) {
-          const intentKey = submitActionKey(groupedSearchForm, groupedSearchForm.url);
-          const choice = await this._authorizeGroupedSearch(
-            tabId,
-            groupedRisk.host,
-            intentKey,
-            [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK],
-            onUpdate,
-          );
-          if (choice === null) {
-            const value = '[Stopped by user before executing requested tool calls.]';
-            this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
-              success: false,
-              cancelled: true,
-              error: value,
-            }));
-            onUpdate('warning', { message: 'Stopped by user.' });
-            return { action: 'abort', value };
-          }
-          if (choice !== 'once') {
-            messages.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: JSON.stringify({
+          const existingGate = this.permissions.check(groupedRisk.host, Capability.TYPE, tabId);
+          if (existingGate.allowed) {
+            // Standing "always" type grant covers this; don't intercept with grouped search.
+            capabilities = capabilities.filter(capability => capability !== Capability.TYPE);
+          } else {
+            const intentKey = submitActionKey(groupedSearchForm, groupedSearchForm.url);
+            const choice = await this._authorizeGroupedSearch(
+              tabId,
+              groupedRisk.host,
+              intentKey,
+              [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK],
+              onUpdate,
+              { actionUrl: groupedRisk.action },
+            );
+            if (choice === null) {
+              const value = '[Stopped by user before executing requested tool calls.]';
+              this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
                 success: false,
-                denied: true,
-                permissionRequired: true,
-                groupedPermission: true,
-                error: `The user did not allow the grouped low-risk search actions on ${groupedRisk.host || 'this site'}. Do NOT retry this unchanged search unless the user explicitly allows it.`,
-              }),
-            });
-            onUpdate('warning', { message: 'Low-risk search blocked until the user allows the grouped actions.' });
-            if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
-            continue;
+                cancelled: true,
+                error: value,
+              }));
+              onUpdate('warning', { message: 'Stopped by user.' });
+              return { action: 'abort', value };
+            }
+            if (choice !== 'once') {
+              messages.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: JSON.stringify({
+                  success: false,
+                  denied: true,
+                  permissionRequired: true,
+                  groupedPermission: true,
+                  error: `The user did not allow the grouped low-risk search actions on ${groupedRisk.host || 'this site'}. Do NOT retry this unchanged search unless the user explicitly allows it.`,
+                }),
+              });
+              onUpdate('warning', { message: 'Low-risk search blocked until the user allows the grouped actions.' });
+              if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+              continue;
+            }
+            capabilities = capabilities.filter(capability => capability !== Capability.TYPE);
           }
-          capabilities = capabilities.filter(capability => capability !== Capability.TYPE);
         }
       }
       if (
@@ -10606,41 +10607,48 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (fnName === 'navigate' && capabilities.includes(Capability.NAVIGATE)) {
           const navigationRisk = classifySearchNavigation(fnArgs?.url, curUrl);
           if (navigationRisk.risk === SubmitRisk.LOW_RISK_SEARCH) {
-            const choice = await this._authorizeGroupedSearch(
-              tabId,
-              navigationRisk.host,
-              '',
-              [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK],
-              onUpdate,
-              { candidateOnly: true },
-            );
-            if (choice === null) {
-              const value = '[Stopped by user before executing requested tool calls.]';
-              this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
-                success: false,
-                cancelled: true,
-                error: value,
-              }));
-              onUpdate('warning', { message: 'Stopped by user.' });
-              return { action: 'abort', value };
-            }
-            if (choice !== 'once') {
-              messages.push({
-                role: 'tool',
-                tool_call_id: tc.id,
-                content: JSON.stringify({
+            const existingGate = this.permissions.check(navigationRisk.host, Capability.NAVIGATE, tabId);
+            if (existingGate.allowed) {
+              // The user previously granted NAVIGATE (e.g. "always allow").
+              // Honor that standing grant and bypass the grouped search card.
+              capabilities = capabilities.filter(capability => capability !== Capability.NAVIGATE);
+            } else {
+              const choice = await this._authorizeGroupedSearch(
+                tabId,
+                navigationRisk.host,
+                '',
+                [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK],
+                onUpdate,
+                { candidateOnly: true, actionUrl: navigationRisk.action },
+              );
+              if (choice === null) {
+                const value = '[Stopped by user before executing requested tool calls.]';
+                this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
                   success: false,
-                  denied: true,
-                  permissionRequired: true,
-                  groupedPermission: true,
-                  error: `The user did not allow the grouped low-risk search actions on ${navigationRisk.host || 'this site'}. Do NOT retry this unchanged search unless the user explicitly allows it.`,
-                }),
-              });
-              onUpdate('warning', { message: 'Low-risk search blocked until the user allows the grouped actions.' });
-              if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
-              continue;
+                  cancelled: true,
+                  error: value,
+                }));
+                onUpdate('warning', { message: 'Stopped by user.' });
+                return { action: 'abort', value };
+              }
+              if (choice !== 'once') {
+                messages.push({
+                  role: 'tool',
+                  tool_call_id: tc.id,
+                  content: JSON.stringify({
+                    success: false,
+                    denied: true,
+                    permissionRequired: true,
+                    groupedPermission: true,
+                    error: `The user did not allow the grouped low-risk search actions on ${navigationRisk.host || 'this site'}. Do NOT retry this unchanged search unless the user explicitly allows it.`,
+                  }),
+                });
+                onUpdate('warning', { message: 'Low-risk search blocked until the user allows the grouped actions.' });
+                if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+                continue;
+              }
+              capabilities = capabilities.filter(capability => capability !== Capability.NAVIGATE);
             }
-            capabilities = capabilities.filter(capability => capability !== Capability.NAVIGATE);
           }
         }
         let blocked = null;     // { capability, host }
@@ -11154,6 +11162,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const beforeFull = this._normalizeUrl(beforeUrl);
         const afterFull = this._normalizeUrl(afterUrl);
         const fullUrlChanged = beforeFull && afterFull && beforeFull !== afterFull;
+        if (fullUrlChanged) {
+          // If navigation leaves the approved candidate's registrable site,
+          // clear the candidate so it doesn't linger on an unrelated domain.
+          // Don't clear if navigating from blank/about/initial page into the target site,
+          // or between subdomains of the same registrable site.
+          const afterHost = normalizeHost(afterUrl);
+          const candidate = this.permissions.intentCandidates.find(c => c.tabId === tabId);
+          if (candidate && afterHost && registrableHost(afterHost) !== registrableHost(candidate.host)) {
+            this.permissions.clearIntentCandidates(tabId);
+          }
+        }
         if (fullUrlChanged && toolResult && typeof toolResult === 'object') {
           // Scroll refs/coordinates are scoped to the current route, including
           // SPA views distinguished only by query/hash.
@@ -19377,14 +19396,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return String(response?.answer || '').trim().toLowerCase() === 'once' ? 'once' : 'deny';
   }
 
-  async _authorizeGroupedSearch(tabId, host, intentKey, capabilities, onUpdate, { candidateOnly = false } = {}) {
+  async _authorizeGroupedSearch(tabId, host, intentKey, capabilities, onUpdate, { candidateOnly = false, actionUrl = '' } = {}) {
     let verdict = candidateOnly
-      ? this.permissions.checkIntentCandidate(host, tabId)
+      ? this.permissions.checkIntentCandidate(host, tabId, null, actionUrl)
       : this.permissions.checkIntent(intentKey, tabId);
     if (!candidateOnly && !verdict.allowed && verdict.needsPrompt) {
-      const candidateVerdict = this.permissions.checkIntentCandidate(host, tabId);
+      const candidateVerdict = this.permissions.checkIntentCandidate(host, tabId, null, actionUrl);
       if (candidateVerdict.allowed) {
         this.permissions.recordIntent(intentKey, capabilities, 'allow', tabId);
+        // Consume the single-use allow candidate so it does not auto-promote
+        // a subsequent search or different action later in the task.
+        this.permissions.consumeIntentCandidate(tabId);
         return 'once';
       }
       if (!candidateVerdict.needsPrompt) return 'deny';
@@ -19399,6 +19421,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         capabilities,
         choice === 'once' ? 'allow' : 'deny',
         tabId,
+        actionUrl,
       );
     } else {
       this.permissions.recordIntent(
@@ -20824,6 +20847,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           validationSubmitEvidence: detected.validationSubmitEvidence === 'strong' ? 'strong' : 'heuristic',
           summary: String(detected.summary || '').slice(0, 1200),
           fields: Array.isArray(detected.fields) ? detected.fields.slice(0, 12) : [],
+          hiddenFields: Array.isArray(detected.hiddenFields) ? detected.hiddenFields.slice(0, 20) : [],
           changedFields: Array.isArray(detected.changedFields) ? detected.changedFields.slice(0, 8) : [],
           method: String(detected.method || 'GET').slice(0, 20).toUpperCase(),
           action: String(detected.action || '').slice(0, 300),
@@ -20855,6 +20879,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           tool: name,
           summary: String(resolvedForm.summary || '').slice(0, 1200),
           fields: Array.isArray(resolvedForm.fields) ? resolvedForm.fields.slice(0, 12) : [],
+          hiddenFields: Array.isArray(resolvedForm.hiddenFields) ? resolvedForm.hiddenFields.slice(0, 20) : [],
           changedFields: Array.isArray(resolvedForm.changedFields) ? resolvedForm.changedFields.slice(0, 8) : [],
           method: String(resolvedForm.method || 'GET').slice(0, 20).toUpperCase(),
           action: String(resolvedForm.action || '').slice(0, 300),
@@ -21049,6 +21074,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return !['hidden', 'submit', 'button', 'reset', 'image'].includes(type);
         })
         .slice(0, 20);
+      // Capture hidden inputs metadata (names, IDs, labels only; NO values).
+      // This lets the risk classifier fail closed if a form contains a hidden
+      // token or credential field (csrf_token, api_key, etc.), without leaking
+      // hidden secrets into summaries or telemetry.
+      const hiddenControls = Array.from(form.querySelectorAll('input[type="hidden"]')).slice(0, 20);
+      const hiddenFields = hiddenControls.map(el => ({
+        type: 'hidden',
+        name: compact(el.getAttribute?.('name') || '', 80),
+        id: compact(el.getAttribute?.('id') || '', 80),
+        ariaLabel: compact(el.getAttribute?.('aria-label') || '', 120),
+      }));
       const fields = controls.map((el) => {
         const value = fieldValue(el, pendingEl, pendingValue);
         const before = defaultValue(el);
@@ -21077,6 +21113,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return {
         summary: `${origin} ${changedText}`,
         fields: fields.slice(0, 12),
+        hiddenFields,
         changedFields,
         method,
         action,

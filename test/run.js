@@ -106687,6 +106687,13 @@ test('submit risk classifier groups only conservative same-site GET searches', (
   );
   assert.equal(registrableHost('api.example.co.uk'), 'example.co.uk');
   assert.equal(registrableHostCh('www.example.co.uk'), 'example.co.uk');
+  // Multi-tenant suffixes keep distinct tenants isolated
+  assert.equal(registrableHost('alice.blogspot.com'), 'alice.blogspot.com');
+  assert.notEqual(registrableHost('alice.blogspot.com'), registrableHost('victim.blogspot.com'));
+  assert.equal(registrableHost('user.notion.site'), 'user.notion.site');
+  assert.equal(registrableHost('store.myshopify.com'), 'store.myshopify.com');
+  assert.equal(registrableHost('alice.blogspot.co.uk'), 'alice.blogspot.co.uk');
+  assert.notEqual(registrableHost('alice.blogspot.co.uk'), registrableHost('victim.blogspot.co.uk'));
 
   for (const [label, classify] of [['firefox', classifySubmitRisk], ['chrome', classifySubmitRiskCh]]) {
     const cases = [
@@ -106696,6 +106703,8 @@ test('submit risk classifier groups only conservative same-site GET searches', (
       [{ ...search, fields: [{ type: 'text', name: 'cardnumber', label: 'Card number' }] }, 'payment'],
       [{ ...search, fields: [{ type: 'password', name: 'q', label: 'Search' }] }, 'credential'],
       [{ ...search, actionUrl: 'https://scholar.google.com/account', fields: [{ type: 'text', name: 'title', label: 'Title' }] }, 'resolved search'],
+      [{ ...search, hiddenFields: [{ type: 'hidden', name: 'csrf_token' }] }, 'hidden csrf token'],
+      [{ ...search, hiddenFields: [{ type: 'hidden', name: 'api_key' }] }, 'hidden api key'],
     ];
     for (const [info, reason] of cases) {
       const result = classify(info, search.url);
@@ -106733,6 +106742,15 @@ test('task-scoped grouped approvals stay per-tab, deny retries, and expire at tu
   assert.equal(pm.checkIntent(key, 1, Capability.CLICK).needsPrompt, false);
   pm.beginTurn(1);
   assert.equal(pm.checkIntent(key, 1, Capability.CLICK).needsPrompt, true);
+
+  // Candidate grants are bound to action URL and single-use allow promotion
+  pm.recordIntentCandidate('scholar.google.com', [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK], 'allow', 1, 'https://scholar.google.com/scholar');
+  assert.equal(pm.checkIntentCandidate('scholar.google.com', 1, null, 'https://scholar.google.com/scholar').allowed, true);
+  // Different action path on same site must not be allowed
+  assert.equal(pm.checkIntentCandidate('scholar.google.com', 1, null, 'https://scholar.google.com/different').needsPrompt, true);
+  // Single-use allow candidate consumption
+  pm.consumeIntentCandidate(1);
+  assert.equal(pm.checkIntentCandidate('scholar.google.com', 1, null, 'https://scholar.google.com/scholar').needsPrompt, true);
 });
 
 test('parity: chrome & firefox permission-gate behave identically', async () => {

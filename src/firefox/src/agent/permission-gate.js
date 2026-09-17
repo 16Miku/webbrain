@@ -139,6 +139,22 @@ const MULTI_LABEL_SITE_SUFFIXES = new Set([
   'github.io', 'gitlab.io', 'netlify.app', 'netlify.com', 'vercel.app',
   'pages.dev', 'workers.dev', 'herokuapp.com', 'firebaseapp.com', 'web.app',
   'glitch.me', 'cloudfront.net', 'azurewebsites.net', 'r2.dev', 'github.dev',
+  // Multi-tenant hosting suffixes: without these, alice.blogspot.com and
+  // victim.blogspot.com would compare equal and share a grouped approval.
+  'blogspot.com', 'wordpress.com', 'wixsite.com', 'squarespace.com',
+  'medium.com', 'notion.site', 'notion.so', 'webflow.io', 'shopify.com',
+  'myshopify.com', 'tumblr.com', 'weebly.com', 'ghost.io', 'gitbook.io',
+  'substack.com', 'storenvy.com', 'bigcartel.com', 'shopifycloud.com',
+  'azureedge.net', 'amazonaws.com', 'elasticbeanstalk.com', 'appspot.com',
+]);
+
+// Three-label shared suffixes (e.g. alice.blogspot.co.uk, bucket.s3.amazonaws.com).
+// When the last three labels match, the registrable domain needs four labels
+// to stay tenant-specific.
+const THREE_LABEL_SITE_SUFFIXES = new Set([
+  'blogspot.co.uk', 'blogspot.de', 'blogspot.fr', 'blogspot.jp',
+  'wordpress.co.uk', 's3.amazonaws.com',
+  's3-website-us-east-1.amazonaws.com', 's3-website-eu-west-1.amazonaws.com',
 ]);
 
 export const SubmitRisk = {
@@ -179,10 +195,36 @@ export function registrableHost(input) {
   if (host.includes(':') || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return host;
   const parts = host.split('.');
   if (parts.length < 2) return host;
+  // Longest match first: a three-label shared suffix (e.g. blogspot.co.uk)
+  // needs four labels to stay tenant-specific.
+  if (parts.length >= 4) {
+    const suffix3 = parts.slice(-3).join('.');
+    if (THREE_LABEL_SITE_SUFFIXES.has(suffix3)) return parts.slice(-4).join('.');
+  }
   const suffix = parts.slice(-2).join('.');
   return parts.length >= 3 && MULTI_LABEL_SITE_SUFFIXES.has(suffix)
     ? parts.slice(-3).join('.')
     : suffix;
+}
+
+/**
+ * Normalized search-action identity (origin + pathname, no query/hash).
+ * Binds a grouped candidate to the approved search endpoint so a different
+ * form on the same registrable host does not auto-inherit the approval.
+ * Query terms live in changedFields (the intent key), not here.
+ */
+export function normalizeSearchActionBase(input) {
+  if (!input) return '';
+  try {
+    const parsed = new URL(String(input));
+    if (!/^https?:$/i.test(parsed.protocol)) return '';
+    const host = normalizeHost(parsed.hostname);
+    if (!host) return '';
+    const pathname = parsed.pathname || '/';
+    return `${parsed.protocol.toLowerCase()}//${host}${pathname}`;
+  } catch {
+    return '';
+  }
 }
 
 function submitActionUrl(submitInfo = {}, currentUrlOrHost = '') {
@@ -226,8 +268,16 @@ export function classifySubmitRisk(submitInfo = {}, currentUrlOrHost = '') {
 
   const fields = Array.isArray(submitInfo.fields) ? submitInfo.fields.slice(0, 20) : [];
   if (!fields.length) return freshSubmitRisk('form has no resolved search fields');
+  // Hidden controls are excluded from visible fields by the probe, but their
+  // names/ids can still carry secrets (csrf_token, access_token, api_key).
+  // The probe reports them as metadata-only hiddenFields (no values), so a
+  // hidden token field still disqualifies the form from grouping.
+  const hiddenFields = Array.isArray(submitInfo.hiddenFields) ? submitInfo.hiddenFields.slice(0, 20) : [];
   if (fields.some(field => SENSITIVE_SUBMIT_FIELD_RE.test(submitFieldDescriptor(field)))) {
     return freshSubmitRisk('form contains a credential or payment field');
+  }
+  if (hiddenFields.some(field => SENSITIVE_SUBMIT_FIELD_RE.test(submitFieldDescriptor(field)))) {
+    return freshSubmitRisk('form contains a hidden credential or token field');
   }
 
   const pathname = actionUrl.pathname || '/';
@@ -295,7 +345,8 @@ export function submitActionKey(submitInfo = {}, currentUrlOrHost = '') {
   const host = normalizeHost(actionUrl?.hostname || submitInfo.host || currentUrlOrHost);
   const method = String(submitInfo.method || 'GET').trim().toUpperCase();
   const fields = Array.isArray(submitInfo.fields) ? submitInfo.fields : [];
-  const sensitive = fields
+  const hiddenFields = Array.isArray(submitInfo.hiddenFields) ? submitInfo.hiddenFields : [];
+  const sensitive = [...fields, ...hiddenFields]
     .filter(field => SENSITIVE_SUBMIT_FIELD_RE.test(submitFieldDescriptor(field)))
     .map(field => submitFieldDescriptor(field));
   const changed = (Array.isArray(submitInfo.changedFields) ? submitInfo.changedFields : fields.filter(field => field?.changed))
@@ -645,18 +696,30 @@ export class PermissionManager {
     return this.intentCandidates.some(candidate => candidate.tabId === tabId);
   }
 
-  checkIntentCandidate(host, tabId, capability = null) {
+  /**
+   * Check a provisional navigation candidate. The candidate is bound to the
+   * approved search endpoint (origin + pathname via normalizeSearchActionBase)
+   * in addition to the registrable host, so approving one search form does not
+   * auto-approve a different form or a different search URL on the same site.
+   * Pass expectedAction (the new navigation target or form action) to enforce
+   * the binding; omitting it preserves the legacy host-only check.
+   */
+  checkIntentCandidate(host, tabId, capability = null, expectedAction = '') {
     const targetSite = registrableHost(host);
+    const expectedBase = normalizeSearchActionBase(expectedAction);
     const candidate = this.intentCandidates.find(item =>
       item.tabId === tabId
       && registrableHost(item.host) === targetSite
       && (!capability || item.capabilities.includes(capability))
     );
     if (!candidate) return { allowed: false, needsPrompt: true };
+    if (expectedBase && candidate.actionBase && candidate.actionBase !== expectedBase) {
+      return { allowed: false, needsPrompt: true };
+    }
     return { allowed: candidate.action === 'allow', needsPrompt: false, candidate };
   }
 
-  recordIntentCandidate(host, capabilities, action, tabId) {
+  recordIntentCandidate(host, capabilities, action, tabId, actionUrl = '') {
     const normalizedHost = normalizeHost(host);
     if (!normalizedHost) return;
     this.intentCandidates = this.intentCandidates.filter(candidate => candidate.tabId !== tabId);
@@ -664,9 +727,25 @@ export class PermissionManager {
       host: normalizedHost,
       capabilities: [...new Set(Array.isArray(capabilities) ? capabilities : [])],
       action: action === 'allow' ? 'allow' : 'deny',
+      actionBase: normalizeSearchActionBase(actionUrl || host),
+      actionUrl: String(actionUrl || '').slice(0, 300),
       tabId,
       ts: Date.now(),
     });
+  }
+
+  /**
+   * Consume a single-use allow candidate after it promotes to a full intent
+   * grant. Without this, one approval would auto-promote every subsequent
+   * same-site search for the rest of the turn, contradicting the "only this
+   * unchanged search" consent copy. Deny candidates persist so retries fail
+   * closed without re-prompting.
+   */
+  consumeIntentCandidate(tabId) {
+    const remaining = this.intentCandidates.filter(candidate =>
+      !(candidate.tabId === tabId && candidate.action === 'allow')
+    );
+    this.intentCandidates = remaining;
   }
 
   clearIntentCandidates(tabId) {
