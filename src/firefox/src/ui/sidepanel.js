@@ -2860,6 +2860,7 @@ const SENSITIVE_PATH_SEGMENT_RE = /(\/(?:reset|verify|verification|confirm|confi
 function redactUrlForLabel(url, depth = 0) {
   if (depth > 3) return '…';
   return String(url || '')
+    .trim()
     .replace(/^((?:[a-z][a-z0-9+.-]*:)?\/\/)(?:[^/?#\s]*@)+/i, '$1')
     .replace(SENSITIVE_PATH_SEGMENT_RE, '$1…')
     .replace(/([?&#])([^=&#\s]+)=([^&#\s]*)/g, (match, prefix, param, val) => {
