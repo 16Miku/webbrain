@@ -262,6 +262,7 @@ export default {
   'tool.chat_send': "Ipinapadala ang mensahe",
   'tool.load_skill': "Ikinakarga ang kasanayan",
   'tool.execute_webmcp_tool': "Pinapatakbo ang tool ng WebMCP",
+  'tool.list_webmcp_tools': 'Inililista ang mga WebMCP tool',
   'tool.beep': "Pinapatunog ang alerto",
   'tool.get_interactive_elements': 'Sina-scan ang mga interactive na elemento',
   'tool.click': 'Pag-click',
@@ -727,6 +728,7 @@ export default {
   'sp.compact.busy': 'Hindi maaaring mag-compact habang may tumatakbong proseso — hintayin itong matapos.',
   'sp.compact.failed': 'Nabigong i-compact ang konteksto: {error}',
   'tool.inspect_element_styles': 'Sinusuri ang mga estilo',
+  'tool.get_shadow_dom': 'Sinusuri ang shadow DOM',
   'tool.read_page_source': 'Binabasa ang source ng pahina',
 
 

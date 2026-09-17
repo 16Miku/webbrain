@@ -262,6 +262,7 @@ export default {
   'tool.chat_send': "Envoi du message",
   'tool.load_skill': "Chargement de compétence",
   'tool.execute_webmcp_tool': "Exécution de l'outil WebMCP",
+  'tool.list_webmcp_tools': 'Liste des outils WebMCP',
   'tool.beep': "Alerte sonore",
   'tool.get_interactive_elements': 'Analyse des éléments interactifs',
   'tool.click': 'Clic',
@@ -727,6 +728,7 @@ export default {
   'sp.compact.busy': "Impossible de compacter pendant une exécution — attendez qu'elle se termine.",
   'sp.compact.failed': 'Échec de la compaction du contexte : {error}',
   'tool.inspect_element_styles': 'Inspection des styles',
+  'tool.get_shadow_dom': 'Inspection du shadow DOM',
   'tool.read_page_source': 'Lecture du code source',
 
 

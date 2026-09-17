@@ -262,6 +262,7 @@ export default {
   'tool.chat_send': "Отправка сообщения",
   'tool.load_skill': "Загрузка навыка",
   'tool.execute_webmcp_tool': "Выполнение инструмента WebMCP",
+  'tool.list_webmcp_tools': 'Список инструментов WebMCP',
   'tool.beep': "Воспроизведение сигнала",
   'tool.get_interactive_elements': 'Сканирование интерактивных элементов',
   'tool.click': 'Нажатие',
@@ -727,6 +728,7 @@ export default {
   'sp.compact.busy': 'Нельзя сжать во время выполнения — подождите завершения.',
   'sp.compact.failed': 'Ошибка сжатия контекста: {error}',
   'tool.inspect_element_styles': 'Проверка стилей',
+  'tool.get_shadow_dom': 'Осмотр shadow DOM',
   'tool.read_page_source': 'Чтение исходного кода страницы',
 
 

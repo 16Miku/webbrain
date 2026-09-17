@@ -262,6 +262,7 @@ export default {
   'tool.chat_send': "Mengirim pesan",
   'tool.load_skill': "Memuat keterampilan",
   'tool.execute_webmcp_tool': "Menjalankan alat WebMCP",
+  'tool.list_webmcp_tools': 'Mencantumkan alat WebMCP',
   'tool.beep': "Memutar suara peringatan",
   'tool.get_interactive_elements': 'Memindai elemen interaktif',
   'tool.click': 'Mengeklik',
@@ -711,6 +712,7 @@ export default {
   'sp.compact.busy': 'Tidak bisa mengompak saat proses sedang berjalan — tunggu hingga selesai.',
   'sp.compact.failed': 'Kompaksi konteks gagal: {error}',
   'tool.inspect_element_styles': 'Memeriksa gaya',
+  'tool.get_shadow_dom': 'Memeriksa shadow DOM',
   'tool.read_page_source': 'Membaca sumber halaman',
 
 

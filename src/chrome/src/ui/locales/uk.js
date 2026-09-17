@@ -262,6 +262,7 @@ export default {
   'tool.chat_send': "Надсилання повідомлення",
   'tool.load_skill': "Завантаження навички",
   'tool.execute_webmcp_tool': "Виконання інструменту WebMCP",
+  'tool.list_webmcp_tools': 'Список інструментів WebMCP',
   'tool.beep': "Відтворення сигналу",
   'tool.get_interactive_elements': 'Сканування інтерактивних елементів',
   'tool.click': 'Натискання',
@@ -727,6 +728,7 @@ export default {
   'sp.compact.busy': 'Не можна стискати під час виконання — зачекайте завершення.',
   'sp.compact.failed': 'Помилка стиснення контексту: {error}',
   'tool.inspect_element_styles': 'Перевірка стилів',
+  'tool.get_shadow_dom': 'Огляд shadow DOM',
   'tool.read_page_source': 'Читання вихідного коду сторінки',
 
 

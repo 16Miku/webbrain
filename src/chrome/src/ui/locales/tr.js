@@ -299,6 +299,7 @@ export default {
   'tool.chat_send': "Mesaj gönderiliyor",
   'tool.load_skill': "Yetenek yükleniyor",
   'tool.execute_webmcp_tool': "WebMCP aracı çalıştırılıyor",
+  'tool.list_webmcp_tools': 'WebMCP araçları listeleniyor',
   'tool.beep': "Uyarı sesi çalınıyor",
   'tool.get_interactive_elements': 'Etkileşimli öğeler taranıyor',
   'tool.click': 'Tıklanıyor',
@@ -767,6 +768,7 @@ export default {
   'sp.compact.busy': 'Bir çalışma devam ederken sıkıştırılamaz — bitmesini bekleyin.',
   'sp.compact.failed': 'Bağlam sıkıştırma başarısız oldu: {error}',
   'tool.inspect_element_styles': 'Stiller inceleniyor',
+  'tool.get_shadow_dom': 'Shadow DOM inceleniyor',
   'tool.read_page_source': 'Sayfa kaynağı okunuyor',
 
 

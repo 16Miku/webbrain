@@ -262,6 +262,7 @@ export default {
   'tool.chat_send': "إرسال الرسالة",
   'tool.load_skill': "تحميل المهارة",
   'tool.execute_webmcp_tool': "تشغيل أداة WebMCP",
+  'tool.list_webmcp_tools': 'سرد أدوات WebMCP',
   'tool.beep': "تشغيل صوت التنبيه",
   'tool.get_interactive_elements': 'فحص العناصر التفاعلية',
   'tool.click': 'النقر',
@@ -711,6 +712,7 @@ export default {
   'sp.compact.busy': 'لا يمكن الضغط أثناء تشغيل جارٍ — انتظر حتى ينتهي.',
   'sp.compact.failed': 'فشل ضغط السياق: {error}',
   'tool.inspect_element_styles': 'فحص الأنماط',
+  'tool.get_shadow_dom': 'فحص Shadow DOM',
   'tool.read_page_source': 'قراءة مصدر الصفحة',
 
 

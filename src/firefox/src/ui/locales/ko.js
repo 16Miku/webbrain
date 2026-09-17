@@ -262,6 +262,7 @@ export default {
   'tool.chat_send': "메시지 전송 중",
   'tool.load_skill': "스킬 불러오는 중",
   'tool.execute_webmcp_tool': "WebMCP 도구 실행 중",
+  'tool.list_webmcp_tools': 'WebMCP 도구 나열 중',
   'tool.beep': "알림음 재생 중",
   'tool.get_interactive_elements': '인터랙티브 요소 스캔 중',
   'tool.click': '클릭',
@@ -711,6 +712,7 @@ export default {
   'sp.compact.busy': '실행 중에는 압축할 수 없습니다 — 완료될 때까지 기다려주세요.',
   'sp.compact.failed': '컨텍스트 압축 실패: {error}',
   'tool.inspect_element_styles': '스타일 검사 중',
+  'tool.get_shadow_dom': '섀도 DOM 검사 중',
   'tool.read_page_source': '페이지 소스 읽는 중',
 
 

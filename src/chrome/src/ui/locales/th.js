@@ -262,6 +262,7 @@ export default {
   'tool.chat_send': "กำลังส่งข้อความ",
   'tool.load_skill': "กำลังโหลดทักษะ",
   'tool.execute_webmcp_tool': "กำลังเรียกใช้เครื่องมือ WebMCP",
+  'tool.list_webmcp_tools': 'กำลังแสดงเครื่องมือ WebMCP',
   'tool.beep': "กำลังเล่นเสียงแจ้งเตือน",
   'tool.get_interactive_elements': 'กำลังสแกนองค์ประกอบโต้ตอบได้',
   'tool.click': 'คลิก',
@@ -727,6 +728,7 @@ export default {
   'sp.compact.busy': 'ไม่สามารถบีบอัดขณะรันอยู่ — รอให้เสร็จก่อน',
   'sp.compact.failed': 'การบีบอัดบริบทล้มเหลว: {error}',
   'tool.inspect_element_styles': 'กำลังตรวจสอบสไตล์',
+  'tool.get_shadow_dom': 'กำลังตรวจสอบ Shadow DOM',
   'tool.read_page_source': 'กำลังอ่านซอร์สโค้ดหน้า',
 
 

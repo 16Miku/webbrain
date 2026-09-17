@@ -262,6 +262,7 @@ export default {
   'tool.chat_send': "メッセージを送信中",
   'tool.load_skill': "スキルを読み込み中",
   'tool.execute_webmcp_tool': "WebMCP ツールを実行中",
+  'tool.list_webmcp_tools': 'WebMCP ツールを一覧表示中',
   'tool.beep': "通知音を再生中",
   'tool.get_interactive_elements': '操作可能な要素をスキャン中',
   'tool.click': 'クリック',
@@ -711,6 +712,7 @@ export default {
   'sp.compact.busy': '実行中はコンパクト化できません — 完了するまでお待ちください。',
   'sp.compact.failed': 'コンテキストのコンパクト化に失敗しました: {error}',
   'tool.inspect_element_styles': 'スタイルを検査中',
+  'tool.get_shadow_dom': 'シャドウ DOM を確認中',
   'tool.read_page_source': 'ページソースを読み込み中',
 
 

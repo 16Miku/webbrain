@@ -262,6 +262,7 @@ export default {
   'tool.chat_send': "发送消息",
   'tool.load_skill': "加载技能",
   'tool.execute_webmcp_tool': "运行 WebMCP 工具",
+  'tool.list_webmcp_tools': '正在列出 WebMCP 工具',
   'tool.beep': "播放提示音",
   'tool.get_interactive_elements': '扫描可交互元素',
   'tool.click': '点击',
@@ -727,6 +728,7 @@ export default {
   'sp.compact.busy': '运行时无法压缩 — 请等待完成。',
   'sp.compact.failed': '上下文压缩失败：{error}',
   'tool.inspect_element_styles': '正在检查样式',
+  'tool.get_shadow_dom': '正在检查 Shadow DOM',
   'tool.read_page_source': '正在读取页面源代码',
 
 
