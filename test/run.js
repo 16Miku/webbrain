@@ -45021,6 +45021,64 @@ test('sidepanel activity-step labels treat tool names as text', () => {
   }
 });
 
+test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions across browsers', () => {
+  for (const [label, panelRel, localeDir] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/locales'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/locales'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    assert.match(panel, /get_accessibility_tree:\s*['"]tool\.get_accessibility_tree['"]/, `${label}: TOOL_KEYS must map get_accessibility_tree`);
+    assert.match(panel, /click_ax:\s*['"]tool\.click['"]/, `${label}: TOOL_KEYS must map click_ax`);
+    assert.match(panel, /type_ax:\s*['"]tool\.type_text['"]/, `${label}: TOOL_KEYS must map type_ax`);
+    assert.match(panel, /set_field:\s*['"]tool\.type_text['"]/, `${label}: TOOL_KEYS must map set_field`);
+    assert.match(panel, /wait_for_stable:\s*['"]tool\.wait_for_stable['"]/, `${label}: TOOL_KEYS must map wait_for_stable`);
+    assert.match(panel, /fetch_url:\s*['"]tool\.fetch_url['"]/, `${label}: TOOL_KEYS must map fetch_url`);
+
+    const files = fs.readdirSync(path.join(ROOT, localeDir)).filter(f => f.endsWith('.js'));
+    assert.ok(files.length > 0, `${label}: expected at least one locale file`);
+    for (const file of files) {
+      const localeSrc = fs.readFileSync(path.join(ROOT, localeDir, file), 'utf8');
+      assert.match(localeSrc, /['"]tool\.get_accessibility_tree['"]/, `${label}/${file} missing tool.get_accessibility_tree`);
+      assert.match(localeSrc, /['"]tool\.research_url\.url['"]/, `${label}/${file} missing tool.research_url.url`);
+      assert.match(localeSrc, /['"]tool\.list_webmcp_tools['"]/, `${label}/${file} missing tool.list_webmcp_tools`);
+      assert.match(localeSrc, /['"]tool\.get_shadow_dom['"]/, `${label}/${file} missing tool.get_shadow_dom`);
+      assert.match(localeSrc, /['"]tool\.shadow_dom_query['"]/, `${label}/${file} missing tool.shadow_dom_query`);
+      assert.match(localeSrc, /['"]tool\.gmail_count_results['"]/, `${label}/${file} missing tool.gmail_count_results`);
+      assert.match(localeSrc, /['"]tool\.staged_screenshot['"]/, `${label}/${file} missing tool.staged_screenshot`);
+      assert.match(localeSrc, /['"]tool\.get_frames['"]/, `${label}/${file} missing tool.get_frames`);
+      assert.match(localeSrc, /['"]tool\.download_resource['"]/, `${label}/${file} missing tool.download_resource`);
+    }
+    assert.match(panel, /if \(name === 'press_keys' && \(args\?\.key \|\| args\?\.keys\)\)/, `${label}: press_keys label must read schema-valid args.key`);
+    assert.match(panel, /if \(name === 'research_url' && args\?\.url\)[\s\S]*?tool\.research_url\.url/, `${label}: research_url must keep its own label`);
+    assert.match(panel, /list_webmcp_tools:\s*['"]tool\.list_webmcp_tools['"]/, `${label}: list_webmcp_tools must keep its own discovery label`);
+    assert.match(panel, /get_shadow_dom:\s*['"]tool\.get_shadow_dom['"]/, `${label}: get_shadow_dom must keep its own discovery label`);
+    assert.match(panel, /shadow_dom_query:\s*['"]tool\.shadow_dom_query['"]/, `${label}: shadow_dom_query must keep its own query label`);
+    assert.match(panel, /gmail_count_results:\s*['"]tool\.gmail_count_results['"]/, `${label}: gmail_count_results must keep its own counting label`);
+    assert.match(panel, /staged_screenshot:\s*['"]tool\.staged_screenshot['"]/, `${label}: staged_screenshot must keep its own inspection label`);
+    assert.match(panel, /get_frames:\s*['"]tool\.get_frames['"]/, `${label}: get_frames must keep its own discovery label`);
+    assert.match(panel, /download_resource_from_page:\s*['"]tool\.download_resource['"]/, `${label}: download_resource_from_page must keep its own file label`);
+    assert.match(panel, /auto_screenshot:\s*['"]tool\.staged_screenshot['"]/, `${label}: auto_screenshot must use an inspection label after capture`);
+    assert.doesNotMatch(panel, /name === 'type_ax'[^;]*?tool\.type_text\.text/, `${label}: type_ax must not preview typed text (credential exposure)`);
+    assert.doesNotMatch(panel, /name === 'set_field'[^;]*?tool\.type_text\.text/, `${label}: set_field must not preview typed text (credential exposure)`);
+    assert.doesNotMatch(panel, /name === 'click'[^;]*?args\?\.text/, `${label}: click must not preview arbitrary target text`);
+    assert.match(panel, /function refreshRenderedStepLabels\(root\)/, `${label}: rendered step labels must be refreshable on locale change`);
+    assert.match(panel, /step\.dataset\.args = safeLabelArgs\(args\)/, `${label}: steps must persist label args for locale refresh`);
+    assert.match(panel, /refreshRenderedStepLabels\(\);/, `${label}: locale-change handler must refresh rendered step labels`);
+    assert.ok((panel.match(/refreshRenderedStepLabels\(\);/g) || []).length >= 4, `${label}: restored transcripts must refresh step labels on every restore path`);
+    assert.doesNotMatch(panel, /tool\.(?:navigate|fetch_url|research_url)\.url/, `${label}: activity labels must not disclose URLs`);
+    assert.doesNotMatch(panel, /name === 'find_text' && args\?\.text/, `${label}: find_text must not preview arbitrary search terms`);
+    assert.match(panel, /const LABEL_ARG_KEYS =/, `${label}: step metadata must filter arguments to label-relevant keys`);
+    const labelArgKeys = panel.match(/const LABEL_ARG_KEYS = \[([^\]]*)\];/)?.[1] || '';
+    assert.doesNotMatch(labelArgKeys, /'url'/, `${label}: step metadata must not persist URLs`);
+    assert.doesNotMatch(labelArgKeys, /'text'/, `${label}: step metadata must not persist typed or searched text`);
+    assert.match(panel, /function isTerminalDoneTool\(name\)/, `${label}: done_json must share terminal completion handling`);
+    assert.match(panel, /function restoreStepFriendlyLabel\(step\)/, `${label}: completed/failed steps must restore friendly label and clear progress marker`);
+    assert.match(panel, /failed \? 'sp\.tool\.done\.failed' : 'sp\.tool\.done\.completed'/, `${label}: restoreStepFriendlyLabel must set terminal failure outcome for interrupted done steps`);
+    assert.match(panel, /const failed = isAborted \|\| isTerminal;/, `${label}: finalizeSteps must mark aborted terminal steps as failed`);
+    assert.match(panel, /label\.textContent = friendlyToolLabel\(step\.dataset\.tool, stepArgs\);/, `${label}: completed steps must restore the friendly label after progress`);
+  }
+});
+
 test('sidepanel suppresses streamed raw tool-call text before rendering tool steps', () => {
   for (const [label, panelRel] of [
     ['chrome', 'src/chrome/src/ui/sidepanel.js'],
@@ -52786,6 +52844,8 @@ test('activity results settle matching steps and preserve completion outcomes', 
         escapeHtml: (value) => String(value),
         truncate: (value) => String(value),
         t: (key) => key,
+        isTerminalDoneTool: (name) => name === 'done' || name === 'done_json',
+        friendlyToolLabel: (name, args) => name,
       },
     );
 

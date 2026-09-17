@@ -2773,10 +2773,15 @@ async function renderClearedConversationForTab(tabId, { allowCacheClearFailure =
 // Tool names → i18n key for the human-friendly label. Resolved at render
 // time so language changes take effect without a reload.
 const TOOL_KEYS = {
+  get_accessibility_tree: 'tool.get_accessibility_tree',
   read_page: 'tool.read_page',
   get_interactive_elements: 'tool.get_interactive_elements',
   click: 'tool.click',
+  click_ax: 'tool.click',
   type_text: 'tool.type_text',
+  type_ax: 'tool.type_text',
+  set_field: 'tool.type_text',
+  set_checked: 'tool.set_checked',
   scroll: 'tool.scroll',
   navigate: 'tool.navigate',
   go_back: 'tool.go_back',
@@ -2784,28 +2789,151 @@ const TOOL_KEYS = {
   extract_data: 'tool.extract_data',
   inspect_element_styles: 'tool.inspect_element_styles',
   read_page_source: 'tool.read_page_source',
-  wait_for_element: 'tool.wait_for_element',
-  get_selection: 'tool.get_selection',
+  inject_css: 'tool.inject_css',
+  remove_injected_css: 'tool.remove_injected_css',
+  patch_element: 'tool.patch_element',
+  revert_patch: 'tool.revert_patch',
   execute_js: 'tool.execute_js',
+  read_console: 'tool.read_console',
+  inspect_network_requests: 'tool.inspect_network_requests',
+  inspect_event_listeners: 'tool.inspect_event_listeners',
+  highlight_element: 'tool.highlight_element',
+  wait_for_element: 'tool.wait_for_element',
+  wait_for_stable: 'tool.wait_for_stable',
+  get_selection: 'tool.get_selection',
+  find_text: 'tool.find_text',
+  hover: 'tool.hover',
+  drag_drop: 'tool.drag_drop',
+  press_keys: 'tool.press_keys',
+  fetch_url: 'tool.fetch_url',
+  research_url: 'tool.research_url',
+  read_pdf: 'tool.read_pdf',
+  read_youtube_transcript: 'tool.read_youtube_transcript',
+  screenshot: 'tool.screenshot',
+  full_page_screenshot: 'tool.screenshot',
+  auto_screenshot: 'tool.staged_screenshot',
+  staged_screenshot: 'tool.staged_screenshot',
+  upload_file: 'tool.upload_file',
+  download_resource_from_page: 'tool.download_resource',
+  download_files: 'tool.download_files',
+  download_social_media: 'tool.download_media',
+  download_public_media: 'tool.download_media',
+  list_downloads: 'tool.check_downloads',
+  read_downloaded_file: 'tool.read_downloaded_file',
+  scratchpad_write: 'tool.scratchpad_write',
+  progress_update: 'tool.progress_update',
+  progress_read: 'tool.progress_read',
+  verify_form: 'tool.verify_form',
+  solve_captcha: 'tool.solve_captcha',
+  clarify: 'tool.clarify',
+  get_window_info: 'tool.get_window_info',
+  resize_window: 'tool.resize_window',
+  inspect_viewport: 'tool.inspect_viewport',
+  get_shadow_dom: 'tool.get_shadow_dom',
+  shadow_dom_query: 'tool.shadow_dom_query',
+  get_frames: 'tool.get_frames',
+  iframe_read: 'tool.read_frame',
+  iframe_click: 'tool.click',
+  iframe_type: 'tool.type_text',
+  chat_observe: 'tool.chat_observe',
+  chat_send: 'tool.chat_send',
   delegate_research: 'tool.delegate_research',
   promote_iframe: 'tool.navigate',
   schedule_resume: 'tool.schedule_resume',
   schedule_task: 'tool.schedule_task',
   done: 'tool.done',
+  done_json: 'tool.done',
+  load_skill: 'tool.load_skill',
+  execute_webmcp_tool: 'tool.execute_webmcp_tool',
+  list_webmcp_tools: 'tool.list_webmcp_tools',
+  beep: 'tool.beep',
+  gmail_count_results: 'tool.gmail_count_results',
+  carousel_navigate: 'tool.navigate',
 };
+
+function isTerminalDoneTool(name) {
+  return name === 'done' || name === 'done_json';
+}
 
 function friendlyToolLabel(name, args) {
   // Add context from args where it makes sense
-  if (name === 'click' && args?.selector) return t('tool.click.selector', { selector: truncate(args.selector, 30) });
-  if (name === 'click' && args?.index != null) return t('tool.click.index', { index: args.index });
-  if (name === 'type_text' && args?.text) return t('tool.type_text.text', { text: truncate(args.text, 25) });
-  if (name === 'navigate' && args?.url) return t('tool.navigate.url', { url: truncate(args.url, 35) });
-  if (name === 'promote_iframe' && args?.urlFilter) return t('tool.navigate.url', { url: truncate(args.urlFilter, 35) });
+  if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.selector) {
+    return t('tool.click.selector', { selector: truncate(args.selector, 30) });
+  }
+  if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.index != null) {
+    return t('tool.click.index', { index: args.index });
+  }
+  // NOTE: only type_text previews its text. type_ax / set_field / iframe_type
+  // are the preferred form-filling tools and routinely carry passwords, OTP
+  // codes, and API keys — never render their values in the always-visible label.
+  if (name === 'type_text' && args?.text) {
+    return t('tool.type_text.text', { text: truncate(args.text, 25) });
+  }
+  if (name === 'press_keys' && (args?.key || args?.keys)) return t('tool.press_keys.keys', { keys: truncate(args.key || args.keys, 25) });
   if (name === 'scroll') return t('tool.scroll.direction', { direction: args?.direction || 'down' });
   if (name === 'extract_data') return t('tool.extract_data.type', { type: args?.type || 'data' });
   if (name === 'wait_for_element' && args?.selector) return t('tool.wait_for_element.selector', { selector: truncate(args.selector, 30) });
-  const key = TOOL_KEYS[name];
-  return key ? t(key) : name;
+  const key = TOOL_KEYS[name] || `tool.${name}`;
+  const translated = t(key);
+  if (translated && translated !== key) return translated;
+  if (typeof name === 'string' && name.trim()) {
+    const cleaned = name.replace(/_ax$/, '').replace(/[_-]+/g, ' ').trim();
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+  return name || '';
+}
+
+const LABEL_ARG_KEYS = ['selector', 'index', 'key', 'keys', 'direction', 'type'];
+
+// Persisted step labels are plain textContent, so a later locale change would
+// otherwise leave old steps in the previous language (applyDOMTranslations only
+// touches data-i18n elements). Steps store their tool + label-relevant args in
+// dataset so the locale-change handler can recompute them via refreshRenderedStepLabels().
+// Large tool payloads (e.g. 100k CSS in inject_css) are omitted to preserve the
+// tab-chat persistence budget.
+function safeLabelArgs(args) {
+  if (!args || typeof args !== 'object') return '';
+  const filtered = {};
+  for (const k of LABEL_ARG_KEYS) {
+    if (args[k] != null) {
+      filtered[k] = typeof args[k] === 'string' ? args[k].slice(0, 80) : args[k];
+    }
+  }
+  try {
+    const json = JSON.stringify(filtered);
+    return json === '{}' ? '' : json;
+  } catch {
+    return '';
+  }
+}
+
+function refreshRenderedStepLabels(root) {
+  const scope = root || document;
+  scope.querySelectorAll('.step-item[data-tool] .step-label').forEach((labelEl) => {
+    const step = labelEl.closest('.step-item');
+    if (!step || !step.dataset.labelSource) return;
+    if (step.dataset.labelSource === 'done-terminal' && step.dataset.doneLabelKey) {
+      labelEl.textContent = String(t(step.dataset.doneLabelKey)).trim();
+      return;
+    }
+    if (step.dataset.labelSource !== 'friendly') return;
+    let args = null;
+    try {
+      args = step.dataset.args ? JSON.parse(step.dataset.args) : null;
+    } catch {
+      args = null;
+    }
+    labelEl.textContent = friendlyToolLabel(step.dataset.tool || '', args);
+  });
+  scope.querySelectorAll('.step-details > .detail-label').forEach((el) => {
+    el.textContent = t('sp.step.input_label');
+  });
+  scope.querySelectorAll('.detail-result > .detail-label').forEach((el) => {
+    el.textContent = t('sp.step.result_label');
+  });
+  scope.querySelectorAll('.step-details-toggle').forEach((el) => {
+    el.textContent = t('sp.step.details');
+  });
 }
 
 function formatScheduledTime(value) {
@@ -4423,6 +4551,7 @@ async function init() {
           migrateLegacyEmptyStateFromRestoredChat(restoreTabId);
           messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
           rebindRestoredMessageControls();
+          refreshRenderedStepLabels();
         }
       }
     } finally {
@@ -4608,6 +4737,7 @@ async function switchToTab(newTabId) {
       migrateLegacyEmptyStateFromRestoredChat(newTabId);
       messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
       rebindRestoredMessageControls();
+      refreshRenderedStepLabels();
     } else {
       messagesEl.innerHTML = '';
       syncProgressDisplayMode();
@@ -4654,6 +4784,7 @@ async function refreshVisibleSidePanelState() {
     messagesEl.innerHTML = html;
     messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
     rebindRestoredMessageControls();
+    refreshRenderedStepLabels();
   } else if (!html) {
     messagesEl.innerHTML = '';
     syncProgressDisplayMode();
@@ -10338,6 +10469,35 @@ function findLastActiveCompactStep(toolName = '') {
   return activeSteps.at(-1) || null;
 }
 
+// When a step completes or fails, restore its friendly localized label so any
+// transient tool_progress message (which may be English-only) does not linger,
+// and clear the progress marker so future locale changes refresh the label.
+function restoreStepFriendlyLabel(step) {
+  if (!step || !step.dataset?.tool) return;
+  const label = step.querySelector('.step-label');
+  if (isTerminalDoneTool(step.dataset.tool)) {
+    const failed = step.querySelector('.step-icon')?.classList.contains('fail')
+      || step.dataset.rejectedCompletion === 'true';
+    const key = step.dataset.rejectedCompletion === 'true'
+      ? 'sp.tool.done.rejected'
+      : (failed ? 'sp.tool.done.failed' : 'sp.tool.done.completed');
+    if (label) label.textContent = String(t(key)).trim();
+    step.dataset.doneLabelKey = key;
+    step.dataset.labelSource = 'done-terminal';
+    return;
+  }
+  if (label) {
+    let stepArgs = null;
+    try {
+      stepArgs = step.dataset.args ? JSON.parse(step.dataset.args) : null;
+    } catch {
+      stepArgs = null;
+    }
+    label.textContent = friendlyToolLabel(step.dataset.tool, stepArgs);
+  }
+  step.dataset.labelSource = 'friendly';
+}
+
 function appendCompactStep(toolName, args) {
   const container = getOrCreateStepsContainer();
   if (!container) return;
@@ -10351,11 +10511,12 @@ function appendCompactStep(toolName, args) {
     prev.classList.add('done');
     const icon = prev.querySelector('.step-icon');
     if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
+    restoreStepFriendlyLabel(prev);
   }
 
-  if (toolName === 'done') {
+  if (isTerminalDoneTool(toolName)) {
     const rejectedSteps = currentAssistantEl?.querySelectorAll?.(
-      '.step-item[data-tool="done"][data-rejected-completion="true"]',
+      '.step-item[data-tool="done"][data-rejected-completion="true"], .step-item[data-tool="done_json"][data-rejected-completion="true"]',
     ) || [];
     const priorRejected = rejectedSteps[rejectedSteps.length - 1];
     if (priorRejected) {
@@ -10369,6 +10530,8 @@ function appendCompactStep(toolName, args) {
       }
       const priorLabel = priorRejected.querySelector('.step-label');
       if (priorLabel) priorLabel.textContent = friendlyToolLabel(toolName, args);
+      priorRejected.dataset.args = safeLabelArgs(args);
+      priorRejected.dataset.labelSource = 'friendly';
       const priorDetails = priorRejected.nextElementSibling;
       if (priorDetails?.classList?.contains('step-details')) {
         const priorArgs = priorDetails.querySelector('.detail-args');
@@ -10382,6 +10545,8 @@ function appendCompactStep(toolName, args) {
   const step = document.createElement('div');
   step.className = 'step-item active';
   step.dataset.tool = toolName;
+  step.dataset.args = safeLabelArgs(args);
+  step.dataset.labelSource = 'friendly';
 
   const icon = document.createElement('span');
   icon.className = 'step-icon spinning';
@@ -10423,6 +10588,7 @@ function updateActiveToolProgress(toolName, message) {
   const active = findLastActiveCompactStep(toolName);
   const label = active?.querySelector('.step-label');
   if (label) label.textContent = message;
+  if (active) active.dataset.labelSource = 'progress';
 }
 
 function markLastStepDone(toolName, result) {
@@ -10433,8 +10599,8 @@ function markLastStepDone(toolName, result) {
   if (active) {
     active.classList.remove('active');
     active.classList.add('done');
-    const rejectedCompletion = toolName === 'done' && result?.blockedDone === true;
-    if (toolName === 'done') {
+    const rejectedCompletion = isTerminalDoneTool(toolName) && result?.blockedDone === true;
+    if (isTerminalDoneTool(toolName)) {
       active.dataset.rejectedCompletion = rejectedCompletion ? 'true' : 'false';
     }
     const failed = rejectedCompletion
@@ -10446,14 +10612,21 @@ function markLastStepDone(toolName, result) {
       icon.className = failed ? 'step-icon fail' : 'step-icon check';
       icon.textContent = failed ? '\u2717' : '\u2713';
     }
-    if (toolName === 'done') {
+    if (isTerminalDoneTool(toolName)) {
       const label = active.querySelector('.step-label');
       if (label) {
         const key = rejectedCompletion
           ? 'sp.tool.done.rejected'
           : (failed ? 'sp.tool.done.failed' : 'sp.tool.done.completed');
         label.textContent = String(t(key)).trim();
+        active.dataset.doneLabelKey = key;
+        active.dataset.labelSource = 'done-terminal';
       }
+    } else {
+      // A transient tool_progress message may have overwritten the friendly
+      // label; restore the localized label now that the result arrived so a
+      // later locale change or transcript restore shows the right text.
+      restoreStepFriendlyLabel(active);
     }
 
     // Append result to the details panel
@@ -10476,17 +10649,25 @@ function markLastStepFailed() {
     active.classList.add('done');
     const icon = active.querySelector('.step-icon');
     if (icon) { icon.className = 'step-icon fail'; icon.textContent = '\u2717'; }
+    restoreStepFriendlyLabel(active);
   }
 }
 
 function finalizeSteps(assistantEl = currentAssistantEl) {
   if (!assistantEl) return;
+  const isAborted = isTabAbortRequested(currentTabId);
   const actives = assistantEl.querySelectorAll('.step-item.active');
   actives.forEach(step => {
     step.classList.remove('active');
     step.classList.add('done');
+    const isTerminal = isTerminalDoneTool(step.dataset?.tool);
+    const failed = isAborted || isTerminal;
     const icon = step.querySelector('.step-icon');
-    if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
+    if (icon) {
+      icon.className = failed ? 'step-icon fail' : 'step-icon check';
+      icon.textContent = failed ? '\u2717' : '\u2713';
+    }
+    restoreStepFriendlyLabel(step);
   });
 }
 
@@ -13587,6 +13768,7 @@ document.addEventListener('wb-locale-changed', () => {
   renderQueuedComposerMessages();
   syncSelectionScopeUi();
   refreshOpenMessageInfoRows();
+  refreshRenderedStepLabels();
   void loadProviders();
 });
 
