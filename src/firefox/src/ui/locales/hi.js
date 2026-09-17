@@ -453,6 +453,7 @@ export default {
   'tool.wait_for_stable': "पेज के स्थिर होने की प्रतीक्षा है",
   'tool.fetch_url': "पेज लाया जा रहा है",
   'tool.fetch_url.url': "{url} लाया जा रहा है",
+  'tool.research_url.url': '{url} का विश्लेषण किया जा रहा है',
   'tool.research_url': "पेज का विश्लेषण किया जा रहा है",
   'tool.read_pdf': "PDF पढ़ा जा रहा है",
   'tool.read_youtube_transcript': "वीडियो ट्रांसक्रिप्ट पढ़ी जा रही है",

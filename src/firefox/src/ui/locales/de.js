@@ -452,6 +452,7 @@ export default {
   'tool.wait_for_stable': "Warten auf Stabilisierung der Seite",
   'tool.fetch_url': "Seite wird abgerufen",
   'tool.fetch_url.url': "{url} wird abgerufen",
+  'tool.research_url.url': '{url} wird recherchiert',
   'tool.research_url': "Seite wird recherchiert",
   'tool.read_pdf': "PDF wird gelesen",
   'tool.read_youtube_transcript': "Videotranskript wird gelesen",

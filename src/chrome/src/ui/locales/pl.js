@@ -325,6 +325,7 @@ export default {
   'tool.wait_for_stable': "Oczekiwanie na ustabilizowanie strony",
   'tool.fetch_url': "Pobieranie strony",
   'tool.fetch_url.url': "Pobieranie {url}",
+  'tool.research_url.url': 'Badanie {url}',
   'tool.research_url': "Badanie strony",
   'tool.read_pdf': "Czytanie PDF",
   'tool.read_youtube_transcript': "Czytanie transkrypcji wideo",

@@ -269,6 +269,7 @@ export default {
   'tool.wait_for_stable': "Sayfanın kararlı hale gelmesi bekleniyor",
   'tool.fetch_url': "Sayfa getiriliyor",
   'tool.fetch_url.url': "{url} getiriliyor",
+  'tool.research_url.url': '{url} araştırılıyor',
   'tool.research_url': "Sayfa araştırılıyor",
   'tool.read_pdf': "PDF okunuyor",
   'tool.read_youtube_transcript': "Video dökümü okunuyor",

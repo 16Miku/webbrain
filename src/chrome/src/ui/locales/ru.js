@@ -232,6 +232,7 @@ export default {
   'tool.wait_for_stable': "Ожидание стабилизации страницы",
   'tool.fetch_url': "Загрузка страницы",
   'tool.fetch_url.url': "Загрузка {url}",
+  'tool.research_url.url': 'Исследование {url}',
   'tool.research_url': "Исследование страницы",
   'tool.read_pdf': "Чтение PDF",
   'tool.read_youtube_transcript': "Чтение стенограммы видео",

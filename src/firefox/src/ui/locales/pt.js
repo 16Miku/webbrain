@@ -453,6 +453,7 @@ export default {
   'tool.wait_for_stable': "Aguardando a página estabilizar",
   'tool.fetch_url': "Obtendo página",
   'tool.fetch_url.url': "Obtendo {url}",
+  'tool.research_url.url': 'Pesquisando {url}',
   'tool.research_url': "Pesquisando página",
   'tool.read_pdf': "Lendo PDF",
   'tool.read_youtube_transcript': "Lendo transcrição do vídeo",

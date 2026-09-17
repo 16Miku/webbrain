@@ -437,6 +437,7 @@ export default {
   'tool.wait_for_stable': "Wachten tot de pagina stabiliseert",
   'tool.fetch_url': "Pagina ophalen",
   'tool.fetch_url.url': "{url} ophalen",
+  'tool.research_url.url': '{url} onderzoeken',
   'tool.research_url': "Pagina onderzoeken",
   'tool.read_pdf': "PDF lezen",
   'tool.read_youtube_transcript': "Videotranscript lezen",

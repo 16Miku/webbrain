@@ -455,6 +455,7 @@ export default {
   'tool.wait_for_stable': "Waiting for page to settle",
   'tool.fetch_url': "Fetching page",
   'tool.fetch_url.url': "Fetching {url}",
+  'tool.research_url.url': 'Researching {url}',
   'tool.research_url': "Researching page",
   'tool.read_pdf': "Reading PDF",
   'tool.read_youtube_transcript': "Reading video transcript",

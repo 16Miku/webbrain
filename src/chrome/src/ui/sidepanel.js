@@ -3004,11 +3004,14 @@ function friendlyToolLabel(name, args) {
   }
   if (name === 'navigate' && args?.url) return t('tool.navigate.url', { url: truncate(args.url, 35) });
   if (name === 'promote_iframe' && args?.urlFilter) return t('tool.navigate.url', { url: truncate(args.urlFilter, 35) });
-  if ((name === 'fetch_url' || name === 'research_url') && args?.url) {
+  if (name === 'fetch_url' && args?.url) {
     return t('tool.fetch_url.url', { url: truncate(args.url, 35) });
   }
+  if (name === 'research_url' && args?.url) {
+    return t('tool.research_url.url', { url: truncate(args.url, 35) });
+  }
   if (name === 'find_text' && args?.text) return t('tool.find_text.text', { text: truncate(args.text, 25) });
-  if (name === 'press_keys' && args?.keys) return t('tool.press_keys.keys', { keys: truncate(args.keys, 25) });
+  if (name === 'press_keys' && (args?.key || args?.keys)) return t('tool.press_keys.keys', { keys: truncate(args.key || args.keys, 25) });
   if (name === 'scroll') return t('tool.scroll.direction', { direction: args?.direction || 'down' });
   if (name === 'extract_data') return t('tool.extract_data.type', { type: args?.type || 'data' });
   if (name === 'wait_for_element' && args?.selector) return t('tool.wait_for_element.selector', { selector: truncate(args.selector, 30) });

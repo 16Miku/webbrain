@@ -232,6 +232,7 @@ export default {
   'tool.wait_for_stable': "페이지 안정화 대기 중",
   'tool.fetch_url': "페이지 가져오는 중",
   'tool.fetch_url.url': "{url} 가져오는 중",
+  'tool.research_url.url': '{url} 조사 중',
   'tool.research_url': "페이지 조사 중",
   'tool.read_pdf': "PDF 읽는 중",
   'tool.read_youtube_transcript': "동영상 스크립트 읽는 중",

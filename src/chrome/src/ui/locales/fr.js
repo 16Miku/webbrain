@@ -232,6 +232,7 @@ export default {
   'tool.wait_for_stable': "Attente de stabilisation de la page",
   'tool.fetch_url': "Récupération de la page",
   'tool.fetch_url.url': "Récupération de {url}",
+  'tool.research_url.url': 'Recherche sur {url}',
   'tool.research_url': "Recherche sur la page",
   'tool.read_pdf': "Lecture du PDF",
   'tool.read_youtube_transcript': "Lecture de la transcription vidéo",

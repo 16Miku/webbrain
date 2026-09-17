@@ -232,6 +232,7 @@ export default {
   'tool.wait_for_stable': "等待页面稳定",
   'tool.fetch_url': "正在获取页面",
   'tool.fetch_url.url': "正在获取 {url}",
+  'tool.research_url.url': '正在研究 {url}',
   'tool.research_url': "正在研究页面",
   'tool.read_pdf': "正在阅读 PDF",
   'tool.read_youtube_transcript': "正在阅读视频字幕",

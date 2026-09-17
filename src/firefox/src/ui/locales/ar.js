@@ -232,6 +232,7 @@ export default {
   'tool.wait_for_stable': "انتظار استقرار الصفحة",
   'tool.fetch_url': "جلب الصفحة",
   'tool.fetch_url.url': "جلب {url}",
+  'tool.research_url.url': 'استكشاف {url}',
   'tool.research_url': "استكشاف الصفحة",
   'tool.read_pdf': "قراءة ملف PDF",
   'tool.read_youtube_transcript': "قراءة نص الفيديو",

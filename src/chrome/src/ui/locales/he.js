@@ -403,6 +403,7 @@ export default {
   'tool.wait_for_stable': "ממתין להתייצבות הדף",
   'tool.fetch_url': "מביא דף",
   'tool.fetch_url.url': "מביא את {url}",
+  'tool.research_url.url': 'חוקר את {url}',
   'tool.research_url': "חוקר דף",
   'tool.read_pdf': "קורא PDF",
   'tool.read_youtube_transcript': "קורא תמליל סרטון",

@@ -232,6 +232,7 @@ export default {
   'tool.wait_for_stable': "กำลังรอให้หน้าเว็บเสถียร",
   'tool.fetch_url': "กำลังดึงข้อมูลหน้าเว็บ",
   'tool.fetch_url.url': "กำลังดึง {url}",
+  'tool.research_url.url': 'กำลังค้นคว้า {url}',
   'tool.research_url': "กำลังค้นคว้าหน้าเว็บ",
   'tool.read_pdf': "กำลังอ่าน PDF",
   'tool.read_youtube_transcript': "กำลังอ่านข้อความถอดเสียงของวิดีโอ",

@@ -453,6 +453,7 @@ export default {
   'tool.wait_for_stable': "পৃষ্ঠা স্থিতিশীল হওয়ার অপেক্ষা",
   'tool.fetch_url': "পৃষ্ঠা আনা হচ্ছে",
   'tool.fetch_url.url': "{url} আনা হচ্ছে",
+  'tool.research_url.url': '{url} গবেষণা করা হচ্ছে',
   'tool.research_url': "পৃষ্ঠা গবেষণা করা হচ্ছে",
   'tool.read_pdf': "PDF পড়া হচ্ছে",
   'tool.read_youtube_transcript': "ভিডিওর অনুলিপি পড়া হচ্ছে",

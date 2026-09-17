@@ -453,6 +453,7 @@ export default {
   'tool.wait_for_stable': "Đang đợi trang ổn định",
   'tool.fetch_url': "Đang tải trang",
   'tool.fetch_url.url': "Đang tải {url}",
+  'tool.research_url.url': 'Đang tìm hiểu {url}',
   'tool.research_url': "Đang tìm hiểu trang",
   'tool.read_pdf': "Đang đọc PDF",
   'tool.read_youtube_transcript': "Đang đọc phụ đề video",

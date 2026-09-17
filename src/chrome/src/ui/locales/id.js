@@ -232,6 +232,7 @@ export default {
   'tool.wait_for_stable': "Menunggu halaman stabil",
   'tool.fetch_url': "Mengambil halaman",
   'tool.fetch_url.url': "Mengambil {url}",
+  'tool.research_url.url': 'Meneliti {url}',
   'tool.research_url': "Meneliti halaman",
   'tool.read_pdf': "Membaca PDF",
   'tool.read_youtube_transcript': "Membaca transkrip video",

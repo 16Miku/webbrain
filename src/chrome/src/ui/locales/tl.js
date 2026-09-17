@@ -232,6 +232,7 @@ export default {
   'tool.wait_for_stable': "Naghihintay na maging matatag ang pahina",
   'tool.fetch_url': "Kinukuha ang pahina",
   'tool.fetch_url.url': "Kinukuha ang {url}",
+  'tool.research_url.url': 'Sinasaliksik ang {url}',
   'tool.research_url': "Sinasaliksik ang pahina",
   'tool.read_pdf': "Binabasa ang PDF",
   'tool.read_youtube_transcript': "Binabasa ang transcript ng video",

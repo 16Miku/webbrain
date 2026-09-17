@@ -232,6 +232,7 @@ export default {
   'tool.wait_for_stable': "Esperando a que la página se estabilice",
   'tool.fetch_url': "Obteniendo página",
   'tool.fetch_url.url': "Obteniendo {url}",
+  'tool.research_url.url': 'Investigando {url}',
   'tool.research_url': "Investigando página",
   'tool.read_pdf': "Leyendo PDF",
   'tool.read_youtube_transcript': "Leyendo transcripción de video",

@@ -232,6 +232,7 @@ export default {
   'tool.wait_for_stable': "ページの安定を待機中",
   'tool.fetch_url': "ページを取得中",
   'tool.fetch_url.url': "{url} を取得中",
+  'tool.research_url.url': '{url} を調査中',
   'tool.research_url': "ページを調査中",
   'tool.read_pdf': "PDF を読み取り中",
   'tool.read_youtube_transcript': "動画の文字起こしを読み取り中",

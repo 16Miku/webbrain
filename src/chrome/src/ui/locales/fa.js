@@ -455,6 +455,7 @@ export default {
   'tool.wait_for_stable': "در انتظار پایدار شدن صفحه",
   'tool.fetch_url': "دریافت صفحه",
   'tool.fetch_url.url': "دریافت {url}",
+  'tool.research_url.url': 'بررسی {url}',
   'tool.research_url': "بررسی صفحه",
   'tool.read_pdf': "خواندن PDF",
   'tool.read_youtube_transcript': "خواندن متن ویدیو",
