@@ -45051,6 +45051,11 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /get_shadow_dom:\s*['"]tool\.get_shadow_dom['"]/, `${label}: get_shadow_dom must keep its own discovery label`);
     assert.match(panel, /shadow_dom_query:\s*['"]tool\.shadow_dom_query['"]/, `${label}: shadow_dom_query must keep its own query label`);
     assert.match(panel, /gmail_count_results:\s*['"]tool\.gmail_count_results['"]/, `${label}: gmail_count_results must keep its own counting label`);
+    assert.doesNotMatch(panel, /name === 'type_ax'[^;]*?tool\.type_text\.text/, `${label}: type_ax must not preview typed text (credential exposure)`);
+    assert.doesNotMatch(panel, /name === 'set_field'[^;]*?tool\.type_text\.text/, `${label}: set_field must not preview typed text (credential exposure)`);
+    assert.match(panel, /function refreshRenderedStepLabels\(root\)/, `${label}: rendered step labels must be refreshable on locale change`);
+    assert.match(panel, /step\.dataset\.args = safeLabelArgs\(args\)/, `${label}: steps must persist label args for locale refresh`);
+    assert.match(panel, /refreshRenderedStepLabels\(\);/, `${label}: locale-change handler must refresh rendered step labels`);
   }
 });
 

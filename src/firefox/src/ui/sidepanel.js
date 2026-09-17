@@ -2860,7 +2860,10 @@ function friendlyToolLabel(name, args) {
   if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.text) {
     return t('tool.click.selector', { selector: truncate(args.text, 30) });
   }
-  if ((name === 'type_text' || name === 'type_ax' || name === 'set_field' || name === 'iframe_type') && args?.text) {
+  // NOTE: only type_text previews its text. type_ax / set_field / iframe_type
+  // are the preferred form-filling tools and routinely carry passwords, OTP
+  // codes, and API keys — never render their values in the always-visible label.
+  if (name === 'type_text' && args?.text) {
     return t('tool.type_text.text', { text: truncate(args.text, 25) });
   }
   if (name === 'navigate' && args?.url) return t('tool.navigate.url', { url: truncate(args.url, 35) });
@@ -2884,6 +2887,46 @@ function friendlyToolLabel(name, args) {
     return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
   }
   return name || '';
+}
+
+// Persisted step labels are plain textContent, so a later locale change would
+// otherwise leave old steps in the previous language (applyDOMTranslations only
+// touches data-i18n elements). Steps store their tool + args in dataset so the
+// locale-change handler can recompute them via refreshRenderedStepLabels().
+function safeLabelArgs(args) {
+  try {
+    return JSON.stringify(args ?? {});
+  } catch {
+    return '{}';
+  }
+}
+
+function refreshRenderedStepLabels(root) {
+  const scope = root || document;
+  scope.querySelectorAll('.step-item[data-tool] .step-label').forEach((labelEl) => {
+    const step = labelEl.closest('.step-item');
+    if (!step || step.dataset.labelSource === 'progress') return;
+    if (step.dataset.labelSource === 'done-terminal' && step.dataset.doneLabelKey) {
+      labelEl.textContent = String(t(step.dataset.doneLabelKey)).trim();
+      return;
+    }
+    let args = null;
+    try {
+      args = step.dataset.args ? JSON.parse(step.dataset.args) : null;
+    } catch {
+      args = null;
+    }
+    labelEl.textContent = friendlyToolLabel(step.dataset.tool || '', args);
+  });
+  scope.querySelectorAll('.step-details > .detail-label').forEach((el) => {
+    el.textContent = t('sp.step.input_label');
+  });
+  scope.querySelectorAll('.detail-result > .detail-label').forEach((el) => {
+    el.textContent = t('sp.step.result_label');
+  });
+  scope.querySelectorAll('.step-details-toggle').forEach((el) => {
+    el.textContent = t('sp.step.details');
+  });
 }
 
 function formatScheduledTime(value) {
@@ -10447,6 +10490,8 @@ function appendCompactStep(toolName, args) {
       }
       const priorLabel = priorRejected.querySelector('.step-label');
       if (priorLabel) priorLabel.textContent = friendlyToolLabel(toolName, args);
+      priorRejected.dataset.args = safeLabelArgs(args);
+      priorRejected.dataset.labelSource = 'friendly';
       const priorDetails = priorRejected.nextElementSibling;
       if (priorDetails?.classList?.contains('step-details')) {
         const priorArgs = priorDetails.querySelector('.detail-args');
@@ -10460,6 +10505,8 @@ function appendCompactStep(toolName, args) {
   const step = document.createElement('div');
   step.className = 'step-item active';
   step.dataset.tool = toolName;
+  step.dataset.args = safeLabelArgs(args);
+  step.dataset.labelSource = 'friendly';
 
   const icon = document.createElement('span');
   icon.className = 'step-icon spinning';
@@ -10501,6 +10548,7 @@ function updateActiveToolProgress(toolName, message) {
   const active = findLastActiveCompactStep(toolName);
   const label = active?.querySelector('.step-label');
   if (label) label.textContent = message;
+  if (active) active.dataset.labelSource = 'progress';
 }
 
 function markLastStepDone(toolName, result) {
@@ -10531,6 +10579,8 @@ function markLastStepDone(toolName, result) {
           ? 'sp.tool.done.rejected'
           : (failed ? 'sp.tool.done.failed' : 'sp.tool.done.completed');
         label.textContent = String(t(key)).trim();
+        active.dataset.doneLabelKey = key;
+        active.dataset.labelSource = 'done-terminal';
       }
     }
 
@@ -13664,6 +13714,7 @@ document.addEventListener('wb-locale-changed', () => {
   renderQueuedComposerMessages();
   syncSelectionScopeUi();
   refreshOpenMessageInfoRows();
+  refreshRenderedStepLabels();
   void loadProviders();
 });
 
