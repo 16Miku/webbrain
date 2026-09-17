@@ -10,9 +10,11 @@ export function hasFileDragPayload(event) {
 export function installFileDropHandlers(target, onFiles) {
   if (!target?.addEventListener || typeof onFiles !== 'function') return () => {};
 
+  const root = target.ownerDocument || globalThis.document;
   let dragDepth = 0;
   const setDragOver = (active) => target.classList?.toggle?.('drag-over', active);
   const isFileEvent = (event) => hasFileDragPayload(event);
+  const isInsideTarget = (event) => target.contains?.(event.target);
 
   const onDragEnter = (event) => {
     if (!isFileEvent(event)) return;
@@ -46,26 +48,45 @@ export function installFileDropHandlers(target, onFiles) {
     if (files?.length) onFiles(files);
   };
 
-  const onWindowDragEnd = () => {
+  const clearDragOver = () => {
     dragDepth = 0;
     setDragOver(false);
+  };
+
+  const onDocumentDragOver = (event) => {
+    if (!isFileEvent(event) || isInsideTarget(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  };
+
+  const onDocumentDrop = (event) => {
+    if (!isFileEvent(event) || isInsideTarget(event)) return;
+    event.preventDefault();
+    clearDragOver();
+    const files = event.dataTransfer?.files;
+    if (files?.length) onFiles(files);
+  };
+
+  const onDocumentDragLeave = (event) => {
+    if (!event.relatedTarget) clearDragOver();
   };
 
   target.addEventListener('dragenter', onDragEnter);
   target.addEventListener('dragover', onDragOver);
   target.addEventListener('dragleave', onDragLeave);
   target.addEventListener('drop', onDrop);
-  window.addEventListener?.('dragend', onWindowDragEnd);
-  window.addEventListener?.('drop', onWindowDragEnd);
+  root?.addEventListener?.('dragover', onDocumentDragOver);
+  root?.addEventListener?.('drop', onDocumentDrop);
+  root?.addEventListener?.('dragleave', onDocumentDragLeave);
 
   return () => {
     target.removeEventListener?.('dragenter', onDragEnter);
     target.removeEventListener?.('dragover', onDragOver);
     target.removeEventListener?.('dragleave', onDragLeave);
     target.removeEventListener?.('drop', onDrop);
-    window.removeEventListener?.('dragend', onWindowDragEnd);
-    window.removeEventListener?.('drop', onWindowDragEnd);
-    dragDepth = 0;
-    setDragOver(false);
+    root?.removeEventListener?.('dragover', onDocumentDragOver);
+    root?.removeEventListener?.('drop', onDocumentDrop);
+    root?.removeEventListener?.('dragleave', onDocumentDragLeave);
+    clearDragOver();
   };
 }

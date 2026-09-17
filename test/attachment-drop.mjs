@@ -121,6 +121,7 @@ function createTarget() {
     dispatch(type, dataTransfer, extra = {}) {
       const event = {
         type,
+        target: this,
         dataTransfer,
         defaultPrevented: false,
         preventDefault() {
@@ -135,19 +136,24 @@ function createTarget() {
   return target;
 }
 
-const windowListeners = new Map();
-globalThis.window = {
+const documentListeners = new Map();
+globalThis.document = {
   addEventListener(type, listener) {
-    const handlers = windowListeners.get(type) || [];
+    const handlers = documentListeners.get(type) || [];
     handlers.push(listener);
-    windowListeners.set(type, handlers);
+    documentListeners.set(type, handlers);
   },
   removeEventListener(type, listener) {
-    const handlers = windowListeners.get(type) || [];
-    windowListeners.set(type, handlers.filter(candidate => candidate !== listener));
+    const handlers = documentListeners.get(type) || [];
+    documentListeners.set(type, handlers.filter(candidate => candidate !== listener));
   },
   dispatchEvent(type, event = {}) {
-    for (const listener of windowListeners.get(type) || []) listener(event);
+    event.defaultPrevented = false;
+    event.preventDefault = () => {
+      event.defaultPrevented = true;
+    };
+    for (const listener of documentListeners.get(type) || []) listener(event);
+    return event;
   },
 };
 
@@ -207,17 +213,30 @@ for (const [label, relativeModule] of implementations) {
   assert.equal(nonFileDrop.defaultPrevented, false, `${label}: non-file drop should remain untouched`);
   assert.deepEqual(received, [files], `${label}: non-file drops should not reach the attachment reader`);
 
+  const externalOver = globalThis.document.dispatchEvent('dragover', {
+    target: {},
+    dataTransfer: transfer(['Files']),
+  });
+  assert.equal(externalOver.defaultPrevented, true, `${label}: panel-wide file dragover should be consumed`);
+  assert.equal(externalOver.dataTransfer.dropEffect, 'copy', `${label}: panel-wide dragover should advertise copy behavior`);
+  const externalDrop = globalThis.document.dispatchEvent('drop', {
+    target: {},
+    dataTransfer: transfer(['Files'], files),
+  });
+  assert.equal(externalDrop.defaultPrevented, true, `${label}: panel-wide file drop should be consumed`);
+  assert.deepEqual(received, [files, files], `${label}: panel-wide drop should forward files to the attachment reader`);
+
   cleanup();
   target.dispatch('drop', transfer(['Files'], files));
-  assert.deepEqual(received, [files], `${label}: cleanup should remove drop listeners`);
+  assert.deepEqual(received, [files, files], `${label}: cleanup should remove drop listeners`);
 
-  // Window dragend / drop fallback clears stuck drag-over
+  // A document-level leave with no destination occurs on OS-drag cancellation.
   const target2 = createTarget();
   const cleanup2 = module.installFileDropHandlers(target2, () => {});
   target2.dispatch('dragenter', transfer(['Files']));
   assert.equal(target2.classList.contains('drag-over'), true, `${label}: dragenter should activate drag-over`);
-  globalThis.window.dispatchEvent('dragend');
-  assert.equal(target2.classList.contains('drag-over'), false, `${label}: window dragend should reset stuck drag-over`);
+  globalThis.document.dispatchEvent('dragleave', { relatedTarget: null });
+  assert.equal(target2.classList.contains('drag-over'), false, `${label}: document dragleave should reset a cancelled OS drag`);
   cleanup2();
 }
 
