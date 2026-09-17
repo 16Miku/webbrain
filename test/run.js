@@ -45066,6 +45066,7 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /function redactUrlForLabel\(url/, `${label}: URL step labels must redact credentials`);
     assert.match(panel, /SENSITIVE_PATH_SEGMENT_RE/, `${label}: URL credential redaction must sanitize sensitive path tokens`);
     assert.match(panel, /\(\?:\[\^\/\?#\\s\]\*@\)\+/, `${label}: URL userinfo redaction must strip through final authority delimiter`);
+    assert.match(panel, /\(\?:\[a-z\]\[a-z0-9\+\.-\]\*:\)\?\\\/\\\//, `${label}: URL userinfo redaction must cover protocol-relative URLs`);
     assert.match(panel, /decodeURIComponent/, `${label}: URL credential redaction must decode parameter names`);
     assert.match(panel, /SENSITIVE_PARAM_WORDS_RE/, `${label}: URL credential redaction must inspect sensitive parameter names`);
     assert.match(panel, /signature\|sig/, `${label}: URL credential redaction must cover signatures`);
