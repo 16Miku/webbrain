@@ -9735,7 +9735,7 @@ function renderClarifyCard(data) {
     return;
   }
 
-  // Permission-prompt mode: localized question + three fixed choices that
+  // Permission-prompt mode: localized question + fixed choices that
   // return a stable VALUE ('once'/'always'/'deny'), and NO free-text input —
   // so there's nothing to parse and no English/locale dependency.
   if (data.permission && data.permission.capability) {
@@ -9748,20 +9748,30 @@ function renderClarifyCard(data) {
     // consent wording cannot drift between two English copies; other locales
     // carry their own translation under the key.
     const resolvedVerb = verb === verbKey ? (CAPABILITY_LABEL[cap] || cap) : verb;
-    qEl.textContent = t('sp.perm.question', { verb: resolvedVerb, host });
+    const grouped = data.permission.grouped === true;
+    qEl.textContent = grouped
+      ? String(data.question || `WebBrain wants to run a task-scoped low-risk search on ${host}.`).slice(0, 600)
+      : t('sp.perm.question', { verb: resolvedVerb, host });
 
     const reasonEl = document.createElement('div');
     reasonEl.className = 'clarify-reason';
-    reasonEl.textContent = t('sp.perm.reason');
+    reasonEl.textContent = grouped
+      ? 'This one-time approval covers only this unchanged search on this tab. It does not allow passwords, payments, mutations, JavaScript, or future tasks.'
+      : t('sp.perm.reason');
     card.appendChild(reasonEl);
 
     const optionsEl = document.createElement('div');
     optionsEl.className = 'clarify-options';
-    const choices = [
-      ['once', t('sp.perm.allow_once')],
-      ['always', t('sp.perm.always_allow', { host })],
-      ['deny', t('sp.perm.dont_allow')],
-    ];
+    const choices = grouped
+      ? [
+        ['once', t('sp.perm.allow_once')],
+        ['deny', t('sp.perm.dont_allow')],
+      ]
+      : [
+        ['once', t('sp.perm.allow_once')],
+        ['always', t('sp.perm.always_allow', { host })],
+        ['deny', t('sp.perm.dont_allow')],
+      ];
     for (const [value, label] of choices) {
       const b = document.createElement('button');
       b.type = 'button';

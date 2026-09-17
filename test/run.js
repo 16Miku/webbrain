@@ -724,18 +724,23 @@ const { createContextMenuPromptHandler: createContextMenuPromptHandlerFx } = awa
 );
 
 // permission-gate.js is pure JS (deterministic capability × origin gate).
-const { Capability, CAPABILITY_LABEL, capabilityFor, capabilitiesFor, normalizeHost, hostForCapability, requiredHosts, frameHostMatches, isNetworkMutation, PermissionManager, UNTRUSTED_CONTENT_TOOLS } = await import(
+const { Capability, CAPABILITY_LABEL, SubmitRisk, capabilityFor, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, normalizeHost, registrableHost, hostForCapability, requiredHosts, frameHostMatches, isNetworkMutation, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/permission-gate.js').replace(/\\/g, '/')
 );
 const {
   Capability: CapabilityCh,
   CAPABILITY_LABEL: CAPABILITY_LABEL_CH,
+  SubmitRisk: SubmitRiskCh,
   capabilityFor: capabilityForCh,
   capabilitiesFor: capabilitiesForCh,
+  classifySubmitRisk: classifySubmitRiskCh,
+  classifySearchNavigation: classifySearchNavigationCh,
   PermissionManager: PermissionManagerCh,
   normalizeHost: normalizeHostCh,
+  registrableHost: registrableHostCh,
   hostForCapability: hostForCapabilityCh,
   requiredHosts: requiredHostsCh,
+  submitActionKey: submitActionKeyCh,
   UNTRUSTED_CONTENT_TOOLS: UNTRUSTED_CONTENT_TOOLS_CH,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/permission-gate.js').replace(/\\/g, '/')
@@ -75666,6 +75671,212 @@ test('approved submit confirmation is one-time and skips generic click always gr
   }
 });
 
+test('low-risk GET searches use one task-scoped approval and deduplicate unchanged retries', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = 5112;
+    let executed = 0;
+    let groupedPrompts = 0;
+    let submitPrompts = 0;
+    const makeSubmitInfo = () => ({
+      isSubmit: true,
+      host: 'scholar.google.com',
+      url: 'https://www.google.com/search',
+      method: 'GET',
+      action: 'https://scholar.google.com/scholar',
+      actionUrl: 'https://scholar.google.com/scholar',
+      tool: 'click_ax',
+      reason: 'submit button/control activation',
+      fields: [{ type: 'text', name: 'q', label: 'Search articles', value: 'agents', changed: true }],
+      changedFields: [{ type: 'text', name: 'q', label: 'Search articles', value: 'agents', changed: true }],
+    });
+    const runSearch = async (id) => {
+      const messages = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{ id, function: { name: 'click_ax', arguments: '{"ref_id":"ref_submit"}' } }],
+        messages,
+        () => {},
+        { supportsVision: false },
+        '',
+        new Set(['click_ax']),
+        1,
+      );
+      return messages;
+    };
+
+    agent._ensureGateSetting = async () => false;
+    agent._skipPermissionGate = false;
+    agent._currentUrl = async () => 'https://www.google.com/search';
+    agent._recordProgressObservation = async () => null;
+    agent._autoRecordProgressAction = () => null;
+    agent._progressWarningForAction = () => '';
+    agent._persist = () => {};
+    agent._detectLikelySubmitAction = async () => makeSubmitInfo();
+    agent._promptGroupedSearchPermission = async () => {
+      groupedPrompts += 1;
+      return 'once';
+    };
+    agent._promptSubmitConfirmation = async () => {
+      submitPrompts += 1;
+      throw new Error(`${AgentClass.name}: low-risk search used a fresh submit prompt`);
+    };
+    agent._promptPermission = async () => {
+      throw new Error(`${AgentClass.name}: low-risk search used a generic capability prompt`);
+    };
+    agent.executeTool = async () => {
+      executed += 1;
+      return { success: true, searched: true };
+    };
+
+    const first = await runSearch('tool_grouped_search_1');
+    const second = await runSearch('tool_grouped_search_2');
+    assert.equal(executed, 2, `${AgentClass.name}: unchanged search retry did not execute`);
+    assert.equal(groupedPrompts, 1, `${AgentClass.name}: expected one grouped approval across retries`);
+    assert.equal(submitPrompts, 0, `${AgentClass.name}: grouped search requested a fresh submit prompt`);
+    assert.equal(first.length, 1, `${AgentClass.name}: first search result missing`);
+    assert.equal(second.length, 1, `${AgentClass.name}: retry search result missing`);
+    assert.equal(JSON.parse(agent._unwrapUntrusted(first[0].content)).success, true);
+    assert.equal(JSON.parse(agent._unwrapUntrusted(second[0].content)).success, true);
+  }
+});
+
+test('search navigation, typing, and submit share one grouped approval', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = 5114;
+    const searchUrl = 'https://scholar.google.com/scholar';
+    let pageUrl = 'about:blank';
+    let groupedPrompts = 0;
+    let capabilityPrompts = 0;
+    let submitPrompts = 0;
+    const executed = [];
+
+    const formInfo = (name) => ({
+      isSubmit: name === 'click_ax',
+      ...(name === 'click_ax' ? {} : { resolvedForm: true }),
+      host: 'scholar.google.com',
+      url: searchUrl,
+      method: 'GET',
+      action: searchUrl,
+      actionUrl: searchUrl,
+      tool: name,
+      fields: [{ type: 'text', name: 'q', label: 'Search articles', value: 'agents', changed: true }],
+      changedFields: [{ type: 'text', name: 'q', label: 'Search articles', value: 'agents', changed: true }],
+    });
+
+    agent._ensureGateSetting = async () => false;
+    agent._skipPermissionGate = false;
+    agent._currentUrl = async () => pageUrl;
+    agent._recordProgressObservation = async () => null;
+    agent._autoRecordProgressAction = () => null;
+    agent._progressWarningForAction = () => '';
+    agent._persist = () => {};
+    agent._promptGroupedSearchPermission = async () => {
+      groupedPrompts += 1;
+      return 'once';
+    };
+    agent._promptPermission = async () => {
+      capabilityPrompts += 1;
+      throw new Error(`${AgentClass.name}: grouped search requested a generic capability prompt`);
+    };
+    agent._promptSubmitConfirmation = async () => {
+      submitPrompts += 1;
+      throw new Error(`${AgentClass.name}: grouped search requested fresh submit confirmation`);
+    };
+    agent._detectLikelySubmitAction = async (_tabId, name) => formInfo(name);
+    agent.executeTool = async (_tabId, name, args) => {
+      executed.push(name);
+      if (name === 'navigate') pageUrl = args.url;
+      return { success: true, tool: name };
+    };
+
+    const run = async (id, name, args, advertisedName = name) => {
+      const messages = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{ id, function: { name, arguments: JSON.stringify(args) } }],
+        messages,
+        () => {},
+        { supportsVision: false },
+        '',
+        new Set([advertisedName]),
+        1,
+      );
+      assert.equal(messages.length, 1, `${AgentClass.name} ${name}: expected one tool result`);
+      assert.equal(JSON.parse(agent._unwrapUntrusted(messages[0].content)).success, true, `${AgentClass.name} ${name}: tool did not execute successfully`);
+    };
+
+    await run('tool_search_navigation', 'navigate', { url: searchUrl });
+    await run('tool_search_type', 'type_ax', { ref_id: 'ref_query', text: 'agents' });
+    await run('tool_search_submit', 'click_ax', { ref_id: 'ref_submit' });
+
+    assert.deepEqual(executed, ['navigate', 'type_ax', 'click_ax'], `${AgentClass.name}: search flow did not execute in order`);
+    assert.equal(groupedPrompts, 1, `${AgentClass.name}: navigation/type/submit should use one grouped approval`);
+    assert.equal(capabilityPrompts, 0, `${AgentClass.name}: grouped search requested a generic capability prompt`);
+    assert.equal(submitPrompts, 0, `${AgentClass.name}: grouped search requested fresh submit confirmation`);
+  }
+});
+
+test('set_field submit stays outside the grouped low-risk search bypass', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const messages = [];
+    let groupedPrompts = 0;
+    let submitPrompts = 0;
+    let capabilityPrompts = 0;
+    let executed = false;
+    agent._ensureGateSetting = async () => false;
+    agent._skipPermissionGate = false;
+    agent._currentUrl = async () => 'https://scholar.google.com/scholar';
+    agent._recordProgressObservation = async () => null;
+    agent._autoRecordProgressAction = () => null;
+    agent._progressWarningForAction = () => '';
+    agent._persist = () => {};
+    agent._detectLikelySubmitAction = async () => ({
+      isSubmit: true,
+      host: 'scholar.google.com',
+      url: 'https://scholar.google.com/scholar',
+      method: 'GET',
+      action: 'https://scholar.google.com/scholar',
+      actionUrl: 'https://scholar.google.com/scholar',
+      fields: [{ type: 'text', name: 'q', label: 'Search articles', value: 'agents', changed: true }],
+      changedFields: [{ type: 'text', name: 'q', label: 'Search articles', value: 'agents', changed: true }],
+    });
+    agent._promptGroupedSearchPermission = async () => {
+      groupedPrompts += 1;
+      throw new Error(`${AgentClass.name}: set_field submit entered grouped search permission`);
+    };
+    agent._promptSubmitConfirmation = async () => {
+      submitPrompts += 1;
+      return 'once';
+    };
+    agent._promptPermission = async () => {
+      capabilityPrompts += 1;
+      return 'once';
+    };
+    agent.executeTool = async () => {
+      executed = true;
+      return { success: true };
+    };
+
+    await agent._executeToolBatch(
+      5113,
+      [{ id: 'tool_set_field_submit', function: { name: 'set_field', arguments: '{"ref_id":"ref_query","text":"agents","submit":true}' } }],
+      messages,
+      () => {},
+      { supportsVision: false },
+      '',
+      new Set(['set_field']),
+      1,
+    );
+    assert.equal(executed, true, `${AgentClass.name}: approved set_field submit did not execute`);
+    assert.equal(groupedPrompts, 0, `${AgentClass.name}: set_field submit used grouped approval`);
+    assert.equal(submitPrompts, 1, `${AgentClass.name}: set_field submit skipped fresh submit confirmation`);
+    assert.equal(capabilityPrompts, 1, `${AgentClass.name}: set_field submit skipped TYPE permission`);
+  }
+});
+
 test('iframe submit without urlFilter fails before confirmation or dispatch', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -106455,10 +106666,98 @@ test('skipAll hook allows everything without prompting', () => {
   assert.equal(v.needsPrompt, false);
 });
 
+test('submit risk classifier groups only conservative same-site GET searches', () => {
+  const search = {
+    isSubmit: true,
+    url: 'https://www.scholar.google.com/scholar',
+    method: 'GET',
+    actionUrl: 'https://scholar.google.com/scholar',
+    fields: [{ type: 'text', name: 'q', label: 'Search articles', value: 'agents', changed: true }],
+    changedFields: [{ type: 'text', name: 'q', label: 'Search articles', value: 'agents', changed: true }],
+  };
+  assert.equal(classifySubmitRisk(search, search.url).risk, SubmitRisk.LOW_RISK_SEARCH);
+  assert.equal(classifySubmitRisk(search, search.url).lowRisk, true);
+  assert.equal(
+    classifySearchNavigation(search.actionUrl, 'about:blank').risk,
+    SubmitRisk.LOW_RISK_SEARCH,
+  );
+  assert.equal(
+    classifySearchNavigationCh(search.actionUrl, search.url).risk,
+    SubmitRiskCh.LOW_RISK_SEARCH,
+  );
+  assert.equal(registrableHost('api.example.co.uk'), 'example.co.uk');
+  assert.equal(registrableHostCh('www.example.co.uk'), 'example.co.uk');
+  // Multi-tenant suffixes keep distinct tenants isolated
+  assert.equal(registrableHost('alice.blogspot.com'), 'alice.blogspot.com');
+  assert.notEqual(registrableHost('alice.blogspot.com'), registrableHost('victim.blogspot.com'));
+  assert.equal(registrableHost('user.notion.site'), 'user.notion.site');
+  assert.equal(registrableHost('store.myshopify.com'), 'store.myshopify.com');
+  assert.equal(registrableHost('alice.blogspot.co.uk'), 'alice.blogspot.co.uk');
+  assert.notEqual(registrableHost('alice.blogspot.co.uk'), registrableHost('victim.blogspot.co.uk'));
+
+  for (const [label, classify] of [['firefox', classifySubmitRisk], ['chrome', classifySubmitRiskCh]]) {
+    const cases = [
+      [{ ...search, method: 'POST' }, 'HTTP POST'],
+      [{ ...search, actionUrl: 'https://evil.example/search' }, 'cross-site'],
+      [{ ...search, actionUrl: 'https://scholar.google.com/logout?action=delete' }, 'side effects'],
+      [{ ...search, fields: [{ type: 'text', name: 'cardnumber', label: 'Card number' }] }, 'payment'],
+      [{ ...search, fields: [{ type: 'password', name: 'q', label: 'Search' }] }, 'credential'],
+      [{ ...search, actionUrl: 'https://scholar.google.com/account', fields: [{ type: 'text', name: 'title', label: 'Title' }] }, 'resolved search'],
+      [{ ...search, hiddenFields: [{ type: 'hidden', name: 'csrf_token' }] }, 'hidden csrf token'],
+      [{ ...search, hiddenFields: [{ type: 'hidden', name: 'api_key' }] }, 'hidden api key'],
+    ];
+    for (const [info, reason] of cases) {
+      const result = classify(info, search.url);
+      assert.equal(result.risk, SubmitRisk.FRESH_CONFIRMATION, `${label}: ${reason} must keep fresh confirmation`);
+      assert.equal(result.lowRisk, false, `${label}: ${reason} must not be grouped`);
+    }
+  }
+});
+
+test('submit action keys deduplicate unchanged retries without exposing values', () => {
+  const base = {
+    isSubmit: true,
+    url: 'https://scholar.google.com/scholar',
+    method: 'GET',
+    actionUrl: 'https://scholar.google.com/scholar',
+    fields: [{ type: 'text', name: 'q', label: 'Search', value: 'machine learning', changed: true }],
+    changedFields: [{ type: 'text', name: 'q', label: 'Search', value: 'machine learning', changed: true }],
+  };
+  const key = submitActionKey(base, base.url);
+  const chromeKey = submitActionKeyCh(base, base.url);
+  assert.equal(key, chromeKey, 'Chrome and Firefox retry keys must match');
+  assert.doesNotMatch(key, /machine learning/i, 'retry keys must hash field values');
+  assert.notEqual(key, submitActionKey({ ...base, changedFields: [{ ...base.changedFields[0], value: 'deep learning' }] }, base.url));
+  assert.notEqual(key, submitActionKey({ ...base, actionUrl: 'https://scholar.google.com/logout' }, base.url));
+});
+
+test('task-scoped grouped approvals stay per-tab, deny retries, and expire at turn boundaries', () => {
+  const pm = new PermissionManager();
+  const key = 'scholar.google.com|https://scholar.google.com/scholar|GET|s:0|c:1';
+  pm.recordIntent(key, [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK], 'allow', 1);
+  assert.equal(pm.checkIntent(key, 1, Capability.CLICK).allowed, true);
+  assert.equal(pm.checkIntent(key, 2, Capability.CLICK).needsPrompt, true);
+  pm.recordIntent(key, [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK], 'deny', 1);
+  assert.equal(pm.checkIntent(key, 1, Capability.CLICK).allowed, false);
+  assert.equal(pm.checkIntent(key, 1, Capability.CLICK).needsPrompt, false);
+  pm.beginTurn(1);
+  assert.equal(pm.checkIntent(key, 1, Capability.CLICK).needsPrompt, true);
+
+  // Candidate grants are bound to action URL and single-use allow promotion
+  pm.recordIntentCandidate('scholar.google.com', [Capability.NAVIGATE, Capability.TYPE, Capability.CLICK], 'allow', 1, 'https://scholar.google.com/scholar');
+  assert.equal(pm.checkIntentCandidate('scholar.google.com', 1, null, 'https://scholar.google.com/scholar').allowed, true);
+  // Different action path on same site must not be allowed
+  assert.equal(pm.checkIntentCandidate('scholar.google.com', 1, null, 'https://scholar.google.com/different').needsPrompt, true);
+  // Single-use allow candidate consumption
+  pm.consumeIntentCandidate(1);
+  assert.equal(pm.checkIntentCandidate('scholar.google.com', 1, null, 'https://scholar.google.com/scholar').needsPrompt, true);
+});
+
 test('parity: chrome & firefox permission-gate behave identically', async () => {
   assert.equal(capabilityForCh('click', {}), capabilityFor('click', {}));
   assert.equal(capabilityForCh('read_page', {}), capabilityFor('read_page', {}));
   assert.equal(normalizeHostCh('https://www.GitHub.com/x'), normalizeHost('https://www.GitHub.com/x'));
+  assert.equal(SubmitRiskCh.LOW_RISK_SEARCH, SubmitRisk.LOW_RISK_SEARCH);
   const a = new PermissionManager(); const b = new PermissionManagerCh();
   await a.record('x.com', 'click', 'allow', 'always');
   await b.record('x.com', 'click', 'allow', 'always');
