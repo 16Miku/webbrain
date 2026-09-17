@@ -265,6 +265,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>İzin istemleri KAPALI.</strong> WebBrain, izin istemeden tıklayacak, yazacak, gezinecek, JavaScript çalıştıracak, dosya yükleyecek, indirecek, kaydı başlatacak ve gelecek görevler zamanlayacaktır. Bunu Ayarlar → İzinler → Önemli işlemlerden önce sor seçeneğinden yeniden etkinleştirin.',
 
   'tool.read_page': 'Sayfa okunuyor',
+  'tool.gmail_count_results': 'Gmail sonuçları sayılıyor',
   'tool.get_accessibility_tree': "Sayfa yapısı anlaşılıyor",
   'tool.wait_for_stable': "Sayfanın kararlı hale gelmesi bekleniyor",
   'tool.fetch_url': "Sayfa getiriliyor",
@@ -753,6 +754,7 @@ export default {
   'sp.compact.failed': 'Bağlam sıkıştırma başarısız oldu: {error}',
   'tool.inspect_element_styles': 'Stiller inceleniyor',
   'tool.get_shadow_dom': 'Shadow DOM inceleniyor',
+  'tool.shadow_dom_query': 'Shadow DOM sorgulanıyor',
   'tool.read_page_source': 'Sayfa kaynağı okunuyor',
 
 

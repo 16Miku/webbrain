@@ -451,6 +451,7 @@ export default {
 
   // --- Tool labels -------------------------------------------------------
   'tool.read_page': "পঠন পাতা",
+  'tool.gmail_count_results': 'Gmail ফলাফল গণনা করা হচ্ছে',
   'tool.get_accessibility_tree': "পৃষ্ঠার HTML বোঝা হচ্ছে",
   'tool.wait_for_stable': "পৃষ্ঠা স্থিতিশীল হওয়ার অপেক্ষা",
   'tool.fetch_url': "পৃষ্ঠা আনা হচ্ছে",
@@ -497,6 +498,7 @@ export default {
   'tool.extract_data': "ডেটা বের করা হচ্ছে",
   'tool.inspect_element_styles': "শৈলী পরিদর্শন",
   'tool.get_shadow_dom': 'Shadow DOM পরিদর্শন করা হচ্ছে',
+  'tool.shadow_dom_query': 'Shadow DOM কোয়েরি করা হচ্ছে',
   'tool.read_page_source': "পৃষ্ঠার উত্স পড়া",
   'tool.inject_css': "সিএসএস ইনজেকশন করা",
   'tool.remove_injected_css': "ইনজেকশন করা CSS সরানো হচ্ছে",

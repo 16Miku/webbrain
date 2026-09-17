@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>权限提示已关闭。</strong>WebBrain 将在不询问的情况下点击、输入、导航、运行 JavaScript、上传、下载、录制以及安排后续任务。请在设置 → 权限 → 执行重要操作前询问中重新启用。',
 
   'tool.read_page': '正在阅读页面',
+  'tool.gmail_count_results': '正在统计 Gmail 结果',
   'tool.get_accessibility_tree': "正在理解页面 HTML",
   'tool.wait_for_stable': "等待页面稳定",
   'tool.fetch_url': "正在获取页面",
@@ -713,6 +714,7 @@ export default {
   'sp.compact.failed': '上下文压缩失败：{error}',
   'tool.inspect_element_styles': '正在检查样式',
   'tool.get_shadow_dom': '正在检查 Shadow DOM',
+  'tool.shadow_dom_query': '正在查询 Shadow DOM',
   'tool.read_page_source': '正在读取页面源代码',
 
 

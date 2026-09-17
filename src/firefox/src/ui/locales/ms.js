@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>Gesaan kebenaran DIMATIKAN.</strong> WebBrain akan mengklik, menaip, menavigasi, menjalankan JavaScript, memuat naik, memuat turun, merakam, dan menjadualkan kerja masa hadapan tanpa bertanya terlebih dahulu. Aktifkan semula ini dari Tetapan → Kebenaran → Tanya sebelum tindakan penting.',
 
   'tool.read_page': 'Membaca halaman',
+  'tool.gmail_count_results': 'Mengira hasil Gmail',
   'tool.get_accessibility_tree': "Memahami struktur HTML halaman",
   'tool.wait_for_stable': "Menunggu halaman stabil",
   'tool.fetch_url': "Mengambil halaman",
@@ -713,6 +714,7 @@ export default {
   'sp.compact.failed': 'Pemadatan konteks gagal: {error}',
   'tool.inspect_element_styles': 'Memeriksa gaya',
   'tool.get_shadow_dom': 'Memeriksa shadow DOM',
+  'tool.shadow_dom_query': 'Menyoal shadow DOM',
   'tool.read_page_source': 'Membaca sumber halaman',
 
 

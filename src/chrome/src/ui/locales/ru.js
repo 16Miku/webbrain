@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>Запросы разрешений отключены.</strong> WebBrain будет нажимать, вводить текст, переходить, запускать JavaScript, загружать, скачивать, записывать и планировать будущие задачи без запроса. Включите снова: Настройки → Разрешения → Спрашивать перед важными действиями.',
 
   'tool.read_page': 'Чтение страницы',
+  'tool.gmail_count_results': 'Подсчёт результатов Gmail',
   'tool.get_accessibility_tree': "Анализ структуры страницы",
   'tool.wait_for_stable': "Ожидание стабилизации страницы",
   'tool.fetch_url': "Загрузка страницы",
@@ -729,6 +730,7 @@ export default {
   'sp.compact.failed': 'Ошибка сжатия контекста: {error}',
   'tool.inspect_element_styles': 'Проверка стилей',
   'tool.get_shadow_dom': 'Осмотр shadow DOM',
+  'tool.shadow_dom_query': 'Запрос к shadow DOM',
   'tool.read_page_source': 'Чтение исходного кода страницы',
 
 

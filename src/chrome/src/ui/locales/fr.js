@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>Les demandes d\'autorisation sont DÉSACTIVÉES.</strong> WebBrain cliquera, saisira du texte, naviguera, exécutera du JavaScript, téléversera, téléchargera, enregistrera et planifiera des tâches futures sans demander au préalable. Réactivez cette option depuis Paramètres → Autorisations → Demander avant les actions importantes.',
 
   'tool.read_page': 'Lecture de la page',
+  'tool.gmail_count_results': 'Comptage des résultats Gmail',
   'tool.get_accessibility_tree': "Compréhension du HTML de la page",
   'tool.wait_for_stable': "Attente de stabilisation de la page",
   'tool.fetch_url': "Récupération de la page",
@@ -729,6 +730,7 @@ export default {
   'sp.compact.failed': 'Échec de la compaction du contexte : {error}',
   'tool.inspect_element_styles': 'Inspection des styles',
   'tool.get_shadow_dom': 'Inspection du shadow DOM',
+  'tool.shadow_dom_query': 'Requête shadow DOM',
   'tool.read_page_source': 'Lecture du code source',
 
 

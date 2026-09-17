@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>Naka-off ang mga prompt ng pahintulot.</strong> Mag-cli-click, magta-type, magna-navigate, magpapatakbo ng JavaScript, mag-aupload, mag-dadownload, magre-record, at mag-iskedyul ng mga gawaing hinaharap ang WebBrain nang hindi nagtatanong. I-enable muli mula sa Mga Setting → Mga Pahintulot → Magtanong bago ang mahahalagang aksyon.',
 
   'tool.read_page': 'Binabasa ang pahina',
+  'tool.gmail_count_results': 'Binibilang ang mga resulta ng Gmail',
   'tool.get_accessibility_tree': "Inuunawa ang HTML ng pahina",
   'tool.wait_for_stable': "Naghihintay na maging matatag ang pahina",
   'tool.fetch_url': "Kinukuha ang pahina",
@@ -729,6 +730,7 @@ export default {
   'sp.compact.failed': 'Nabigong i-compact ang konteksto: {error}',
   'tool.inspect_element_styles': 'Sinusuri ang mga estilo',
   'tool.get_shadow_dom': 'Sinusuri ang shadow DOM',
+  'tool.shadow_dom_query': 'Naghahanap sa shadow DOM',
   'tool.read_page_source': 'Binabasa ang source ng pahina',
 
 

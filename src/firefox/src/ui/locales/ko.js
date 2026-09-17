@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>권한 확인이 꺼져 있습니다.</strong> WebBrain은 클릭, 입력, 이동, JavaScript 실행, 업로드, 다운로드, 녹화, 예약 작업을 미리 묻지 않고 수행합니다. 설정 → 권한 → 중요 작업 전에 확인에서 다시 활성화하세요.',
 
   'tool.read_page': '페이지 읽는 중',
+  'tool.gmail_count_results': 'Gmail 결과 계산 중',
   'tool.get_accessibility_tree': "페이지 HTML 분석 중",
   'tool.wait_for_stable': "페이지 안정화 대기 중",
   'tool.fetch_url': "페이지 가져오는 중",
@@ -713,6 +714,7 @@ export default {
   'sp.compact.failed': '컨텍스트 압축 실패: {error}',
   'tool.inspect_element_styles': '스타일 검사 중',
   'tool.get_shadow_dom': '섀도 DOM 검사 중',
+  'tool.shadow_dom_query': '섀도 DOM 쿼리 중',
   'tool.read_page_source': '페이지 소스 읽는 중',
 
 

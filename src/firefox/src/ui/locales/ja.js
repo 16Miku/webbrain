@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>権限の確認がオフです。</strong> WebBrain は確認なしにクリック、入力、移動、JavaScript の実行、アップロード、ダウンロード、録画、将来の作業のスケジュールを行います。設定 → 権限 → 重要な操作の前に確認する から再有効にしてください。',
 
   'tool.read_page': 'ページを読み取り中',
+  'tool.gmail_count_results': 'Gmail の結果を数えています',
   'tool.get_accessibility_tree': "ページの HTML を解析中",
   'tool.wait_for_stable': "ページの安定を待機中",
   'tool.fetch_url': "ページを取得中",
@@ -713,6 +714,7 @@ export default {
   'sp.compact.failed': 'コンテキストのコンパクト化に失敗しました: {error}',
   'tool.inspect_element_styles': 'スタイルを検査中',
   'tool.get_shadow_dom': 'シャドウ DOM を確認中',
+  'tool.shadow_dom_query': 'シャドウ DOM を検索中',
   'tool.read_page_source': 'ページソースを読み込み中',
 
 

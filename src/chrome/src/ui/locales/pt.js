@@ -451,6 +451,7 @@ export default {
 
   // --- Tool labels -------------------------------------------------------
   'tool.read_page': "Página de leitura",
+  'tool.gmail_count_results': 'Contando resultados do Gmail',
   'tool.get_accessibility_tree': "Compreendendo o HTML da página",
   'tool.wait_for_stable': "Aguardando a página estabilizar",
   'tool.fetch_url': "Obtendo página",
@@ -497,6 +498,7 @@ export default {
   'tool.extract_data': "Extraindo dados",
   'tool.inspect_element_styles': "Inspecionando estilos",
   'tool.get_shadow_dom': 'Inspecionando shadow DOM',
+  'tool.shadow_dom_query': 'Consultando shadow DOM',
   'tool.read_page_source': "Lendo a fonte da página",
   'tool.inject_css': "Injetando CSS",
   'tool.remove_injected_css': "Removendo CSS injetado",

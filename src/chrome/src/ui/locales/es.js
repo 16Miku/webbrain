@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>Las solicitudes de permiso están DESACTIVADAS.</strong> WebBrain hará clic, escribirá, navegará, ejecutará JavaScript, subirá, descargará, grabará y programará trabajos futuros sin preguntar primero. Reactiva esto desde Ajustes → Permisos → Preguntar antes de acciones importantes.',
 
   'tool.read_page': 'Leyendo página',
+  'tool.gmail_count_results': 'Contando resultados de Gmail',
   'tool.get_accessibility_tree': "Comprendiendo el HTML de la página",
   'tool.wait_for_stable': "Esperando a que la página se estabilice",
   'tool.fetch_url': "Obteniendo página",
@@ -729,6 +730,7 @@ export default {
   'sp.compact.failed': 'Error al compactar el contexto: {error}',
   'tool.inspect_element_styles': 'Inspeccionando estilos',
   'tool.get_shadow_dom': 'Inspeccionando shadow DOM',
+  'tool.shadow_dom_query': 'Consultando shadow DOM',
   'tool.read_page_source': 'Leyendo fuente de la página',
 
 

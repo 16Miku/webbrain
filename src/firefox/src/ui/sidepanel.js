@@ -2828,7 +2828,7 @@ const TOOL_KEYS = {
   resize_window: 'tool.resize_window',
   inspect_viewport: 'tool.inspect_viewport',
   get_shadow_dom: 'tool.get_shadow_dom',
-  shadow_dom_query: 'tool.get_interactive_elements',
+  shadow_dom_query: 'tool.shadow_dom_query',
   get_frames: 'tool.read_frame',
   iframe_read: 'tool.read_frame',
   iframe_click: 'tool.click',
@@ -2845,7 +2845,7 @@ const TOOL_KEYS = {
   execute_webmcp_tool: 'tool.execute_webmcp_tool',
   list_webmcp_tools: 'tool.list_webmcp_tools',
   beep: 'tool.beep',
-  gmail_count_results: 'tool.read_page',
+  gmail_count_results: 'tool.gmail_count_results',
   carousel_navigate: 'tool.navigate',
 };
 

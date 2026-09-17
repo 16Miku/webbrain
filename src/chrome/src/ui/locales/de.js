@@ -450,6 +450,7 @@ export default {
   'sp.import_config.error': 'Konfiguration konnte nicht importiert werden: {error}',
   // --- Tool labels ---
   'tool.read_page': 'Seite lesen',
+  'tool.gmail_count_results': 'Gmail-Ergebnisse zählen',
   'tool.get_accessibility_tree': "Seitenstruktur wird analysiert",
   'tool.wait_for_stable': "Warten auf Stabilisierung der Seite",
   'tool.fetch_url': "Seite wird abgerufen",
@@ -496,6 +497,7 @@ export default {
   'tool.extract_data': 'Daten extrahieren',
   'tool.inspect_element_styles': 'Stile inspizieren',
   'tool.get_shadow_dom': 'Shadow-DOM untersuchen',
+  'tool.shadow_dom_query': 'Shadow-DOM abfragen',
   'tool.read_page_source': 'Seitenquellcode lesen',
   'tool.inject_css': 'CSS einfügen',
   'tool.remove_injected_css': 'Eingefügtes CSS entfernen',

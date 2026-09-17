@@ -451,6 +451,7 @@ export default {
 
   // --- Tool labels -------------------------------------------------------
   'tool.read_page': "صفحه خواندن",
+  'tool.gmail_count_results': 'شمارش نتایج Gmail',
   'tool.get_accessibility_tree': "درک ساختار HTML صفحه",
   'tool.wait_for_stable': "در انتظار پایدار شدن صفحه",
   'tool.fetch_url': "دریافت صفحه",
@@ -497,6 +498,7 @@ export default {
   'tool.extract_data': "استخراج داده ها",
   'tool.inspect_element_styles': "بازرسی سبک ها",
   'tool.get_shadow_dom': 'بررسی Shadow DOM',
+  'tool.shadow_dom_query': 'پرس\u200cوجو در Shadow DOM',
   'tool.read_page_source': "خواندن منبع صفحه",
   'tool.inject_css': "تزریق CSS",
   'tool.remove_injected_css': "حذف CSS تزریق شده",

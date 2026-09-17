@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>مطالبات الأذونات مُعطّلة.</strong> سيقوم WebBrain بالنقر والكتابة والتنقل وتشغيل JavaScript والرفع والتنزيل والتسجيل وجدولة أعمال مستقبلية دون أن يسأل أولًا. أعد تفعيل هذا من الإعدادات ← الأذونات ← السؤال قبل الإجراءات المهمة.',
 
   'tool.read_page': 'قراءة الصفحة',
+  'tool.gmail_count_results': 'عدّ نتائج Gmail',
   'tool.get_accessibility_tree': "فهم بنية الصفحة",
   'tool.wait_for_stable': "انتظار استقرار الصفحة",
   'tool.fetch_url': "جلب الصفحة",
@@ -729,6 +730,7 @@ export default {
   'sp.compact.failed': 'فشل ضغط السياق: {error}',
   'tool.inspect_element_styles': 'فحص الأنماط',
   'tool.get_shadow_dom': 'فحص Shadow DOM',
+  'tool.shadow_dom_query': 'الاستعلام في Shadow DOM',
   'tool.read_page_source': 'قراءة مصدر الصفحة',
 
 

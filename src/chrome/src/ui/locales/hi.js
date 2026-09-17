@@ -451,6 +451,7 @@ export default {
 
   // --- Tool labels -------------------------------------------------------
   'tool.read_page': "पेज पढ़ना",
+  'tool.gmail_count_results': 'Gmail परिणाम गिने जा रहे हैं',
   'tool.get_accessibility_tree': "पेज का HTML समझ रहे हैं",
   'tool.wait_for_stable': "पेज के स्थिर होने की प्रतीक्षा है",
   'tool.fetch_url': "पेज लाया जा रहा है",
@@ -497,6 +498,7 @@ export default {
   'tool.extract_data': "डेटा निकालना",
   'tool.inspect_element_styles': "शैलियों का निरीक्षण करना",
   'tool.get_shadow_dom': 'Shadow DOM जाँचा जा रहा है',
+  'tool.shadow_dom_query': 'Shadow DOM क्वेरी किया जा रहा है',
   'tool.read_page_source': "पेज स्रोत पढ़ना",
   'tool.inject_css': "सीएसएस इंजेक्ट करना",
   'tool.remove_injected_css': "इंजेक्टेड सीएसएस को हटाया जा रहा है",

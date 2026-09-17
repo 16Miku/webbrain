@@ -45042,11 +45042,15 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
       assert.match(localeSrc, /['"]tool\.research_url\.url['"]/, `${label}/${file} missing tool.research_url.url`);
       assert.match(localeSrc, /['"]tool\.list_webmcp_tools['"]/, `${label}/${file} missing tool.list_webmcp_tools`);
       assert.match(localeSrc, /['"]tool\.get_shadow_dom['"]/, `${label}/${file} missing tool.get_shadow_dom`);
+      assert.match(localeSrc, /['"]tool\.shadow_dom_query['"]/, `${label}/${file} missing tool.shadow_dom_query`);
+      assert.match(localeSrc, /['"]tool\.gmail_count_results['"]/, `${label}/${file} missing tool.gmail_count_results`);
     }
     assert.match(panel, /if \(name === 'press_keys' && \(args\?\.key \|\| args\?\.keys\)\)/, `${label}: press_keys label must read schema-valid args.key`);
     assert.match(panel, /if \(name === 'research_url' && args\?\.url\)[\s\S]*?tool\.research_url\.url/, `${label}: research_url must keep its own label`);
     assert.match(panel, /list_webmcp_tools:\s*['"]tool\.list_webmcp_tools['"]/, `${label}: list_webmcp_tools must keep its own discovery label`);
     assert.match(panel, /get_shadow_dom:\s*['"]tool\.get_shadow_dom['"]/, `${label}: get_shadow_dom must keep its own discovery label`);
+    assert.match(panel, /shadow_dom_query:\s*['"]tool\.shadow_dom_query['"]/, `${label}: shadow_dom_query must keep its own query label`);
+    assert.match(panel, /gmail_count_results:\s*['"]tool\.gmail_count_results['"]/, `${label}: gmail_count_results must keep its own counting label`);
   }
 });
 

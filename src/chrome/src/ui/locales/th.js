@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>การถามสิทธิ์ถูกปิดอยู่</strong> WebBrain จะคลิก พิมพ์ นำทาง รัน JavaScript อัปโหลด ดาวน์โหลด บันทึก และตั้งเวลางานในอนาคตโดยไม่ถามก่อน เปิดใช้งานอีกครั้งได้ที่ การตั้งค่า → สิทธิ์ → ถามก่อนการดำเนินการสำคัญ',
 
   'tool.read_page': 'กำลังอ่านหน้า',
+  'tool.gmail_count_results': 'กำลังนับผลลัพธ์ Gmail',
   'tool.get_accessibility_tree': "กำลังทำความเข้าใจ HTML ของหน้า",
   'tool.wait_for_stable': "กำลังรอให้หน้าเว็บเสถียร",
   'tool.fetch_url': "กำลังดึงข้อมูลหน้าเว็บ",
@@ -729,6 +730,7 @@ export default {
   'sp.compact.failed': 'การบีบอัดบริบทล้มเหลว: {error}',
   'tool.inspect_element_styles': 'กำลังตรวจสอบสไตล์',
   'tool.get_shadow_dom': 'กำลังตรวจสอบ Shadow DOM',
+  'tool.shadow_dom_query': 'กำลังค้นหา Shadow DOM',
   'tool.read_page_source': 'กำลังอ่านซอร์สโค้ดหน้า',
 
 

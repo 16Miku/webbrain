@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>Permintaan izin NONAKTIF.</strong> WebBrain akan mengeklik, mengetik, menavigasi, menjalankan JavaScript, mengunggah, mengunduh, merekam, dan menjadwalkan pekerjaan mendatang tanpa bertanya terlebih dahulu. Aktifkan kembali dari Pengaturan → Izin → Tanya sebelum tindakan penting.',
 
   'tool.read_page': 'Membaca halaman',
+  'tool.gmail_count_results': 'Menghitung hasil Gmail',
   'tool.get_accessibility_tree': "Memahami struktur HTML halaman",
   'tool.wait_for_stable': "Menunggu halaman stabil",
   'tool.fetch_url': "Mengambil halaman",
@@ -729,6 +730,7 @@ export default {
   'sp.compact.failed': 'Kompaksi konteks gagal: {error}',
   'tool.inspect_element_styles': 'Memeriksa gaya',
   'tool.get_shadow_dom': 'Memeriksa shadow DOM',
+  'tool.shadow_dom_query': 'Mengkueri shadow DOM',
   'tool.read_page_source': 'Membaca sumber halaman',
 
 

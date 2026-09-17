@@ -451,6 +451,7 @@ export default {
 
   // --- Tool labels -------------------------------------------------------
   'tool.read_page': "Trang đọc",
+  'tool.gmail_count_results': 'Đếm kết quả Gmail',
   'tool.get_accessibility_tree': "Tìm hiểu cấu trúc HTML của trang",
   'tool.wait_for_stable': "Đang đợi trang ổn định",
   'tool.fetch_url': "Đang tải trang",
@@ -497,6 +498,7 @@ export default {
   'tool.extract_data': "Trích xuất dữ liệu",
   'tool.inspect_element_styles': "Kiểm tra phong cách",
   'tool.get_shadow_dom': 'Kiểm tra shadow DOM',
+  'tool.shadow_dom_query': 'Truy vấn shadow DOM',
   'tool.read_page_source': "Nguồn trang đọc",
   'tool.inject_css': "Tiêm CSS",
   'tool.remove_injected_css': "Loại bỏ CSS được chèn",

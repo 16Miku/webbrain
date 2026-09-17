@@ -228,6 +228,7 @@ export default {
   'sp.permissions.disabled_html': '⚠️ <strong>Запити дозволів ВИМКНЕНО.</strong> WebBrain натискатиме, друкуватиме, переходитиме, запускатиме JavaScript, вивантажуватиме, завантажуватиме, записуватиме та плануватиме майбутню роботу без попереднього запиту. Увімкніть знову в Налаштування → Дозволи → Питати перед важливими діями.',
 
   'tool.read_page': 'Читання сторінки',
+  'tool.gmail_count_results': 'Підрахунок результатів Gmail',
   'tool.get_accessibility_tree': "Аналіз структури сторінки",
   'tool.wait_for_stable': "Очікування стабілізації сторінки",
   'tool.fetch_url': "Завантаження сторінки",
@@ -729,6 +730,7 @@ export default {
   'sp.compact.failed': 'Помилка стиснення контексту: {error}',
   'tool.inspect_element_styles': 'Перевірка стилів',
   'tool.get_shadow_dom': 'Огляд shadow DOM',
+  'tool.shadow_dom_query': 'Запит до shadow DOM',
   'tool.read_page_source': 'Читання вихідного коду сторінки',
 
 
