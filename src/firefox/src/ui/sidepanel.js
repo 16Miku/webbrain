@@ -10487,6 +10487,25 @@ function findLastActiveCompactStep(toolName = '') {
   return activeSteps.at(-1) || null;
 }
 
+// When a step completes or fails, restore its friendly localized label so any
+// transient tool_progress message (which may be English-only) does not linger,
+// and clear the progress marker so future locale changes refresh the label.
+function restoreStepFriendlyLabel(step) {
+  if (!step || !step.dataset?.tool) return;
+  if (isTerminalDoneTool(step.dataset.tool)) return;
+  const label = step.querySelector('.step-label');
+  if (label) {
+    let stepArgs = null;
+    try {
+      stepArgs = step.dataset.args ? JSON.parse(step.dataset.args) : null;
+    } catch {
+      stepArgs = null;
+    }
+    label.textContent = friendlyToolLabel(step.dataset.tool, stepArgs);
+  }
+  step.dataset.labelSource = 'friendly';
+}
+
 function appendCompactStep(toolName, args) {
   const container = getOrCreateStepsContainer();
   if (!container) return;
@@ -10500,6 +10519,7 @@ function appendCompactStep(toolName, args) {
     prev.classList.add('done');
     const icon = prev.querySelector('.step-icon');
     if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
+    restoreStepFriendlyLabel(prev);
   }
 
   if (isTerminalDoneTool(toolName)) {
@@ -10614,17 +10634,7 @@ function markLastStepDone(toolName, result) {
       // A transient tool_progress message may have overwritten the friendly
       // label; restore the localized label now that the result arrived so a
       // later locale change or transcript restore shows the right text.
-      const label = active.querySelector('.step-label');
-      if (label) {
-        let stepArgs = null;
-        try {
-          stepArgs = active.dataset.args ? JSON.parse(active.dataset.args) : null;
-        } catch {
-          stepArgs = null;
-        }
-        label.textContent = friendlyToolLabel(toolName, stepArgs);
-      }
-      active.dataset.labelSource = 'friendly';
+      restoreStepFriendlyLabel(active);
     }
 
     // Append result to the details panel
@@ -10647,6 +10657,7 @@ function markLastStepFailed() {
     active.classList.add('done');
     const icon = active.querySelector('.step-icon');
     if (icon) { icon.className = 'step-icon fail'; icon.textContent = '\u2717'; }
+    restoreStepFriendlyLabel(active);
   }
 }
 
@@ -10658,6 +10669,7 @@ function finalizeSteps(assistantEl = currentAssistantEl) {
     step.classList.add('done');
     const icon = step.querySelector('.step-icon');
     if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
+    restoreStepFriendlyLabel(step);
   });
 }
 

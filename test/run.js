@@ -45068,7 +45068,8 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /signature\|sig/, `${label}: URL credential redaction must cover signatures`);
     assert.match(panel, /redactUrlForLabel\(args\.url\)/, `${label}: fetch/research labels must redact URL credentials`);
     assert.match(panel, /function isTerminalDoneTool\(name\)/, `${label}: done_json must share terminal completion handling`);
-    assert.match(panel, /label\.textContent = friendlyToolLabel\(toolName, stepArgs\);/, `${label}: completed steps must restore the friendly label after progress`);
+    assert.match(panel, /function restoreStepFriendlyLabel\(step\)/, `${label}: completed/failed steps must restore friendly label and clear progress marker`);
+    assert.match(panel, /label\.textContent = friendlyToolLabel\(step\.dataset\.tool, stepArgs\);/, `${label}: completed steps must restore the friendly label after progress`);
   }
 });
 
