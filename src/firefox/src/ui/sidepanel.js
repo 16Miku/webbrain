@@ -2851,40 +2851,6 @@ const TOOL_KEYS = {
   carousel_navigate: 'tool.navigate',
 };
 
-const SENSITIVE_PARAM_WORDS_RE = /(?:^|[^a-z0-9])(?:key|api[_-]?key|token|secret|password|passwd|pwd|session|otp|signature|sig|auth|authorization|code|ticket|jwt|bearer|credential|credentials)(?:[^a-z0-9]|$)/i;
-const SENSITIVE_PATH_SEGMENT_RE = /(\/(?:reset|verify|verification|confirm|confirmation|magic|auth|invite|invitation|password|passwd)\/)[^/?#\s]+/gi;
-
-// Strip credentials (userinfo, sensitive path tokens, sensitive query/fragment
-// values, and nested redirect URLs) before a URL is shown in the always-visible
-// step label. The full value stays behind the expandable details panel.
-function redactUrlForLabel(url, depth = 0) {
-  if (depth > 3) return '…';
-  return String(url || '')
-    .trim()
-    .replace(/^((?:[a-z][a-z0-9+.-]*:)?\/\/)(?:[^/?#\s]*@)+/i, '$1')
-    .replace(SENSITIVE_PATH_SEGMENT_RE, '$1…')
-    .replace(/([?&#])([^=&#\s]+)=([^&#\s]*)/g, (match, prefix, param, val) => {
-      let decoded = param;
-      try {
-        decoded = decodeURIComponent(param);
-      } catch {}
-      const norm = String(decoded || '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
-      if (SENSITIVE_PARAM_WORDS_RE.test(norm)) {
-        return `${prefix}${param}=…`;
-      }
-      if (val && /[%@=?:/]|%40|%2f|%3d|%3f/i.test(val)) {
-        try {
-          const decodedVal = decodeURIComponent(val);
-          const redactedVal = redactUrlForLabel(decodedVal, depth + 1);
-          if (redactedVal !== decodedVal) {
-            return `${prefix}${param}=${encodeURIComponent(redactedVal)}`;
-          }
-        } catch {}
-      }
-      return match;
-    });
-}
-
 function isTerminalDoneTool(name) {
   return name === 'done' || name === 'done_json';
 }
@@ -2906,15 +2872,6 @@ function friendlyToolLabel(name, args) {
   if (name === 'type_text' && args?.text) {
     return t('tool.type_text.text', { text: truncate(args.text, 25) });
   }
-  if (name === 'navigate' && args?.url) return t('tool.navigate.url', { url: truncate(redactUrlForLabel(args.url), 35) });
-  if (name === 'promote_iframe' && args?.urlFilter) return t('tool.navigate.url', { url: truncate(redactUrlForLabel(args.urlFilter), 35) });
-  if (name === 'fetch_url' && args?.url) {
-    return t('tool.fetch_url.url', { url: truncate(redactUrlForLabel(args.url), 35) });
-  }
-  if (name === 'research_url' && args?.url) {
-    return t('tool.research_url.url', { url: truncate(redactUrlForLabel(args.url), 35) });
-  }
-  if (name === 'find_text' && args?.text) return t('tool.find_text.text', { text: truncate(args.text, 25) });
   if (name === 'press_keys' && (args?.key || args?.keys)) return t('tool.press_keys.keys', { keys: truncate(args.key || args.keys, 25) });
   if (name === 'scroll') return t('tool.scroll.direction', { direction: args?.direction || 'down' });
   if (name === 'extract_data') return t('tool.extract_data.type', { type: args?.type || 'data' });
@@ -2929,7 +2886,7 @@ function friendlyToolLabel(name, args) {
   return name || '';
 }
 
-const LABEL_ARG_KEYS = ['selector', 'index', 'text', 'url', 'urlFilter', 'key', 'keys', 'direction', 'type'];
+const LABEL_ARG_KEYS = ['selector', 'index', 'key', 'keys', 'direction', 'type'];
 
 // Persisted step labels are plain textContent, so a later locale change would
 // otherwise leave old steps in the previous language (applyDOMTranslations only
