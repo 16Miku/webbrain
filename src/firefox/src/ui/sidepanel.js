@@ -2871,7 +2871,7 @@ function redactUrlForLabel(url, depth = 0) {
       if (SENSITIVE_PARAM_WORDS_RE.test(norm)) {
         return `${prefix}${param}=…`;
       }
-      if (val && (val.includes('%3D') || val.includes('%3d') || val.includes('=') || val.includes('%3F') || val.includes('%3f') || val.includes('?'))) {
+      if (val && /[%@=?:/]|%40|%2f|%3d|%3f/i.test(val)) {
         try {
           const decodedVal = decodeURIComponent(val);
           const redactedVal = redactUrlForLabel(decodedVal, depth + 1);
