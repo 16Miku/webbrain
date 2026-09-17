@@ -116,7 +116,7 @@ export default {
   'mic.denied': 'میکروفون رد شد. شما می توانید آن را در تنظیمات سایت افزونه اجازه دهید.',
   'sp.attach.remove': "حذف پیوست",
   'sp.attach.too_large': "{name} برای اتصال بیش از حد بزرگ است (حداکثر {max}).",
-  'sp.attach.unsupported_type': "{name} یک نوع پیوست پشتیبانی نمی‌شود - فقط تصاویر، فایل‌های PDF، JSON، TXT و فایل‌های CSV پشتیبانی می‌شوند.",
+  'sp.attach.unsupported_type': "{name} یک نوع پیوست پشتیبانی نمی‌شود - فقط تصاویر، فایل‌های PDF، JSON، TXT، CSV و Markdown پشتیبانی می‌شوند.",
   'sp.attach.read_failed': "نمی توان {name} را خواند.",
   'sp.attach.needs_prompt': 'برای ارسال همراه پیوست، یک پرسش بنویسید.',
   'sp.attach.no_tab': 'هیچ زبانه فعالی برای پیوست کردن متن انتخاب‌شده وجود ندارد.',

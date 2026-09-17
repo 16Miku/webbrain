@@ -1,9 +1,77 @@
 import { strict as assert } from 'node:assert';
+import { readFile, readdir } from 'node:fs/promises';
 
 const implementations = [
   ['chrome', '../src/chrome/src/ui/attachment-drop.js'],
   ['firefox', '../src/firefox/src/ui/attachment-drop.js'],
 ];
+
+const fileImplementations = [
+  ['chrome', '../src/chrome/src/ui/attachment-file.js'],
+  ['firefox', '../src/firefox/src/ui/attachment-file.js'],
+];
+
+for (const [label] of implementations) {
+  const sidepanelHtml = await readFile(
+    new URL(`../src/${label}/src/ui/sidepanel.html`, import.meta.url),
+    'utf8'
+  );
+  assert.match(
+    sidepanelHtml,
+    /id="file-attach-input"[^>]*text\/markdown[^>]*\.md/,
+    `${label}: file picker should advertise Markdown MIME and extension support`
+  );
+
+  const agentSource = await readFile(
+    new URL(`../src/${label}/src/agent/agent.js`, import.meta.url),
+    'utf8'
+  );
+  assert.match(
+    agentSource,
+    /JSON\/TXT\/CSV\/Markdown attachments/,
+    `${label}: attachment safety guidance should include Markdown`
+  );
+  assert.match(
+    agentSource,
+    /JSON\/TXT\/CSV\/Markdown facts/,
+    `${label}: text attachment memory guidance should include Markdown`
+  );
+
+  const localeDirectory = new URL(`../src/${label}/src/ui/locales/`, import.meta.url);
+  for (const localeFile of (await readdir(localeDirectory)).filter(name => name.endsWith('.js'))) {
+    const localeSource = await readFile(new URL(localeFile, localeDirectory), 'utf8');
+    assert.match(
+      localeSource,
+      /sp\.attach\.unsupported_type[^\n]*Markdown/,
+      `${label}/${localeFile}: unsupported attachment copy should mention Markdown`
+    );
+  }
+}
+
+for (const [label, relativeModule] of fileImplementations) {
+  const { isTextAttachment } = await import(new URL(relativeModule, import.meta.url).href);
+
+  assert.equal(
+    isTextAttachment({ name: 'README.md', type: 'text/markdown' }),
+    true,
+    `${label}: text/markdown should be accepted as a text attachment`
+  );
+  assert.equal(
+    isTextAttachment({ name: 'README.MD', type: '' }),
+    true,
+    `${label}: Markdown extension should be accepted when MIME type is empty`
+  );
+  assert.equal(
+    isTextAttachment({ name: 'README.md', type: 'image/png' }),
+    false,
+    `${label}: image MIME types should not be reclassified by a Markdown extension`
+  );
+  assert.equal(
+    isTextAttachment({ name: 'archive.zip', type: 'application/zip' }),
+    false,
+    `${label}: unsupported binary files should remain rejected`
+  );
+}
 
 function createTarget() {
   const listeners = new Map();

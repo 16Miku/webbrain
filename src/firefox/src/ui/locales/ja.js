@@ -769,7 +769,7 @@ export default {
   'mic.denied': 'マイクが拒否されました。拡張機能のサイト設定で許可できます。',
   "sp.attach.remove": "添付を削除",
   "sp.attach.too_large": "{name} は大きすぎて添付できません（最大 {max}）。",
-  "sp.attach.unsupported_type": "{name} は対応していない添付タイプです — 画像、PDF、JSON、TXT、CSV ファイルのみ対応しています。",
+  "sp.attach.unsupported_type": "{name} は対応していない添付タイプです — 画像、PDF、JSON、TXT、CSV、Markdown ファイルのみ対応しています。",
   "sp.attach.read_failed": "{name} を読み取れませんでした。",
   "sp.attach.needs_prompt": "添付ファイルと一緒に送る質問を入力してください。",
   "sp.attach.no_tab": "選択したテキストを添付できるアクティブなタブがありません。",

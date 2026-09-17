@@ -769,7 +769,7 @@ export default {
   'mic.denied': '마이크가 거부되었습니다. 확장 프로그램의 사이트 설정에서 허용할 수 있습니다.',
   "sp.attach.remove": "첨부 파일 제거",
   "sp.attach.too_large": "{name}은(는) 첨부하기에 너무 큽니다(최대 {max}).",
-  "sp.attach.unsupported_type": "{name}은(는) 지원되는 첨부 파일 형식이 아닙니다 — 이미지, PDF, JSON, TXT, CSV 파일만 지원됩니다.",
+  "sp.attach.unsupported_type": "{name}은(는) 지원되는 첨부 파일 형식이 아닙니다 — 이미지, PDF, JSON, TXT, CSV, Markdown 파일만 지원됩니다.",
   "sp.attach.read_failed": "{name}을(를) 읽을 수 없습니다.",
   "sp.attach.needs_prompt": "첨부 파일과 함께 보낼 질문을 입력하세요.",
   "sp.attach.no_tab": "선택한 텍스트를 첨부할 활성 탭이 없습니다.",
