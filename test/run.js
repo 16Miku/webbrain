@@ -45049,7 +45049,8 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
       assert.match(localeSrc, /['"]tool\.download_resource['"]/, `${label}/${file} missing tool.download_resource`);
     }
     assert.match(panel, /if \(name === 'press_keys' && \(args\?\.key \|\| args\?\.keys\)\)/, `${label}: press_keys label must read schema-valid args.key`);
-    assert.match(panel, /if \(name === 'research_url' && args\?\.url\)[\s\S]*?tool\.research_url\.url/, `${label}: research_url must keep its own label`);
+    assert.match(panel, /research_url:\s*['"]tool\.research_url['"]/, `${label}: research_url must keep its own generic label`);
+    assert.doesNotMatch(panel, /name === 'research_url' && args\?\.url/, `${label}: research_url must not preview URLs`);
     assert.match(panel, /list_webmcp_tools:\s*['"]tool\.list_webmcp_tools['"]/, `${label}: list_webmcp_tools must keep its own discovery label`);
     assert.match(panel, /get_shadow_dom:\s*['"]tool\.get_shadow_dom['"]/, `${label}: get_shadow_dom must keep its own discovery label`);
     assert.match(panel, /shadow_dom_query:\s*['"]tool\.shadow_dom_query['"]/, `${label}: shadow_dom_query must keep its own query label`);
