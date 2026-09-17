@@ -2859,9 +2859,13 @@ const SENSITIVE_PARAM_WORDS_RE = /(?:^|[_-])(?:key|api[_-]?key|token|secret|pass
 // kebab-case (x-amz-signature), and camelCase (authToken, sessionToken) names.
 function redactUrlForLabel(url) {
   return String(url || '')
-    .replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/i, '$1')
+    .replace(/^([a-z][a-z0-9+.-]*:\/\/)(?:[^/?#\s]*@)+/i, '$1')
     .replace(/([?&#])([^=&#\s]+)=([^&#\s]*)/g, (match, prefix, param) => {
-      const norm = String(param || '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+      let decoded = param;
+      try {
+        decoded = decodeURIComponent(param);
+      } catch {}
+      const norm = String(decoded || '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
       return SENSITIVE_PARAM_WORDS_RE.test(norm) ? `${prefix}${param}=…` : match;
     });
 }
