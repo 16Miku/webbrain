@@ -760,7 +760,7 @@ export default {
   'mic.denied': 'Mikrofon został odrzucony. Możesz zezwolić na to w ustawieniach witryny rozszerzenia.',
   "sp.attach.remove": "Usuń załącznik",
   "sp.attach.too_large": "{name} jest za duży, aby go dołączyć (maks. {max}).",
-  "sp.attach.unsupported_type": "{name} nie jest obsługiwanym typem załącznika — obsługiwane są tylko obrazy, PDF, JSON, TXT i CSV.",
+  "sp.attach.unsupported_type": "{name} nie jest obsługiwanym typem załącznika — obsługiwane są tylko obrazy, PDF, JSON, TXT, CSV i Markdown.",
   "sp.attach.read_failed": "Nie udało się odczytać {name}.",
   "sp.attach.needs_prompt": "Dodaj pytanie, które zostanie wysłane z załącznikiem.",
   "sp.attach.no_tab": "Brak aktywnej karty, do której można dołączyć zaznaczenie.",

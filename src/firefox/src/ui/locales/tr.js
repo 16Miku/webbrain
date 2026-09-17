@@ -774,7 +774,7 @@ export default {
   'mic.denied': 'Mikrofon reddedildi. Uzantının site ayarlarından buna izin verebilirsiniz.',
   "sp.attach.remove": "Eki kaldır",
   "sp.attach.too_large": "{name} eklemek için çok büyük (en fazla {max}).",
-  "sp.attach.unsupported_type": "{name} desteklenen bir ek türü değil — yalnızca görseller, PDF, JSON, TXT ve CSV dosyaları desteklenir.",
+  "sp.attach.unsupported_type": "{name} desteklenen bir ek türü değil — yalnızca görseller, PDF, JSON, TXT, CSV ve Markdown dosyaları desteklenir.",
   "sp.attach.read_failed": "{name} okunamadı.",
   "sp.attach.needs_prompt": "Ekinizle birlikte göndermek için bir soru yazın.",
   "sp.attach.no_tab": "Seçimi ekleyebileceğiniz etkin bir sekme yok.",

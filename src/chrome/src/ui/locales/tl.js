@@ -796,7 +796,7 @@ export default {
   "mic.denied": "Ang mikropono ay tinanggi. Maaari mong payagan ito sa site settings ng extension.",
   "sp.attach.remove": "Alisin ang attachment",
   "sp.attach.too_large": "Masyadong malaki ang {name} para i-attach (max {max}).",
-  "sp.attach.unsupported_type": "Hindi suportadong uri ng attachment ang {name} — mga image, PDF, JSON, TXT, at CSV file lang ang suportado.",
+  "sp.attach.unsupported_type": "Hindi suportadong uri ng attachment ang {name} — mga image, PDF, JSON, TXT, CSV, at Markdown file lang ang suportado.",
   "sp.attach.read_failed": "Hindi mabasa ang {name}.",
   "sp.attach.needs_prompt": "Magdagdag ng tanong na ipapadala kasama ng iyong attachment.",
   "sp.attach.no_tab": "Walang aktibong tab kung saan maidudugtong ang piniling teksto.",

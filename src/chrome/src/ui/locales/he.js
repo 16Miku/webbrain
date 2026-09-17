@@ -116,7 +116,7 @@ export default {
   'mic.denied': 'המיקרופון נדחה. אתה יכול לאפשר את זה בהגדרות האתר של ההרחבה.',
   "sp.attach.remove": "הסר קובץ מצורף",
   "sp.attach.too_large": "{name} גדול מדי לצירוף (מקסימום {max}).",
-  "sp.attach.unsupported_type": "{name} אינו סוג קובץ נתמך. ניתן לצרף רק תמונות וקובצי PDF, JSON, TXT ו-CSV.",
+  "sp.attach.unsupported_type": "{name} אינו סוג קובץ נתמך. ניתן לצרף רק תמונות וקובצי PDF, JSON, TXT, CSV ו-Markdown.",
   "sp.attach.read_failed": "לא ניתן לקרוא את {name}.",
   "sp.attach.needs_prompt": "הוסיפו שאלה שתישלח יחד עם הקובץ המצורף.",
   "sp.attach.no_tab": "אין לשונית פעילה שאליה אפשר לצרף את הבחירה.",

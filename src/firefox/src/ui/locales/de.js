@@ -116,7 +116,7 @@ export default {
   'mic.denied': 'Mikrofon wurde verweigert. Sie können es in den Site-Einstellungen der Erweiterung zulassen.',
   'sp.attach.remove': 'Anhang entfernen',
   'sp.attach.too_large': '{name} ist zu groß zum Anhängen (max. {max}).',
-  'sp.attach.unsupported_type': '{name} ist kein unterstützter Anhangstyp — nur Bilder, PDFs, JSON, TXT- und CSV-Dateien werden unterstützt.',
+  'sp.attach.unsupported_type': '{name} ist kein unterstützter Anhangstyp — nur Bilder, PDFs, JSON-, TXT-, CSV- und Markdown-Dateien werden unterstützt.',
   'sp.attach.read_failed': '{name} konnte nicht gelesen werden.',
   'sp.attach.needs_prompt': 'Fügen Sie eine Frage hinzu, die mit dem Anhang gesendet wird.',
   'sp.attach.no_tab': 'Kein aktiver Tab, an den die Auswahl angehängt werden kann.',

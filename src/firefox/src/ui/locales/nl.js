@@ -116,7 +116,7 @@ export default {
   'mic.denied': 'Microfoon geweigerd. U kunt dit toestaan in de site-instellingen van de extensie.',
   'sp.attach.remove': 'Bijlage verwijderen',
   'sp.attach.too_large': '{name} is te groot om bij te voegen (max {max}).',
-  'sp.attach.unsupported_type': "{name} is een niet-ondersteund bijlagetype — alleen afbeeldingen, PDF's, JSON, TXT- en CSV-bestanden worden ondersteund.",
+  'sp.attach.unsupported_type': "{name} is een niet-ondersteund bijlagetype — alleen afbeeldingen, PDF's, JSON-, TXT-, CSV- en Markdown-bestanden worden ondersteund.",
   'sp.attach.read_failed': '{name} kon niet worden gelezen.',
   'sp.attach.needs_prompt': 'Voeg een vraag toe om met je bijlage te versturen.',
   'sp.attach.no_tab': 'Geen actief tabblad om de selectie aan toe te voegen.',

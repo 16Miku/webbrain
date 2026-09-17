@@ -84,6 +84,8 @@ import {
   removeStagedScreenshots,
   saveStagedScreenshot,
 } from './staged-screenshot-store.js';
+import { installFileDropHandlers } from './attachment-drop.js';
+import { isTextAttachment } from './attachment-file.js';
 
 const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
 
@@ -13435,10 +13437,7 @@ async function handleAttachedFiles(fileList, tabId = currentTabId) {
       const isPdf = file.type === 'application/pdf';
       // The reported MIME type for text files is OS-registry dependent and
       // often empty — fall back to the extension.
-      const isTextFile = file.type === 'application/json'
-        || file.type === 'text/plain'
-        || file.type === 'text/csv'
-        || (!isImage && !isPdf && /\.(json|txt|csv)$/i.test(file.name || ''));
+      const isTextFile = isTextAttachment(file);
       if (!isImage && !isPdf && !isTextFile) {
         if (normalizeAttachmentTabId() === numericTabId) {
           addMessage('system', systemHtml(tSystemHtml('sp.attach.unsupported_type', { name: file.name })));
@@ -13503,6 +13502,10 @@ if (attachBtn && fileAttachInput) {
     fileAttachInput.value = ''; // allow re-selecting the same file
   });
 }
+
+installFileDropHandlers(inputArea, (files) => {
+  handleAttachedFiles(files, currentTabId);
+});
 
 // --- Event Listeners ---
 
