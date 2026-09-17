@@ -45072,12 +45072,14 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /signature\|sig/, `${label}: URL credential redaction must cover signatures`);
     assert.match(panel, /authorization\|code/, `${label}: URL credential redaction must cover auth code`);
     assert.match(panel, /ticket\|jwt\|bearer\|credential/, `${label}: URL credential redaction must cover tickets, tokens, and credentials`);
+    assert.match(panel, /if \(depth > 3\) return '…';/, `${label}: URL credential redaction must fail closed at depth limit`);
     assert.match(panel, /redactUrlForLabel\(args\.url\)/, `${label}: fetch/research labels must redact URL credentials`);
     assert.match(panel, /redactUrlForLabel\(decodedVal, depth \+ 1\)/, `${label}: URL credential redaction must redact nested URLs`);
     assert.match(panel, /const LABEL_ARG_KEYS =/, `${label}: step metadata must filter arguments to label-relevant keys`);
     assert.match(panel, /function isTerminalDoneTool\(name\)/, `${label}: done_json must share terminal completion handling`);
     assert.match(panel, /function restoreStepFriendlyLabel\(step\)/, `${label}: completed/failed steps must restore friendly label and clear progress marker`);
     assert.match(panel, /failed \? 'sp\.tool\.done\.failed' : 'sp\.tool\.done\.completed'/, `${label}: restoreStepFriendlyLabel must set terminal failure outcome for interrupted done steps`);
+    assert.match(panel, /const failed = isAborted \|\| isTerminal;/, `${label}: finalizeSteps must mark aborted terminal steps as failed`);
     assert.match(panel, /label\.textContent = friendlyToolLabel\(step\.dataset\.tool, stepArgs\);/, `${label}: completed steps must restore the friendly label after progress`);
   }
 });

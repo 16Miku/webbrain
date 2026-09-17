@@ -2997,7 +2997,7 @@ const SENSITIVE_PATH_SEGMENT_RE = /(\/(?:reset|verify|verification|confirm|confi
 // values, and nested redirect URLs) before a URL is shown in the always-visible
 // step label. The full value stays behind the expandable details panel.
 function redactUrlForLabel(url, depth = 0) {
-  if (depth > 3) return String(url || '');
+  if (depth > 3) return '…';
   return String(url || '')
     .replace(/^((?:[a-z][a-z0-9+.-]*:)?\/\/)(?:[^/?#\s]*@)+/i, '$1')
     .replace(SENSITIVE_PATH_SEGMENT_RE, '$1…')
@@ -11090,12 +11090,18 @@ function markLastStepFailed() {
 
 function finalizeSteps(assistantEl = currentAssistantEl) {
   if (!assistantEl) return;
+  const isAborted = isTabAbortRequested(currentTabId);
   const actives = assistantEl.querySelectorAll('.step-item.active');
   actives.forEach(step => {
     step.classList.remove('active');
     step.classList.add('done');
+    const isTerminal = isTerminalDoneTool(step.dataset?.tool);
+    const failed = isAborted || isTerminal;
     const icon = step.querySelector('.step-icon');
-    if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
+    if (icon) {
+      icon.className = failed ? 'step-icon fail' : 'step-icon check';
+      icon.textContent = failed ? '\u2717' : '\u2713';
+    }
     restoreStepFriendlyLabel(step);
   });
 }
