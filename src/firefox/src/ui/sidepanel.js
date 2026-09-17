@@ -10519,8 +10519,18 @@ function findLastActiveCompactStep(toolName = '') {
 // and clear the progress marker so future locale changes refresh the label.
 function restoreStepFriendlyLabel(step) {
   if (!step || !step.dataset?.tool) return;
-  if (isTerminalDoneTool(step.dataset.tool)) return;
   const label = step.querySelector('.step-label');
+  if (isTerminalDoneTool(step.dataset.tool)) {
+    const failed = step.querySelector('.step-icon')?.classList.contains('fail')
+      || step.dataset.rejectedCompletion === 'true';
+    const key = step.dataset.rejectedCompletion === 'true'
+      ? 'sp.tool.done.rejected'
+      : (failed ? 'sp.tool.done.failed' : 'sp.tool.done.completed');
+    if (label) label.textContent = String(t(key)).trim();
+    step.dataset.doneLabelKey = key;
+    step.dataset.labelSource = 'done-terminal';
+    return;
+  }
   if (label) {
     let stepArgs = null;
     try {

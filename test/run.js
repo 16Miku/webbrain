@@ -45077,6 +45077,7 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /const LABEL_ARG_KEYS =/, `${label}: step metadata must filter arguments to label-relevant keys`);
     assert.match(panel, /function isTerminalDoneTool\(name\)/, `${label}: done_json must share terminal completion handling`);
     assert.match(panel, /function restoreStepFriendlyLabel\(step\)/, `${label}: completed/failed steps must restore friendly label and clear progress marker`);
+    assert.match(panel, /failed \? 'sp\.tool\.done\.failed' : 'sp\.tool\.done\.completed'/, `${label}: restoreStepFriendlyLabel must set terminal failure outcome for interrupted done steps`);
     assert.match(panel, /label\.textContent = friendlyToolLabel\(step\.dataset\.tool, stepArgs\);/, `${label}: completed steps must restore the friendly label after progress`);
   }
 });
