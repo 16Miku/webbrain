@@ -116,7 +116,7 @@ export default {
   'mic.denied': 'Máy vi âm bị từ chối. Bạn có thể cho phép trong cài đặt trang web của tiện ích mở rộng.',
   'sp.attach.remove': "Xóa tệp đính kèm",
   'sp.attach.too_large': "{name} quá lớn để đính kèm (tối đa {max}).",
-  'sp.attach.unsupported_type': "{name} không phải là loại tệp đính kèm được hỗ trợ - chỉ hỗ trợ các tệp hình ảnh, PDF, JSON, TXT và CSV.",
+  'sp.attach.unsupported_type': "{name} không phải là loại tệp đính kèm được hỗ trợ - chỉ hỗ trợ các tệp hình ảnh, PDF, JSON, TXT, CSV và Markdown.",
   'sp.attach.read_failed': "Không thể đọc {name}.",
   'sp.attach.needs_prompt': 'Hãy nhập câu hỏi để gửi kèm tệp đính kèm.',
   'sp.attach.no_tab': 'Không có tab đang hoạt động để đính kèm văn bản đã chọn.',

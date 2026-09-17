@@ -4,6 +4,15 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.6.2] - 2026-09-16
+
+### Changed
+- 36.6.1
+- feat(providers): add NEAR AI Cloud
+- Create Spanish README for WebBrain project
+- Delete README.es-ES.md
+- Update license section in README.md
+
 ## [36.6.0] - 2026-09-15
 
 ### Changed

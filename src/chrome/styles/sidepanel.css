@@ -3225,6 +3225,11 @@ html[data-ui-scale="175"] .conversation-action-label {
   border-color: var(--warning);
 }
 
+#input-area.drag-over #input-wrapper {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
 .slash-command-menu {
   display: flex;
   flex-direction: column;

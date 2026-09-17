@@ -1,0 +1,303 @@
+{
+  "schema": "webbrain-accessibility-tree-benchmark/1",
+  "createdAt": "2026-09-17T01:14:36.369Z",
+  "fixture": {
+    "path": "test/llm/fixtures/accessibility-tree-benchmark.json",
+    "sha256": "273c192b81ae250b2e07f0833cfad404bf4673e8ec9def28562c8314fb7afcd3",
+    "trees": 4,
+    "nodes": 65,
+    "selectionCases": 12,
+    "sourceAssets": [
+      {
+        "path": "docs/accessibility-tree-and-refs.md",
+        "purpose": "Current line-oriented format, ref stability, and pagination contract.",
+        "exists": true
+      },
+      {
+        "path": "test/llm/scenarios/034.json",
+        "purpose": "Listing pagination and continuation behavior.",
+        "exists": true
+      },
+      {
+        "path": "test/llm/scenarios/051.json",
+        "purpose": "GitHub release control selection.",
+        "exists": true
+      },
+      {
+        "path": "test/llm/scenarios/053.json",
+        "purpose": "Composer control selection.",
+        "exists": true
+      },
+      {
+        "path": "test/llm/scenarios/058.json",
+        "purpose": "Duplicate labels and ref disambiguation.",
+        "exists": true
+      },
+      {
+        "path": "test/llm/scenarios/060.json",
+        "purpose": "Form submission control selection.",
+        "exists": true
+      }
+    ]
+  },
+  "tokenizer": {
+    "name": "tiktoken/o200k_base",
+    "exact": true,
+    "sampleTokens": 1
+  },
+  "candidateSchemas": {
+    "compactNdjson": {
+      "description": "One compact JSON object per line; depth is explicit so continuation pages retain hierarchy.",
+      "keys": {
+        "depth": "d",
+        "role": "r",
+        "name": "n",
+        "ref_id": "i",
+        "href": "h",
+        "type": "t",
+        "value": "v",
+        "placeholder": "p",
+        "checked": "c",
+        "selected": "s",
+        "disabled": "x",
+        "dom_id": "e",
+        "field_name": "f",
+        "required": "q",
+        "readonly": "o",
+        "group": "g",
+        "hidden": "z",
+        "value_len": "l",
+        "value_fp": "y"
+      }
+    },
+    "fullJson": {
+      "description": "Conventional JSON object with nodes[] and descriptive repeated keys; baseline only."
+    }
+  },
+  "formats": {
+    "line": {
+      "trees": 4,
+      "roundTrips": 4,
+      "tree": {
+        "chars": {
+          "total": 3115,
+          "mean": 778.75,
+          "max": 962,
+          "min": 481
+        },
+        "tokens": {
+          "total": 982,
+          "mean": 245.5,
+          "max": 307,
+          "min": 185
+        },
+        "tokenReductionVsLinePct": 0
+      },
+      "pagedWire": {
+        "pages": {
+          "total": 10,
+          "mean": 2.5,
+          "max": 3,
+          "min": 2
+        },
+        "chars": {
+          "total": 6714,
+          "mean": 671.4,
+          "max": 916,
+          "min": 256
+        },
+        "tokens": {
+          "total": 2267,
+          "mean": 226.7,
+          "max": 332,
+          "min": 92
+        },
+        "firstPageTokens": {
+          "total": 1211,
+          "mean": 302.75,
+          "max": 332,
+          "min": 276
+        },
+        "tokenReductionVsLinePct": 0
+      },
+      "selectionAvailability": {
+        "cases": 12,
+        "passes": 12,
+        "passRate": 1
+      },
+      "refReuse": {
+        "cases": 2,
+        "expectedRefs": 35,
+        "preservedRefs": 35,
+        "passRate": 1
+      },
+      "currentWorkflowParser": {
+        "recordsParsed": 65,
+        "firefoxRecordsParsed": 65,
+        "compatible": true
+      },
+      "metadata": {
+        "fields": 19,
+        "preserved": 19,
+        "passRate": 1
+      }
+    },
+    "compact-ndjson": {
+      "trees": 4,
+      "roundTrips": 4,
+      "tree": {
+        "chars": {
+          "total": 4291,
+          "mean": 1072.75,
+          "max": 1384,
+          "min": 796
+        },
+        "tokens": {
+          "total": 1603,
+          "mean": 400.75,
+          "max": 509,
+          "min": 333
+        },
+        "tokenReductionVsLinePct": -63.24
+      },
+      "pagedWire": {
+        "pages": {
+          "total": 12,
+          "mean": 3,
+          "max": 4,
+          "min": 2
+        },
+        "chars": {
+          "total": 9584,
+          "mean": 798.67,
+          "max": 1027,
+          "min": 355
+        },
+        "tokens": {
+          "total": 3255,
+          "mean": 271.25,
+          "max": 345,
+          "min": 112
+        },
+        "firstPageTokens": {
+          "total": 1278,
+          "mean": 319.5,
+          "max": 345,
+          "min": 298
+        },
+        "tokenReductionVsLinePct": -43.58
+      },
+      "selectionAvailability": {
+        "cases": 12,
+        "passes": 12,
+        "passRate": 1
+      },
+      "refReuse": {
+        "cases": 2,
+        "expectedRefs": 35,
+        "preservedRefs": 35,
+        "passRate": 1
+      },
+      "currentWorkflowParser": {
+        "recordsParsed": 0,
+        "firefoxRecordsParsed": 0,
+        "compatible": false
+      },
+      "metadata": {
+        "fields": 23,
+        "preserved": 23,
+        "passRate": 1
+      }
+    },
+    "full-json": {
+      "trees": 4,
+      "roundTrips": 4,
+      "tree": {
+        "chars": {
+          "total": 5800,
+          "mean": 1450,
+          "max": 1790,
+          "min": 1061
+        },
+        "tokens": {
+          "total": 1703,
+          "mean": 425.75,
+          "max": 526,
+          "min": 340
+        },
+        "tokenReductionVsLinePct": -73.42
+      },
+      "pagedWire": {
+        "pages": {
+          "total": 17,
+          "mean": 4.25,
+          "max": 5,
+          "min": 3
+        },
+        "chars": {
+          "total": 13262,
+          "mean": 780.12,
+          "max": 984,
+          "min": 445
+        },
+        "tokens": {
+          "total": 4178,
+          "mean": 245.76,
+          "max": 299,
+          "min": 139
+        },
+        "firstPageTokens": {
+          "total": 1136,
+          "mean": 284,
+          "max": 293,
+          "min": 275
+        },
+        "tokenReductionVsLinePct": -84.3
+      },
+      "selectionAvailability": {
+        "cases": 12,
+        "passes": 12,
+        "passRate": 1
+      },
+      "refReuse": {
+        "cases": 2,
+        "expectedRefs": 35,
+        "preservedRefs": 35,
+        "passRate": 1
+      },
+      "currentWorkflowParser": {
+        "recordsParsed": 0,
+        "firefoxRecordsParsed": 0,
+        "compatible": false
+      },
+      "metadata": {
+        "fields": 32,
+        "preserved": 32,
+        "passRate": 1
+      }
+    }
+  },
+  "pagination": {
+    "contract": "Record-safe pages with exact continuationArgs and explicit depth/ref fields.",
+    "everyFormatReassembled": true,
+    "everyFormatTerminated": true
+  },
+  "modelValidation": {
+    "providerModel": "Codex / gpt-5.6-luna",
+    "method": "blinded controlled spot-check using the same 12 tasks and prompt policy for each representation",
+    "requests": 36,
+    "validJsonResponses": 36,
+    "formats": {
+      "line": { "cases": 12, "passes": 12, "passRate": 1 },
+      "compact-ndjson": { "cases": 12, "passes": 12, "passRate": 1 },
+      "full-json": { "cases": 12, "passes": 12, "passRate": 1 }
+    },
+    "note": "All three formats produced the same correct refs and actions in this small Luna spot-check; this is not statistically significant and does not provide local-model or frontier-model population evidence. See luna-selection.json for the standalone record."
+  },
+  "compatibility": {
+    "runtimeChanged": false,
+    "shippedRepresentation": "line",
+    "existingConsumer": "src/chrome/src/agent/workflows.js::parseAccessibilityTreeDescriptors",
+    "note": "The JSON candidates are measured as opt-in representations. Existing workflow parsing accepts the line format only; adopting a candidate would require an explicit parser/version boundary and mirrored Chrome/Firefox changes."
+  }
+}

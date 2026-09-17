@@ -838,7 +838,7 @@ export default {
   "mic.denied": "Le microphone a été refusé. Vous pouvez l\’autoriser dans les paramètres du site de l\’extension.",
   "sp.attach.remove": "Supprimer la pièce jointe",
   "sp.attach.too_large": "{name} est trop volumineux pour être joint (max {max}).",
-  "sp.attach.unsupported_type": "{name} n’est pas un type de pièce jointe pris en charge — seuls les images, PDF, JSON, TXT et CSV sont pris en charge.",
+  "sp.attach.unsupported_type": "{name} n’est pas un type de pièce jointe pris en charge — seuls les images, PDF, JSON, TXT, CSV et Markdown sont pris en charge.",
   "sp.attach.read_failed": "Impossible de lire {name}.",
   "sp.attach.needs_prompt": "Ajoutez une question à envoyer avec votre pièce jointe.",
   "sp.attach.no_tab": "Aucun onglet actif auquel joindre la sélection.",

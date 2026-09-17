@@ -838,7 +838,7 @@ export default {
   'mic.denied': 'El micrófono fue denegado. Puedes permitirlo en la configuración del sitio de la extensión.',
   "sp.attach.remove": "Eliminar adjunto",
   "sp.attach.too_large": "{name} es demasiado grande para adjuntarlo (máx. {max}).",
-  "sp.attach.unsupported_type": "{name} no es un tipo de adjunto compatible — solo se admiten imágenes, PDF, JSON, TXT y CSV.",
+  "sp.attach.unsupported_type": "{name} no es un tipo de adjunto compatible — solo se admiten imágenes, PDF, JSON, TXT, CSV y Markdown.",
   "sp.attach.read_failed": "No se pudo leer {name}.",
   "sp.attach.needs_prompt": "Añade una pregunta para enviarla con el archivo adjunto.",
   "sp.attach.no_tab": "No hay ninguna pestaña activa a la que adjuntar la selección.",

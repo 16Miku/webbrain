@@ -811,7 +811,7 @@ export default {
   'mic.denied': 'ไมโครโฟนถูกปฏิเสธ คุณสามารถอนุญาตได้ในการตั้งค่าไซต์ของส่วนเสริม',
   "sp.attach.remove": "ลบไฟล์แนบ",
   "sp.attach.too_large": "{name} ใหญ่เกินกว่าจะแนบได้ (สูงสุด {max})",
-  "sp.attach.unsupported_type": "{name} ไม่ใช่ประเภทไฟล์แนบที่รองรับ — รองรับเฉพาะรูปภาพ, PDF, JSON, TXT และ CSV",
+  "sp.attach.unsupported_type": "{name} ไม่ใช่ประเภทไฟล์แนบที่รองรับ — รองรับเฉพาะรูปภาพ, PDF, JSON, TXT, CSV และ Markdown",
   "sp.attach.read_failed": "อ่าน {name} ไม่ได้",
   "sp.attach.needs_prompt": "พิมพ์คำถามเพื่อส่งไปพร้อมกับไฟล์แนบ",
   "sp.attach.no_tab": "ไม่มีแท็บที่ใช้งานอยู่สำหรับแนบข้อความที่เลือก",

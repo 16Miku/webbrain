@@ -116391,7 +116391,7 @@ test('attachments: uploaded text files are injected as plain text blocks', async
     assert.match(textBlock.text, /"key": "value"/, `${label} text block should contain the file content`);
     const noticeBlock = enriched.content.find(block => block?.text?.startsWith('[UNTRUSTED USER ATTACHMENTS'));
     assert.ok(noticeBlock, `${label} should include the untrusted attachment notice`);
-    assert.match(noticeBlock.text, /For JSON\/TXT\/CSV attachments/, `${label} notice should mention text attachment memory handling`);
+    assert.match(noticeBlock.text, /For JSON\/TXT\/CSV\/Markdown attachments/, `${label} notice should mention text attachment memory handling`);
     assert.match(noticeBlock.text, /scratchpad_write/, `${label} notice should tell the model how to preserve needed text-file facts`);
     assert.match(noticeBlock.text, /brief neutral summary\/schema\/key IDs/, `${label} notice should prefer concise scratchpad facts`);
     assert.match(noticeBlock.text, /Do not copy the full file/, `${label} notice should forbid copying full text attachments to scratchpad`);
@@ -116674,12 +116674,15 @@ test('attachments: Compact-tier Dev rejection preserves the unsent payload', asy
 });
 
 test('sidepanel: pending attachments are tab-scoped and send-gated while loading', () => {
-  for (const [label, file, htmlFile] of [
-    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/sidepanel.html'],
-    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/sidepanel.html'],
+  for (const [label, file, htmlFile, helperFile] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/sidepanel.html', 'src/chrome/src/ui/attachment-file.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/sidepanel.html', 'src/firefox/src/ui/attachment-file.js'],
   ]) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
     const html = fs.readFileSync(path.join(ROOT, htmlFile), 'utf8');
+    const helper = fs.readFileSync(path.join(ROOT, helperFile), 'utf8');
+    assert.match(helper, /mimeType === 'text\/markdown'/, 'should accept Markdown MIME types');
+    assert.match(helper, /\\\.\(json\|txt\|csv\|md\)\$\/i\.test\(fileName\)/, 'should accept Markdown extension fallback');
     assert.ok(source.includes('const pendingAttachmentsByTab = new Map()'), `${label} should store pending attachments by tab`);
     assert.ok(source.includes('const attachmentReadCountsByTab = new Map()'), `${label} should track in-flight attachment reads by tab`);
     assert.ok(source.includes('function isAttachmentReadPendingForTab'), `${label} should expose a read-pending helper`);
@@ -116736,13 +116739,13 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     );
     assert.match(
       source,
-      /const isTextFile = file\.type === 'application\/json'[\s\S]*?file\.type === 'text\/plain'[\s\S]*?file\.type === 'text\/csv'[\s\S]*?\/\\\.\(json\|txt\|csv\)\$\/i\.test\(file\.name \|\| ''\)/,
-      `${label} should accept JSON, TXT, and CSV text attachments with extension fallback`,
+      /const isTextFile = isTextAttachment\(file\)/,
+      `${label} should accept JSON, TXT, CSV, and Markdown text attachments with extension fallback`,
     );
     assert.match(
       html,
-      /accept="[^"]*application\/json[^"]*text\/plain[^"]*text\/csv[^"]*\.json[^"]*\.txt[^"]*\.csv[^"]*"/,
-      `${label} file picker should advertise JSON, TXT, and CSV text attachments`,
+      /accept="[^"]*application\/json[^"]*text\/plain[^"]*text\/csv[^"]*text\/markdown[^"]*\.json[^"]*\.txt[^"]*\.csv[^"]*\.md[^"]*"/,
+      `${label} file picker should advertise Markdown along with JSON, TXT, and CSV text attachments`,
     );
     assert.ok(!source.includes('let pendingAttachments = []'), `${label} should not keep one global pending attachment list`);
     if (label === 'chrome') {

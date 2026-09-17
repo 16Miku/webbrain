@@ -116,7 +116,7 @@ export default {
   'mic.denied': 'माइक्रोफोन अस्वीकार दिया गया। आप इसे एक्सटेंशन की साइट सेटिंग्स में अनुमति दे सकते हैं।',
   'sp.attach.remove': "अनुलग्नक हटाएँ",
   'sp.attach.too_large': "{name} संलग्न करने के लिए बहुत बड़ा है (अधिकतम {max})।",
-  'sp.attach.unsupported_type': "{name} एक समर्थित अनुलग्नक प्रकार नहीं है - केवल छवियां, PDF, JSON, TXT और CSV फ़ाइलें समर्थित हैं।",
+  'sp.attach.unsupported_type': "{name} एक समर्थित अनुलग्नक प्रकार नहीं है - केवल छवियां, PDF, JSON, TXT, CSV और Markdown फ़ाइलें समर्थित हैं।",
   'sp.attach.read_failed': "{name} नहीं पढ़ सका.",
   'sp.attach.needs_prompt': 'अपने अटैचमेंट के साथ भेजने के लिए एक सवाल लिखें।',
   'sp.attach.no_tab': 'चयनित टेक्स्ट को जोड़ने के लिए कोई सक्रिय टैब नहीं है।',
