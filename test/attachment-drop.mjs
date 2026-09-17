@@ -57,6 +57,26 @@ for (const [label, relativeModule] of fileImplementations) {
     `${label}: text/markdown should be accepted as a text attachment`
   );
   assert.equal(
+    isTextAttachment({ name: 'payload', type: 'application/json' }),
+    true,
+    `${label}: application/json without file extension should be accepted`
+  );
+  assert.equal(
+    isTextAttachment({ name: 'notes', type: 'text/plain' }),
+    true,
+    `${label}: text/plain without file extension should be accepted`
+  );
+  assert.equal(
+    isTextAttachment({ name: 'data', type: 'text/csv' }),
+    true,
+    `${label}: text/csv without file extension should be accepted`
+  );
+  assert.equal(
+    isTextAttachment({ name: 'doc', type: 'text/markdown' }),
+    true,
+    `${label}: text/markdown without file extension should be accepted`
+  );
+  assert.equal(
     isTextAttachment({ name: 'README.MD', type: '' }),
     true,
     `${label}: Markdown extension should be accepted when MIME type is empty`
@@ -76,7 +96,7 @@ for (const [label, relativeModule] of fileImplementations) {
 function createTarget() {
   const listeners = new Map();
   const classes = new Set();
-  return {
+  const target = {
     classList: {
       toggle(name, force) {
         if (force) classes.add(name);
@@ -112,7 +132,24 @@ function createTarget() {
       return event;
     },
   };
+  return target;
 }
+
+const windowListeners = new Map();
+globalThis.window = {
+  addEventListener(type, listener) {
+    const handlers = windowListeners.get(type) || [];
+    handlers.push(listener);
+    windowListeners.set(type, handlers);
+  },
+  removeEventListener(type, listener) {
+    const handlers = windowListeners.get(type) || [];
+    windowListeners.set(type, handlers.filter(candidate => candidate !== listener));
+  },
+  dispatchEvent(type, event = {}) {
+    for (const listener of windowListeners.get(type) || []) listener(event);
+  },
+};
 
 function transfer(types, files = []) {
   return { types, files, dropEffect: 'none' };
@@ -173,6 +210,15 @@ for (const [label, relativeModule] of implementations) {
   cleanup();
   target.dispatch('drop', transfer(['Files'], files));
   assert.deepEqual(received, [files], `${label}: cleanup should remove drop listeners`);
+
+  // Window dragend / drop fallback clears stuck drag-over
+  const target2 = createTarget();
+  const cleanup2 = module.installFileDropHandlers(target2, () => {});
+  target2.dispatch('dragenter', transfer(['Files']));
+  assert.equal(target2.classList.contains('drag-over'), true, `${label}: dragenter should activate drag-over`);
+  globalThis.window.dispatchEvent('dragend');
+  assert.equal(target2.classList.contains('drag-over'), false, `${label}: window dragend should reset stuck drag-over`);
+  cleanup2();
 }
 
 console.log('attachment drag-and-drop tests passed for Chrome and Firefox');

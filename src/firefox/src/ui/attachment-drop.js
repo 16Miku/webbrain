@@ -46,16 +46,25 @@ export function installFileDropHandlers(target, onFiles) {
     if (files?.length) onFiles(files);
   };
 
+  const onWindowDragEnd = () => {
+    dragDepth = 0;
+    setDragOver(false);
+  };
+
   target.addEventListener('dragenter', onDragEnter);
   target.addEventListener('dragover', onDragOver);
   target.addEventListener('dragleave', onDragLeave);
   target.addEventListener('drop', onDrop);
+  window.addEventListener?.('dragend', onWindowDragEnd);
+  window.addEventListener?.('drop', onWindowDragEnd);
 
   return () => {
     target.removeEventListener?.('dragenter', onDragEnter);
     target.removeEventListener?.('dragover', onDragOver);
     target.removeEventListener?.('dragleave', onDragLeave);
     target.removeEventListener?.('drop', onDrop);
+    window.removeEventListener?.('dragend', onWindowDragEnd);
+    window.removeEventListener?.('drop', onWindowDragEnd);
     dragDepth = 0;
     setDragOver(false);
   };
