@@ -45064,6 +45064,7 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /refreshRenderedStepLabels\(\);/, `${label}: locale-change handler must refresh rendered step labels`);
     assert.ok((panel.match(/refreshRenderedStepLabels\(\);/g) || []).length >= 4, `${label}: restored transcripts must refresh step labels on every restore path`);
     assert.match(panel, /function redactUrlForLabel\(url\)/, `${label}: URL step labels must redact credentials`);
+    assert.match(panel, /SENSITIVE_PARAM_WORDS_RE/, `${label}: URL credential redaction must inspect sensitive parameter names`);
     assert.match(panel, /signature\|sig/, `${label}: URL credential redaction must cover signatures`);
     assert.match(panel, /redactUrlForLabel\(args\.url\)/, `${label}: fetch/research labels must redact URL credentials`);
     assert.match(panel, /function isTerminalDoneTool\(name\)/, `${label}: done_json must share terminal completion handling`);

@@ -2851,15 +2851,19 @@ const TOOL_KEYS = {
   carousel_navigate: 'tool.navigate',
 };
 
-const SENSITIVE_URL_PARAM_RE = /([#?&](?:[^#&?=]*?[_.-])?(?:token|auth|api[_-]?key|secret|password|passwd|pwd|session|otp|signature|sig)(?:[_.-][^#&?=]*)?=)[^#&\s]*/gi;
+const SENSITIVE_PARAM_WORDS_RE = /(?:^|[_-])(?:key|api[_-]?key|token|secret|password|passwd|pwd|session|otp|signature|sig|auth|authorization)(?:[_-]|$)/i;
 
 // Strip credentials (userinfo, sensitive query/fragment values) before a URL
 // is shown in the always-visible step label. The full value stays behind the
-// expandable details panel.
+// expandable details panel. Handles bare (key), snake_case (api_key, auth_token),
+// kebab-case (x-amz-signature), and camelCase (authToken, sessionToken) names.
 function redactUrlForLabel(url) {
   return String(url || '')
     .replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/i, '$1')
-    .replace(SENSITIVE_URL_PARAM_RE, '$1…');
+    .replace(/([?&#])([^=&#\s]+)=([^&#\s]*)/g, (match, prefix, param) => {
+      const norm = String(param || '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+      return SENSITIVE_PARAM_WORDS_RE.test(norm) ? `${prefix}${param}=…` : match;
+    });
 }
 
 function isTerminalDoneTool(name) {
