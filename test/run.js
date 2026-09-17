@@ -45057,8 +45057,10 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /staged_screenshot:\s*['"]tool\.staged_screenshot['"]/, `${label}: staged_screenshot must keep its own inspection label`);
     assert.match(panel, /get_frames:\s*['"]tool\.get_frames['"]/, `${label}: get_frames must keep its own discovery label`);
     assert.match(panel, /download_resource_from_page:\s*['"]tool\.download_resource['"]/, `${label}: download_resource_from_page must keep its own file label`);
+    assert.match(panel, /auto_screenshot:\s*['"]tool\.staged_screenshot['"]/, `${label}: auto_screenshot must use an inspection label after capture`);
     assert.doesNotMatch(panel, /name === 'type_ax'[^;]*?tool\.type_text\.text/, `${label}: type_ax must not preview typed text (credential exposure)`);
     assert.doesNotMatch(panel, /name === 'set_field'[^;]*?tool\.type_text\.text/, `${label}: set_field must not preview typed text (credential exposure)`);
+    assert.doesNotMatch(panel, /name === 'click'[^;]*?args\?\.text/, `${label}: click must not preview arbitrary target text`);
     assert.match(panel, /function refreshRenderedStepLabels\(root\)/, `${label}: rendered step labels must be refreshable on locale change`);
     assert.match(panel, /step\.dataset\.args = safeLabelArgs\(args\)/, `${label}: steps must persist label args for locale refresh`);
     assert.match(panel, /refreshRenderedStepLabels\(\);/, `${label}: locale-change handler must refresh rendered step labels`);

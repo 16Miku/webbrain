@@ -2950,7 +2950,7 @@ const TOOL_KEYS = {
   read_youtube_transcript: 'tool.read_youtube_transcript',
   screenshot: 'tool.screenshot',
   full_page_screenshot: 'tool.screenshot',
-  auto_screenshot: 'tool.screenshot',
+  auto_screenshot: 'tool.staged_screenshot',
   staged_screenshot: 'tool.staged_screenshot',
   upload_file: 'tool.upload_file',
   download_resource_from_page: 'tool.download_resource',
@@ -3001,9 +3001,6 @@ function friendlyToolLabel(name, args) {
   }
   if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.index != null) {
     return t('tool.click.index', { index: args.index });
-  }
-  if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.text) {
-    return t('tool.click.selector', { selector: truncate(args.text, 30) });
   }
   // NOTE: only type_text previews its text. type_ax / set_field / iframe_type
   // are the preferred form-filling tools and routinely carry passwords, OTP
