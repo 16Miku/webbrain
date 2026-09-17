@@ -47,7 +47,7 @@ function panelHarness(build) {
     'hideActivity', 'flushRenderedTabChat', 'flushChatHistorySnapshot', 'captureInputDraftForTab',
     'resetChatNavigation', 'syncCurrentTabRunFlags', 'syncApiMutationsAllowedForCurrentTab',
     'syncSelectionScopeUi', 'hydrateRestoredChatHistory', 'migrateLegacyEmptyStateFromRestoredChat',
-    'rebindRestoredMessageControls', 'syncProgressDisplayMode', 'restoreInputDraftForTab',
+    'rebindRestoredMessageControls', 'refreshRenderedStepLabels', 'syncProgressDisplayMode', 'restoreInputDraftForTab',
     'renderAttachmentPreviews', 'renderQueuedComposerMessages', 'restoreLatestChatTurnPosition',
     'refreshScheduledJobs', 'refreshRecommendedActions', 'drainQueuedAgentUpdatesForTab',
     'drainQueuedPromptsAfterRunSettles', 'requestVisibleSidePanelStateRefresh', 'waitForTabChatHandoffRetry',
