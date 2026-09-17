@@ -2910,11 +2910,15 @@ function refreshRenderedStepLabels(root) {
       labelEl.textContent = String(t(step.dataset.doneLabelKey)).trim();
       return;
     }
+    // Legacy cached steps rendered before label metadata existed carry no
+    // dataset.args — leave their text untouched rather than recomputing with
+    // empty args (which would lose e.g. the original scroll direction).
+    if (!step.dataset.args) return;
     let args = null;
     try {
-      args = step.dataset.args ? JSON.parse(step.dataset.args) : null;
+      args = JSON.parse(step.dataset.args);
     } catch {
-      args = null;
+      return;
     }
     labelEl.textContent = friendlyToolLabel(step.dataset.tool || '', args);
   });
@@ -4544,6 +4548,7 @@ async function init() {
           migrateLegacyEmptyStateFromRestoredChat(restoreTabId);
           messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
           rebindRestoredMessageControls();
+          refreshRenderedStepLabels();
         }
       }
     } finally {
@@ -4729,6 +4734,7 @@ async function switchToTab(newTabId) {
       migrateLegacyEmptyStateFromRestoredChat(newTabId);
       messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
       rebindRestoredMessageControls();
+      refreshRenderedStepLabels();
     } else {
       messagesEl.innerHTML = '';
       syncProgressDisplayMode();
@@ -4775,6 +4781,7 @@ async function refreshVisibleSidePanelState() {
     messagesEl.innerHTML = html;
     messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
     rebindRestoredMessageControls();
+    refreshRenderedStepLabels();
   } else if (!html) {
     messagesEl.innerHTML = '';
     syncProgressDisplayMode();

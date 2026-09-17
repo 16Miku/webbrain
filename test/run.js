@@ -45062,6 +45062,7 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /function refreshRenderedStepLabels\(root\)/, `${label}: rendered step labels must be refreshable on locale change`);
     assert.match(panel, /step\.dataset\.args = safeLabelArgs\(args\)/, `${label}: steps must persist label args for locale refresh`);
     assert.match(panel, /refreshRenderedStepLabels\(\);/, `${label}: locale-change handler must refresh rendered step labels`);
+    assert.ok((panel.match(/refreshRenderedStepLabels\(\);/g) || []).length >= 4, `${label}: restored transcripts must refresh step labels on every restore path`);
   }
 });
 
