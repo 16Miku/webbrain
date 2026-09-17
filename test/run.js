@@ -45063,7 +45063,8 @@ test('sidepanel friendlyToolLabel localizes get_accessibility_tree and actions a
     assert.match(panel, /step\.dataset\.args = safeLabelArgs\(args\)/, `${label}: steps must persist label args for locale refresh`);
     assert.match(panel, /refreshRenderedStepLabels\(\);/, `${label}: locale-change handler must refresh rendered step labels`);
     assert.ok((panel.match(/refreshRenderedStepLabels\(\);/g) || []).length >= 4, `${label}: restored transcripts must refresh step labels on every restore path`);
-    assert.match(panel, /function redactUrlForLabel\(url\)/, `${label}: URL step labels must redact credentials`);
+    assert.match(panel, /function redactUrlForLabel\(url/, `${label}: URL step labels must redact credentials`);
+    assert.match(panel, /SENSITIVE_PATH_SEGMENT_RE/, `${label}: URL credential redaction must sanitize sensitive path tokens`);
     assert.match(panel, /\(\?:\[\^\/\?#\\s\]\*@\)\+/, `${label}: URL userinfo redaction must strip through final authority delimiter`);
     assert.match(panel, /decodeURIComponent/, `${label}: URL credential redaction must decode parameter names`);
     assert.match(panel, /SENSITIVE_PARAM_WORDS_RE/, `${label}: URL credential redaction must inspect sensitive parameter names`);

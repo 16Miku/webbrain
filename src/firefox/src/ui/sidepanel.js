@@ -2852,15 +2852,16 @@ const TOOL_KEYS = {
 };
 
 const SENSITIVE_PARAM_WORDS_RE = /(?:^|[^a-z0-9])(?:key|api[_-]?key|token|secret|password|passwd|pwd|session|otp|signature|sig|auth|authorization|code|ticket|jwt|bearer|credential|credentials)(?:[^a-z0-9]|$)/i;
+const SENSITIVE_PATH_SEGMENT_RE = /(\/(?:reset|verify|verification|confirm|confirmation|magic|auth|invite|invitation|password|passwd)\/)[^/?#\s]+/gi;
 
-// Strip credentials (userinfo, sensitive query/fragment values) before a URL
-// is shown in the always-visible step label. The full value stays behind the
-// expandable details panel. Handles bare (key), snake_case (api_key, auth_token),
-// kebab-case (x-amz-signature), and camelCase (authToken, sessionToken) names.
+// Strip credentials (userinfo, sensitive path tokens, sensitive query/fragment
+// values, and nested redirect URLs) before a URL is shown in the always-visible
+// step label. The full value stays behind the expandable details panel.
 function redactUrlForLabel(url, depth = 0) {
   if (depth > 3) return String(url || '');
   return String(url || '')
     .replace(/^([a-z][a-z0-9+.-]*:\/\/)(?:[^/?#\s]*@)+/i, '$1')
+    .replace(SENSITIVE_PATH_SEGMENT_RE, '$1…')
     .replace(/([?&#])([^=&#\s]+)=([^&#\s]*)/g, (match, prefix, param, val) => {
       let decoded = param;
       try {
