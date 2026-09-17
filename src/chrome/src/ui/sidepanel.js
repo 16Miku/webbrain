@@ -80,6 +80,7 @@ import {
   removeStagedScreenshots,
   saveStagedScreenshot,
 } from './staged-screenshot-store.js';
+import { installFileDropHandlers } from './attachment-drop.js';
 
 const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
 
@@ -14037,6 +14038,10 @@ if (attachBtn && fileAttachInput) {
     fileAttachInput.value = ''; // allow re-selecting the same file
   });
 }
+
+installFileDropHandlers(inputArea, (files) => {
+  handleAttachedFiles(files, renderedTabId ?? currentTabId);
+});
 
 // --- Event Listeners ---
 
