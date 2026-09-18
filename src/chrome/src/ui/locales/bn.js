@@ -978,6 +978,23 @@ export default {
   'st.captcha.balance_fail': "ব্যর্থ হয়েছে: {error}",
   'st.captcha.security_html': "<strong>হেড-আপ:</strong> API কী সংরক্ষণ করা হয় <strong>প্লেইনটেক্সট</strong> ব্রাউজার স্থানীয় স্টোরেজে। CapSolver প্রতিটি সমাধানের জন্য আপনার অ্যাকাউন্ট চার্জ করে; এজেন্ট কেবল তখনই এটিকে কল করবে যখন একটি ক্যাপচা প্রকৃতপক্ষে একটি পদক্ষেপকে ব্লক করে (প্রতি এনকাউন্টারে সর্বোচ্চ একবার - এটি ব্যর্থ হলে পুনরায় চেষ্টা করবে না)। কিছু সাইটের পরিষেবার শর্তাবলী স্বয়ংক্রিয় ক্যাপচা সমাধান নিষিদ্ধ করে; আপনার রায় ব্যবহার করুন।",
 
+  'st.system_one.desc_html': 'শিডিউল করা ওয়াচ এবং কাজ সম্পন্ন হওয়ার জন্য দ্বিতীয় মতামত হিসেবে ঐচ্ছিকভাবে <a href="https://typesafe.ai" target="_blank" style="color:var(--accent);">TypeSafe System One</a> ব্যবহার করুন। এটি শুধু সীমাবদ্ধ কাজ ও সর্বশেষ পর্যবেক্ষণ বিচার করে; ব্রাউজার নিয়ন্ত্রণ করে না।',
+  'st.system_one.enabled.label': 'TypeSafe System One চালু করুন',
+  'st.system_one.enabled.desc': 'শিডিউল করা কাজের যেকোনো গার্ড চালুর আগে এটি সামগ্রিকভাবে অনুমোদন করুন। ডিফল্টে বন্ধ।',
+  'st.system_one.api_key.label': 'TypeSafe API key',
+  'st.system_one.watch.label': 'শিডিউল করা ওয়াচ বিচার করুন',
+  'st.system_one.watch.desc': 'শর্ত বা প্রমাণ অনিশ্চিত মনে হলে ওয়াচের সাফল্যকে পোল হিসেবে নামিয়ে দিন।',
+  'st.system_one.completion.label': 'শিডিউল করা কাজ সম্পূর্ণতা বিচার করুন',
+  'st.system_one.completion.desc': 'সম্পূর্ণতার প্রমাণ অনিশ্চিত মনে হলে অতিরিক্ত আশাবাদী সাফল্যকে নামিয়ে দিন।',
+  'st.system_one.watch_threshold': 'ওয়াচ আস্থার সীমা',
+  'st.system_one.completion_threshold': 'সম্পূর্ণতা আস্থার সীমা',
+  'st.system_one.save': 'সেটিংস সংরক্ষণ করুন',
+  'st.system_one.clear': 'মুছুন',
+  'st.system_one.saved': 'সংরক্ষিত। TypeSafe System One কনফিগার করা হয়েছে।',
+  'st.system_one.cleared': 'মুছে ফেলা হয়েছে।',
+  'st.system_one.need_key': 'System One চালু করার আগে একটি TypeSafe API key দিন।',
+  'st.system_one.security_html': '<strong>গোপনীয়তা ও খরচ:</strong> আপনি অনুমতি না দেওয়া পর্যন্ত এই বৈশিষ্ট্য বন্ধ থাকে। এক্সটেনশন আপনার API key ব্যবহার করে কাজ ও সীমাবদ্ধ সর্বশেষ পর্যবেক্ষণ TypeSafe-এ পাঠায়। স্ক্রিনশট, অডিও বা provider credentials পাঠানো হয় না। key ব্রাউজারের local storage-এ plaintext হিসেবে রাখা হয়; TypeSafe আপনার অ্যাকাউন্টে খরচ করতে পারে। Strict Secret Mode এই sidecar বন্ধ করে।',
+
   // --- Chat History page -------------------------------------------------
   'hist.title': "WebBrain চ্যাট ইতিহাস",
   'hist.records': "{n} রেকর্ড",

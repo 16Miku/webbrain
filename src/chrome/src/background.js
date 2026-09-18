@@ -40,6 +40,7 @@ import {
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
+import { createSystemOneJudge } from './agent/systemone-judge.js';
 import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
 import { EMERGENCY_DOWNLOAD_ACTION } from './ui/emergency-download-client.js';
@@ -241,6 +242,7 @@ async function playWatchAlert({ style = 'default' } = {}) {
 const scheduler = new ScheduledJobManager({
   api: chrome,
   agent,
+  systemOneJudge: createSystemOneJudge(),
   loadProviders: async () => {
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;

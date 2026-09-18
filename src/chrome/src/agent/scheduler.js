@@ -1,3 +1,16 @@
+import {
+  buildCompletionQuestions,
+  buildWatchQuestions,
+  shouldDowngradeSuccess,
+  normalizeSystemOneThreshold,
+  SYSTEM_ONE_API_KEY,
+  SYSTEM_ONE_COMPLETION_ENABLED_KEY,
+  SYSTEM_ONE_COMPLETION_THRESHOLD_KEY,
+  SYSTEM_ONE_ENABLED_KEY,
+  SYSTEM_ONE_WATCH_ENABLED_KEY,
+  SYSTEM_ONE_WATCH_THRESHOLD_KEY,
+} from './systemone-judge.js';
+
 export const SCHEDULED_JOBS_KEY = 'wb_scheduled_jobs';
 export const SCHEDULED_TASKS_ENABLED_KEY = 'scheduledTasksEnabled';
 export const SCHEDULED_REQUIRE_CONFIRMATION_KEY = 'scheduledRequireConsequentialConfirmation';
@@ -577,6 +590,7 @@ export class ScheduledJobManager {
     showIndicator = () => {},
     hideIndicator = () => {},
     playWatchAlert = async () => {},
+    systemOneJudge = null,
     now = () => Date.now(),
     startAlarmKeepAlive = null,
   }) {
@@ -587,6 +601,7 @@ export class ScheduledJobManager {
     this.showIndicator = showIndicator;
     this.hideIndicator = hideIndicator;
     this.playWatchAlert = playWatchAlert;
+    this.systemOneJudge = systemOneJudge;
     this.now = now;
     this._started = false;
     this._waitingForInput = new Set();
@@ -639,10 +654,26 @@ export class ScheduledJobManager {
     const stored = await this.api.storage.local.get([
       SCHEDULED_TASKS_ENABLED_KEY,
       SCHEDULED_REQUIRE_CONFIRMATION_KEY,
+      SYSTEM_ONE_API_KEY,
+      SYSTEM_ONE_ENABLED_KEY,
+      SYSTEM_ONE_WATCH_ENABLED_KEY,
+      SYSTEM_ONE_COMPLETION_ENABLED_KEY,
+      SYSTEM_ONE_WATCH_THRESHOLD_KEY,
+      SYSTEM_ONE_COMPLETION_THRESHOLD_KEY,
+      'strictSecretMode',
     ]);
     return {
       enabled: stored[SCHEDULED_TASKS_ENABLED_KEY] !== false,
       requireConsequentialConfirmation: stored[SCHEDULED_REQUIRE_CONFIRMATION_KEY] !== false,
+      typesafeApiKey: typeof stored[SYSTEM_ONE_API_KEY] === 'string'
+        ? stored[SYSTEM_ONE_API_KEY].trim()
+        : '',
+      systemOneEnabled: stored[SYSTEM_ONE_ENABLED_KEY] === true,
+      systemOneWatchEnabled: stored[SYSTEM_ONE_WATCH_ENABLED_KEY] === true,
+      systemOneCompletionEnabled: stored[SYSTEM_ONE_COMPLETION_ENABLED_KEY] === true,
+      systemOneWatchThreshold: normalizeSystemOneThreshold(stored[SYSTEM_ONE_WATCH_THRESHOLD_KEY]),
+      systemOneCompletionThreshold: normalizeSystemOneThreshold(stored[SYSTEM_ONE_COMPLETION_THRESHOLD_KEY]),
+      strictSecretMode: stored.strictSecretMode === true,
     };
   }
 
@@ -1419,6 +1450,44 @@ export class ScheduledJobManager {
     return `[Scheduled task ${job.id}: ${job.title}]\nThe user explicitly scheduled this future task. Treat this as the user-authored task for this scheduled run.\nTask: ${job.prompt}\nFirst reread the current page/state. If the task is stale, conflicts with newer user messages, or needs user input, stop and explain.`;
   }
 
+  async _shouldDowngradeWithSystemOne(job, result, outcome, runMeta = {}) {
+    if (outcome !== 'success' || !this.systemOneJudge) return false;
+    const settings = asObject(runMeta.settings);
+    const isWatch = job.source === 'watch';
+    const featureEnabled = isWatch ? settings.systemOneWatchEnabled : settings.systemOneCompletionEnabled;
+    if (settings.systemOneEnabled !== true
+      || featureEnabled !== true
+      || !settings.typesafeApiKey
+      || settings.strictSecretMode === true
+      || runMeta.sidecarAllowed === false
+      || runMeta.signal?.aborted) {
+      return false;
+    }
+    const state = {
+      task: String(job.prompt || job.resumeInstruction || job.reason || '').slice(0, 8000),
+      latest_observation: String(result || '').slice(0, 2000),
+      ...(isWatch ? {
+        baseline: String(job.watch?.lastObservation || '').slice(0, 2000) || null,
+      } : {}),
+    };
+    try {
+      const verdict = await this.systemOneJudge.evaluate({
+        apiKey: settings.typesafeApiKey,
+        state,
+        questions: isWatch ? buildWatchQuestions() : buildCompletionQuestions(),
+        signal: runMeta.signal,
+      });
+      return shouldDowngradeSuccess(verdict?.answers, {
+        threshold: isWatch ? settings.systemOneWatchThreshold : settings.systemOneCompletionThreshold,
+      });
+    } catch (error) {
+      if (!runMeta.signal?.aborted) {
+        console.warn('[WebBrain] TypeSafe System One sidecar failed open:', error);
+      }
+      return false;
+    }
+  }
+
   async _completeWatch(job, result, outcome = null, runMeta = {}) {
     const lastOutcome = normalizeDoneOutcome(outcome);
     const observation = String(result || '').slice(0, 2000);
@@ -1429,19 +1498,23 @@ export class ScheduledJobManager {
       && watchAlert.duplicate === true
       && !!eventKey
       && eventKey === job.watch?.lastTriggeredEventKey;
-    const freshAlert = lastOutcome === 'success'
+    let effectiveOutcome = duplicateAlert ? 'partial' : lastOutcome;
+    if (effectiveOutcome === 'success'
+      && await this._shouldDowngradeWithSystemOne(job, result, effectiveOutcome, runMeta)) {
+      effectiveOutcome = 'partial';
+    }
+    const freshAlert = effectiveOutcome === 'success'
       && job.watch?.beep === true
       && watchAlert.armed === true
       && !!eventKey
       && !duplicateAlert
       && eventKey !== job.watch?.lastTriggeredEventKey;
-    const alertWarning = lastOutcome === 'success'
+    const alertWarning = effectiveOutcome === 'success'
       && job.watch?.beep === true
       && !duplicateAlert
       && !freshAlert
       ? 'Watch reported success without arming a fresh /beep event; the action succeeded without an alert.'
       : null;
-    const effectiveOutcome = duplicateAlert ? 'partial' : lastOutcome;
     if (!lastOutcome || lastOutcome === 'failed') {
       const lastError = lastOutcome === 'failed'
         ? (observation || 'Watch reported a failed check or action.')
@@ -1560,7 +1633,11 @@ export class ScheduledJobManager {
       await this._completeWatch(job, result, outcome, runMeta);
       return;
     }
-    const lastOutcome = normalizeDoneOutcome(outcome);
+    let lastOutcome = normalizeDoneOutcome(outcome);
+    if (lastOutcome === 'success'
+      && await this._shouldDowngradeWithSystemOne(job, result, lastOutcome, runMeta)) {
+      lastOutcome = 'partial';
+    }
     if (job.kind === 'task' && job.schedule?.type === 'recurring') {
       const updated = await this._updateJobIf(job.id, (prev) => (
         ['running', 'needs_user_input'].includes(prev.status)
@@ -1953,7 +2030,12 @@ export class ScheduledJobManager {
           ?? ((running.mode || 'act') === 'ask' && askRunSucceeded(result, sawFailureLikeUpdate)
             ? 'success'
             : null);
-        await this._complete(running, result, effectiveOutcome, { watchAlert });
+        await this._complete(running, result, effectiveOutcome, {
+          watchAlert,
+          settings,
+          signal: execution.controller.signal,
+          sidecarAllowed: runStatus !== 'cost_limit',
+        });
       }
     } catch (e) {
       this._waitingForInput.delete(job.id);

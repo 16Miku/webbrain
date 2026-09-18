@@ -957,6 +957,23 @@ export default {
   'st.captcha.balance_fail': "Không thành công: {error}",
   'st.captcha.security_html': "<strong>Lưu ý:</strong> khóa API được lưu trữ <strong>trong bản rõ</strong> trong bộ nhớ cục bộ của trình duyệt. CapSolver tính phí tài khoản của bạn cho mỗi lần giải; tác nhân sẽ chỉ gọi nó khi CAPTCHA thực sự chặn một bước (tối đa một lần cho mỗi lần gặp - nó sẽ không thử lại nếu thất bại). Điều khoản dịch vụ của một số trang web nghiêm cấm việc giải CAPTCHA tự động; sử dụng phán đoán của bạn.",
 
+  'st.system_one.desc_html': 'Tùy chọn sử dụng <a href="https://typesafe.ai" target="_blank" style="color:var(--accent);">TypeSafe System One</a> như ý kiến thứ hai cho các tác vụ theo dõi và hoàn tất tác vụ đã lên lịch. Công cụ chỉ đánh giá tác vụ giới hạn và quan sát mới nhất; không bao giờ điều khiển trình duyệt.',
+  'st.system_one.enabled.label': 'Bật TypeSafe System One',
+  'st.system_one.enabled.desc': 'Bật toàn cục trước khi bật một trong các lớp bảo vệ tác vụ đã lên lịch. Mặc định tắt.',
+  'st.system_one.api_key.label': 'Khóa API TypeSafe',
+  'st.system_one.watch.label': 'Đánh giá tác vụ theo dõi đã lên lịch',
+  'st.system_one.watch.desc': 'Hạ thành một lần thăm dò khi điều kiện hoặc bằng chứng của tác vụ theo dõi có vẻ không chắc chắn.',
+  'st.system_one.completion.label': 'Đánh giá hoàn tất tác vụ đã lên lịch',
+  'st.system_one.completion.desc': 'Hạ một kết quả thành công quá lạc quan khi bằng chứng hoàn tất có vẻ không chắc chắn.',
+  'st.system_one.watch_threshold': 'Ngưỡng tin cậy theo dõi',
+  'st.system_one.completion_threshold': 'Ngưỡng tin cậy hoàn tất',
+  'st.system_one.save': 'Lưu cài đặt',
+  'st.system_one.clear': 'Xóa',
+  'st.system_one.saved': 'Đã lưu. TypeSafe System One đã được cấu hình.',
+  'st.system_one.cleared': 'Đã xóa.',
+  'st.system_one.need_key': 'Nhập khóa API TypeSafe trước khi bật System One.',
+  'st.system_one.security_html': '<strong>Quyền riêng tư và chi phí:</strong> tính năng này tắt cho đến khi bạn bật. Tiện ích gửi tác vụ và quan sát mới nhất có giới hạn đến TypeSafe bằng khóa API của bạn. Không gửi ảnh chụp màn hình, âm thanh hoặc thông tin xác thực của nhà cung cấp. Khóa được lưu dạng văn bản thuần trong bộ nhớ cục bộ của trình duyệt; TypeSafe có thể tính phí tài khoản của bạn. Strict Secret Mode sẽ tắt sidecar này.',
+
   // --- Chat History page -------------------------------------------------
   'hist.title': "Lịch sử trò chuyện WebBrain",
   'hist.records': "Bản ghi {n}",

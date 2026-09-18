@@ -77,6 +77,12 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   enableAllPackagedSkills: false,
   captchaSolverEnabled: false,
   capsolverApiKey: '',
+  systemOneEnabled: false,
+  systemOneWatchEnabled: false,
+  systemOneCompletionEnabled: false,
+  systemOneWatchThreshold: 0.7,
+  systemOneCompletionThreshold: 0.7,
+  typesafeApiKey: '',
 });
 
 export const CONFIG_STORAGE_KEYS = Object.freeze(Object.keys(DEFAULT_CONFIG_SETTINGS));
@@ -114,6 +120,9 @@ const BOOLEAN_KEYS = new Set([
   USER_MEMORY_FORM_CAPTURE_KEY,
   'enableAllPackagedSkills',
   'captchaSolverEnabled',
+  'systemOneEnabled',
+  'systemOneWatchEnabled',
+  'systemOneCompletionEnabled',
 ]);
 const NUMBER_KEYS = new Set([
   'maxAgentSteps',
@@ -123,6 +132,8 @@ const NUMBER_KEYS = new Set([
   'costAllowanceSessionUsd',
   'costAllowanceTotalUsd',
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
+  'systemOneWatchThreshold',
+  'systemOneCompletionThreshold',
 ]);
 const STRING_KEYS = new Set([
   'wbLocale',
@@ -136,6 +147,7 @@ const STRING_KEYS = new Set([
   'activeProvider',
   'profileText',
   'capsolverApiKey',
+  'typesafeApiKey',
 ]);
 const ARRAY_KEYS = new Set([
   'wb_permissions',

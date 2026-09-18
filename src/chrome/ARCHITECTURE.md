@@ -583,6 +583,16 @@ bridge, and the optional local WebGPU model worker.
 
 `ScheduledJobManager` (Chrome/Edge build: `src/chrome/src/agent/scheduler.js`) is instantiated in `background.js` and uses `chrome.alarms` to fire deferred work.
 
+The optional `systemone-judge.js` module is a separate, browser-neutral HTTP
+sidecar. It is disabled by default and is wired into scheduled watch and task
+completion only after the user enables the global switch, the relevant feature
+switch, and supplies a TypeSafe API key. The sidecar receives bounded task and
+observation state, uses the documented `jev-latest` System One contract, and
+can only downgrade a scheduler success to `partial`. It never runs browser
+tools or supplies instructions to the agent. Its retry, timeout, answer-shape,
+privacy, and fail-open behavior lives in the shared module so the Chrome and
+Firefox copies remain byte-identical.
+
 **Chromium/Edge-specific behavior vs Firefox:**
 
 - URL-target tasks open their tab in the **background** (`active: false`) so the user isn't interrupted.

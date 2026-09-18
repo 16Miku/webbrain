@@ -978,6 +978,23 @@ export default {
   'st.captcha.balance_fail': "विफल: {error}",
   'st.captcha.security_html': "<strong>सावधान:</strong> एपीआई कुंजी संग्रहीत है <strong>सादे पाठ में</strong> ब्राउज़र स्थानीय भंडारण में. कैपसॉल्वर प्रत्येक समाधान के लिए आपके खाते से शुल्क लेता है; एजेंट इसे केवल तभी कॉल करेगा जब कैप्चा वास्तव में एक चरण को अवरुद्ध करता है (प्रति मुठभेड़ अधिकतम एक बार - यह विफलता पर पुनः प्रयास नहीं करेगा)। कुछ साइटों की सेवा की शर्तें स्वचालित कैप्चा समाधान पर रोक लगाती हैं; अपने निर्णय का प्रयोग करें.",
 
+  'st.system_one.desc_html': 'शेड्यूल किए गए वॉच और कार्य-पूर्णता के लिए दूसरे मत के रूप में वैकल्पिक रूप से <a href="https://typesafe.ai" target="_blank" style="color:var(--accent);">TypeSafe System One</a> का उपयोग करें। यह केवल सीमित कार्य और नवीनतम निरीक्षण का मूल्यांकन करता है; ब्राउज़र को नियंत्रित नहीं करता।',
+  'st.system_one.enabled.label': 'TypeSafe System One सक्षम करें',
+  'st.system_one.enabled.desc': 'किसी भी शेड्यूल किए गए सुरक्षा विकल्प को सक्षम करने से पहले इसे वैश्विक रूप से चुनें। डिफ़ॉल्ट रूप से बंद।',
+  'st.system_one.api_key.label': 'TypeSafe API key',
+  'st.system_one.watch.label': 'शेड्यूल किए गए वॉच का मूल्यांकन करें',
+  'st.system_one.watch.desc': 'स्थिति या प्रमाण अनिश्चित होने पर वॉच की सफलता को पोल में बदलें।',
+  'st.system_one.completion.label': 'शेड्यूल किए गए कार्य की पूर्णता का मूल्यांकन करें',
+  'st.system_one.completion.desc': 'पूर्णता का प्रमाण अनिश्चित होने पर आशावादी कार्य-सफलता को कम करें।',
+  'st.system_one.watch_threshold': 'वॉच विश्वास सीमा',
+  'st.system_one.completion_threshold': 'पूर्णता विश्वास सीमा',
+  'st.system_one.save': 'सेटिंग सहेजें',
+  'st.system_one.clear': 'साफ़ करें',
+  'st.system_one.saved': 'सहेजा गया। TypeSafe System One कॉन्फ़िगर है।',
+  'st.system_one.cleared': 'साफ़ किया गया।',
+  'st.system_one.need_key': 'System One सक्षम करने से पहले TypeSafe API key दर्ज करें।',
+  'st.system_one.security_html': '<strong>गोपनीयता और लागत:</strong> यह सुविधा आपकी अनुमति तक बंद रहती है। एक्सटेंशन आपकी अपनी API key का उपयोग करके कार्य और सीमित नवीनतम निरीक्षण TypeSafe को भेजता है। स्क्रीनशॉट, ऑडियो या provider credentials नहीं भेजे जाते। key ब्राउज़र local storage में plaintext में रखी जाती है; TypeSafe आपके खाते से शुल्क ले सकता है। Strict Secret Mode इस sidecar को बंद करता है।',
+
   // --- Chat History page -------------------------------------------------
   'hist.title': "WebBrain चैट इतिहास",
   'hist.records': "{n} रिकॉर्ड",

@@ -99,6 +99,28 @@ on login, layout, or timeout failures. Turning Research escalation off removes
 both the delegation tool and the Ask-mode consent schema from later model
 requests.
 
+### Optional TypeSafe System One scheduled-task judge
+
+TypeSafe System One is **off by default** and has separate opt-in switches for
+scheduled `/watch` polls and scheduled task completion. When enabled, the
+background scheduler sends a bounded JSON state to `api.typesafe.ai` using the
+user's own TypeSafe API key. The state contains the scheduled task text, the
+latest bounded observation, and (for watches) the previous observation as data.
+The sidecar receives no screenshot, audio, provider credential, conversation
+history, or browser control capability.
+
+System One can only downgrade an optimistic scheduler success to a partial
+poll/completion. It cannot turn a failed or incomplete run into success. A
+missing key, disabled feature, strict-secret run, cancellation, cost-limit
+condition, timeout, invalid response, or network failure fails open to the
+existing deterministic scheduler result. Thresholds are user-configurable and
+bounded to 50–95%.
+
+The TypeSafe key is stored in plaintext in browser local storage, is included
+in portable Settings export like other BYO API keys, and may incur charges on
+the user's TypeSafe account. The feature is implemented with the documented
+HTTP API and does not install an SDK.
+
 ### WebBrain Compass improvement data
 
 Help Improve WebBrain is available under Settings -> General and is

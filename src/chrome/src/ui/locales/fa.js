@@ -978,6 +978,23 @@ export default {
   'st.captcha.balance_fail': "ناموفق: {error}",
   'st.captcha.security_html': "<strong>هدآپ:</strong> کلید API ذخیره می شود <strong>در متن ساده</strong> در حافظه محلی مرورگر CapSolver برای هر حل حساب شما را شارژ می کند. عامل فقط زمانی آن را فراخوانی می کند که یک CAPTCHA در واقع یک مرحله را مسدود کند (حداکثر یک بار در هر برخورد - در صورت شکست مجدداً تلاش نمی کند). شرایط خدمات برخی از سایت ها حل خودکار CAPTCHA را ممنوع می کند. از قضاوت خود استفاده کنید",
 
+  'st.system_one.desc_html': 'به‌صورت اختیاری از <a href="https://typesafe.ai" target="_blank" style="color:var(--accent);">TypeSafe System One</a> به‌عنوان نظر دوم برای پایش‌های زمان‌بندی‌شده و تکمیل وظایف استفاده کنید. این ابزار فقط وظیفه محدود و مشاهده اخیر را ارزیابی می‌کند و هرگز مرورگر را کنترل نمی‌کند.',
+  'st.system_one.enabled.label': 'فعال‌سازی TypeSafe System One',
+  'st.system_one.enabled.desc': 'پیش از فعال‌کردن هر محافظ وظیفه زمان‌بندی‌شده، این گزینه را به‌صورت کلی فعال کنید. به‌طور پیش‌فرض خاموش است.',
+  'st.system_one.api_key.label': 'کلید API تایپ‌سیف',
+  'st.system_one.watch.label': 'ارزیابی پایش‌های زمان‌بندی‌شده',
+  'st.system_one.watch.desc': 'وقتی شرط یا شواهد نامطمئن است، موفقیت پایش را به یک بررسی دوره‌ای تبدیل می‌کند.',
+  'st.system_one.completion.label': 'ارزیابی تکمیل وظایف زمان‌بندی‌شده',
+  'st.system_one.completion.desc': 'وقتی شواهد تکمیل نامطمئن است، موفقیت خوش‌بینانه وظیفه را کاهش می‌دهد.',
+  'st.system_one.watch_threshold': 'آستانه اطمینان پایش',
+  'st.system_one.completion_threshold': 'آستانه اطمینان تکمیل',
+  'st.system_one.save': 'ذخیره تنظیمات',
+  'st.system_one.clear': 'پاک‌کردن',
+  'st.system_one.saved': 'ذخیره شد. TypeSafe System One پیکربندی شد.',
+  'st.system_one.cleared': 'پاک شد.',
+  'st.system_one.need_key': 'پیش از فعال‌کردن System One یک کلید API تایپ‌سیف وارد کنید.',
+  'st.system_one.security_html': '<strong>حریم خصوصی و هزینه:</strong> این قابلیت تا زمان انتخاب شما خاموش است. افزونه با استفاده از کلید API شما، وظیفه و یک مشاهده اخیر محدودشده را به TypeSafe می‌فرستد. تصویر، صدا یا اعتبارنامه ارائه‌دهنده ارسال نمی‌شود. کلید به‌صورت متن ساده در حافظه محلی مرورگر ذخیره می‌شود و TypeSafe ممکن است از حساب شما هزینه بگیرد. Strict Secret Mode این sidecar را غیرفعال می‌کند.',
+
   // --- Chat History page -------------------------------------------------
   'hist.title': "تاریخچه چت WebBrain",
   'hist.records': "رکوردهای {n}",

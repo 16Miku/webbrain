@@ -38,6 +38,7 @@ import {
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
+import { createSystemOneJudge } from './agent/systemone-judge.js';
 import {
   SELECTION_CONTEXT_SOURCE_GROUNDING,
   SELECTION_ONLY_SOURCE_GROUNDING,
@@ -178,6 +179,7 @@ const runCaptureController = createRunCaptureController({
 const scheduler = new ScheduledJobManager({
   api: browser,
   agent,
+  systemOneJudge: createSystemOneJudge(),
   loadProviders: async () => {
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
