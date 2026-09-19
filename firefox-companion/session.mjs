@@ -2,6 +2,17 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 
+function unpackRemoteObjectValue(value) {
+  if (value?.type !== 'object' || !Array.isArray(value.value)) return value;
+  return Object.fromEntries(value.value.flatMap(entry => {
+    if (!Array.isArray(entry) || entry.length < 2 || typeof entry[0] !== 'string') return [];
+    const [key, property] = entry;
+    return [[key, property && typeof property === 'object' && Object.hasOwn(property, 'value')
+      ? property.value
+      : undefined]];
+  }));
+}
+
 export class BidiSession {
   constructor(WebSocketImpl = WebSocket) {
     this.WebSocketImpl = WebSocketImpl;
@@ -101,6 +112,52 @@ export class BidiSession {
   call(match, functionDeclaration, args = []) {
     return this.send('script.callFunction', { target: { context: match.context }, functionDeclaration,
       arguments: [{ sharedId: match.node.sharedId }, ...args], awaitPromise: true });
+  }
+  async _waitForCheckableState(match, desiredChecked, timeoutMs = 80) {
+    const result = await this.call(match, `async (el, desired, timeout) => {
+      const read = () => el.isConnected && (el.type === "checkbox" || el.type === "radio")
+        ? !!el.checked
+        : null;
+      const initial = read();
+      if (initial === desired || initial === null) return { checkedAfter: initial, elapsedMs: 0 };
+      const startedAt = performance.now();
+      return await new Promise(resolve => {
+        let timer = null;
+        let settled = false;
+        const cleanup = () => {
+          el.removeEventListener('input', check);
+          el.removeEventListener('change', check);
+          clearTimeout(timer);
+        };
+        const finish = checkedAfter => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve({ checkedAfter, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)) });
+        };
+        const check = () => {
+          const checkedAfter = read();
+          if (checkedAfter === desired || checkedAfter === null) finish(checkedAfter);
+        };
+        el.addEventListener('input', check);
+        el.addEventListener('change', check);
+        timer = setTimeout(() => finish(read()), Math.max(0, timeout));
+        check();
+      });
+    }`, [
+      { type: 'boolean', value: desiredChecked },
+      { type: 'number', value: timeoutMs },
+    ]);
+    const observation = unpackRemoteObjectValue(result.result?.type ? result.result : result.result?.value);
+    if (observation && typeof observation === 'object') {
+      return {
+        checkedAfter: typeof observation.checkedAfter === 'boolean' ? observation.checkedAfter : null,
+        elapsedMs: Number.isFinite(Number(observation.elapsedMs)) ? Math.max(0, Number(observation.elapsedMs)) : timeoutMs,
+      };
+    }
+    // A malformed page response stays inconclusive and keeps the bounded
+    // observation budget visible to the caller.
+    return { checkedAfter: null, elapsedMs: timeoutMs };
   }
   async closeRun(id) {
     this.closedRuns.add(id);
@@ -223,12 +280,12 @@ export class BidiSession {
       finally { await this.send('input.releaseActions', { context: match.context }).catch(() => {}); }
       assertLive();
       if (checkable) {
-        await new Promise(resolve => setTimeout(resolve, 80));
+        const observation = await this._waitForCheckableState(match, checkable.desiredChecked, 80);
         assertLive();
-        const checked = await this.call(match, '(el) => el.isConnected && (el.type === "checkbox" || el.type === "radio") ? !!el.checked : null');
-        const checkedAfter = checked.result?.value;
+        const checkedAfter = observation.checkedAfter;
         if (typeof checkedAfter !== 'boolean') {
           return { success: false, dispatched: true, outcomeUnknown: true, retryable: false,
+            _checkableObservationMs: observation.elapsedMs,
             error: 'Checkable target changed after trusted click; inspect the page before retrying.' };
         }
         const stateMatchesDesired = checkedAfter === checkable.desiredChecked;
@@ -242,6 +299,7 @@ export class BidiSession {
           desiredChecked: checkable.desiredChecked,
           checkboxIdentity: checkable.checkboxIdentity,
           checkboxState: { identity: checkable.checkboxIdentity, desiredChecked: checkable.desiredChecked, actualChecked: checkedAfter },
+          _checkableObservationMs: observation.elapsedMs,
           ...(stateMatchesDesired ? { observedEffects: ['checked_state'] } : {
             noProgress: true,
             error: checkable.inputType === 'checkbox'

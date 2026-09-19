@@ -20839,6 +20839,9 @@ test('public click_ax preserves the complete pre-extraction dispatch and post-pr
       documentToken: 'fresh-document-token',
       refScopeUrl: 'https://example.test/fresh-route',
       routeChanged: true,
+      _syntheticClickStartedAt: Date.now(),
+      _syntheticClickDispatchMs: 1.25,
+      _checkableObservationMs: 12,
     };
     const tabs = {
       get: async () => ({ url: 'https://example.test/fresh-route' }),
@@ -20918,6 +20921,11 @@ test('public click_ax preserves the complete pre-extraction dispatch and post-pr
       const result = await agent.executeTool(tabId, 'click_ax', { ref_id: 'ref_907' });
       assert.equal(result.documentToken, 'fresh-document-token', `${label}: click_ax response token must remain public`);
       assert.equal(result.refScopeUrl, 'https://example.test/fresh-route', `${label}: click_ax scope URL must remain public`);
+      if (label === 'firefox') {
+        assert.equal(Object.hasOwn(result, '_syntheticClickStartedAt'), false, 'firefox: private click clock leaked to the tool result');
+        assert.equal(Object.hasOwn(result, '_syntheticClickDispatchMs'), false, 'firefox: private dispatch clock leaked to the tool result');
+        assert.equal(Object.hasOwn(result, '_checkableObservationMs'), false, 'firefox: private observation clock leaked to the tool result');
+      }
       assert.deepEqual(agent._lastAxScopes.get(tabId), {
         documentToken: 'fresh-document-token',
         pageUrl: 'https://example.test/fresh-route',
@@ -110799,6 +110807,13 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
       assert.match(fallbackDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._maybeFallbackClickAxWithCdpImpl\([\s\S]*'click_ax'/, 'chrome: click_ax fallback pipeline bypasses the deadline');
       assert.match(fallbackDeadlineSource, /abortSignal =>[\s\S]*baseline,[\s\S]*abortSignal/, 'chrome: click_ax fallback deadline does not propagate cancellation');
     } else {
+      const clickTimingTraceStart = source.indexOf('  _recordClickAxTiming(');
+      const clickTimingTraceEnd = source.indexOf('  async _dispatchClickAx(', clickTimingTraceStart);
+      assert.ok(clickTimingTraceStart >= 0 && clickTimingTraceEnd > clickTimingTraceStart, 'firefox: click_ax timing trace recorder missing');
+      assert.match(source.slice(clickTimingTraceStart, clickTimingTraceEnd), /trace\.recordNote\(runId,[\s\S]*'click_ax_timing'/, 'firefox: click_ax timings are not recorded as a trace note');
+      assert.match(toolPipelineSource, /traceStep: step,/, 'firefox: click_ax trace notes do not receive the current tool step');
+      assert.match(clickAxSource, /_checkableObservationMs[\s\S]*delete response\._checkableObservationMs/, 'firefox: private state-observation timing can escape in the tool result');
+      assert.match(contentClickAx, /_syntheticClickStartedAt:[\s\S]*_syntheticClickDispatchMs:/, 'firefox: synthetic click boundary timing is missing');
       assert.match(source, /runContentActionStage\([\s\S]*this\._keyProgressSnapshot\(tabId, abortSignal\)/, 'firefox: pre-dispatch Arrow snapshot bypasses the pipeline deadline');
       assert.match(source, /runContentActionStage\([\s\S]*this\._verifyProvisionalKeyProgress\([\s\S]*abortSignal/, 'firefox: post-dispatch Arrow verification bypasses the pipeline deadline');
       const uploadStart = source.indexOf('const buildInjectCode = actionDeadlineAt =>');

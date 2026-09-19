@@ -221,7 +221,9 @@ test('trusted checkable clicks report a prevented state transition', async () =>
   const session = new BidiSession(); const runId = id(); const sent = [];
   session.runs.set(runId, { context: 'tab' });
   session.locate = async () => ({ context: 'tab', node: { sharedId: 'check' } });
-  session.call = async (_match, fn) => ({ result: { value: fn.includes('checkbox" || el.type') ? false : true } });
+  session.call = async (_match, fn) => ({ result: { value: fn.includes('checkbox" || el.type')
+    ? { checkedAfter: false, elapsedMs: 80 }
+    : true } });
   session.send = async (method, params) => { sent.push({ method, params }); return {}; };
   const result = await session.perform(runId, 'click', {
     checkable: { inputType: 'checkbox', checkedBefore: false, desiredChecked: true, checkboxIdentity: 'check' },
@@ -232,6 +234,27 @@ test('trusted checkable clicks report a prevented state transition', async () =>
   assert.equal(result.noProgress, true);
   assert.equal(result.checkedAfter, false);
   assert.equal(result.checkedChanged, false);
+});
+test('trusted checkable clicks wait on state events and report observation time', async () => {
+  const session = new BidiSession(); const runId = id(); const scripts = [];
+  session.runs.set(runId, { context: 'tab' });
+  session.locate = async () => ({ context: 'tab', node: { sharedId: 'check' } });
+  session.call = async (_match, fn) => {
+    scripts.push(fn);
+    return scripts.length === 1
+      ? { result: { value: true } }
+      : { result: { value: { checkedAfter: true, elapsedMs: 12 } } };
+  };
+  session.send = async () => ({});
+  const result = await session.perform(runId, 'click', {
+    checkable: { inputType: 'checkbox', checkedBefore: false, desiredChecked: true, checkboxIdentity: 'check' },
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.verified, true);
+  assert.equal(result.checkedAfter, true);
+  assert.equal(result._checkableObservationMs, 12);
+  assert.match(scripts[1], /addEventListener\(['"]change['"], check\)/);
+  assert.match(scripts[1], /setTimeout\(/, 'a bounded timeout must remain as the no-event fallback');
 });
 test('trusted target validation descends through open shadow roots', async () => {
   const session = new BidiSession(); const runId = id(); let validation;

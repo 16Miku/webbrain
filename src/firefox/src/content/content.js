@@ -5337,7 +5337,10 @@
             };
           }
           dispatched = true;
+          const syntheticClickStartedAt = Date.now();
+          const syntheticClickDispatchStartedAt = performance.now();
           const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
+          const syntheticClickDispatchMs = Math.max(0, performance.now() - syntheticClickDispatchStartedAt);
           if (filePickerGuard.blocked) {
             return failure(
               filePickerBlockedResponse(filePickerGuard.blocked, targetName || '').error,
@@ -5362,6 +5365,8 @@
               method: 'click_ax',
               ref_id,
               tag,
+              _syntheticClickStartedAt: syntheticClickStartedAt,
+              _syntheticClickDispatchMs: syntheticClickDispatchMs,
               rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
               ...(targetContext ? { targetContext } : {}),
               ...(filePickerGuard.guardId ? { _filePickerGuardId: filePickerGuard.guardId } : {}),
