@@ -46,6 +46,8 @@ export default {
   "st.system_one.need_key": "Bir TypeSafe API anahtarı girin.",
   "st.system_one.uncertain": "Jev: tamamlanma doğrulanamadı.",
   "st.system_one.clear": "Anahtarı sil",
+  "st.system_one.fast_classifications": "Hızlı sınıflandırmalar",
+  "st.system_one.fast_browser": "Hızlı tarayıcı işlemleri — Deneysel",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Zamanlanmış izlemeleri doğrula — Olasılık eşiği",
   "st.system_one.completion_threshold": "Zamanlanmış görev tamamlanmasını doğrula — Olasılık eşiği",

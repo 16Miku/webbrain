@@ -46,6 +46,8 @@ export default {
   "st.system_one.need_key": "TypeSafe API 키를 입력하세요.",
   "st.system_one.uncertain": "Jev: 완료를 확인할 수 없습니다.",
   "st.system_one.clear": "키 삭제",
+  "st.system_one.fast_classifications": "빠른 분류",
+  "st.system_one.fast_browser": "빠른 브라우저 작업 — 실험적",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "예약 모니터링 검증 — 확률 임계값",
   "st.system_one.completion_threshold": "예약 작업 완료 검증 — 확률 임계값",

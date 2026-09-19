@@ -8,8 +8,8 @@
 final replies. **Settings → Assistive Models** groups Vision (including screenshot
 limits and redaction), Speech to text, and Jev (TypeSafe). Configuring an assistive
 model does not replace the active provider. Jev is outside the dynamic provider
-list; its scheduled-watch and scheduled-completion verification options
-are controlled independently. See [the settings guide](https://webbrain.one/docs/settings/#multimodal)
+list; its verification, fast-classification and experimental browser switches
+are independent opt-ins. See [the settings guide](https://webbrain.one/docs/settings/#multimodal)
 and [data flow](privacy-and-data-flow.md#optional-jev-typesafe-scheduled-task-verification)
 for setup and disclosure details. Existing `#multimodal` settings links still work.
 

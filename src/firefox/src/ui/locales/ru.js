@@ -46,6 +46,8 @@ export default {
   "st.system_one.need_key": "Введите ключ API TypeSafe.",
   "st.system_one.uncertain": "Jev: завершение не подтверждено.",
   "st.system_one.clear": "Удалить ключ",
+  "st.system_one.fast_classifications": "Быстрые классификации",
+  "st.system_one.fast_browser": "Быстрые действия в браузере — Экспериментально",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Проверять запланированные наблюдения — Порог вероятности",
   "st.system_one.completion_threshold": "Проверять завершение запланированных задач — Порог вероятности",

@@ -710,6 +710,56 @@
     }
   }
 
+
+  // Internal Jev inventory is collected by the existing AX walker. It never
+  // parses page-authored ref strings and cannot target frames or shadow roots.
+  let jevCollector = null;
+  let lastJevSnapshot = null;
+  function jevControl(el) {
+    if (window.top !== window || el.getRootNode() !== document || !isInteractive(el)) return null;
+    const tag = el.tagName.toLowerCase();
+    const type = String(el.type || '').toLowerCase();
+    const name = String(getAccessibleName(el) || '').slice(0, 120);
+    if (['password', 'file', 'hidden'].includes(type) || /password|passwd|api.?key|token|secret|credit.?card|cvv|cvc/i.test([name, el.name, el.id, el.autocomplete].join(' '))) return null;
+    const role = getRole(el);
+    const kinds = [];
+    if (tag === 'select') kinds.push('select');
+    else if (type === 'checkbox' || role === 'checkbox' || role === 'switch') kinds.push('check');
+    else if ((tag === 'input' && !['submit', 'button', 'reset', 'image', 'radio', 'range', 'color'].includes(type)) || tag === 'textarea') kinds.push('fill');
+    else if (['button', 'a', 'option'].includes(tag) || ['button', 'link', 'option', 'menuitem', 'tab', 'radio'].includes(role)) kinds.push('click');
+    if (!kinds.length) return null;
+    const disabled = !!el.disabled || el.getAttribute('aria-disabled') === 'true' || !!el.readOnly;
+    const control = { ref: getOrMintRef(el), role, name, kinds, disabled,
+      form: el.form ? getOrMintRef(el.form) : '',
+      value: kinds.includes('fill') ? String(el.value || '').slice(0, 500) : '',
+      checked: kinds.includes('check') ? (el.checked === true || el.getAttribute('aria-checked') === 'true') : null,
+      options: tag === 'select' ? Array.from(el.options).filter(o => !o.disabled).slice(0, 20).map(o => ({ value: o.value, label: o.text.slice(0, 100) })) : [],
+    };
+    // The signature remains internal. A changed destination or field identity
+    // invalidates a selected target even if its DOM node/ref survived.
+    control.signature = fingerprintTreeContent(JSON.stringify({ ...control, id: el.id, fieldName: el.name, href: el.getAttribute('href'), type }));
+    return control;
+  }
+  function collectJevControl(el) {
+    if (!jevCollector || jevCollector.size >= 24) return;
+    try { const control = jevControl(el); if (control) jevCollector.set(control.ref, control); } catch { /* Optional inventory must not break the normal AX reader. */ }
+  }
+  function jevSnapshot() { return lastJevSnapshot; }
+  function jevValidate(binding) {
+    if (!binding || binding.pageUrl !== location.href) return false;
+    generateAccessibilityTree('interactive', 10, 3500);
+    const snapshot = lastJevSnapshot;
+    if (!snapshot || snapshot.structure !== binding.structure) return false;
+    const target = snapshot.controls.find(c => c.ref === binding.ref);
+    const el = lookup(binding.ref);
+    if (!target || target.disabled || target.signature !== binding.signature || !el || el.getRootNode() !== document) return false;
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    if (rect.width <= 0 || rect.height <= 0 || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return false;
+    const hit = document.elementFromPoint(x, y);
+    return hit === el || el.contains(hit);
+  }
+
   // ── Line formatting ────────────────────────────────────────────────────
   function formatLine(el, depth) {
     const role = getRole(el);
@@ -974,6 +1024,7 @@
     const included = shouldInclude(el, opts) || (opts.refId != null && depth === 0);
 
     if (included) {
+      opts._onIncluded?.(el);
       lines.push(formatLine(el, depth));
 
       if (el.tagName.toLowerCase() === 'select' && el.options) {
@@ -1399,6 +1450,8 @@
   }
 
   function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page, expectedTreeRevision) {
+    jevCollector = filter === 'interactive' && !refId && (!page || page === 1) ? new Map() : null;
+    lastJevSnapshot = null;
     try {
       ensureRefScope();
       const effFilter = filter || 'all';
@@ -1423,6 +1476,7 @@
                           : 6000;
       const opts = {
         filter: effFilter,
+        _onIncluded: collectJevControl,
         maxDepth: maxDepth != null ? maxDepth : defaultDepth,
         refId: refId || null,
       };
@@ -1565,6 +1619,7 @@
           if (priority.elements.length) {
             lines.push('[priority action surfaces - editable/focused/submit controls rendered first]');
             for (const n of priority.elements) {
+              collectJevControl(n);
               lines.push(formatLine(n, 0));
             }
             lines.push('[/priority action surfaces]');
@@ -1664,6 +1719,13 @@
         pageContent: '',
         viewport: { width: window.innerWidth, height: window.innerHeight },
       };
+    } finally {
+      if (jevCollector) {
+        const controls = [...jevCollector.values()];
+        const structure = fingerprintTreeContent(JSON.stringify(controls.map(({ value, checked, signature, ...control }) => control)));
+        lastJevSnapshot = { controls, structure, progress: fingerprintTreeContent(JSON.stringify(controls)) + ':' + Math.round(scrollY) };
+      }
+      jevCollector = null;
     }
   }
 
@@ -1754,6 +1816,8 @@
     return generateAccessibilityTree(filter, maxDepth, maxChars, getOrMintRef(rootElement), page);
   }
 
+  window.__wb_jev_snapshot = jevSnapshot;
+  window.__wb_jev_validate = jevValidate;
   window.__generateAccessibilityTree = generateAccessibilityTree;
   window.__generateAccessibilitySubtree = generateAccessibilitySubtree;
   window.__wb_expand_gmail_conversation_for_read = expandGmailConversationForRead;

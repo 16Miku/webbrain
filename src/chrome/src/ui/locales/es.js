@@ -46,6 +46,8 @@ export default {
   "st.system_one.need_key": "Introduce una clave API de TypeSafe.",
   "st.system_one.uncertain": "Jev: no se pudo verificar la finalización.",
   "st.system_one.clear": "Eliminar clave",
+  "st.system_one.fast_classifications": "Clasificaciones rápidas",
+  "st.system_one.fast_browser": "Acciones rápidas del navegador — Experimental",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Verificar seguimientos programados — Umbral de probabilidad",
   "st.system_one.completion_threshold": "Verificar tareas programadas completadas — Umbral de probabilidad",

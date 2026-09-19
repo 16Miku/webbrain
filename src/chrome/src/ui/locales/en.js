@@ -991,6 +991,8 @@ export default {
   "st.system_one.need_key": "Enter a TypeSafe API key.",
   "st.system_one.uncertain": "Jev: completion could not be verified.",
   "st.system_one.clear": "Delete key",
+  "st.system_one.fast_classifications": "Fast classifications",
+  "st.system_one.fast_browser": "Fast browser actions — Experimental",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Verify scheduled watches — Probability threshold",
   "st.system_one.completion_threshold": "Verify scheduled task completion — Probability threshold",

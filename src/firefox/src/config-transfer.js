@@ -80,6 +80,8 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   systemOneEnabled: false,
   systemOneWatchEnabled: false,
   systemOneCompletionEnabled: false,
+  systemOneFastClassifications: false,
+  systemOneFastBrowser: false,
   systemOneWatchThreshold: 0.7,
   systemOneCompletionThreshold: 0.7,
   typesafeApiKey: '',
@@ -123,6 +125,8 @@ const BOOLEAN_KEYS = new Set([
   'systemOneEnabled',
   'systemOneWatchEnabled',
   'systemOneCompletionEnabled',
+  'systemOneFastClassifications',
+  'systemOneFastBrowser',
 ]);
 const NUMBER_KEYS = new Set([
   'maxAgentSteps',

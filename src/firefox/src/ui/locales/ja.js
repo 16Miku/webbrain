@@ -46,6 +46,8 @@ export default {
   "st.system_one.need_key": "TypeSafe API キーを入力してください。",
   "st.system_one.uncertain": "Jev: 完了を確認できませんでした。",
   "st.system_one.clear": "キーを削除",
+  "st.system_one.fast_classifications": "高速分類",
+  "st.system_one.fast_browser": "高速ブラウザ操作 — 実験的",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "定期監視を検証 — 確率のしきい値",
   "st.system_one.completion_threshold": "予約タスクの完了を検証 — 確率のしきい値",

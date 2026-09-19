@@ -966,6 +966,8 @@ export default {
   "st.system_one.need_key": "TypeSafe API কী লিখুন।",
   "st.system_one.uncertain": "Jev: কাজ সম্পন্ন হওয়া যাচাই করা যায়নি।",
   "st.system_one.clear": "কী মুছুন",
+  "st.system_one.fast_classifications": "দ্রুত শ্রেণিবিভাগ",
+  "st.system_one.fast_browser": "দ্রুত ব্রাউজার কাজ — পরীক্ষামূলক",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "নির্ধারিত পর্যবেক্ষণ যাচাই করুন — সম্ভাবনার সীমা",
   "st.system_one.completion_threshold": "নির্ধারিত কাজ সম্পন্ন হওয়া যাচাই করুন — সম্ভাবনার সীমা",
