@@ -163,10 +163,11 @@ export class JevFastSession {
     this.fallbackCount = 0;
     this.fallbackContext = null;
     this.completionCandidate = false;
+    this.hardStopped = false;
   }
   get fallbackBlocked() { return this.fallbackCount >= 2; }
   recordFallback() { this.fallbackCount++; this.queue = []; }
-  hardStop() { this.disabled = true; this.queue = []; }
+  hardStop() { this.hardStopped = true; this.disabled = true; this.queue = []; }
   observe(snapshot) {
     const context = JSON.stringify([snapshot?.documentToken, snapshot?.pageUrl, snapshot?.structure, snapshot?.progress, snapshot?.hasSensitiveControls === true]);
     if (context !== this.fallbackContext) {

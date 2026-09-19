@@ -6800,7 +6800,7 @@ export class Agent extends LoopDetector {
     const context = this.systemOneContext(tabId);
     try {
       const settings = await this._jevSettings();
-      if (!settings?.systemOneFastClassifications || this._checkAbort(tabId) || !context.isCurrent()) return null;
+      if (!settings?.systemOneFastClassifications || this._jevSessions?.get(tabId)?.hardStopped || this._checkAbort(tabId) || !context.isCurrent()) return null;
       // Classification receives plain text only; multimodal requests stay with the active provider.
       if (!state || Object.values(state).some(value => value != null && typeof value !== 'string')) return null;
       const text = JSON.stringify(state);
@@ -6815,6 +6815,12 @@ export class Agent extends LoopDetector {
       this.recordSystemOneVerdict(tabId, { decision: choice ? 'classification' : 'fallback', reason: choice ? 'confident' : 'low_confidence', model: verdict.model }, context);
       return this._checkAbort(tabId) || !context.isCurrent() ? null : choice;
     } catch (error) {
+      if (isSystemOneResponseContractError(error)) {
+        this._jevSessions ??= new Map();
+        let session = this._jevSessions.get(tabId);
+        if (!session) { session = new JevFastSession(); this._jevSessions.set(tabId, session); }
+        session.hardStop();
+      }
       this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `classification_${this._isCostAllowanceError(error) ? 'cost_limit' : systemOneFailureReason(error)}` }, context);
       return null;
     }

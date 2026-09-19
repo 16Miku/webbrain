@@ -225,6 +225,24 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(calls, 1);
   });
 
+  test(`${build}: malformed classifier response hard-stops all Jev requests for the run`, async () => {
+    const provider = { name: 'test', model: 'active-model' }; const agent = new Agent({ getActive: () => provider });
+    Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, systemOneFastClassifications: true, typesafeApiKey: 'synthetic' });
+    let calls = 0;
+    agent.evaluateSystemOne = async () => {
+      calls++;
+      const error = new Error('Invalid Jev distribution.');
+      error.code = 'JEV_INVALID_DISTRIBUTION';
+      throw error;
+    };
+    const classify = () => agent._jevClassify(1, 'classify', { yes: 'yes', no: 'no' }, { task: 'Classify this request.' });
+    assert.equal(await classify(), null);
+    assert.equal(agent._jevSessions.get(1).hardStopped, true);
+    assert.equal(await classify(), null);
+    assert.equal(await agent._maybeJevFastTurn(1, 'Click Save', [], 'act', new Set(['get_accessibility_tree', 'click_ax']), provider, {}), null);
+    assert.equal(calls, 1);
+  });
+
   test(`${build}: click-only decisions and uncertain fill targets never invoke value preparation`, async () => {
     const provider = { name: 'test', model: 'active-model' }; const agent = new Agent({ getActive: () => provider });
     Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, typesafeApiKey: 'synthetic' });
