@@ -1,4 +1,4 @@
-import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, JevFastSession } from './systemone-fast.js';
+import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData } from './systemone-evidence.js';
 import { createSystemOneJudge, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
@@ -6817,9 +6817,13 @@ export class Agent extends LoopDetector {
     } catch { this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: 'classification_unavailable_or_invalid' }, context); return null; }
   }
 
+  _jevValueContext(task, snapshot) {
+    return `${snapshot.documentToken}:${snapshot.structure}:${task}`;
+  }
+
   async _jevPrepareValues(tabId, task, session, provider, costState) {
     const snapshot = session.snapshot;
-    const context = `${snapshot.documentToken}:${snapshot.structure}:${task}`;
+    const context = this._jevValueContext(task, snapshot);
     if (session.valueContext === context) return session.values || [];
     session.valueContext = context;
     session.values = [];
@@ -6848,42 +6852,81 @@ export class Agent extends LoopDetector {
     return { content: '', toolCalls: [{ id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) } }], jev: true };
   }
 
+  _jevModelMessages(tabId, messages) {
+    if (!this._jevSessions?.get(tabId)?.completionCandidate) return messages;
+    // Model-only guidance: never add an invented user turn to the conversation.
+    const instruction = '[Runtime completion candidate: inspect the latest evidence and use the normal completion checks. If the task is complete, give the user a final response; otherwise continue or report the missing evidence. Jev is not proof of success.]';
+    const copy = messages.slice();
+    const index = copy.findIndex(message => message.role === 'system');
+    if (index < 0) copy.unshift({ role: 'system', content: instruction });
+    else {
+      const message = copy[index];
+      copy[index] = { ...message, content: typeof message.content === 'string'
+        ? message.content + '\n\n' + instruction
+        : [...(Array.isArray(message.content) ? message.content : []), { type: 'text', text: instruction }] };
+    }
+    return copy;
+  }
+
   async _maybeJevFastTurn(tabId, task, messages, mode, allowed, provider, costState, runOptions = {}, recovery = null) {
     const context = this.systemOneContext(tabId);
     if (!['act', 'dev'].includes(mode) || recovery || runOptions.cloudRun || this.selectionGroundingScopes.has(tabId) || this._isStandaloneChatRun(runOptions)
       || messages.some(message => Array.isArray(message?.content) && message.content.some(block => block?.type !== 'text'))
       || this._checkAbort(tabId) || /log.?in|sign.?in|password|parola|giriş|oturum|credential|api.?key|secret/i.test(task)) return null;
+    let session;
     try {
       const settings = await this._jevSettings();
       if (!settings?.systemOneFastBrowser || !allowed.has('get_accessibility_tree') || !context.isCurrent()) return null;
       this._jevSessions ??= new Map();
-      let session = this._jevSessions.get(tabId);
+      session = this._jevSessions.get(tabId);
       if (!session) { session = new JevFastSession(); this._jevSessions.set(tabId, session); }
       if (session.disabled) return null;
       const read = () => this._jevResultForCall(tabId, session, { name: 'get_accessibility_tree', args: { filter: 'interactive', maxDepth: 10, maxChars: 3500 } });
       if (!session.snapshot || session.pending) return read();
+      if (session.fallbackBlocked) return null;
       const queued = session.nextQueued();
       if (queued && allowed.has(queued.name)) return this._jevResultForCall(tabId, session, queued);
-      const values = await this._jevPrepareValues(tabId, String(task).slice(0, 4000), session, provider, costState);
-      if (!context.isCurrent() || this._checkAbort(tabId)) return null;
-      const request = buildJevBrowserRequest(task, session.snapshot, values);
-      if (!request) return null;
-      const verdict = await this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 1000, maxRetries: 0 }), {
+      const fallback = reason => {
+        session.recordFallback();
+        this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason }, context);
+        return null;
+      };
+      const taskText = String(task).slice(0, 4000);
+      const cached = session.valueContext === this._jevValueContext(taskText, session.snapshot) ? session.values || [] : [];
+      let request = buildJevBrowserRequest(taskText, session.snapshot, cached);
+      if (!request) return fallback('unsupported_state');
+      const judge = request => this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 1000, maxRetries: 0 }), {
         apiKey: settings.typesafeApiKey, state: request.state, questions: request.questions, signal: this._runAbortSignal(tabId),
       }, context);
+      let verdict = await judge(request);
       if (this._checkAbort(tabId) || !context.isCurrent()) return null;
+      if (confidentChoice(verdict.answers.operation, JEV_BROWSER_THRESHOLD) === 'fill' && !request.values.length) {
+        const first = confidentChoice(verdict.answers.fill_target, JEV_BROWSER_THRESHOLD);
+        if (!allowed.has('set_field') || !request.controls.some(control => control.ref === first && !control.disabled && control.kinds.includes('fill'))) return fallback('invalid_fill_target');
+        // Clicks, completion candidates and fallbacks never prepare text. The
+        // first uncached fill needs a second Jev request to map prepared values.
+        const values = await this._jevPrepareValues(tabId, taskText, session, provider, costState);
+        if (this._checkAbort(tabId) || !context.isCurrent()) return null;
+        if (!values.length) return fallback('missing_field_values');
+        request = buildJevBrowserRequest(taskText, session.snapshot, values);
+        if (!request) return fallback('unsupported_state');
+        verdict = await judge(request);
+        if (this._checkAbort(tabId) || !context.isCurrent()) return null;
+      }
       const decision = decideJevBrowser(request, verdict.answers, session.snapshot);
-      this.recordSystemOneVerdict(tabId, { decision: decision.kind, reason: decision.reason || 'confident', model: verdict.model }, context);
+      if (decision.kind === 'fallback') return fallback(decision.reason || 'uncertain_or_unsupported');
       if (decision.kind === 'verify') {
-        // This is a suggestion to the active model, never a successful done.
-        messages.push({ role: 'user', content: '[Runtime completion candidate: inspect the latest evidence and use the normal completion checks. If the task is complete, give the user a final response; otherwise continue or report the missing evidence. Jev is not proof of success.]' });
+        session.completionCandidate = true;
         session.disabled = true;
+        this.recordSystemOneVerdict(tabId, { decision: 'verify', reason: 'completion_candidate', model: verdict.model }, context);
         return null;
       }
-      if (decision.kind !== 'tools' || decision.calls.some(c => !allowed.has(c.name))) return null;
+      if (decision.kind !== 'tools' || decision.calls.some(call => !allowed.has(call.name))) return fallback('unsupported_tool');
+      this.recordSystemOneVerdict(tabId, { decision: 'tools', reason: 'confident', model: verdict.model }, context);
       session.queue = decision.calls.slice(1);
       return this._jevResultForCall(tabId, session, decision.calls[0]);
     } catch (error) {
+      session?.recordFallback();
       this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: this._isCostAllowanceError(error) ? 'cost_limit' : 'unavailable_or_invalid' }, context);
       return null;
     }
@@ -12706,7 +12749,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (!jevPending && Agent.STATE_CHANGE_TOOLS.has(fnName)) {
         const session = this._jevSessions?.get(tabId);
-        if (session) { session.snapshot = null; session.queue = []; }
+        if (session) { session.snapshot = null; session.queue = []; session.completionCandidate = false; }
       }
       if (fnName !== 'done') {
         this._markPlanExecutionToolCall(tabId, fnName, toolResult, {
@@ -41095,12 +41138,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const modelMessagesForRun = () => {
       const rawMessages = rawModelMessagesForRun();
       if (!sourceBoundTrimmedMessages || !(sourceBoundMessagesAtTrim instanceof Set)) {
-        return rawMessages;
+        return this._jevModelMessages(tabId, rawMessages);
       }
       const appendedMessages = rawMessages.filter((message, index) =>
         index > 0 && !sourceBoundMessagesAtTrim.has(message)
       );
-      return [...sourceBoundTrimmedMessages, ...appendedMessages];
+      return this._jevModelMessages(tabId, [...sourceBoundTrimmedMessages, ...appendedMessages]);
     };
     const emergencyTrimMessagesForRun = () => {
       if (!selectionOnly && !standaloneChatRun) {
@@ -42485,12 +42528,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const modelMessagesForRun = () => {
       const rawMessages = rawModelMessagesForRun();
       if (!sourceBoundTrimmedMessages || !(sourceBoundMessagesAtTrim instanceof Set)) {
-        return rawMessages;
+        return this._jevModelMessages(tabId, rawMessages);
       }
       const appendedMessages = rawMessages.filter((message, index) =>
         index > 0 && !sourceBoundMessagesAtTrim.has(message)
       );
-      return [...sourceBoundTrimmedMessages, ...appendedMessages];
+      return this._jevModelMessages(tabId, [...sourceBoundTrimmedMessages, ...appendedMessages]);
     };
     const emergencyTrimMessagesForRun = () => {
       if (!selectionOnly && !standaloneChatRun) {

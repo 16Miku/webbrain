@@ -1041,14 +1041,21 @@ page-authored ref strings are never parsed. Internal snapshots are stripped from
 public tool results and diagnostics. Identity, document, form structure, options,
 value and occlusion are checked again before dispatch. Frames, shadow roots,
 credential/file fields and unsupported actions fall back. Field values come from
-the active provider, then Jev maps independent fields in one request; each write
-is executed separately with a new observation. Labels must match the prepared
+the active provider only after a confident fill action/target is selected. The
+first uncached fill uses a second Jev request to map those prepared values;
+clicks, completion candidates and fallbacks do not prepare text. Cached values
+and queued independent writes avoid repeated preparation. Each write is
+executed separately with a new observation. Labels must match the prepared
 field purpose, and ambiguous labels fall back. Changed form/document context
 invalidates queued writes and cached values.
 
 Choice probability and confidence must both reach 85% for classifiers and 90%
 for browser decisions. Each Jev request has one second and no retry. Errors or
-low confidence fall back in the current step. Two unchanged observations after
+low confidence fall back in the current step. Two fallbacks on the same observed
+snapshot suspend further paid decisions until a new snapshot changes the
+context. This suspension is separate from the permanent run stop for unknown
+outcomes or no progress. Completion guidance is added only to the model's system
+message copy, never to persisted user messages. Two unchanged observations after
 Jev decisions disable the path for the rest of the run. Unknown outcomes and
 denied/cancelled calls also disable it. Strict Secret Mode, offline connectivity,
 run cancellation and model cost limits apply. `done` remains an active-model

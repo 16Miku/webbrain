@@ -69,9 +69,19 @@ for (const build of ['chrome', 'firefox']) {
     const session = new mod.JevFastSession(); session.observe(snapshot()); agent._jevSessions = new Map([[1, session]]);
     agent._jevPrepareValues = async () => [];
     agent.evaluateSystemOne = async () => ({ model: 'jev-1.13.0', answers: { operation: choice('done') } });
-    const messages = [];
+    const messages = [{ role: 'system', content: 'Original policy' }, { role: 'user', content: 'Save record' }];
+    const original = structuredClone(messages);
     const result = await agent._maybeJevFastTurn(1, 'Save record', messages, 'act', new Set(['get_accessibility_tree', 'done']), provider, {});
-    assert.equal(result, null); assert.equal(session.disabled, true); assert.match(messages[0].content, /not proof of success/);
+    assert.equal(result, null); assert.equal(session.disabled, true);
+    assert.deepEqual(messages, original);
+    const modelMessages = agent._jevModelMessages(1, messages);
+    assert.match(modelMessages[0].content, /not proof of success/);
+    assert.equal(modelMessages[0].role, 'system');
+    assert.equal(modelMessages.length, original.length);
+    assert.deepEqual(messages, original);
+    assert.deepEqual(modelMessages.filter(m => m.role === 'user'), original.filter(m => m.role === 'user'));
+    session.observe({ ...snapshot(), progress: 'new-observation' });
+    assert.equal(agent._jevModelMessages(1, messages), messages);
     assert.equal(agent._jevPendingCalls?.size || 0, 0);
   });
   test(`${build}: generated calls denied by available tool policy cannot be retried by Jev`, async () => {
@@ -112,6 +122,80 @@ for (const build of ['chrome', 'firefox']) {
     respond({ answers: { operation: choice('click'), click_target: choice('ref_3') } });
     assert.equal(await pending, null);
     assert.equal(agent._jevPendingCalls?.size || 0, 0);
+  });
+
+  test(`${build}: repeated fallbacks stop paid decisions until a changed snapshot, without rearming hard stops`, async () => {
+    for (const failure of ['fallback', 'low_confidence', 'service_error']) {
+      const provider = { name: 'test', model: 'active-model' }; const agent = new Agent({ getActive: () => provider });
+      Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, typesafeApiKey: 'synthetic' });
+      const session = new mod.JevFastSession(); session.observe(snapshot()); agent._jevSessions = new Map([[1, session]]);
+      let calls = 0, preparations = 0;
+      agent._jevPrepareValues = async () => { preparations++; return []; };
+      agent.evaluateSystemOne = async () => {
+        calls++;
+        if (failure === 'service_error') throw Error('Unavailable');
+        return { answers: { operation: choice(failure === 'fallback' ? 'fallback' : 'click', failure === 'low_confidence' ? .5 : .95) } };
+      };
+      const decide = () => agent._maybeJevFastTurn(1, 'Click Save', [], 'act', new Set(['get_accessibility_tree', 'click_ax']), provider, {});
+      for (let i = 0; i < 5; i++) { session.observe(snapshot()); assert.equal(await decide(), null); }
+      assert.equal(calls, 2, failure); assert.equal(preparations, 0); assert.equal(session.fallbackBlocked, true);
+      session.snapshot = null; // A main-model mutation requests a fresh observation.
+      session.observe(snapshot()); await decide(); assert.equal(calls, 2);
+      session.observe({ ...snapshot(), progress: 'changed' }); await decide(); assert.equal(calls, 3);
+      session.dispatched({ outcomeUnknown: true });
+      session.observe({ ...snapshot(), progress: 'changed-again' }); await decide(); assert.equal(calls, 3);
+    }
+  });
+
+  test(`${build}: click-only decisions and uncertain fill targets never invoke value preparation`, async () => {
+    const provider = { name: 'test', model: 'active-model' }; const agent = new Agent({ getActive: () => provider });
+    Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, typesafeApiKey: 'synthetic' });
+    const session = new mod.JevFastSession(); session.observe(snapshot()); agent._jevSessions = new Map([[1, session]]);
+    let preparations = 0;
+    agent._jevPrepareValues = async () => { preparations++; return []; };
+    agent.evaluateSystemOne = async () => ({ answers: { operation: choice('click'), click_target: choice('ref_3') } });
+    const allowed = new Set(['get_accessibility_tree', 'click_ax', 'set_field']);
+    const result = await agent._maybeJevFastTurn(1, 'Click Send', [], 'act', allowed, provider, {});
+    assert.equal(result.toolCalls[0].function.name, 'click_ax');
+    agent.evaluateSystemOne = async () => ({ answers: { operation: choice('fill'), fill_target: choice('ref_1', .89) } });
+    assert.equal(await agent._maybeJevFastTurn(1, 'Fill Name Ada', [], 'act', allowed, provider, {}), null);
+    assert.equal(preparations, 0);
+  });
+
+  test(`${build}: the first confident fill prepares once then maps values; cached fields avoid another LLM call`, async () => {
+    const provider = { name: 'test', model: 'active-model' }; const agent = new Agent({ getActive: () => provider });
+    Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, typesafeApiKey: 'synthetic' });
+    const session = new mod.JevFastSession(); session.observe(snapshot()); agent._jevSessions = new Map([[1, session]]);
+    const sequence = []; let prepared = 0;
+    agent._chatWithCostAllowance = async () => {
+      sequence.push('llm'); prepared++;
+      return { content: JSON.stringify({ values: [{ purpose: 'Name', text: 'Ada' }, { purpose: 'Email', text: 'ada@example.com' }] }) };
+    };
+    agent.evaluateSystemOne = async (_tab, _client, args) => {
+      sequence.push('jev');
+      return { answers: { operation: choice('fill'), fill_target: choice('ref_1'), ...(args.questions.value_0 ? { value_0: choice('ref_1'), value_1: choice('ref_2') } : {}) } };
+    };
+    const decide = () => agent._maybeJevFastTurn(1, 'Fill Name Ada and Email ada@example.com', [], 'act', new Set(['get_accessibility_tree', 'set_field']), provider, {});
+    const result = await decide();
+    assert.equal(JSON.parse(result.toolCalls[0].function.arguments).text, 'Ada');
+    assert.deepEqual(sequence, ['jev', 'llm', 'jev']);
+    const queued = await decide(); assert.equal(JSON.parse(queued.toolCalls[0].function.arguments).text, 'ada@example.com');
+    await decide(); assert.equal(prepared, 1); assert.deepEqual(sequence, ['jev', 'llm', 'jev', 'jev']);
+  });
+
+  test(`${build}: run replacement during lazy preparation cannot send a mapping request or tool call`, async () => {
+    const provider = { name: 'test', model: 'active-model' }; const agent = new Agent({ getActive: () => provider });
+    Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, typesafeApiKey: 'synthetic' });
+    agent._systemOneGenerations = new Map([[1, 1]]);
+    const session = new mod.JevFastSession(); session.observe(snapshot()); agent._jevSessions = new Map([[1, session]]);
+    let entered, resolveValues, calls = 0;
+    const ready = new Promise(resolve => { entered = resolve; });
+    agent._jevPrepareValues = async () => { entered(); return new Promise(resolve => { resolveValues = resolve; }); };
+    agent.evaluateSystemOne = async () => { calls++; return { answers: { operation: choice('fill'), fill_target: choice('ref_1') } }; };
+    const pending = agent._maybeJevFastTurn(1, 'Fill Name Ada', [], 'act', new Set(['get_accessibility_tree', 'set_field']), provider, {});
+    await ready; agent._systemOneGenerations.set(1, 2);
+    resolveValues([{ purpose: 'Name', text: 'Ada' }]);
+    assert.equal(await pending, null); assert.equal(calls, 1); assert.equal(agent._jevPendingCalls?.size || 0, 0);
   });
 
 }
