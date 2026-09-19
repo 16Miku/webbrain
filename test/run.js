@@ -112754,6 +112754,77 @@ test('planner failure continuation preserves Act mode and runtime guards', async
   }
 });
 
+test('post-navigation document reads reconcile uncertain generic action evidence without bypassing submission proof', () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const makeRun = (tabId, requiresSubmission) => {
+      const agent = new AgentClass({ getActive: () => ({ promptTier: 'full', supportsVision: false }) });
+      agent._persist = () => {};
+      agent.conversationModes.set(tabId, 'act');
+      agent._runModeOverrides.set(tabId, 'act');
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'system' },
+        { role: 'user', content: 'Search Google for emre sokullu and show the results.' },
+      ]);
+      const token = agent._beginCompletionInvariant(tabId);
+      const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+        requestKind: 'execute', requiresStateChange: true, requiresSubmission,
+      });
+      agent._lastAxScopes.set(tabId, { documentToken: 'google-home', pageUrl: 'https://www.google.com/' });
+      return { agent, guard, token };
+    };
+    const action = {
+      success: true,
+      verified: true,
+      outcomeUnknown: true,
+      pageUrlChanged: true,
+      previousUrl: 'https://www.google.com/',
+      currentUrl: 'https://www.google.com/search?q=emre+sokullu',
+    };
+    const tabId = label === 'chrome' ? 9163 : 9164;
+    const { agent, guard, token } = makeRun(tabId, false);
+
+    // A read that happened before the navigation cannot satisfy a later
+    // uncertain action, and a failed post-action read cannot reconcile it.
+    agent._markPlanExecutionToolCall(tabId, 'get_accessibility_tree', {
+      success: true, pageUrl: 'https://www.google.com/', pageContent: 'Google home',
+    });
+    agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, {
+      success: true, pageUrl: 'https://www.google.com/', pageContent: 'Google home',
+    });
+    agent._markPlanExecutionToolCall(tabId, 'set_field', action, { consequential: true });
+    agent._recordCompletionToolResult(tabId, 'set_field', { ref_id: 'ref_search', text: 'emre sokullu', submit: true }, action);
+    assert.equal(guard.successfulConsequentialToolCalls, 0, `${label}: uncertain navigation counted before a new document read`);
+    assert.equal(agent._executionEvidenceSatisfied(guard), false, `${label}: pre-action read satisfied state-changing execution`);
+    agent._lastAxScopes.set(tabId, { documentToken: 'google-results', pageUrl: action.currentUrl });
+    const failedRead = { success: false, pageUrl: action.currentUrl, error: 'tree unavailable' };
+    agent._markPlanExecutionToolCall(tabId, 'get_accessibility_tree', failedRead);
+    agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, failedRead);
+    assert.equal(guard.successfulConsequentialToolCalls, 0, `${label}: failed result read reconciled the navigation`);
+
+    const resultsRead = { success: true, pageUrl: action.currentUrl, pageContent: 'Search results for emre sokullu' };
+    agent._markPlanExecutionToolCall(tabId, 'get_accessibility_tree', resultsRead);
+    agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, resultsRead);
+    assert.equal(guard.successfulConsequentialToolCalls, 1, `${label}: fresh result-page read did not reconcile the navigation`);
+    assert.equal(agent._executionEvidenceSatisfied(guard), true, `${label}: reconciled navigation did not satisfy generic execution evidence`);
+    assert.equal(agent._completionDoneBlock(tabId, 'done', { outcome: 'success' }), null, `${label}: explicit post-navigation read left completion debt`);
+    assert.equal(agent._planOnlyTerminalDecision(tabId, 'Search results are displayed.', { viaDone: true, outcome: 'success' }), null,
+      `${label}: a verified search navigation still forced an extra model turn`);
+    agent._clearCompletionInvariant(tabId, token);
+
+    const submitTabId = tabId + 10;
+    const submitted = makeRun(submitTabId, true);
+    submitted.agent._markPlanExecutionToolCall(submitTabId, 'set_field', action, { consequential: true });
+    submitted.agent._recordCompletionToolResult(submitTabId, 'set_field', { ref_id: 'ref_search', text: 'emre sokullu', submit: true }, action);
+    submitted.agent._lastAxScopes.set(submitTabId, { documentToken: 'google-results', pageUrl: action.currentUrl });
+    submitted.agent._markPlanExecutionToolCall(submitTabId, 'get_accessibility_tree', resultsRead);
+    submitted.agent._recordCompletionToolResult(submitTabId, 'get_accessibility_tree', {}, resultsRead);
+    assert.equal(submitted.guard.successfulConsequentialToolCalls, 1, `${label}: submission fixture did not reconcile generic action evidence`);
+    assert.equal(submitted.agent._executionEvidenceSatisfied(submitted.guard), false,
+      `${label}: generic navigation reconciliation bypassed required submission evidence`);
+    submitted.agent._clearCompletionInvariant(submitTabId, submitted.token);
+  }
+});
+
 test('planner gate: retries reasoning-only planner responses for final JSON', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {

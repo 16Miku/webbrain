@@ -1,6 +1,6 @@
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData } from './systemone-evidence.js';
-import { createSystemOneJudge, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
+import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
 import { validateToolArguments } from './tool-arguments.js';
@@ -6814,7 +6814,10 @@ export class Agent extends LoopDetector {
       const choice = confidentChoice(verdict.answers.classification, JEV_CLASSIFIER_THRESHOLD);
       this.recordSystemOneVerdict(tabId, { decision: choice ? 'classification' : 'fallback', reason: choice ? 'confident' : 'low_confidence', model: verdict.model }, context);
       return this._checkAbort(tabId) || !context.isCurrent() ? null : choice;
-    } catch { this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: 'classification_unavailable_or_invalid' }, context); return null; }
+    } catch (error) {
+      this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `classification_${this._isCostAllowanceError(error) ? 'cost_limit' : systemOneFailureReason(error)}` }, context);
+      return null;
+    }
   }
 
   _jevValueContext(task, snapshot) {
@@ -6937,8 +6940,14 @@ export class Agent extends LoopDetector {
       session.queue = decision.calls.slice(1);
       return this._jevResultForCall(tabId, session, decision.calls[0]);
     } catch (error) {
-      session?.recordFallback();
-      this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: this._isCostAllowanceError(error) ? 'cost_limit' : 'unavailable_or_invalid' }, context);
+      const costLimit = this._isCostAllowanceError(error);
+      const reason = costLimit ? 'cost_limit' : systemOneFailureReason(error);
+      // A response-contract failure will recur for the same client/server
+      // pairing and may already be billable. Stop Jev for this run after the
+      // first one instead of paying again whenever the snapshot changes.
+      if (costLimit || isSystemOneResponseContractError(error)) session?.hardStop();
+      else session?.recordFallback();
+      this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason }, context);
       return null;
     }
   }
@@ -29125,6 +29134,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // the immediately preceding run; ordinary user turns always start at 0.
       successfulTaskToolCalls: carryMatches ? carried.successfulTaskToolCalls : 0,
       successfulConsequentialToolCalls: carryMatches ? carried.successfulConsequentialToolCalls : 0,
+      pendingNavigatedConsequentialAction: null,
       successfulDownloadToolCalls: carryMatches ? (carried.successfulDownloadToolCalls || 0) : 0,
       pendingDownloadIds: carryMatches && Array.isArray(carried.pendingDownloadIds)
         ? [...carried.pendingDownloadIds]
@@ -29358,6 +29368,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // on the completion invariant's required follow-up page observation.
     const unverifiedFindText = name === 'find_text'
       && (result?.found !== true || result?.verified !== true || result?.inconclusive === true);
+    if (state?.enabled && consequential) {
+      const previousUrl = this._normalizeUrl(result?.previousUrl || '');
+      const currentUrl = this._normalizeUrl(result?.currentUrl || result?.pageUrl || result?.url || '');
+      const completion = this.completionInvariants.get(tabId);
+      const navigatedButUncertain = result?.success === true
+        && result?.verified === true
+        && result?.outcomeUnknown === true
+        && result?.pageUrlChanged === true
+        && !!previousUrl
+        && !!currentUrl
+        && previousUrl !== currentUrl;
+      state.pendingNavigatedConsequentialAction = navigatedButUncertain
+        ? {
+            actionSequence: Number(completion?.sequence || 0) + 1,
+            currentUrl,
+            previousDocument: String(this._lastAxScopes.get(tabId)?.documentToken || ''),
+            taskKey: state.taskKey,
+          }
+        : null;
+    }
     if (state?.enabled && download) {
       const pendingIds = this._pendingDownloadIdsFromResult(name, result);
       state.pendingDownloadIds = [...new Set([...state.pendingDownloadIds, ...pendingIds])];
@@ -29376,6 +29406,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // window-size probe observes nothing the answer can rest on.
     const contentRead = this.constructor.WORKFLOW_CONTENT_READ_TOOLS.has(name);
     const observationUrl = contentRead ? this._workflowObservationUrl(tabId, result) : '';
+    const pendingNavigation = state.pendingNavigatedConsequentialAction;
+    const completion = this.completionInvariants.get(tabId);
+    const observedDocument = String(this._lastAxScopes.get(tabId)?.documentToken || '');
+    if (pendingNavigation
+        && COMPLETION_DOCUMENT_URL_TOOLS.has(name)
+        && completion?.verificationDebt === true
+        && completion?.lastAction?.uncertain === true
+        && Number(completion.lastAction.sequence || 0) === pendingNavigation.actionSequence
+        && pendingNavigation.taskKey === state.taskKey
+        && this._normalizeUrl(observationUrl) === pendingNavigation.currentUrl
+        && (!pendingNavigation.previousDocument || !observedDocument
+          || pendingNavigation.previousDocument !== observedDocument)) {
+      // A navigation-producing action can report an unknown outcome because
+      // its original document disappeared before the field/click verifier
+      // returned. A later successful read of the resulting document is the
+      // missing execution evidence. This only reconciles the generic plan
+      // counter; submission, publication, messaging, payment and workflow
+      // contracts below still require their own terminal evidence.
+      state.successfulConsequentialToolCalls += 1;
+      state.pendingNavigatedConsequentialAction = null;
+    }
     if (contentRead && observationUrl && state.workflowRequiredJobEvidence) {
       const observedIdentity = this._workflowJobScopeIdentity(observationUrl);
       const seen = Array.isArray(state.workflowObservedScopeIdentities)

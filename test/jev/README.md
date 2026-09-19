@@ -43,7 +43,9 @@ disable the AX-only path. `reason=current_visual_input` means a current user
 attachment, explicit screenshot-tool result or unknown non-text input kept that
 decision on the active provider. Sensitive controls use
 `reason=sensitive_controls`. No screenshot pixels or bounded Jev evidence are
-included in the export.
+included in the export. Response-contract failures use a specific bounded
+reason such as `invalid_distribution` or `unexpected_model`; the raw response is
+not exported, and the first such response disables Jev for the rest of that run.
 
 ## Settings and documentation checks
 
@@ -74,4 +76,8 @@ latencies. No credentials or raw trace have been copied into this repository.
 
 Jev completion is only a candidate. It neither clears validation failure state
 nor bypasses the completion guards, so this particular loop must not be claimed
-as fixed by enabling Jev.
+as fixed by enabling Jev. Separately, a successful navigation-producing action
+whose original-document result is uncertain can now be reconciled by a later
+successful read of the resulting URL. This removes a redundant generic `done`
+recovery turn for search-like navigation while preserving all job-specific
+submit, send, publish and payment evidence requirements.

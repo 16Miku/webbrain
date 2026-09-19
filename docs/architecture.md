@@ -1043,7 +1043,9 @@ page-authored ref strings are never parsed. Internal snapshots are stripped from
 public tool results and diagnostics. Identity, document, form structure, options,
 value and occlusion are checked again before dispatch. Frames, shadow roots,
 unsupported actions and pages containing credential, payment, OTP or file controls
-fall back as a whole. Field values come from
+fall back as a whole. The request includes only operations that have observed
+candidates and omits target questions that would contain only the `none` choice.
+Field values come from
 the active provider only after a confident fill action/target is selected. The
 first uncached fill uses a second Jev request to map those prepared values;
 clicks, completion candidates and fallbacks do not prepare text. Cached values
@@ -1056,8 +1058,10 @@ Choice probability and confidence must both reach 85% for classifiers and 90%
 for browser decisions. Each Jev request has one second and no retry. Errors or
 low confidence fall back in the current step. Two fallbacks on the same observed
 snapshot suspend further paid decisions until a new snapshot changes the
-context. This suspension is separate from the permanent run stop for unknown
-outcomes or no progress. Completion guidance is added only to the model's system
+context. A malformed usage/model/answer response permanently stops Jev for that
+run after the first response, even if the page changes, and the trace stores a
+bounded reason code rather than the response. This suspension is separate from
+the permanent run stop for unknown outcomes or no progress. Completion guidance is added only to the model's system
 message copy, never to persisted user messages. Two unchanged observations after
 Jev decisions disable the path for the rest of the run. Unknown outcomes and
 denied/cancelled calls also disable it. Strict Secret Mode, offline connectivity,
@@ -1065,6 +1069,14 @@ run cancellation and model cost limits apply. `done` remains an active-model
 operation using existing evidence checks. RAG, skill routing and direct watch
 poll optimization are not part of this integration. See `test/jev/README.md` for
 benchmark protocol and its unverified live-performance status.
+
+An action such as a submitted search field can lose its original-document
+verification while successfully navigating. When that result is successful,
+verified, marked `outcomeUnknown`, and reports a real URL change, a later
+successful read of the resulting URL can reconcile the generic plan-execution
+counter. A read from before the action, a failed read, or a different document
+cannot do so. This does not satisfy submit/send/publish/payment or site-workflow
+terminal contracts; those still require their existing bound evidence.
 
 Initial-page and automatic browser screenshots do not make the AX-only path
 ineligible, and their pixels are never included in a Jev request. A current user

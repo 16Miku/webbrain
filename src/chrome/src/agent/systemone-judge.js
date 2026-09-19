@@ -21,11 +21,56 @@ export const SYSTEM_ONE_DEFAULT_THRESHOLD = 0.7;
 export const SYSTEM_ONE_MIN_COMPLETENESS_SCORE = 1;
 
 const QUESTION_TYPES = new Set(['choice', 'score', 'noul']);
+const RESPONSE_CONTRACT_ERROR_CODES = new Set([
+  'JEV_INVALID_RESPONSE_JSON',
+  'JEV_INVALID_USAGE',
+  'JEV_UNEXPECTED_MODEL',
+  'JEV_INVALID_ANSWER_MAP',
+  'JEV_INVALID_ANSWER_TYPE',
+  'JEV_INVALID_PROBABILITY',
+  'JEV_INVALID_DISTRIBUTION',
+  'JEV_INVALID_CHOICE',
+  'JEV_INVALID_SCORE',
+]);
 
 function isRecord(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+function systemOneError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+export function isSystemOneResponseContractError(error) {
+  return RESPONSE_CONTRACT_ERROR_CODES.has(error?.code);
+}
+
+export function systemOneFailureReason(error) {
+  const mapped = {
+    JEV_INVALID_RESPONSE_JSON: 'invalid_response_json',
+    JEV_INVALID_USAGE: 'invalid_usage',
+    JEV_UNEXPECTED_MODEL: 'unexpected_model',
+    JEV_INVALID_ANSWER_MAP: 'invalid_answer_map',
+    JEV_INVALID_ANSWER_TYPE: 'invalid_answer_type',
+    JEV_INVALID_PROBABILITY: 'invalid_probability',
+    JEV_INVALID_DISTRIBUTION: 'invalid_distribution',
+    JEV_INVALID_CHOICE: 'invalid_choice',
+    JEV_INVALID_SCORE: 'invalid_score',
+  };
+  if (mapped[error?.code]) return mapped[error.code];
+  const status = Number(error?.status || 0);
+  if (status === 401 || status === 403) return 'authentication';
+  if (status === 429) return 'rate_limit';
+  if (status === 529) return 'service_overloaded';
+  if (status >= 500) return 'service_error';
+  const message = String(error?.message || '').toLowerCase();
+  if (/cancelled|canceled|aborted/.test(message)) return 'cancelled';
+  if (/timed out|timeout/.test(message)) return 'timeout';
+  return 'service_unavailable';
 }
 
 function abortError(signal) {
@@ -81,8 +126,8 @@ function validateQuestions(questions) {
     if (question.instructions == null) {
       throw new Error(`TypeSafe System One question "${id}" is missing instructions.`);
     }
-    if (question.type === 'choice' && !isRecord(question.criteria)) {
-      throw new Error(`TypeSafe System One choice question "${id}" needs criteria.`);
+    if (question.type === 'choice' && (!isRecord(question.criteria) || Object.keys(question.criteria).length < 2)) {
+      throw new Error(`TypeSafe System One choice question "${id}" needs at least two criteria.`);
     }
     if (question.type === 'score' && (!Array.isArray(question.criteria) || question.criteria.length < 2)) {
       throw new Error(`TypeSafe System One score question "${id}" needs at least two criteria.`);
@@ -106,12 +151,12 @@ export const SYSTEM_ONE_COST_PROVIDER = Object.freeze({
 });
 
 export function validateSystemOneAnswers(answers, questions) {
-  if (!isRecord(answers)) throw new Error('Invalid Jev answer map.');
+  if (!isRecord(answers)) throw systemOneError('JEV_INVALID_ANSWER_MAP', 'Invalid Jev answer map.');
   for (const [id, question] of Object.entries(questions)) {
     const answer = answers[id];
-    if (!isRecord(answer) || answer.type !== question.type) throw new Error('Invalid Jev answer type.');
+    if (!isRecord(answer) || answer.type !== question.type) throw systemOneError('JEV_INVALID_ANSWER_TYPE', 'Invalid Jev answer type.');
     if (question.type === 'noul') {
-      if (!unitNumber(answer.noul)) throw new Error('Invalid Jev probability.');
+      if (!unitNumber(answer.noul)) throw systemOneError('JEV_INVALID_PROBABILITY', 'Invalid Jev probability.');
       continue;
     }
     const keys = question.type === 'choice' ? Object.keys(question.criteria) : question.criteria.map((_, i) => String(i));
@@ -119,15 +164,15 @@ export function validateSystemOneAnswers(answers, questions) {
       || Object.keys(answer.probabilities).length !== keys.length
       || keys.some(key => !unitNumber(answer.probabilities[key]))
       || Math.abs(keys.reduce((sum, key) => sum + answer.probabilities[key], 0) - 1) > 0.001) {
-      throw new Error('Invalid Jev distribution.');
+      throw systemOneError('JEV_INVALID_DISTRIBUTION', 'Invalid Jev distribution.');
     }
     if (question.type === 'choice') {
-      if (!keys.includes(answer.choice) || keys.some(key => answer.probabilities[key] > answer.probabilities[answer.choice] + 1e-6)) throw new Error('Invalid Jev choice.');
+      if (!keys.includes(answer.choice) || keys.some(key => answer.probabilities[key] > answer.probabilities[answer.choice] + 1e-6)) throw systemOneError('JEV_INVALID_CHOICE', 'Invalid Jev choice.');
     } else {
       const expected = keys.reduce((sum, key) => sum + Number(key) * answer.probabilities[key], 0);
       if (normalizeAnswerNumber(answer.score) == null || answer.score < 0 || answer.score > keys.length - 1
         || Math.abs(expected - answer.score) > 0.02 || !isRecord(answer.legend)
-        || keys.some(key => typeof answer.legend[key] !== 'string')) throw new Error('Invalid Jev score.');
+        || keys.some(key => typeof answer.legend[key] !== 'string')) throw systemOneError('JEV_INVALID_SCORE', 'Invalid Jev score.');
     }
   }
   return answers;
@@ -253,10 +298,16 @@ export function createSystemOneJudge({
             }
             throw requestError(status);
           }
-          const result = await abortable(response.json(), request.signal);
+          let result;
+          try {
+            result = await abortable(response.json(), request.signal);
+          } catch (error) {
+            if (request.signal.aborted) throw abortError(request.signal);
+            throw systemOneError('JEV_INVALID_RESPONSE_JSON', 'Invalid Jev response JSON.');
+          }
           const usage = result?.usage;
           if (!isRecord(usage) || !Number.isInteger(usage.input_tokens) || usage.input_tokens < 0
-            || !Number.isInteger(usage.output_tokens) || usage.output_tokens < 0) throw new Error('Invalid Jev usage.');
+            || !Number.isInteger(usage.output_tokens) || usage.output_tokens < 0) throw systemOneError('JEV_INVALID_USAGE', 'Invalid Jev usage.');
           const metadata = {
             model: SYSTEM_ONE_MODEL,
             usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens },
@@ -266,7 +317,7 @@ export function createSystemOneJudge({
           // Account for billable responses even when the answer contract is invalid.
           if (onUsage) await abortable(onUsage(metadata), request.signal);
           throwIfAborted(request.signal);
-          if (result.model !== SYSTEM_ONE_MODEL) throw new Error('Unexpected Jev model version.');
+          if (result.model !== SYSTEM_ONE_MODEL) throw systemOneError('JEV_UNEXPECTED_MODEL', 'Unexpected Jev model version.');
           validateSystemOneAnswers(result.answers, questions);
           return { ...metadata, answers: result.answers };
         }
