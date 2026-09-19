@@ -50102,6 +50102,13 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
       assert.match(prompt, /<untrusted_page_content id="ctx-[^"]+">\nselected page words\n<\/untrusted_page_content>/, `${label}: ${action} should wrap only the page selection`);
     }
 
+    const proofread = buildSelectionPrompt('A visibly cut wor', 'proofread');
+    assert.match(proofread, /Never infer or reconstruct text beyond its boundaries/, `${label}: proofreading may not invent missing source text`);
+    assert.match(proofread, /visibly cut mid-word/, `${label}: proofreading should detect an incomplete selection edge`);
+    assert.match(proofread, /tie every claimed error to exact selected wording/, `${label}: proofreading critiques must stay source-grounded`);
+    assert.match(proofread, /distinguish actual errors from optional style suggestions/, `${label}: proofreading should not present preferences as errors`);
+    assert.match(proofread, /one complete corrected version that fixes every listed error without unrelated additions/, `${label}: proofreading should reconcile its own issue list and avoid stale output`);
+
     const localizedPreset = buildSelectionPrompt('这里有 Electron 和 Tauri', 'explain', '', 'zh');
     assert.match(localizedPreset, /^Explain this selected text in plain language\. Respond in Chinese\./, `${label}: fixed selection actions should request the interface language`);
     assert.match(localizedPreset, /This English template does not set the reply language/, `${label}: English explain/quiz templates should not override the interface language`);
