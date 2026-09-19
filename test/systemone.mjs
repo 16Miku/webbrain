@@ -24,6 +24,24 @@ for (const build of ['chrome', 'firefox']) {
       const a = answers(); Object.assign(a.s, patch); assert.throws(() => mod.validateSystemOneAnswers(a, questions));
     }
     for (const value of [null, '', '0.8', false, NaN, .3, 1]) assert.equal(mod.normalizeSystemOneThreshold(value), .7);
+    assert.throws(
+      () => mod.validateSystemOneAnswers({}, questions),
+      error => error.code === 'JEV_INVALID_ANSWER_TYPE' && mod.isSystemOneResponseContractError(error),
+    );
+    assert.equal(mod.systemOneFailureReason(Object.assign(new Error(), { code: 'JEV_INVALID_DISTRIBUTION' })), 'invalid_distribution');
+    assert.equal(mod.systemOneFailureReason(Object.assign(new Error(), { status: 429 })), 'rate_limit');
+  });
+  test(`${build}: singleton Choice requests fail locally before a service call`, async () => {
+    let calls = 0;
+    const judge = mod.createSystemOneJudge({ fetchImpl: async () => { calls++; throw new Error('must not call'); } });
+    await assert.rejects(
+      judge.evaluate({
+        apiKey: 'test', state: {},
+        questions: { target: { type: 'choice', instructions: 'Choose', criteria: { none: 'No target' } } },
+      }),
+      /at least two criteria/,
+    );
+    assert.equal(calls, 0);
   });
   test(`${build}: one deadline covers retry backoff and an uncooperative fetch`, async () => {
     let calls = 0;
@@ -40,7 +58,10 @@ for (const build of ['chrome', 'firefox']) {
     await entered.promise; controller.abort(new Error('cancelled')); await assert.rejects(result, /cancelled/); assert.equal(calls, 1);
     let usage;
     const invalid = mod.createSystemOneJudge({ fetchImpl: async () => ({ ok: true, json: async () => ({ model: mod.SYSTEM_ONE_MODEL, answers: {}, usage: { input_tokens: 1000, output_tokens: 0 } }) }) });
-    await assert.rejects(invalid.evaluate({ apiKey: 'test', state: {}, questions, onUsage: m => { usage = m; } }));
+    await assert.rejects(
+      invalid.evaluate({ apiKey: 'test', state: {}, questions, onUsage: m => { usage = m; } }),
+      error => error.code === 'JEV_INVALID_ANSWER_TYPE' && mod.systemOneFailureReason(error) === 'invalid_answer_type',
+    );
     assert.equal(usage.model, 'jev-1.13.0'); assert.equal(usage.estimatedCostUsd, .000042);
   });
   test(`${build}: evidence excludes summary, history, credentials and pre-action observations`, () => {

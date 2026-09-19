@@ -681,5 +681,8 @@ non-text input keeps that decision on the active chat provider. That provider al
 prepares free text and gives the final answer; Jev receives neither screenshots nor
 full conversation history for browser decisions. Separate requests use the same
 pinned model, cost accounting and untrusted-data boundaries, with a one-second
-deadline and zero retries. Exported traces show Jev decisions and skip reasons but
-never the bounded request evidence.
+deadline and zero retries. Unsupported operations and their target questions are
+omitted rather than sending a one-option placeholder Choice. A malformed model,
+usage or answer response stops further Jev requests for that run; exported traces
+show only its bounded reason code along with Jev decisions and usage, never the
+response or bounded request evidence.
