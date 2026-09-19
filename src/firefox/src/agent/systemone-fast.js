@@ -2,6 +2,49 @@ import { redactSystemOneText, wrapSystemOneData } from './systemone-evidence.js'
 export const JEV_CLASSIFIER_THRESHOLD = .85;
 export const JEV_BROWSER_THRESHOLD = .90;
 export const JEV_FAST_KEYS = ['systemOneEnabled', 'typesafeApiKey', 'systemOneFastClassifications', 'systemOneFastBrowser'];
+
+function messageText(message) {
+  if (typeof message?.content === 'string') return message.content;
+  if (!Array.isArray(message?.content)) return '';
+  return message.content
+    .filter(block => block?.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text)
+    .join('\n');
+}
+
+function hasNonTextBlock(message) {
+  return Array.isArray(message?.content)
+    && message.content.some(block => block?.type !== 'text');
+}
+
+// Only a visual input that the main model has not consumed yet blocks Jev.
+// Initial and automatic browser captures are auxiliary context; Jev makes its
+// decision from a fresh bounded AX snapshot and never receives those pixels.
+// User attachments and explicit screenshot-tool results still require the main
+// model for visual reasoning. Looking only after the latest assistant message
+// lets Jev resume after that model has consumed an explicit visual observation.
+export function jevVisualInputRequiresMainModel(messages) {
+  if (!Array.isArray(messages)) return false;
+  let start = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'assistant') {
+      start = index + 1;
+      break;
+    }
+  }
+  for (let index = start; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (!hasNonTextBlock(message)) continue;
+    const text = messageText(message);
+    if (text.includes('[UNTRUSTED USER ATTACHMENTS')) return true;
+    if (/\[UNTRUSTED SCREENSHOT[^\]]*Screenshot from your [^\]]+ call\./i.test(text)) return true;
+    if (/\[UNTRUSTED SCREENSHOT[^\]]*Capture ID:/i.test(text)) continue;
+    if (/\[UNTRUSTED CAPTURE[^\]]*Capture ID:/i.test(text)) continue;
+    return true;
+  }
+  return false;
+}
+
 export function confidentChoice(answer, threshold) {
   return answer?.type === 'choice' && typeof answer.confidence === 'number' && answer.confidence >= threshold
     && typeof answer.probabilities?.[answer.choice] === 'number' && answer.probabilities[answer.choice] >= threshold
@@ -10,7 +53,7 @@ export function confidentChoice(answer, threshold) {
 const question = (instructions, criteria) => ({ type: 'choice', instructions, criteria });
 const NONE = { none: 'No supported target; use the main model.' };
 export function buildJevBrowserRequest(task, snapshot, values = []) {
-  if (!snapshot || !Array.isArray(snapshot.controls) || !snapshot.documentToken || !snapshot.structure) return null;
+  if (!snapshot || snapshot.hasSensitiveControls === true || !Array.isArray(snapshot.controls) || !snapshot.documentToken || !snapshot.structure) return null;
   const controls = snapshot.controls.slice(0, 24);
   const targets = kind => Object.fromEntries(controls.filter(c => c.kinds.includes(kind)).map(c => [c.ref, `Observed ${kind} target ${c.ref} in state.controls.`]));
   const choices = { click: 'Click a visible control or link, including a requested final submit/save/send.', fill: 'Fill fields required by the user task. Values can be prepared after this action is selected.', select: 'Select an observed native option.', check: 'Set a checkbox state.', scroll_down: 'Scroll down to reveal controls.', scroll_up: 'Scroll up.', wait: 'Wait for the page to settle.', done: 'Candidate completion: ask the main model to verify evidence and respond.', fallback: 'Unsupported, ambiguous, visual, iframe, shadow, upload, keyboard, code or WebMCP work: use the main model.' };
@@ -101,7 +144,7 @@ export class JevFastSession {
   get fallbackBlocked() { return this.fallbackCount >= 2; }
   recordFallback() { this.fallbackCount++; this.queue = []; }
   observe(snapshot) {
-    const context = JSON.stringify([snapshot?.documentToken, snapshot?.pageUrl, snapshot?.structure, snapshot?.progress]);
+    const context = JSON.stringify([snapshot?.documentToken, snapshot?.pageUrl, snapshot?.structure, snapshot?.progress, snapshot?.hasSensitiveControls === true]);
     if (context !== this.fallbackContext) {
       this.fallbackCount = 0;
       this.completionCandidate = false;
@@ -111,7 +154,8 @@ export class JevFastSession {
     else if (this.pending) this.noProgress = 0;
     this.pending = false;
     if (this.noProgress >= 2) this.disabled = true;
-    if (this.snapshot?.structure !== snapshot?.structure || this.snapshot?.documentToken !== snapshot?.documentToken) this.queue = [];
+    if (this.snapshot?.structure !== snapshot?.structure || this.snapshot?.documentToken !== snapshot?.documentToken
+        || (this.snapshot?.hasSensitiveControls === true) !== (snapshot?.hasSensitiveControls === true)) this.queue = [];
     this.snapshot = snapshot;
   }
   dispatched(result) {

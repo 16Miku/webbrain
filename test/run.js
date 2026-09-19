@@ -10995,6 +10995,25 @@ test('trace export: proves visual delivery without exporting pixels or OCR text'
   }
 });
 
+test('trace export: renders Jev routing and usage without private evidence', () => {
+  const runs = [{
+    run: { runId: 'jev-routing', userMessage: 'Save this record', status: 'done' },
+    events: [
+      { kind: 'note', data: { note: 'system_one', extra: { decision: 'skip', reason: 'current_visual_input' } } },
+      { kind: 'note', data: { note: 'system_one', extra: {
+        decision: 'usage', model: 'jev-1.13.0', latencyMs: 25, estimatedCostUsd: 0.001,
+        usage: { prompt_tokens: 12, completion_tokens: 2 }, evidence: 'PRIVATE_JEV_EVIDENCE',
+      } } },
+    ],
+  }];
+  for (const [label, serialize] of [['chrome', tracesToMarkdown], ['firefox', tracesToMarkdownFx]]) {
+    const { markdown } = serialize(runs);
+    assert.match(markdown, /⚡ Jev: skip · reason=current_visual_input/, `${label}: Jev skip reason missing`);
+    assert.match(markdown, /⚡ Jev: usage · model=jev-1\.13\.0 · 25 ms · \$0\.001000 · 12 in \/ 2 out/, `${label}: Jev usage missing`);
+    assert.doesNotMatch(markdown, /PRIVATE_JEV_EVIDENCE/, `${label}: Jev evidence leaked`);
+  }
+});
+
 test('trace export: reports prompt/runtime alignment without fingerprinting private content', () => {
   const runtimeContext = buildTrustedRuntimeContextCh({
     now: new Date('2026-08-11T10:00:00.000Z'),

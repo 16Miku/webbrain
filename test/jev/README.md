@@ -37,6 +37,14 @@ cost. Acceptance requires all 120 attempts, at least 25% lower median duration,
 no success regression and no wrong or repeated Jev actions. No general speed
 claim should be made from fixture-only or mocked results.
 
+For manual runs, exported traces now contain `⚡ Jev` entries for routing,
+fallback and usage. An initial or automatic browser screenshot does not by itself
+disable the AX-only path. `reason=current_visual_input` means a current user
+attachment, explicit screenshot-tool result or unknown non-text input kept that
+decision on the active provider. Sensitive controls use
+`reason=sensitive_controls`. No screenshot pixels or bounded Jev evidence are
+included in the export.
+
 ## Settings and documentation checks
 
 Configure Jev under **Settings → Assistive Models → Jev (TypeSafe)**, after

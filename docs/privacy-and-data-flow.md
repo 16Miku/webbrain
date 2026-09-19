@@ -668,8 +668,13 @@ or scheduler settings do not enable them. Fast classification sends bounded
 request context; fast browser decisions send the task, up to 24 structured AX
 controls, observed options and bounded prepared field values. These may include
 ordinary personal text explicitly supplied for a form. Credential-related tasks
-and credential/file controls are excluded from the fast path. Redaction remains
-best effort. The active chat provider prepares free text and gives the final
-answer; Jev receives neither screenshots nor full conversation history for
-browser decisions. Separate requests use the same pinned model, cost accounting
-and untrusted-data boundaries, with a one-second deadline and zero retries.
+and pages containing credential, payment, OTP or file controls are excluded from
+the fast path as a whole. Redaction remains best effort. Initial and automatic
+browser screenshots do not disable the AX-only path, but their pixels are never
+sent to Jev. A current user attachment, explicit screenshot-tool result or unknown
+non-text input keeps that decision on the active chat provider. That provider also
+prepares free text and gives the final answer; Jev receives neither screenshots nor
+full conversation history for browser decisions. Separate requests use the same
+pinned model, cost accounting and untrusted-data boundaries, with a one-second
+deadline and zero retries. Exported traces show Jev decisions and skip reasons but
+never the bounded request evidence.

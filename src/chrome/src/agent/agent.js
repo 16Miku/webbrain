@@ -1,4 +1,4 @@
-import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, JevFastSession } from './systemone-fast.js';
+import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData } from './systemone-evidence.js';
 import { createSystemOneJudge, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
@@ -6870,13 +6870,23 @@ export class Agent extends LoopDetector {
 
   async _maybeJevFastTurn(tabId, task, messages, mode, allowed, provider, costState, runOptions = {}, recovery = null) {
     const context = this.systemOneContext(tabId);
-    if (!['act', 'dev'].includes(mode) || recovery || runOptions.cloudRun || this.selectionGroundingScopes.has(tabId) || this._isStandaloneChatRun(runOptions)
-      || messages.some(message => Array.isArray(message?.content) && message.content.some(block => block?.type !== 'text'))
-      || this._checkAbort(tabId) || /log.?in|sign.?in|password|parola|giriş|oturum|credential|api.?key|secret/i.test(task)) return null;
+    if (!['act', 'dev'].includes(mode) || this._checkAbort(tabId)) return null;
     let session;
     try {
       const settings = await this._jevSettings();
-      if (!settings?.systemOneFastBrowser || !allowed.has('get_accessibility_tree') || !context.isCurrent()) return null;
+      if (!settings?.systemOneFastBrowser || !context.isCurrent()) return null;
+      let skipReason = '';
+      if (recovery) skipReason = 'recovery_turn';
+      else if (runOptions.cloudRun) skipReason = 'cloud_run';
+      else if (this.selectionGroundingScopes.has(tabId)) skipReason = 'selection_grounded';
+      else if (this._isStandaloneChatRun(runOptions)) skipReason = 'standalone_chat';
+      else if (jevVisualInputRequiresMainModel(messages)) skipReason = 'current_visual_input';
+      else if (/log.?in|sign.?in|password|passwd|passcode|\b(?:otp|token|secret)\b|one.?time.?code|parola|giriş|oturum|credential|api.?key/i.test(task)) skipReason = 'sensitive_task';
+      else if (!allowed.has('get_accessibility_tree')) skipReason = 'tool_policy';
+      if (skipReason) {
+        this.recordSystemOneVerdict(tabId, { decision: 'skip', reason: skipReason }, context);
+        return null;
+      }
       this._jevSessions ??= new Map();
       session = this._jevSessions.get(tabId);
       if (!session) { session = new JevFastSession(); this._jevSessions.set(tabId, session); }
@@ -6891,6 +6901,7 @@ export class Agent extends LoopDetector {
         this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason }, context);
         return null;
       };
+      if (session.snapshot.hasSensitiveControls === true) return fallback('sensitive_controls');
       const taskText = String(task).slice(0, 4000);
       const cached = session.valueContext === this._jevValueContext(taskText, session.snapshot) ? session.values || [] : [];
       let request = buildJevBrowserRequest(taskText, session.snapshot, cached);
