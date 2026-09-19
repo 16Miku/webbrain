@@ -50109,6 +50109,13 @@ test('selection shortcut builds allowlisted prompts with an untrusted selection 
       assert.match(prompt, /<untrusted_page_content id="ctx-[^"]+">\nselected page words\n<\/untrusted_page_content>/, `${label}: ${action} should wrap only the page selection`);
     }
 
+    const proofread = buildSelectionPrompt('A visibly cut wor', 'proofread');
+    assert.match(proofread, /Never infer or reconstruct text beyond its boundaries/, `${label}: proofreading may not invent missing source text`);
+    assert.match(proofread, /visibly cut mid-word/, `${label}: proofreading should detect an incomplete selection edge`);
+    assert.match(proofread, /tie every claimed error to exact selected wording/, `${label}: proofreading critiques must stay source-grounded`);
+    assert.match(proofread, /distinguish actual errors from optional style suggestions/, `${label}: proofreading should not present preferences as errors`);
+    assert.match(proofread, /one complete corrected version that fixes every listed error without unrelated additions/, `${label}: proofreading should reconcile its own issue list and avoid stale output`);
+
     const localizedPreset = buildSelectionPrompt('这里有 Electron 和 Tauri', 'explain', '', 'zh');
     assert.match(localizedPreset, /^Explain this selected text in plain language\. Respond in Chinese\./, `${label}: fixed selection actions should request the interface language`);
     assert.match(localizedPreset, /This English template does not set the reply language/, `${label}: English explain/quiz templates should not override the interface language`);
@@ -51501,6 +51508,24 @@ test('selection prompt display formatter hides untrusted wrappers from the chat 
       formatSelectionPromptForDisplay(summarize),
       'Summarize this selected text clearly and concisely.\n\nSelected text:\npage words',
       `${label}: fixed actions should keep their instruction and show the selection cleanly`,
+    );
+
+    const proofread = buildSelectionPrompt('A visibly cut wor', 'proofread');
+    const proofreadDisplay = formatSelectionPromptForDisplay(proofread);
+    assert.equal(
+      proofreadDisplay,
+      'Proofread this selected text.\n\nSelected text:\nA visibly cut wor',
+      `${label}: proofread should keep its guardrails model-facing and use a concise display label`,
+    );
+    assert.doesNotMatch(proofreadDisplay, /Never infer|visibly cut mid-word|exact selected wording/, `${label}: proofread display must hide model-only guardrails`);
+    assert.ok(proofreadDisplay.indexOf('A visibly cut wor') < 140, `${label}: proofread history titles should reach the selected text before truncation`);
+    assert.match(proofread, /Never infer or reconstruct text beyond its boundaries/, `${label}: model prompt must retain the proofread guardrails`);
+
+    const localizedProofread = buildSelectionPrompt('需要校对的文本', 'proofread', '', 'zh');
+    assert.equal(
+      formatSelectionPromptForDisplay(localizedProofread),
+      'Proofread this selected text.\n\nSelected text:\n需要校对的文本',
+      `${label}: localized proofread prompts should use the same concise display label`,
     );
 
     const generic = buildContextMenuPrompt('native fallback');
