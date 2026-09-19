@@ -11,6 +11,13 @@ export const SELECTION_SHORTCUT_ACTIONS = Object.freeze({
   humanize: 'Rewrite this selected text so it reads as human writing rather than AI output. Keep every claim, the language, and the author\'s intent; return only the rewritten text.',
 });
 
+// Some fixed actions carry model-only guardrails that should not crowd the
+// user-visible chat bubble or history title. Match the complete trusted action
+// text so custom prompts that happen to start similarly remain untouched.
+const SELECTION_SHORTCUT_DISPLAY_INSTRUCTIONS = Object.freeze({
+  proofread: 'Proofread this selected text.',
+});
+
 // Selected-text runs carry no tools, so `load_skill` cannot rescue a writing
 // request mid-run: a prose skill either rides in at run start or never. Keep
 // this limited to explicit structured writing actions; `custom` is the
@@ -168,6 +175,12 @@ export function formatSelectionPromptForDisplay(promptText) {
     instruction = instruction.slice(CUSTOM_QUESTION_PREFIX.length).trim();
   } else {
     instruction = stripResponseLanguageInstruction(instruction);
+    for (const [actionId, displayInstruction] of Object.entries(SELECTION_SHORTCUT_DISPLAY_INSTRUCTIONS)) {
+      if (instruction === SELECTION_SHORTCUT_ACTIONS[actionId]) {
+        instruction = displayInstruction;
+        break;
+      }
+    }
     if (instruction === GENERIC_CONTEXT_MENU_INSTRUCTION) instruction = '';
   }
 

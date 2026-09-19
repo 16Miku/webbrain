@@ -51503,6 +51503,24 @@ test('selection prompt display formatter hides untrusted wrappers from the chat 
       `${label}: fixed actions should keep their instruction and show the selection cleanly`,
     );
 
+    const proofread = buildSelectionPrompt('A visibly cut wor', 'proofread');
+    const proofreadDisplay = formatSelectionPromptForDisplay(proofread);
+    assert.equal(
+      proofreadDisplay,
+      'Proofread this selected text.\n\nSelected text:\nA visibly cut wor',
+      `${label}: proofread should keep its guardrails model-facing and use a concise display label`,
+    );
+    assert.doesNotMatch(proofreadDisplay, /Never infer|visibly cut mid-word|exact selected wording/, `${label}: proofread display must hide model-only guardrails`);
+    assert.ok(proofreadDisplay.indexOf('A visibly cut wor') < 140, `${label}: proofread history titles should reach the selected text before truncation`);
+    assert.match(proofread, /Never infer or reconstruct text beyond its boundaries/, `${label}: model prompt must retain the proofread guardrails`);
+
+    const localizedProofread = buildSelectionPrompt('需要校对的文本', 'proofread', '', 'zh');
+    assert.equal(
+      formatSelectionPromptForDisplay(localizedProofread),
+      'Proofread this selected text.\n\nSelected text:\n需要校对的文本',
+      `${label}: localized proofread prompts should use the same concise display label`,
+    );
+
     const generic = buildContextMenuPrompt('native fallback');
     assert.equal(
       formatSelectionPromptForDisplay(generic),
