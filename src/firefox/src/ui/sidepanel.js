@@ -2984,6 +2984,7 @@ function scheduledJobMeta(job) {
   if (job.status === 'completed' && job.lastResult) {
     parts.push(truncate(String(job.lastResult), 80));
   }
+  if (job.systemOneVerdict?.decision === 'downgrade') parts.push(t('st.system_one.uncertain'));
   if (job.lastError) {
     parts.push(truncate(String(job.lastError), 80));
   }

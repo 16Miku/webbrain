@@ -49,6 +49,17 @@ export function addTraceEvent(stats, event) {
     stats.totalOutputTokens += nonNegativeNumber(usage.completion_tokens);
     stats.totalCost += nonNegativeNumber(usage.cost);
     stats.totalLlmLatencyMs += nonNegativeNumber(data.latencyMs);
+  } else if (event.kind === 'note' && data.note === 'system_one' && data.extra?.decision === 'usage') {
+    // Include auxiliary model usage in the same totals without inventing a
+    // conversation response or exposing its input in the event log.
+    const metadata = data.extra;
+    const usage = metadata.usage || {};
+    stats.llmRequestCount += 1;
+    stats.llmResponseCount += 1;
+    stats.totalInputTokens += nonNegativeNumber(usage.prompt_tokens ?? usage.input_tokens);
+    stats.totalOutputTokens += nonNegativeNumber(usage.completion_tokens ?? usage.output_tokens);
+    stats.totalCost += nonNegativeNumber(metadata.estimatedCostUsd);
+    stats.totalLlmLatencyMs += nonNegativeNumber(metadata.latencyMs);
   } else if (event.kind === 'tool') {
     stats.toolCallCount += 1;
     stats.totalToolLatencyMs += nonNegativeNumber(data.latencyMs);

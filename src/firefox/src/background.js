@@ -38,6 +38,7 @@ import {
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
+import { createSystemOneJudge } from './agent/systemone-judge.js';
 import {
   SELECTION_CONTEXT_SOURCE_GROUNDING,
   SELECTION_ONLY_SOURCE_GROUNDING,
@@ -178,6 +179,7 @@ const runCaptureController = createRunCaptureController({
 const scheduler = new ScheduledJobManager({
   api: browser,
   agent,
+  systemOneJudge: createSystemOneJudge(),
   loadProviders: async () => {
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
@@ -3461,6 +3463,17 @@ async function handleMessage(msg, sender) {
 
     case 'test_transcription_provider': {
       return await providerManager.testTranscriptionProvider();
+    }
+
+    case 'test_system_one': {
+      await strictSecretModeReady;
+      try {
+        const result = await agent.evaluateSystemOne(null, createSystemOneJudge({ maxRetries: 0 }), {
+          apiKey: msg.apiKey, state: { color: 'blue' },
+          questions: { test: { type: 'noul', instructions: 'Is the color blue?' } },
+        });
+        return { success: true, model: result.model };
+      } catch (error) { return { success: false, error: error.message }; }
     }
 
     case 'test_capsolver_balance': {

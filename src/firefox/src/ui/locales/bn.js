@@ -957,6 +957,20 @@ export default {
   'st.captcha.balance_fail': "ব্যর্থ হয়েছে: {error}",
   'st.captcha.security_html': "<strong>হেড-আপ:</strong> API কী সংরক্ষণ করা হয় <strong>প্লেইনটেক্সট</strong> ব্রাউজার স্থানীয় স্টোরেজে। CapSolver প্রতিটি সমাধানের জন্য আপনার অ্যাকাউন্ট চার্জ করে; এজেন্ট কেবল তখনই এটিকে কল করবে যখন একটি ক্যাপচা প্রকৃতপক্ষে একটি পদক্ষেপকে ব্লক করে (প্রতি এনকাউন্টারে সর্বোচ্চ একবার - এটি ব্যর্থ হলে পুনরায় চেষ্টা করবে না)। কিছু সাইটের পরিষেবার শর্তাবলী স্বয়ংক্রিয় ক্যাপচা সমাধান নিষিদ্ধ করে; আপনার রায় ব্যবহার করুন।",
 
+  "st.system_one.heading": "সহায়ক মডেল",
+  "st.system_one.desc_html": "নির্ধারিত পর্যবেক্ষণ ও কাজ সম্পন্ন হওয়ার অতিরিক্ত যাচাই।",
+  "st.system_one.enabled.label": "Jev চালু করুন",
+  "st.system_one.api_key.label": "TypeSafe API কী",
+  "st.system_one.watch.label": "নির্ধারিত পর্যবেক্ষণ যাচাই করুন",
+  "st.system_one.completion.label": "নির্ধারিত কাজ সম্পন্ন হওয়া যাচাই করুন",
+  "st.system_one.security_html": "কাজ ও পৃষ্ঠার সীমিত প্রমাণ TypeSafe-এ পাঠায়। কী স্থানীয়ভাবে সাধারণ পাঠ্য হিসেবে থাকে এবং ব্যবহারে খরচ হতে পারে। Strict Secret Mode-এ Jev বন্ধ থাকে।",
+  "st.system_one.need_key": "TypeSafe API কী লিখুন।",
+  "st.system_one.uncertain": "Jev: কাজ সম্পন্ন হওয়া যাচাই করা যায়নি।",
+  "st.system_one.clear": "কী মুছুন",
+  "st.system_one.title": "Jev (TypeSafe)",
+  "st.system_one.watch_threshold": "নির্ধারিত পর্যবেক্ষণ যাচাই করুন — সম্ভাবনার সীমা",
+  "st.system_one.completion_threshold": "নির্ধারিত কাজ সম্পন্ন হওয়া যাচাই করুন — সম্ভাবনার সীমা",
+
   // --- Chat History page -------------------------------------------------
   'hist.title': "WebBrain চ্যাট ইতিহাস",
   'hist.records': "{n} রেকর্ড",

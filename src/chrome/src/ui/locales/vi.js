@@ -978,6 +978,20 @@ export default {
   'st.captcha.balance_fail': "Không thành công: {error}",
   'st.captcha.security_html': "<strong>Lưu ý:</strong> khóa API được lưu trữ <strong>trong bản rõ</strong> trong bộ nhớ cục bộ của trình duyệt. CapSolver tính phí tài khoản của bạn cho mỗi lần giải; tác nhân sẽ chỉ gọi nó khi CAPTCHA thực sự chặn một bước (tối đa một lần cho mỗi lần gặp - nó sẽ không thử lại nếu thất bại). Điều khoản dịch vụ của một số trang web nghiêm cấm việc giải CAPTCHA tự động; sử dụng phán đoán của bạn.",
 
+  "st.system_one.heading": "Mô hình hỗ trợ",
+  "st.system_one.desc_html": "Xác minh bổ sung cho theo dõi định kỳ và hoàn thành tác vụ.",
+  "st.system_one.enabled.label": "Bật Jev",
+  "st.system_one.api_key.label": "Khóa API TypeSafe",
+  "st.system_one.watch.label": "Xác minh theo dõi định kỳ",
+  "st.system_one.completion.label": "Xác minh hoàn thành tác vụ đã lên lịch",
+  "st.system_one.security_html": "Gửi tác vụ và bằng chứng trang có giới hạn đến TypeSafe. Khóa được lưu cục bộ dưới dạng văn bản thuần và có thể phát sinh phí sử dụng. Strict Secret Mode tắt Jev.",
+  "st.system_one.need_key": "Nhập khóa API TypeSafe.",
+  "st.system_one.uncertain": "Jev: không thể xác minh việc hoàn thành.",
+  "st.system_one.clear": "Xóa khóa",
+  "st.system_one.title": "Jev (TypeSafe)",
+  "st.system_one.watch_threshold": "Xác minh theo dõi định kỳ — Ngưỡng xác suất",
+  "st.system_one.completion_threshold": "Xác minh hoàn thành tác vụ đã lên lịch — Ngưỡng xác suất",
+
   // --- Chat History page -------------------------------------------------
   'hist.title': "Lịch sử trò chuyện WebBrain",
   'hist.records': "Bản ghi {n}",

@@ -41,6 +41,11 @@ import {
   normalizeCapsolverApiKey,
 } from '../agent/capsolver-config.js';
 import {
+  isValidTypesafeApiKey,
+  normalizeSystemOneThreshold,
+  normalizeTypesafeApiKey,
+} from '../agent/systemone-judge.js';
+import {
   OPENROUTER_ROUTING_VARIANTS,
   detectedCompatibilityPreset,
   isNewOpenAIContractConfig,
@@ -212,6 +217,18 @@ const btnSaveCaptcha = document.getElementById('btn-save-captcha');
 const btnTestCaptcha = document.getElementById('btn-test-captcha');
 const btnClearCaptcha = document.getElementById('btn-clear-captcha');
 const captchaTestResult = document.getElementById('test-captcha');
+const systemOneApiKeyInput = document.getElementById('system-one-api-key');
+const systemOneEnabledToggle = document.getElementById('toggle-system-one');
+const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
+const systemOneCompletionToggle = document.getElementById('toggle-system-one-completion');
+const systemOneWatchThresholdRange = document.getElementById('range-system-one-watch-threshold');
+const systemOneWatchThresholdValue = document.getElementById('system-one-watch-threshold-value');
+const systemOneCompletionThresholdRange = document.getElementById('range-system-one-completion-threshold');
+const systemOneCompletionThresholdValue = document.getElementById('system-one-completion-threshold-value');
+const btnSaveSystemOne = document.getElementById('btn-save-system-one');
+const btnTestSystemOne = document.getElementById('btn-test-system-one');
+const btnClearSystemOne = document.getElementById('btn-clear-system-one');
+const systemOneTestResult = document.getElementById('test-system-one');
 const languageSelect = document.getElementById('select-language');
 const themeSelect = document.getElementById('select-theme');
 const settingsUiScaleDecrease = document.getElementById('settings-ui-scale-decrease');
@@ -789,7 +806,7 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -886,6 +903,13 @@ async function init() {
   if (scheduledConfirmToggle) {
     scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false; // on by default
   }
+  if (systemOneEnabledToggle) systemOneEnabledToggle.checked = stored.systemOneEnabled === true;
+  if (systemOneWatchToggle) systemOneWatchToggle.checked = stored.systemOneWatchEnabled === true;
+  if (systemOneCompletionToggle) systemOneCompletionToggle.checked = stored.systemOneCompletionEnabled === true;
+  if (systemOneApiKeyInput) systemOneApiKeyInput.value = normalizeTypesafeApiKey(stored.typesafeApiKey);
+  if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
+  if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
+  updateSystemOneThresholdLabels();
 
   // Load vision model config
   await loadVisionConfig();
@@ -1667,6 +1691,82 @@ if (scheduledConfirmToggle) {
     await chrome.storage.local.set({ scheduledRequireConsequentialConfirmation: scheduledConfirmToggle.checked }).catch(() => {});
   });
 }
+
+function updateSystemOneThresholdLabels() {
+  if (systemOneWatchThresholdValue && systemOneWatchThresholdRange) {
+    systemOneWatchThresholdValue.textContent = `${systemOneWatchThresholdRange.value}%`;
+  }
+  if (systemOneCompletionThresholdValue && systemOneCompletionThresholdRange) {
+    systemOneCompletionThresholdValue.textContent = `${systemOneCompletionThresholdRange.value}%`;
+  }
+}
+
+systemOneWatchThresholdRange?.addEventListener('input', updateSystemOneThresholdLabels);
+systemOneCompletionThresholdRange?.addEventListener('input', updateSystemOneThresholdLabels);
+
+function showSystemOneResult(className, text) {
+  if (!systemOneTestResult) return;
+  systemOneTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
+  systemOneTestResult.textContent = text;
+  if (className) setTimeout(() => systemOneTestResult.classList.remove('show'), 3000);
+}
+
+if (btnSaveSystemOne) {
+  btnSaveSystemOne.addEventListener('click', async () => {
+    const key = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
+    const enabled = systemOneEnabledToggle?.checked === true;
+    if (enabled && !isValidTypesafeApiKey(key)) {
+      showSystemOneResult('fail', t('st.system_one.need_key'));
+      return;
+    }
+    if (systemOneApiKeyInput) systemOneApiKeyInput.value = key;
+    await chrome.storage.local.set({
+      typesafeApiKey: key,
+      systemOneEnabled: enabled && isValidTypesafeApiKey(key),
+      systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
+      systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
+      systemOneWatchThreshold: normalizeSystemOneThreshold(Number(systemOneWatchThresholdRange?.value) / 100),
+      systemOneCompletionThreshold: normalizeSystemOneThreshold(Number(systemOneCompletionThresholdRange?.value) / 100),
+    });
+    showSystemOneResult('ok', t('st.providers.saved'));
+  });
+}
+
+if (btnClearSystemOne) {
+  btnClearSystemOne.addEventListener('click', async () => {
+    if (systemOneApiKeyInput) systemOneApiKeyInput.value = '';
+    if (systemOneEnabledToggle) systemOneEnabledToggle.checked = false;
+    if (systemOneWatchToggle) systemOneWatchToggle.checked = false;
+    if (systemOneCompletionToggle) systemOneCompletionToggle.checked = false;
+    await chrome.storage.local.remove([
+      'typesafeApiKey',
+      'systemOneEnabled',
+      'systemOneWatchEnabled',
+      'systemOneCompletionEnabled',
+      'systemOneWatchThreshold',
+      'systemOneCompletionThreshold',
+    ]);
+    if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = '70';
+    if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = '70';
+    updateSystemOneThresholdLabels();
+    showSystemOneResult('ok', t('st.captcha.cleared'));
+  });
+}
+
+btnTestSystemOne?.addEventListener('click', async () => {
+  const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
+  if (!apiKey) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  btnTestSystemOne.disabled = true;
+  showSystemOneResult('', t('st.providers.testing'));
+  try {
+    const result = await sendToBackground('test_system_one', { apiKey });
+    showSystemOneResult(result?.success ? 'ok' : 'fail', result?.success
+      ? t('st.providers.connected', { model: result.model })
+      : t('st.providers.failed', { error: result?.error || 'Jev unavailable' }));
+  } catch (error) {
+    showSystemOneResult('fail', t('st.providers.failed', { error: error.message }));
+  } finally { btnTestSystemOne.disabled = false; }
+});
 
 // --- Vision Model ---
 

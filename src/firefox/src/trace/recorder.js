@@ -458,6 +458,30 @@ function _putEventWithLosslessTotal(db, runId, event, losslessBytes) {
   });
 }
 
+// A scheduler verifier can finish after endRun. Persist its event and the
+// completed run's usage totals atomically, on the existing serialized queue.
+function _putAuxiliaryUsage(db, runId, event) {
+  return new Promise((resolve, reject) => {
+    const transaction = tx(db, ['runs', 'events']);
+    transaction.objectStore('events').put(event);
+    const store = transaction.objectStore('runs');
+    const request = store.get(runId);
+    request.onsuccess = () => {
+      const run = request.result;
+      if (!run || run.status === 'running') return;
+      const stats = { ...createTraceStats(), ...run };
+      addTraceEvent(stats, event);
+      for (const key of Object.keys(createTraceStats())) {
+        if (key !== 'hasLoopError') run[key] = stats[key];
+      }
+      store.put(run);
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error('Auxiliary trace write aborted'));
+  });
+}
+
 async function _appendEventNow(runId, kind, data) {
   if (!(await tracingEnabled())) return;
   try {
@@ -506,6 +530,8 @@ async function _appendEventNow(runId, kind, data) {
         state.losslessBytesEncoding = 'utf8';
         await evictOldestLosslessRuns(runId, bytes);
       }
+    } else if (kind === 'note' && resolvedData?.note === 'system_one' && resolvedData.extra?.decision === 'usage') {
+      await _putAuxiliaryUsage(db, runId, ev);
     } else {
       await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
     }

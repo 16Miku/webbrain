@@ -982,6 +982,20 @@ export default {
   'st.captcha.balance_fail': 'Failed: {error}',
   'st.captcha.security_html': '<strong>Heads-up:</strong> the API key is stored <strong>in plaintext</strong> in browser local storage. CapSolver charges your account for every solve; the agent will only call it when a CAPTCHA actually blocks a step (max once per encounter — it won\'t retry on failure). Some sites\' terms of service prohibit automated CAPTCHA solving; use your judgement.',
 
+  "st.system_one.heading": "Auxiliary models",
+  "st.system_one.desc_html": "Extra verification for scheduled watches and task completion.",
+  "st.system_one.enabled.label": "Enable Jev",
+  "st.system_one.api_key.label": "TypeSafe API key",
+  "st.system_one.watch.label": "Verify scheduled watches",
+  "st.system_one.completion.label": "Verify scheduled task completion",
+  "st.system_one.security_html": "Sends the task and limited page evidence to TypeSafe. Your key is stored locally in plaintext and usage may cost money. Strict Secret Mode disables Jev.",
+  "st.system_one.need_key": "Enter a TypeSafe API key.",
+  "st.system_one.uncertain": "Jev: completion could not be verified.",
+  "st.system_one.clear": "Delete key",
+  "st.system_one.title": "Jev (TypeSafe)",
+  "st.system_one.watch_threshold": "Verify scheduled watches — Probability threshold",
+  "st.system_one.completion_threshold": "Verify scheduled task completion — Probability threshold",
+
   // --- Chat History page -------------------------------------------------
   'hist.title': 'WebBrain Chat History',
   'hist.records': '{n} records',

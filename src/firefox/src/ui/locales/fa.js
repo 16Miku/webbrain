@@ -957,6 +957,20 @@ export default {
   'st.captcha.balance_fail': "ناموفق: {error}",
   'st.captcha.security_html': "<strong>هدآپ:</strong> کلید API ذخیره می شود <strong>در متن ساده</strong> در حافظه محلی مرورگر CapSolver برای هر حل حساب شما را شارژ می کند. عامل فقط زمانی آن را فراخوانی می کند که یک CAPTCHA در واقع یک مرحله را مسدود کند (حداکثر یک بار در هر برخورد - در صورت شکست مجدداً تلاش نمی کند). شرایط خدمات برخی از سایت ها حل خودکار CAPTCHA را ممنوع می کند. از قضاوت خود استفاده کنید",
 
+  "st.system_one.heading": "مدل‌های کمکی",
+  "st.system_one.desc_html": "بررسی تکمیلی پایش‌های زمان‌بندی‌شده و تکمیل کارها.",
+  "st.system_one.enabled.label": "فعال‌سازی Jev",
+  "st.system_one.api_key.label": "کلید API تایپ‌سیف",
+  "st.system_one.watch.label": "بررسی پایش‌های زمان‌بندی‌شده",
+  "st.system_one.completion.label": "بررسی تکمیل کارهای زمان‌بندی‌شده",
+  "st.system_one.security_html": "کار و شواهد محدود صفحه را به TypeSafe می‌فرستد. کلید به‌صورت متن ساده محلی ذخیره می‌شود و استفاده ممکن است هزینه داشته باشد. Strict Secret Mode، Jev را غیرفعال می‌کند.",
+  "st.system_one.need_key": "کلید API تایپ‌سیف را وارد کنید.",
+  "st.system_one.uncertain": "Jev: تکمیل کار تأیید نشد.",
+  "st.system_one.clear": "حذف کلید",
+  "st.system_one.title": "Jev (TypeSafe)",
+  "st.system_one.watch_threshold": "بررسی پایش‌های زمان‌بندی‌شده — آستانه احتمال",
+  "st.system_one.completion_threshold": "بررسی تکمیل کارهای زمان‌بندی‌شده — آستانه احتمال",
+
   // --- Chat History page -------------------------------------------------
   'hist.title': "تاریخچه چت WebBrain",
   'hist.records': "رکوردهای {n}",

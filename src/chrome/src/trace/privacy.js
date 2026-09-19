@@ -95,6 +95,24 @@ export function projectTraceRun(run, { includeContent = false } = {}) {
 }
 
 export function projectTraceEventData(kind, data, { includeContent = false } = {}) {
+  // Auxiliary decisions never retain evidence, even in the opt-in content tier.
+  if (kind === 'note' && data?.note === 'system_one') {
+    const extra = {};
+    for (const key of ['decision', 'reason', 'model']) {
+      const value = data.extra?.[key];
+      if (typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,120}$/.test(value)) extra[key] = value;
+    }
+    for (const key of ['latencyMs', 'estimatedCostUsd']) {
+      const value = data.extra?.[key];
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) extra[key] = value;
+    }
+    const usage = projectUsage(data.extra?.usage);
+    for (const key of Object.keys(usage)) {
+      if (typeof usage[key] !== 'number' || !Number.isFinite(usage[key]) || usage[key] < 0) delete usage[key];
+    }
+    if (Object.keys(usage).length) extra.usage = usage;
+    return { step: Number.isFinite(data.step) ? data.step : 0, note: 'system_one', extra };
+  }
   if (includeContent || data == null) return data;
   const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
 

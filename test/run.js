@@ -1,3 +1,4 @@
+import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
 /**
  * WebBrain test runner — pure Node, no framework, no chrome.* APIs.
  *
@@ -1288,6 +1289,12 @@ const SchedulerCh = await import(
 );
 const SchedulerFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/scheduler.js').replace(/\\/g, '/')
+);
+const SystemOneJudgeCh = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/agent/systemone-judge.js').replace(/\\/g, '/')
+);
+const SystemOneJudgeFx = await import(
+  'file://' + path.join(ROOT, 'src/firefox/src/agent/systemone-judge.js').replace(/\\/g, '/')
 );
 
 // credential-fields.js — pure ESM detector, no DOM. Both chrome and
@@ -53404,96 +53411,118 @@ test('download_social_media exposes merged DOM/vision strategy in act tiers only
 
 console.log('\nscheduler');
 
-function makeSchedulerHarness(SchedulerMod, opts = {}) {
-  const store = {
-    [SchedulerMod.SCHEDULED_JOBS_KEY]: opts.jobs ? structuredClone(opts.jobs) : [],
-    [SchedulerMod.SCHEDULED_TASKS_ENABLED_KEY]: opts.enabled ?? true,
-    [SchedulerMod.SCHEDULED_REQUIRE_CONFIRMATION_KEY]: opts.requireConfirmation ?? true,
-  };
-  const cloneStoredValue = (value) => value == null ? value : structuredClone(value);
-  const alarms = new Map();
-  const updates = [];
-  let currentNow = opts.now ?? Date.UTC(2026, 0, 1, 12, 0, 0);
-  const tabs = new Map([[77, { id: 77, url: 'https://example.com/', title: 'Example' }]]);
-  let nextTabId = 100;
+test('TypeSafe System One judge uses the documented wire contract and retries transient overloads', async () => {
+  for (const [label, mod] of [['chrome', SystemOneJudgeCh], ['firefox', SystemOneJudgeFx]]) {
+    const requests = [];
+    const sleeps = [];
+    let attempt = 0;
+    const judge = mod.createSystemOneJudge({
+      sleep: async (delay) => { sleeps.push(delay); },
+      fetchImpl: async (url, options) => {
+        requests.push({ url, options });
+        attempt += 1;
+        if (attempt === 1) return { ok: false, status: 429, async json() { return {}; } };
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              model: 'jev-1.13.0',
+              answers: {
+                condition_met: { type: 'noul', noul: 0.91 },
+                task_completeness: { type: 'score', score: 1.8, confidence: 0.88, probabilities: { 0: 0, 1: 0.2, 2: 0.8 }, legend: { 0: 'none', 1: 'some', 2: 'clear' } },
+              },
+              usage: { input_tokens: 10, output_tokens: 4 },
+            };
+          },
+        };
+      },
+    });
+    const questions = mod.buildWatchQuestions();
+    const result = await judge.evaluate({
+      apiKey: 'typesafe-test-key',
+      state: { task: 'Wait for the build', latest_observation: 'Build is green.', baseline: null },
+      questions,
+    });
 
-  const api = {
-    storage: {
-      local: {
-        async get(keys) {
-          if (Array.isArray(keys)) {
-            return Object.fromEntries(keys.map((key) => [key, cloneStoredValue(store[key])]));
-          }
-          if (typeof keys === 'string') return { [keys]: cloneStoredValue(store[keys]) };
-          return Object.fromEntries(Object.entries(store).map(([key, value]) => [key, cloneStoredValue(value)]));
+    assert.equal(requests.length, 2, `${label}: transient overload should retry once`);
+    assert.equal(sleeps.length, 1, `${label}: retry should wait before dispatch`);
+    assert.equal(sleeps[0], mod.SYSTEM_ONE_RETRY_BASE_MS, `${label}: retry backoff should be bounded and deterministic`);
+    assert.equal(requests[0].url, mod.SYSTEM_ONE_API_URL, `${label}: wrong System One endpoint`);
+    assert.deepEqual(JSON.parse(requests[1].options.body), {
+      state: { task: 'Wait for the build', latest_observation: 'Build is green.', baseline: null },
+      model: mod.SYSTEM_ONE_MODEL,
+      questions,
+    }, `${label}: request body should preserve structured state and typed questions`);
+    assert.equal(requests[1].options.headers.Authorization, 'Bearer typesafe-test-key');
+    assert.equal(result.answers.condition_met.noul, 0.91);
+  }
+});
+
+test('TypeSafe System One verdicts only downgrade optimistic success', () => {
+  for (const [label, mod] of [['chrome', SystemOneJudgeCh], ['firefox', SystemOneJudgeFx]]) {
+    const cautious = mod.shouldDowngradeSuccess({
+      condition_met: { type: 'noul', noul: 0.45 },
+      task_completeness: { type: 'score', score: 1.7 },
+    }, { threshold: 0.7 });
+    assert.equal(cautious, true, `${label}: low condition probability should downgrade success`);
+    assert.equal(mod.shouldDowngradeSuccess({
+      condition_met: { type: 'noul', noul: 0.9 },
+      task_completeness: { type: 'score', score: 1.4 },
+    }, { threshold: 0.7 }), false, `${label}: complete evidence should retain success`);
+    assert.equal(mod.shouldDowngradeSuccess({ condition_met: { type: 'noul', noul: 0.99 } }, { threshold: 0.7 }), false,
+      `${label}: malformed optional answers should fail open`);
+  }
+});
+
+test('ScheduledJobManager applies opt-in System One verdicts as a conservative completion guard', async () => {
+  for (const [label, SchedulerMod] of [['chrome', SchedulerCh], ['firefox', SchedulerFx]]) {
+    const calls = [];
+    const h = makeSchedulerHarness(SchedulerMod, {
+      systemOneEnabled: true,
+      systemOneWatchEnabled: true,
+      systemOneApiKey: 'typesafe-test-key',
+      systemOneJudge: {
+        async evaluate(args) {
+          calls.push(args);
+          return {
+            answers: {
+              condition_met: { type: 'noul', noul: 0.35 },
+              task_completeness: { type: 'score', score: 2 },
+            },
+          };
         },
-        async set(values) {
-          Object.assign(store, Object.fromEntries(
-            Object.entries(values).map(([key, value]) => [key, cloneStoredValue(value)])
-          ));
-        },
       },
-    },
-    alarms: {
-      async create(name, spec) { alarms.set(name, spec); },
-      async clear(name) { return alarms.delete(name); },
-      onAlarm: { addListener() {} },
-    },
-    tabs: {
-      async get(tabId) {
-        if (!tabs.has(tabId)) throw new Error(`No tab ${tabId}`);
-        return tabs.get(tabId);
+      processMessage: async (_tabId, _message, onUpdate) => {
+        onUpdate('tool_result', { name: 'get_accessibility_tree', result: { pageContent: 'Build status: pending.' } });
+        onUpdate('tool_result', {
+          name: 'done',
+          result: { done: true, summary: 'The build looks green.', outcome: 'success' },
+        });
+        return 'The build looks green.';
       },
-      async update(tabId, changes) {
-        if (!tabs.has(tabId)) throw new Error(`No tab ${tabId}`);
-        const tab = { ...tabs.get(tabId), ...changes };
-        tabs.set(tabId, tab);
-        return tab;
+    });
+    const created = await h.manager.createWatchJob({
+      tabId: 77,
+      args: {
+        prompt: 'When the build is green, report it.',
+        keep: true,
+        interval_seconds: 60,
       },
-      async create({ url, active }) {
-        const tab = { id: nextTabId++, url, active: !!active };
-        tabs.set(tab.id, tab);
-        return tab;
-      },
-      async remove(tabId) {
-        if (!tabs.has(tabId)) throw new Error(`No tab ${tabId}`);
-        tabs.delete(tabId);
-      },
-    },
-  };
+      currentUrl: 'https://example.com/',
+    });
 
-  const agent = {
-    isRunning: opts.isRunning || (() => false),
-    getConversationId: opts.getConversationId || (async () => 'conv-1'),
-    requireExplicitClarificationAuthorization: opts.requireExplicitClarificationAuthorization || (async () => {}),
-    processMessage: opts.processMessage || (async () => 'scheduled result'),
-    abort: opts.abort || (() => {}),
-    setScheduledRunPolicy: opts.setScheduledRunPolicy || (() => {}),
-    clearScheduledRunPolicy: opts.clearScheduledRunPolicy || (() => {}),
-  };
-
-  const manager = new SchedulerMod.ScheduledJobManager({
-    api,
-    agent,
-    loadProviders: async () => {},
-    sendUpdate(tabId, type, data) { updates.push({ tabId, type, data }); },
-    showIndicator() {},
-    hideIndicator() {},
-    playWatchAlert: opts.playWatchAlert || (async () => {}),
-    now: () => currentNow,
-    ...(opts.startAlarmKeepAlive ? { startAlarmKeepAlive: opts.startAlarmKeepAlive } : {}),
-  });
-
-  return {
-    manager,
-    alarms,
-    tabs,
-    updates,
-    jobs: () => store[SchedulerMod.SCHEDULED_JOBS_KEY],
-    setNow: (value) => { currentNow = value; },
-    alarmName: (jobId) => `${SchedulerMod.SCHEDULED_ALARM_PREFIX}${jobId}`,
-  };
-}
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+    const job = h.jobs()[0];
+    assert.equal(job.status, 'pending', `${label}: downgraded watch should keep polling`);
+    assert.equal(job.lastOutcome, 'partial', `${label}: low System One confidence should downgrade success`);
+    assert.equal(calls.length, 1, `${label}: enabled watch should invoke one sidecar judge`);
+    assert.equal(calls[0].apiKey, 'typesafe-test-key');
+    assert.equal(calls[0].state.task, 'When the build is green, report it.');
+    assert.match(calls[0].state.latest_observation[0].data, /Build status: pending/);
+    assert.doesNotMatch(JSON.stringify(calls[0].state), /The build looks green/);
+  }
+});
 
 test('ScheduledJobManager marks alarm executions as independent runs', async () => {
   const now = Date.UTC(2026, 0, 1, 12, 0, 0);

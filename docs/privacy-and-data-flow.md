@@ -99,6 +99,38 @@ on login, layout, or timeout failures. Turning Research escalation off removes
 both the delegation tool and the Ask-mode consent schema from later model
 requests.
 
+### Optional Jev (TypeSafe) scheduled-task verification
+
+Settings → Providers → Auxiliary models contains Jev, disabled by default,
+with separate watch and completion switches. Turning the master switch off
+preserves those preferences. Removing the key disables all uses and resets
+probability thresholds to 70%. Settings import/export preserves the original
+`systemOne*` keys and `typesafeApiKey` (plaintext local storage).
+
+The scheduler sends at most 16,000 serialized characters to
+`https://api.typesafe.ai/v1/systemone`, pinned to `jev-1.13.0`. State contains
+the bounded task, allowlisted textual tool observations from this run, and a
+bounded real previous observation for watches. It excludes agent success
+summaries, conversation history, screenshots, audio, attachments, raw request
+bodies and credential fields. Text is redacted and wrapped as untrusted data.
+An action invalidates earlier observations. Missing eligible evidence skips
+verification. Redaction is best effort: ordinary page text can contain personal
+data, so enabling Jev authorizes sending that limited evidence to TypeSafe.
+
+Jev never upgrades a result. A low judgment on a read-only watch permits another
+poll. If an action was dispatched or its outcome is uncertain, a downgrade
+preserves its record and requests reconciliation instead of repeating it;
+this also applies to recurring tasks. Cancellation or replaced execution
+invalidates late responses. Invalid responses, unavailable service, Strict
+Secret Mode, offline operation or cost restrictions retain the existing result.
+
+Requests have one total five-second deadline, including up to two retries for
+429/529. Connection testing occurs only on a button press and sends one fixed
+synthetic example with no retries. Input usage is estimated at $0.042 per million
+tokens; output tokens are free under the documented model price. Usage, duration,
+model and decision reasons enter cost/trace accounting without raw evidence.
+TypeSafe may charge your account; no SDK is installed.
+
 ### WebBrain Compass improvement data
 
 Help Improve WebBrain is available under Settings -> General and is

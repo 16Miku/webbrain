@@ -978,6 +978,20 @@ export default {
   'st.captcha.balance_fail': "Falha: {error}",
   'st.captcha.security_html': "<strong>Atenção:</strong> a chave API é armazenada <strong>em texto simples</strong> no armazenamento local do navegador. CapSolver cobra sua conta por cada solução; o agente só o chamará quando um CAPTCHA realmente bloquear uma etapa (no máximo uma vez por encontro - ele não tentará novamente em caso de falha). Os termos de serviço de alguns sites proíbem a resolução automatizada de CAPTCHA; use seu julgamento.",
 
+  "st.system_one.heading": "Modelos auxiliares",
+  "st.system_one.desc_html": "Verificação adicional de monitoramentos e tarefas agendadas.",
+  "st.system_one.enabled.label": "Ativar Jev",
+  "st.system_one.api_key.label": "Chave de API TypeSafe",
+  "st.system_one.watch.label": "Verificar monitoramentos agendados",
+  "st.system_one.completion.label": "Verificar conclusão de tarefas agendadas",
+  "st.system_one.security_html": "Envia a tarefa e evidências limitadas da página ao TypeSafe. A chave é armazenada localmente em texto simples. O uso pode ter custos. Strict Secret Mode desativa o Jev.",
+  "st.system_one.need_key": "Insira uma chave de API TypeSafe.",
+  "st.system_one.uncertain": "Jev: não foi possível confirmar a conclusão.",
+  "st.system_one.clear": "Excluir chave",
+  "st.system_one.title": "Jev (TypeSafe)",
+  "st.system_one.watch_threshold": "Verificar monitoramentos agendados — Limite de probabilidade",
+  "st.system_one.completion_threshold": "Verificar conclusão de tarefas agendadas — Limite de probabilidade",
+
   // --- Chat History page -------------------------------------------------
   'hist.title': "WebBrain Histórico de bate-papo",
   'hist.records': "Registros {n}",

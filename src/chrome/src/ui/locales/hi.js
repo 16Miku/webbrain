@@ -978,6 +978,20 @@ export default {
   'st.captcha.balance_fail': "विफल: {error}",
   'st.captcha.security_html': "<strong>सावधान:</strong> एपीआई कुंजी संग्रहीत है <strong>सादे पाठ में</strong> ब्राउज़र स्थानीय भंडारण में. कैपसॉल्वर प्रत्येक समाधान के लिए आपके खाते से शुल्क लेता है; एजेंट इसे केवल तभी कॉल करेगा जब कैप्चा वास्तव में एक चरण को अवरुद्ध करता है (प्रति मुठभेड़ अधिकतम एक बार - यह विफलता पर पुनः प्रयास नहीं करेगा)। कुछ साइटों की सेवा की शर्तें स्वचालित कैप्चा समाधान पर रोक लगाती हैं; अपने निर्णय का प्रयोग करें.",
 
+  "st.system_one.heading": "सहायक मॉडल",
+  "st.system_one.desc_html": "निर्धारित निगरानी और कार्य पूर्ण होने की अतिरिक्त जाँच।",
+  "st.system_one.enabled.label": "Jev चालू करें",
+  "st.system_one.api_key.label": "TypeSafe API कुंजी",
+  "st.system_one.watch.label": "निर्धारित निगरानी की जाँच करें",
+  "st.system_one.completion.label": "निर्धारित कार्य पूर्ण होने की जाँच करें",
+  "st.system_one.security_html": "कार्य और पृष्ठ के सीमित प्रमाण TypeSafe को भेजता है। कुंजी स्थानीय रूप से सादे पाठ में रहती है और उपयोग का शुल्क लग सकता है। Strict Secret Mode में Jev बंद रहता है।",
+  "st.system_one.need_key": "TypeSafe API कुंजी दर्ज करें।",
+  "st.system_one.uncertain": "Jev: कार्य पूर्ण होने की पुष्टि नहीं हुई।",
+  "st.system_one.clear": "कुंजी हटाएँ",
+  "st.system_one.title": "Jev (TypeSafe)",
+  "st.system_one.watch_threshold": "निर्धारित निगरानी की जाँच करें — प्रायिकता सीमा",
+  "st.system_one.completion_threshold": "निर्धारित कार्य पूर्ण होने की जाँच करें — प्रायिकता सीमा",
+
   // --- Chat History page -------------------------------------------------
   'hist.title': "WebBrain चैट इतिहास",
   'hist.records': "{n} रिकॉर्ड",
