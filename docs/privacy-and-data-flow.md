@@ -101,7 +101,7 @@ requests.
 
 ### Optional Jev (TypeSafe) scheduled-task verification
 
-Settings → Providers → Auxiliary models contains Jev, disabled by default,
+Settings → Assistive Models → Jev (TypeSafe) contains the Jev controls, disabled by default,
 with separate watch and completion switches. Turning the master switch off
 preserves those preferences. Removing the key disables all uses and resets
 probability thresholds to 70%. Settings import/export preserves the original

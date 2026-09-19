@@ -576,7 +576,7 @@ export default {
   'st.tab.providers': "Nhà cung cấp",
   'st.tab.skills': "Kỹ năng",
   'st.tab.vision': "Tầm nhìn",
-  'st.tab.multimodal': "Đa phương thức",
+  'st.tab.multimodal': "Mô hình hỗ trợ",
   'st.tab.memory': "Bộ nhớ",
   'st.tab.profile': "Hồ sơ",
   'st.tab.account': "Tài khoản",
@@ -887,7 +887,7 @@ export default {
   'st.vision.failed': "Không thành công: {error}",
   'st.vision.fill_required': "Trước tiên hãy điền URL cơ sở và Mô hình.",
 
-  'st.transcription.heading': "Phiên âm",
+  'st.transcription.heading': "Chuyển giọng nói thành văn bản",
   'st.transcription.desc': "Được sử dụng bởi phiên âm Tab Recorder. Nếu được đặt, âm thanh sẽ được gửi đến điểm cuối tương thích với Whisper này. Để trống để tự động chọn từ các nhà cung cấp đã định cấu hình (OpenAI → Groq → LM Studio → llama.cpp). Chỉ các bản ghi /v1/âm thanh/bản ghi tương thích với OpenAI.",
   'st.transcription.save': "Lưu",
   'st.transcription.test': "Kiểm tra kết nối",
@@ -978,7 +978,6 @@ export default {
   'st.captcha.balance_fail': "Không thành công: {error}",
   'st.captcha.security_html': "<strong>Lưu ý:</strong> khóa API được lưu trữ <strong>trong bản rõ</strong> trong bộ nhớ cục bộ của trình duyệt. CapSolver tính phí tài khoản của bạn cho mỗi lần giải; tác nhân sẽ chỉ gọi nó khi CAPTCHA thực sự chặn một bước (tối đa một lần cho mỗi lần gặp - nó sẽ không thử lại nếu thất bại). Điều khoản dịch vụ của một số trang web nghiêm cấm việc giải CAPTCHA tự động; sử dụng phán đoán của bạn.",
 
-  "st.system_one.heading": "Mô hình hỗ trợ",
   "st.system_one.desc_html": "Xác minh bổ sung cho theo dõi định kỳ và hoàn thành tác vụ.",
   "st.system_one.enabled.label": "Bật Jev",
   "st.system_one.api_key.label": "Khóa API TypeSafe",

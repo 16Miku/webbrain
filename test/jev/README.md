@@ -37,6 +37,22 @@ cost. Acceptance requires all 120 attempts, at least 25% lower median duration,
 no success regression and no wrong or repeated Jev actions. No general speed
 claim should be made from fixture-only or mocked results.
 
+## Settings and documentation checks
+
+Configure Jev under **Settings → Assistive Models → Jev (TypeSafe)**, after
+Vision and Speech to text. The two speed switches are independent of scheduled
+verification and remain off by default.
+
+`npm run test:systemone:ui` checks both browsers in English and Turkish at narrow
+and wide widths, including the retained `#multimodal` link, remembered tabs,
+provider-filter independence, preference retention, and save/test/delete.
+Connection tests are mocked; the test never calls TypeSafe.
+
+To refresh the documentation images from this synthetic configuration, run
+`JEV_DOC_SCREENSHOTS=web/docs/assets/screenshots npm run test:systemone:ui`.
+Review the resulting screenshots before committing them. The capture clears the
+synthetic Jev key and disables every Jev option before taking documentation images.
+
 ## Completion trace investigation
 
 A user-supplied v36.7.1 trace showed 8 `done` attempts among 27 tool calls in its

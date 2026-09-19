@@ -573,7 +573,7 @@ export default {
   'st.tab.providers': "प्रदाता",
   'st.tab.skills': "कौशल",
   'st.tab.vision': "दृष्टि",
-  'st.tab.multimodal': "मल्टीमॉडल",
+  'st.tab.multimodal': "सहायक मॉडल",
   'st.tab.memory': "स्मृति",
   'st.tab.profile': "प्रोफाइल",
   'st.tab.account': "खाता",
@@ -866,7 +866,7 @@ export default {
   'st.vision.failed': "विफल: {error}",
   'st.vision.fill_required': "सबसे पहले बेस यूआरएल और मॉडल भरें।",
 
-  'st.transcription.heading': "प्रतिलेखन",
+  'st.transcription.heading': "वाक् से पाठ",
   'st.transcription.desc': "टैब रिकॉर्डर प्रतिलेखन द्वारा उपयोग किया जाता है। यदि सेट किया गया है, तो ऑडियो इस व्हिस्पर-संगत एंडपॉइंट पर भेजा जाता है। कॉन्फ़िगर किए गए प्रदाताओं से ऑटो-पिक करने के लिए खाली छोड़ दें (OpenAI → Groq → LM Studio → llama.cpp)। केवल OpenAI-संगत /v1/ऑडियो/ट्रांसक्रिप्शन।",
   'st.transcription.save': "सहेजें",
   'st.transcription.test': "परीक्षण कनेक्शन",
@@ -957,7 +957,6 @@ export default {
   'st.captcha.balance_fail': "विफल: {error}",
   'st.captcha.security_html': "<strong>सावधान:</strong> एपीआई कुंजी संग्रहीत है <strong>सादे पाठ में</strong> ब्राउज़र स्थानीय भंडारण में. कैपसॉल्वर प्रत्येक समाधान के लिए आपके खाते से शुल्क लेता है; एजेंट इसे केवल तभी कॉल करेगा जब कैप्चा वास्तव में एक चरण को अवरुद्ध करता है (प्रति मुठभेड़ अधिकतम एक बार - यह विफलता पर पुनः प्रयास नहीं करेगा)। कुछ साइटों की सेवा की शर्तें स्वचालित कैप्चा समाधान पर रोक लगाती हैं; अपने निर्णय का प्रयोग करें.",
 
-  "st.system_one.heading": "सहायक मॉडल",
   "st.system_one.desc_html": "निर्धारित निगरानी और कार्य पूर्ण होने की अतिरिक्त जाँच।",
   "st.system_one.enabled.label": "Jev चालू करें",
   "st.system_one.api_key.label": "TypeSafe API कुंजी",

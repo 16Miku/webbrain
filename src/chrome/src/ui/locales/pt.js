@@ -576,7 +576,7 @@ export default {
   'st.tab.providers': "Provedores",
   'st.tab.skills': "Habilidades",
   'st.tab.vision': "Visão",
-  'st.tab.multimodal': "Multimodal",
+  'st.tab.multimodal': "Modelos auxiliares",
   'st.tab.memory': "Memória",
   'st.tab.profile': "Perfil",
   'st.tab.account': "Conta",
@@ -887,7 +887,7 @@ export default {
   'st.vision.failed': "Falha: {error}",
   'st.vision.fill_required': "Preencha primeiro o URL base e o modelo.",
 
-  'st.transcription.heading': "Transcrição",
+  'st.transcription.heading': "Fala para texto",
   'st.transcription.desc': "Usado pela transcrição do Tab Recorder. Se definido, o áudio será enviado para este endpoint compatível com Whisper. Deixe em branco para seleção automática dos provedores configurados (OpenAI → Groq → LM Studio → llama.cpp). Compatível com OpenAI somente /v1/audio/transcrições.",
   'st.transcription.save': "Salvar",
   'st.transcription.test': "Conexão de teste",
@@ -978,7 +978,6 @@ export default {
   'st.captcha.balance_fail': "Falha: {error}",
   'st.captcha.security_html': "<strong>Atenção:</strong> a chave API é armazenada <strong>em texto simples</strong> no armazenamento local do navegador. CapSolver cobra sua conta por cada solução; o agente só o chamará quando um CAPTCHA realmente bloquear uma etapa (no máximo uma vez por encontro - ele não tentará novamente em caso de falha). Os termos de serviço de alguns sites proíbem a resolução automatizada de CAPTCHA; use seu julgamento.",
 
-  "st.system_one.heading": "Modelos auxiliares",
   "st.system_one.desc_html": "Verificação adicional de monitoramentos e tarefas agendadas.",
   "st.system_one.enabled.label": "Ativar Jev",
   "st.system_one.api_key.label": "Chave de API TypeSafe",

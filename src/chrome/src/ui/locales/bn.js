@@ -576,7 +576,7 @@ export default {
   'st.tab.providers': "প্রদানকারী",
   'st.tab.skills': "দক্ষতা",
   'st.tab.vision': "দৃষ্টি",
-  'st.tab.multimodal': "মাল্টিমডাল",
+  'st.tab.multimodal': "সহায়ক মডেল",
   'st.tab.memory': "স্মৃতি",
   'st.tab.profile': "প্রোফাইল",
   'st.tab.account': "হিসাব",
@@ -887,7 +887,7 @@ export default {
   'st.vision.failed': "ব্যর্থ হয়েছে: {error}",
   'st.vision.fill_required': "প্রথমে বেস URL এবং মডেল পূরণ করুন।",
 
-  'st.transcription.heading': "প্রতিলিপি",
+  'st.transcription.heading': "কথা থেকে লেখা",
   'st.transcription.desc': "ট্যাব রেকর্ডার ট্রান্সক্রিপশন দ্বারা ব্যবহৃত। সেট করা হলে, এই হুইস্পার-সামঞ্জস্যপূর্ণ এন্ডপয়েন্টে অডিও পাঠানো হয়। কনফিগার করা প্রদানকারীদের থেকে স্বয়ংক্রিয়ভাবে বাছাই করতে ফাঁকা ছেড়ে দিন (OpenAI → Groq → LM Studio → llama.cpp)। OpenAI- সামঞ্জস্যপূর্ণ /v1/audio/ট্রান্সক্রিপশন শুধুমাত্র।",
   'st.transcription.save': "সংরক্ষণ করুন",
   'st.transcription.test': "পরীক্ষা সংযোগ",
@@ -978,7 +978,6 @@ export default {
   'st.captcha.balance_fail': "ব্যর্থ হয়েছে: {error}",
   'st.captcha.security_html': "<strong>হেড-আপ:</strong> API কী সংরক্ষণ করা হয় <strong>প্লেইনটেক্সট</strong> ব্রাউজার স্থানীয় স্টোরেজে। CapSolver প্রতিটি সমাধানের জন্য আপনার অ্যাকাউন্ট চার্জ করে; এজেন্ট কেবল তখনই এটিকে কল করবে যখন একটি ক্যাপচা প্রকৃতপক্ষে একটি পদক্ষেপকে ব্লক করে (প্রতি এনকাউন্টারে সর্বোচ্চ একবার - এটি ব্যর্থ হলে পুনরায় চেষ্টা করবে না)। কিছু সাইটের পরিষেবার শর্তাবলী স্বয়ংক্রিয় ক্যাপচা সমাধান নিষিদ্ধ করে; আপনার রায় ব্যবহার করুন।",
 
-  "st.system_one.heading": "সহায়ক মডেল",
   "st.system_one.desc_html": "নির্ধারিত পর্যবেক্ষণ ও কাজ সম্পন্ন হওয়ার অতিরিক্ত যাচাই।",
   "st.system_one.enabled.label": "Jev চালু করুন",
   "st.system_one.api_key.label": "TypeSafe API কী",
