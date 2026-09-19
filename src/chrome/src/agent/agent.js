@@ -6801,8 +6801,9 @@ export class Agent extends LoopDetector {
         if (message) throw this._costAllowanceError(message);
       },
       onUsage: async metadata => {
-        await this._recordCostUsage(SYSTEM_ONE_COST_PROVIDER, metadata.usage, costState);
+        const stopped = await this._recordCostUsage(SYSTEM_ONE_COST_PROVIDER, metadata.usage, costState);
         this.recordSystemOneVerdict(tabId, { decision: 'usage', ...metadata }, context);
+        if (stopped) throw this._costAllowanceError(stopped);
       },
     });
   }

@@ -1460,7 +1460,7 @@ export class ScheduledJobManager {
   async _applySystemOne(job, result, outcome, runMeta) {
     const verdict = await this._evaluateSystemOne(job, result, outcome, runMeta);
     if (runMeta.signal?.aborted || runMeta.judgeContext?.isCurrent?.() === false) return { stop: true };
-    if (verdict.reason === 'disabled') return { stop: false, outcome };
+    if (verdict.decision === 'skip') return { stop: false, outcome };
     const current = await this._updateJobIf(job.id, prev => (
       ['running', 'needs_user_input'].includes(prev.status)
       && (!runMeta.executionId || prev.executionId === runMeta.executionId)
@@ -1632,6 +1632,26 @@ export class ScheduledJobManager {
   }
 
   async _complete(job, result, outcome = null, runMeta = {}) {
+    try {
+      return await this._completeCurrentExecution(job, result, outcome, runMeta);
+    } finally {
+      // Discard a stale judgment, but settle the scheduler execution we still
+      // own. Never overwrite cancellation, user input, or a newer execution.
+      if (runMeta.executionId && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() === false) {
+        const waiting = await this._updateJobIf(job.id, prev => (
+          prev.status === 'running' && prev.executionId === runMeta.executionId && !runMeta.signal?.aborted
+        ), () => ({
+          status: 'needs_user_input', reconciliationRequired: true,
+          clarificationRequired: true, clarificationAuthorizationRequired: true,
+          lastOutcome: 'partial', nextRunAt: null, pendingClarify: null,
+          lastError: 'The tab started another run while completion was being verified. Reconcile the earlier result before running this task again.',
+        }));
+        if (waiting) this._emit(waiting, 'clarification_required');
+      }
+    }
+  }
+
+  async _completeCurrentExecution(job, result, outcome = null, runMeta = {}) {
     if (job.source === 'watch') {
       await this._completeWatch(job, result, outcome, runMeta);
       return;

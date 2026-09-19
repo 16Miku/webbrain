@@ -1019,4 +1019,10 @@ Scheduler evaluation returns keep/downgrade/skip plus metadata, revalidates the
 execution after awaiting the response and never requeues a downgraded action.
 The agent supplies the original run cost state and trace ID to the sidecar.
 No evidence is written to additional diagnostic logs. Watch baselines alone
-persist a bounded observation to support change comparisons.
+persist a bounded observation to support change comparisons after an actual
+judgment. Skips leave the stored verdict and Jev baseline unchanged and do not
+create verdict trace notes; billable responses still record usage. If the tab's
+run changes during verification, the still-owned scheduler execution enters
+reconciliation instead of remaining running. Post-response cost enforcement
+rejects a judgment that crosses the allowance; an already sent request can
+still incur charges.
