@@ -236,6 +236,11 @@ to the local `webbrain_traces` IndexedDB database in one of two privacy tiers:
   storage bounds; old completed lossless runs may be evicted to remain within
   the aggregate limit. These runs are visibly marked in the Traces UI.
 
+`click_ax_timing` trace notes retain only bounded stage durations, input-event
+counts, outcome categories, and safety-status booleans. URL, target labels,
+accessibility references, and other page content are excluded in both tiers,
+including lossless traces.
+
 Default trace redaction does not disable `/workflow --save`. While a traced run
 is active, the recorder keeps bounded raw tool payloads in memory only. On
 successful completion, the agent immediately compiles them into the existing
