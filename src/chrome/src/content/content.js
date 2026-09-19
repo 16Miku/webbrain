@@ -1371,9 +1371,34 @@
       'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
       ..._siteInteractiveSelectors(),
     ].join(', ');
-    return Array.from(scope.querySelectorAll(selectors))
+    // LinkedIn can render the feed itself inside an open shadow root. Keep
+    // preflight and dispatch on the same candidate set, including duplicate
+    // labels across roots, without searching outside the selected modal.
+    const candidates = [];
+    const visit = (root) => {
+      candidates.push(...root.querySelectorAll(selectors));
+      if (root.shadowRoot) visit(root.shadowRoot);
+      for (const host of root.querySelectorAll('*')) {
+        if (host.shadowRoot) visit(host.shadowRoot);
+      }
+    };
+    visit(scope);
+    return candidates
       .map(e => ({ e, txt: _siteInteractionText(e).toLowerCase() }))
       .filter(candidate => candidate.txt);
+  }
+
+  function _shadowAwareElementFromPoint(x, y) {
+    let topmost = document.elementFromPoint(x, y);
+    const seen = new Set();
+    while (topmost && topmost.shadowRoot && !seen.has(topmost)) {
+      seen.add(topmost);
+      let inner = null;
+      try { inner = topmost.shadowRoot.elementFromPoint(x, y); } catch {}
+      if (!inner || inner === topmost) break;
+      topmost = inner;
+    }
+    return topmost;
   }
 
   let _lastClickIdent = null;
@@ -1601,7 +1626,7 @@
       el = interactive[params.index];
       if (!el) return { ..._staleIndexError(params.index, interactive), dispatched: false };
     } else if (params.x != null && params.y != null) {
-      el = document.elementFromPoint(params.x, params.y);
+      el = _shadowAwareElementFromPoint(params.x, params.y);
     }
 
     // A selector miss is a discovery failure, not a changed bound target. Do
@@ -1741,8 +1766,8 @@
         if (r.width >= 1 && r.height >= 1 && r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth) {
           const cx = Math.round(r.left + r.width / 2);
           const cy = Math.round(r.top + r.height / 2);
-          const topmost = document.elementFromPoint(cx, cy);
-          if (topmost && topmost !== el && !el.contains(topmost) && !topmost.contains(el)) {
+          const topmost = _shadowAwareElementFromPoint(cx, cy);
+          if (topmost && !_isComposedAncestor(el, topmost) && !_isComposedAncestor(topmost, el)) {
             // Another element is painted on top. Give the model actionable
             // info (what's blocking, where, what to do) instead of silently
             // clicking the wrong thing.
@@ -5080,7 +5105,7 @@
         } else if (Number.isInteger(args.index) && args.index >= 0) {
           target = queryInteractiveForToolIndex()[args.index] || null;
         } else if (Number.isFinite(args.x) && Number.isFinite(args.y)) {
-          target = document.elementFromPoint(args.x, args.y);
+          target = _shadowAwareElementFromPoint(args.x, args.y);
         }
         targetResolved = !!target;
       }
@@ -5280,6 +5305,32 @@
         }
       };
 
+      const verifiedLinkedInPostEntry = (clicked) => {
+        if (params.adapterName !== 'linkedin' || !/^\/feed\/?$/.test(location.pathname)) return false;
+        const button = _composedClosestElement(clicked, 'button,[role="button"]');
+        if (!button || !visible(button) || button.disabled
+            || button.getAttribute?.('aria-disabled') === 'true'
+            || String(button.getAttribute?.('type') || 'button').toLowerCase() !== 'button'
+            || button.form || button.hasAttribute?.('form')) return false;
+        // The feed entry only opens a public-post composer. Do not infer this
+        // from the requested text, a nearby editor, or a control inside a post,
+        // conversation, or dialog: those can send or publish existing drafts.
+        if (!_composedClosestElement(button, 'main,[role="main"]')
+            || _composedClosestElement(button,
+              'form,article,dialog,[role="dialog"],[role="alertdialog"],[role="log"],'
+              + '[data-message-id],[data-thread-id],[data-conversation-id],'
+              + '[contenteditable]:not([contenteditable="false"])')) return false;
+        const labels = [button.innerText || button.textContent, button.getAttribute?.('aria-label')]
+          .map(value => compact(value).toLowerCase()).filter(Boolean);
+        if (!labels.length || !labels.every(label => label === 'start a post')) return false;
+        // A shadow-root dialog may not appear in the document's modal query.
+        // Require the actual painted control, descending through open roots.
+        const rect = button.getBoundingClientRect();
+        const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+        const hit = _shadowAwareElementFromPoint(x, y);
+        return !!hit && _isComposedAncestor(button, hit);
+      };
+
       let composer = null;
       let messageSend = null;
       if (observationOnly) {
@@ -5319,6 +5370,9 @@
         const modal = _findTopmostBlockingModal();
         if (!visible(control) || (modal && !_isComposedAncestor(modal, target))) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (verifiedLinkedInPostEntry(target)) {
+          return { success: true, messageSend: false, conclusive: true, composerSetup: true, identityCandidates: [] };
         }
         const linkedInNavigation = classifyLinkedInNavigation(target, modal);
         if (linkedInNavigation === 'navigation') {

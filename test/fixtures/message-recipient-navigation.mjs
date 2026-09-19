@@ -52,6 +52,130 @@ export function registerMessageRecipientNavigationFixtures({
       return { agent, guard, probe };
     };
 
+    const addPostEntry = async (page, shadow = false) => page.evaluate((shadow) => {
+      const host = document.createElement('section');
+      host.id = 'post-entry';
+      document.querySelector('main').prepend(host);
+      const root = shadow ? host.attachShadow({ mode: 'open' }) : host;
+      root.innerHTML = '<button id="start-post" type="button" style="padding:12px"><span>Start a post</span></button>';
+      const button = root.querySelector('button');
+      button.addEventListener('click', () => {
+        const dialog = document.createElement('div');
+        dialog.id = 'post-composer';
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.style.cssText = 'position:fixed;inset:100px;background:white';
+        dialog.innerHTML = '<div contenteditable="true">Draft</div><button type="button">Post</button>';
+        document.body.append(dialog);
+      });
+      const rect = button.getBoundingClientRect();
+      return { ref_id: window.__wb_ax_ref(button.querySelector('span')), x: rect.x + 10, y: rect.y + 10 };
+    }, shadow);
+
+    register(`${kind}: LinkedIn Start a post opens without a message recipient across targeting methods`, async (page) => {
+      const { guard, probe } = await setup(page);
+      for (const shadow of [false, true]) {
+        const target = await addPostEntry(page, shadow);
+        for (const chatOpen of [false, true]) {
+          await page.evaluate(open => { document.querySelector('#chat').hidden = !open; }, chatOpen);
+          // Both agents expose the full collector, including open shadow roots.
+          const elements = await call(page, 'get_interactive_elements_cdp', {});
+          const index = elements.find(element => element.text === 'Start a post')?.index;
+          assert.ok(Number.isInteger(index), JSON.stringify(elements));
+          const strategies = [
+            ['click', { text: 'Start a post' }],
+            ['click_ax', { ref_id: target.ref_id }],
+            ['click', { index }],
+            ['click', { x: target.x, y: target.y, coordinate_space: 'css' }],
+            ...(!shadow ? [['click', { selector: '#start-post' }]] : []),
+          ];
+          for (const [tool, args] of strategies) {
+            const result = await probe(tool, args);
+            assert.equal(result.conclusive, true, JSON.stringify({ shadow, chatOpen, tool, args, result }));
+            assert.equal(result.messageSend, false);
+            assert.equal(await guard(tool, args), null);
+            const clicked = await call(page, tool, args);
+            assert.equal(clicked.success, true, JSON.stringify({ shadow, chatOpen, tool, args, clicked }));
+            assert.equal(await page.locator('#post-composer').count(), 1,
+              JSON.stringify({ shadow, chatOpen, tool, args, clicked }));
+            // Opening a composer must not authorize its eventual publication.
+            assert.equal((await guard('click', { text: 'Post' }))?.noDispatch, true);
+            await page.locator('#post-composer').evaluate(el => el.remove());
+          }
+        }
+        await page.locator('#post-entry').evaluate(el => el.remove());
+      }
+    });
+
+    register(`${kind}: LinkedIn post entry classification rejects send and publish lookalikes`, async (page) => {
+      const { guard } = await setup(page);
+      await addPostEntry(page);
+      for (const [attribute, value] of [
+        ['type', 'submit'], ['aria-label', 'Send'], ['form', 'chat'], ['disabled', ''], ['aria-disabled', 'true'],
+      ]) {
+        await page.locator('#start-post').evaluate((el, [key, value]) => el.setAttribute(key, value), [attribute, value]);
+        assert.equal((await guard('click', { selector: '#start-post' }))?.noDispatch, true, attribute);
+        await page.locator('#start-post').evaluate((el, key) => el.removeAttribute(key), attribute);
+      }
+      for (const label of ['Post', 'Send', 'Start a post and send', 'Photo']) {
+        await page.locator('#start-post').evaluate((el, text) => { el.textContent = text; }, label);
+        assert.equal((await guard('click', { selector: '#start-post' }))?.noDispatch, true, label);
+      }
+      await page.locator('#start-post').evaluate(el => { el.textContent = 'Start a post'; });
+      await page.evaluate(() => history.replaceState(null, '', '/messaging/'));
+      assert.equal((await guard('click', { text: 'Start a post' }))?.noDispatch, true, 'messaging route');
+      await page.evaluate(() => history.replaceState(null, '', '/feed/'));
+      for (const markup of ['<form></form>', '<article></article>', '<div role="dialog"></div>', '<div role="log"></div>']) {
+        await page.evaluate(markup => {
+          const wrapper = document.createElement('div');
+          wrapper.id = 'entry-wrapper';
+          wrapper.innerHTML = markup;
+          document.querySelector('main').append(wrapper);
+          wrapper.firstChild.append(document.querySelector('#post-entry'));
+        }, markup);
+        assert.equal((await guard('click', { text: 'Start a post' }))?.noDispatch, true, markup);
+        await page.evaluate(() => {
+          document.querySelector('main').append(document.querySelector('#post-entry'));
+          document.querySelector('#entry-wrapper').remove();
+        });
+      }
+      await page.evaluate(() => document.body.append(document.querySelector('#post-entry')));
+      assert.equal((await guard('click', { text: 'Start a post' }))?.noDispatch, true, 'outside feed main');
+      assert.deepEqual(await page.evaluate(() => window.fixtureClicks), []);
+    });
+
+    register(`${kind}: LinkedIn post entry respects blocking shadow dialogs and ambiguous targets`, async (page) => {
+      const { guard } = await setup(page);
+      const { ref_id } = await addPostEntry(page, true);
+      await page.evaluate(() => {
+        const host = document.createElement('div');
+        host.id = 'shadow-modal';
+        document.body.append(host);
+        host.attachShadow({ mode: 'open' }).innerHTML = '<div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:white"><button>Start a post</button></div>';
+      });
+      assert.equal((await guard('click_ax', { ref_id }))?.noDispatch, true, 'background control');
+      assert.equal((await guard('click', { text: 'Start a post' }))?.noDispatch, true, 'dialog control');
+      await page.locator('#shadow-modal').evaluate(el => el.remove());
+      await page.evaluate(() => document.querySelector('main').insertAdjacentHTML('beforeend', '<button>Start a post</button>'));
+      assert.equal((await guard('click', { text: 'Start a post' }))?.noDispatch, true, 'ambiguous controls');
+      await page.locator('#post-entry').evaluate(el => el.remove());
+      assert.equal((await guard('click_ax', { ref_id }))?.noDispatch, true, 'stale reference');
+    });
+
+    register(`${kind}: LinkedIn missing composer does not recommend alternate click retries`, async (page) => {
+      const { guard } = await setup(page);
+      const result = await guard('click', { selector: '#close-contact-info' });
+      // Use a visible unresolved action so this is a classification failure,
+      // not a stale/missing target that a fresh page read could repair.
+      await page.evaluate(() => document.querySelector('main').insertAdjacentHTML('beforeend', '<button id="unknown">Unknown action</button>'));
+      const missingComposer = await guard('click', { selector: '#unknown' });
+      assert.equal(missingComposer?.noDispatch, true);
+      assert.equal(missingComposer?.reasonCode, 'message_send_classification_inconclusive');
+      assert.equal(missingComposer?.retryable, false);
+      assert.match(missingComposer?.error, /no message composer/i);
+      assert.notEqual(result?.retryable, false, 'unresolved target should retain fresh-target recovery');
+    });
+
     register(`${kind}: LinkedIn Home and Jobs navigate with closed and open message composers (#2999)`, async (page) => {
       const { guard, probe } = await setup(page);
       for (const open of [false, true]) {
