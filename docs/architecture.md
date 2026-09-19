@@ -1008,3 +1008,15 @@ Key points:
 - Trace data is local-only (IndexedDB), never transmitted
 - Offscreen proxy only forwards provider SDK traffic
 - Finance adapters inject extra confirmation guidance
+
+### Jev auxiliary verification
+
+The static Jev card lives above the dynamic provider list and never participates
+in chat model selection. `systemone-judge.js` owns the pinned HTTP contract,
+strict typed responses and a shared deadline for retries. `systemone-evidence.js`
+collects bounded allowlisted observations and invalidates them on page changes.
+Scheduler evaluation returns keep/downgrade/skip plus metadata, revalidates the
+execution after awaiting the response and never requeues a downgraded action.
+The agent supplies the original run cost state and trace ID to the sidecar.
+No evidence is written to additional diagnostic logs. Watch baselines alone
+persist a bounded observation to support change comparisons.

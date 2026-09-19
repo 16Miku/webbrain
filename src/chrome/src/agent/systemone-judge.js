@@ -5,7 +5,7 @@
 // interface. It never performs an action or turns a non-success into success.
 
 export const SYSTEM_ONE_API_URL = 'https://api.typesafe.ai/v1/systemone';
-export const SYSTEM_ONE_MODEL = 'jev-latest';
+export const SYSTEM_ONE_MODEL = 'jev-1.13.0';
 export const SYSTEM_ONE_API_KEY = 'typesafeApiKey';
 export const SYSTEM_ONE_ENABLED_KEY = 'systemOneEnabled';
 export const SYSTEM_ONE_WATCH_ENABLED_KEY = 'systemOneWatchEnabled';
@@ -97,8 +97,53 @@ function requestError(status) {
 }
 
 function normalizeAnswerNumber(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+export const SYSTEM_ONE_INPUT_COST_PER_MILLION_USD = 0.042;
+export const SYSTEM_ONE_COST_PROVIDER = Object.freeze({
+  config: { category: 'cloud', inputCostPerMillionUsd: SYSTEM_ONE_INPUT_COST_PER_MILLION_USD, outputCostPerMillionUsd: 0 },
+});
+
+export function validateSystemOneAnswers(answers, questions) {
+  if (!isRecord(answers)) throw new Error('Invalid Jev answer map.');
+  for (const [id, question] of Object.entries(questions)) {
+    const answer = answers[id];
+    if (!isRecord(answer) || answer.type !== question.type) throw new Error('Invalid Jev answer type.');
+    if (question.type === 'noul') {
+      if (!unitNumber(answer.noul)) throw new Error('Invalid Jev probability.');
+      continue;
+    }
+    const keys = question.type === 'choice' ? Object.keys(question.criteria) : question.criteria.map((_, i) => String(i));
+    if (!unitNumber(answer.confidence) || !isRecord(answer.probabilities)
+      || Object.keys(answer.probabilities).length !== keys.length
+      || keys.some(key => !unitNumber(answer.probabilities[key]))
+      || Math.abs(keys.reduce((sum, key) => sum + answer.probabilities[key], 0) - 1) > 0.001) {
+      throw new Error('Invalid Jev distribution.');
+    }
+    if (question.type === 'choice') {
+      if (!keys.includes(answer.choice) || keys.some(key => answer.probabilities[key] > answer.probabilities[answer.choice] + 1e-6)) throw new Error('Invalid Jev choice.');
+    } else {
+      const expected = keys.reduce((sum, key) => sum + Number(key) * answer.probabilities[key], 0);
+      if (normalizeAnswerNumber(answer.score) == null || answer.score < 0 || answer.score > keys.length - 1
+        || Math.abs(expected - answer.score) > 0.02 || !isRecord(answer.legend)
+        || keys.some(key => typeof answer.legend[key] !== 'string')) throw new Error('Invalid Jev score.');
+    }
+  }
+  return answers;
+}
+
+function unitNumber(value) {
+  return normalizeAnswerNumber(value) != null && value >= 0 && value <= 1;
+}
+
+function abortable(promise, signal) {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(abortError(signal));
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
 }
 
 export function normalizeTypesafeApiKey(value) {
@@ -110,12 +155,8 @@ export function isValidTypesafeApiKey(value) {
 }
 
 export function normalizeSystemOneThreshold(value, fallback = SYSTEM_ONE_DEFAULT_THRESHOLD) {
-  const number = Number(value);
-  const safeFallback = Number.isFinite(Number(fallback))
-    ? Number(fallback)
-    : SYSTEM_ONE_DEFAULT_THRESHOLD;
-  const candidate = Number.isFinite(number) ? number : safeFallback;
-  return Math.max(SYSTEM_ONE_MIN_THRESHOLD, Math.min(SYSTEM_ONE_MAX_THRESHOLD, candidate));
+  const valid = n => typeof n === 'number' && Number.isFinite(n) && n >= SYSTEM_ONE_MIN_THRESHOLD && n <= SYSTEM_ONE_MAX_THRESHOLD;
+  return valid(value) ? value : valid(fallback) ? fallback : SYSTEM_ONE_DEFAULT_THRESHOLD;
 }
 
 export function buildWatchQuestions() {
@@ -170,7 +211,7 @@ export function shouldDowngradeSuccess(answers, { threshold = SYSTEM_ONE_DEFAULT
   const completenessAnswer = answers.task_completeness;
   const probability = normalizeAnswerNumber(conditionAnswer?.noul);
   const score = normalizeAnswerNumber(completenessAnswer?.score);
-  if (probability == null || score == null) return false;
+  if (!unitNumber(probability) || score == null || score < 0 || score > 2) return false;
   return probability < normalizeSystemOneThreshold(threshold)
     || score < SYSTEM_ONE_MIN_COMPLETENESS_SCORE;
 }
@@ -180,48 +221,57 @@ export function createSystemOneJudge({
   sleep = defaultSleep,
   timeoutMs = SYSTEM_ONE_TIMEOUT_MS,
   maxRetries = SYSTEM_ONE_MAX_RETRIES,
+  now = () => Date.now(),
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('TypeSafe System One fetch is unavailable.');
   return {
-    async evaluate({ apiKey, state, questions, signal } = {}) {
+    async evaluate({ apiKey, state, questions, signal, beforeRequest, onUsage } = {}) {
       const key = normalizeTypesafeApiKey(apiKey);
       if (!key) throw new Error('TypeSafe System One API key is not configured.');
       validateState(state);
       validateQuestions(questions);
-      const body = { state, model: SYSTEM_ONE_MODEL, questions };
-      const retries = Math.max(0, Math.floor(Number(maxRetries) || 0));
-
-      for (let attempt = 0; ; attempt += 1) {
-        throwIfAborted(signal);
-        const request = requestSignal(signal, timeoutMs);
-        try {
-          const response = await fetchImpl(SYSTEM_ONE_API_URL, {
+      const started = now();
+      const request = requestSignal(signal, Math.max(1, Math.min(5000, Number(timeoutMs) || 5000)));
+      const retries = Math.max(0, Math.min(2, Math.floor(Number(maxRetries) || 0)));
+      try {
+        for (let attempt = 0; ; attempt += 1) {
+          throwIfAborted(request.signal);
+          if (beforeRequest) await abortable(beforeRequest(), request.signal);
+          throwIfAborted(request.signal);
+          const response = await abortable(fetchImpl(SYSTEM_ONE_API_URL, {
             method: 'POST',
-            headers: {
-              Authorization: `Bearer ${key}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body),
+            credentials: 'omit',
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ state, model: SYSTEM_ONE_MODEL, questions }),
             signal: request.signal,
-          });
+          }), request.signal);
           if (!response?.ok) {
             const status = Number(response?.status) || 0;
             if ((status === 429 || status === 529) && attempt < retries) {
-              request.dispose();
-              await sleep(SYSTEM_ONE_RETRY_BASE_MS * (2 ** attempt));
+              await abortable(sleep(SYSTEM_ONE_RETRY_BASE_MS * (2 ** attempt)), request.signal);
               continue;
             }
             throw requestError(status);
           }
-          let result;
-          try { result = await response.json(); } catch { throw new Error('TypeSafe System One returned invalid JSON.'); }
-          if (!isRecord(result) || !isRecord(result.answers)) {
-            throw new Error('TypeSafe System One returned an invalid answer map.');
-          }
-          return result;
-        } finally {
-          request.dispose();
+          const result = await abortable(response.json(), request.signal);
+          const usage = result?.usage;
+          if (!isRecord(usage) || !Number.isInteger(usage.input_tokens) || usage.input_tokens < 0
+            || !Number.isInteger(usage.output_tokens) || usage.output_tokens < 0) throw new Error('Invalid Jev usage.');
+          const metadata = {
+            model: SYSTEM_ONE_MODEL,
+            usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens },
+            latencyMs: Math.max(0, now() - started),
+            estimatedCostUsd: usage.input_tokens * SYSTEM_ONE_INPUT_COST_PER_MILLION_USD / 1_000_000,
+          };
+          // Account for billable responses even when the answer contract is invalid.
+          if (onUsage) await abortable(onUsage(metadata), request.signal);
+          throwIfAborted(request.signal);
+          if (result.model !== SYSTEM_ONE_MODEL) throw new Error('Unexpected Jev model version.');
+          validateSystemOneAnswers(result.answers, questions);
+          return { ...metadata, answers: result.answers };
         }
+      } finally {
+        request.dispose();
       }
     },
   };

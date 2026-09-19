@@ -210,6 +210,7 @@ const systemOneWatchThresholdValue = document.getElementById('system-one-watch-t
 const systemOneCompletionThresholdRange = document.getElementById('range-system-one-completion-threshold');
 const systemOneCompletionThresholdValue = document.getElementById('system-one-completion-threshold-value');
 const btnSaveSystemOne = document.getElementById('btn-save-system-one');
+const btnTestSystemOne = document.getElementById('btn-test-system-one');
 const btnClearSystemOne = document.getElementById('btn-clear-system-one');
 const systemOneTestResult = document.getElementById('test-system-one');
 const languageSelect = document.getElementById('select-language');
@@ -1461,12 +1462,12 @@ if (btnSaveSystemOne) {
     await browser.storage.local.set({
       typesafeApiKey: key,
       systemOneEnabled: enabled && isValidTypesafeApiKey(key),
-      systemOneWatchEnabled: enabled && systemOneWatchToggle?.checked === true,
-      systemOneCompletionEnabled: enabled && systemOneCompletionToggle?.checked === true,
+      systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
+      systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
       systemOneWatchThreshold: normalizeSystemOneThreshold(Number(systemOneWatchThresholdRange?.value) / 100),
       systemOneCompletionThreshold: normalizeSystemOneThreshold(Number(systemOneCompletionThresholdRange?.value) / 100),
     });
-    showSystemOneResult('ok', t('st.system_one.saved'));
+    showSystemOneResult('ok', t('st.providers.saved'));
   });
 }
 
@@ -1484,9 +1485,27 @@ if (btnClearSystemOne) {
       'systemOneWatchThreshold',
       'systemOneCompletionThreshold',
     ]);
-    showSystemOneResult('ok', t('st.system_one.cleared'));
+    if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = '70';
+    if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = '70';
+    updateSystemOneThresholdLabels();
+    showSystemOneResult('ok', t('st.captcha.cleared'));
   });
 }
+
+btnTestSystemOne?.addEventListener('click', async () => {
+  const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
+  if (!apiKey) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  btnTestSystemOne.disabled = true;
+  showSystemOneResult('', t('st.providers.testing'));
+  try {
+    const result = await sendToBackground('test_system_one', { apiKey });
+    showSystemOneResult(result?.success ? 'ok' : 'fail', result?.success
+      ? t('st.providers.connected', { model: result.model })
+      : t('st.providers.failed', { error: result?.error || 'Jev unavailable' }));
+  } catch (error) {
+    showSystemOneResult('fail', t('st.providers.failed', { error: error.message }));
+  } finally { btnTestSystemOne.disabled = false; }
+});
 
 // --- Vision Model ---
 

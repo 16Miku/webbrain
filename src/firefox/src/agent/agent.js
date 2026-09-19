@@ -1,3 +1,4 @@
+import { SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
@@ -5669,6 +5670,8 @@ export class Agent extends LoopDetector {
     // Claim synchronously before awaiting the external guard so teacher-mode
     // startup cannot race a run whose persisted teacher-state check is pending.
     this._runningTabs.add(tabId);
+    this._systemOneGenerations ??= new Map();
+    this._systemOneGenerations.set(tabId, (this._systemOneGenerations.get(tabId) || 0) + 1);
     // Reset only when claiming a NEW run, before any asynchronous setup.
     this.abortFlags.delete(tabId);
     const controller = new AbortController();
@@ -6565,6 +6568,32 @@ export class Agent extends LoopDetector {
     const code = failureCode || inferredCode;
     const detail = extra && typeof extra === 'object' ? extra : {};
     return { status: reason, reason, ...(code ? { code } : {}), ...detail };
+  }
+
+  systemOneContext(tabId) {
+    const generation = this._systemOneGenerations?.get(tabId);
+    return { costState: this.currentCostState.get(tabId), runId: this.currentRunId.get(tabId),
+      isCurrent: () => this._systemOneGenerations?.get(tabId) === generation };
+  }
+
+  async evaluateSystemOne(tabId, client, args, context = this.systemOneContext(tabId)) {
+    const costState = context.costState || this.currentCostState.get(tabId) || this._newCostRunState();
+    return client.evaluate({ ...args,
+      beforeRequest: async () => {
+        if (this.strictSecretMode || globalThis.navigator?.onLine === false || context.isCurrent?.() === false) throw new Error('Jev unavailable.');
+        const message = await this._checkCostAllowance(SYSTEM_ONE_COST_PROVIDER, costState);
+        if (message) throw this._costAllowanceError(message);
+      },
+      onUsage: async metadata => {
+        await this._recordCostUsage(SYSTEM_ONE_COST_PROVIDER, metadata.usage, costState);
+        this.recordSystemOneVerdict(tabId, { decision: 'usage', ...metadata }, context);
+      },
+    });
+  }
+
+  recordSystemOneVerdict(tabId, metadata, context = {}) {
+    const runId = context.runId || this.currentRunId.get(tabId);
+    if (runId) try { trace.recordNote(runId, 0, 'system_one', metadata); } catch {}
   }
 
   async _chatWithCostAllowance(provider, messages, options, costState, requestContext = null) {

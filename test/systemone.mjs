@@ -1,0 +1,107 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
+const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+for (const build of ['chrome', 'firefox']) {
+  const mod = await import(`../src/${build}/src/agent/systemone-judge.js`);
+  const evidence = await import(`../src/${build}/src/agent/systemone-evidence.js`);
+  const scheduler = await import(`../src/${build}/src/agent/scheduler.js`);
+  const questions = { p: { type: 'noul', instructions: 'Is it ready?' }, c: { type: 'choice', instructions: 'Choose', criteria: { yes: 'ready', no: 'not ready' } }, s: { type: 'score', instructions: 'Score', criteria: ['none', 'some', 'all'] } };
+  const answers = () => ({ p: { type: 'noul', noul: .9 }, c: { type: 'choice', choice: 'yes', confidence: .9, probabilities: { yes: .9, no: .1 } }, s: { type: 'score', score: 1.8, confidence: .9, probabilities: { 0: 0, 1: .2, 2: .8 }, legend: { 0: 'none', 1: 'some', 2: 'all' } } });
+  test(`${build}: strict typed answer and threshold contracts`, () => {
+    assert.deepEqual(mod.validateSystemOneAnswers(answers(), questions), answers());
+    for (const value of [null, '', true, '0.9', NaN, Infinity, -1, 1.1]) {
+      const a = answers(); a.p.noul = value;
+      assert.throws(() => mod.validateSystemOneAnswers(a, questions));
+    }
+    for (const patch of [{ choice: 'fake' }, { confidence: null }, { probabilities: { yes: .9 } }, { probabilities: { yes: 1.2, no: -.2 } }, { probabilities: { yes: .1, no: .9 } }]) {
+      const a = answers(); Object.assign(a.c, patch); assert.throws(() => mod.validateSystemOneAnswers(a, questions));
+    }
+    for (const patch of [{ score: null }, { score: 3 }, { score: 0 }, { legend: null }, { type: 'noul' }]) {
+      const a = answers(); Object.assign(a.s, patch); assert.throws(() => mod.validateSystemOneAnswers(a, questions));
+    }
+    for (const value of [null, '', '0.8', false, NaN, .3, 1]) assert.equal(mod.normalizeSystemOneThreshold(value), .7);
+  });
+  test(`${build}: one deadline covers retry backoff and an uncooperative fetch`, async () => {
+    let calls = 0;
+    const start = Date.now();
+    const judge = mod.createSystemOneJudge({ timeoutMs: 40, fetchImpl: async () => { calls++; return { ok: false, status: 429 }; } });
+    await assert.rejects(judge.evaluate({ apiKey: 'test', state: {}, questions }), /timed out/);
+    assert.equal(calls, 1); assert.ok(Date.now() - start < 500);
+    await assert.rejects(mod.createSystemOneJudge({ timeoutMs: 20, fetchImpl: () => new Promise(() => {}) }).evaluate({ apiKey: 'test', state: {}, questions }), /timed out/);
+  });
+  test(`${build}: abort interrupts backoff; billable invalid answers are accounted`, async () => {
+    const controller = new AbortController(); const entered = deferred(); let calls = 0;
+    const judge = mod.createSystemOneJudge({ fetchImpl: async () => { calls++; return { ok: false, status: 529 }; }, sleep: () => { entered.resolve(); return new Promise(() => {}); } });
+    const result = judge.evaluate({ apiKey: 'test', state: {}, questions, signal: controller.signal });
+    await entered.promise; controller.abort(new Error('cancelled')); await assert.rejects(result, /cancelled/); assert.equal(calls, 1);
+    let usage;
+    const invalid = mod.createSystemOneJudge({ fetchImpl: async () => ({ ok: true, json: async () => ({ model: mod.SYSTEM_ONE_MODEL, answers: {}, usage: { input_tokens: 1000, output_tokens: 0 } }) }) });
+    await assert.rejects(invalid.evaluate({ apiKey: 'test', state: {}, questions, onUsage: m => { usage = m; } }));
+    assert.equal(usage.model, 'jev-1.13.0'); assert.equal(usage.estimatedCostUsd, .000042);
+  });
+  test(`${build}: evidence excludes summary, history, credentials and pre-action observations`, () => {
+    const c = evidence.createSystemOneEvidence();
+    c.observe('tool_result', { name: 'done', result: { summary: 'Everything succeeded!' } });
+    assert.equal(evidence.systemOneEvidenceState('task', c.snapshot()), null);
+    c.observe('tool_result', { name: 'get_accessibility_tree', result: { pageContent: 'Before action', screenshot: 'PRIVATE', history: 'PRIVATE' } });
+    c.observe('tool_call', { name: 'click_ax', args: { ref_id: 'ref_1' } });
+    c.observe('tool_result', { name: 'click_ax', result: { success: true } });
+    assert.equal(evidence.systemOneEvidenceState('task', c.snapshot()), null);
+    c.observe('tool_result', { name: 'read_page', result: { text: 'After action\npassword=hunter2\nhttps://user:pass@example.com/page?token=PRIVATE' } });
+    const state = evidence.systemOneEvidenceState('task', c.snapshot());
+    assert.equal(c.snapshot().sideEffect, true);
+    assert.doesNotMatch(JSON.stringify(state), /Before action|hunter2|PRIVATE|user:pass/);
+    assert.match(state.latest_observation[0].data, /untrusted_page_content/);
+    assert.ok(JSON.stringify(state).length <= 16000);
+  });
+  async function setup({ mutate = false, noEvidence = false, judge, recurring = false } = {}) {
+    let calls = 0;
+    const h = makeSchedulerHarness(scheduler, {
+      systemOneEnabled: true, systemOneWatchEnabled: true, systemOneCompletionEnabled: true, systemOneApiKey: 'test',
+      systemOneJudge: judge || { evaluate: async () => { calls++; return { answers: { condition_met: { noul: .1 }, task_complete: { noul: .1 }, task_completeness: { score: 0 } } }; } },
+      processMessage: async (_tab, _prompt, emit, _mode, _attachments, options) => {
+        if (mutate) {
+          await options.beforeConsequentialTool({ name: 'click_ax' });
+          emit('tool_call', { name: 'click_ax' }); emit('tool_result', { name: 'click_ax', result: { success: true } });
+          await options.afterConsequentialTool({ name: 'click_ax', result: { success: true } });
+        }
+        if (!noEvidence) emit('tool_result', { name: 'get_accessibility_tree', result: { pageContent: 'Status: not confirmed' } });
+        emit('tool_result', { name: 'done', result: { done: true, outcome: 'success', summary: 'Succeeded' } });
+        return 'Succeeded';
+      },
+    });
+    const created = recurring
+      ? await h.manager.createTaskJob({ tabId: 77, args: { title: 'Save record', prompt: 'Save record', mode: 'act', schedule: { type: 'recurring', after_seconds: 0, interval_minutes: 5 }, target: { type: 'current_tab' } }, currentUrl: 'https://example.com/' })
+      : await h.manager.createWatchJob({ tabId: 77, args: { prompt: 'Watch status', keep: true, interval_seconds: 60 }, currentUrl: 'https://example.com/' });
+    assert.equal(created.success, true);
+    return { ...h, id: created.jobId, calls: () => calls, run: () => h.manager.handleAlarm(h.alarmName(created.jobId)) };
+  }
+  test(`${build}: no evidence skips Jev; read-only downgraded watch keeps polling`, async () => {
+    const missing = await setup({ noEvidence: true }); await missing.run();
+    assert.equal(missing.calls(), 0); assert.equal(missing.jobs()[0].systemOneVerdict.reason, 'no_evidence');
+    const h = await setup(); await h.run();
+    assert.equal(h.jobs()[0].status, 'pending'); assert.equal(h.jobs()[0].lastOutcome, 'partial');
+    assert.match(h.jobs()[0].watch.systemOneBaseline[0].data, /Status: not confirmed/);
+  });
+  test(`${build}: uncertain completed actions never automatically repeat, including recurring tasks`, async () => {
+    for (const recurring of [false, true]) {
+      const h = await setup({ mutate: true, recurring }); await h.run();
+      const job = h.jobs()[0]; assert.equal(job.status, 'needs_user_input'); assert.equal(job.reconciliationRequired, true);
+      assert.equal(job.completedConsequentialAction.name, 'click_ax'); assert.equal(job.nextRunAt, null);
+      await h.run(); assert.equal(h.calls(), 1);
+    }
+  });
+  test(`${build}: cancellation and replaced execution discard a delayed verdict`, async () => {
+    for (const cancel of [true, false]) {
+      const entered = deferred(); const response = deferred();
+      const h = await setup({ judge: { evaluate: async () => { entered.resolve(); return response.promise; } } });
+      const running = h.run(); await entered.promise;
+      if (cancel) await h.manager.cancelJob(h.id);
+      else await h.manager._updateJob(h.id, () => ({ executionId: 'new-execution', lastResult: 'new result' }));
+      response.resolve({ answers: { condition_met: { noul: .1 }, task_completeness: { score: 0 } } }); await running;
+      const job = h.jobs()[0]; assert.equal(job.systemOneVerdict, undefined);
+      assert.equal(cancel ? job.status : job.lastResult, cancel ? 'cancelled' : 'new result');
+    }
+  });
+}

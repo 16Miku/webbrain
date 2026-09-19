@@ -1,3 +1,4 @@
+import { createSystemOneEvidence, systemOneEvidenceState } from './systemone-evidence.js';
 import {
   buildCompletionQuestions,
   buildWatchQuestions,
@@ -555,6 +556,7 @@ export function summarizeScheduledJob(job) {
     target: job.target || null,
     lastResult: job.lastResult || null,
     lastOutcome: job.lastOutcome || null,
+    systemOneVerdict: job.systemOneVerdict || null,
     lastError: job.lastError || null,
     needsUserInput: job.status === 'needs_user_input',
     clarificationRequired: job.clarificationRequired === true,
@@ -1426,42 +1428,64 @@ export class ScheduledJobManager {
     return `[Scheduled task ${job.id}: ${job.title}]\nThe user explicitly scheduled this future task. Treat this as the user-authored task for this scheduled run.\nTask: ${job.prompt}\nFirst reread the current page/state. If the task is stale, conflicts with newer user messages, or needs user input, stop and explain.`;
   }
 
-  async _shouldDowngradeWithSystemOne(job, result, outcome, runMeta = {}) {
-    if (outcome !== 'success' || !this.systemOneJudge) return false;
+  async _evaluateSystemOne(job, result, outcome, runMeta = {}) {
     const settings = asObject(runMeta.settings);
     const isWatch = job.source === 'watch';
-    const featureEnabled = isWatch ? settings.systemOneWatchEnabled : settings.systemOneCompletionEnabled;
-    if (settings.systemOneEnabled !== true
-      || featureEnabled !== true
-      || !settings.typesafeApiKey
-      || settings.strictSecretMode === true
-      || runMeta.sidecarAllowed === false
-      || runMeta.signal?.aborted) {
-      return false;
-    }
-    const state = {
-      task: String(job.prompt || job.resumeInstruction || job.reason || '').slice(0, 8000),
-      latest_observation: String(result || '').slice(0, 2000),
-      ...(isWatch ? {
-        baseline: String(job.watch?.lastObservation || '').slice(0, 2000) || null,
-      } : {}),
-    };
+    const skip = reason => ({ decision: 'skip', reason });
+    if (outcome !== 'success') return skip('not_success');
+    if (!this.systemOneJudge || settings.systemOneEnabled !== true
+      || !(isWatch ? settings.systemOneWatchEnabled : settings.systemOneCompletionEnabled)
+      || !settings.typesafeApiKey) return skip('disabled');
+    if (settings.strictSecretMode || runMeta.sidecarAllowed === false || runMeta.signal?.aborted) return skip('unavailable');
+    const state = systemOneEvidenceState(job.prompt || job.resumeInstruction || job.reason || '', runMeta.evidence, isWatch ? job.watch?.systemOneBaseline : null);
+    if (!state) return skip('no_evidence');
     try {
-      const verdict = await this.systemOneJudge.evaluate({
-        apiKey: settings.typesafeApiKey,
-        state,
-        questions: isWatch ? buildWatchQuestions() : buildCompletionQuestions(),
-        signal: runMeta.signal,
-      });
-      return shouldDowngradeSuccess(verdict?.answers, {
-        threshold: isWatch ? settings.systemOneWatchThreshold : settings.systemOneCompletionThreshold,
-      });
+      const args = { apiKey: settings.typesafeApiKey, state,
+        questions: isWatch ? buildWatchQuestions() : buildCompletionQuestions(), signal: runMeta.signal };
+      const verdict = this.agent.evaluateSystemOne
+        ? await this.agent.evaluateSystemOne(job.tabId, this.systemOneJudge, args, runMeta.judgeContext)
+        : await this.systemOneJudge.evaluate(args);
+      return {
+        decision: shouldDowngradeSuccess(verdict.answers, {
+          threshold: isWatch ? settings.systemOneWatchThreshold : settings.systemOneCompletionThreshold,
+        }) ? 'downgrade' : 'keep',
+        reason: 'evidence_judgment', model: verdict.model, latencyMs: verdict.latencyMs,
+        usage: verdict.usage, estimatedCostUsd: verdict.estimatedCostUsd,
+      };
     } catch (error) {
-      if (!runMeta.signal?.aborted) {
-        console.warn('[WebBrain] TypeSafe System One sidecar failed open:', error);
-      }
-      return false;
+      return skip(runMeta.signal?.aborted ? 'cancelled' : error?.code === 'WB_COST_ALLOWANCE' ? 'cost_limit' : 'service_unavailable');
     }
+  }
+
+  async _applySystemOne(job, result, outcome, runMeta) {
+    const verdict = await this._evaluateSystemOne(job, result, outcome, runMeta);
+    if (runMeta.signal?.aborted || runMeta.judgeContext?.isCurrent?.() === false) return { stop: true };
+    if (verdict.reason === 'disabled') return { stop: false, outcome };
+    const current = await this._updateJobIf(job.id, prev => (
+      ['running', 'needs_user_input'].includes(prev.status)
+      && (!runMeta.executionId || prev.executionId === runMeta.executionId)
+      && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
+    ), prev => ({
+      systemOneVerdict: verdict,
+      ...(prev.source === 'watch' && runMeta.evidence?.observations?.length ? {
+        watch: { ...prev.watch, systemOneBaseline: runMeta.evidence.observations.slice(-1) },
+      } : {}),
+    }));
+    if (!current) return { stop: true };
+    this.agent.recordSystemOneVerdict?.(job.tabId, verdict, runMeta.judgeContext);
+    if (verdict.decision === 'downgrade' && (runMeta.evidence?.sideEffect || current.completedConsequentialAction || current.pendingToolCall)) {
+      const waiting = await this._updateJobIf(job.id, prev => (
+        prev.executionId === current.executionId && ['running', 'needs_user_input'].includes(prev.status) && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
+      ), () => ({ status: 'needs_user_input', reconciliationRequired: true,
+        clarificationRequired: true, clarificationAuthorizationRequired: true,
+        lastOutcome: 'partial', lastResult: String(result || '').slice(0, 2000),
+        lastError: 'Jev could not verify the completed action. Check its result before running this task again.',
+        nextRunAt: null, pendingClarify: null,
+      }));
+      if (waiting) this._emit(waiting, 'clarification_required');
+      return { stop: true };
+    }
+    return { stop: false, outcome: verdict.decision === 'downgrade' ? 'partial' : outcome };
   }
 
   async _completeWatch(job, result, outcome = null, runMeta = {}) {
@@ -1475,10 +1499,9 @@ export class ScheduledJobManager {
       && !!eventKey
       && eventKey === job.watch?.lastTriggeredEventKey;
     let effectiveOutcome = duplicateAlert ? 'partial' : lastOutcome;
-    if (effectiveOutcome === 'success'
-      && await this._shouldDowngradeWithSystemOne(job, result, effectiveOutcome, runMeta)) {
-      effectiveOutcome = 'partial';
-    }
+    const judged = await this._applySystemOne(job, result, effectiveOutcome, runMeta);
+    if (judged.stop) return;
+    effectiveOutcome = judged.outcome;
     const freshAlert = effectiveOutcome === 'success'
       && job.watch?.beep === true
       && watchAlert.armed === true
@@ -1507,6 +1530,8 @@ export class ScheduledJobManager {
     if (keepWatching) {
       const updated = await this._updateJobIf(job.id, (prev) => (
         ['running', 'needs_user_input'].includes(prev.status)
+        && (!runMeta.executionId || prev.executionId === runMeta.executionId)
+        && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
       ), (prev) => {
         const nextRunAt = computeNextRunAt(prev, this.now());
         return {
@@ -1562,6 +1587,8 @@ export class ScheduledJobManager {
 
     const completed = await this._updateJobIf(job.id, (prev) => (
       ['running', 'needs_user_input'].includes(prev.status)
+        && (!runMeta.executionId || prev.executionId === runMeta.executionId)
+        && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
     ), (prev) => ({
       status: 'completed',
       reconciliationRequired: false,
@@ -1610,13 +1637,14 @@ export class ScheduledJobManager {
       return;
     }
     let lastOutcome = normalizeDoneOutcome(outcome);
-    if (lastOutcome === 'success'
-      && await this._shouldDowngradeWithSystemOne(job, result, lastOutcome, runMeta)) {
-      lastOutcome = 'partial';
-    }
+    const judged = await this._applySystemOne(job, result, lastOutcome, runMeta);
+    if (judged.stop) return;
+    lastOutcome = judged.outcome;
     if (job.kind === 'task' && job.schedule?.type === 'recurring') {
       const updated = await this._updateJobIf(job.id, (prev) => (
         ['running', 'needs_user_input'].includes(prev.status)
+        && (!runMeta.executionId || prev.executionId === runMeta.executionId)
+        && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
       ), (prev) => {
         const nextRunAt = computeNextRunAt(prev, this.now());
         return {
@@ -1646,6 +1674,8 @@ export class ScheduledJobManager {
     }
     const completed = await this._updateJobIf(job.id, (prev) => (
       ['running', 'needs_user_input'].includes(prev.status)
+        && (!runMeta.executionId || prev.executionId === runMeta.executionId)
+        && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
     ), (prev) => ({
       status: 'completed',
       reconciliationRequired: false,
@@ -1844,7 +1874,11 @@ export class ScheduledJobManager {
     let runStatus = null;
     let watchAlert = null;
     let sawFailureLikeUpdate = false;
+    let judgeContext = null;
+    const evidence = createSystemOneEvidence(this.agent._wrapUntrusted?.bind(this.agent));
     const onUpdate = (type, data) => {
+      judgeContext = this.agent.systemOneContext?.(tabId) || judgeContext;
+      evidence.observe(type, data);
       const doneOutcome = doneOutcomeFromUpdate(type, data);
       if (doneOutcome) runOutcome = doneOutcome;
       if (type === 'error' || type === 'attachment_rejected' || type === 'max_steps_reached'
@@ -2008,6 +2042,9 @@ export class ScheduledJobManager {
             : null);
         await this._complete(running, result, effectiveOutcome, {
           watchAlert,
+          evidence: evidence.snapshot(),
+          judgeContext,
+          executionId: execution.id,
           settings,
           signal: execution.controller.signal,
           sidecarAllowed: runStatus !== 'cost_limit',

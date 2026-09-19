@@ -4058,6 +4058,17 @@ async function handleMessage(msg, sender) {
       return await providerManager.testTranscriptionProvider();
     }
 
+    case 'test_system_one': {
+      await strictSecretModeReady;
+      try {
+        const result = await agent.evaluateSystemOne(null, createSystemOneJudge({ maxRetries: 0 }), {
+          apiKey: msg.apiKey, state: { color: 'blue' },
+          questions: { test: { type: 'noul', instructions: 'Is the color blue?' } },
+        });
+        return { success: true, model: result.model };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
+
     case 'test_capsolver_balance': {
       // Settings UI "Check balance" button. Uses the key from the request
       // rather than re-reading storage so the user gets feedback before
