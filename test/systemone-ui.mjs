@@ -78,7 +78,6 @@ try {
         })), true, 'every tab label fits on one line without clipping');
         await page.screenshot({ animations: 'disabled', path: `${output}/${build}-${lang}-${width}-tabs.png` });
         assert.equal(await page.locator('[data-panel="providers"] #system-one-card').count(), 0);
-        assert.equal(await page.locator('#toggle-system-one-browser, #toggle-system-one-classifications').count(), 0, 'experimental speed options remain outside main');
         assert.deepEqual(await page.locator('[data-panel="multimodal"] > .provider-card').evaluateAll(cards => cards.map(card => card.id)), [
           'vision-card', 'image-budget-card', 'redaction-card', 'transcription-card', 'system-one-card',
         ]);
@@ -92,6 +91,10 @@ try {
         await page.waitForFunction(() => document.querySelector('#system-one-heading')?.textContent.trim() === 'Jev (TypeSafe)');
         assert.equal(await page.locator('[data-panel="multimodal"]').isVisible(), true);
         assert.equal(await page.evaluate(() => testRequests.filter(r => r.action === 'test_system_one').length), 0);
+        assert.equal(await page.locator('#toggle-system-one-classifications').isChecked(), false);
+        assert.equal(await page.locator('#toggle-system-one-browser').isChecked(), false);
+        await page.locator('#toggle-system-one-classifications').locator('..').click();
+        await page.locator('#toggle-system-one-browser').locator('..').click();
         await page.locator('#system-one-api-key').fill('synthetic-test-key');
         await page.locator('[data-tab="providers"]').click();
         const search = page.locator('#providers .provider-search input');
@@ -111,6 +114,8 @@ try {
         await page.waitForFunction(() => testStore.systemOneEnabled === false);
         assert.equal(await page.evaluate(() => testStore.systemOneWatchEnabled), true);
         assert.equal(await page.evaluate(() => testStore.systemOneCompletionEnabled), true);
+        assert.equal(await page.evaluate(() => testStore.systemOneFastBrowser), true);
+        assert.equal(await page.evaluate(() => testStore.systemOneFastClassifications), true);
         await page.locator('#btn-test-system-one').click();
         await page.waitForFunction(() => testRequests.filter(r => r.action === 'test_system_one').length === 1);
         await page.locator('#system-one-card details').evaluate(el => { el.open = true; });
@@ -121,6 +126,8 @@ try {
         assert.equal(await page.locator('#toggle-system-one').isChecked(), false);
         assert.equal(await page.locator('#toggle-system-one-completion').isChecked(), false);
         assert.equal(await page.locator('#range-system-one-completion-threshold').inputValue(), '70');
+        assert.equal(await page.locator('#toggle-system-one-browser').isChecked(), false);
+        assert.equal(await page.locator('#toggle-system-one-classifications').isChecked(), false);
         assert.equal(await page.evaluate(() => testStore.typesafeApiKey), undefined);
         if (build === 'chrome' && lang === 'en' && width === 1280 && process.env.JEV_DOC_SCREENSHOTS) {
           await captureDocScreenshots(page, process.env.JEV_DOC_SCREENSHOTS);

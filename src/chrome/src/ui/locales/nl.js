@@ -888,6 +888,8 @@ export default {
   "st.system_one.need_key": "Voer een TypeSafe-API-sleutel in.",
   "st.system_one.uncertain": "Jev: voltooiing kon niet worden bevestigd.",
   "st.system_one.clear": "Sleutel verwijderen",
+  "st.system_one.fast_classifications": "Snelle classificaties",
+  "st.system_one.fast_browser": "Snelle browseracties — Experimenteel",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Geplande bewakingen controleren — Waarschijnlijkheidsdrempel",
   "st.system_one.completion_threshold": "Voltooiing van geplande taken controleren — Waarschijnlijkheidsdrempel",

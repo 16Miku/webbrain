@@ -1,11 +1,11 @@
 {
   "name": "webbrain",
-  "version": "36.7.2",
+  "version": "36.7.3",
   "description": "Open-source AI browser agent \u2014 chat with pages, automate tasks, multi-provider LLM support.",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run test:systemone && node --test test/browser-dialogs.mjs && npm run test:firefox-bidi && npm run test:runtime-lifecycle && npm run test:provider-limits && npm run test:accessibility-tree-benchmark && npm run test:toolbar-guard && npm run test:pdf-read && npm run test:pdf-selection && npm run test:social-contract && npm run test:build-unpacked && npm run test:attachment-drop && node test/run.js && node test/selection-scope-restoration.mjs && node scripts/benchmark-offline-relevance.mjs && npm run test:security",
+    "test": "npm run test:systemone && npm run test:systemone:fast && node --test test/browser-dialogs.mjs && npm run test:firefox-bidi && npm run test:runtime-lifecycle && npm run test:provider-limits && npm run test:accessibility-tree-benchmark && npm run test:toolbar-guard && npm run test:pdf-read && npm run test:pdf-selection && npm run test:social-contract && npm run test:build-unpacked && npm run test:attachment-drop && node test/run.js && node test/selection-scope-restoration.mjs && node scripts/benchmark-offline-relevance.mjs && npm run test:security",
     "test:provider-limits": "node test/provider-model-limits.mjs",
     "test:accessibility-tree-benchmark": "node --test test/llm/lib/accessibility-tree-formats.test.mjs && node test/llm/accessibility-tree-benchmark.mjs --no-exact-tokenizer --check",
     "test:attachment-drop": "node test/attachment-drop.mjs",
@@ -49,7 +49,9 @@
     "test:firefox-bidi": "node --test test/firefox-bidi.mjs",
     "test:firefox-bidi:e2e": "node test/firefox-bidi-e2e.mjs",
     "test:systemone": "node --test test/systemone.mjs",
-    "test:systemone:ui": "node test/systemone-ui.mjs"
+    "test:systemone:ui": "node test/systemone-ui.mjs",
+    "test:systemone:fast": "node --test test/systemone-fast.mjs && node test/systemone-fast-dom.mjs && node --test test/jev/fixtures.test.mjs",
+    "benchmark:jev": "node test/jev/benchmark.mjs"
   },
   "devDependencies": {
     "playwright": "^1.48.0",

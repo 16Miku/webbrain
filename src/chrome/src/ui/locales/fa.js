@@ -987,6 +987,8 @@ export default {
   "st.system_one.need_key": "کلید API تایپ‌سیف را وارد کنید.",
   "st.system_one.uncertain": "Jev: تکمیل کار تأیید نشد.",
   "st.system_one.clear": "حذف کلید",
+  "st.system_one.fast_classifications": "دسته‌بندی سریع",
+  "st.system_one.fast_browser": "عملیات سریع مرورگر — آزمایشی",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "بررسی پایش‌های زمان‌بندی‌شده — آستانه احتمال",
   "st.system_one.completion_threshold": "بررسی تکمیل کارهای زمان‌بندی‌شده — آستانه احتمال",

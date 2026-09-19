@@ -987,6 +987,8 @@ export default {
   "st.system_one.need_key": "Nhập khóa API TypeSafe.",
   "st.system_one.uncertain": "Jev: không thể xác minh việc hoàn thành.",
   "st.system_one.clear": "Xóa khóa",
+  "st.system_one.fast_classifications": "Phân loại nhanh",
+  "st.system_one.fast_browser": "Thao tác trình duyệt nhanh — Thử nghiệm",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Xác minh theo dõi định kỳ — Ngưỡng xác suất",
   "st.system_one.completion_threshold": "Xác minh hoàn thành tác vụ đã lên lịch — Ngưỡng xác suất",

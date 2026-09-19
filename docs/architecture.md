@@ -1028,3 +1028,39 @@ run changes during verification, the still-owned scheduler execution enters
 reconciliation instead of remaining running. Post-response cost enforcement
 rejects a judgment that crosses the allowance; an already sent request can
 still incur charges.
+
+### Experimental Jev decisions
+
+`systemone-fast.js` produces existing tool calls, a fallback, or a completion
+candidate. Separate default-off settings control read-scope/Ask-handoff
+classification and Act/Dev browser decisions. The normal planner and intent
+checks still precede the loop. Both streaming and non-streaming loops dispatch
+Jev-selected calls through `_executeToolBatch`, including final submit/save/send
+clicks. Ask cannot use this browser path.
+
+The existing AX walk supplies at most 24 structured controls with its own refs;
+page-authored ref strings are never parsed. Internal snapshots are stripped from
+public tool results and diagnostics. Identity, document, form structure, options,
+value and occlusion are checked again before dispatch. Frames, shadow roots,
+credential/file fields and unsupported actions fall back. Field values come from
+the active provider only after a confident fill action/target is selected. The
+first uncached fill uses a second Jev request to map those prepared values;
+clicks, completion candidates and fallbacks do not prepare text. Cached values
+and queued independent writes avoid repeated preparation. Each write is
+executed separately with a new observation. Labels must match the prepared
+field purpose, and ambiguous labels fall back. Changed form/document context
+invalidates queued writes and cached values.
+
+Choice probability and confidence must both reach 85% for classifiers and 90%
+for browser decisions. Each Jev request has one second and no retry. Errors or
+low confidence fall back in the current step. Two fallbacks on the same observed
+snapshot suspend further paid decisions until a new snapshot changes the
+context. This suspension is separate from the permanent run stop for unknown
+outcomes or no progress. Completion guidance is added only to the model's system
+message copy, never to persisted user messages. Two unchanged observations after
+Jev decisions disable the path for the rest of the run. Unknown outcomes and
+denied/cancelled calls also disable it. Strict Secret Mode, offline connectivity,
+run cancellation and model cost limits apply. `done` remains an active-model
+operation using existing evidence checks. RAG, skill routing and direct watch
+poll optimization are not part of this integration. See `test/jev/README.md` for
+benchmark protocol and its unverified live-performance status.

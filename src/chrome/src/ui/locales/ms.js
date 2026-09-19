@@ -46,6 +46,8 @@ export default {
   "st.system_one.need_key": "Masukkan kunci API TypeSafe.",
   "st.system_one.uncertain": "Jev: penyelesaian tidak dapat disahkan.",
   "st.system_one.clear": "Padam kunci",
+  "st.system_one.fast_classifications": "Pengelasan pantas",
+  "st.system_one.fast_browser": "Tindakan pelayar pantas — Percubaan",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Sahkan pemantauan berjadual — Ambang kebarangkalian",
   "st.system_one.completion_threshold": "Sahkan penyelesaian tugas berjadual — Ambang kebarangkalian",
