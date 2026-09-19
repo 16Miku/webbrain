@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
 import './systemone-trace.mjs';
+const area = { get: async () => ({}), set: async () => {} };
+globalThis.chrome = globalThis.browser = { storage: { local: area, session: area }, runtime: { getURL: x => x, sendMessage: async () => ({}) } };
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 for (const build of ['chrome', 'firefox']) {
   const mod = await import(`../src/${build}/src/agent/systemone-judge.js`);
@@ -56,7 +58,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(state.latest_observation[0].data, /untrusted_page_content/);
     assert.ok(JSON.stringify(state).length <= 16000);
   });
-  async function setup({ mutate = false, noEvidence = false, judge, recurring = false } = {}) {
+  async function setup({ mutate = false, noEvidence = false, judge, recurring = false, outcome = 'success' } = {}) {
     let calls = 0;
     const h = makeSchedulerHarness(scheduler, {
       systemOneEnabled: true, systemOneWatchEnabled: true, systemOneCompletionEnabled: true, systemOneApiKey: 'test',
@@ -68,7 +70,7 @@ for (const build of ['chrome', 'firefox']) {
           await options.afterConsequentialTool({ name: 'click_ax', result: { success: true } });
         }
         if (!noEvidence) emit('tool_result', { name: 'get_accessibility_tree', result: { pageContent: 'Status: not confirmed' } });
-        emit('tool_result', { name: 'done', result: { done: true, outcome: 'success', summary: 'Succeeded' } });
+        emit('tool_result', { name: 'done', result: { done: true, outcome, summary: 'Succeeded' } });
         return 'Succeeded';
       },
     });
@@ -80,7 +82,8 @@ for (const build of ['chrome', 'firefox']) {
   }
   test(`${build}: no evidence skips Jev; read-only downgraded watch keeps polling`, async () => {
     const missing = await setup({ noEvidence: true }); await missing.run();
-    assert.equal(missing.calls(), 0); assert.equal(missing.jobs()[0].systemOneVerdict.reason, 'no_evidence');
+    assert.equal(missing.calls(), 0); assert.equal(missing.jobs()[0].systemOneVerdict, undefined);
+    assert.equal(missing.jobs()[0].watch.systemOneBaseline, undefined);
     const h = await setup(); await h.run();
     assert.equal(h.jobs()[0].status, 'pending'); assert.equal(h.jobs()[0].lastOutcome, 'partial');
     assert.match(h.jobs()[0].watch.systemOneBaseline[0].data, /Status: not confirmed/);
@@ -97,12 +100,65 @@ for (const build of ['chrome', 'firefox']) {
     for (const cancel of [true, false]) {
       const entered = deferred(); const response = deferred();
       const h = await setup({ judge: { evaluate: async () => { entered.resolve(); return response.promise; } } });
+      let current = true;
+      h.manager.agent.systemOneContext = () => ({ isCurrent: () => current });
       const running = h.run(); await entered.promise;
+      current = false;
       if (cancel) await h.manager.cancelJob(h.id);
       else await h.manager._updateJob(h.id, () => ({ executionId: 'new-execution', lastResult: 'new result' }));
       response.resolve({ answers: { condition_met: { noul: .1 }, task_completeness: { score: 0 } } }); await running;
       const job = h.jobs()[0]; assert.equal(job.systemOneVerdict, undefined);
       assert.equal(cancel ? job.status : job.lastResult, cancel ? 'cancelled' : 'new result');
     }
+  });
+
+  test(`${build}: every skipped judgment preserves prior verdict and observation without a verdict trace`, async () => {
+    for (const reason of ['disabled', 'no_evidence', 'not_success', 'service_unavailable', 'cost_limit', 'unavailable', 'cancelled']) {
+      const h = await setup();
+      const prior = { decision: 'keep', reason: 'evidence_judgment' };
+      const baseline = [{ tool: 'read_page', data: 'Previously judged observation' }];
+      await h.manager._updateJob(h.id, job => ({ systemOneVerdict: prior, watch: { ...job.watch, systemOneBaseline: baseline } }));
+      h.manager._evaluateSystemOne = async () => ({ decision: 'skip', reason });
+      let notes = 0; h.manager.agent.recordSystemOneVerdict = () => { notes++; };
+      await h.run();
+      assert.deepEqual(h.jobs()[0].systemOneVerdict, prior, reason);
+      assert.deepEqual(h.jobs()[0].watch.systemOneBaseline, baseline, reason);
+      assert.equal(h.jobs()[0].status, 'pending', reason);
+      assert.equal(notes, 0, reason);
+    }
+  });
+
+  test(`${build}: generation loss settles the owned watch or recurring execution without replay`, async () => {
+    for (const recurring of [false, true]) for (const phase of ['judge', 'terminal']) {
+      const entered = deferred(); const response = deferred(); let current = true;
+      const h = await setup({ mutate: true, recurring, judge: { evaluate: async () => { entered.resolve(); return response.promise; } } });
+      h.manager.agent.systemOneContext = () => ({ isCurrent: () => current });
+      h.manager.agent.recordSystemOneVerdict = () => { if (phase === 'terminal') current = false; };
+      const running = h.run(); await entered.promise;
+      if (phase === 'judge') current = false;
+      response.resolve({ answers: { condition_met: { noul: .99 }, task_complete: { noul: .99 }, task_completeness: { score: 2 } } });
+      await running;
+      const job = h.jobs()[0];
+      assert.equal(job.status, 'needs_user_input');
+      assert.equal(job.reconciliationRequired, true);
+      assert.equal(job.completedConsequentialAction.name, 'click_ax');
+      assert.equal(job.nextRunAt, null);
+      if (phase === 'judge') assert.equal(job.systemOneVerdict, undefined);
+      await h.run(); assert.equal(h.jobs()[0].status, 'needs_user_input');
+    }
+  });
+
+  test(`${build}: response that crosses the allowance is charged but cannot supply a judgment`, async () => {
+    const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+    const agent = new Agent({ getActive: () => ({ name: 'test', config: {} }) });
+    agent._checkCostAllowance = async () => null;
+    let charged = 0; const notes = [];
+    agent._recordCostUsage = async () => { charged++; return 'Cost allowance exceeded'; };
+    agent.recordSystemOneVerdict = (_tab, data) => notes.push(data);
+    const client = mod.createSystemOneJudge({ fetchImpl: async () => ({ ok: true, json: async () => ({ model: mod.SYSTEM_ONE_MODEL, usage: { input_tokens: 1000, output_tokens: 1 }, answers: answers() }) }) });
+    await assert.rejects(agent.evaluateSystemOne(77, client, { apiKey: 'test', state: {}, questions }), error => error.code === 'WB_COST_ALLOWANCE');
+    assert.equal(charged, 1);
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].decision, 'usage');
   });
 }
