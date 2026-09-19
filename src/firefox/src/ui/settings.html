@@ -129,10 +129,10 @@
     }
     h2:first-of-type { margin-top: 0; }
 
-    /* Tab bar — sticky so it survives long provider lists. */
+    /* Keep translated labels on one line; narrow windows scroll the tab bar. */
     .tabs {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      display: flex;
+      overflow-x: auto;
       gap: 2px;
       margin: 4px 0 20px 0;
       padding: 4px;
@@ -144,6 +144,7 @@
       z-index: 10;
     }
     .tab-btn {
+      flex: 1 0 auto;
       min-width: 0;
       background: transparent;
       color: var(--text2);
@@ -155,7 +156,7 @@
       line-height: 1.2;
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
     }
     .tab-btn:hover { color: var(--text); }
     .tab-btn.active {
@@ -167,10 +168,6 @@
     @media (max-width: 600px) {
       .header-row { flex-direction: column; gap: 10px; }
       .header-actions { justify-content: flex-start; }
-      .tabs {
-        grid-template-columns: repeat(6, minmax(90px, 1fr));
-        overflow-x: auto;
-      }
     }
 
     .tab-panel { display: none; }

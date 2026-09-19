@@ -69,6 +69,14 @@ try {
         await page.waitForFunction(() => document.querySelector('#system-one-heading')?.textContent.trim() === 'Jev (TypeSafe)');
         assert.equal(await page.locator('[data-tab="multimodal"]').textContent(), lang === 'tr' ? 'Yardımcı Modeller' : 'Assistive Models');
         assert.equal(await page.locator('[data-panel="multimodal"]').isVisible(), true, 'existing deep link opens Assistive Models');
+        assert.equal(await page.locator('.tab-btn').evaluateAll(buttons => buttons.every(button => {
+          const range = document.createRange();
+          range.selectNodeContents(button);
+          const lines = [...range.getClientRects()].filter(rect => rect.width > 0);
+          return lines.length > 0 && lines.every(rect => Math.abs(rect.top - lines[0].top) < 1)
+            && button.scrollWidth <= button.clientWidth + 1;
+        })), true, 'every tab label fits on one line without clipping');
+        await page.screenshot({ animations: 'disabled', path: `${output}/${build}-${lang}-${width}-tabs.png` });
         assert.equal(await page.locator('[data-panel="providers"] #system-one-card').count(), 0);
         assert.deepEqual(await page.locator('[data-panel="multimodal"] > .provider-card').evaluateAll(cards => cards.map(card => card.id)), [
           'vision-card', 'image-budget-card', 'redaction-card', 'transcription-card', 'system-one-card',
