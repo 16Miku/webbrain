@@ -14,6 +14,25 @@ for (const build of ['chrome', 'firefox']) {
     { ref: 'ref_3', name: 'Send', role: 'button', kinds: ['click'], signature: 'send' },
     { ref: 'ref_4', name: 'City', role: 'combobox', kinds: ['select'], signature: 'city', options: [{ value: '34', label: 'Istanbul' }] },
   ] });
+  test(`${build}: browser requests omit unsupported operations and one-option target questions`, () => {
+    const google = {
+      documentToken: 'google-home', pageUrl: 'https://www.google.com/', structure: 'search', progress: 'initial', controls: [
+        { ref: 'ref_search', name: 'Search', role: 'combobox', kinds: ['fill'], value: '', signature: 'search' },
+        { ref: 'ref_submit', name: 'Google Search', role: 'button', kinds: ['click'], signature: 'submit' },
+      ],
+    };
+    const request = mod.buildJevBrowserRequest('Search for emre sokullu', google, []);
+    assert.deepEqual(Object.keys(request.questions).sort(), ['click_target', 'fill_target', 'operation']);
+    assert.equal(Object.hasOwn(request.questions.operation.criteria, 'select'), false);
+    assert.equal(Object.hasOwn(request.questions.operation.criteria, 'check'), false);
+    for (const candidate of Object.values(request.questions)) {
+      if (candidate.type === 'choice') assert.ok(Object.keys(candidate.criteria).length >= 2);
+    }
+    const readOnly = mod.buildJevBrowserRequest('Read this page', { ...google, controls: [] }, [{ purpose: 'unused', text: 'private' }]);
+    assert.deepEqual(Object.keys(readOnly.questions), ['operation']);
+    assert.deepEqual(readOnly.values, []);
+    assert.equal(readOnly.state.values.length, 0);
+  });
   test(`${build}: speculative answers use only the selected action and all its required confident heads`, () => {
     const state = snapshot(); const request = mod.buildJevBrowserRequest('Fill and save', state, [{ purpose: 'name', text: 'Ada' }, { purpose: 'email', text: 'ada@example.com' }]);
     const answers = { operation: choice('click'), click_target: choice('ref_3'), fill_target: choice('ref_9999', .4) };
@@ -183,6 +202,45 @@ for (const build of ['chrome', 'firefox']) {
       session.dispatched({ outcomeUnknown: true });
       session.observe({ ...snapshot(), progress: 'changed-again' }); await decide(); assert.equal(calls, 3);
     }
+  });
+
+  test(`${build}: one response-contract failure hard-stops paid Jev decisions for the run`, async () => {
+    const provider = { name: 'test', model: 'active-model' }; const agent = new Agent({ getActive: () => provider });
+    Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, typesafeApiKey: 'synthetic' });
+    const session = new mod.JevFastSession(); session.observe(snapshot()); agent._jevSessions = new Map([[1, session]]);
+    let calls = 0; const notes = [];
+    agent.recordSystemOneVerdict = (_tab, note) => notes.push(note);
+    agent.evaluateSystemOne = async () => {
+      calls++;
+      const error = new Error('Invalid Jev distribution.');
+      error.code = 'JEV_INVALID_DISTRIBUTION';
+      throw error;
+    };
+    const decide = () => agent._maybeJevFastTurn(1, 'Click Save', [], 'act', new Set(['get_accessibility_tree', 'click_ax']), provider, {});
+    assert.equal(await decide(), null);
+    assert.equal(session.disabled, true);
+    assert.equal(notes.at(-1)?.reason, 'invalid_distribution');
+    session.observe({ ...snapshot(), documentToken: 'changed-doc', structure: 'changed', progress: 'changed' });
+    assert.equal(await decide(), null);
+    assert.equal(calls, 1);
+  });
+
+  test(`${build}: malformed classifier response hard-stops all Jev requests for the run`, async () => {
+    const provider = { name: 'test', model: 'active-model' }; const agent = new Agent({ getActive: () => provider });
+    Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, systemOneFastClassifications: true, typesafeApiKey: 'synthetic' });
+    let calls = 0;
+    agent.evaluateSystemOne = async () => {
+      calls++;
+      const error = new Error('Invalid Jev distribution.');
+      error.code = 'JEV_INVALID_DISTRIBUTION';
+      throw error;
+    };
+    const classify = () => agent._jevClassify(1, 'classify', { yes: 'yes', no: 'no' }, { task: 'Classify this request.' });
+    assert.equal(await classify(), null);
+    assert.equal(agent._jevSessions.get(1).hardStopped, true);
+    assert.equal(await classify(), null);
+    assert.equal(await agent._maybeJevFastTurn(1, 'Click Save', [], 'act', new Set(['get_accessibility_tree', 'click_ax']), provider, {}), null);
+    assert.equal(calls, 1);
   });
 
   test(`${build}: click-only decisions and uncertain fill targets never invoke value preparation`, async () => {
