@@ -715,12 +715,18 @@
   // parses page-authored ref strings and cannot target frames or shadow roots.
   let jevCollector = null;
   let lastJevSnapshot = null;
+  let jevSensitiveControlSeen = false;
   function jevControl(el) {
     if (window.top !== window || el.getRootNode() !== document || !isInteractive(el)) return null;
     const tag = el.tagName.toLowerCase();
     const type = String(el.type || '').toLowerCase();
     const name = String(getAccessibleName(el) || '').slice(0, 120);
-    if (['password', 'file', 'hidden'].includes(type) || /password|passwd|api.?key|token|secret|credit.?card|cvv|cvc/i.test([name, el.name, el.id, el.autocomplete].join(' '))) return null;
+    const identity = [name, el.name, el.id, el.autocomplete].join(' ');
+    if (['password', 'file', 'hidden'].includes(type)
+        || /\b(?:password|passwd|passcode|pin|otp|token|secret|cvv|cvc|csc|ssn|iban)\b|\bcc-(?:name|given-name|additional-name|family-name|number|exp|exp-month|exp-year|csc|type)\b|api.?key|one[-_\s]?time(?:[-_\s]?code)?|verification.?code|security.?code|auth(?:entication)?.?code|credit.?card|card.?number|social.?security|(?:routing|account).?number/i.test(identity)) {
+      jevSensitiveControlSeen = true;
+      return null;
+    }
     const role = getRole(el);
     const kinds = [];
     if (tag === 'select') kinds.push('select');
@@ -741,15 +747,18 @@
     return control;
   }
   function collectJevControl(el) {
-    if (!jevCollector || jevCollector.size >= 24) return;
-    try { const control = jevControl(el); if (control) jevCollector.set(control.ref, control); } catch { /* Optional inventory must not break the normal AX reader. */ }
+    if (!jevCollector) return;
+    try {
+      const control = jevControl(el);
+      if (control && jevCollector.size < 24) jevCollector.set(control.ref, control);
+    } catch { /* Optional inventory must not break the normal AX reader. */ }
   }
   function jevSnapshot() { return lastJevSnapshot; }
   function jevValidate(binding) {
     if (!binding || binding.pageUrl !== location.href) return false;
     generateAccessibilityTree('interactive', 10, 3500);
     const snapshot = lastJevSnapshot;
-    if (!snapshot || snapshot.structure !== binding.structure) return false;
+    if (!snapshot || snapshot.hasSensitiveControls === true || snapshot.structure !== binding.structure) return false;
     const target = snapshot.controls.find(c => c.ref === binding.ref);
     const el = lookup(binding.ref);
     if (!target || target.disabled || target.signature !== binding.signature || !el || el.getRootNode() !== document) return false;
@@ -1452,6 +1461,7 @@
   function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page, expectedTreeRevision) {
     jevCollector = filter === 'interactive' && !refId && (!page || page === 1) ? new Map() : null;
     lastJevSnapshot = null;
+    jevSensitiveControlSeen = false;
     try {
       ensureRefScope();
       const effFilter = filter || 'all';
@@ -1723,7 +1733,7 @@
       if (jevCollector) {
         const controls = [...jevCollector.values()];
         const structure = fingerprintTreeContent(JSON.stringify(controls.map(({ value, checked, signature, ...control }) => control)));
-        lastJevSnapshot = { controls, structure, progress: fingerprintTreeContent(JSON.stringify(controls)) + ':' + Math.round(scrollY) };
+        lastJevSnapshot = { controls, structure, progress: fingerprintTreeContent(JSON.stringify(controls)) + ':' + Math.round(scrollY), hasSensitiveControls: jevSensitiveControlSeen };
       }
       jevCollector = null;
     }

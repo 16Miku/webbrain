@@ -1042,7 +1042,8 @@ The existing AX walk supplies at most 24 structured controls with its own refs;
 page-authored ref strings are never parsed. Internal snapshots are stripped from
 public tool results and diagnostics. Identity, document, form structure, options,
 value and occlusion are checked again before dispatch. Frames, shadow roots,
-credential/file fields and unsupported actions fall back. Field values come from
+unsupported actions and pages containing credential, payment, OTP or file controls
+fall back as a whole. Field values come from
 the active provider only after a confident fill action/target is selected. The
 first uncached fill uses a second Jev request to map those prepared values;
 clicks, completion candidates and fallbacks do not prepare text. Cached values
@@ -1064,3 +1065,10 @@ run cancellation and model cost limits apply. `done` remains an active-model
 operation using existing evidence checks. RAG, skill routing and direct watch
 poll optimization are not part of this integration. See `test/jev/README.md` for
 benchmark protocol and its unverified live-performance status.
+
+Initial-page and automatic browser screenshots do not make the AX-only path
+ineligible, and their pixels are never included in a Jev request. A current user
+attachment, explicit screenshot-tool result or unknown non-text input routes that
+decision to the active provider. The fast path may resume after that provider has
+consumed the input. Trace exports render Jev routing, fallback and usage metadata,
+including skip reasons, without exporting evidence.

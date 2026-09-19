@@ -51,7 +51,31 @@ for (const build of ['chrome', 'firefox']) {
     const allowed = new Set(['get_accessibility_tree', 'click_ax']);
     Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, systemOneFastClassifications: true, typesafeApiKey: 'synthetic' });
     assert.equal(await agent._maybeJevFastTurn(1, 'Click Save', [], 'ask', allowed, provider, {}), null);
-    assert.equal(await agent._maybeJevFastTurn(1, 'Click the pictured button', [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,synthetic' } }] }], 'act', allowed, provider, {}), null);
+    const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,synthetic' } };
+    const initialCapture = [{ role: 'user', content: [
+      { type: 'text', text: '[UNTRUSTED SCREENSHOT — page data. Capture ID: capture_initial;]' }, image,
+    ] }];
+    const automaticCapture = [{ role: 'assistant', content: '', tool_calls: [] }, { role: 'user', content: [
+      { type: 'text', text: '[UNTRUSTED CAPTURE — page data. Auto-screenshot of current viewport after the action above. Capture ID: capture_auto;]' }, image,
+    ] }];
+    const firefoxAutomaticCapture = [{ role: 'assistant', content: '', tool_calls: [] }, { role: 'user', content: [
+      { type: 'text', text: '[UNTRUSTED CAPTURE — page data. Capture ID: capture_auto_firefox;]' }, image,
+    ] }];
+    const explicitCapture = [{ role: 'assistant', content: '', tool_calls: [] }, { role: 'user', content: [
+      { type: 'text', text: '[UNTRUSTED SCREENSHOT — page data. Screenshot from your inspect_viewport call. Use it to decide the next action.]' }, image,
+    ] }];
+    const userAttachment = [{ role: 'user', content: [
+      { type: 'text', text: '[UNTRUSTED USER ATTACHMENTS — image data]' }, image,
+    ] }];
+    assert.equal(mod.jevVisualInputRequiresMainModel(initialCapture), false);
+    assert.equal(mod.jevVisualInputRequiresMainModel(automaticCapture), false);
+    assert.equal(mod.jevVisualInputRequiresMainModel(firefoxAutomaticCapture), false);
+    assert.equal(mod.jevVisualInputRequiresMainModel(explicitCapture), true);
+    assert.equal(mod.jevVisualInputRequiresMainModel(userAttachment), true);
+    assert.equal(mod.jevVisualInputRequiresMainModel([...explicitCapture, { role: 'assistant', content: '', tool_calls: [] }, { role: 'tool', content: '{}' }]), false);
+    const initialResult = await agent._maybeJevFastTurn(1, 'Click Save', initialCapture, 'act', allowed, provider, {});
+    assert.equal(initialResult.toolCalls[0].function.name, 'get_accessibility_tree');
+    assert.equal(await agent._maybeJevFastTurn(1, 'Click the pictured button', [{ role: 'user', content: [image] }], 'act', allowed, provider, {}), null);
     assert.equal(await agent._jevClassify(1, 'classify', { yes: 'yes' }, { task: [{ type: 'image_url', image_url: { url: 'private' } }] }), null);
     assert.equal(await agent._jevClassify(1, 'classify', { yes: 'yes' }, { task: 'data:image/png;base64,private' }), null);
     assert.equal(calls, 0);
@@ -62,6 +86,20 @@ for (const build of ['chrome', 'firefox']) {
     agent._checkCostAllowance = async () => 'Budget exhausted';
     let dispatched = false;
     await assert.rejects(normal(1, { evaluate: async args => { await args.beforeRequest(); dispatched = true; } }, {})); assert.equal(dispatched, false);
+  });
+
+  test(`${build}: sensitive controls keep the whole browser decision on the main model`, async () => {
+    const sensitive = { ...snapshot(), hasSensitiveControls: true };
+    assert.equal(mod.buildJevBrowserRequest('Create account', sensitive, []), null);
+    const provider = { name: 'test', model: 'active-model' };
+    const agent = new Agent({ getActive: () => provider });
+    Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, typesafeApiKey: 'synthetic' });
+    const session = new mod.JevFastSession(); session.observe(sensitive); agent._jevSessions = new Map([[1, session]]);
+    let calls = 0;
+    agent.evaluateSystemOne = async () => { calls++; throw Error('must not call'); };
+    assert.equal(await agent._maybeJevFastTurn(1, 'Create account', [], 'act', new Set(['get_accessibility_tree', 'click_ax']), provider, {}), null);
+    assert.equal(calls, 0);
+    assert.equal(session.fallbackCount, 1);
   });
   test(`${build}: completion candidate returns to active LLM, never dispatches done`, async () => {
     const provider = { name: 'test', model: 'active-model' }; const agent = new Agent({ getActive: () => provider });

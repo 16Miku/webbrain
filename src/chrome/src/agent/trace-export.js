@@ -352,6 +352,21 @@ export function tracesToMarkdown(runsWithEvents, {
         const details = [oneLine(d.context), oneLine(d.visionRoute), oneLine(d.model), oneLine(d.captureId)]
           .filter(Boolean).join(' · ');
         md += `- 👁 Vision route${details ? `: ${details}` : ''}${d.fallbackReason ? ` · fallback=${oneLine(d.fallbackReason)}` : ''}\n`;
+      } else if (ev.kind === 'note' && d.note === 'system_one') {
+        const metadata = d.extra || {};
+        const usage = metadata.usage || {};
+        const inputTokens = Number(usage.prompt_tokens ?? usage.input_tokens);
+        const outputTokens = Number(usage.completion_tokens ?? usage.output_tokens);
+        const details = [
+          metadata.reason ? `reason=${oneLine(metadata.reason)}` : '',
+          metadata.model ? `model=${oneLine(metadata.model)}` : '',
+          Number.isFinite(metadata.latencyMs) ? `${metadata.latencyMs} ms` : '',
+          Number.isFinite(metadata.estimatedCostUsd) ? `$${metadata.estimatedCostUsd.toFixed(6)}` : '',
+          Number.isFinite(inputTokens) || Number.isFinite(outputTokens)
+            ? `${Number.isFinite(inputTokens) ? inputTokens : 0} in / ${Number.isFinite(outputTokens) ? outputTokens : 0} out`
+            : '',
+        ].filter(Boolean).join(' · ');
+        md += `- ⚡ Jev: ${oneLine(metadata.decision || 'event')}${details ? ` · ${details}` : ''}\n`;
       } else if (ev.kind === 'note' && d.note === 'vision_status') {
         const status = d.extra || {};
         const progress = Number.isFinite(Number(status.progress)) ? `${Math.round(Number(status.progress))}%` : '';
