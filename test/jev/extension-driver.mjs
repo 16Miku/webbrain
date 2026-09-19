@@ -5,6 +5,45 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawn } from 'node:child_process';
 const delay = ms => new Promise(r=>setTimeout(r,ms));
+const operations = {
+  setStorage: async json => (globalThis.browser || chrome).storage.local.set(JSON.parse(json)),
+  sendMessage: async json => (globalThis.browser || chrome).runtime.sendMessage(JSON.parse(json)),
+  enablePlanApproval: async () => {
+    (globalThis.browser || chrome).runtime.onMessage.addListener(msg => {
+      if (msg.action !== 'agent_update' || msg.type !== 'plan_review') return;
+      (globalThis.browser || chrome).runtime.sendMessage({ target: 'background', action: 'plan_response', tabId: msg.tabId, planId: msg.data.planId, decision: 'approve' });
+    });
+  },
+  createTab: async json => (globalThis.browser || chrome).tabs.create(JSON.parse(json)),
+  startTrial: async json => {
+    const message = JSON.parse(json), api = globalThis.browser || chrome;
+    const trace = await import(api.runtime.getURL('src/trace/recorder.js'));
+    await trace.clearAllRuns();
+    globalThis.__jevTrial = { done: false };
+    api.runtime.sendMessage(message).then(result => { globalThis.__jevTrial = { done: true, result }; }, error => { globalThis.__jevTrial = { done: true, error: String(error) }; });
+  },
+  getTrial: async () => globalThis.__jevTrial,
+  getMetrics: async () => {
+    const api = globalThis.browser || chrome;
+    const trace = await import(api.runtime.getURL('src/trace/recorder.js'));
+    const runs = await trace.listRuns({ limit: 10 });
+    const events = (await Promise.all(runs.map(run => trace.getRunEvents(run.runId)))).flat();
+    const notes = events.filter(event => event.kind === 'note' && event.data.note === 'system_one').map(event => event.data.extra);
+    const cost = await api.storage.local.get('meteredProviderCostSpentUsd');
+    return { llmCalls: events.filter(event => event.kind === 'llm_request').length, jevCalls: notes.filter(note => note?.decision === 'usage').length, fallbacks: notes.filter(note => note?.decision === 'fallback').length, modelCostUsd: cost.meteredProviderCostSpentUsd || 0 };
+  },
+  getFixture: async json => {
+    const { tabId } = JSON.parse(json), api = globalThis.browser || chrome;
+    if (globalThis.chrome?.scripting) {
+      const results = await chrome.scripting.executeScript({ target: { tabId }, func: () => JSON.parse(document.documentElement.dataset.fixtureResult || '{}') });
+      return results[0]?.result;
+    }
+    const results = await api.tabs.executeScript(tabId, { code: "document.documentElement.dataset.fixtureResult||'{}'" });
+    return JSON.parse(results[0]);
+  },
+  getStorageCost: async () => (globalThis.browser || chrome).storage.local.get('meteredProviderCostSpentUsd'),
+  removeTab: async json => (globalThis.browser || chrome).tabs.remove(JSON.parse(json)),
+};
 export async function launchDriver(build) {
   const profile = await mkdtemp(join(tmpdir(),'jev-benchmark-'));
   let context,child,session,extensionPage,extensionContext,extensionOrigin;
@@ -22,42 +61,41 @@ export async function launchDriver(build) {
       for(let i=0;i<40;i++){const tree=await session.send('browsingContext.getTree',{});const ext=tree.contexts.find(c=>c.url?.startsWith('moz-extension://'));if(ext){extensionContext=ext.context;extensionOrigin=ext.url.split('/').slice(0,3).join('/');break;}await delay(100);}
       if(!extensionContext)throw Error('Firefox extension page unavailable');
     }
-    const evaluate=async expression=>{
-      if(extensionPage)return extensionPage.evaluate(expression);
-      const response=await session.send('script.evaluate',{target:{context:extensionContext},expression:`(async()=>JSON.stringify(await (${expression})))()`,awaitPromise:true});
+    const execute=async (operation, payload)=>{
+      const serialized = JSON.stringify(payload ?? null);
+      if(extensionPage)return extensionPage.evaluate(operations[operation], serialized);
+      const functionDeclaration=`async json => JSON.stringify(await (${operations[operation].toString()})(json))`;
+      const response=await session.send('script.callFunction',{target:{context:extensionContext},functionDeclaration,arguments:[{type:'string',value:serialized}],awaitPromise:true});
       if(response.type==='exception')throw Error(response.exceptionDetails.text);
       return JSON.parse(response.result.value ?? 'null');
     };
-    const invoke=(action,data={})=>evaluate(`(globalThis.browser||chrome).runtime.sendMessage(${JSON.stringify({target:'background',action,...data})})`);
+    const invoke=(action,data={})=>execute('sendMessage',{target:'background',action,...data});
     return {
-      invoke,evaluate,
       async configure(config,settings){
-        await evaluate(`(globalThis.browser||chrome).storage.local.set(${JSON.stringify(settings)})`);
+        await execute('setStorage',settings);
         await invoke('update_provider',{providerId:'openai',config:{...config,enabled:true,type:'openai',category:'cloud',providerName:'openai-compatible',apiProtocol:'chat_completions',supportsVision:false}});
         await invoke('set_active_provider',{providerId:'openai'});
-        await evaluate(`(globalThis.browser||chrome).runtime.onMessage.addListener(msg=>{if(msg.action!=='agent_update')return;if(msg.type==='plan_review')(globalThis.browser||chrome).runtime.sendMessage({target:'background',action:'plan_response',tabId:msg.tabId,planId:msg.data.planId,decision:'approve'});})`);
+        await execute('enablePlanApproval');
       },
       async trial({url,prompt,locale,variant,budgetUsd}){
-        const api='(globalThis.browser||chrome)';
-        await evaluate(`${api}.storage.local.set(${JSON.stringify({systemOneFastBrowser:variant==='jev',systemOneFastClassifications:variant==='jev',wbLocale:locale,costAllowanceTotalUsd:budgetUsd,meteredProviderCostSpentUsd:0})})`);
-        const tab=await evaluate(`${api}.tabs.create({url:${JSON.stringify(url)},active:true})`);
+        await execute('setStorage',{systemOneFastBrowser:variant==='jev',systemOneFastClassifications:variant==='jev',wbLocale:locale,costAllowanceTotalUsd:budgetUsd,meteredProviderCostSpentUsd:0});
+        const tab=await execute('createTab',{url,active:true});
         try {
           await delay(300);
-          await evaluate(`(async()=>{const trace=await import(${JSON.stringify(extensionOrigin+'/src/trace/recorder.js')});await trace.clearAllRuns();window.__jevTrial={done:false};${api}.runtime.sendMessage(${JSON.stringify({target:'background',action:'chat',tabId:tab.id,text:prompt,mode:'act',foreground:true})}).then(result=>{window.__jevTrial={done:true,result}},error=>{window.__jevTrial={done:true,error:String(error)}});return true;})()`);
+          await execute('startTrial',{target:'background',action:'chat',tabId:tab.id,text:prompt,mode:'act',foreground:true});
           const start=Date.now();let status;
-          while(Date.now()-start<180000){status=await evaluate('window.__jevTrial');if(status?.done)break;await delay(250);}
+          while(Date.now()-start<180000){status=await execute('getTrial');if(status?.done)break;await delay(250);}
           if(!status?.done)await invoke('abort',{tabId:tab.id});
           const elapsedMs=Date.now()-start;
-          const metrics=await evaluate(`(async()=>{const trace=await import(${JSON.stringify(extensionOrigin+'/src/trace/recorder.js')});const runs=await trace.listRuns({limit:10});const events=(await Promise.all(runs.map(r=>trace.getRunEvents(r.runId)))).flat();const notes=events.filter(e=>e.kind==='note'&&e.data.note==='system_one').map(e=>e.data.extra);const cost=await ${api}.storage.local.get('meteredProviderCostSpentUsd');return {llmCalls:events.filter(e=>e.kind==='llm_request').length,jevCalls:notes.filter(n=>n?.decision==='usage').length,fallbacks:notes.filter(n=>n?.decision==='fallback').length,modelCostUsd:cost.meteredProviderCostSpentUsd||0};})()`);
-          const fixture=build==='chrome'
-            ? (await evaluate(`${api}.scripting.executeScript({target:{tabId:${tab.id}},func:()=>JSON.parse(document.documentElement.dataset.fixtureResult||'{}')}).then(results=>results[0]?.result)`))
-            : await evaluate(`${api}.tabs.executeScript(${tab.id},{code:"document.documentElement.dataset.fixtureResult||'{}'"}).then(results=>JSON.parse(results[0]))`);
+          const metrics=await execute('getMetrics');
+          const fixture=await execute('getFixture',{tabId:tab.id});
           const doneUpdates=(status?.result?.updates||[]).filter(u=>u.type==='tool_result'&&u.data?.name==='done'&&u.data.result?.done===true);
           const reportedOutcome=doneUpdates.at(-1)?.data.result.outcome;
           const success=!!fixture?.success&&!status?.error&&status?.done&&reportedOutcome==='success';
           return {...metrics,elapsedMs,success,reportedOutcome,fixtureSuccess:!!fixture?.success,wrong:fixture?.wrong||0,duplicates:Math.max(0,(fixture?.actions||0)-1),error:status?.error||(!status?.done?'timeout':null)};
-        } finally {await evaluate(`${api}.tabs.remove(${tab.id})`).catch(()=>{});}
+        } finally {await execute('removeTab',tab.id).catch(()=>{});}
       },
+      async getCost(){return (await execute('getStorageCost'))?.meteredProviderCostSpentUsd||0;},
       async close(){await context?.close();await session?.close();child?.kill();await rm(profile,{recursive:true,force:true});},
     };
   } catch(error){await context?.close();await session?.close();child?.kill();await rm(profile,{recursive:true,force:true});throw error;}

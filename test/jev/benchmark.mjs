@@ -27,7 +27,7 @@ if(!args.includes('--live')){
           if(spent>=budget)throw Error('Budget exhausted; remaining attempts were not run');
           const start=Date.now();let result;
           try{result=await driver.trial({...row,url:`${origin}/${row.workflow}`,budgetUsd:budget-spent});}
-          catch(error){const costs=await driver.evaluate("(globalThis.browser||chrome).storage.local.get('meteredProviderCostSpentUsd')");result={success:false,error:String(error.message),elapsedMs:Date.now()-start,modelCostUsd:costs.meteredProviderCostSpentUsd||0};}
+          catch(error){result={success:false,error:String(error.message),elapsedMs:Date.now()-start,modelCostUsd:await driver.getCost()};}
           spent+=result.modelCostUsd||0;rows.push({...row,...result});
           await writeFile(`${output}/report.json`,JSON.stringify({model:process.env.JEV_LLM_MODEL,jevModel:'jev-1.13.0',budgetUsd:budget,spentUsd:spent,rows,summary:summarize(rows)},null,2));
           console.log(`${browser} ${row.workflow} ${row.repetition} ${row.variant}: ${result.success?'pass':'fail'}`);
