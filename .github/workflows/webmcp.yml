@@ -42,9 +42,12 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      - name: Install dependencies
+        id: dependencies
+        run: npm ci
 
       - name: Report Chrome version
+        id: chrome_version
         run: google-chrome --version
 
       - name: Run PDF MIME handler regression
@@ -53,6 +56,7 @@ jobs:
         run: npm run test:pdf-mime-handler
 
       - name: Run real Chrome WebMCP smoke test
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && steps.chrome_version.outcome == 'success' }}
         env:
           WEBMCP_CHROME_PATH: /usr/bin/google-chrome
         run: npm run test:webmcp

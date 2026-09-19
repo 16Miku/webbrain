@@ -11175,6 +11175,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             onUpdate,
             {
               completionBatchStartState,
+              traceStep: step,
               jevBinding: jevPending?.call.binding,
               promptTier,
               dispatchBinding: pipelineToolbarPreflight.probe?.dispatchBinding || null,
@@ -12433,9 +12434,51 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, upstreamAbortSignal = null, dispatchState = { started: false }) {
+  _recordClickAxTiming(tabId, step, timing, result) {
+    const runId = this.currentRunId.get(tabId);
+    if (!runId) return;
+    let outcome = 'inconclusive';
+    if (timing.outcomeUnknown === true) outcome = 'unknown';
+    else if (!timing.syntheticDispatched && timing.trustedInputEvents === 0) outcome = 'pre_dispatch';
+    else if (result?.noProgress === true) outcome = 'no_progress';
+    else if (result?.success !== true) outcome = 'failed';
+    else if (result?.verified === true) outcome = 'verified';
+    const extra = {
+      preflightMs: timing.preflightMs,
+      syntheticDispatchMs: timing.syntheticDispatchMs,
+      syntheticResponseMs: timing.syntheticResponseMs,
+      postClickObservationMs: timing.postClickObservationMs,
+      fallbackPreparationMs: 0,
+      fallbackDispatchMs: 0,
+      trustedObservationMs: 0,
+      clickPathMs: timing.clickPathMs,
+      trustedInputEvents: timing.trustedInputEvents,
+      syntheticDispatched: timing.syntheticDispatched,
+      trustedFallbackAttempted: false,
+      outcomeUnknown: timing.outcomeUnknown === true,
+      safetyVeto: false,
+      duplicateFallbackBlocked: false,
+      outcome,
+    };
     try {
-      return await this._withContentActionDeadline(
+      const pending = trace.recordNote(runId, Number.isInteger(step) ? step : null, 'click_ax_timing', extra);
+      if (pending?.catch) pending.catch(() => {});
+    } catch {}
+  }
+
+  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, upstreamAbortSignal = null, dispatchState = { started: false }, traceStep = null) {
+    const timing = {
+      startedAtEpoch: Date.now(),
+      preflightMs: 0,
+      syntheticDispatchMs: 0,
+      syntheticResponseMs: 0,
+      postClickObservationMs: 0,
+      trustedInputEvents: 0,
+      syntheticDispatched: false,
+    };
+    let result = null;
+    try {
+      result = await this._withContentActionDeadline(
         deadlineAbortSignal => this._dispatchClickAxImpl(
           tabId,
           args,
@@ -12445,20 +12488,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           deadlineAbortSignal,
           upstreamAbortSignal,
           dispatchState,
+          timing,
         ),
         'click_ax',
       );
+      return result;
     } catch (error) {
       if (error?.code !== 'content_action_timeout') throw error;
-      if (dispatchState.started) return this._contentActionTimeoutResult('click_ax', error);
-      return {
-        success: false,
-        dispatched: false,
-        noDispatch: true,
-        outcomeUnknown: false,
-        retryable: true,
-        error: `${error.message} No click was sent because click preparation did not finish. Re-observe the page before retrying.`,
-      };
+      result = dispatchState.started
+        ? this._contentActionTimeoutResult('click_ax', error)
+        : {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            outcomeUnknown: false,
+            retryable: true,
+            error: `${error.message} No click was sent because click preparation did not finish. Re-observe the page before retrying.`,
+          };
+      return result;
+    } finally {
+      timing.clickPathMs = Math.max(0, Date.now() - timing.startedAtEpoch);
+      timing.outcomeUnknown = result?.outcomeUnknown === true
+        || (dispatchState.started && result?.dispatched !== false && result?.noDispatch !== true && result?.success !== true);
+      this._recordClickAxTiming(tabId, traceStep, timing, result);
     }
   }
 
@@ -12471,6 +12523,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     deadlineAbortSignal = null,
     upstreamAbortSignal = null,
     dispatchState = { started: false },
+    timing = null,
   ) {
     const throwIfAborted = () => {
       this._throwIfAborted(upstreamAbortSignal);
@@ -12504,6 +12557,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .sort((a, b) => a - b)[0] || 0;
     const send = () => {
       throwIfAborted();
+      if (timing) timing.preflightMs = Math.max(0, Date.now() - timing.startedAtEpoch);
       dispatchState.started = true;
       return firefoxBidi.sendContent(tabId, {
         target: 'content',
@@ -12529,6 +12583,35 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const deadlineResult = provenNoDispatchDeadline(response);
       if (deadlineResult) return deadlineResult;
       throwIfAborted();
+      const syntheticClickStartedAt = Number(response?._syntheticClickStartedAt);
+      const syntheticClickDispatchMs = Number(response?._syntheticClickDispatchMs);
+      if (timing && Number.isFinite(syntheticClickStartedAt) && syntheticClickStartedAt > 0) {
+        timing.preflightMs = Math.max(0, syntheticClickStartedAt - timing.startedAtEpoch);
+        timing.syntheticDispatchMs = Number.isFinite(syntheticClickDispatchMs)
+          ? Math.max(0, syntheticClickDispatchMs)
+          : 0;
+        timing.syntheticResponseMs = Math.max(
+          0,
+          Date.now() - syntheticClickStartedAt - timing.syntheticDispatchMs,
+        );
+        timing.syntheticDispatched = true;
+      }
+      const checkableObservationMs = Number(response?._checkableObservationMs);
+      if (timing && Number.isFinite(checkableObservationMs)) {
+        timing.postClickObservationMs = Math.max(0, checkableObservationMs);
+      }
+      if (response && Object.prototype.hasOwnProperty.call(response, '_syntheticClickStartedAt')) {
+        delete response._syntheticClickStartedAt;
+      }
+      if (response && Object.prototype.hasOwnProperty.call(response, '_syntheticClickDispatchMs')) {
+        delete response._syntheticClickDispatchMs;
+      }
+      if (response && Object.prototype.hasOwnProperty.call(response, '_checkableObservationMs')) {
+        delete response._checkableObservationMs;
+      }
+      if (timing && response?.method === 'firefox-bidi' && response?.dispatched === true) {
+        timing.trustedInputEvents = 3;
+      }
       response = await this._settleContentFilePickerGuard(tabId, response);
       throwIfAborted();
       if (response?.documentToken && (
@@ -33575,6 +33658,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         { messageRecipientGuardRequired, messageRecipientDispatchBinding, jevBinding: dispatchContext.jevBinding },
         contentPipelineAbortSignal,
         contentPipelineDispatchState,
+        dispatchContext.traceStep,
       );
     }
 

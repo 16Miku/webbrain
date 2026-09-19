@@ -39,6 +39,38 @@ const NOTE_METADATA_FIELDS = [
   'adapter', 'revision', 'notesInjected', 'workflowSchema', 'job', 'template',
 ];
 
+const CLICK_AX_TIMING_MS_FIELDS = [
+  'preflightMs', 'syntheticDispatchMs', 'syntheticResponseMs',
+  'postClickObservationMs', 'fallbackPreparationMs', 'fallbackDispatchMs',
+  'trustedObservationMs', 'clickPathMs',
+];
+
+function projectClickAxTiming(data) {
+  const extra = {};
+  for (const key of CLICK_AX_TIMING_MS_FIELDS) {
+    const value = data?.extra?.[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      extra[key] = Math.min(value, 120_000);
+    }
+  }
+  const trustedInputEvents = data?.extra?.trustedInputEvents;
+  if (Number.isSafeInteger(trustedInputEvents) && trustedInputEvents >= 0) {
+    extra.trustedInputEvents = Math.min(trustedInputEvents, 16);
+  }
+  for (const key of ['syntheticDispatched', 'trustedFallbackAttempted', 'outcomeUnknown', 'safetyVeto', 'duplicateFallbackBlocked']) {
+    if (typeof data?.extra?.[key] === 'boolean') extra[key] = data.extra[key];
+  }
+  const outcome = data?.extra?.outcome;
+  if (['verified', 'inconclusive', 'no_progress', 'failed', 'pre_dispatch', 'unknown'].includes(outcome)) {
+    extra.outcome = outcome;
+  }
+  return {
+    step: Number.isFinite(data?.step) ? data.step : 0,
+    note: 'click_ax_timing',
+    extra,
+  };
+}
+
 function pick(source, fields) {
   if (!source || typeof source !== 'object' || Array.isArray(source)) return {};
   const output = {};
@@ -112,6 +144,9 @@ export function projectTraceEventData(kind, data, { includeContent = false } = {
     }
     if (Object.keys(usage).length) extra.usage = usage;
     return { step: Number.isFinite(data.step) ? data.step : 0, note: 'system_one', extra };
+  }
+  if (kind === 'note' && data?.note === 'click_ax_timing') {
+    return projectClickAxTiming(data);
   }
   if (includeContent || data == null) return data;
   const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};

@@ -76,7 +76,7 @@ try {
   assert.deepEqual(pointPrepared.point,{x:22,y:210});
   await session.perform(runId,'click',{token:pointToken,url,point:pointPrepared.point});
   assert.deepEqual(JSON.parse((await evaluate('JSON.stringify(window.clickedPoint)')).value),{x:22,y:210,trusted:true});
-  await evaluate(`document.body.insertAdjacentHTML('beforeend', '<input id="checkable" type="checkbox"><input id="blocked-checkable" type="checkbox">'); document.querySelector('#blocked-checkable').onclick=event=>event.preventDefault();`);
+  await evaluate(`document.body.insertAdjacentHTML('beforeend', '<input id="checkable" type="checkbox"><input id="blocked-checkable" type="checkbox"><input id="delayed-checkable" type="checkbox">'); document.querySelector('#blocked-checkable').onclick=event=>event.preventDefault(); document.querySelector('#delayed-checkable').addEventListener('click',event=>{event.preventDefault();setTimeout(()=>{const input=document.querySelector('#delayed-checkable');input.checked=true;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));},25);},{once:true});`);
   const checked = await session.perform(runId, 'click', {
     ...await mark('#checkable'),
     checkable: { inputType: 'checkbox', checkedBefore: false, desiredChecked: true, checkboxIdentity: 'checkable' },
@@ -84,6 +84,15 @@ try {
   assert.equal(checked.success, true);
   assert.equal(checked.verified, true);
   assert.equal(checked.checkedAfter, true);
+  assert.equal(checked._checkableObservationMs, 0, 'already-observed check state should not wait out the old 80ms delay');
+  const delayedChecked = await session.perform(runId, 'click', {
+    ...await mark('#delayed-checkable'),
+    checkable: { inputType: 'checkbox', checkedBefore: false, desiredChecked: true, checkboxIdentity: 'delayed-checkable' },
+  });
+  assert.equal(delayedChecked.success, true);
+  assert.equal(delayedChecked.verified, true);
+  assert.ok(delayedChecked._checkableObservationMs >= 10, 'the test should wait for the delayed state event');
+  assert.ok(delayedChecked._checkableObservationMs < 80, 'the change event should wake the observer before the timeout');
   const blockedCheck = await session.perform(runId, 'click', {
     ...await mark('#blocked-checkable'),
     checkable: { inputType: 'checkbox', checkedBefore: false, desiredChecked: true, checkboxIdentity: 'blocked-checkable' },
@@ -197,7 +206,7 @@ try {
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal((await evaluate('document.querySelector("#text").value')).value, afterStop);
   await assert.rejects(session.perform(resumed, 'click', await mark('#click')), /stopped|disconnected/);
-  console.log('PASS: Firefox connection, dialogs, uploads, literal newlines, focus guards, interrupted typing, deferred blank-tab binding, and packaged extension integration');
+  console.log(`PASS: Firefox connection, dialogs, uploads, literal newlines, focus guards, interrupted typing, deferred blank-tab binding, and packaged extension integration; checkable state event woke in ${delayedChecked._checkableObservationMs}ms (80ms cap)`);
 } finally {
   await session?.close().catch(() => {});
   firefox.kill('SIGTERM');

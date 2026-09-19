@@ -6107,7 +6107,9 @@
             );
           }
           dispatched = true;
+          const syntheticClickDispatchStartedAt = performance.now();
           const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
+          const syntheticClickDispatchMs = Math.max(0, performance.now() - syntheticClickDispatchStartedAt);
           const fallbackStateAfterImmediate = _axFallbackState(el);
           if (filePickerGuard.blocked) {
             return failure(
@@ -6139,6 +6141,7 @@
               tag,
               _preparedActive: preparedActive,
               _syntheticClickStartedAt: syntheticClickStartedAt,
+              _syntheticClickDispatchMs: syntheticClickDispatchMs,
               _fallbackStateBefore: fallbackStateBefore.full,
               _fallbackStateAfterImmediate: fallbackStateAfterImmediate.full,
               _fallbackStrongStateBefore: fallbackStateBefore.strong,
