@@ -6585,7 +6585,10 @@ export class Agent extends LoopDetector {
     try {
       const settings = await this._jevSettings();
       if (!settings?.systemOneFastClassifications || this._checkAbort(tabId) || !context.isCurrent()) return null;
+      // Classification receives plain text only; multimodal requests stay with the active provider.
+      if (!state || Object.values(state).some(value => value != null && typeof value !== 'string')) return null;
       const text = JSON.stringify(state);
+      if (/data:(?:image|application)\//i.test(text)) return null;
       if (/log.?in|sign.?in|password|parola|giriş|oturum|credential|api.?key|secret/i.test(text)) return null;
       const verdict = await this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 1000, maxRetries: 0 }), {
         apiKey: settings.typesafeApiKey, signal: this._runAbortSignal(tabId),
@@ -6632,6 +6635,7 @@ export class Agent extends LoopDetector {
   async _maybeJevFastTurn(tabId, task, messages, mode, allowed, provider, costState, runOptions = {}, recovery = null) {
     const context = this.systemOneContext(tabId);
     if (!['act', 'dev'].includes(mode) || recovery || runOptions.cloudRun || this.selectionGroundingScopes.has(tabId) || this._isStandaloneChatRun(runOptions)
+      || messages.some(message => Array.isArray(message?.content) && message.content.some(block => block?.type !== 'text'))
       || this._checkAbort(tabId) || /log.?in|sign.?in|password|parola|giriş|oturum|credential|api.?key|secret/i.test(task)) return null;
     try {
       const settings = await this._jevSettings();

@@ -51,6 +51,10 @@ for (const build of ['chrome', 'firefox']) {
     const allowed = new Set(['get_accessibility_tree', 'click_ax']);
     Object.assign(storage, { systemOneEnabled: true, systemOneFastBrowser: true, systemOneFastClassifications: true, typesafeApiKey: 'synthetic' });
     assert.equal(await agent._maybeJevFastTurn(1, 'Click Save', [], 'ask', allowed, provider, {}), null);
+    assert.equal(await agent._maybeJevFastTurn(1, 'Click the pictured button', [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,synthetic' } }] }], 'act', allowed, provider, {}), null);
+    assert.equal(await agent._jevClassify(1, 'classify', { yes: 'yes' }, { task: [{ type: 'image_url', image_url: { url: 'private' } }] }), null);
+    assert.equal(await agent._jevClassify(1, 'classify', { yes: 'yes' }, { task: 'data:image/png;base64,private' }), null);
+    assert.equal(calls, 0);
     agent.strictSecretMode = true; assert.equal(await agent._jevClassify(1, 'classify', { yes: 'yes' }, {}), null);
     agent.strictSecretMode = false; storage.typesafeApiKey = ''; assert.equal(await agent._jevClassify(1, 'classify', { yes: 'yes' }, {}), null); assert.equal(calls, 0);
     storage.typesafeApiKey = 'synthetic';
