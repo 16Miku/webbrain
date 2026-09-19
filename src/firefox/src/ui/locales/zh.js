@@ -47,6 +47,8 @@ export default {
   "st.system_one.need_key": "请输入 TypeSafe API 密钥。",
   "st.system_one.uncertain": "Jev：无法确认任务已完成。",
   "st.system_one.clear": "删除密钥",
+  "st.system_one.fast_classifications": "快速分类",
+  "st.system_one.fast_browser": "快速浏览器操作 — 实验性",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "验证定时监测 — 概率阈值",
   "st.system_one.completion_threshold": "验证定时任务完成情况 — 概率阈值",

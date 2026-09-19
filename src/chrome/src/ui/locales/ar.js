@@ -47,6 +47,8 @@ export default {
   "st.system_one.need_key": "أدخل مفتاح API لـ TypeSafe.",
   "st.system_one.uncertain": "Jev: تعذر التحقق من الإتمام.",
   "st.system_one.clear": "حذف المفتاح",
+  "st.system_one.fast_classifications": "تصنيفات سريعة",
+  "st.system_one.fast_browser": "إجراءات متصفح سريعة — تجريبي",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "التحقق من المراقبة المجدولة — عتبة الاحتمال",
   "st.system_one.completion_threshold": "التحقق من إتمام المهام المجدولة — عتبة الاحتمال",

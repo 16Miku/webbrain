@@ -5734,7 +5734,16 @@
       return;
     }
 
+    const jevBinding = msg.params?._jevBinding;
+    if (jevBinding && (jevBinding.documentToken !== _axDocumentToken()
+        || window.__wb_jev_validate?.(jevBinding) !== true)) {
+      sendResponse({ success: false, noDispatch: true, dispatched: false, staleJevTarget: true,
+        error: 'The observed target or form context changed. Read the page again before acting.' });
+      return;
+    }
+
     const handlers = {
+      'jev_validate_target': () => ({ success: !!jevBinding }),
       'get_page_info': () => getPageInfo(),
       'get_page_info_cdp': () => getPageInfoFull(msg.params || {}),
       'get_interactive_elements': () => getInteractiveElements(),
@@ -5843,8 +5852,11 @@
             const prepared = await window.__wb_expand_gmail_conversation_for_read(ref_id);
             conversationAutoExpanded = prepared?.attempted === true && prepared?.expanded === true;
           }
+          const tree = window.__generateAccessibilityTree(filter, maxDepth, maxChars, ref_id, page, tree_revision);
+          const jev = window.__wb_jev_snapshot?.();
           return {
-            ...window.__generateAccessibilityTree(filter, maxDepth, maxChars, ref_id, page, tree_revision),
+            ...tree,
+            ...(jev ? { _jevSnapshot: { ...jev, documentToken, pageUrl: refScopeUrl } } : {}),
             ...(conversationAutoExpanded ? { conversationAutoExpanded: true } : {}),
             documentToken,
             refScopeUrl,

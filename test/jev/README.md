@@ -1,0 +1,53 @@
+# Jev speed evaluation
+
+The experimental fast browser flow is disabled by default. It is not a verified
+speedup until the paired live evaluation passes. A confidence or probability
+threshold is a routing heuristic, not an accuracy guarantee.
+
+`node test/jev/benchmark.mjs --dry-run` validates the 120-attempt schedule without
+model requests: search, filtering, dynamic selection, a multi-field form, saving
+a record and sending a message; baseline and Jev; Chrome and Firefox; five
+repetitions with matched English/Turkish prompts. Each trial starts in a new tab
+on the same local fixture. Failed attempts remain in the report. Fixtures keep
+an independent action ledger so wrong and repeated final actions are counted.
+`node --test test/jev/fixtures.test.mjs` validates fixture scoring in both engines.
+
+Live evaluation requires explicit user authorization for the test budget and:
+
+- `JEV_API_KEY` and `JEV_LLM_API_KEY` (environment only; never commit them).
+- `JEV_LLM_BASE_URL` and `JEV_LLM_MODEL` for the same active OpenAI-compatible
+  model in both variants.
+- `JEV_LLM_INPUT_USD_PER_MILLION` and `JEV_LLM_OUTPUT_USD_PER_MILLION`, verified
+  for that model before running. Cost results are estimates at these rates.
+- `FIREFOX_BINARY` when Firefox is not at the macOS default application path.
+
+Run `node test/jev/benchmark.mjs --live --budget-usd <authorized-budget> --out
+<private-output-directory>`. Temporary extension profiles isolate settings and
+keys; cleanup removes them. The normal planner, permission prompts, submit
+checks, executor and completion checks remain active. The runner accepts planner
+reviews for these explicitly requested local fixture tasks, but does not blanket
+approve clarification or permission prompts. Such a blocked attempt counts as a
+failure. Runtime cost limits stop subsequent calls; a request already in flight
+can exceed an estimated remaining allowance, so this is not a provider billing
+cap. No live evaluation has been run for this change.
+
+`report.json` contains every attempt and totals, p50/p95 duration, success, wrong
+and repeated actions, LLM/Jev call counts, fallbacks and total estimated model
+cost. Acceptance requires all 120 attempts, at least 25% lower median duration,
+no success regression and no wrong or repeated Jev actions. No general speed
+claim should be made from fixture-only or mocked results.
+
+## Completion trace investigation
+
+A user-supplied v36.7.1 trace showed 8 `done` attempts among 27 tool calls in its
+first task. Six were rejected by the form-validation completion guard and one
+by the submission-evidence guard; the final result was partial. Reads meanwhile
+showed post-login administration pages. The retained failed-submit state needs
+a separate task-scoped reconciliation investigation; navigating to another page
+alone is not sufficient proof that the requested operation succeeded. The text
+export truncates diagnostic payloads and does not establish exact per-call
+latencies. No credentials or raw trace have been copied into this repository.
+
+Jev completion is only a candidate. It neither clears validation failure state
+nor bypasses the completion guards, so this particular loop must not be claimed
+as fixed by enabling Jev.

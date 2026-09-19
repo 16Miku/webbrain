@@ -47,6 +47,8 @@ export default {
   "st.system_one.need_key": "Saisissez une clé API TypeSafe.",
   "st.system_one.uncertain": "Jev : fin de tâche non confirmée.",
   "st.system_one.clear": "Supprimer la clé",
+  "st.system_one.fast_classifications": "Classifications rapides",
+  "st.system_one.fast_browser": "Actions rapides du navigateur — Expérimental",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Vérifier les surveillances planifiées — Seuil de probabilité",
   "st.system_one.completion_threshold": "Vérifier la fin des tâches planifiées — Seuil de probabilité",

@@ -988,6 +988,8 @@ export default {
   "st.system_one.need_key": "TypeSafe API कुंजी दर्ज करें।",
   "st.system_one.uncertain": "Jev: कार्य पूर्ण होने की पुष्टि नहीं हुई।",
   "st.system_one.clear": "कुंजी हटाएँ",
+  "st.system_one.fast_classifications": "तेज़ वर्गीकरण",
+  "st.system_one.fast_browser": "तेज़ ब्राउज़र क्रियाएँ — प्रायोगिक",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "निर्धारित निगरानी की जाँच करें — प्रायिकता सीमा",
   "st.system_one.completion_threshold": "निर्धारित कार्य पूर्ण होने की जाँच करें — प्रायिकता सीमा",

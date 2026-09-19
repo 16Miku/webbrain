@@ -1020,3 +1020,32 @@ execution after awaiting the response and never requeues a downgraded action.
 The agent supplies the original run cost state and trace ID to the sidecar.
 No evidence is written to additional diagnostic logs. Watch baselines alone
 persist a bounded observation to support change comparisons.
+
+### Experimental Jev decisions
+
+`systemone-fast.js` produces existing tool calls, a fallback, or a completion
+candidate. Separate default-off settings control read-scope/Ask-handoff
+classification and Act/Dev browser decisions. The normal planner and intent
+checks still precede the loop. Both streaming and non-streaming loops dispatch
+Jev-selected calls through `_executeToolBatch`, including final submit/save/send
+clicks. Ask cannot use this browser path.
+
+The existing AX walk supplies at most 24 structured controls with its own refs;
+page-authored ref strings are never parsed. Internal snapshots are stripped from
+public tool results and diagnostics. Identity, document, form structure, options,
+value and occlusion are checked again before dispatch. Frames, shadow roots,
+credential/file fields and unsupported actions fall back. Field values come from
+the active provider, then Jev maps independent fields in one request; each write
+is executed separately with a new observation. Labels must match the prepared
+field purpose, and ambiguous labels fall back. Changed form/document context
+invalidates queued writes and cached values.
+
+Choice probability and confidence must both reach 85% for classifiers and 90%
+for browser decisions. Each Jev request has one second and no retry. Errors or
+low confidence fall back in the current step. Two unchanged observations after
+Jev decisions disable the path for the rest of the run. Unknown outcomes and
+denied/cancelled calls also disable it. Strict Secret Mode, offline connectivity,
+run cancellation and model cost limits apply. `done` remains an active-model
+operation using existing evidence checks. RAG, skill routing and direct watch
+poll optimization are not part of this integration. See `test/jev/README.md` for
+benchmark protocol and its unverified live-performance status.

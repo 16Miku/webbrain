@@ -660,3 +660,16 @@ data-flow patterns are otherwise the same, except:
 - No slash-driven tab/screen recording
 - Conversation, rendered chat, and detached-run UI journals use
   `browser.storage.session`, matching Chrome's session-scoped persistence.
+
+### Experimental Jev decisions
+
+The two additional Jev switches are independent opt-ins. Existing enabled keys
+or scheduler settings do not enable them. Fast classification sends bounded
+request context; fast browser decisions send the task, up to 24 structured AX
+controls, observed options and bounded prepared field values. These may include
+ordinary personal text explicitly supplied for a form. Credential-related tasks
+and credential/file controls are excluded from the fast path. Redaction remains
+best effort. The active chat provider prepares free text and gives the final
+answer; Jev receives neither screenshots nor full conversation history for
+browser decisions. Separate requests use the same pinned model, cost accounting
+and untrusted-data boundaries, with a one-second deadline and zero retries.

@@ -47,6 +47,8 @@ export default {
   "st.system_one.need_key": "Masukkan kunci API TypeSafe.",
   "st.system_one.uncertain": "Jev: penyelesaian tidak dapat diverifikasi.",
   "st.system_one.clear": "Hapus kunci",
+  "st.system_one.fast_classifications": "Klasifikasi cepat",
+  "st.system_one.fast_browser": "Tindakan browser cepat — Eksperimental",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Verifikasi pemantauan terjadwal — Ambang probabilitas",
   "st.system_one.completion_threshold": "Verifikasi penyelesaian tugas terjadwal — Ambang probabilitas",

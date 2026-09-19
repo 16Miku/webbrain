@@ -908,6 +908,8 @@ export default {
   "st.system_one.need_key": "TypeSafe-API-Schlüssel eingeben.",
   "st.system_one.uncertain": "Jev: Abschluss konnte nicht bestätigt werden.",
   "st.system_one.clear": "Schlüssel löschen",
+  "st.system_one.fast_classifications": "Schnelle Klassifizierung",
+  "st.system_one.fast_browser": "Schnelle Browseraktionen — Experimentell",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Geplante Überwachungen prüfen — Wahrscheinlichkeitsschwelle",
   "st.system_one.completion_threshold": "Abschluss geplanter Aufgaben prüfen — Wahrscheinlichkeitsschwelle",

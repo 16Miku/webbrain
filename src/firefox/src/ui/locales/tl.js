@@ -47,6 +47,8 @@ export default {
   "st.system_one.need_key": "Maglagay ng TypeSafe API key.",
   "st.system_one.uncertain": "Jev: hindi matiyak ang pagkumpleto.",
   "st.system_one.clear": "Burahin ang key",
+  "st.system_one.fast_classifications": "Mabilis na pag-uuri",
+  "st.system_one.fast_browser": "Mabilis na pagkilos sa browser — Eksperimental",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "Tiyakin ang nakaiskedyul na pagsubaybay — Hangganan ng probabilidad",
   "st.system_one.completion_threshold": "Tiyakin ang pagkumpleto ng nakaiskedyul na gawain — Hangganan ng probabilidad",

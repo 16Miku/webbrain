@@ -226,6 +226,8 @@ const systemOneWatchThresholdValue = document.getElementById('system-one-watch-t
 const systemOneCompletionThresholdRange = document.getElementById('range-system-one-completion-threshold');
 const systemOneCompletionThresholdValue = document.getElementById('system-one-completion-threshold-value');
 const btnSaveSystemOne = document.getElementById('btn-save-system-one');
+const systemOneClassificationsToggle = document.getElementById('toggle-system-one-classifications');
+const systemOneBrowserToggle = document.getElementById('toggle-system-one-browser');
 const btnTestSystemOne = document.getElementById('btn-test-system-one');
 const btnClearSystemOne = document.getElementById('btn-clear-system-one');
 const systemOneTestResult = document.getElementById('test-system-one');
@@ -806,7 +808,7 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -905,6 +907,8 @@ async function init() {
   }
   if (systemOneEnabledToggle) systemOneEnabledToggle.checked = stored.systemOneEnabled === true;
   if (systemOneWatchToggle) systemOneWatchToggle.checked = stored.systemOneWatchEnabled === true;
+  if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = stored.systemOneFastClassifications === true;
+  if (systemOneBrowserToggle) systemOneBrowserToggle.checked = stored.systemOneFastBrowser === true;
   if (systemOneCompletionToggle) systemOneCompletionToggle.checked = stored.systemOneCompletionEnabled === true;
   if (systemOneApiKeyInput) systemOneApiKeyInput.value = normalizeTypesafeApiKey(stored.typesafeApiKey);
   if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
@@ -1725,6 +1729,8 @@ if (btnSaveSystemOne) {
       systemOneEnabled: enabled && isValidTypesafeApiKey(key),
       systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
       systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
+      systemOneFastClassifications: systemOneClassificationsToggle?.checked === true,
+      systemOneFastBrowser: systemOneBrowserToggle?.checked === true,
       systemOneWatchThreshold: normalizeSystemOneThreshold(Number(systemOneWatchThresholdRange?.value) / 100),
       systemOneCompletionThreshold: normalizeSystemOneThreshold(Number(systemOneCompletionThresholdRange?.value) / 100),
     });
@@ -1734,6 +1740,8 @@ if (btnSaveSystemOne) {
 
 if (btnClearSystemOne) {
   btnClearSystemOne.addEventListener('click', async () => {
+    if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = false;
+    if (systemOneBrowserToggle) systemOneBrowserToggle.checked = false;
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = '';
     if (systemOneEnabledToggle) systemOneEnabledToggle.checked = false;
     if (systemOneWatchToggle) systemOneWatchToggle.checked = false;
@@ -1742,7 +1750,7 @@ if (btnClearSystemOne) {
       'typesafeApiKey',
       'systemOneEnabled',
       'systemOneWatchEnabled',
-      'systemOneCompletionEnabled',
+      'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser',
       'systemOneWatchThreshold',
       'systemOneCompletionThreshold',
     ]);
@@ -3907,6 +3915,8 @@ function renderProviderFilterBar() {
   input.value = providerSearchQuery;
   let providerSearchComposing = false;
   const applyProviderSearchInput = () => {
+    // Firefox may emit a final input event while the old search is removed.
+    if (!input.isConnected) return;
     const selectionStart = input.selectionStart ?? input.value.length;
     const selectionEnd = input.selectionEnd ?? input.value.length;
     syncInputsIntoProvidersData();

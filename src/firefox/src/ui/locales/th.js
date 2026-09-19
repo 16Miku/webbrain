@@ -47,6 +47,8 @@ export default {
   "st.system_one.need_key": "ป้อนคีย์ API ของ TypeSafe",
   "st.system_one.uncertain": "Jev: ไม่สามารถยืนยันการเสร็จสิ้นได้",
   "st.system_one.clear": "ลบคีย์",
+  "st.system_one.fast_classifications": "การจัดประเภทอย่างรวดเร็ว",
+  "st.system_one.fast_browser": "การทำงานเบราว์เซอร์อย่างรวดเร็ว — ทดลอง",
   "st.system_one.title": "Jev (TypeSafe)",
   "st.system_one.watch_threshold": "ตรวจสอบการเฝ้าดูตามกำหนดเวลา — เกณฑ์ความน่าจะเป็น",
   "st.system_one.completion_threshold": "ตรวจสอบการเสร็จสิ้นของงานตามกำหนดเวลา — เกณฑ์ความน่าจะเป็น",
