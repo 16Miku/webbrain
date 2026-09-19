@@ -20643,16 +20643,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : false;
     }
 
+    const missingLinkedInComposer = policy.adapterName === 'linkedin'
+      && probe?.success === true && probe?.composerAvailable === false;
     return {
       success: false,
       blocked: true,
       noDispatch: true,
       dispatched: false,
       messageRecipientGuard: true,
+      ...(missingLinkedInComposer ? { retryable: false } : {}),
       reasonCode: probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
         ? 'message_send_classification_inconclusive'
         : (target ? 'active_recipient_unverified' : 'authorized_recipient_missing'),
-      error: probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
+      error: missingLinkedInComposer
+        ? 'Message action blocked: no message composer is visible and this control is not a verified non-send action. Changing click targeting methods will not resolve this classification failure. Re-read the page to find a supported navigation or composer-opening control; if none is available, report the blocker instead of repeating the click.'
+        : probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
         ? 'Message action blocked: WebBrain could not conclusively resolve the target control and active composer. Re-read the page and retry with an exact visible control or fresh ref_id.'
         : target
           ? 'Message send blocked: the active conversation does not exactly match the recipient authorized by the user. Select the intended conversation, re-read its visible header, then retry the send action.'
