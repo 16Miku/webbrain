@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
+import './systemone-trace.mjs';
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 for (const build of ['chrome', 'firefox']) {
   const mod = await import(`../src/${build}/src/agent/systemone-judge.js`);
