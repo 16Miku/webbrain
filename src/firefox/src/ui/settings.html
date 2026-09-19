@@ -129,10 +129,10 @@
     }
     h2:first-of-type { margin-top: 0; }
 
-    /* Tab bar — sticky so it survives long provider lists. */
+    /* Keep translated labels on one line; narrow windows scroll the tab bar. */
     .tabs {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      display: flex;
+      overflow-x: auto;
       gap: 2px;
       margin: 4px 0 20px 0;
       padding: 4px;
@@ -144,6 +144,7 @@
       z-index: 10;
     }
     .tab-btn {
+      flex: 1 0 auto;
       min-width: 0;
       background: transparent;
       color: var(--text2);
@@ -155,7 +156,7 @@
       line-height: 1.2;
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
     }
     .tab-btn:hover { color: var(--text); }
     .tab-btn.active {
@@ -167,10 +168,6 @@
     @media (max-width: 600px) {
       .header-row { flex-direction: column; gap: 10px; }
       .header-actions { justify-content: flex-start; }
-      .tabs {
-        grid-template-columns: repeat(6, minmax(90px, 1fr));
-        overflow-x: auto;
-      }
     }
 
     .tab-panel { display: none; }
@@ -339,7 +336,7 @@
       flex-shrink: 0;
       display: block;
     }
-    /* Multimodal section headings always show a mono feature icon so the
+    /* Assistive model section headings always show a mono feature icon so the
        tab has visual anchors even when base URL is empty (brand chip only
        appears after a known endpoint is sniffed). */
     .mm-section-heading {
@@ -1633,66 +1630,6 @@
   </section>
 
   <section class="tab-panel active" data-panel="providers" role="tabpanel">
-    <h2 data-i18n="st.system_one.heading" style="font-size:16px"></h2>
-    <div class="provider-card" id="system-one-card">
-      <h3 data-i18n="st.system_one.title"></h3>
-            <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.system_one.desc_html"></div>
-
-            <div class="setting-row">
-              <div class="setting-info">
-                <div class="setting-label" data-i18n="st.system_one.enabled.label"></div>
-              </div>
-              <label class="toggle">
-                <input type="checkbox" id="toggle-system-one">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-
-            <div class="field">
-              <label for="system-one-api-key" data-i18n="st.system_one.api_key.label"></label>
-              <input type="password" id="system-one-api-key" placeholder="ts_…" autocomplete="off" spellcheck="false">
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-info">
-                <div class="setting-label" data-i18n="st.system_one.watch.label"></div>
-              </div>
-              <label class="toggle">
-                <input type="checkbox" id="toggle-system-one-watch">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-            <div class="setting-row">
-              <div class="setting-info">
-                <div class="setting-label" data-i18n="st.system_one.completion.label"></div>
-              </div>
-              <label class="toggle">
-                <input type="checkbox" id="toggle-system-one-completion">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-
-            <details class="advanced-settings">
-              <summary data-i18n="st.display.advanced"></summary>
-            <div class="field">
-              <label for="range-system-one-watch-threshold"><span data-i18n="st.system_one.watch_threshold"></span> <span id="system-one-watch-threshold-value">70%</span></label>
-              <input type="range" id="range-system-one-watch-threshold" min="50" max="95" step="5" value="70">
-            </div>
-            <div class="field">
-              <label for="range-system-one-completion-threshold"><span data-i18n="st.system_one.completion_threshold"></span> <span id="system-one-completion-threshold-value">70%</span></label>
-              <input type="range" id="range-system-one-completion-threshold" min="50" max="95" step="5" value="70">
-            </div>
-
-            </details>
-            <div class="btn-row">
-              <button class="btn-primary" id="btn-save-system-one" data-i18n="st.providers.save"></button>
-              <button class="btn-secondary" id="btn-test-system-one" data-i18n="st.providers.test"></button>
-              <button class="btn-secondary" id="btn-clear-system-one" data-i18n="st.system_one.clear"></button>
-            </div>
-            <div class="test-result" id="test-system-one"></div>
-
-            <div class="info-box" style="margin-top:16px;" data-i18n-html="st.system_one.security_html"></div>
-          </div>
     <div id="providers"></div>
 
     <div class="info-box" data-i18n-html="st.providers.info.html"></div>
@@ -1732,43 +1669,6 @@
         <button class="btn-secondary" id="btn-clear-vision" data-i18n="st.vision.clear"></button>
       </div>
       <div class="test-result" id="test-vision"></div>
-    </div>
-
-    <h3 class="mm-section-heading">
-      <svg class="mm-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-        <line x1="12" y1="19" x2="12" y2="23"/>
-        <line x1="8" y1="23" x2="16" y2="23"/>
-      </svg>
-      <span data-i18n="st.transcription.heading"></span>
-    </h3>
-    <div class="provider-card" id="transcription-card">
-      <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.5;" data-i18n="st.transcription.desc"></div>
-      <div class="field">
-        <label class="mm-field-label">
-          <span data-i18n="st.provider.field.api_base_url"></span>
-          <span class="mm-detected-provider" id="transcription-detected" hidden>
-            <img class="provider-icon" id="transcription-detected-icon" alt="" width="16" height="16" decoding="async" draggable="false">
-            <span id="transcription-detected-label"></span>
-          </span>
-        </label>
-        <input type="text" id="transcription-base-url" placeholder="https://api.openai.com/v1">
-      </div>
-      <div class="field">
-        <label data-i18n="st.provider.field.api_key"></label>
-        <input type="password" id="transcription-api-key" placeholder="sk-...">
-      </div>
-      <div class="field">
-        <label data-i18n="st.provider.field.model"></label>
-        <input type="text" id="transcription-model" placeholder="whisper-1">
-      </div>
-      <div class="btn-row">
-        <button class="btn-primary" id="btn-save-transcription" data-i18n="st.transcription.save"></button>
-        <button class="btn-secondary" id="btn-test-transcription" data-i18n="st.transcription.test"></button>
-        <button class="btn-secondary" id="btn-clear-transcription" data-i18n="st.transcription.clear"></button>
-      </div>
-      <div class="test-result" id="test-transcription"></div>
     </div>
 
     <h3 data-i18n="st.imageBudget.heading" style="margin:24px 0 12px;font-size:14px;font-weight:600;"></h3>
@@ -1828,6 +1728,109 @@
       </div>
       <div class="info-box" data-i18n-html="st.redaction.warning"></div>
     </div>
+
+    <h3 class="mm-section-heading">
+      <svg class="mm-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+      <span data-i18n="st.transcription.heading"></span>
+    </h3>
+    <div class="provider-card" id="transcription-card">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.5;" data-i18n="st.transcription.desc"></div>
+      <div class="field">
+        <label class="mm-field-label">
+          <span data-i18n="st.provider.field.api_base_url"></span>
+          <span class="mm-detected-provider" id="transcription-detected" hidden>
+            <img class="provider-icon" id="transcription-detected-icon" alt="" width="16" height="16" decoding="async" draggable="false">
+            <span id="transcription-detected-label"></span>
+          </span>
+        </label>
+        <input type="text" id="transcription-base-url" placeholder="https://api.openai.com/v1">
+      </div>
+      <div class="field">
+        <label data-i18n="st.provider.field.api_key"></label>
+        <input type="password" id="transcription-api-key" placeholder="sk-...">
+      </div>
+      <div class="field">
+        <label data-i18n="st.provider.field.model"></label>
+        <input type="text" id="transcription-model" placeholder="whisper-1">
+      </div>
+      <div class="btn-row">
+        <button class="btn-primary" id="btn-save-transcription" data-i18n="st.transcription.save"></button>
+        <button class="btn-secondary" id="btn-test-transcription" data-i18n="st.transcription.test"></button>
+        <button class="btn-secondary" id="btn-clear-transcription" data-i18n="st.transcription.clear"></button>
+      </div>
+      <div class="test-result" id="test-transcription"></div>
+    </div>
+
+    <h3 class="mm-section-heading" id="system-one-heading">
+      <svg class="mm-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="m8 12 3 3 5-6"/>
+      </svg>
+      <span data-i18n="st.system_one.title"></span>
+    </h3>
+    <div class="provider-card" id="system-one-card" aria-labelledby="system-one-heading">
+            <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.system_one.desc_html"></div>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label" data-i18n="st.system_one.enabled.label"></div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toggle-system-one">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="field">
+              <label for="system-one-api-key" data-i18n="st.system_one.api_key.label"></label>
+              <input type="password" id="system-one-api-key" placeholder="ts_…" autocomplete="off" spellcheck="false">
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label" data-i18n="st.system_one.watch.label"></div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toggle-system-one-watch">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label" data-i18n="st.system_one.completion.label"></div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toggle-system-one-completion">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <details class="advanced-settings">
+              <summary data-i18n="st.display.advanced"></summary>
+            <div class="field">
+              <label for="range-system-one-watch-threshold"><span data-i18n="st.system_one.watch_threshold"></span> <span id="system-one-watch-threshold-value">70%</span></label>
+              <input type="range" id="range-system-one-watch-threshold" min="50" max="95" step="5" value="70">
+            </div>
+            <div class="field">
+              <label for="range-system-one-completion-threshold"><span data-i18n="st.system_one.completion_threshold"></span> <span id="system-one-completion-threshold-value">70%</span></label>
+              <input type="range" id="range-system-one-completion-threshold" min="50" max="95" step="5" value="70">
+            </div>
+
+            </details>
+            <div class="btn-row">
+              <button class="btn-primary" id="btn-save-system-one" data-i18n="st.providers.save"></button>
+              <button class="btn-secondary" id="btn-test-system-one" data-i18n="st.providers.test"></button>
+              <button class="btn-secondary" id="btn-clear-system-one" data-i18n="st.system_one.clear"></button>
+            </div>
+            <div class="test-result" id="test-system-one"></div>
+
+            <div class="info-box" style="margin-top:16px;" data-i18n-html="st.system_one.security_html"></div>
+          </div>
   </section>
 
   <section class="tab-panel" data-panel="memory" role="tabpanel">

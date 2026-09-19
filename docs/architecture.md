@@ -1009,10 +1009,12 @@ Key points:
 - Offscreen proxy only forwards provider SDK traffic
 - Finance adapters inject extra confirmation guidance
 
-### Jev auxiliary verification
+### Jev scheduled-task verification
 
-The static Jev card lives above the dynamic provider list and never participates
-in chat model selection. `systemone-judge.js` owns the pinned HTTP contract,
+The static Jev card lives in Settings → Assistive Models, after Vision and
+Speech to text, outside the dynamic provider list. It never participates in
+chat model selection. The tab retains its internal `multimodal` identifier for
+existing links and remembered selections. `systemone-judge.js` owns the pinned HTTP contract,
 strict typed responses and a shared deadline for retries. `systemone-evidence.js`
 collects bounded allowlisted observations and invalidates them on page changes.
 Scheduler evaluation returns keep/downgrade/skip plus metadata, revalidates the

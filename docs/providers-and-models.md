@@ -2,6 +2,17 @@
 
 ---
 
+## Main provider and assistive models
+
+**Settings → Providers** selects the main model for conversation, planning and
+final replies. **Settings → Assistive Models** groups Vision (including screenshot
+limits and redaction), Speech to text, and Jev (TypeSafe). Configuring an assistive
+model does not replace the active provider. Jev is outside the dynamic provider
+list; its scheduled-watch and scheduled-completion verification options
+are controlled independently. See [the settings guide](https://webbrain.one/docs/settings/#multimodal)
+and [data flow](privacy-and-data-flow.md#optional-jev-typesafe-scheduled-task-verification)
+for setup and disclosure details. Existing `#multimodal` settings links still work.
+
 ## Provider Interface (`providers/base.js`)
 
 Every LLM provider implements the `BaseLLMProvider` interface:
@@ -465,7 +476,7 @@ const vision = await providerManager.getVisionProvider();
 // active-provider vision and the explicitly enabled, ready local fallback.
 ```
 
-On Chromium, **Settings -> Multimodal -> Vision** also offers a one-click
+On Chromium, **Settings -> Assistive Models -> Vision** also offers a one-click
 in-browser fallback. It runs `webbrain-one/webbrain-vl-2-450M-onnx` through WebGPU in a
 dedicated Worker with FP16 embeddings/vision encoder and a Q4 decoder. The
 model is not present in the general provider catalog and never receives agent

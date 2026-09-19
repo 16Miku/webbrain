@@ -93,7 +93,7 @@ flowchart TD
    - The picker offers only Compass Tiny v2.1 (about 1.87 GB); starting its
      download caches that repository.
    - The separate 810 MB local vision fallback is downloaded only after the
-     user enables it in **Settings -> Multimodal -> Vision**.
+     user enables it in **Settings -> Assistive Models -> Vision**.
 
 ---
 

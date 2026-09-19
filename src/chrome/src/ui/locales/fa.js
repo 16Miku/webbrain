@@ -576,7 +576,7 @@ export default {
   'st.tab.providers': "ارائه دهندگان",
   'st.tab.skills': "مهارت ها",
   'st.tab.vision': "چشم انداز",
-  'st.tab.multimodal': "چند وجهی",
+  'st.tab.multimodal': "مدل‌های کمکی",
   'st.tab.memory': "حافظه",
   'st.tab.profile': "نمایه",
   'st.tab.account': "حساب",
@@ -887,7 +887,7 @@ export default {
   'st.vision.failed': "ناموفق: {error}",
   'st.vision.fill_required': "ابتدا Base URL و Model را پر کنید.",
 
-  'st.transcription.heading': "رونویسی",
+  'st.transcription.heading': "گفتار به متن",
   'st.transcription.desc': "استفاده شده توسط رونویسی Tab Recorder. در صورت تنظیم، صدا به این نقطه پایانی سازگار با Whisper ارسال می‌شود. برای انتخاب خودکار از ارائه دهندگان پیکربندی شده (OpenAI → Groq → LM Studio → llama.cpp) را خالی بگذارید. OpenAI فقط /v1/audio/transcriptions سازگار است.",
   'st.transcription.save': "ذخیره کنید",
   'st.transcription.test': "تست اتصال",
@@ -978,7 +978,6 @@ export default {
   'st.captcha.balance_fail': "ناموفق: {error}",
   'st.captcha.security_html': "<strong>هدآپ:</strong> کلید API ذخیره می شود <strong>در متن ساده</strong> در حافظه محلی مرورگر CapSolver برای هر حل حساب شما را شارژ می کند. عامل فقط زمانی آن را فراخوانی می کند که یک CAPTCHA در واقع یک مرحله را مسدود کند (حداکثر یک بار در هر برخورد - در صورت شکست مجدداً تلاش نمی کند). شرایط خدمات برخی از سایت ها حل خودکار CAPTCHA را ممنوع می کند. از قضاوت خود استفاده کنید",
 
-  "st.system_one.heading": "مدل‌های کمکی",
   "st.system_one.desc_html": "بررسی تکمیلی پایش‌های زمان‌بندی‌شده و تکمیل کارها.",
   "st.system_one.enabled.label": "فعال‌سازی Jev",
   "st.system_one.api_key.label": "کلید API تایپ‌سیف",

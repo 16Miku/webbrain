@@ -3258,6 +3258,8 @@ function renderProviderFilterBar() {
   input.value = providerSearchQuery;
   let providerSearchComposing = false;
   const applyProviderSearchInput = () => {
+    // Firefox may emit a final input event while the old search is removed.
+    if (!input.isConnected) return;
     const selectionStart = input.selectionStart ?? input.value.length;
     const selectionEnd = input.selectionEnd ?? input.value.length;
     syncInputsIntoProvidersData();

@@ -571,7 +571,7 @@ export default {
   'st.tab.providers': 'Anbieter',
   'st.tab.skills': 'Skills',
   'st.tab.vision': 'Vision',
-  'st.tab.multimodal': 'Multimodal',
+  'st.tab.multimodal': "Assistenzmodelle",
   'st.tab.memory': 'Memorie',
   'st.tab.profile': 'Profil',
   'st.tab.account': 'Konto',
@@ -806,7 +806,7 @@ export default {
   'st.vision.fill_required': 'Füllen Sie zuerst die Basis-URL und das Modell aus.',
 
   // --- Transcription settings ---
-  'st.transcription.heading': 'Transkription',
+  'st.transcription.heading': "Sprache zu Text",
   'st.transcription.desc': 'Wird von der Tab-Recorder-Transkription verwendet. Wenn gesetzt, wird Audio an diesen Whisper-kompatiblen Endpoint gesendet...',
   'st.transcription.save': 'Speichern',
   'st.transcription.test': 'Verbindung testen',
@@ -898,7 +898,6 @@ export default {
   'st.captcha.balance_fail': 'Fehlgeschlagen: {error}',
   'st.captcha.security_html': '<strong>Hinweis:</strong> Der API-Schlüssel wird als Klartext im Browser-Speicher gespeichert...',
 
-  "st.system_one.heading": "Hilfsmodelle",
   "st.system_one.desc_html": "Zusätzliche Prüfung geplanter Überwachungen und Aufgabenabschlüsse.",
   "st.system_one.enabled.label": "Jev aktivieren",
   "st.system_one.api_key.label": "TypeSafe-API-Schlüssel",

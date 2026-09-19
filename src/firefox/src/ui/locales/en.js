@@ -573,7 +573,7 @@ export default {
   'st.tab.providers': 'Providers',
   'st.tab.skills': 'Skills',
   'st.tab.vision': 'Vision',
-  'st.tab.multimodal': 'Multimodal',
+  'st.tab.multimodal': "Assistive Models",
   'st.tab.memory': 'Memory',
   'st.tab.profile': 'Profile',
   'st.tab.account': 'Account',
@@ -867,7 +867,7 @@ export default {
   'st.vision.failed': 'Failed: {error}',
   'st.vision.fill_required': 'Fill in Base URL and Model first.',
 
-  'st.transcription.heading': 'Transcription',
+  'st.transcription.heading': "Speech to text",
   'st.transcription.desc': 'Used by Tab Recorder transcription. If set, audio is sent to this Whisper-compatible endpoint. Leave blank to auto-pick from the configured providers (OpenAI → Groq → LM Studio → llama.cpp). OpenAI-compatible /v1/audio/transcriptions only.',
   'st.transcription.save': 'Save',
   'st.transcription.test': 'Test Connection',
@@ -959,7 +959,6 @@ export default {
   'st.captcha.balance_fail': 'Failed: {error}',
   'st.captcha.security_html': '<strong>Heads-up:</strong> the API key is stored <strong>in plaintext</strong> in browser local storage. CapSolver charges your account for every solve; the agent will only call it when a CAPTCHA actually blocks a step (max once per encounter — it won\'t retry on failure). Some sites\' terms of service prohibit automated CAPTCHA solving; use your judgement.',
 
-  "st.system_one.heading": "Auxiliary models",
   "st.system_one.desc_html": "Extra verification for scheduled watches and task completion.",
   "st.system_one.enabled.label": "Enable Jev",
   "st.system_one.api_key.label": "TypeSafe API key",
