@@ -12460,6 +12460,77 @@ test('trace privacy: default persistence keeps metadata and content mode is expl
 
   const safeNote = TRACE_PRIVACY_CH.projectTraceEventData('note', note);
   assert.deepEqual(safeNote.extra, { attempt: 2, delayMs: 50, code: 'RATE_LIMIT' });
+  const clickAxTimingExtra = {
+    preflightMs: 12.25,
+    syntheticDispatchMs: 1.5,
+    syntheticResponseMs: 3.25,
+    postClickObservationMs: 250,
+    fallbackPreparationMs: 0,
+    fallbackDispatchMs: 0,
+    trustedObservationMs: 0,
+    clickPathMs: 270,
+    trustedInputEvents: 0,
+    syntheticDispatched: true,
+    trustedFallbackAttempted: false,
+    safetyVeto: true,
+    duplicateFallbackBlocked: false,
+    outcome: 'inconclusive',
+    tabUrl: 'https://private.example.test/path',
+    targetName: 'Private button label',
+    ref_id: 'private-ref',
+  };
+  const projectedClickAxTiming = {
+    step: 4,
+    note: 'click_ax_timing',
+    extra: {
+      preflightMs: 12.25,
+      syntheticDispatchMs: 1.5,
+      syntheticResponseMs: 3.25,
+      postClickObservationMs: 250,
+      fallbackPreparationMs: 0,
+      fallbackDispatchMs: 0,
+      trustedObservationMs: 0,
+      clickPathMs: 270,
+      trustedInputEvents: 0,
+      syntheticDispatched: true,
+      trustedFallbackAttempted: false,
+      safetyVeto: true,
+      duplicateFallbackBlocked: false,
+      outcome: 'inconclusive',
+    },
+  };
+  for (const [label, privacy] of [['chrome', TRACE_PRIVACY_CH], ['firefox', TRACE_PRIVACY_FX]]) {
+    for (const includeContent of [false, true]) {
+      assert.deepEqual(
+        privacy.projectTraceEventData('note', {
+          step: 4,
+          note: 'click_ax_timing',
+          extra: clickAxTimingExtra,
+        }, { includeContent }),
+        projectedClickAxTiming,
+        `${label}: click timing must retain only its numeric and categorical metadata even in the content tier`,
+      );
+    }
+    for (const includeContent of [false, true]) {
+      assert.deepEqual(
+        privacy.projectTraceEventData('note', {
+          step: 5,
+          note: 'click_ax_timing',
+          extra: {
+            outcome: 'unknown',
+            outcomeUnknown: true,
+            tabUrl: 'https://private.example.test/path',
+          },
+        }, { includeContent }),
+        {
+          step: 5,
+          note: 'click_ax_timing',
+          extra: { outcomeUnknown: true, outcome: 'unknown' },
+        },
+        `${label}: unknown click outcomes must remain diagnosable without retaining page content`,
+      );
+    }
+  }
   const safeAdapterContext = TRACE_PRIVACY_CH.projectTraceEventData('note', {
     step: 0,
     note: 'adapter_context',
@@ -20787,6 +20858,9 @@ test('public click_ax preserves the complete pre-extraction dispatch and post-pr
       documentToken: 'fresh-document-token',
       refScopeUrl: 'https://example.test/fresh-route',
       routeChanged: true,
+      _syntheticClickStartedAt: Date.now(),
+      _syntheticClickDispatchMs: 1.25,
+      _checkableObservationMs: 12,
     };
     const tabs = {
       get: async () => ({ url: 'https://example.test/fresh-route' }),
@@ -20866,6 +20940,11 @@ test('public click_ax preserves the complete pre-extraction dispatch and post-pr
       const result = await agent.executeTool(tabId, 'click_ax', { ref_id: 'ref_907' });
       assert.equal(result.documentToken, 'fresh-document-token', `${label}: click_ax response token must remain public`);
       assert.equal(result.refScopeUrl, 'https://example.test/fresh-route', `${label}: click_ax scope URL must remain public`);
+      if (label === 'firefox') {
+        assert.equal(Object.hasOwn(result, '_syntheticClickStartedAt'), false, 'firefox: private click clock leaked to the tool result');
+        assert.equal(Object.hasOwn(result, '_syntheticClickDispatchMs'), false, 'firefox: private dispatch clock leaked to the tool result');
+        assert.equal(Object.hasOwn(result, '_checkableObservationMs'), false, 'firefox: private observation clock leaked to the tool result');
+      }
       assert.deepEqual(agent._lastAxScopes.get(tabId), {
         documentToken: 'fresh-document-token',
         pageUrl: 'https://example.test/fresh-route',
@@ -59673,6 +59752,114 @@ test('Chrome click_ax skips observation delay and keeps clean success when snaps
   assert.equal(result.verified, undefined, 'unobservable path must not mark verified:false noise');
   assert.equal(result.error, undefined);
   assert.match(result.fallbackSkipped, /could not be observed safely/);
+});
+
+test('Chrome click_ax observation wakes on route and safety events without trusting the event alone', async () => {
+  const previousChrome = globalThis.chrome;
+  const createEvent = () => {
+    const listeners = new Set();
+    return {
+      addListener(listener) { listeners.add(listener); },
+      removeListener(listener) { listeners.delete(listener); },
+      fire(...args) { for (const listener of [...listeners]) listener(...args); },
+      get listenerCount() { return listeners.size; },
+    };
+  };
+  const events = {
+    download: createEvent(),
+    request: createEvent(),
+    tabCreated: createEvent(),
+    tabRemoved: createEvent(),
+    tabUpdated: createEvent(),
+  };
+  globalThis.chrome = {
+    downloads: { onCreated: events.download },
+    webRequest: { onBeforeRequest: events.request },
+    tabs: {
+      onCreated: events.tabCreated,
+      onRemoved: events.tabRemoved,
+      onUpdated: events.tabUpdated,
+    },
+  };
+  const agent = new AgentCh({});
+  const before = JSON.stringify({ url: 'https://example.test/', text: 'same', media: '', controls: '', active: '' });
+  let snapshot = before;
+  let tabs = '1,42';
+  const results = [];
+  agent._clickProgressSnapshot = async () => snapshot;
+  agent._clickAxTabSnapshot = async () => tabs;
+
+  const observeAfterSignal = async (fire, { proved = false, safetyVeto = false } = {}) => {
+    const watch = agent._beginClickAxSideEffectWatch(42);
+    const baseline = {
+      startedAt: Date.now(),
+      snapshot: before,
+      tabIds: '1,42',
+      sideEffectWatch: watch,
+      signalVersion: watch.signalVersion,
+    };
+    const timer = setTimeout(fire, 20);
+    const started = performance.now();
+    try {
+      const observation = await agent._observeClickAxSideEffect(42, baseline, {
+        firstDelayMs: 250,
+        pollMs: 150,
+        maxMs: 1250,
+      });
+      const elapsedMs = performance.now() - started;
+      assert.ok(elapsedMs < 230, `expected an event-driven sample, got ${Math.round(elapsedMs)} ms`);
+      assert.equal(observation.proved, proved);
+      assert.equal(observation.safetyVeto, safetyVeto);
+      if (safetyVeto) assert.equal(observation.proved, false, 'a safety event must not become click success proof');
+      results.push(observation);
+    } finally {
+      clearTimeout(timer);
+      watch.stop();
+    }
+  };
+
+  try {
+    snapshot = before;
+    await observeAfterSignal(() => {
+      snapshot = before.replace('example.test/', 'example.test/next');
+      events.tabUpdated.fire(42, { url: 'https://example.test/next' });
+    }, { proved: true });
+
+    snapshot = before;
+    await observeAfterSignal(() => {
+      events.request.fire({
+        tabId: 42,
+        url: 'https://example.test/api/mutate',
+        method: 'POST',
+        type: 'xmlhttprequest',
+        requestId: 'request-1',
+      });
+    }, { safetyVeto: true });
+
+    snapshot = before;
+    await observeAfterSignal(() => {
+      events.download.fire({ id: 7, filename: 'download.zip' });
+    }, { safetyVeto: true });
+
+    snapshot = before;
+    tabs = '1,42';
+    await observeAfterSignal(() => {
+      tabs = '1,42,43';
+      events.tabCreated.fire({ id: 43 });
+    }, { safetyVeto: true });
+
+    tabs = '1,42';
+    await observeAfterSignal(() => {
+      tabs = '1';
+      events.tabRemoved.fire(42, { windowId: 1, isWindowClosing: false });
+    }, { safetyVeto: true });
+
+    assert.equal(results.length, 5);
+    assert.ok(Object.values(events).every(event => event.listenerCount === 0), 'all watcher listeners must be removed');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
 });
 
 test('Chrome click_ax trusted phase carries preparedActive so blur-only is not proof', async () => {
@@ -110664,6 +110851,13 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
       assert.match(fallbackDeadlineSource, /this\._withContentActionDeadline\([\s\S]*this\._maybeFallbackClickAxWithCdpImpl\([\s\S]*'click_ax'/, 'chrome: click_ax fallback pipeline bypasses the deadline');
       assert.match(fallbackDeadlineSource, /abortSignal =>[\s\S]*baseline,[\s\S]*abortSignal/, 'chrome: click_ax fallback deadline does not propagate cancellation');
     } else {
+      const clickTimingTraceStart = source.indexOf('  _recordClickAxTiming(');
+      const clickTimingTraceEnd = source.indexOf('  async _dispatchClickAx(', clickTimingTraceStart);
+      assert.ok(clickTimingTraceStart >= 0 && clickTimingTraceEnd > clickTimingTraceStart, 'firefox: click_ax timing trace recorder missing');
+      assert.match(source.slice(clickTimingTraceStart, clickTimingTraceEnd), /trace\.recordNote\(runId,[\s\S]*'click_ax_timing'/, 'firefox: click_ax timings are not recorded as a trace note');
+      assert.match(toolPipelineSource, /traceStep: step,/, 'firefox: click_ax trace notes do not receive the current tool step');
+      assert.match(clickAxSource, /_checkableObservationMs[\s\S]*delete response\._checkableObservationMs/, 'firefox: private state-observation timing can escape in the tool result');
+      assert.match(contentClickAx, /_syntheticClickStartedAt:[\s\S]*_syntheticClickDispatchMs:/, 'firefox: synthetic click boundary timing is missing');
       assert.match(source, /runContentActionStage\([\s\S]*this\._keyProgressSnapshot\(tabId, abortSignal\)/, 'firefox: pre-dispatch Arrow snapshot bypasses the pipeline deadline');
       assert.match(source, /runContentActionStage\([\s\S]*this\._verifyProvisionalKeyProgress\([\s\S]*abortSignal/, 'firefox: post-dispatch Arrow verification bypasses the pipeline deadline');
       const uploadStart = source.indexOf('const buildInjectCode = actionDeadlineAt =>');

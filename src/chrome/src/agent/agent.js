@@ -12636,6 +12636,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               onUpdate,
               {
                 completionBatchStartState,
+                traceStep: step,
                 jevBinding: jevPending?.call.binding,
                 promptTier,
                 dispatchBinding: pipelineToolbarPreflight.probe?.dispatchBinding || null,
@@ -15636,33 +15637,103 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _dispatchClickAx(tabId, args, axScope = null, dispatchBinding = null, messageRecipientContext = {}, upstreamAbortSignal = null, upstreamDispatchState = null) {
+  _recordClickAxTiming(tabId, step, timing, result) {
+    const runId = this.currentRunId?.get(tabId);
+    if (!runId) return;
+    let outcome = 'inconclusive';
+    if (timing.outcomeUnknown === true) outcome = 'unknown';
+    else if (!timing.syntheticDispatched) outcome = 'pre_dispatch';
+    else if (result?.noProgress === true) outcome = 'no_progress';
+    else if (result?.success !== true) outcome = 'failed';
+    else if (result?.verified === true) outcome = 'verified';
+    const extra = {
+      preflightMs: timing.preflightMs,
+      syntheticDispatchMs: timing.syntheticDispatchMs,
+      syntheticResponseMs: timing.syntheticResponseMs,
+      postClickObservationMs: timing.postClickObservationMs,
+      fallbackPreparationMs: timing.fallbackPreparationMs,
+      fallbackDispatchMs: timing.fallbackDispatchMs,
+      trustedObservationMs: timing.trustedObservationMs,
+      clickPathMs: timing.clickPathMs,
+      trustedInputEvents: timing.trustedInputEvents,
+      syntheticDispatched: timing.syntheticDispatched,
+      trustedFallbackAttempted: result?.fallbackAttempted === true || timing.trustedInputEvents > 0,
+      outcomeUnknown: timing.outcomeUnknown === true,
+      safetyVeto: timing.safetyVeto === true,
+      duplicateFallbackBlocked: timing.duplicateFallbackBlocked === true,
+      outcome,
+    };
+    try {
+      const pending = trace.recordNote(runId, Number.isInteger(step) ? step : null, 'click_ax_timing', extra);
+      if (pending?.catch) pending.catch(() => {});
+    } catch {}
+  }
+
+  async _dispatchClickAx(
+    tabId,
+    args,
+    axScope = null,
+    dispatchBinding = null,
+    messageRecipientContext = {},
+    upstreamAbortSignal = null,
+    upstreamDispatchState = null,
+    traceStep = null,
+  ) {
     const dispatchState = upstreamDispatchState || { started: false };
+    const timing = {
+      startedAt: this._clickAxClockNow(),
+      startedAtEpoch: Date.now(),
+      postClickObservationMs: 0,
+      fallbackPreparationMs: 0,
+      fallbackDispatchMs: 0,
+      trustedObservationMs: 0,
+      trustedInputEvents: 0,
+      syntheticDispatched: false,
+      safetyVeto: false,
+      duplicateFallbackBlocked: false,
+    };
+    let result = null;
     try {
       return await this._withContentActionDeadline(
-        deadlineAbortSignal => this._dispatchClickAxImpl(
-          tabId,
-          args,
-          axScope,
-          dispatchBinding,
-          messageRecipientContext,
-          deadlineAbortSignal,
-          upstreamAbortSignal,
-          dispatchState,
-        ),
+        async deadlineAbortSignal => {
+          result = await this._dispatchClickAxImpl(
+            tabId,
+            args,
+            axScope,
+            dispatchBinding,
+            messageRecipientContext,
+            deadlineAbortSignal,
+            upstreamAbortSignal,
+            dispatchState,
+            timing,
+          );
+          return result;
+        },
         'click_ax',
       );
     } catch (error) {
       if (error?.code !== 'content_action_timeout') throw error;
-      if (dispatchState.started) return this._contentActionTimeoutResult('click_ax', error);
-      return {
-        success: false,
-        dispatched: false,
-        noDispatch: true,
-        outcomeUnknown: false,
-        retryable: true,
-        error: `${error.message} No click was sent because the pre-dispatch page observation did not finish. Re-observe the page before retrying.`,
-      };
+      if (dispatchState.started) {
+        result = this._contentActionTimeoutResult('click_ax', error);
+      } else {
+        result = {
+          success: false,
+          dispatched: false,
+          noDispatch: true,
+          outcomeUnknown: false,
+          retryable: true,
+          error: `${error.message} No click was sent because the pre-dispatch page observation did not finish. Re-observe the page before retrying.`,
+        };
+      }
+      return result;
+    } finally {
+      timing.clickPathMs = Math.max(0, this._clickAxClockNow() - timing.startedAt);
+      timing.outcomeUnknown = result?.outcomeUnknown === true
+        || (!timing.syntheticDispatched
+          && dispatchState.started
+          && result?.dispatched !== false
+          && result?.noDispatch !== true);
+      this._recordClickAxTiming(tabId, traceStep, timing, result);
     }
   }
 
@@ -15675,6 +15746,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     deadlineAbortSignal = null,
     upstreamAbortSignal = null,
     dispatchState = { started: false },
+    timing = null,
   ) {
     const throwIfAborted = () => {
       this._throwIfAborted(upstreamAbortSignal);
@@ -15778,6 +15850,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { error: `Failed to communicate with page: ${retryError.message}` };
         }
       }
+      const syntheticClickStartedAt = Number(response?._syntheticClickStartedAt);
+      const syntheticClickDispatchMs = Number(response?._syntheticClickDispatchMs);
+      if (timing && Number.isFinite(syntheticClickStartedAt) && syntheticClickStartedAt > 0) {
+        timing.preflightMs = Math.max(0, syntheticClickStartedAt - timing.startedAtEpoch);
+        timing.syntheticDispatchMs = Number.isFinite(syntheticClickDispatchMs)
+          ? Math.max(0, syntheticClickDispatchMs)
+          : undefined;
+        timing.syntheticResponseMs = Math.max(
+          0,
+          Date.now() - syntheticClickStartedAt - (timing.syntheticDispatchMs || 0),
+        );
+        timing.syntheticDispatched = true;
+      }
+      if (response && Object.prototype.hasOwnProperty.call(response, '_syntheticClickDispatchMs')) {
+        delete response._syntheticClickDispatchMs;
+      }
       response = await this._settleContentFilePickerGuard(tabId, response);
       throwIfAborted();
       if (response?.documentToken && (
@@ -15798,6 +15886,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           response,
           baseline,
           deadlineAbortSignal,
+          timing,
         );
         throwIfAborted();
       }
@@ -39118,6 +39207,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         { messageRecipientGuardRequired, messageRecipientDispatchBinding, jevBinding: dispatchContext.jevBinding },
         earlyCdpAbortSignal,
         earlyCdpDispatchState,
+        dispatchContext.traceStep,
       );
     }
 
@@ -39397,21 +39487,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _beginClickAxSideEffectWatch(tabId) {
     const created = [];
     const requests = [];
+    let signalVersion = 0;
+    const signalWaiters = new Set();
+    const signal = () => {
+      signalVersion++;
+      for (const waiter of [...signalWaiters]) waiter.resolve();
+    };
     const downloadListener = (item) => {
       created.push({ id: item?.id, filename: item?.filename || '', ts: Date.now() });
+      signal();
     };
     const requestListener = (details) => {
       if (details?.tabId !== tabId) return;
-      requests.push({
+      const request = {
         url: details.url || '',
         method: details.method || '',
         type: details.type || '',
         requestId: details.requestId,
         ts: Date.now(),
-      });
+      };
+      requests.push(request);
+      if (this._clickAxRequestIsSafetyRelevant(request, request.ts)) signal();
+    };
+    const tabCreatedListener = () => signal();
+    const tabRemovedListener = () => signal();
+    const tabUpdatedListener = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && typeof changeInfo?.url === 'string') signal();
     };
     let listeningDownloads = false;
     let listeningRequests = false;
+    let listeningTabCreated = false;
+    let listeningTabRemoved = false;
+    let listeningTabUpdated = false;
     try {
       if (chrome.downloads?.onCreated?.addListener) {
         chrome.downloads.onCreated.addListener(downloadListener);
@@ -39427,9 +39534,45 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         listeningRequests = true;
       }
     } catch {}
+    try {
+      if (chrome.tabs?.onCreated?.addListener) {
+        chrome.tabs.onCreated.addListener(tabCreatedListener);
+        listeningTabCreated = true;
+      }
+    } catch {}
+    try {
+      if (chrome.tabs?.onRemoved?.addListener) {
+        chrome.tabs.onRemoved.addListener(tabRemovedListener);
+        listeningTabRemoved = true;
+      }
+    } catch {}
+    try {
+      if (chrome.tabs?.onUpdated?.addListener) {
+        chrome.tabs.onUpdated.addListener(tabUpdatedListener);
+        listeningTabUpdated = true;
+      }
+    } catch {}
     return {
       created,
       requests,
+      get signalVersion() {
+        return signalVersion;
+      },
+      waitForSignal: (ms, afterVersion = signalVersion) => {
+        if (signalVersion !== afterVersion) return Promise.resolve(signalVersion);
+        return new Promise(resolve => {
+          const waiter = {
+            timer: null,
+            resolve: () => {
+              clearTimeout(waiter.timer);
+              signalWaiters.delete(waiter);
+              resolve(signalVersion);
+            },
+          };
+          waiter.timer = setTimeout(waiter.resolve, Math.max(0, Number(ms) || 0));
+          signalWaiters.add(waiter);
+        });
+      },
       get listeningRequests() {
         return listeningRequests;
       },
@@ -39442,6 +39585,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           try { chrome.webRequest.onBeforeRequest.removeListener(requestListener); } catch {}
           listeningRequests = false;
         }
+        if (listeningTabCreated) {
+          try { chrome.tabs.onCreated.removeListener(tabCreatedListener); } catch {}
+          listeningTabCreated = false;
+        }
+        if (listeningTabRemoved) {
+          try { chrome.tabs.onRemoved.removeListener(tabRemovedListener); } catch {}
+          listeningTabRemoved = false;
+        }
+        if (listeningTabUpdated) {
+          try { chrome.tabs.onUpdated.removeListener(tabUpdatedListener); } catch {}
+          listeningTabUpdated = false;
+        }
+        for (const waiter of [...signalWaiters]) waiter.resolve();
       },
     };
   }
@@ -39502,6 +39658,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       snapshot: snapshot || await this._clickProgressSnapshot(tabId),
       tabIds: await this._clickAxTabSnapshot(),
       sideEffectWatch,
+      signalVersion: Number(sideEffectWatch?.signalVersion) || 0,
       // Carry preparatory / pre-round focus identity so blur-only changes
       // (e.g. CDP mousedown clearing an unrelated focused input) never count
       // as proof that this click activated the page.
@@ -39600,6 +39757,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  _clickAxClockNow() {
+    try {
+      const now = globalThis.performance?.now;
+      if (typeof now === 'function') return now.call(globalThis.performance);
+    } catch {}
+    return Date.now();
+  }
+
+  async _measureClickAxStage(timing, field, operation) {
+    const startedAt = this._clickAxClockNow();
+    try {
+      return await operation();
+    } finally {
+      if (timing) {
+        const elapsedMs = Math.max(0, this._clickAxClockNow() - startedAt);
+        timing[field] = (Number(timing[field]) || 0) + elapsedMs;
+      }
+    }
+  }
+
+  async _observeClickAxTimed(tabId, baseline, options, timing, field = 'postClickObservationMs') {
+    return this._measureClickAxStage(
+      timing,
+      field,
+      () => this._observeClickAxSideEffect(tabId, baseline, options),
+    );
+  }
+
   /**
    * Observe post-click side effects. Fixed sleeps alone misclassify slow SPA
    * handlers; progressive polling keeps the upper bound but resolves early on
@@ -39617,11 +39802,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return this._clickAxObservedSideEffect(tabId, baseline);
     }
     const started = Date.now();
-    await this._clickAxDelay(allowDelayed ? firstDelayMs : Math.min(firstDelayMs, 250));
+    let signalVersion = Number(baseline.signalVersion) || 0;
+    const waitForNextObservation = async ms => {
+      if (typeof baseline.sideEffectWatch?.waitForSignal === 'function') {
+        signalVersion = await baseline.sideEffectWatch.waitForSignal(ms, signalVersion);
+      } else {
+        await this._clickAxDelay(ms);
+      }
+    };
+    await waitForNextObservation(allowDelayed ? firstDelayMs : Math.min(firstDelayMs, 250));
     let observed = await this._clickAxObservedSideEffect(tabId, baseline);
     if (!allowDelayed || observed.proved || observed.safetyVeto || !observed.observable) return observed;
     while (Date.now() - started < maxMs) {
-      await this._clickAxDelay(pollMs);
+      await waitForNextObservation(pollMs);
       observed = await this._clickAxObservedSideEffect(tabId, baseline);
       if (observed.proved || observed.safetyVeto || !observed.observable) return observed;
     }
@@ -40024,7 +40217,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch { /* best-effort pointer cleanup */ }
   }
 
-  async _maybeFallbackClickAxWithCdp(tabId, args, response, baseline, upstreamAbortSignal = null) {
+  async _maybeFallbackClickAxWithCdp(tabId, args, response, baseline, upstreamAbortSignal = null, timing = null) {
     if (CONTENT_ACTION_SIGNAL_DEADLINES.has(upstreamAbortSignal)) {
       return this._maybeFallbackClickAxWithCdpImpl(
         tabId,
@@ -40032,6 +40225,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         response,
         baseline,
         upstreamAbortSignal,
+        timing,
       );
     }
     try {
@@ -40042,6 +40236,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           response,
           baseline,
           abortSignal,
+          timing,
         ),
         'click_ax',
         this._contentActionDeadlineMs('click_ax', args),
@@ -40055,7 +40250,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _maybeFallbackClickAxWithCdpImpl(tabId, args, response, baseline, abortSignal = null) {
+  async _maybeFallbackClickAxWithCdpImpl(tabId, args, response, baseline, abortSignal = null, timing = null) {
     if (!response || response.success !== true || !baseline) return response;
 
     const withSnapshot = (value, observation) => {
@@ -40119,13 +40314,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Ineligible targets only pay a short first sample; eligible candidates
     // use progressive polling so slow SPA handlers can still prove progress
     // before a second trusted click is considered.
-    const syntheticObservation = await this._observeClickAxSideEffect(
+    const syntheticObservation = await this._observeClickAxTimed(
       tabId,
       baseline,
       fallbackStaticBlockedReason
         ? { allowDelayed: false, firstDelayMs: 250 }
         : { allowDelayed: true, firstDelayMs: 250, pollMs: 150, maxMs: 1250 },
+      timing,
     );
+    if (timing) timing.safetyVeto ||= syntheticObservation?.safetyVeto === true;
     this._throwIfAborted(abortSignal);
     {
       const assessed = this._assessClickAxObservationRound(
@@ -40136,7 +40333,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (assessed.done) return withSnapshot(assessed.value, syntheticObservation);
     }
 
-    let target = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal);
+    let target = await this._measureClickAxStage(
+      timing,
+      'fallbackPreparationMs',
+      () => this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal),
+    );
     this._throwIfAborted(abortSignal);
     let targetStrongState = strongStateOf(target);
     let targetWeakState = weakStateOf(target);
@@ -40162,11 +40363,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Final settle for eligible candidates only: progressive samples up to
     // ~finalSettleMs so late DOM/URL/focus still suppress the second click.
     const settleBudget = this._clickAxFinalSettleMs();
-    const settledObservation = await this._observeClickAxSideEffect(
+    const settledObservation = await this._observeClickAxTimed(
       tabId,
       baseline,
       { allowDelayed: true, firstDelayMs: Math.min(200, settleBudget), pollMs: 150, maxMs: settleBudget },
+      timing,
     );
+    if (timing) timing.safetyVeto ||= settledObservation?.safetyVeto === true;
     this._throwIfAborted(abortSignal);
     {
       const assessed = this._assessClickAxObservationRound(
@@ -40177,7 +40380,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (assessed.done) return withSnapshot(assessed.value, settledObservation);
     }
 
-    const settledTarget = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal);
+    const settledTarget = await this._measureClickAxStage(
+      timing,
+      'fallbackPreparationMs',
+      () => this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal),
+    );
     this._throwIfAborted(abortSignal);
     const settledTargetStrongState = strongStateOf(settledTarget);
     const settledTargetWeakState = weakStateOf(settledTarget);
@@ -40217,6 +40424,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const fallbackKey = `${target.documentToken || 'document'}|${args?.ref_id || ''}`;
     const attempted = this._clickAxCdpFallbacks.get(tabId) || new Set();
     if (attempted.has(fallbackKey)) {
+      if (timing) timing.duplicateFallbackBlocked = true;
       return withSnapshot({
         ...response,
         success: false,
@@ -40236,12 +40444,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch {
       preCdpActive = '';
     }
-    const fallbackBaseline = await this._captureClickAxObservation(
-      tabId,
-      settledObservation.snapshot,
-      baseline.sideEffectWatch,
-      Date.now(),
-      baseline.preparedActive || preCdpActive,
+    const fallbackBaseline = await this._measureClickAxStage(
+      timing,
+      'fallbackPreparationMs',
+      () => this._captureClickAxObservation(
+        tabId,
+        settledObservation.snapshot,
+        baseline.sideEffectWatch,
+        Date.now(),
+        baseline.preparedActive || preCdpActive,
+      ),
     );
     this._throwIfAborted(abortSignal);
     // Prefer the live pre-CDP active as the "preparatory" identity for the
@@ -40253,22 +40465,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let pressedDelivered = false;
     try {
       this._throwIfAborted(abortSignal);
-      await cdpClient.attach(tabId);
+      await this._measureClickAxStage(timing, 'fallbackPreparationMs', () => cdpClient.attach(tabId));
       this._throwIfAborted(abortSignal);
       dispatchStage = 'filePickerGuardArm';
-      await cdpClient.armFileInputClickGuard(tabId);
+      await this._measureClickAxStage(timing, 'fallbackPreparationMs', () => cdpClient.armFileInputClickGuard(tabId));
       this._throwIfAborted(abortSignal);
       dispatchStage = 'mouseMoved';
-      await cdpClient.dispatchMouseEvent(tabId, 'mouseMoved', target.x, target.y);
+      await this._measureClickAxStage(
+        timing,
+        'fallbackDispatchMs',
+        () => cdpClient.dispatchMouseEvent(tabId, 'mouseMoved', target.x, target.y),
+      );
       dispatchedEvents++;
+      if (timing) timing.trustedInputEvents = dispatchedEvents;
       this._throwIfAborted(abortSignal);
       dispatchStage = 'mousePressed';
       // Snapshot/tab baselines must exist before pointer input, but the
       // mutation window starts at the first click-producing event rather than
       // CDP attach or mouse movement.
       fallbackBaseline.startedAt = Date.now();
-      await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', target.x, target.y);
+      await this._measureClickAxStage(
+        timing,
+        'fallbackDispatchMs',
+        () => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', target.x, target.y),
+      );
       dispatchedEvents++;
+      if (timing) timing.trustedInputEvents = dispatchedEvents;
       pressedDelivered = true;
       // A confirmed press is partial user input; from this point onward a
       // retry could double-activate or leave mismatched pointer state.
@@ -40281,11 +40503,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         throw error;
       }
       dispatchStage = 'mouseReleased';
-      await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', target.x, target.y);
+      await this._measureClickAxStage(
+        timing,
+        'fallbackDispatchMs',
+        () => cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', target.x, target.y),
+      );
       dispatchedEvents++;
+      if (timing) timing.trustedInputEvents = dispatchedEvents;
       this._throwIfAborted(abortSignal);
       dispatchStage = 'filePickerGuardConsume';
-      const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
+      const blockedFileInput = await this._measureClickAxStage(
+        timing,
+        'fallbackDispatchMs',
+        () => cdpClient.consumeFileInputClickGuard(tabId),
+      );
       if (blockedFileInput?.blocked) {
         return withSnapshot({
           ...cdpClient.fileInputClickBlockedResult(
@@ -40319,17 +40550,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }, settledObservation);
     }
 
-    const trustedObservation = await this._observeClickAxSideEffect(
+    const trustedObservation = await this._observeClickAxTimed(
       tabId,
       fallbackBaseline,
       { allowDelayed: true, firstDelayMs: 250, pollMs: 150, maxMs: 1000 },
+      timing,
+      'trustedObservationMs',
     );
+    if (timing) timing.safetyVeto ||= trustedObservation?.safetyVeto === true;
     this._throwIfAborted(abortSignal);
     this._clickAxAddObservedHints(response, trustedObservation);
     let trustedTargetStateChanged = false;
     let trustedTargetWeakStateChanged = false;
     if (!trustedObservation.proved) {
-      const trustedTarget = await this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal);
+      const trustedTarget = await this._measureClickAxStage(
+        timing,
+        'fallbackPreparationMs',
+        () => this._resolveClickAxFallbackTarget(tabId, args?.ref_id, abortSignal),
+      );
       this._throwIfAborted(abortSignal);
       const trustedTargetStrongState = strongStateOf(trustedTarget);
       const trustedTargetWeakState = weakStateOf(trustedTarget);
