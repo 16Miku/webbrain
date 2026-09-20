@@ -4421,11 +4421,18 @@
   function _settledEmptyTwitterLog(log) {
     if (!log?.isConnected) return false;
     let loading = false;
+    let historyComplete = false;
     try {
-      loading = log.getAttribute('aria-busy') === 'true'
+      const ariaBusy = log.getAttribute('aria-busy');
+      loading = ariaBusy === 'true'
         || !!log.querySelector('[aria-busy="true"],[role="progressbar"]');
+      // An empty log alone is ambiguous: history may still mount after the
+      // submit. Require X to expose either its finished busy state or its
+      // app-owned empty-state marker before pinning a first-message baseline.
+      historyComplete = ariaBusy === 'false'
+        || !!log.querySelector('[data-testid="dm-empty-state"],[data-testid="empty_state"],[data-testid="empty-state"]');
     } catch {}
-    if (loading) {
+    if (loading || !historyComplete) {
       _twitterEmptyLogObservations.delete(log);
       return false;
     }
@@ -4436,8 +4443,8 @@
       : { firstSeenAt: now, count: 1 };
     _twitterEmptyLogObservations.set(log, observation);
     // A first-message conversation has no historic tail to pin. Require the
-    // same empty log to survive two non-loading reads before treating that
-    // exceptional baseline as settled.
+    // same positively-complete empty log to survive two reads before treating
+    // that exceptional baseline as settled.
     return observation.count >= 2 && now - observation.firstSeenAt >= 300;
   }
 

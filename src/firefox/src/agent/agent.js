@@ -26111,7 +26111,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const details = this._normalizeWorkflowMetadataRequirementsDetails(
             obj?.workflowFields ?? obj?.workflow_fields,
           );
-          const extractedBody = this._extractWorkflowTaskBody(taskText, approvedPlanText, siteWorkflow?.adapterName);
+          // The concise "Send Alex: ..." recovery is deliberately limited to
+          // X DMs. Other messaging adapters have structured fields (for
+          // example, Gmail subject/body), which a generic Send parser must not
+          // replace or invent.
+          const recoverTwitterMessageBody = siteWorkflow?.adapterName === 'twitter'
+            && siteWorkflow?.job?.template === 'message'
+            && siteWorkflow?.job?.id === 'send-message';
+          const extractedBody = recoverTwitterMessageBody
+            ? this._extractWorkflowTaskBody(taskText, approvedPlanText, 'twitter')
+            : '';
           if (extractedBody) {
             const bodyReq = details.items.find(r => r.field === 'body');
             if (bodyReq) {
@@ -26155,7 +26164,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && (siteWorkflow?.job?.template !== 'publish' || !SOCIAL_PLATFORMS.includes(siteWorkflow?.adapterName))) {
         const guard = this._planExecutionGuards.get(tabId);
         if (guard && guard.workflowMetadataRequirementsResolved !== true) {
-          const extractedBody = this._extractWorkflowTaskBody(taskText, approvedPlanText, siteWorkflow?.adapterName);
+          const recoverTwitterMessageBody = siteWorkflow?.adapterName === 'twitter'
+            && siteWorkflow?.job?.template === 'message'
+            && siteWorkflow?.job?.id === 'send-message';
+          const extractedBody = recoverTwitterMessageBody
+            ? this._extractWorkflowTaskBody(taskText, approvedPlanText, 'twitter')
+            : '';
           if (extractedBody) {
             guard.workflowMetadataRequirements = [{
               field: 'body',

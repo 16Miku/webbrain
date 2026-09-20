@@ -7890,6 +7890,55 @@ test('message recipient dispatch binding detects composer and active-thread race
   }
 });
 
+test('empty X history baselines require a positive completion signal', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/content/content.js'],
+    ['firefox', 'src/firefox/src/content/content.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const start = source.indexOf('const _messageRecipientDispatchBindings = new Map();');
+    const end = source.indexOf(label === 'chrome'
+      ? '\n\n  // Above this length'
+      : '\n\n  function _releaseDispatchBinding', start);
+    assert.ok(start >= 0 && end > start, `${label}: empty-X helper should remain independently testable`);
+    let now = 0;
+    const { settledEmptyTwitterLog } = vm.runInNewContext(`(() => {
+      ${source.slice(start, end)}
+      return { settledEmptyTwitterLog: _settledEmptyTwitterLog };
+    })()`, {
+      Date: { now: () => now },
+    });
+    const log = ({ ariaBusy = null, emptyState = false, loading = false } = {}) => ({
+      isConnected: true,
+      getAttribute: name => name === 'aria-busy' ? ariaBusy : null,
+      querySelector: selector => {
+        if (selector === '[aria-busy="true"],[role="progressbar"]') return loading ? {} : null;
+        return emptyState ? {} : null;
+      },
+    });
+    const ambiguousEmptyLog = log();
+    assert.equal(settledEmptyTwitterLog(ambiguousEmptyLog), false,
+      `${label}: a bare empty X log was accepted before history completion`);
+    now += 300;
+    assert.equal(settledEmptyTwitterLog(ambiguousEmptyLog), false,
+      `${label}: a bare empty X log became a first-message baseline`);
+
+    const completedEmptyLog = log({ ariaBusy: 'false' });
+    assert.equal(settledEmptyTwitterLog(completedEmptyLog), false,
+      `${label}: the first completed empty-X observation was accepted`);
+    now += 300;
+    assert.equal(settledEmptyTwitterLog(completedEmptyLog), true,
+      `${label}: a stable aria-busy=false X log did not become a baseline`);
+
+    const markedEmptyLog = log({ emptyState: true });
+    assert.equal(settledEmptyTwitterLog(markedEmptyLog), false,
+      `${label}: the first explicit X empty-state observation was accepted`);
+    now += 300;
+    assert.equal(settledEmptyTwitterLog(markedEmptyLog), true,
+      `${label}: a stable X empty-state marker did not become a baseline`);
+  }
+});
+
 test('matches BOSS Zhipin job surfaces with safe search and communication guidance', () => {
   const trustedUrls = [
     'https://zhipin.com/',
@@ -93999,6 +94048,48 @@ test('publication workflows classify and bind requested payload fields', async (
     assert.deepEqual(xGuard.workflowMetadataRequirements, [
       { field: 'body', value: 'Hello there' },
     ], `${AgentClass.name}: an explicit X DM body was not bound after an empty classifier response`);
+
+    const gmailTabId = 8997 + index;
+    const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox';
+    const gmailTask = 'Send an email to Alice with subject: Message: Hello and body: How are you?';
+    const gmailWorkflow = agent._resolvePlannerSiteWorkflow(gmailUrl, {
+      request_kind: 'execute',
+      site_job: 'send-email',
+      requires_submission: true,
+      messaging: { target_kind: 'named', recipients: ['Alice'] },
+    });
+    assert.equal(gmailWorkflow?.job?.id, 'send-email');
+    assert.equal(agent._extractWorkflowTaskBody(gmailTask, '', 'gmail'), 'Hello and body: How are you?',
+      `${AgentClass.name}: the regression fixture no longer exercises Gmail's generic Send parser`);
+    agent.conversations.set(gmailTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: gmailTask },
+    ]);
+    const gmailGuard = agent._startPlanExecutionGuard(gmailTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'named', recipients: ['Alice'] },
+      siteWorkflow: gmailWorkflow,
+    });
+    agent._chatWithCostAllowance = async () => ({ content: JSON.stringify({
+      mode: 'inactive', allowedActions: [], forbiddenActions: [], targets: [],
+      workflowFields: [
+        { field: 'subject', value: 'Message: Hello' },
+        { field: 'body', value: 'How are you?' },
+      ],
+      confidence: 0.99, pageScopePolicy: 'page',
+    }) });
+    await agent._ensureProgressSessionForCurrentTask(gmailTabId, {
+      provider: { chat: async () => ({ content: '{}' }) },
+      progressLedgerPolicy: 'disabled',
+      taskText: gmailTask,
+      pageScope: gmailUrl,
+    });
+    assert.deepEqual(gmailGuard.workflowMetadataRequirements, [
+      { field: 'subject', value: 'Message: Hello' },
+      { field: 'body', value: 'How are you?' },
+    ], `${AgentClass.name}: X's body recovery rewrote Gmail's structured subject/body fields`);
     const xTerminal = (body) => {
       const workflowBinding = agent._workflowSubmitBindingForAttempt(xTabId, xUrl, {
         messageRecipientGuardRequired: true,
