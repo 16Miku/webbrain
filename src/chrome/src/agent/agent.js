@@ -28235,7 +28235,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? scopedCandidates
       : (sawNamedSocialPlatform ? [] : rawCandidates);
     let bestBody = '';
-    const publishVerbPattern = `(?:${SOCIAL_PUBLISH_VERBS.source}|message|update)`;
+    // A direct-message task can omit the platform when the active workflow
+    // already binds the X conversation ("Send Alex: Hello there"). Treat
+    // that imperative like the existing message/publish forms so an explicit
+    // body remains subject to the same exact dispatch verification.
+    const publishVerbPattern = `(?:${SOCIAL_PUBLISH_VERBS.source}|message|send|update)`;
     const quotedPattern = new RegExp(`${publishVerbPattern}[\\s\\S]*?(?:“([\\s\\S]+?)”|「([\\s\\S]+?)」|『([\\s\\S]+?)』|«([\\s\\S]+?)»|"([\\s\\S]+?)")`, 'iu');
     const singleQuotePattern = new RegExp(`${publishVerbPattern}[\\s\\S]*?(?:(?<!\\p{L})'([\\s\\S]+?)'(?!\\p{L}))`, 'iu');
     const colonPattern = new RegExp(`${publishVerbPattern}[\\s\\S]*?(?<!https?|ftp|sftp)(?:(?<!\\d)[:：]|[:：](?!\\d{2}))(?!\\/\\/)\\s*([\\s\\S]+)$`, 'iu');

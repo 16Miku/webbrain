@@ -93887,7 +93887,9 @@ test('publication workflows classify and bind requested payload fields', async (
 
     const xTabId = 8987 + index;
     const xUrl = 'https://x.com/i/chat/123-456';
-    const xTask = 'Send Alex this exact message on X: "The release is ready."';
+    // The active X route supplies the platform. The task itself can be the
+    // concise direct-message command users naturally write.
+    const xTask = 'Send Alex: Hello there';
     const xWorkflow = agent._resolvePlannerSiteWorkflow(xUrl, {
       request_kind: 'execute',
       requires_submission: true,
@@ -93922,8 +93924,10 @@ test('publication workflows classify and bind requested payload fields', async (
     });
     assert.match(xPrompt, /siteContext\.workflow\.template="message"/,
       `${AgentClass.name}: the classifier did not require direct-message fields`);
+    assert.equal(agent._extractWorkflowTaskBody(xTask, '', 'twitter'), 'Hello there',
+      `${AgentClass.name}: a route-local Send command did not recover its explicit X DM body`);
     assert.deepEqual(xGuard.workflowMetadataRequirements, [
-      { field: 'body', value: 'The release is ready.' },
+      { field: 'body', value: 'Hello there' },
     ], `${AgentClass.name}: an explicit X DM body was not bound after an empty classifier response`);
     const xTerminal = (body) => {
       const workflowBinding = agent._workflowSubmitBindingForAttempt(xTabId, xUrl, {
@@ -93949,7 +93953,7 @@ test('publication workflows classify and bind requested payload fields', async (
     };
     assert.equal(xTerminal('Changed message'), null,
       `${AgentClass.name}: a sent X DM drifted from the approved body`);
-    assert.equal(xTerminal('The release is ready.')?.verificationKind, 'message_sent',
+    assert.equal(xTerminal('Hello there')?.verificationKind, 'message_sent',
       `${AgentClass.name}: the approved X DM body could not complete`);
   }
 });
