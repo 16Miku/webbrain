@@ -33,7 +33,7 @@ try {
     const strategies = build === 'chrome' ? ['content', 'cdp'] : ['content'];
     for (const strategy of strategies) {
       for (const textMatch of [undefined, 'exact', 'prefix', 'contains']) {
-        await clickPage.setContent('<form><input aria-label="Save" placeholder="Name"><button type="submit">Save</button></form>');
+        await clickPage.setContent('<form><input aria-label="Save" placeholder="Name"><button type="submit">Save</button></form><section hidden><button>Save</button></section><button style="visibility:hidden">Save</button>');
         await clickPage.evaluate(() => {
           window.submitCount = 0;
           document.querySelector('form').addEventListener('submit', event => { event.preventDefault(); window.submitCount++; });
@@ -65,6 +65,51 @@ try {
       }
     }
     await clickPage.close();
+
+    if (build === 'chrome') {
+      // Exercise the real CDP keyboard dispatch on this host. On macOS a
+      // synthetic Meta+A without commands:['selectAll'] does not select text.
+      const {cdpClient} = await import('../src/chrome/src/cdp/cdp-client.js');
+      const typingPage = await context.newPage();
+      await typingPage.goto('https://x.com/compose/post');
+      const session = await context.newCDPSession(typingPage);
+      const originals = {attach:cdpClient.attach,sendCommand:cdpClient.sendCommand};
+      const commands = [];
+      cdpClient.attach = async () => ({attached:true});
+      cdpClient.sendCommand = async (_tab, method, params) => {
+        commands.push({method,params});
+        return session.send(method,params);
+      };
+      try {
+        for (const route of ['selector','focused']) {
+          for (const tag of ['input','textarea','div']) {
+            await typingPage.setContent(tag === 'div'
+              ? '<div id="editor" contenteditable="true" role="textbox">Old tweet text must disappear.</div>'
+              : `<${tag} id="editor"></${tag}>`);
+            const editor = typingPage.locator('#editor');
+            if (tag !== 'div') await editor.fill('Old tweet text must disappear.');
+            await editor.focus();
+            const text='Replacement tweet ①';
+            const agent = new Agent({});
+            agent._showAgentTarget=()=>{};
+            const result=route === 'selector'
+              ? await cdpClient.typeText(1,'#editor',text,true)
+              : await agent.executeTool(1,'type_text',{text,clear:true});
+            assert.equal(result.success,true,`${route}/${tag}: ${JSON.stringify(result)}`);
+            assert.equal(result.verified,true,`${route}/${tag}: replacement verified`);
+            assert.equal(await editor.evaluate(el=>el.isContentEditable?el.textContent:el.value),text);
+            assert.equal(agent._uncertainTextMutations.has(1),false);
+            checked++;
+          }
+        }
+        assert(commands.some(({method,params})=>method==='Input.dispatchKeyEvent' && params.type==='keyDown' && params.commands?.includes('selectAll')));
+        assert(!commands.some(({method,params})=>method==='Input.dispatchKeyEvent' && params.type==='keyUp' && params.commands?.length));
+      } finally {
+        Object.assign(cdpClient,originals);
+        await session.detach();
+        await typingPage.close();
+      }
+    }
 
     // Bluesky uses ProseMirror paragraphs. Verify the actual content-script
     // readback, digest, CDP paths and publication probe against the same DOM.
@@ -166,6 +211,19 @@ try {
             assert.equal(await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,name,args,detected,providerScope),null);
             checked++;
           }
+        }
+        if (platform === 'twitter') {
+          const {guardRecentSubmitClick}=await import(`../src/${build}/src/agent/submit-click-guard.js`);
+          await page.setContent('<div role="dialog"><div contenteditable="true">First tweet</div><button id="add" type="button" data-testid="addButton" aria-label="Add post"><svg width="24" height="24"></svg></button><button id="publish" type="button" data-testid="tweetButton">Post all</button></div>');
+          const recent=new Map();
+          for(let i=0;i<3;i++) {
+            const args={text:'Add post'};
+            const detected=await scopeAgent._detectLikelySubmitAction(scopeTab,'click',args);
+            assert.equal(detected?.resolvedNonSubmitTarget,true);
+            assert.equal(await guardRecentSubmitClick(recent,scopeTab,args,async()=>page.url(),()=>100000+i*1000,detected),null);
+            checked++;
+          }
+          assert.equal((await probe()).isSubmit,true,'actual thread publication stays guarded');
         }
         if (platform === 'bluesky') {
           for (const label of ['Cancel','Keep editing']) {

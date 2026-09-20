@@ -16214,12 +16214,22 @@ const ADAPTERS = [
   {
     name: 'twitter',
     category: 'general',
-    revision: 1,
+    revision: 2,
     regions: ['global'],
-    jobs: ['publish-post'],
+    jobs: ['publish-post', 'send-message'],
     workflow: {
       schema: ADAPTER_WORKFLOW_SCHEMA,
       jobs: {
+        'send-message': {
+          description: 'Send and verify a direct message in the active X conversation.',
+          template: 'message',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'scope', 'fill', 'review', 'commit', 'verify'],
+          successEvidence: ['A new outgoing message matches the reviewed body in the intended conversation and has the provider sent status.'],
+          partialEvidence: ['The recipient, composer state, and exact send or verification blocker are reported.'],
+        },
         'publish-post': {
           description: 'Prepare, publish, and verify an X post.',
           template: 'publish',
@@ -16233,9 +16243,13 @@ const ADAPTERS = [
       },
     },
     matches: (url) => /^https?:\/\/(www\.)?(twitter\.com|x\.com)\//.test(url),
+    messaging: {
+      verifyActiveRecipient: url => /^\/i\/chat\/[^/]+\/?$/.test(new URL(url).pathname),
+    },
     fullPageCapture: { infiniteScroll: isTwitterInfiniteScrollUrl },
     notes: `
-- The composer is a contenteditable, not a textarea. Character count is enforced client-side at 280 (or higher for Premium).
+- On /i/chat/<conversation>, the DM composer stays visible after sending. Verify the exact new outgoing message and its sent status in the same conversation; do not resend because the composer remains open.
+- The public post composer is a contenteditable, not a textarea. Character count is enforced client-side at 280 (or higher for Premium).
 - On /compose/post, call wait_for_stable before filling the composer. After typing, re-read the visible accessibility tree and require the Post control to be enabled (no disabled=true) before clicking it.
 - If the exact text is visible but Post remains disabled, keep the composer open and refill the editor with type_text({selector:"[data-testid=\\\"tweetTextarea_0\\\"]", text:"<exact complete post>", clear:true}). Do not dismiss the composer to recover.
 - A click_ax result with verified:false or no observable posting evidence is not proof that the post was published. Keep the composer open and verify a new status URL or matching feed item before reporting success.

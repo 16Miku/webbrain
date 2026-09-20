@@ -667,6 +667,9 @@
   function _hasVisibleBox(el, minWidth = 1, minHeight = 1) {
     if (!el || typeof el.getBoundingClientRect !== 'function') return false;
     try {
+      for (let ancestor = el; ancestor; ancestor = _composedParent(ancestor)) {
+        if (ancestor.getAttribute?.('aria-hidden') === 'true') return false;
+      }
       const r = el.getBoundingClientRect();
       if (r.width < minWidth || r.height < minHeight) return false;
       const s = getComputedStyle(el);
@@ -1358,7 +1361,7 @@
       }
     };
     visit(scope);
-    const all = candidates.filter(_keepCandidate);
+    const all = candidates.filter(e => _hasVisibleBox(e) && _keepCandidate(e));
     return all.map(e => ({ e, txt: _normTxt(e) })).filter(x => !!x.txt);
   }
 
@@ -3725,6 +3728,49 @@
   }
 
   const _messageRecipientDispatchBindings = new Map();
+  const _twitterHistoryObservations = new WeakMap();
+
+  function _settledTwitterHistory(log, messageIds = []) {
+    if (!log?.isConnected) return false;
+    let loading = false;
+    let completionSignal = false;
+    try {
+      const ariaBusy = log.getAttribute('aria-busy');
+      loading = ariaBusy === 'true'
+        || !!log.querySelector('[aria-busy="true"],[role="progressbar"]');
+      // X's explicit idle state is a direct history-completion signal. Empty
+      // logs may alternatively use X's own empty-state marker.
+      completionSignal = ariaBusy === 'false'
+        || (!(Array.isArray(messageIds) && messageIds.length > 0)
+          && !!log.querySelector('[data-testid="dm-empty-state"],[data-testid="empty_state"],[data-testid="empty-state"]'));
+    } catch {}
+    if (loading) {
+      _twitterHistoryObservations.delete(log);
+      return false;
+    }
+    if (completionSignal) {
+      _twitterHistoryObservations.delete(log);
+      return true;
+    }
+    // Without an explicit X completion marker, an empty history remains
+    // ambiguous. A nonempty history must retain the same row identities long
+    // enough to rule out an in-progress history append.
+    if (!Array.isArray(messageIds) || messageIds.length === 0) {
+      _twitterHistoryObservations.delete(log);
+      return false;
+    }
+    const now = Date.now();
+    const signature = Array.isArray(messageIds) ? messageIds.join('\u001f') : '';
+    const prior = _twitterHistoryObservations.get(log);
+    const observation = prior?.signature === signature
+      ? { firstSeenAt: prior.firstSeenAt, count: prior.count + 1 }
+      : { firstSeenAt: now, count: 1, signature };
+    _twitterHistoryObservations.set(log, { ...observation, signature });
+    // A nonempty history without an explicit idle marker can append old
+    // messages. Require the same snapshot to survive two reads before using
+    // it as a dispatch baseline.
+    return observation.count >= 2 && now - observation.firstSeenAt >= 300;
+  }
 
   function _messageRecipientIdentityKey(values = []) {
     return JSON.stringify(Array.from(new Set((Array.isArray(values) ? values : [])
@@ -3778,6 +3824,8 @@
       identityKey,
       messageBody: String(dispatch.messageBody || ''),
       messageBodyBaselineCount: Number(dispatch.messageBodyBaselineCount || 0),
+      ...(Array.isArray(dispatch.existingMessageIds) ? { existingMessageIds: [...dispatch.existingMessageIds] } : {}),
+      twitterEmptyConversationBaseline: dispatch.twitterEmptyConversationBaseline === true,
       gmailComposeFlow: dispatch.gmailComposeFlow === true,
       composerSubject: String(dispatch.composerSubject || ''),
       composerSubjectAvailable: dispatch.composerSubjectAvailable === true,
@@ -3846,6 +3894,10 @@
       || liveIdentityKey !== expected.identityKey
       || !expected.messageBody
       || live?.messageBody !== expected.messageBody
+      || (expected.existingMessageIds
+        && JSON.stringify(live?.existingMessageIds) !== JSON.stringify(expected.existingMessageIds))
+      || (expected.twitterEmptyConversationBaseline === true
+        && live?.twitterEmptyConversationBaseline !== true)
       || (expected.gmailComposeFlow === true && live?.gmailComposeFlow !== true)
       || (expected.composerSubjectAvailable === true
         && (live?.composerSubjectAvailable !== true || live?.composerSubject !== expected.composerSubject))) {
@@ -4112,6 +4164,9 @@
       const visible = (el) => {
         if (!el || el.nodeType !== 1 || !el.isConnected) return false;
         try {
+          for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
+            if (ancestor.getAttribute?.('aria-hidden') === 'true') return false;
+          }
           const style = getComputedStyle(el);
           const rect = el.getBoundingClientRect();
           return style.display !== 'none'
@@ -4205,9 +4260,41 @@
         }
         return null;
       };
+      const twitterConversation = params.adapterName === 'twitter'
+        && /^\/i\/chat\/[^/]+\/?$/.test(location.pathname);
+      const twitterLogs = twitterConversation
+        ? Array.from(document.querySelectorAll('[role="log"][data-testid="dm-message-scroller"]')).filter(visible) : [];
+      // Keep all mounted identities, including hidden and pending rows. A
+      // virtualized row becoming visible or an old retry becoming sent must
+      // never look like the message dispatched by this run.
+      const twitterRows = twitterLogs.length === 1
+        ? Array.from(twitterLogs[0].querySelectorAll('[data-testid^="message-"]'))
+            .filter(row => /^message-(?!text-)[a-zA-Z0-9_-]{1,128}$/.test(row.getAttribute('data-testid') || ''))
+        : [];
+      const twitterMessageIds = twitterRows.map(row => row.getAttribute('data-testid'));
+      const twitterHistorySettled = twitterLogs.length === 1
+        && _settledTwitterHistory(twitterLogs[0], twitterMessageIds);
+      const twitterEmptyConversationBaseline = twitterRows.length === 0 && twitterHistorySettled;
+      // A mounted X log can still append older history. Empty conversations
+      // need a positive X completion signal; other histories need that signal
+      // or a stable row snapshot before they become dispatch baselines.
+      const twitterBaselineComplete = twitterLogs.length === 1 && twitterRows.length <= 2000
+        && new Set(twitterMessageIds).size === twitterMessageIds.length
+        && (twitterRows.length > 0 ? twitterHistorySettled : twitterEmptyConversationBaseline);
+      const matchingTwitterMessageIds = expectedBody => {
+        const expected = normalizedMessageBody(expectedBody);
+        if (!expected || !twitterBaselineComplete) return [];
+        return twitterRows.filter(row => visible(row) && row.classList.contains('justify-end')
+          && row.getAttribute('data-send-status') === 'sent')
+          .filter(row => {
+            const body = row.querySelector('[data-testid^="message-text-"] span[dir="auto"]');
+            return visible(body) && normalizedMessageBody(body.innerText || body.textContent) === expected;
+          }).map(row => row.getAttribute('data-testid'));
+      };
       const matchingMessageBodyCount = (expectedBody, activeComposer = null) => {
         const expected = normalizedMessageBody(expectedBody);
         if (!expected) return 0;
+        if (twitterConversation) return matchingTwitterMessageIds(expected).length;
         let candidates = [];
         try {
           candidates = Array.from(document.querySelectorAll(
@@ -4302,7 +4389,11 @@
           || ((br.width * br.height) - (ar.width * ar.height));
       });
       const viewportHeight = Math.max(0, Number(window.innerHeight) || 0);
-      const layoutCandidate = composerCandidates[0] || null;
+      const twitterComposers = twitterConversation
+        ? composerCandidates.filter(el => el.matches('textarea[data-testid="dm-composer-textarea"]')) : [];
+      const layoutCandidate = twitterConversation
+        ? (twitterComposers.length === 1 ? twitterComposers[0] : null)
+        : composerCandidates[0] || null;
       const layoutCandidateRect = layoutCandidate?.getBoundingClientRect?.();
       // A recipient/search field can be the only focused editable while the
       // real composer is temporarily hidden. Never promote an upper-page
@@ -4504,6 +4595,53 @@
         return !!hit && _isComposedAncestor(button, hit);
       };
 
+      const verifiedTwitterNavigation = clicked => {
+        if (!twitterConversation) return false;
+        const control = _composedClosestElement(clicked, 'a[href],button,[role="button"]');
+        if (!control || !visible(control) || control.disabled
+            || control.getAttribute('aria-disabled') === 'true'
+            || _composedClosestElement(control, 'form,dialog,[role="dialog"],[role="log"],[contenteditable="true"]')
+            || control.hasAttribute('form') || control.hasAttribute('download')) return false;
+        if (control.matches('button[data-testid="dm-conversation-back-button"]')) {
+          return String(control.getAttribute('type') || 'button').toLowerCase() === 'button';
+        }
+        if (!control.matches('a[href]') || control.hasAttribute('onclick') || control.hasAttribute('data-action')) return false;
+        try {
+          const destination = new URL(control.getAttribute('href'), location.href);
+          if (!/^https?:$/.test(destination.protocol) || destination.username || destination.password
+              || !/^(?:www\.)?(?:x|twitter)\.com$/.test(destination.hostname)) return false;
+          const isProfile = /^\/[a-zA-Z0-9_]{1,15}\/?$/.test(destination.pathname);
+          const header = control.querySelector('[data-testid="dm-conversation-username"]');
+          if (header && visible(header)) return isProfile;
+          return !!_composedClosestElement(control, 'nav,[role="navigation"]')
+            && (isProfile || /^\/(?:home|explore|notifications|messages|i\/chat)\/?$/.test(destination.pathname));
+        } catch { return false; }
+      };
+
+      const verifiedLinkedInPublicPostControl = (clicked) => {
+        if (params.adapterName !== 'linkedin') return false;
+        const button = _composedClosestElement(clicked, 'button,[role="button"]');
+        if (!button || !visible(button) || button.disabled
+            || button.getAttribute?.('aria-disabled') === 'true'
+            || String(button.getAttribute?.('type') || 'button').toLowerCase() !== 'button'
+            || button.form || button.hasAttribute?.('form')) return false;
+        const messageScope = 'form,[role="log"],[data-message-id],[data-thread-id],[data-conversation-id],'
+          + '.msg-form,.msg-overlay-conversation-bubble,.msg-convo-wrapper';
+        if (_composedClosestElement(button, messageScope)) return false;
+        if (compact(button.getAttribute?.('data-control-name')).toLowerCase() !== 'share.post') return false;
+        // Identify the public composer itself, not merely a nearby textbox.
+        // LinkedIn's dedicated compose route may render as a whole page.
+        const root = _composedClosestElement(button, 'dialog,[role="dialog"],.share-box')
+          || (/^\/sharing\/compose\/?$/.test(location.pathname)
+            ? (_composedClosestElement(button, 'main,[role="main"]') || document.body) : null);
+        if (!root) return false;
+        const owned = el => visible(el) && !_composedClosestElement(el, messageScope)
+          && (_composedClosestElement(el, 'dialog,[role="dialog"],.share-box') || root) === root;
+        const editors = Array.from(root.querySelectorAll('[contenteditable="true"],textarea'))
+          .filter(owned);
+        return editors.length === 1;
+      };
+
       let composer = null;
       let messageSend = null;
       if (observationOnly) {
@@ -4544,8 +4682,16 @@
         if (!visible(control) || (modal && !_isComposedAncestor(modal, target))) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
+        if (verifiedTwitterNavigation(target)) {
+          return { success: true, messageSend: false, conclusive: true, navigation: true, identityCandidates: [] };
+        }
         if (verifiedLinkedInPostEntry(target)) {
           return { success: true, messageSend: false, conclusive: true, composerSetup: true, identityCandidates: [] };
+        }
+        if (verifiedLinkedInPublicPostControl(target)) {
+          // Public publication still goes through the normal submission gates;
+          // a private-message recipient is irrelevant to this composer.
+          return { success: true, messageSend: false, conclusive: true, publicPost: true, identityCandidates: [] };
         }
         const linkedInNavigation = classifyLinkedInNavigation(target, modal);
         if (linkedInNavigation === 'navigation') {
@@ -4582,7 +4728,7 @@
             identityCandidates: [],
           };
         }
-        if (editable(target) && target !== composer) {
+        if (editable(target) && (target !== composer || twitterConversation)) {
           return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
         }
         if (verifiedConversationSelection(target, composer)) {
@@ -4824,6 +4970,45 @@
             }
           }
         }
+      } else if (twitterConversation) {
+        const headers = Array.from(document.querySelectorAll('[data-testid="dm-conversation-username"]'))
+          .filter(el => visible(el) && inConversationHeaderBand(el) && !independentScrollableRegion(el, composer));
+        if (headers.length === 1) {
+          const header = headers[0];
+          const link = header.closest('a[href]');
+          let handle = '';
+          try {
+            const url = new URL(link?.getAttribute('href'), location.href);
+            if (/^(?:www\.)?(?:x|twitter)\.com$/.test(url.hostname)) {
+              handle = url.pathname.match(/^\/([a-zA-Z0-9_]{1,15})\/?$/)?.[1] || '';
+            }
+          } catch {}
+          if (handle) {
+            const identity = '@' + handle.toLowerCase();
+            strongIdentities.push(identity);
+            strongRecipients.push({ identity, role: 'to' });
+            observedRecipientCandidates.push({ identity, role: 'to', aliases: [identity, handle, compact(header.innerText)] });
+          } else {
+            // X group DM headers name the conversation instead of linking to a
+            // single account. Bind the visible header to the canonical chat
+            // route so a later conversation cannot inherit this authorization.
+            let groupIdentity = '';
+            try {
+              const groupId = new URL(location.href).pathname
+                .match(/^\/i\/chat\/([a-zA-Z0-9_-]{1,128})\/?$/)?.[1] || '';
+              if (groupId && compact(header.innerText)) groupIdentity = `x-dm-group:${groupId}`;
+            } catch {}
+            if (groupIdentity) {
+              strongIdentities.push(groupIdentity);
+              strongRecipients.push({ identity: groupIdentity, role: 'to' });
+              observedRecipientCandidates.push({
+                identity: groupIdentity,
+                role: 'to',
+                aliases: [groupIdentity, compact(header.innerText)],
+              });
+            }
+          }
+        }
       } else {
         for (const el of document.querySelectorAll(
           '[aria-selected="true"],[aria-current]:not([aria-current="false"])'
@@ -4884,6 +5069,7 @@
       const messageRecipientDispatchToken = params.bindDispatch === true
         && messageSend === true
         && !!messageBody
+        && (!twitterConversation || twitterBaselineComplete)
         && (params.supportsRecipientSets === true
           ? strongRecipients.length > 0
           : strongRecipients.length === 1)
@@ -4896,6 +5082,10 @@
             supportsRecipientSets: params.supportsRecipientSets,
             messageBody,
             messageBodyBaselineCount,
+            ...(twitterConversation ? {
+              existingMessageIds: twitterMessageIds,
+              ...(twitterEmptyConversationBaseline ? { twitterEmptyConversationBaseline: true } : {}),
+            } : {}),
             gmailComposeFlow,
             composerSubject,
             composerSubjectAvailable,
@@ -4919,6 +5109,11 @@
         composerSubjectAvailable,
         composerStatusMessages,
         matchingOutgoingMessageCount,
+        ...(twitterConversation && twitterBaselineComplete ? {
+          existingMessageIds: twitterMessageIds,
+          matchingOutgoingMessageIds: matchingTwitterMessageIds(params.expectedMessageBody),
+          ...(twitterEmptyConversationBaseline ? { twitterEmptyConversationBaseline: true } : {}),
+        } : {}),
         // Only recipient-specific header evidence is authoritative. Ordinary
         // message text, test-id containers, and other leaf content are never
         // returned as dispatch identities.

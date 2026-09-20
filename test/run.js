@@ -4823,7 +4823,7 @@ test('matches twitter.com and x.com', () => {
     assert.match(notes, /verified:false/);
     assert.match(notes, /keep the composer open/i);
     const workflow = getAdapter('https://x.com/compose/post')?.workflow;
-    assert.deepEqual(getAdapter('https://x.com/compose/post')?.jobs, ['publish-post']);
+    assert.deepEqual(getAdapter('https://x.com/compose/post')?.jobs, ['publish-post', 'send-message']);
     assert.deepEqual(validateAdapterWorkflowProfile(getAdapter('https://x.com/compose/post')), { ok: true });
     assert.equal(workflow?.jobs?.['publish-post']?.template, 'publish');
     assert.equal(workflow?.jobs?.['publish-post']?.requiresSubmission, true);
@@ -5725,6 +5725,29 @@ test('direct-message recipient guard uses structured intent and exact active ide
       await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' }),
       null,
       `${label}: conclusively non-message Enter was incorrectly blocked`,
+    );
+
+    probe = { success: true, conclusive: true, messageSend: false, publicPost: true, identityCandidates: [] };
+    agent._planExecutionGuards.set(tabId, {
+      messaging: { target_kind: 'named', recipients: ['Ada'] },
+      requiresSubmission: true,
+      requiresStateChange: true,
+      siteWorkflow: resolveAdapterWorkflowJob('https://www.linkedin.com/feed/', 'send-message'),
+    });
+    const publicPostBlocked = await agent._messageRecipientGuardBlock(
+      tabId, 'click_ax', { ref_id: 'ref_linkedin_post' }, 'https://www.linkedin.com/feed/', {},
+    );
+    assert.equal(publicPostBlocked?.reasonCode, 'public_post_not_authorized',
+      `${label}: LinkedIn DM authorization allowed a public Post control`);
+    agent._planExecutionGuards.get(tabId).siteWorkflow = resolveAdapterWorkflowJob(
+      'https://www.linkedin.com/feed/', 'publish-post',
+    );
+    assert.equal(
+      await agent._messageRecipientGuardBlock(
+        tabId, 'click_ax', { ref_id: 'ref_linkedin_post' }, 'https://www.linkedin.com/feed/', {},
+      ),
+      null,
+      `${label}: explicit LinkedIn publish workflow could not use its public Post control`,
     );
 
     probe = { success: true, conclusive: false, messageSend: null, identityCandidates: [] };
@@ -6950,6 +6973,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
         innerText: text,
         children: [],
         parentElement: options.parentElement || null,
+        get parentNode() { return this.parentElement; },
         clientHeight: options.clientHeight || rect.height || 0,
         scrollHeight: options.scrollHeight || rect.height || 0,
         getBoundingClientRect: () => rect,
@@ -6994,6 +7018,30 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       left: 910, right: 980, top: 700, bottom: 750, width: 70, height: 50,
     }, { tagName: 'BUTTON', role: 'button' });
     sendButton.closest = () => sendButton;
+    const hiddenSendWrapper = element('', {
+      left: 900, right: 990, top: 680, bottom: 760, width: 90, height: 80,
+    }, { attributes: { 'aria-hidden': 'true' } });
+    const hiddenSendButton = element('Send', {
+      left: 910, right: 980, top: 700, bottom: 750, width: 70, height: 50,
+    }, { tagName: 'BUTTON', role: 'button', parentElement: hiddenSendWrapper });
+    hiddenSendButton.closest = () => hiddenSendButton;
+    const linkedInComposer = element('', {
+      left: 260, right: 780, top: 120, bottom: 680, width: 520, height: 560,
+    }, { role: 'dialog' });
+    const linkedInEditor = element('', {
+      left: 290, right: 750, top: 260, bottom: 500, width: 460, height: 240,
+    }, { parentElement: linkedInComposer });
+    linkedInEditor.isContentEditable = true;
+    const localizedLinkedInPost = element('Gönder', {
+      left: 650, right: 750, top: 610, bottom: 660, width: 100, height: 50,
+    }, {
+      tagName: 'BUTTON', role: 'button', parentElement: linkedInComposer,
+      attributes: { 'data-control-name': 'share.post' },
+    });
+    localizedLinkedInPost.closest = () => localizedLinkedInPost;
+    linkedInComposer.querySelectorAll = (selector) => selector === '[contenteditable="true"],textarea'
+      ? [linkedInEditor]
+      : [];
     const customSendControl = element('Quick send', {
       left: 910, right: 990, top: 755, bottom: 795, width: 80, height: 40,
     }, { dataAction: true });
@@ -7040,7 +7088,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       querySelector: (selector) => selector === '#conversation-row' ? conversationRow : null,
       querySelectorAll: (selector) => {
         if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer, searchBox, alternateComposer];
-        if (selector.startsWith('a, button,')) return [sendButton, customSendControl, distantControl, conversationRowMenu];
+        if (selector.startsWith('a, button,')) return [sendButton, hiddenSendButton, customSendControl, distantControl, conversationRowMenu];
         if (selector.startsWith('[aria-selected')) return [];
         if (selector.startsWith('h1,')) return [searchedName, activeHeader, conversationMessageHeading];
         if (selector.startsWith('[data-testid')) return [];
@@ -7058,16 +7106,28 @@ test('direct-message recipient probe accepts only a unique active-thread header 
           if (refId === 'conversation-row-label') return conversationRowLabel;
           if (refId === 'conversation-row-menu-leaf') return conversationRowMenuLeaf;
           if (refId === 'alternate-composer') return alternateComposer;
+          if (refId === 'localized-linkedin-post') return localizedLinkedInPost;
           return null;
         },
       },
+      location: { pathname: '/sharing/compose/', href: 'https://www.linkedin.com/sharing/compose/' },
       getComputedStyle: (el) => ({
         display: 'block',
         visibility: 'visible',
         overflowY: el === conversationRail ? 'auto' : 'visible',
       }),
       _deepActiveElement: () => activeElement,
+      _composedClosestElement: (node, selector) => {
+        if (node === localizedLinkedInPost && /button|\[role="button"\]/.test(selector)) return node;
+        if ((node === localizedLinkedInPost || node === linkedInEditor)
+            && /dialog|\[role="dialog"\]|\.share-box/.test(selector)) return linkedInComposer;
+        return null;
+      },
     };
+    const composedParentStart = source.indexOf('  function _composedParent(');
+    const composedParentEnd = source.indexOf('\n\n  function ', composedParentStart + 1);
+    assert.ok(composedParentStart >= 0 && composedParentEnd > composedParentStart,
+      `${prefix}: composed-parent helper must be available to visibility checks`);
     const candidatesStart = source.indexOf('  function _clickTextCandidates(');
     const candidatesEnd = source.indexOf('\n\n  let _lastClickIdent', candidatesStart);
     Object.assign(context, {
@@ -7079,8 +7139,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       _resolveInteractiveAncestor: el => el,
       safeIndexedQuerySelector: selector => ({ element: document.querySelector(selector) }),
     });
+    const visibilityStart = source.indexOf('  function _hasVisibleBox(');
+    const visibilityEnd = source.indexOf('\n\n  function ', visibilityStart + 1);
     const probe = vm.runInNewContext(
-      `${source.slice(candidatesStart, candidatesEnd)}; (${source.slice(start, end)})`, context,
+      `${source.slice(composedParentStart, composedParentEnd)}; ${source.slice(visibilityStart, visibilityEnd)}; ${source.slice(candidatesStart, candidatesEnd)}; (${source.slice(start, end)})`, context,
     );
     const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
     const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
@@ -7121,6 +7183,9 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const conversationMenuResult = probe({ tool: 'click', args: { text: 'More' } });
     const conversationMenuLeafResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-menu-leaf' } });
     const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen', textMatch: 'exact' } });
+    const localizedLinkedInPostResult = probe({
+      tool: 'click_ax', args: { ref_id: 'localized-linkedin-post' }, adapterName: 'linkedin',
+    });
     activeElement = composer;
     const gmailAliceChip = element('Alice', {
       left: 430, right: 620, top: 610, bottom: 650, width: 190, height: 40,
@@ -7252,6 +7317,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       conversationMenuResult,
       conversationMenuLeafResult,
       unresolvedClickResult,
+      localizedLinkedInPostResult,
       emptyComposerCustomSendResult,
       gmailMatchingRecipientResult,
       gmailMatchingNameResult,
@@ -7289,6 +7355,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       conversationMenuResult,
       conversationMenuLeafResult,
       unresolvedClickResult,
+      localizedLinkedInPostResult,
       emptyComposerCustomSendResult,
       gmailMatchingRecipientResult,
       gmailMatchingNameResult,
@@ -7333,7 +7400,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(alternateComposerEnterResult.conclusive, false);
     assert.equal(alternateComposerSubmitResult.messageSend, null, `${prefix}: alternate composer submit bypassed recipient verification`);
     assert.equal(alternateComposerSubmitResult.conclusive, false);
-    assert.equal(unfocusedClickResult.messageSend, true, `${prefix}: unfocused composer made send click fail open`);
+    assert.equal(unfocusedClickResult.messageSend, true,
+      `${prefix}: aria-hidden duplicate Send control made the visible target ambiguous`);
     assert.equal(unfocusedClickResult.conclusive, true);
     assert.equal(emptyComposerCustomSendResult.messageSend, true, `${prefix}: custom attachment/send control failed open`);
     assert.equal(emptyComposerCustomSendResult.conclusive, true);
@@ -7351,6 +7419,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(conversationMenuLeafResult.conclusive, false);
     assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
     assert.equal(unresolvedClickResult.conclusive, false);
+    assert.equal(localizedLinkedInPostResult.messageSend, false,
+      `${prefix}: localized LinkedIn public post was treated as a direct message`);
+    assert.equal(localizedLinkedInPostResult.publicPost, true,
+      `${prefix}: LinkedIn's app-owned publish control was not recognized without English labels`);
     assert.deepEqual(Array.from(gmailMatchingRecipientResult.strongIdentityCandidates), ['alice@example.com']);
     assert.equal(gmailMatchingRecipientResult.gmailComposeFlow, true,
       `${prefix}: Gmail compose dialog was not bound to the send probe`);
@@ -7820,6 +7892,67 @@ test('message recipient dispatch binding detects composer and active-thread race
       clickAxRecipientCheck >= 0 && clickAxDispatch > clickAxRecipientCheck,
       `${label}: click_ax recipient binding must be consumed before click dispatch`,
     );
+  }
+});
+
+test('empty X history baselines require a positive completion signal', () => {
+  for (const [label, rel] of [
+    ['chrome', 'src/chrome/src/content/content.js'],
+    ['firefox', 'src/firefox/src/content/content.js'],
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const start = source.indexOf('const _messageRecipientDispatchBindings = new Map();');
+    const end = source.indexOf(label === 'chrome'
+      ? '\n\n  // Above this length'
+      : '\n\n  function _releaseDispatchBinding', start);
+    assert.ok(start >= 0 && end > start, `${label}: empty-X helper should remain independently testable`);
+    let now = 0;
+    const { settledTwitterHistory } = vm.runInNewContext(`(() => {
+      ${source.slice(start, end)}
+      return { settledTwitterHistory: _settledTwitterHistory };
+    })()`, {
+      Date: { now: () => now },
+    });
+    const log = ({ ariaBusy = null, emptyState = false, loading = false } = {}) => ({
+      isConnected: true,
+      getAttribute: name => name === 'aria-busy' ? ariaBusy : null,
+      querySelector: selector => {
+        if (selector === '[aria-busy="true"],[role="progressbar"]') return loading ? {} : null;
+        return emptyState ? {} : null;
+      },
+    });
+    const ambiguousEmptyLog = log();
+    assert.equal(settledTwitterHistory(ambiguousEmptyLog), false,
+      `${label}: a bare empty X log was accepted before history completion`);
+    now += 300;
+    assert.equal(settledTwitterHistory(ambiguousEmptyLog), false,
+      `${label}: a bare empty X log became a first-message baseline`);
+
+    const completedEmptyLog = log({ ariaBusy: 'false' });
+    assert.equal(settledTwitterHistory(completedEmptyLog), true,
+      `${label}: an explicit aria-busy=false X empty log did not become a baseline`);
+
+    const markedEmptyLog = log({ emptyState: true });
+    assert.equal(settledTwitterHistory(markedEmptyLog), true,
+      `${label}: an explicit X empty-state marker did not become a baseline`);
+
+    const loadingHistory = log({ ariaBusy: 'true' });
+    assert.equal(settledTwitterHistory(loadingHistory, ['message-existing']), false,
+      `${label}: an explicitly loading X history became a baseline`);
+
+    const completedHistory = log({ ariaBusy: 'false' });
+    assert.equal(settledTwitterHistory(completedHistory, ['message-existing']), true,
+      `${label}: an explicit aria-busy=false X history did not become a baseline`);
+
+    const unmarkedHistory = log();
+    assert.equal(settledTwitterHistory(unmarkedHistory, ['message-existing']), false,
+      `${label}: the first unmarked X history observation was accepted`);
+    now += 300;
+    assert.equal(settledTwitterHistory(unmarkedHistory, ['message-existing']), true,
+      `${label}: a stable unmarked X history did not become a baseline`);
+    now += 300;
+    assert.equal(settledTwitterHistory(unmarkedHistory, ['message-existing', 'message-late']), false,
+      `${label}: an appended historical X row kept the previous baseline`);
   }
 });
 
@@ -93882,6 +94015,186 @@ test('publication workflows classify and bind requested payload fields', async (
     assert.match(prompt, /\bcanonical field names tag, title, notes, body, visibility, attachment, path, branch, or commit_message\b/);
     assert.match(prompt, /for publish-post only, also use account/);
     assert.match(prompt, /For edit-file-and-commit, include path, branch, and commit_message only when the user explicitly supplied them/);
+
+    const xTabId = 8987 + index;
+    const xUrl = 'https://x.com/i/chat/123-456';
+    // The active X route supplies the platform. The task itself can be the
+    // concise direct-message command users naturally write.
+    const xTask = 'Send Alex: Hello there';
+    const xWorkflow = agent._resolvePlannerSiteWorkflow(xUrl, {
+      request_kind: 'execute',
+      requires_submission: true,
+      messaging: { target_kind: 'named', recipients: ['@altryne'] },
+    });
+    assert.equal(xWorkflow?.job?.id, 'send-message');
+    agent.conversations.set(xTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: xTask },
+    ]);
+    const xGuard = agent._startPlanExecutionGuard(xTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'named', recipients: ['@altryne'] },
+      siteWorkflow: xWorkflow,
+    });
+    let xPrompt = '';
+    agent._chatWithCostAllowance = async (_provider, messages) => {
+      xPrompt = messages[0].content;
+      // This was previously a compliant classifier response for send-message.
+      return { content: JSON.stringify({
+        mode: 'inactive', allowedActions: [], forbiddenActions: [], targets: [],
+        workflowFields: [], confidence: 0.99, pageScopePolicy: 'page',
+      }) };
+    };
+    await agent._ensureProgressSessionForCurrentTask(xTabId, {
+      provider: { chat: async () => ({ content: '{}' }) },
+      progressLedgerPolicy: 'disabled',
+      taskText: xTask,
+      pageScope: xUrl,
+    });
+    assert.match(xPrompt, /siteContext\.workflow\.template="message"/,
+      `${AgentClass.name}: the classifier did not require direct-message fields`);
+    assert.equal(agent._extractWorkflowTaskBody(xTask, '', 'twitter'), 'Hello there',
+      `${AgentClass.name}: a route-local Send command did not recover its explicit X DM body`);
+    assert.equal(
+      agent._extractWorkflowTaskBody('Send an email to Alice with subject: Hello and body: How are you?', '', 'gmail'),
+      '',
+      `${AgentClass.name}: X route-local Send recovery rewrote Gmail subject/body metadata`,
+    );
+    assert.deepEqual(xGuard.workflowMetadataRequirements, [
+      { field: 'body', value: 'Hello there' },
+    ], `${AgentClass.name}: an explicit X DM body was not bound after an empty classifier response`);
+
+    const gmailTabId = 8997 + index;
+    const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox';
+    const gmailTask = 'Send an email to Alice with subject: Message: Hello and body: How are you?';
+    const gmailWorkflow = agent._resolvePlannerSiteWorkflow(gmailUrl, {
+      request_kind: 'execute',
+      site_job: 'send-email',
+      requires_submission: true,
+      messaging: { target_kind: 'named', recipients: ['Alice'] },
+    });
+    assert.equal(gmailWorkflow?.job?.id, 'send-email');
+    assert.equal(agent._extractWorkflowTaskBody(gmailTask, '', 'gmail'), 'Hello and body: How are you?',
+      `${AgentClass.name}: the regression fixture no longer exercises Gmail's generic Send parser`);
+    agent.conversations.set(gmailTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: gmailTask },
+    ]);
+    const gmailGuard = agent._startPlanExecutionGuard(gmailTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'named', recipients: ['Alice'] },
+      siteWorkflow: gmailWorkflow,
+    });
+    agent._chatWithCostAllowance = async () => ({ content: JSON.stringify({
+      mode: 'inactive', allowedActions: [], forbiddenActions: [], targets: [],
+      workflowFields: [
+        { field: 'subject', value: 'Message: Hello' },
+        { field: 'body', value: 'How are you?' },
+      ],
+      confidence: 0.99, pageScopePolicy: 'page',
+    }) });
+    await agent._ensureProgressSessionForCurrentTask(gmailTabId, {
+      provider: { chat: async () => ({ content: '{}' }) },
+      progressLedgerPolicy: 'disabled',
+      taskText: gmailTask,
+      pageScope: gmailUrl,
+    });
+    assert.deepEqual(gmailGuard.workflowMetadataRequirements, [
+      { field: 'subject', value: 'Message: Hello' },
+      { field: 'body', value: 'How are you?' },
+    ], `${AgentClass.name}: X's body recovery rewrote Gmail's structured subject/body fields`);
+    const xTerminal = (body) => {
+      const workflowBinding = agent._workflowSubmitBindingForAttempt(xTabId, xUrl, {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: `x-body-${body}` },
+        messageRecipientBody: body,
+        messageRecipientBodyBaselineCount: 0,
+        messageRecipientExistingMessageIds: ['message-prior'],
+      });
+      return agent._workflowTerminalEvidenceFromDone(xTabId, { liveRegionMessages: [] }, xUrl, {
+        submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: xUrl, workflowBinding },
+        verifiedFinalSubmit: false,
+        relevantForms: 1,
+      }, {
+        success: true,
+        conclusive: true,
+        composerEmpty: true,
+        strongRecipientCandidates: [{ identity: '@altryne', role: 'to' }],
+        existingMessageIds: ['message-prior', 'message-new'],
+        matchingOutgoingMessageIds: ['message-new'],
+        matchingOutgoingMessageCount: 1,
+      });
+    };
+    assert.equal(xTerminal('Changed message'), null,
+      `${AgentClass.name}: a sent X DM drifted from the approved body`);
+    assert.equal(xTerminal('Hello there')?.verificationKind, 'message_sent',
+      `${AgentClass.name}: the approved X DM body could not complete`);
+    const emptyBaselineBinding = agent._workflowSubmitBindingForAttempt(xTabId, xUrl, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: 'x-empty-baseline' },
+      messageRecipientBody: 'Hello there',
+      messageRecipientBodyBaselineCount: 0,
+      messageRecipientExistingMessageIds: [],
+    });
+    const lateHistoricRow = agent._workflowTerminalEvidenceFromDone(xTabId, { liveRegionMessages: [] }, xUrl, {
+      submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: xUrl, workflowBinding: emptyBaselineBinding },
+      verifiedFinalSubmit: false,
+      relevantForms: 1,
+    }, {
+      success: true,
+      conclusive: true,
+      composerEmpty: true,
+      strongRecipientCandidates: [{ identity: '@altryne', role: 'to' }],
+      existingMessageIds: ['message-late-history'],
+      matchingOutgoingMessageIds: ['message-late-history'],
+      matchingOutgoingMessageCount: 1,
+    });
+    assert.equal(lateHistoricRow, null,
+      `${AgentClass.name}: a late-loaded historic X row satisfied an empty dispatch baseline`);
+    const settledEmptyBaselineBinding = agent._workflowSubmitBindingForAttempt(xTabId, xUrl, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: 'x-settled-empty-baseline' },
+      messageRecipientBody: 'Hello there',
+      messageRecipientBodyBaselineCount: 0,
+      messageRecipientExistingMessageIds: [],
+      messageRecipientTwitterEmptyConversationBaseline: true,
+    });
+    const firstXMessage = agent._workflowTerminalEvidenceFromDone(xTabId, { liveRegionMessages: [] }, xUrl, {
+      submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: xUrl, workflowBinding: settledEmptyBaselineBinding },
+      verifiedFinalSubmit: false,
+      relevantForms: 1,
+    }, {
+      success: true,
+      conclusive: true,
+      composerEmpty: true,
+      strongRecipientCandidates: [{ identity: '@altryne', role: 'to' }],
+      existingMessageIds: ['message-first'],
+      matchingOutgoingMessageIds: ['message-first'],
+      matchingOutgoingMessageCount: 1,
+    });
+    assert.equal(firstXMessage?.verificationKind, 'message_sent',
+      `${AgentClass.name}: a settled empty X conversation could not complete its first DM`);
+    const historyAfterSettledEmptyBaseline = agent._workflowTerminalEvidenceFromDone(
+      xTabId, { liveRegionMessages: [] }, xUrl, {
+        submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: xUrl, workflowBinding: settledEmptyBaselineBinding },
+        verifiedFinalSubmit: false,
+        relevantForms: 1,
+      }, {
+        success: true,
+        conclusive: true,
+        composerEmpty: true,
+        strongRecipientCandidates: [{ identity: '@altryne', role: 'to' }],
+        existingMessageIds: ['message-late-history', 'message-first'],
+        matchingOutgoingMessageIds: ['message-first'],
+        matchingOutgoingMessageCount: 1,
+      },
+    );
+    assert.equal(historyAfterSettledEmptyBaseline, null,
+      `${AgentClass.name}: late history satisfied a settled empty X dispatch baseline`);
   }
 });
 
@@ -100338,6 +100651,26 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { success: false, conclusive: false, matchingOutgoingMessageCount: 0 },
     )?.source, 'recipient_body_bound_gmail_compose_and_sent_confirmation',
     `${AgentClass.name}: a bound Gmail compose send required an inline Sent-body rendering`);
+
+    // A toast left from an earlier send must not hide a still-populated
+    // Gmail compose dialog. Only X's stronger new-message proof can bypass
+    // the generic open-composer heuristic.
+    const unsentComposeState = {
+      openDialogCount: 1, relevantFormCount: 1, liveRegionMessages: ['Message sent'],
+    };
+    const staleToastEvidence = agent._workflowTerminalEvidenceFromDone(
+      gmailTabId, unsentComposeState, gmailUrl,
+      { submit: composeBoundGmailSubmit, verifiedFinalSubmit: false, relevantForms: 1 },
+      { success: true, conclusive: true, composerEmpty: false,
+        strongIdentityCandidates: ['alice@example.com'], matchingOutgoingMessageCount: 0 },
+    );
+    assert.equal(staleToastEvidence?.verificationKind, 'message_sent');
+    assert.match(agent._completionPageWarning(
+      gmailTabId, 'Sent', 'success', unsentComposeState, gmailUrl, staleToastEvidence,
+    )?.key || '', /\|dialog\|1$/, `${AgentClass.name}: a stale sent toast bypassed Gmail's open dialog`);
+    assert.equal(agent._completionPageWarning(
+      gmailTabId, 'Sent', 'success', { openDialogCount: 0, relevantFormCount: 0 }, gmailUrl, staleToastEvidence,
+    ), null, `${AgentClass.name}: a completed Gmail compose was blocked`);
 
     const linkedInMessageTabId = 9005 + index;
     const linkedInMessageUrl = 'https://www.linkedin.com/messaging/thread/2-abc/';
