@@ -1080,6 +1080,9 @@ export class Agent extends LoopDetector {
     this.deliveryObservationStreaks = new Map(); // tabId -> count
     this.deliveryActionableDiscoveryResets = new Set(); // tabIds that used their one discovery reset since meaningful progress
     this.lastAutoScreenshotTs = new Map(); // tabId -> ms — defensive debounce
+    // tabId -> { toolName, streak }. Burst state must not leak across tabs or
+    // be consumed by read-only preflight checks.
+    this.autoScreenshotBursts = new Map();
     this.lastSeenAdapter = new Map(); // tabId -> adapter name from last enrichment
     this.pendingAdapterMatchTraces = new Map(); // tabId -> Map(adapter@revision -> content-free match metadata)
     this.adapterMatchTraceKeys = new Map(); // runId -> Map(adapter@revision -> OR-merged match metadata)
@@ -9131,24 +9134,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && opts.turnCaptures >= this.maxScreenshotsPerTurn) {
       return false;
     }
-    // Repetition-aware budget. A burst of the SAME action (invite N people,
-    // like N posts, click through a list) barely moves the page between steps,
-    // yet the default `state_change` mode paid an image plus a full vision LLM
-    // call for every one of them — the largest avoidable token and latency cost
-    // in a run. Capture the first action of a burst, then only every 4th, so a
-    // long burst still gets periodic visual evidence. A different action resets
-    // the burst, because that usually does change what is on screen.
-    //
-    // Deliberately not time-based: consecutive agent steps are seconds apart
-    // because each contains an LLM round trip, so an idle-gap throttle would
-    // never engage.
-    if (this._autoScreenshotLastTool !== toolName) {
-      this._autoScreenshotLastTool = toolName;
-      this._autoScreenshotSameToolStreak = 1;
-      return true;
-    }
-    this._autoScreenshotSameToolStreak = (Number(this._autoScreenshotSameToolStreak) || 1) + 1;
-    return this._autoScreenshotSameToolStreak % 4 === 1;
+    return true;
+  }
+
+  // Advance the burst only after a successful post-dispatch capture request.
+  // _shouldAutoScreenshot is used by preflight, so it must remain pure.
+  _advanceAutoScreenshotBurst(tabId, toolName) {
+    if (this.autoScreenshot === 'navigation') return true;
+    const normalizedTool = String(toolName || '');
+    if (!normalizedTool) return true;
+    const prior = this.autoScreenshotBursts.get(tabId);
+    const streak = prior?.toolName === normalizedTool ? prior.streak + 1 : 1;
+    this.autoScreenshotBursts.set(tabId, { toolName: normalizedTool, streak });
+    return streak === 1 || streak % 4 === 1;
   }
 
   /**
@@ -11598,6 +11596,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _executeToolBatchInner(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText, allowedToolNames, step, runOptions, toolSchemas, cancellationState) {
     let didStateChange = false;
+    let autoScreenshotToolName = '';
     const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true;
     const apiMutationsAllowedForRun = () =>
       !apiMutationsDeniedForRun && this.isApiMutationsAllowed(tabId);
@@ -13572,7 +13571,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // The interruption helper already emitted the queued synthetic results
         // and navigation notice. Continue through the shared post-batch path so
         // state_change/every_step auto-screenshots still reach the fresh turn.
-        if (this._shouldAutoScreenshot(fnName) && !toolResult?.error) didStateChange = true;
+        if (this._shouldAutoScreenshot(fnName) && !toolResult?.error) {
+          didStateChange = true;
+          autoScreenshotToolName = fnName;
+        }
         navNotices.length = 0;
         break;
       }
@@ -13622,6 +13624,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       if (this._shouldAutoScreenshot(fnName) && !toolResult?.error) {
         didStateChange = true;
+        autoScreenshotToolName = fnName;
       }
     }
 
@@ -13632,12 +13635,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Auto-screenshot once per batch, debounced 500ms. Capture if either
     // the main provider supports images, or a dedicated vision model is
     // configured to describe them.
+    const captureAfterBatch = didStateChange
+      && this._advanceAutoScreenshotBurst(tabId, autoScreenshotToolName);
     const visionRoute = await this._resolveVisionRoute(tabId, provider);
-    if (didStateChange && !visionRoute.provider && visionRoute.visionStatus) {
+    if (captureAfterBatch && !visionRoute.provider && visionRoute.visionStatus) {
       this._recordVisionRouteTrace(tabId, visionRoute, null, 'auto_screenshot');
       this._emitVisionUnavailableNotice(tabId, visionRoute, onUpdate, 'Automatic screenshot');
     }
-    if (didStateChange && visionRoute.provider) {
+    if (captureAfterBatch && visionRoute.provider) {
       const lastTs = this.lastAutoScreenshotTs.get(tabId) || 0;
       if (Date.now() - lastTs >= 500) {
         await new Promise(r => setTimeout(r, 250));
@@ -23372,35 +23377,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return null;
     }
 
-    // A send-labelled control on a page that exposes NO recipient identity at
-    // all is a contact/feedback form, not a message with an addressee to
-    // protect — the recipient guard has nothing to verify there, and blocking
-    // it would loop the agent on a page that cannot ever answer. Known
-    // adapters keep their stricter behaviour; on generic surfaces we fail open
-    // and let the separate submit-confirmation gate govern the submission.
-    if (probe?.success === true
-        && probe?.conclusive === true
-        && probe?.messageSend === true
-        && observedIdentities.length === 0
-        && policy?.adapterName === 'generic-messaging') {
-      return null;
-    }
-
-    // Unclassifiable actions pass through.
-    //
-    // A recipient guard exists to stop a mis-addressed MESSAGE — it must never
-    // veto an action the classifier could not place. Blocking these produced
-    // "could not conclusively resolve the target control and active composer"
-    // on pages that were perfectly usable, made the agent give up and report a
-    // blocker, and forced the user to re-confirm forever. Only a CONFIDENT send
-    // classification reaches the recipient verification below; everything the
-    // probe could not resolve is left to the normal dispatch path, which
-    // enforces its own target resolution, permission gate, and submit
-    // confirmation.
-    if (probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true) {
-      return null;
-    }
-
     // Retain what the page actually showed only when the plan already permits
     // messaging and has pre-existing messaging authorization. The block below
     // tells the model to ask the user who the message is for, and that answer
@@ -25958,6 +25934,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     this._continuationResponseLanguagePolicies.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.lastAutoScreenshotTs.delete(tabId);
+    this.autoScreenshotBursts.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
     this.toolbarAuditBudgetNotified.delete(tabId);
@@ -41725,6 +41702,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     this.pendingVisionSubCallTraces.delete(tabId);
     this.visionStatusNotices.delete(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
+    this.autoScreenshotBursts.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
     this.toolbarAuditBudgetNotified.delete(tabId);
@@ -43132,6 +43110,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     this.pendingVisionSubCallTraces.delete(tabId);
     this.visionStatusNotices.delete(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
+    this.autoScreenshotBursts.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
     this.toolbarAuditBudgetNotified.delete(tabId);

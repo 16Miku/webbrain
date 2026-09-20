@@ -18187,28 +18187,19 @@ export function getFullPageCapturePolicy(url) {
   }
 }
 
-/**
- * Messaging / webmail surfaces that have no first-party adapter but still get
- * the same recipient verification and confirm-then-send flow. Matched against
- * `hostname + pathname`, so it covers both known providers and generic
- * messaging routes on any site (/messages, /chat, /dm, /compose, /inbox, ...).
- */
+// Generic mail routes may legitimately show a To/Cc/Bcc set. Generic chat
+// routes must resolve to one visible conversation identity before dispatch.
 const GENERIC_MESSAGING_SURFACE_RE = new RegExp(
   '(?:^|\\.)(?:mail|webmail|outlook|hotmail|yahoo|proton|zoho|fastmail|icloud|gmx|tutanota|roundcube|horde|zimbra)\\b'
   + '|(?:^|\\.)(?:whatsapp|telegram|discord|slack|messenger|wechat|signal|skype|teams|element|mattermost)\\.'
-  + '|/(?:mail|messages?|chats?|dm|direct|inbox|compose|conversations?)(?:/|$)',
+  + '|/(?:mail|messag(?:e|es|ing)|chats?|dm|direct|compose|conversations?)(?:/|$)',
   'i',
 );
-// Mail-like surfaces carry a To/Cc/Bcc set; chat-like surfaces address one
-// conversation. Only the verification shape differs — both get the same
-// confirm-then-send flow.
 const GENERIC_MESSAGING_MAIL_LIKE_RE = new RegExp(
   '(?:^|\\.)(?:mail|webmail|outlook|hotmail|yahoo|proton|zoho|fastmail|icloud|gmx|tutanota|roundcube|horde|zimbra)\\b'
-  + '|/(?:mail|compose|inbox)(?:/|$)',
+  + '|/(?:mail|compose)(?:/|$)',
   'i',
 );
-
-
 
 /**
  * Return the machine-readable recipient-safety policy for a messaging page.
@@ -18224,14 +18215,6 @@ export function getMessageRecipientGuardPolicy(url) {
     enabled = false;
   }
   if (!enabled) {
-    // Any page on the web may host a messaging or mail surface. The recipient
-    // guard is therefore generic-first: arm it everywhere and let the
-    // content-side recipient extraction decide whether this page is actually
-    // sending something. If it finds no address and no conversation header,
-    // nothing is a send and no action is blocked; when it does find one, the
-    // same verify → ask → authorize flow used by Gmail applies. These entries
-    // only pick the verification shape (single conversation identity vs a
-    // To/Cc/Bcc set).
     let mailLike = false;
     let chatLike = false;
     try {
@@ -18239,14 +18222,12 @@ export function getMessageRecipientGuardPolicy(url) {
       const hostPath = `${parsed.hostname}${parsed.pathname}`;
       mailLike = GENERIC_MESSAGING_MAIL_LIKE_RE.test(hostPath);
       chatLike = !mailLike && GENERIC_MESSAGING_SURFACE_RE.test(hostPath);
-    } catch {
-      mailLike = false;
-      chatLike = false;
-    }
+    } catch {}
+    if (!mailLike && !chatLike) return null;
     return {
-      adapterName: adapter?.name || 'generic-messaging',
+      adapterName: 'generic-messaging',
       verifyActiveRecipient: true,
-      ...(mailLike || chatLike ? { supportsRecipientSets: true } : {}),
+      ...(mailLike ? { supportsRecipientSets: true } : {}),
     };
   }
   return {

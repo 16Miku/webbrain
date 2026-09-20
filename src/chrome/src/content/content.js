@@ -1390,12 +1390,14 @@
   // (including every shadow host) and reads innerText per match. clickElement,
   // the recipient preflight, and every retry all call it. Cache the result and
   // reuse it until the DOM actually changes.
-  const _domRevision = { value: 0, observer: null };
-  function _ensureDomRevisionObserver() {
-    if (_domRevision.observer || typeof MutationObserver === 'undefined') return;
+  const _domRevision = { value: 0, observer: null, observedRoots: new WeakSet() };
+  function _observeDomRevisionRoot(root) {
+    if (!root || _domRevision.observedRoots.has(root) || typeof MutationObserver === 'undefined') return;
     try {
-      _domRevision.observer = new MutationObserver(() => { _domRevision.value += 1; });
-      _domRevision.observer.observe(document, {
+      if (!_domRevision.observer) {
+        _domRevision.observer = new MutationObserver(() => { _domRevision.value += 1; });
+      }
+      _domRevision.observer.observe(root, {
         childList: true,
         subtree: true,
         attributes: true,
@@ -1407,9 +1409,15 @@
           'class', 'style', 'role', 'tabindex',
         ],
       });
+      _domRevision.observedRoots.add(root);
     } catch {
-      _domRevision.observer = null;
+      // Some roots cannot be observed. The uncached caller still retains the
+      // original click behaviour; do not prevent other roots from registering.
     }
+  }
+
+  function _ensureDomRevisionObserver() {
+    _observeDomRevisionRoot(document);
   }
 
   const _textCandidateCache = new WeakMap();
@@ -1432,6 +1440,7 @@
     // labels across roots, without searching outside the selected modal.
     const candidates = [];
     const visit = (root) => {
+      _observeDomRevisionRoot(root);
       candidates.push(...root.querySelectorAll(selectors));
       if (root.shadowRoot) visit(root.shadowRoot);
       for (const host of root.querySelectorAll('*')) {
@@ -1440,11 +1449,10 @@
     };
     visit(cacheScope);
     const out = [];
-    const seen = new Set();
     for (const e of candidates) {
       if (!_hasVisibleBox(e)) continue;
       const text = _siteInteractionText(e).toLowerCase();
-      if (text && !seen.has(`${text}\u0000${out.length}`)) out.push({ e, txt: text });
+      if (text) out.push({ e, txt: text });
       // A control's aria-label / title / placeholder often names it far better
       // than its visible glyphs — icon-only buttons and combobox-style fields
       // ("Search for contacts") are unreachable by visible text alone. Offer
@@ -5165,7 +5173,8 @@
       ).replace(/\s+/g, ' ').trim();
       if (label && _COMPOSER_UTILITY_LABEL_RE.test(label)) return true;
       // Formatting toolbars and pressed toggles are structural non-sends.
-      if (el.closest?.('[role="toolbar"],[aria-label*="formatting" i],[aria-label*="format" i]')) return true;
+      const formattingScope = el.closest?.('[role="toolbar"],[aria-label*="formatting" i],[aria-label*="format" i]');
+      if (formattingScope && formattingScope !== el) return true;
       if (el.hasAttribute?.('aria-pressed')) return true;
       return false;
     } catch {
@@ -5855,32 +5864,6 @@
         const verticalGap = Math.max(0, composerRect.top - controlRect.bottom, controlRect.top - composerRect.bottom);
         messageSend = sameForm || (horizontalGap <= 240 && verticalGap <= 120);
         if (!messageSend) {
-          // The control is geometrically far from the composer and not in the
-          // same form, so clicking it cannot commit the message. Geometry alone
-          // is enough evidence — but only after also ruling out a send-labelled
-          // control and anything inside the app's messaging surface, both of
-          // which can commit without sitting near the composer. That second
-          // check is what makes far-away controls self-healing instead of
-          // being blocked as "inconclusive" and retried in a loop.
-          const farLabel = compact(
-            control.getAttribute?.('aria-label')
-            || control.getAttribute?.('title')
-            || control.getAttribute?.('data-tooltip')
-            || control.value
-            || control.innerText
-            || control.textContent,
-            120,
-          );
-          if (!_hasMessageCommitName(farLabel) && !_inMessagingSurface(control)) {
-            return {
-              success: true,
-              messageSend: false,
-              conclusive: true,
-              nonMessagingTarget: true,
-              reasonCode: 'non_messaging_target',
-              identityCandidates: [],
-            };
-          }
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
       }
@@ -6220,6 +6203,8 @@
       // depending on one vendor's markup. This is what makes confirm-then-send
       // work globally rather than only on Gmail.
       if (observedRecipientCandidates.length === 0) {
+        const genericMailRecipientMode = params.adapterName === 'generic-messaging'
+          && params.supportsRecipientSets === true;
         const RECIPIENT_FIELD_RE = new RegExp(
           '(?:^|[^\\p{L}])(?:to|to\\s+recipients?|recipients?|send\\s+to|email|e-?mail(?:\\s+address)?'
           + '|destinatario|destinataria|destinataire|para|aan|kime|do|til|komu|\\u0644\\u0625\\u0649'
@@ -6228,8 +6213,8 @@
         );
         const fieldLooksLikeRecipient = (el) => {
           try {
-            if (/^email$/i.test(String(el.getAttribute?.('type') || ''))) return true;
-            if (/^email$/i.test(String(el.getAttribute?.('autocomplete') || ''))) return true;
+            if (/^email$/i.test(String(el.getAttribute?.('type') || ''))) return genericMailRecipientMode;
+            if (/^email$/i.test(String(el.getAttribute?.('autocomplete') || ''))) return genericMailRecipientMode;
             const haystack = [
               el.getAttribute?.('name'),
               el.getAttribute?.('aria-label'),
@@ -6290,6 +6275,8 @@
             '[email],[data-email],[data-hovercard-id],a[href^="mailto:" i],input[type="email"]',
           )).slice(0, 40)) {
             if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
+            if (!genericMailRecipientMode
+                && /^email$/i.test(String(el.getAttribute?.('type') || ''))) continue;
             const mailto = String(el.getAttribute?.('href') || '')
               .replace(/^mailto:/i, '').split('?')[0];
             const address = [

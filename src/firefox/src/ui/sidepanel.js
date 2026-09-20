@@ -1402,6 +1402,12 @@ function playCompletionSound() {
   } catch { /* ignore */ }
 }
 
+// A clarification or permission card needs the same attention cue as a
+// completed run. It shares the user's existing notification-sound preference.
+function playClarifySound() {
+  playCompletionSound();
+}
+
 function triggerCompletionConfetti() {
   if (!completionConfettiEnabled) return;
   if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return;
@@ -9590,6 +9596,7 @@ function workflowHealingTargetLabel(target) {
 
 function renderClarifyCard(data) {
   hideActivity();
+  playClarifySound();
   const tabId = data?.scheduledTabId ?? data?.tabId ?? currentTabId;
   if (tabId == null) return;
   const scheduledJobId = data?.scheduledJobId ? String(data.scheduledJobId) : '';

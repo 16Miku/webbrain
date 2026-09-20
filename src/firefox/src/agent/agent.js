@@ -902,6 +902,9 @@ export class Agent extends LoopDetector {
     // default — loaded from browser.storage.local in background.js.
     this.screenshotRedaction = false;
     this.lastAutoScreenshotTs = new Map();
+    // tabId -> { toolName, streak } for post-dispatch screenshot throttling.
+    // It is deliberately independent per tab and reset for every run.
+    this.autoScreenshotBursts = new Map();
     this.lastSeenAdapter = new Map();
     this.pendingAdapterMatchTraces = new Map(); // tabId -> Map(adapter@revision -> content-free match metadata)
     this.adapterMatchTraceKeys = new Map(); // runId -> Map(adapter@revision -> OR-merged match metadata)
@@ -8672,13 +8675,35 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { imageBlockCount, documentBlockCount };
   }
 
-  _shouldAutoScreenshot(toolName) {
+  _shouldAutoScreenshot(toolName, opts = {}) {
     const mode = this.autoScreenshot;
     if (mode === 'off' || !mode) return false;
-    if (mode === 'every_step') return true;
-    if (mode === 'state_change') return Agent.STATE_CHANGE_TOOLS.has(toolName);
-    if (mode === 'navigation') return Agent.NAV_TOOLS.has(toolName);
-    return false;
+    if (opts.domEvidenceProven === true) return false;
+    const isStateChange = Agent.STATE_CHANGE_TOOLS.has(toolName);
+    const eligible = mode === 'every_step'
+      || (mode === 'state_change' && isStateChange)
+      || (mode === 'navigation' && Agent.NAV_TOOLS.has(toolName));
+    if (!eligible) return false;
+    if (mode === 'navigation') return true;
+    if (Number.isFinite(opts.turnCaptures) && Number.isFinite(this.maxScreenshotsPerTurn)
+        && this.maxScreenshotsPerTurn > 0
+        && opts.turnCaptures >= this.maxScreenshotsPerTurn) {
+      return false;
+    }
+    return true;
+  }
+
+  // Advance only after a successful action batch has requested a screenshot.
+  // _shouldAutoScreenshot is also used by preflight, so it must remain a pure
+  // predicate and cannot consume a capture slot or burst position.
+  _advanceAutoScreenshotBurst(tabId, toolName) {
+    if (this.autoScreenshot === 'navigation') return true;
+    const normalizedTool = String(toolName || '');
+    if (!normalizedTool) return true;
+    const prior = this.autoScreenshotBursts.get(tabId);
+    const streak = prior?.toolName === normalizedTool ? prior.streak + 1 : 1;
+    this.autoScreenshotBursts.set(tabId, { toolName: normalizedTool, streak });
+    return streak === 1 || streak % 4 === 1;
   }
 
   async _currentUrl(tabId) {
@@ -10180,6 +10205,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _executeToolBatchInner(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText, allowedToolNames, step, runOptions, toolSchemas, cancellationState) {
     let didStateChange = false;
+    let autoScreenshotToolName = '';
     const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true;
     const apiMutationsAllowedForRun = () =>
       !apiMutationsDeniedForRun && this.isApiMutationsAllowed(tabId);
@@ -11984,7 +12010,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // The interruption helper already emitted the queued synthetic results
         // and navigation notice. Continue through the shared post-batch path so
         // state_change/every_step auto-screenshots still reach the fresh turn.
-        if (this._shouldAutoScreenshot(fnName) && !toolResult?.error) didStateChange = true;
+        if (this._shouldAutoScreenshot(fnName) && !toolResult?.error) {
+          didStateChange = true;
+          autoScreenshotToolName = fnName;
+        }
         navNotices.length = 0;
         break;
       }
@@ -12032,6 +12061,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (this._shouldAutoScreenshot(fnName) && !toolResult?.error) {
         didStateChange = true;
+        autoScreenshotToolName = fnName;
       }
     }
 
@@ -12040,8 +12070,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Auto-screenshot after state change. Capture if either the main
     // provider supports images, or a dedicated vision model is configured
     // to describe them.
+    const captureAfterBatch = didStateChange
+      && this._advanceAutoScreenshotBurst(tabId, autoScreenshotToolName);
     const visionRoute = await this._resolveVisionRoute(tabId, provider);
-    if (didStateChange && visionRoute.provider) {
+    if (captureAfterBatch && visionRoute.provider) {
       const lastTs = this.lastAutoScreenshotTs.get(tabId) || 0;
       if (Date.now() - lastTs >= 500) {
         await new Promise(r => setTimeout(r, 250));
@@ -21019,12 +21051,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._resolveTwitterNamedMessagingTarget(target, probe) : null;
     if (resolvedTwitterTarget) target = resolvedTwitterTarget;
     const messageBodyBaselineCount = Number(probe?.messageBodyBaselineCount);
+    const targetMatchesObserved = messageTargetMatchesObservedIdentities(
+      target,
+      this._messageRecipientCandidates(probe),
+    );
+    const observedIdentities = this._messageRecipientCandidates(probe)
+      .map(item => normalizeRecipientIdentity(item?.identity || item))
+      .filter(Boolean);
+    const approvedRecipients = Array.isArray(guard?.approvedRecipients) ? guard.approvedRecipients : [];
+    const approvedByUser = guard?.messageRecipientApprovedAll === true
+      || (observedIdentities.length > 0
+        && observedIdentities.every(identity => approvedRecipients.includes(identity)));
     const verified = probe?.success === true
       && probe.messageSend === true
       && !!this._workflowMessageBody(probe?.messageBody)
       && Number.isInteger(messageBodyBaselineCount)
       && messageBodyBaselineCount >= 0
-      && messageTargetMatchesObservedIdentities(target, this._messageRecipientCandidates(probe));
+      && (targetMatchesObserved || approvedByUser);
     if (verified) {
       const binding = probe?.messageRecipientDispatchBinding;
       if (!binding?.token) {
@@ -21049,6 +21092,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (probe.twitterEmptyConversationBaseline === true) {
             executionContext.messageRecipientTwitterEmptyConversationBaseline = true;
           }
+        }
+        if (!targetMatchesObserved && approvedByUser && observedIdentities.length > 0) {
+          const approvedTarget = normalizeMessageTarget({
+            target_kind: 'named',
+            recipients: this._messageRecipientCandidates(probe).map(item => ({
+              identity: item?.identity || item,
+              role: item?.role || 'to',
+            })),
+          });
+          if (approvedTarget && guard) guard.messaging = approvedTarget;
         }
         if (probe.composerSubjectAvailable === true) {
           executionContext.messageRecipientSubject = this._workflowMetadataValue(probe.composerSubject);
@@ -21206,11 +21259,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const normalizedAnswer = normalizeRecipientAnswer(answer);
     if (!normalizedAnswer) return false;
-    if (!answerNamesAllObservedRecipients(normalizedAnswer, observed)) return false;
-    const resolvedRecipients = resolveClarifiedRecipients(observed, guard.messaging, clarifyContext, answer);
+    const allowAllSends = /(?:^|[^\p{L}])(?:all|everything|any|every|allow\s+all|send\s+all)(?:[^\p{L}]|$)/iu
+      .test(normalizedAnswer);
+    if (!allowAllSends && !answerNamesAllObservedRecipients(normalizedAnswer, observed)) return false;
+    const resolvedRecipients = allowAllSends
+      ? observed
+        .map(item => ({ identity: item?.identity || item, role: item?.role || 'to' }))
+        .filter(recipient => recipient.identity)
+      : resolveClarifiedRecipients(observed, guard.messaging, clarifyContext, answer);
     const target = normalizeMessageTarget({ target_kind: 'named', recipients: resolvedRecipients });
     if (!target) return false;
     guard.messaging = target;
+    const approved = Array.isArray(guard.approvedRecipients) ? guard.approvedRecipients.slice() : [];
+    for (const recipient of target.recipients || []) {
+      const identity = normalizeRecipientIdentity(recipient?.identity || recipient);
+      if (identity && !approved.includes(identity)) approved.push(identity);
+    }
+    guard.approvedRecipients = approved;
+    if (allowAllSends) guard.messageRecipientApprovedAll = true;
     return true;
   }
 
@@ -24394,6 +24460,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._standaloneChatRunTabs.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.lastAutoScreenshotTs.delete(tabId);
+    this.autoScreenshotBursts.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
     this.toolbarAuditBudgetNotified.delete(tabId);
@@ -34019,6 +34086,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     try {
       let response = await dispatchContentAction();
+      if (response === undefined || response === null) {
+        // An orphaned content script can still receive the message but be
+        // unable to reply after an extension reload or update. Reinject the
+        // current bundle once so its generation-aware startup can replace the
+        // stale copy, then require a definite response before continuing.
+        try {
+          await runContentActionStage(() => this._injectCoreContentScripts(tabId));
+          response = await dispatchContentAction();
+        } catch (eInj) {
+          if (eInj?.code === 'content_action_timeout') throw eInj;
+          response = undefined;
+        }
+        if (response === undefined || response === null) {
+          return this._withCoordinateReconciliation({
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            retryable: true,
+            staleContentScript: true,
+            error: `${name} received no answer from the page. The content script may be stale for this tab (reload the tab, or toggle the extension off/on) or the page blocked script injection. Re-observe the page before retrying.`,
+          }, coordinateDiagnostic);
+        }
+      }
       const deadlineResult = provenNoDispatchDeadline(response);
       if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
       if (name === 'click') {
@@ -34546,6 +34636,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.pendingVisionRouteTraces.delete(tabId);
     this.pendingVisionSubCallTraces.delete(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
+    this.autoScreenshotBursts.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
     this.toolbarAuditBudgetNotified.delete(tabId);
@@ -35782,6 +35873,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.pendingVisionRouteTraces.delete(tabId);
     this.pendingVisionSubCallTraces.delete(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
+    this.autoScreenshotBursts.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
     this.toolbarAuditBudgetNotified.delete(tabId);
