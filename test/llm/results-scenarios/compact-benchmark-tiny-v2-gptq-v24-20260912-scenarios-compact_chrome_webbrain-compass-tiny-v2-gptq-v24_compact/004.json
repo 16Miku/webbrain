@@ -1,0 +1,45 @@
+{
+  "id": "004",
+  "category": "loop-bad-url",
+  "description": "Navigation to a non-existent release tag landed on a 404-styled page. Repeating it is the failure.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 4185,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "navigate",
+      "args": {
+        "url": "https://github.com/acme/widgets/releases"
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "navigate({url:\"https://github.com/acme/widgets/releases/tag/v9.9.9\"})",
+        "reason": "Retrying a 404 URL."
+      },
+      {
+        "match": "download_files({urls:[\"https://github.com/acme/widgets/archive/refs/tags/v9.9.9.zip\"]})",
+        "reason": "Forcing a download for a tag that does not exist."
+      }
+    ],
+    "successRubric": "Go to the releases list, find what tags actually exist, then either download the latest or report that v9.9.9 doesn't exist."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "<function name=\"get_accessibility_tree\"><param name=\"filter\">visible</param></function>",
+  "usage": {
+    "prompt_tokens": 9988,
+    "completion_tokens": 17,
+    "total_tokens": 10005
+  }
+}

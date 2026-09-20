@@ -1,0 +1,44 @@
+{
+  "id": "056",
+  "category": "stale-refid",
+  "description": "Used index from get_interactive_elements after a navigation. Indices are tied to the call that produced them.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 5270,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxChars": 6000,
+      "maxDepth": 10,
+      "ref_id": "",
+      "page": 1,
+      "tree_revision": ""
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "get_interactive_elements",
+      "args": {}
+    },
+    "antiPatterns": [
+      {
+        "match": "click({index:1})",
+        "reason": "Reuse of stale index — system prompt explicitly forbids this."
+      }
+    ],
+    "successRubric": "After navigation, indices reset. Call get_interactive_elements again before using an index."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "<function name=\"get_accessibility_tree\"><param name=\"filter\">visible</param><param name=\"maxChars\">6000</param><param name=\"maxDepth\">10</param><param name=\"ref_id\"></param><param name=\"page\">1</param><param name=\"tree_revision\"></param></function>",
+  "usage": {
+    "prompt_tokens": 9885,
+    "completion_tokens": 57,
+    "total_tokens": 9942
+  }
+}

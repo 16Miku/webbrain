@@ -1,0 +1,28 @@
+{
+  "id": "065",
+  "user": "take a screenshot",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 5420,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t take a screenshot from the current page because the available Compact tools don’t include a screenshot tool. Please use `/screenshot` or `/screenshot --full-page` in the browser instead."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t take a screenshot from the current page because the available Compact tools don’t include a screenshot tool. Please use `/screenshot` or `/screenshot --full-page` in the browser instead.</param></function>",
+  "usage": {
+    "prompt_tokens": 9723,
+    "completion_tokens": 63,
+    "total_tokens": 9786
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

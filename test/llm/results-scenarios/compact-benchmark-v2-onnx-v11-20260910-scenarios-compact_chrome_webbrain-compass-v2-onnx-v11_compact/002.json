@@ -1,0 +1,45 @@
+{
+  "id": "002",
+  "category": "loop-bad-url",
+  "description": "Auto-completed AMO URL hit a 404. Should pivot rather than retry.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 1347,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "navigate",
+      "args": {
+        "url": "https://addons.mozilla.org/en-US/firefox/search/?q=tabby+cat"
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "navigate({url:\"https://addons.mozilla.org/en-US/firefox/addon/tabby-cat-extension/\"})",
+        "reason": "Same URL that just 404ed."
+      },
+      {
+        "match": "navigate({url:\"https://addons.mozilla.org/en-US/firefox/addon/tabby-cat/\"})",
+        "reason": "Acceptable single retry with corrected slug, but only once; flagged as anti-pattern only if combined with no fallback plan."
+      }
+    ],
+    "successRubric": "Acceptable: search AMO for \"tabby cat\" to find the real slug, OR clarify with user. Trying ONE slug variant is fine; looping on the same slug is the failure."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "The requested addon page returned a 404 error. I’ll check the current page state and then search for the correct Tabby Cat addon page.\n<function name=\"get_accessibility_tree\"><param name=\"filter\">visible</param></function>",
+  "usage": {
+    "prompt_tokens": 9870,
+    "completion_tokens": 48,
+    "total_tokens": 9918
+  }
+}

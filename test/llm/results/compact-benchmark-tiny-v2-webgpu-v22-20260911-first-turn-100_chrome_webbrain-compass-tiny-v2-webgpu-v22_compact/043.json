@@ -1,0 +1,30 @@
+{
+  "id": "043",
+  "user": "open a pull request",
+  "mode": "act",
+  "tab": {
+    "url": "https://github.com/esokullu/webbrain",
+    "title": "esokullu/webbrain — GitHub"
+  },
+  "latencyMs": 9876,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxChars": 6000,
+      "maxDepth": 10,
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"get_accessibility_tree\"><param name=\"filter\">visible</param><param name=\"maxChars\">6000</param><param name=\"maxDepth\">10</param><param name=\"page\">1</param></function>",
+  "usage": {
+    "prompt_tokens": 10299,
+    "completion_tokens": 42,
+    "total_tokens": 10341
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

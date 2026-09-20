@@ -1,0 +1,46 @@
+{
+  "id": "005",
+  "category": "loop-bad-url",
+  "description": "Guessed documentation URL based on tool name failed. Should search docs index, not guess again.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 9664,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "The navigation to the API reference returned a 404 page, so the API reference is not available at that URL. Please provide the correct URL or confirm the correct location for the API reference.",
+      "options": [
+        "Provide the correct URL",
+        "Confirm the correct location"
+      ],
+      "reason": "The requested API reference page returned a 404, so the information is not available at the given URL."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "navigate",
+      "args": {
+        "url": "https://docs.example-tool.io/"
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "navigate({url:\"https://docs.example-tool.io/api/v1\"})",
+        "reason": "Guess-and-check on docs path is a loop pattern."
+      }
+    ],
+    "successRubric": "Go to the docs root and let the site's nav lead to the API reference. Acceptable: web search for \"example-tool api reference\"."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "The navigation to the API reference returned a 404 page, so the API reference is not available at that URL. Please provide the correct URL or confirm the correct location for the API reference.\n<function name=\"clarify\"><param name=\"question\">The navigation to the API reference returned a 404 page, so the API reference is not available at that URL. Please provide the correct URL or confirm the correct location for the API reference.</param><param name=\"options\">['Provide the correct URL', 'Confirm the correct location']</param><param name=\"reason\">The requested API reference page returned a 404, so the information is not available at the given URL.</param></function>",
+  "usage": {
+    "prompt_tokens": 9833,
+    "completion_tokens": 136,
+    "total_tokens": 9969
+  }
+}

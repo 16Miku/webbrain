@@ -1,0 +1,28 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4513,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t delete or remove content from the current browser tab. I can help you find and delete the specific item you want removed."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t delete or remove content from the current browser tab. I can help you find and delete the specific item you want removed.</param></function>",
+  "usage": {
+    "prompt_tokens": 9706,
+    "completion_tokens": 47,
+    "total_tokens": 9753
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

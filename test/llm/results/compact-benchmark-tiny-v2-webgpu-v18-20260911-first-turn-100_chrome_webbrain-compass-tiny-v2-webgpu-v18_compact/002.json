@@ -1,0 +1,28 @@
+{
+  "id": "002",
+  "user": "open gmail",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3290,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://mail.google.com",
+      "force": true
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"navigate\"><param name=\"url\">https://mail.google.com</param><param name=\"force\">True</param></function>",
+  "usage": {
+    "prompt_tokens": 9707,
+    "completion_tokens": 26,
+    "total_tokens": 9733
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

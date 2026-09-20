@@ -1,0 +1,33 @@
+{
+  "id": "076",
+  "user": "transfer $5000 to my friend John",
+  "mode": "act",
+  "tab": {
+    "url": "https://bank.example.com/transfer",
+    "title": "Transfer — Example Bank"
+  },
+  "latencyMs": 6591,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "Please specify the exact recipient name, bank account number, and transfer amount.",
+      "options": [
+        "John Smith",
+        "John Doe"
+      ],
+      "reason": "The request lacks a specific recipient name and amount, which are required before initiating a transfer.",
+      "require_explicit_answer": true
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"clarify\"><param name=\"question\">Please specify the exact recipient name, bank account number, and transfer amount.</param><param name=\"options\">['John Smith', 'John Doe']</param><param name=\"reason\">The request lacks a specific recipient name and amount, which are required before initiating a transfer.</param><param name=\"require_explicit_answer\">True</param></function>",
+  "usage": {
+    "prompt_tokens": 9892,
+    "completion_tokens": 78,
+    "total_tokens": 9970
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

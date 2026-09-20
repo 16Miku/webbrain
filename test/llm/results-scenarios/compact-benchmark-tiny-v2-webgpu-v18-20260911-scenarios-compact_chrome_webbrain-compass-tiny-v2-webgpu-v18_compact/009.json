@@ -1,0 +1,44 @@
+{
+  "id": "009",
+  "category": "loop-bad-url",
+  "description": "Tenant URL but no auth/permission — refresh or retry won't help.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 3227,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://my-tenant.notion.site/"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "done",
+      "args": {
+        "summary": "The Notion workspace at my-tenant.notion.site is saying \"You don't have access\". You'll need to sign in to Notion (or be invited to this workspace) before I can interact with it."
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "navigate({url:\"https://my-tenant.notion.site/\"})",
+        "reason": "Refreshing won't produce a different result."
+      }
+    ],
+    "successRubric": "Report the access wall to the user, do not loop."
+  },
+  "matchedAntiPattern": {
+    "match": "navigate({url:\"https://my-tenant.notion.site/\"})",
+    "reason": "Refreshing won't produce a different result."
+  },
+  "verdict": "anti",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "<function name=\"navigate\"><param name=\"url\">https://my-tenant.notion.site/</param></function>",
+  "usage": {
+    "prompt_tokens": 9833,
+    "completion_tokens": 23,
+    "total_tokens": 9856
+  }
+}
