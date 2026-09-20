@@ -414,6 +414,26 @@ export function registerMessageRecipientNavigationFixtures({
       assert.equal(await page.locator('textarea').inputValue(), 'Unsent draft');
     });
 
+    register(`${kind}: an aria-hidden assigned slot cannot make Send ambiguous`, async (page) => {
+      await setup(page);
+      await page.evaluate(() => {
+        document.querySelector('#chat').hidden = false;
+        const host = document.createElement('div');
+        const duplicate = document.createElement('button');
+        duplicate.id = 'slotted-hidden-send';
+        duplicate.slot = 'hidden-send';
+        duplicate.type = 'button';
+        duplicate.textContent = 'Send';
+        host.append(duplicate);
+        document.body.append(host);
+        host.attachShadow({ mode: 'open' }).innerHTML = '<slot name="hidden-send" aria-hidden="true"></slot>';
+      });
+      const result = await call(page, 'click', { text: 'Send', textMatch: 'exact' });
+      assert.equal(result.success, true, JSON.stringify(result));
+      assert.deepEqual(await page.evaluate(() => window.fixtureClicks), ['send'],
+        'the assigned hidden control must not be a click candidate');
+    });
+
     const addPostEntry = async (page, shadow = false) => page.evaluate((shadow) => {
       const host = document.createElement('section');
       host.id = 'post-entry';

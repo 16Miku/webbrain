@@ -6973,6 +6973,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
         innerText: text,
         children: [],
         parentElement: options.parentElement || null,
+        get parentNode() { return this.parentElement; },
         clientHeight: options.clientHeight || rect.height || 0,
         scrollHeight: options.scrollHeight || rect.height || 0,
         getBoundingClientRect: () => rect,
@@ -7123,6 +7124,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
         return null;
       },
     };
+    const composedParentStart = source.indexOf('  function _composedParent(');
+    const composedParentEnd = source.indexOf('\n\n  function ', composedParentStart + 1);
+    assert.ok(composedParentStart >= 0 && composedParentEnd > composedParentStart,
+      `${prefix}: composed-parent helper must be available to visibility checks`);
     const candidatesStart = source.indexOf('  function _clickTextCandidates(');
     const candidatesEnd = source.indexOf('\n\n  let _lastClickIdent', candidatesStart);
     Object.assign(context, {
@@ -7137,7 +7142,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const visibilityStart = source.indexOf('  function _hasVisibleBox(');
     const visibilityEnd = source.indexOf('\n\n  function ', visibilityStart + 1);
     const probe = vm.runInNewContext(
-      `${source.slice(visibilityStart, visibilityEnd)}; ${source.slice(candidatesStart, candidatesEnd)}; (${source.slice(start, end)})`, context,
+      `${source.slice(composedParentStart, composedParentEnd)}; ${source.slice(visibilityStart, visibilityEnd)}; ${source.slice(candidatesStart, candidatesEnd)}; (${source.slice(start, end)})`, context,
     );
     const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
     const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
