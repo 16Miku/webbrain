@@ -11,6 +11,7 @@ import {
   USER_MEMORY_STORAGE_KEY,
 } from './agent/user-memory.js';
 import { AUTO_GROUP_TABS_KEY } from './tab-group-preference.js';
+import { normalizeSettings as normalizeSafeSocialSettings, SETTINGS_KEY as SAFE_SOCIAL_SETTINGS_KEY } from './safesocial/config.js';
 import { normalizeUiScale, UI_SCALE_STORAGE_KEY } from './ui/ui-scale.js';
 
 export const CONFIG_SCHEMA = 'webbrain-config/1';
@@ -85,6 +86,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   systemOneWatchThreshold: 0.7,
   systemOneCompletionThreshold: 0.7,
   typesafeApiKey: '',
+  [SAFE_SOCIAL_SETTINGS_KEY]: normalizeSafeSocialSettings(),
 });
 
 export const CONFIG_STORAGE_KEYS = Object.freeze(Object.keys(DEFAULT_CONFIG_SETTINGS));
@@ -190,7 +192,7 @@ function validSettingValue(key, value) {
   if (STRING_KEYS.has(key)) return typeof value === 'string';
   if (ARRAY_KEYS.has(key)) return Array.isArray(value);
   if (NULLABLE_OBJECT_KEYS.has(key)) return value === null || isPlainObject(value);
-  if (key === 'providers' || key === USER_MEMORY_STORAGE_KEY) return isPlainObject(value);
+  if (key === 'providers' || key === USER_MEMORY_STORAGE_KEY || key === SAFE_SOCIAL_SETTINGS_KEY) return isPlainObject(value);
   return true;
 }
 
@@ -206,6 +208,14 @@ function normalizeSettings(source, { strict = false } = {}) {
     const value = source[key];
     if (key === UI_SCALE_STORAGE_KEY) {
       settings[key] = normalizeUiScale(value);
+      continue;
+    }
+    if (key === SAFE_SOCIAL_SETTINGS_KEY) {
+      if (!isPlainObject(value)) {
+        if (strict) throw new Error(`Invalid value for configuration setting "${key}".`);
+        continue;
+      }
+      settings[key] = normalizeSafeSocialSettings(value);
       continue;
     }
     if (!validSettingValue(key, value)) {
@@ -287,6 +297,8 @@ export function parseConfigPatchImport(json) {
     }
     settings[key] = key === UI_SCALE_STORAGE_KEY
       ? normalizeUiScale(value)
+      : key === SAFE_SOCIAL_SETTINGS_KEY
+      ? normalizeSafeSocialSettings(value)
       : key === 'providers'
       ? sanitizeProviders(value, { strict: true })
       : clone(value);

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 for (const build of ['chrome', 'firefox']) {
   const config = await import(`../src/${build}/src/safesocial/config.js`);
+  const configTransfer = await import(`../src/${build}/src/config-transfer.js`);
   const { installSafeSocialBackground } = await import(`../src/${build}/src/safesocial/background.js`);
   const { createSafeSocialHost } = await import(`../src/${build}/src/safesocial/host.js`);
   test(`${build}: opt-in defaults, score selection, strict URL boundaries and training preprocessing`, () => {
@@ -24,6 +25,33 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(config.centerCrop(512, 256, { image_size: 224, resize: 256 }), { x: 144, y: 16, size: 224 });
     const pixels = config.normalizedPixels([255, 0, 128, 255], { image_size: 1, mean: [0, .5, 0], std: [1, .5, 1] });
     assert.equal(pixels[0], 1); assert.equal(pixels[1], -1); assert.ok(Math.abs(pixels[2] - 128 / 255) < 1e-7);
+  });
+  test(`${build}: configuration transfer preserves normalized SafeSocial settings`, () => {
+    const exported = configTransfer.createConfigExport({
+      [config.SETTINGS_KEY]: {
+        enabled: true,
+        action: 'hide',
+        threshold: 2,
+        labels: { social_fomo: true, luxury_status: false },
+      },
+    });
+    assert.deepEqual(exported.settings[config.SETTINGS_KEY], config.normalizeSettings({
+      enabled: true,
+      action: 'hide',
+      threshold: 2,
+      labels: { social_fomo: true, luxury_status: false },
+    }));
+    const restored = configTransfer.parseConfigImport(JSON.stringify(exported));
+    assert.deepEqual(restored.settings[config.SETTINGS_KEY], exported.settings[config.SETTINGS_KEY]);
+    const patch = configTransfer.parseConfigPatchImport(JSON.stringify({
+      ...exported,
+      settings: { [config.SETTINGS_KEY]: { enabled: true, threshold: 0 } },
+    }));
+    assert.deepEqual(patch.settings[config.SETTINGS_KEY], config.normalizeSettings({ enabled: true, threshold: 0 }));
+    assert.throws(() => configTransfer.parseConfigImport(JSON.stringify({
+      ...exported,
+      settings: { [config.SETTINGS_KEY]: true },
+    })), /safeSocialSettings/);
   });
   function harness() {
     let settings = config.normalizeSettings();
