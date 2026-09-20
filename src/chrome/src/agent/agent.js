@@ -9101,14 +9101,54 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   /**
    * Decide whether to capture an auto-screenshot after a tool call, based on
    * the current setting and which tool ran.
+   *
+   * Cost model: every auto-screenshot is not just image bytes in the context
+   * (pruned to the last few messages) — it is also a *separate vision LLM call*
+   * to describe it. On a run of repetitive actions (invite N people, like N
+   * posts, click through a list) the default `state_change` mode therefore paid
+   * one capture + one full model round trip per action, which is the largest
+   * avoidable token and latency cost in a run.
+   *
+   * Two gates keep the informative shots and drop the redundant ones:
+   *   - `opts.domEvidenceProven`: the caller already proved the step's outcome
+   *     from the DOM, so a second, visual copy of the same fact adds nothing.
+   *   - burst throttle: keep the first capture of a burst, then skip while the
+   *     agent keeps acting inside the window. The page state a screenshot would
+   *     show barely changes between consecutive clicks.
    */
-  _shouldAutoScreenshot(toolName) {
+  _shouldAutoScreenshot(toolName, opts = {}) {
     const mode = this.autoScreenshot;
     if (mode === 'off' || !mode) return false;
-    if (mode === 'every_step') return true;
-    if (mode === 'state_change') return Agent.STATE_CHANGE_TOOLS.has(toolName);
-    if (mode === 'navigation') return Agent.NAV_TOOLS.has(toolName);
-    return false;
+    if (opts.domEvidenceProven === true) return false;
+    const isStateChange = Agent.STATE_CHANGE_TOOLS.has(toolName);
+    const eligible = mode === 'every_step'
+      || (mode === 'state_change' && isStateChange)
+      || (mode === 'navigation' && Agent.NAV_TOOLS.has(toolName));
+    if (!eligible) return false;
+    if (mode === 'navigation') return true;
+    if (Number.isFinite(opts.turnCaptures) && Number.isFinite(this.maxScreenshotsPerTurn)
+        && this.maxScreenshotsPerTurn > 0
+        && opts.turnCaptures >= this.maxScreenshotsPerTurn) {
+      return false;
+    }
+    // Repetition-aware budget. A burst of the SAME action (invite N people,
+    // like N posts, click through a list) barely moves the page between steps,
+    // yet the default `state_change` mode paid an image plus a full vision LLM
+    // call for every one of them — the largest avoidable token and latency cost
+    // in a run. Capture the first action of a burst, then only every 4th, so a
+    // long burst still gets periodic visual evidence. A different action resets
+    // the burst, because that usually does change what is on screen.
+    //
+    // Deliberately not time-based: consecutive agent steps are seconds apart
+    // because each contains an LLM round trip, so an idle-gap throttle would
+    // never engage.
+    if (this._autoScreenshotLastTool !== toolName) {
+      this._autoScreenshotLastTool = toolName;
+      this._autoScreenshotSameToolStreak = 1;
+      return true;
+    }
+    this._autoScreenshotSameToolStreak = (Number(this._autoScreenshotSameToolStreak) || 1) + 1;
+    return this._autoScreenshotSameToolStreak % 4 === 1;
   }
 
   /**
@@ -23260,12 +23300,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._resolveTwitterNamedMessagingTarget(target, probe) : null;
     if (resolvedTwitterTarget) target = resolvedTwitterTarget;
     const messageBodyBaselineCount = Number(probe?.messageBodyBaselineCount);
+    const targetMatchesObserved = messageTargetMatchesObservedIdentities(
+      target,
+      this._messageRecipientCandidates(probe),
+    );
+    // The user's OWN grant authorizes the send even when the planner's
+    // original target differs — that is the entire point of asking. A bound
+    // recipient clarification approves one address for the rest of the task,
+    // and an explicit "send all remaining emails" answer approves the task.
+    // Both only exist as the result of a real clarify answer, never model text.
+    const observedIdentities = this._messageRecipientCandidates(probe)
+      .map(item => normalizeRecipientIdentity(item?.identity || item))
+      .filter(Boolean);
+    const approvedRecipients = Array.isArray(guard?.approvedRecipients) ? guard.approvedRecipients : [];
+    const approvedByUser = guard?.messageRecipientApprovedAll === true
+      || (observedIdentities.length > 0
+        && observedIdentities.every(identity => approvedRecipients.includes(identity)));
     const verified = probe?.success === true
       && probe.messageSend === true
       && !!this._workflowMessageBody(probe?.messageBody)
       && Number.isInteger(messageBodyBaselineCount)
       && messageBodyBaselineCount >= 0
-      && messageTargetMatchesObservedIdentities(target, this._messageRecipientCandidates(probe));
+      && (targetMatchesObserved || approvedByUser);
     if (verified) {
       const binding = probe?.messageRecipientDispatchBinding;
       if (!binding?.token) {
@@ -23291,6 +23347,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             executionContext.messageRecipientTwitterEmptyConversationBaseline = true;
           }
         }
+        // The user approved this recipient even though the planner's original
+        // target did not match, so re-point the guard at what the user agreed
+        // to. Later sends in the same task then verify against the approval
+        // list instead of re-asking for the same address.
+        if (!targetMatchesObserved && approvedByUser && observedIdentities.length > 0) {
+          const approvedTarget = normalizeMessageTarget({
+            target_kind: 'named',
+            recipients: this._messageRecipientCandidates(probe).map(item => ({
+              identity: item?.identity || item,
+              role: item?.role || 'to',
+            })),
+          });
+          if (approvedTarget && guard) guard.messaging = approvedTarget;
+        }
         if (probe.composerSubjectAvailable === true) {
           executionContext.messageRecipientSubject = this._workflowMetadataValue(probe.composerSubject);
           executionContext.messageRecipientSubjectAvailable = true;
@@ -23299,6 +23369,35 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           executionContext.messageRecipientGmailComposeFlow = true;
         }
       }
+      return null;
+    }
+
+    // A send-labelled control on a page that exposes NO recipient identity at
+    // all is a contact/feedback form, not a message with an addressee to
+    // protect — the recipient guard has nothing to verify there, and blocking
+    // it would loop the agent on a page that cannot ever answer. Known
+    // adapters keep their stricter behaviour; on generic surfaces we fail open
+    // and let the separate submit-confirmation gate govern the submission.
+    if (probe?.success === true
+        && probe?.conclusive === true
+        && probe?.messageSend === true
+        && observedIdentities.length === 0
+        && policy?.adapterName === 'generic-messaging') {
+      return null;
+    }
+
+    // Unclassifiable actions pass through.
+    //
+    // A recipient guard exists to stop a mis-addressed MESSAGE — it must never
+    // veto an action the classifier could not place. Blocking these produced
+    // "could not conclusively resolve the target control and active composer"
+    // on pages that were perfectly usable, made the agent give up and report a
+    // blocker, and forced the user to re-confirm forever. Only a CONFIDENT send
+    // classification reaches the recipient verification below; everything the
+    // probe could not resolve is left to the normal dispatch path, which
+    // enforces its own target resolution, permission gate, and submit
+    // confirmation.
+    if (probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true) {
       return null;
     }
 
@@ -23334,22 +23433,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const missingLinkedInComposer = policy.adapterName === 'linkedin'
       && probe?.success === true && probe?.composerAvailable === false;
+    const inconclusive = probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true;
+    // Human-readable view of who the page actually addresses, so a mismatch
+    // block can name the exact observed recipient instead of asking the user to
+    // re-confirm blindly (which looped forever when the user had already
+    // confirmed twice: the task authorization, not the chat answer, is what
+    // the guard compares against).
+    const observedRecipientLabel = (() => {
+      try {
+        return (this._messageRecipientCandidates(probe) || [])
+          .map(item => String(item?.identity || item?.name || item || '').trim())
+          .filter(Boolean)
+          .slice(0, 3)
+          .join(', ');
+      } catch {
+        return '';
+      }
+    })();
     return {
       success: false,
       blocked: true,
       noDispatch: true,
       dispatched: false,
       messageRecipientGuard: true,
-      ...(missingLinkedInComposer ? { retryable: false } : {}),
-      reasonCode: probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
-        ? 'message_send_classification_inconclusive'
+      ...((missingLinkedInComposer || (!inconclusive && target)) ? { retryable: false } : {}),
+      reasonCode: inconclusive
+        ? (probe?.reasonCode || 'message_send_classification_inconclusive')
         : (target ? 'active_recipient_unverified' : 'authorized_recipient_missing'),
       error: missingLinkedInComposer
-        ? 'Message action blocked: no message composer is visible and this control is not a verified non-send action. Changing click targeting methods will not resolve this classification failure. Re-read the page to find a supported navigation or composer-opening control; if none is available, report the blocker instead of repeating the click.'
-        : probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
+        ? (probe?.reasonCode === 'message_commit_without_composer'
+          ? 'Message send blocked: this control commits a message (for example "Send" / "Send without a note") but no active composer or recipient could be verified. Changing click targeting methods will not help; ask the user to confirm the recipient or open the intended conversation first.'
+          : 'Message send blocked: no message composer is visible, so this send cannot be verified. Changing click targeting methods will not resolve this classification failure. Re-read the page to find a supported navigation or composer-opening control; if none is available, report the blocker instead of repeating the click.')
+        : inconclusive
         ? 'Message action blocked: WebBrain could not conclusively resolve the target control and active composer. Re-read the page and retry with an exact visible control or fresh ref_id.'
         : target
-          ? 'Message send blocked: the active conversation does not exactly match the recipient authorized by the user. Select the intended conversation, re-read its visible header, then retry the send action.'
+          ? `Message send blocked: this send would go to ${observedRecipientLabel ? `"${observedRecipientLabel}"` : 'a recipient'} which is not the recipient authorized for this task, so nothing was dispatched. Do NOT click Send again, and do not retry with different targeting.
+Ask the user to authorize it — one clarify, then act on their answer. The options must carry the address/identity text itself, because authorization binds to what the page shows and a bare "yes" cannot authorize a send. Include the multi-send option when the task sends more than one message:
+clarify({ question: "Send to ${observedRecipientLabel || '<observed address>'} instead?", options: ["${observedRecipientLabel || '<observed address>'}", "Send all remaining emails in this task without asking again", "Cancel"] })
+- If they pick the address: that recipient is authorized for the rest of this task, so retry the Send and continue normally.
+- If they pick "send all remaining": every remaining send in this task is authorized, so keep going without asking again.
+- If they pick "Cancel": stop and report that the send was not authorized.
+If the user has already named or confirmed this exact recipient, do NOT ask again — treat it as authorized, retry the Send once, and continue.`
           : (guard?.requiresSubmission === false || guard?.requiresStateChange === false || !target
             ? 'Message send blocked: the current plan does not authorize sending or submitting messages. Return the draft in chat or ask the user to authorize sending before attempting delivery.'
             : 'Message send blocked: the current task has no structured recipient authorization. Ask the user to name the recipient or explicitly authorize the currently open conversation before retrying.'),
@@ -23447,11 +23571,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const normalizedAnswer = normalizeRecipientAnswer(answer);
     if (!normalizedAnswer) return false;
-    if (!answerNamesAllObservedRecipients(normalizedAnswer, observed)) return false;
-    const resolvedRecipients = resolveClarifiedRecipients(observed, guard.messaging, clarifyContext, answer);
+    // A user may authorize the rest of the task in one answer instead of one
+    // recipient at a time (multi-email / multi-recipient runs). This is still
+    // the USER's grant: it can only arrive as a real clarify answer, never as
+    // model text, and it still requires a page-observed recipient to exist.
+    const allowAllSends = /(?:^|[^\p{L}])(?:all|everything|any|every|allow\s+all|send\s+all)(?:[^\p{L}]|$)/iu
+      .test(normalizedAnswer);
+    if (!allowAllSends && !answerNamesAllObservedRecipients(normalizedAnswer, observed)) return false;
+    const resolvedRecipients = allowAllSends
+      ? observed
+        .map(item => ({ identity: item?.identity || item, role: item?.role || 'to' }))
+        .filter(recipient => recipient.identity)
+      : resolveClarifiedRecipients(observed, guard.messaging, clarifyContext, answer);
     const target = normalizeMessageTarget({ target_kind: 'named', recipients: resolvedRecipients });
     if (!target) return false;
     guard.messaging = target;
+    // Remember the grant for the rest of this task: a multi-email run must not
+    // re-ask for an address the user already authorized, and an explicit
+    // "send all remaining" answer covers the sends that come after it.
+    const approved = Array.isArray(guard.approvedRecipients) ? guard.approvedRecipients.slice() : [];
+    for (const recipient of target.recipients || []) {
+      const identity = normalizeRecipientIdentity(recipient?.identity || recipient);
+      if (identity && !approved.includes(identity)) approved.push(identity);
+    }
+    guard.approvedRecipients = approved;
+    if (allowAllSends) guard.messageRecipientApprovedAll = true;
     return true;
   }
 
@@ -39547,6 +39691,48 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let response;
     try {
         response = await dispatchContentAction();
+        if (response === undefined || response === null) {
+          // The content script accepted the message but never answered — the
+          // classic cause is an orphaned copy left in this tab by a previous
+          // extension load (reload, update, or a moved folder): its runtime
+          // context is dead, so it receives messages but cannot respond, and
+          // it used to block the fresh install's double-injection guard.
+          // Force-inject the current content scripts (content.js now takes
+          // over via its generation counter) and retry once.
+          try {
+            if (globalThis.chrome?.scripting?.executeScript) {
+              await chrome.scripting.executeScript({
+                target: { tabId },
+                files: [
+                  'src/content/rich-text-toolbar-heuristic.js',
+                  'src/content/accessibility-tree.js',
+                  'src/content/teacher-capture.js',
+                  'src/content/chat-observation.js',
+                  'src/content/content.js',
+                  'src/content/agent-visual-indicator.js',
+                  'src/content/ollama-launch-handoff.js',
+                ],
+              });
+            }
+          } catch { /* best-effort — the resend below decides the outcome */ }
+          try {
+            await runContentActionStage(() => this._injectCoreContentScripts(tabId));
+            response = await dispatchContentAction();
+          } catch (eInj) {
+            if (eInj?.code === 'content_action_timeout') throw eInj;
+            response = undefined;
+          }
+          if (response === undefined || response === null) {
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              retryable: true,
+              staleContentScript: true,
+              error: `${name} received no answer from the page. The content script may be stale for this tab (reload the tab, or toggle the extension off/on) or the page blocked script injection. Re-observe the page before retrying.`,
+            };
+          }
+        }
         const deadlineResult = provenNoDispatchDeadline(response);
         if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
       } catch (e) {
