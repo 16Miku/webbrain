@@ -1378,6 +1378,11 @@
     :root[data-theme="light"] .btn-secondary:hover { background: rgba(89,55,25,0.06); }
     :root[data-theme="light"] .btn-sign-out:hover  { background: rgba(89,55,25,0.06); }
     :root[data-theme="light"] .info-box code       { background: rgba(89,55,25,0.08); }
+    .safesocial-labels-fieldset { border: 0; padding: 0; margin: 18px 0; min-width: 0; }
+    #safesocial-labels { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-top: 10px; }
+    #safesocial-labels .safesocial-label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
+    #safesocial-labels input { width: auto; margin: 0; flex-shrink: 0; }
+    #safesocial-status { margin-top: 12px; }
   </style>
   <link rel="stylesheet" href="apocalypse-comm.css">
   <link rel="stylesheet" href="download-tracker.css">
@@ -2055,6 +2060,49 @@
 
             <div class="info-box" style="margin-top:16px;" data-i18n-html="st.system_one.security_html"></div>
           </div>
+
+    <h3 id="safesocial-heading" class="mm-section-heading" data-i18n="st.safesocial.heading"></h3>
+    <div class="provider-card" id="safesocial-card" aria-labelledby="safesocial-heading">
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label" id="safesocial-enable-label" data-i18n="st.safesocial.enable"></div>
+          <div class="setting-desc" data-i18n="st.safesocial.desc"></div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="safesocial-enabled" aria-labelledby="safesocial-enable-label">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <p class="setting-desc" data-i18n="st.safesocial.download"></p>
+      <p class="setting-desc"><a href="https://huggingface.co/webbrain-one/safesocial-trigger-classifier-efficientnet-lite0" target="_blank" rel="noopener noreferrer" data-i18n="st.safesocial.model"></a></p>
+      <div class="field">
+        <label for="safesocial-action" data-i18n="st.safesocial.action"></label>
+        <select id="safesocial-action">
+          <option value="blur" data-i18n="st.safesocial.blur"></option>
+          <option value="hide" data-i18n="st.safesocial.hide"></option>
+          <option value="dim" data-i18n="st.safesocial.dim"></option>
+          <option value="warn" data-i18n="st.safesocial.warn"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="safesocial-threshold" data-i18n="st.safesocial.threshold"></label>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <input id="safesocial-threshold" type="range" min="50" max="99" step="1" value="95" style="flex:1;min-width:0;">
+          <output for="safesocial-threshold">95%</output>
+        </div>
+        <div class="setting-desc" data-i18n="st.safesocial.threshold_desc"></div>
+      </div>
+      <fieldset class="safesocial-labels-fieldset">
+        <legend class="setting-label" data-i18n="st.safesocial.categories"></legend>
+        <div id="safesocial-labels"></div>
+      </fieldset>
+      <p class="setting-desc" data-i18n="st.safesocial.scope"></p>
+      <div id="safesocial-status" class="setting-desc" role="status" aria-live="polite"></div>
+      <div class="btn-row" style="margin-top:12px;">
+        <button type="button" class="btn-secondary" id="safesocial-retry" hidden data-i18n="st.safesocial.retry"></button>
+        <button type="button" class="btn-secondary" id="safesocial-remove" data-i18n="st.safesocial.remove"></button>
+      </div>
+    </div>
   </section>
 
   <section class="tab-panel" data-panel="memory" role="tabpanel">
@@ -2269,5 +2317,6 @@
   <script type="module" src="apocalypse-comm.js"></script>
   <script type="module" src="download-tracker.js"></script>
   <script src="settings.js" type="module"></script>
+  <script src="safesocial-settings.js" type="module"></script>
 </body>
 </html>

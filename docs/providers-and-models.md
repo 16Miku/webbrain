@@ -6,12 +6,48 @@
 
 **Settings → Providers** selects the main model for conversation, planning and
 final replies. **Settings → Assistive Models** groups Vision (including screenshot
-limits and redaction), Speech to text, and Jev (TypeSafe). Configuring an assistive
+limits and redaction), Speech to text, Jev (TypeSafe), and SafeSocial. Configuring an assistive
 model does not replace the active provider. Jev is outside the dynamic provider
 list; its verification, fast-classification and experimental browser switches
 are independent opt-ins. See [the settings guide](https://webbrain.one/docs/settings/#multimodal)
 and [data flow](privacy-and-data-flow.md#optional-jev-typesafe-scheduled-task-verification)
 for setup and disclosure details. Existing `#multimodal` settings links still work.
+
+### SafeSocial image classifier (experimental)
+
+**Settings → Assistive Models → SafeSocial** optionally filters Instagram images
+and video posters using the local, multilabel
+[EfficientNet-Lite0 classifier](https://huggingface.co/webbrain-one/safesocial-trigger-classifier-efficientnet-lite0).
+It is off by default and does not replace the chat or screenshot vision model.
+Choose categories, an absolute score threshold (default 95%), and blur, hide,
+dim, or warning. Every filtered image has a reveal button. Videos without a
+poster and video frames are not classified in this first integration.
+
+Enabling downloads approximately 13.6 MB of model data from Hugging Face. Files
+are pinned to revision `d39182d06486b237ba33bc675b9302a206182460`, verified with
+SHA-256 and cached in this browser. JavaScript/WASM uses the existing packaged
+ONNX runtime; no remote executable code or bundled model weights are added.
+Inference runs in a dedicated CPU/WASM worker on both Chrome and Firefox.
+Images are fetched from Instagram's image CDNs without cookies and processed
+locally; they are not uploaded to Hugging Face or an inference service.
+
+Turning SafeSocial off cancels pending work, unloads the worker and restores
+filtered media. Cached weights remain until **Remove downloaded model** is
+clicked while disabled. A failed download or inference leaves media unchanged
+and displays an error; there is no mock/keyword fallback. This is an experimental
+social-comparison classifier, not a general content-safety or NSFW detector.
+Scores can be wrong. English and Turkish copy is provided, with English fallback
+for other interface languages.
+
+Validation: `npm run test:safesocial` covers configuration, URL/caller gates,
+cancellation and Chrome/Firefox parity. `npm run test:safesocial:ui` exercises
+responsive settings and media lifecycle in both browsers. Set
+`SAFESOCIAL_MODEL_DIR` to a directory containing the pinned bundle under
+`webbrain-safesocial-model.onnx` and `webbrain-safesocial-model.json` to also run
+real ONNX/WASM inference in that browser test without live network downloads.
+With the same bundle, `npm run test:safesocial:extension` checks the complete
+Chrome MV3 settings/background/offscreen path in an isolated browser profile,
+including cached reactivation and model removal.
 
 ## Provider Interface (`providers/base.js`)
 
