@@ -4823,7 +4823,7 @@ test('matches twitter.com and x.com', () => {
     assert.match(notes, /verified:false/);
     assert.match(notes, /keep the composer open/i);
     const workflow = getAdapter('https://x.com/compose/post')?.workflow;
-    assert.deepEqual(getAdapter('https://x.com/compose/post')?.jobs, ['publish-post']);
+    assert.deepEqual(getAdapter('https://x.com/compose/post')?.jobs, ['publish-post', 'send-message']);
     assert.deepEqual(validateAdapterWorkflowProfile(getAdapter('https://x.com/compose/post')), { ok: true });
     assert.equal(workflow?.jobs?.['publish-post']?.template, 'publish');
     assert.equal(workflow?.jobs?.['publish-post']?.requiresSubmission, true);
@@ -7079,8 +7079,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       _resolveInteractiveAncestor: el => el,
       safeIndexedQuerySelector: selector => ({ element: document.querySelector(selector) }),
     });
+    const visibilityStart = source.indexOf('  function _hasVisibleBox(');
+    const visibilityEnd = source.indexOf('\n\n  function ', visibilityStart + 1);
     const probe = vm.runInNewContext(
-      `${source.slice(candidatesStart, candidatesEnd)}; (${source.slice(start, end)})`, context,
+      `${source.slice(visibilityStart, visibilityEnd)}; ${source.slice(candidatesStart, candidatesEnd)}; (${source.slice(start, end)})`, context,
     );
     const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
     const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
@@ -100338,6 +100340,26 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
       { success: false, conclusive: false, matchingOutgoingMessageCount: 0 },
     )?.source, 'recipient_body_bound_gmail_compose_and_sent_confirmation',
     `${AgentClass.name}: a bound Gmail compose send required an inline Sent-body rendering`);
+
+    // A toast left from an earlier send must not hide a still-populated
+    // Gmail compose dialog. Only X's stronger new-message proof can bypass
+    // the generic open-composer heuristic.
+    const unsentComposeState = {
+      openDialogCount: 1, relevantFormCount: 1, liveRegionMessages: ['Message sent'],
+    };
+    const staleToastEvidence = agent._workflowTerminalEvidenceFromDone(
+      gmailTabId, unsentComposeState, gmailUrl,
+      { submit: composeBoundGmailSubmit, verifiedFinalSubmit: false, relevantForms: 1 },
+      { success: true, conclusive: true, composerEmpty: false,
+        strongIdentityCandidates: ['alice@example.com'], matchingOutgoingMessageCount: 0 },
+    );
+    assert.equal(staleToastEvidence?.verificationKind, 'message_sent');
+    assert.match(agent._completionPageWarning(
+      gmailTabId, 'Sent', 'success', unsentComposeState, gmailUrl, staleToastEvidence,
+    )?.key || '', /\|dialog\|1$/, `${AgentClass.name}: a stale sent toast bypassed Gmail's open dialog`);
+    assert.equal(agent._completionPageWarning(
+      gmailTabId, 'Sent', 'success', { openDialogCount: 0, relevantFormCount: 0 }, gmailUrl, staleToastEvidence,
+    ), null, `${AgentClass.name}: a completed Gmail compose was blocked`);
 
     const linkedInMessageTabId = 9005 + index;
     const linkedInMessageUrl = 'https://www.linkedin.com/messaging/thread/2-abc/';

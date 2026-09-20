@@ -52,6 +52,192 @@ export function registerMessageRecipientNavigationFixtures({
       return { agent, guard, probe };
     };
 
+    register(`${kind}: X sent DM completes with the open composer and exact outgoing delivery evidence`, async (page) => {
+      const { agent } = await setup(page);
+      const url = 'https://x.com/i/chat/123-456';
+      await page.goto(url);
+      await setupContentHtml(page, `<!doctype html><style>
+        body {margin:0} [dir=auto] {white-space:pre-wrap} #header {position:fixed;left:400px;top:20px}
+        textarea {position:fixed;left:400px;bottom:20px;width:400px;height:50px}
+        #send {position:fixed;left:820px;bottom:20px}
+        [role=log] {position:fixed;left:400px;top:100px;width:400px;height:300px;overflow:auto}
+      </style><a id="header" href="https://x.com/altryne"><div data-testid="dm-conversation-username">Alex Volkov</div></a>
+      <div role="log" data-testid="dm-message-scroller"></div>
+      <textarea data-testid="dm-composer-textarea" aria-label="Unencrypted message"></textarea>
+      <button id="send" type="button">Send</button>`, kind);
+      const body = 'Hey Alex, check out webbrain.one.\nHappy to share a demo.';
+      const params = {tool:'observe_active_conversation',adapterName:'twitter',expectedMessageBody:body};
+      const observe = () => call(page,'probe_message_recipient_guard',params);
+      const addRow = async (id, status='sent', outgoing=true, text=body) => page.evaluate(({id,status,outgoing,text})=>{
+        const row=document.createElement('div');row.dataset.testid='message-'+id;
+        row.dataset.sendStatus=status;row.className=outgoing?'justify-end':'justify-start';
+        const content=document.createElement('div');content.dataset.testid='message-text-'+id;
+        const span=document.createElement('span');span.dir='auto';span.textContent=text;
+        content.append(span);content.append('12:39 PM');row.append(content);
+        document.querySelector('[role=log]').append(row);
+      },{id,status,outgoing,text});
+      await addRow('old');
+      await addRow('hidden');
+      await page.locator('[data-testid="message-hidden"]').evaluate(el => { el.hidden = true; });
+      await addRow('already-pending', 'sending');
+      const pinned=await agent._pinActiveConversationMessagingTarget(1,{target_kind:'active_conversation',recipients:[]},url);
+      assert.equal(pinned.ok,true,JSON.stringify(pinned));
+      assert.equal(pinned.target.recipients[0].identity,'@altryne');
+      const workflow=agent._resolvePlannerSiteWorkflow(url,{
+        request_kind:'execute',site_job:null,requires_submission:true,messaging:pinned.target,
+      });
+      assert.equal(workflow?.job.id,'send-message');
+      assert.equal(agent._resolvePlannerSiteWorkflow('https://x.com/home',{
+        request_kind:'execute',requires_submission:true,messaging:pinned.target,
+      }),null);
+      const guard=agent._startPlanExecutionGuard(1,'act',{
+        requestKind:'execute',requiresStateChange:true,requiresSubmission:true,
+        messaging:pinned.target,siteWorkflow:workflow,
+      });
+      let metadataCalls = 0;
+      agent._chatWithCostAllowance = async () => {
+        metadataCalls++;
+        return { content: JSON.stringify({
+          mode: 'inactive', allowedActions: [], forbiddenActions: [], targets: [],
+          workflowFields: [{ field: 'body', value: body }], confidence: 0.99,
+        }) };
+      };
+      const startup = {
+        progressLedgerPolicy: 'disabled', taskText: 'Send the reviewed message to Alex.',
+        pageScope: url, provider: { chat: async () => ({ content: '{}' }) },
+      };
+      await agent._ensureProgressSessionForCurrentTask(1, { ...startup, provider: {} });
+      assert.notEqual(guard.workflowMetadataRequirementsResolved, true, 'missing classifier cannot resolve fields');
+      const session = await agent._ensureProgressSessionForCurrentTask(1, startup);
+      assert.equal(session.mode, 'inactive');
+      assert.equal(guard.workflowMetadataRequirementsResolved, true);
+      assert.deepEqual(guard.workflowMetadataRequirements, [{ field: 'body', value: body }]);
+      await agent._ensureProgressSessionForCurrentTask(1, startup);
+      assert.equal(metadataCalls, 1, 'resolved fields are not classified again');
+      assert.equal(await agent._messageRecipientGuardBlock(1,'click',{selector:'textarea'},url),null);
+      await page.locator('textarea').fill(body);
+      const execution={};
+      assert.equal(await agent._messageRecipientGuardBlock(1,'click',{selector:'#send'},url,execution),null);
+      assert.equal(execution.messageRecipientBodyBaselineCount,1);
+      assert.equal(execution.messageRecipientGuardRequired,true);
+      await page.evaluate(() => {
+        window.fixtureSends = 0;
+        document.querySelector('#send').addEventListener('click', () => { window.fixtureSends++; });
+      });
+      await addRow('arrived-between-probe-and-dispatch', 'sent', false);
+      const stale = await call(page, 'click', {selector:'#send', ...execution});
+      assert.equal(stale.noDispatch, true, 'the bound message baseline must survive to dispatch');
+      assert.equal(await page.evaluate(() => window.fixtureSends), 0);
+      await page.locator('[data-testid="message-arrived-between-probe-and-dispatch"]').evaluate(el => el.remove());
+      assert.equal(await agent._messageRecipientGuardBlock(1,'click',{selector:'#send'},url,execution),null);
+      const clicked = await call(page, 'click', {selector:'#send', ...execution});
+      assert.equal(clicked.success, true, JSON.stringify(clicked));
+      assert.equal(await page.evaluate(() => window.fixtureSends), 1);
+      // The actual UI uses type=button, not an HTML form submit.
+      agent._recordCompletionSubmitAttempt(1,{isSubmit:false},'click',{selector:'#send'},url,url,
+        clicked,'doc','doc',execution);
+      const submit=agent._completionSubmitStates.get(1);
+      assert.equal(submit.dispatched,true);
+      assert.equal(submit.workflowBinding.recipientBound,true);
+      assert.notEqual(submit.workflowBinding.metadataIncomplete, true);
+      assert.deepEqual(submit.workflowBinding.preDispatchMessageIds,
+        ['message-old', 'message-hidden', 'message-already-pending']);
+      submit.observedAfterSubmit=true;
+      const state={relevantFormCount:1,openDialogCount:0,liveRegionMessages:[]};
+      const evidence=probe=>agent._workflowTerminalEvidenceFromDone(1,state,url,{submit,relevantForms:1,verifiedFinalSubmit:false},probe);
+      await page.locator('textarea').fill('');
+      assert.equal(evidence(await observe()),null,'old identical sent bubble cannot satisfy this dispatch');
+      await page.locator('[data-testid="message-hidden"]').evaluate(el => { el.hidden = false; });
+      assert.equal(evidence(await observe()), null, 'revealing an old matching bubble is not delivery');
+      await page.locator('[data-testid="message-already-pending"]').evaluate(el => { el.dataset.sendStatus = 'sent'; });
+      assert.equal(evidence(await observe()), null, 'an earlier pending send is not the current send');
+      await addRow('loaded-history');
+      await page.locator('[data-testid="message-loaded-history"]').evaluate(el => el.parentElement.prepend(el));
+      assert.equal(evidence(await observe()), null, 'newly mounted older history is not delivery');
+      await addRow('incoming','sent',false);
+      await addRow('pending','sending');
+      await addRow('failed','failed');
+      await addRow('different','sent',true,'Something else');
+      assert.equal(evidence(await observe()),null,'incoming, pending, failed or different bodies cannot prove delivery');
+      assert.ok(agent._completionPageWarning(1,'Sent','success',state,url));
+      await addRow('new');
+      const probe=await observe();
+      assert.equal(probe.matchingOutgoingMessageCount,5);
+      const terminal=evidence(probe);
+      assert.equal(terminal?.verificationKind,'message_sent');
+      assert.equal(agent._completionPageWarning(1,'Sent','success',state,url,terminal),null);
+      assert.equal(evidence({...probe,composerEmpty:false}),null);
+      assert.equal(evidence({...probe,strongRecipientCandidates:[{identity:'@someoneelse',role:'to'}]}),null);
+      assert.equal(agent._workflowTerminalEvidenceFromDone(1,state,'https://x.com/i/chat/123-789',
+        {submit,relevantForms:1},probe),null,'another conversation cannot satisfy the dispatch');
+      assert.equal(evidence({...probe,matchingOutgoingMessageIds:['message-old']}),null);
+      assert.equal(evidence({...probe,existingMessageIds:['message-new']}),null, 'missing prior tail fails closed');
+      assert.equal(evidence({...probe,existingMessageIds:undefined}),null, 'incomplete observation fails closed');
+      delete submit.workflowBinding.preDispatchMessageIds;
+      assert.equal(evidence(probe),null, 'a legacy count-only binding cannot prove an X send');
+      submit.workflowBinding.preDispatchMessageIds = [];
+      assert.equal(evidence(probe)?.verificationKind, 'message_sent', 'a first message has an empty baseline');
+      await addRow('new');
+      assert.equal(evidence(await observe()),null, 'duplicate message identities fail closed');
+    });
+
+    register(`${kind}: X conversation navigation is not classified as sending a message`, async (page) => {
+      const { agent } = await setup(page);
+      await page.goto('https://x.com/i/chat/123-456');
+      await setupContentHtml(page, `<!doctype html><style>
+        a,button {display:inline-block;padding:12px} textarea {position:fixed;left:400px;bottom:20px}
+      </style><nav><a id="home" href="/home">Home</a></nav>
+      <header><button id="back" type="button" data-testid="dm-conversation-back-button">Back</button>
+      <a id="profile" href="/altryne"><span data-testid="dm-conversation-username">Alex Volkov</span></a></header>
+      <div role="log" data-testid="dm-message-scroller"><a id="message-link" href="/altryne">Message link</a></div>
+      <textarea data-testid="dm-composer-textarea">Unsent draft</textarea><button id="send">Send</button>`, kind);
+      await page.evaluate(() => {
+        window.fixtureClicks = [];
+        document.addEventListener('click', event => {
+          const el = event.target.closest('a,button');
+          if (el) { event.preventDefault(); window.fixtureClicks.push(el.id); }
+        });
+      });
+      const url = page.url();
+      const guard = (tool, args) => agent._messageRecipientGuardBlock(1, tool, args, url);
+      // No recipient authorization exists in this read-only task.
+      agent._startPlanExecutionGuard(1, 'act', {
+        requestKind: 'execute', requiresStateChange: false, requiresSubmission: false,
+      });
+      for (const [id, label] of [['profile', 'Alex Volkov'], ['back', 'Back'], ['home', 'Home']]) {
+        const ref_id = await page.locator('#' + id).evaluate(el => window.__wb_ax_ref(el));
+        for (const [tool, args] of [['click', {selector:'#'+id}], ['click', {text:label}], ['click_ax', {ref_id}]]) {
+          assert.equal(await guard(tool, args), null, JSON.stringify({id,tool,args}));
+          const clicked = await call(page, tool, args);
+          assert.equal(clicked.success, true, JSON.stringify(clicked));
+        }
+      }
+      assert.deepEqual(await page.evaluate(() => window.fixtureClicks),
+        ['profile','profile','profile','back','back','back','home','home','home']);
+      const messageLinkProbe = await call(page, 'probe_message_recipient_guard', {
+        tool:'click', args:{selector:'#message-link'}, adapterName:'twitter',
+      });
+      assert.notEqual(messageLinkProbe.navigation, true, 'message content is not trusted header navigation');
+      for (const selector of ['#send']) {
+        assert.equal((await guard('click', {selector}))?.noDispatch, true, selector);
+      }
+      await page.locator('#profile').evaluate(el => el.setAttribute('href', 'javascript:void(0)'));
+      assert.notEqual((await call(page, 'probe_message_recipient_guard', {
+        tool:'click', args:{selector:'#profile'}, adapterName:'twitter',
+      })).navigation, true, 'unsafe destinations are not trusted header navigation');
+      await page.locator('#back').evaluate(el => {
+        const form = document.createElement('form'); el.before(form); form.append(el);
+      });
+      assert.equal((await guard('click', {selector:'#back'}))?.noDispatch, true, 'form lookalike');
+      await page.evaluate(() => {
+        const modal = document.createElement('div'); modal.role = 'dialog'; modal.setAttribute('aria-modal','true');
+        modal.style.cssText = 'position:fixed;inset:0;background:white'; modal.textContent='Confirm';
+        document.body.append(modal);
+      });
+      assert.equal((await guard('click', {selector:'#home'}))?.noDispatch, true, 'blocking modal');
+      assert.equal(await page.locator('textarea').inputValue(), 'Unsent draft');
+    });
+
     const addPostEntry = async (page, shadow = false) => page.evaluate((shadow) => {
       const host = document.createElement('section');
       host.id = 'post-entry';
@@ -104,6 +290,61 @@ export function registerMessageRecipientNavigationFixtures({
           }
         }
         await page.locator('#post-entry').evaluate(el => el.remove());
+      }
+    });
+
+    register(`${kind}: LinkedIn public Post is not a private-message send`, async (page) => {
+      const { agent, guard, probe } = await setup(page);
+      for (const route of ['/feed/','/sharing/compose']) {
+        await page.evaluate(route=>history.replaceState({},'',route),route);
+        for (const modal of [true,false]) {
+          if (!modal && route === '/feed/') continue;
+          await page.evaluate(modal=>{
+            document.querySelector('main').innerHTML=`<section id="public" ${modal?'role="dialog" aria-modal="true"':''}>
+              <div role="button">Post to Anyone</div><div contenteditable="true" role="textbox">Announcement</div>
+              <button id="publish" type="button"><span>Post</span></button></section>`;
+            document.getElementById('chat').hidden=true;
+          },modal);
+          const target=await page.evaluate(()=>{
+            const span=document.querySelector('#publish span'),rect=span.getBoundingClientRect();
+            return {ref_id:window.__wb_ax_ref(span),x:rect.x+2,y:rect.y+2};
+          });
+          const elements=await call(page,'get_interactive_elements_cdp',{});
+          const index=elements.find(el=>el.text==='Post')?.index;
+          for(const [tool,args] of [['click',{text:'Post'}],['click',{index}],['click_ax',{ref_id:target.ref_id}],
+            ['click',{selector:'#publish span'}],['click',{x:target.x,y:target.y,coordinate_space:'css'}]]) {
+            const observed=await probe(tool,args);
+            assert.equal(observed.publicPost,true,JSON.stringify({route,modal,tool,args,observed}));
+            assert.equal(observed.messageSend,false);
+            assert.equal(await guard(tool,args),null);
+          }
+          // Public-composer proof cannot be borrowed by an adjacent DM, even
+          // if the DM's button is misleadingly labelled Post.
+          await page.evaluate(()=>{
+            document.querySelector('#public').removeAttribute('aria-modal');
+            document.querySelector('#public').removeAttribute('role');
+            document.getElementById('chat').hidden=false;
+            document.getElementById('send').textContent='Post';
+          });
+          assert.equal((await guard('click',{selector:'#send'}))?.noDispatch,true);
+          assert.equal(agent._planExecutionGuards.get(1)?.messaging,undefined);
+        }
+      }
+    });
+
+    register(`${kind}: LinkedIn public-post classification requires matching composer evidence`, async (page) => {
+      const {guard}=await setup(page);
+      await page.evaluate(()=>history.replaceState({},'','/sharing/compose'));
+      for(const variant of ['no-audience','two-editors','send-label','message-scope','form','hidden-audience']) {
+        await page.evaluate(variant=>{
+          document.querySelector('main').innerHTML=`<section role="dialog" aria-modal="true" ${variant==='message-scope'?'data-conversation-id="alice"':''}>
+            ${variant==='form'?'<form>':''}
+            ${variant==='no-audience'?'':`<div role="button" ${variant==='hidden-audience'?'hidden':''}>Post to Anyone</div>`}
+            <div contenteditable="true">Draft</div>${variant==='two-editors'?'<div contenteditable="true">Other</div>':''}
+            <button id="publish" type="button" ${variant==='send-label'?'aria-label="Send"':''}>Post</button>
+            ${variant==='form'?'</form>':''}</section>`;
+        },variant);
+        assert.equal((await guard('click',{selector:'#publish'}))?.noDispatch,true,variant);
       }
     });
 

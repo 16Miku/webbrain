@@ -1574,7 +1574,9 @@ export class Agent extends LoopDetector {
     // whose source contains strong submit evidence.
     const isSubmit = name === 'execute_js'
       ? this._formValidationActionHasStrongSubmitEvidence(name, args, result, detectedSubmit)
-      : !!detectedSubmit?.isSubmit
+      : (executionContext?.messageRecipientGuardRequired === true
+          && !!executionContext?.messageRecipientDispatchBinding?.token)
+        || !!detectedSubmit?.isSubmit
         || this._formValidationActionLooksSubmit(name, args, result, detectedSubmit);
     if (!isSubmit) return null;
     const before = this._normalizeUrl(beforeUrl || '');
@@ -1713,7 +1715,7 @@ export class Agent extends LoopDetector {
     const guard = this._planExecutionGuards.get(tabId);
     const siteWorkflow = guard?.siteWorkflow;
     if (!guard?.enabled || siteWorkflow?.job?.requiresSubmission !== true || !pageUrl) return null;
-    if (SOCIAL_PLATFORMS.includes(siteWorkflow.adapterName) && !guard.socialPublication?.dispatch) return null;
+    if (siteWorkflow.job.template === 'publish' && SOCIAL_PLATFORMS.includes(siteWorkflow.adapterName) && !guard.socialPublication?.dispatch) return null;
     const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
     if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
     const recipientTarget = normalizeMessageTarget(guard.messaging);
@@ -1871,6 +1873,10 @@ export class Agent extends LoopDetector {
         recipientTargets: recipientTarget.recipients.map(recipient => ({ ...recipient })),
         messageBody,
         messageBodyBaselineCount,
+        ...(siteWorkflow.adapterName === 'twitter'
+          && Array.isArray(executionContext.messageRecipientExistingMessageIds)
+          ? { preDispatchMessageIds: [...executionContext.messageRecipientExistingMessageIds] }
+          : {}),
         ...(siteWorkflow.adapterName === 'gmail'
           && executionContext?.messageRecipientGmailComposeFlow === true
           ? { gmailComposeFlow: true }
@@ -1900,7 +1906,7 @@ export class Agent extends LoopDetector {
               : []).map(item => String(item?.name || '').trim()).filter(Boolean).slice(-12),
           }
         : {}),
-      ...(guard.socialPublication?.dispatch && SOCIAL_PLATFORMS.includes(siteWorkflow.adapterName) ? {
+      ...(siteWorkflow.job.template === 'publish' && guard.socialPublication?.dispatch && SOCIAL_PLATFORMS.includes(siteWorkflow.adapterName) ? {
         socialPublication: { contractKey: guard.socialPublication.key, ...structuredClone(guard.socialPublication.dispatch) },
       } : {}),
       ...(githubFileCommit ? { githubFileCommit } : {}),
@@ -5212,17 +5218,34 @@ export class Agent extends LoopDetector {
       const sentStatusText = this._workflowTerminalText(
         Array.isArray(pageState?.liveRegionMessages) ? pageState.liveRegionMessages.join('\n') : '',
       );
-      const sentStatusObserved = this._workflowMessageSentSignal(siteWorkflow, sentStatusText);
+      let sentStatusObserved = this._workflowMessageSentSignal(siteWorkflow, sentStatusText);
       const dispatchRecipientObserved = binding.recipientBound === true
         && messageTargetMatchesObservedIdentities(state.messaging, binding.recipientTargets);
       const requiresRecipientBinding = normalizeMessageTarget(state.messaging)?.target_kind === 'named';
       const messageBodyBaselineCount = Number(binding.messageBodyBaselineCount);
       const matchingOutgoingMessageCount = Number(messageProbe?.matchingOutgoingMessageCount);
-      const exactOutgoingBodyObserved = !!this._workflowMessageBody(binding.messageBody)
+      let exactOutgoingBodyObserved = !!this._workflowMessageBody(binding.messageBody)
         && Number.isInteger(messageBodyBaselineCount)
         && messageBodyBaselineCount >= 0
         && Number.isInteger(matchingOutgoingMessageCount)
         && matchingOutgoingMessageCount > messageBodyBaselineCount;
+      if (siteWorkflow.adapterName === 'twitter') {
+        // Visibility and delivery-status changes of older rows are not new
+        // sends. Include hidden/pending rows in the dispatch baseline and
+        // require the new sent row to follow the conversation's prior tail.
+        const priorIds = binding.preDispatchMessageIds;
+        const currentIds = messageProbe?.existingMessageIds;
+        const sentIds = messageProbe?.matchingOutgoingMessageIds;
+        const anchorIndex = Array.isArray(priorIds) && priorIds.length > 0 && Array.isArray(currentIds)
+          ? currentIds.indexOf(priorIds[priorIds.length - 1]) : -1;
+        exactOutgoingBodyObserved = !!this._workflowMessageBody(binding.messageBody)
+          && Array.isArray(priorIds) && Array.isArray(currentIds) && Array.isArray(sentIds)
+          && (priorIds.length === 0 || anchorIndex >= 0)
+          && sentIds.some(id => !priorIds.includes(id) && currentIds.indexOf(id) > anchorIndex);
+        sentStatusObserved = exactOutgoingBodyObserved
+          && recipientObserved
+          && this._normalizeUrl(pageUrl) === this._normalizeUrl(submit?.originatingUrl || '');
+      }
       const gmailComposeBodyBound = siteWorkflow.adapterName === 'gmail'
         && binding.gmailComposeFlow === true
         && !!this._workflowMessageBody(binding.messageBody);
@@ -5235,7 +5258,7 @@ export class Agent extends LoopDetector {
         && this._workflowMessageFieldsVerified(binding)
         && (requiresRecipientBinding
           ? (dispatchRecipientObserved && postDispatchRecipientObserved && sentStatusObserved && messageBodyObserved)
-          : (recipientObserved || sentStatusObserved));
+          : (siteWorkflow.adapterName !== 'twitter' && (recipientObserved || sentStatusObserved)));
       source = requiresRecipientBinding
         ? (recipientObserved
           ? 'recipient_body_bound_dispatch_empty_composer_and_sent_confirmation'
@@ -5362,8 +5385,14 @@ export class Agent extends LoopDetector {
     };
   }
 
-  _completionPageWarning(tabId, summary, outcome, pageState, pageUrl = '') {
+  _completionPageWarning(tabId, summary, outcome, pageState, pageUrl = '', workflowEvidence = null) {
     if (normalizeDoneOutcome(outcome) !== 'success' || !pageState) return null;
+    // X keeps its composer open after delivery. Its new-message proof can
+    // override that heuristic; other adapters retain their own dialog checks.
+    const guard = this._planExecutionGuards.get(tabId);
+    if (guard?.siteWorkflow?.adapterName === 'twitter'
+        && workflowEvidence?.verificationKind === 'message_sent'
+        && this._workflowTerminalEvidenceMatchesState(guard, workflowEvidence)) return null;
     const dialogs = Number(pageState.openDialogCount || 0);
     const submissionEvidence = this._completionSubmissionEvidence(tabId, pageState, pageUrl);
     const { submit, liveSignals, relevantForms, observedSuccessSignal, verifiedFinalSubmit } = submissionEvidence;
@@ -11192,6 +11221,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               completionBatchStartState,
               traceStep: step,
               jevBinding: jevPending?.call.binding,
+              detectedSubmitAction,
               promptTier,
               dispatchBinding: pipelineToolbarPreflight.probe?.dispatchBinding || null,
               ...messageRecipientExecutionContext,
@@ -14693,8 +14723,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _resolvePlannerSiteWorkflow(url, plan) {
-    if (!this.useSiteAdapters || plan?.request_kind !== 'execute' || !plan?.site_job) return null;
-    return resolveAdapterWorkflowJob(url, plan.site_job);
+    if (!this.useSiteAdapters || plan?.request_kind !== 'execute') return null;
+    // Older plans have no X message job, but their structured send intent is
+    // sufficient to select it on an actual conversation route.
+    const messageJob = !plan.site_job && plan.requires_submission === true
+      && normalizeMessageTarget(plan.messaging)
+      && getMessageRecipientGuardPolicy(url)?.adapterName === 'twitter';
+    return resolveAdapterWorkflowJob(url, plan.site_job || (messageJob ? 'send-message' : ''));
   }
 
   _sameAdapterWorkflowBinding(left, right) {
@@ -16516,12 +16551,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         .map(m => this._plannerUserAuthoredText(m)).filter(Boolean);
       priorRequests = requests.slice(0, -1).slice(-4).map((text, i) => [`prior_request${i}`, text]);
     }
-    const drafts = messages.filter(m => m.role === 'assistant'
-      && typeof m.content === 'string' && !m.tool_calls?.length).slice(-4);
+    // A displayed answer may live only in done(summary), not in assistant
+    // content. Recover its exact authored bytes from a completed call/result
+    // pair; arbitrary tool output and page-derived verification are not drafts.
+    const drafts = [];
+    const pendingDone = new Map();
+    for (const message of messages) {
+      if (message.role === 'assistant') {
+        if (typeof message.content === 'string' && message.content.trim() && !message.tool_calls?.length) {
+          drafts.push(message.content);
+        }
+        for (const call of message.tool_calls || []) {
+          if (!call.id || (call.function?.name || call.name) !== 'done') continue;
+          try {
+            const args = JSON.parse(call.function?.arguments || call.arguments || '{}');
+            if (typeof args.summary === 'string' && args.summary.trim()) pendingDone.set(call.id, args.summary);
+          } catch { /* malformed calls cannot supply draft text */ }
+        }
+      } else if (message.role === 'tool' && pendingDone.has(message.tool_call_id)) {
+        const summary = pendingDone.get(message.tool_call_id);
+        pendingDone.delete(message.tool_call_id);
+        try {
+          const result = JSON.parse(this._unwrapUntrusted(message.content));
+          if (result?.done === true && result.success !== false && !result.blockedDone) drafts.push(summary);
+        } catch { /* incomplete results do not prove a completed answer */ }
+      } else if (message.role === 'user' && !this._isAgentInjectedUserMessage(message)) {
+        pendingDone.clear();
+      }
+    }
     let draftIndex = Object.keys(sources).filter(key => /^draft\d+$/.test(key)).length;
-    drafts.forEach(m => {
-      if (!Object.entries(sources).some(([key, value]) => /^draft\d+$/.test(key) && value === m.content)) {
-        sources[`draft${draftIndex++}`] = m.content;
+    drafts.slice(-4).forEach(draft => {
+      if (!Object.entries(sources).some(([key, value]) => /^draft\d+$/.test(key) && value === draft)) {
+        sources[`draft${draftIndex++}`] = draft;
       }
     });
     (guard?.socialPublicationClarifications || []).forEach((entry, i) => {
@@ -16788,6 +16849,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const action = this._socialPublicationAction(guard);
     if (social?.needsRecompile || !action || action.platform !== live.adapterName
         || !publicationProgress(social?.contract, social?.outcomes).eligible.includes(action.id)) {
+      if (social?.contract?.status === 'clarify') {
+        return blocked('Publication details are unresolved: ' + social.contract.reason
+          + ' Resolve the missing detail, not just permission. If the post text is missing, include the complete proposed text in one clarification; a yes/no approval without that text cannot supply it.');
+      }
       return blocked(social?.error || 'This publication is not authorized, its prerequisite has not completed, or a previous dispatch still needs verification. Clarify unresolved intent; never repeat an uncertain publication.');
     }
     const snapshot = this._socialPublicationSnapshot(guard, detected.publicationSnapshot);
@@ -20914,6 +20979,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         executionContext.messageRecipientDispatchBinding = binding;
         executionContext.messageRecipientBody = this._workflowMessageBody(probe.messageBody);
         executionContext.messageRecipientBodyBaselineCount = messageBodyBaselineCount;
+        if (policy.adapterName === 'twitter' && Array.isArray(probe.existingMessageIds)) {
+          executionContext.messageRecipientExistingMessageIds = [...probe.existingMessageIds];
+        }
         if (probe.composerSubjectAvailable === true) {
           executionContext.messageRecipientSubject = this._workflowMetadataValue(probe.composerSubject);
           executionContext.messageRecipientSubjectAvailable = true;
@@ -25969,7 +26037,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }, opts.costState || this.currentCostState.get(tabId) || null, { tabId, generationName: 'intent' });
       const obj = Agent._extractFirstJsonObject(response?.content || '');
       if (this._workflowJobStoresMetadataRequirements(siteWorkflow)
-          && !SOCIAL_PLATFORMS.includes(siteWorkflow?.adapterName)) {
+          && (siteWorkflow?.job?.template !== 'publish' || !SOCIAL_PLATFORMS.includes(siteWorkflow?.adapterName))) {
         const guard = this._planExecutionGuards.get(tabId);
         if (guard) {
           const details = this._normalizeWorkflowMetadataRequirementsDetails(
@@ -26015,7 +26083,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return normalizeProgressIntent(obj, { taskText, pageScope, source: 'classifier' });
     } catch {
       if (this._workflowJobStoresMetadataRequirements(siteWorkflow)
-          && !SOCIAL_PLATFORMS.includes(siteWorkflow?.adapterName)) {
+          && (siteWorkflow?.job?.template !== 'publish' || !SOCIAL_PLATFORMS.includes(siteWorkflow?.adapterName))) {
         const guard = this._planExecutionGuards.get(tabId);
         if (guard && guard.workflowMetadataRequirementsResolved !== true) {
           const extractedBody = this._extractWorkflowTaskBody(taskText, approvedPlanText, siteWorkflow?.adapterName);
@@ -26217,7 +26285,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _ensureWorkflowMetadataRequirements(tabId, opts, taskText, pageScope) {
     const guard = this._planExecutionGuards.get(tabId);
     if (!guard?.enabled) return;
-    if (SOCIAL_PLATFORMS.includes(guard.siteWorkflow?.adapterName)) {
+    if (guard.siteWorkflow?.job?.template === 'publish' && SOCIAL_PLATFORMS.includes(guard.siteWorkflow?.adapterName)) {
       await this._ensureSocialPublicationContract(tabId, opts.provider);
       await this._adoptLiveSocialPublishWorkflow(tabId, opts.provider);
       return;
@@ -26256,6 +26324,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : 'auto';
     const plannerAction = normalizeProgressAction(opts.progressAction) || (expectedItems ? 'process_item' : '');
     if (progressLedgerPolicy === 'disabled') {
+      // Disabling repeated-item tracking must not disable the independent
+      // field requirements used to verify a send or other workflow commit.
+      await this._ensureWorkflowMetadataRequirements(tabId, opts, taskText, pageScope);
       const session = this._inactiveProgressSession(
         tabId,
         taskText,
@@ -26296,6 +26367,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return existing;
     }
     if (this._currentTaskIsProgressContinuation(tabId)) {
+      await this._ensureWorkflowMetadataRequirements(tabId, opts, taskText, pageScope);
       const session = this._deriveProgressSessionForCurrentTask(tabId);
       this._syncProgressSessionPrompt(tabId);
       return session;
@@ -31689,15 +31761,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
             // Synthesize a warning when summary claims completion but page
             // state contradicts it.
-            const completionPageBlock = this._completionPageWarning(
-              tabId, args.summary, outcome, pageState, pageState.url || '',
-            );
-            const completionWarning = completionPageBlock?.warning || null;
-            const workflowTerminalEvidence = !completionWarning
+            const candidateWorkflowEvidence = workflowMessageKind === 'message_sent'
               ? this._workflowTerminalEvidenceFromDone(
                   tabId, pageState, pageState.url || '', submissionEvidence, workflowMessageProbe,
                 )
               : null;
+            const completionPageBlock = this._completionPageWarning(
+              tabId, args.summary, outcome, pageState, pageState.url || '', candidateWorkflowEvidence,
+            );
+            const completionWarning = completionPageBlock?.warning || null;
+            const workflowTerminalEvidence = completionWarning ? null
+              : workflowMessageKind === 'message_sent' ? candidateWorkflowEvidence
+                : this._workflowTerminalEvidenceFromDone(
+                    tabId, pageState, pageState.url || '', submissionEvidence, workflowMessageProbe,
+                  );
           if (pageState && typeof pageState === 'object') {
             delete pageState.workflowPageText;
             delete pageState.workflowResourceUrls;
@@ -33733,6 +33810,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const tab = await browser.tabs.get(tabId);
           return tab?.url || '';
         },
+        Date.now,
+        dispatchContext.detectedSubmitAction || null,
       );
       if (duplicateSubmit) return duplicateSubmit;
       if (coordinatePoint && !dispatchBinding?.token) {
