@@ -4,6 +4,35 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [36.8.0] - 2026-09-20
+
+### Added
+
+- Added the SafeSocial Instagram classifier and settings export support for Chrome and Firefox.
+- Added opt-in Jev classifiers and guarded experimental browser decisions.
+- Added the TypeSafe System One scheduler judge to Assistive Models.
+
+### Changed
+
+- Moved Jev into Assistive Models and refreshed the related Settings guidance.
+- Improved Jev verification and fast browser flows, including automatic-screenshot handoffs and event-driven observation wakeups in Chrome and Firefox.
+- Kept multimodal requests out of Jev fast decisions and verification hints internal.
+- Allowed the LinkedIn post composer to open through its safety checks.
+- Kept the proofreading shortcut label concise and hardened selected-text proofreading boundaries.
+
+### Fixed
+
+- Stopped Jev safely on malformed classifier responses and invalid fallbacks.
+- Improved Jev navigation completion, transient skips, superseded verification reconciliation, and benchmark code construction.
+- Fixed Mail.tm mailbox reuse guidance.
+- Kept Settings tab labels on a single line.
+
+### Tests
+
+- Added SafeSocial extension and UI coverage.
+- Added Jev fixtures, workflows, benchmarks, scheduler tests, and mirrored Chrome/Firefox browser regressions.
+- Added selected-text proofreading, social-publication contract, accessibility-tree, browser-event, and lifecycle coverage.
+
 ## [36.7.0] - 2026-09-17
 
 ### Added
