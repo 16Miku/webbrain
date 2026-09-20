@@ -23194,7 +23194,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       supportsRecipientSets: policy.supportsRecipientSets === true,
       ...(target?.target_kind === 'named' ? { expectedRecipients: target.recipients } : {}),
     });
-    if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) return null;
+    if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) {
+      const linkedInPublicPost = policy.adapterName === 'linkedin' && probe.publicPost === true;
+      const publishWorkflowAuthorized = guard?.siteWorkflow?.adapterName === 'linkedin'
+        && guard?.siteWorkflow?.job?.id === 'publish-post';
+      // A public Post control is not a message send, but it is still a
+      // consequential action. Only the explicit LinkedIn publish workflow can
+      // bypass recipient dispatch binding for that control.
+      if (!linkedInPublicPost || publishWorkflowAuthorized) return null;
+      return {
+        success: false,
+        blocked: true,
+        noDispatch: true,
+        dispatched: false,
+        messageRecipientGuard: true,
+        reasonCode: 'public_post_not_authorized',
+        error: 'LinkedIn Post blocked because this task authorizes a private message, not a public post.',
+      };
+    }
     // Gmail reply editors can be collapsed when planning begins. Allow only a
     // content-verified Reply/Reply all/Forward control to open the editor;
     // every other unresolved click remains blocked. Recipient authorization
@@ -28240,10 +28257,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : (sawNamedSocialPlatform ? [] : rawCandidates);
     let bestBody = '';
     // A direct-message task can omit the platform when the active workflow
-    // already binds the X conversation ("Send Alex: Hello there"). Treat
-    // that imperative like the existing message/publish forms so an explicit
-    // body remains subject to the same exact dispatch verification.
-    const publishVerbPattern = `(?:${SOCIAL_PUBLISH_VERBS.source}|message|send|update)`;
+    // already binds the X conversation ("Send Alex: Hello there"). Keep that
+    // imperative local to X: other message workflows may use "send" while
+    // separately naming subject/body fields, which this post-body extractor
+    // must not reinterpret as one combined body.
+    const publishVerbPattern = `(?:${SOCIAL_PUBLISH_VERBS.source}|message${adapterName === 'twitter' ? '|send' : ''}|update)`;
     const quotedPattern = new RegExp(`${publishVerbPattern}[\\s\\S]*?(?:“([\\s\\S]+?)”|「([\\s\\S]+?)」|『([\\s\\S]+?)』|«([\\s\\S]+?)»|"([\\s\\S]+?)")`, 'iu');
     const singleQuotePattern = new RegExp(`${publishVerbPattern}[\\s\\S]*?(?:(?<!\\p{L})'([\\s\\S]+?)'(?!\\p{L}))`, 'iu');
     const colonPattern = new RegExp(`${publishVerbPattern}[\\s\\S]*?(?<!https?|ftp|sftp)(?:(?<!\\d)[:：]|[:：](?!\\d{2}))(?!\\/\\/)\\s*([\\s\\S]+)$`, 'iu');

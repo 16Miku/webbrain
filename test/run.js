@@ -5727,6 +5727,29 @@ test('direct-message recipient guard uses structured intent and exact active ide
       `${label}: conclusively non-message Enter was incorrectly blocked`,
     );
 
+    probe = { success: true, conclusive: true, messageSend: false, publicPost: true, identityCandidates: [] };
+    agent._planExecutionGuards.set(tabId, {
+      messaging: { target_kind: 'named', recipients: ['Ada'] },
+      requiresSubmission: true,
+      requiresStateChange: true,
+      siteWorkflow: resolveAdapterWorkflowJob('https://www.linkedin.com/feed/', 'send-message'),
+    });
+    const publicPostBlocked = await agent._messageRecipientGuardBlock(
+      tabId, 'click_ax', { ref_id: 'ref_linkedin_post' }, 'https://www.linkedin.com/feed/', {},
+    );
+    assert.equal(publicPostBlocked?.reasonCode, 'public_post_not_authorized',
+      `${label}: LinkedIn DM authorization allowed a public Post control`);
+    agent._planExecutionGuards.get(tabId).siteWorkflow = resolveAdapterWorkflowJob(
+      'https://www.linkedin.com/feed/', 'publish-post',
+    );
+    assert.equal(
+      await agent._messageRecipientGuardBlock(
+        tabId, 'click_ax', { ref_id: 'ref_linkedin_post' }, 'https://www.linkedin.com/feed/', {},
+      ),
+      null,
+      `${label}: explicit LinkedIn publish workflow could not use its public Post control`,
+    );
+
     probe = { success: true, conclusive: false, messageSend: null, identityCandidates: [] };
     const inconclusive = await agent._messageRecipientGuardBlock(tabId, 'press_keys', { key: 'Enter' });
     assert.equal(inconclusive?.reasonCode, 'message_send_classification_inconclusive', `${label}: inconclusive probe failed open`);
@@ -93926,6 +93949,11 @@ test('publication workflows classify and bind requested payload fields', async (
       `${AgentClass.name}: the classifier did not require direct-message fields`);
     assert.equal(agent._extractWorkflowTaskBody(xTask, '', 'twitter'), 'Hello there',
       `${AgentClass.name}: a route-local Send command did not recover its explicit X DM body`);
+    assert.equal(
+      agent._extractWorkflowTaskBody('Send an email to Alice with subject: Hello and body: How are you?', '', 'gmail'),
+      '',
+      `${AgentClass.name}: X route-local Send recovery rewrote Gmail subject/body metadata`,
+    );
     assert.deepEqual(xGuard.workflowMetadataRequirements, [
       { field: 'body', value: 'Hello there' },
     ], `${AgentClass.name}: an explicit X DM body was not bound after an empty classifier response`);
