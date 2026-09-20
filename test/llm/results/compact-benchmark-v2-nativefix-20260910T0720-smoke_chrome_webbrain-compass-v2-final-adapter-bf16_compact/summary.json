@@ -1,0 +1,22 @@
+{
+  "runTag": "compact-benchmark-v2-nativefix-20260910T0720-smoke",
+  "model": "webbrain-compass-v2-final-adapter-bf16",
+  "browser": "chrome",
+  "base": "http://127.0.0.1:8326/v1",
+  "saveRequest": false,
+  "tier": "compact",
+  "modeOverride": null,
+  "chatTemplateCompat": "off",
+  "structuredToolsSent": true,
+  "reasoningEffort": null,
+  "freeze": null,
+  "cases": 5,
+  "totalLatencyMs": 14785,
+  "errors": 0,
+  "withToolCall": 5,
+  "withToolCallFromContent": 0,
+  "byTool": {
+    "navigate": 1,
+    "get_accessibility_tree": 4
+  }
+}

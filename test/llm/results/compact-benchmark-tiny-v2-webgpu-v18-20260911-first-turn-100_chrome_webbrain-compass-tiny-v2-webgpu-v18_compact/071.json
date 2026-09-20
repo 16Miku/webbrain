@@ -1,0 +1,28 @@
+{
+  "id": "071",
+  "user": "send it",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 5009,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t send the message because the recipient, subject, and body aren’t specified. Please provide the recipient, subject, and message text, and I’ll send it."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t send the message because the recipient, subject, and body aren’t specified. Please provide the recipient, subject, and message text, and I’ll send it.</param></function>",
+  "usage": {
+    "prompt_tokens": 9706,
+    "completion_tokens": 55,
+    "total_tokens": 9761
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

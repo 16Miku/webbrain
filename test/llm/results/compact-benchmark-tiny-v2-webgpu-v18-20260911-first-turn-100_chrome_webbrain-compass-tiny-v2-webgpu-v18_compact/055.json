@@ -1,0 +1,28 @@
+{
+  "id": "055",
+  "user": "download this instagram post",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.instagram.com/p/CxAbcExample/",
+    "title": "Photo — Instagram"
+  },
+  "latencyMs": 5800,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t download the Instagram post directly because the page requires sign-in and the browser toolset only supports reading and interacting with the visible UI. I can help you sign in or explain how to save the post through the Instagram mobile app."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t download the Instagram post directly because the page requires sign-in and the browser toolset only supports reading and interacting with the visible UI. I can help you sign in or explain how to save the post through the Instagram mobile app.</param></function>",
+  "usage": {
+    "prompt_tokens": 10022,
+    "completion_tokens": 68,
+    "total_tokens": 10090
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

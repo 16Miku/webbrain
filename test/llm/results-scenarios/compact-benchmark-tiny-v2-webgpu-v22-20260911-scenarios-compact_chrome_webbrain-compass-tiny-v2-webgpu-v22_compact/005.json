@@ -1,0 +1,42 @@
+{
+  "id": "005",
+  "category": "loop-bad-url",
+  "description": "Guessed documentation URL based on tool name failed. Should search docs index, not guess again.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 16226,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "The API reference URL returned a 404, so the page is currently showing a “Not Found” error. I can’t safely infer the correct API reference from the current page state. Please provide the correct URL or confirm the exact API reference page you want me to inspect.",
+      "reason": "The navigation result explicitly returned a 404, and the current page context confirms the page is a 404 error page."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "navigate",
+      "args": {
+        "url": "https://docs.example-tool.io/"
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "navigate({url:\"https://docs.example-tool.io/api/v1\"})",
+        "reason": "Guess-and-check on docs path is a loop pattern."
+      }
+    ],
+    "successRubric": "Go to the docs root and let the site's nav lead to the API reference. Acceptable: web search for \"example-tool api reference\"."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "The API reference URL returned a 404, so the page is currently showing a “Not Found” error. I can’t safely infer the correct API reference from the current page state. Please provide the correct URL or confirm the exact API reference page you want me to inspect.\n<function name=\"clarify\"><param name=\"question\">The API reference URL returned a 404, so the page is currently showing a “Not Found” error. I can’t safely infer the correct API reference from the current page state. Please provide the correct URL or confirm the exact API reference page you want me to inspect.</param><param name=\"reason\">The navigation result explicitly returned a 404, and the current page context confirms the page is a 404 error page.</param></function>",
+  "usage": {
+    "prompt_tokens": 9833,
+    "completion_tokens": 154,
+    "total_tokens": 9987
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "id": "063",
+  "category": "mode-boundary",
+  "description": "Ask + summarize. Reading is fine in Ask mode.",
+  "mode": "ask",
+  "browser": "chrome",
+  "latencyMs": 2643,
+  "error": null,
+  "firstToolCall": {
+    "name": "read_page",
+    "args": {
+      "includeChrome": false,
+      "limit": 6000,
+      "offset": 0
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "read_page",
+      "args": {}
+    },
+    "antiPatterns": [
+      {
+        "match": "done({summary:\"I'm in Ask mode and...\"})",
+        "reason": "Reading IS permitted in Ask mode — no need to bail."
+      }
+    ],
+    "successRubric": "Ask mode allows read_page, extract_data, fetch_url, inspect_viewport. Use them and summarize."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "ideal_name",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "<function name=\"read_page\"><param name=\"includeChrome\">False</param><param name=\"limit\">6000</param><param name=\"offset\">0</param></function>",
+  "usage": {
+    "prompt_tokens": 8051,
+    "completion_tokens": 32,
+    "total_tokens": 8083
+  }
+}
