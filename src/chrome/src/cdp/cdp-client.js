@@ -4715,7 +4715,7 @@ export class CDPClient {
         });
       } catch {}
     };
-    const dispatchKeyPress = async ({ key, code, windowsVirtualKeyCode, modifiers = 0 }) => {
+    const dispatchKeyPress = async ({ key, code, windowsVirtualKeyCode, modifiers = 0, commands = [] }) => {
       const keyParams = { key, code, windowsVirtualKeyCode, ...(modifiers ? { modifiers } : {}) };
       const releaseKey = async () => {
         try {
@@ -4730,6 +4730,7 @@ export class CDPClient {
         await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown',
           ...keyParams,
+          ...(commands.length ? { commands } : {}),
         });
       } catch (error) {
         if (actionExpired()) {
@@ -5165,7 +5166,7 @@ export class CDPClient {
         throwIfAborted();
         dispatched = true;
         await dispatchKeyPress({
-          key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65,
+          key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
         });
         // Delete selection
         await dispatchKeyPress({

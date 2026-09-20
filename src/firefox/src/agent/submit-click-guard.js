@@ -18,8 +18,12 @@ export async function guardRecentSubmitClick(
   args,
   getCurrentUrl,
   now = Date.now,
+  detectedTarget = null,
 ) {
   if (!args?.text) return null;
+  // Only app-observed preflight evidence can exempt a control. A label such
+  // as "Add post" adds a thread editor; it does not publish the thread.
+  if (detectedTarget?.isSubmit === false && detectedTarget.resolvedNonSubmitTarget === true) return null;
 
   const rawText = String(args.text).trim();
   if (!SUBMIT_LIKE_CLICK_RE.test(rawText)) return null;

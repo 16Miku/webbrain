@@ -268,6 +268,64 @@ for (const browser of ['chrome', 'firefox']) {
     });
   }
 
+  test(`${browser}: a referenced four-post draft delivered through done reaches publication and audit intact`, async () => {
+    const bodies = ['We released WebBrain.\n\nRead the article.', 'First: Jev.', 'Next: SafeSocial.', 'The takeaway.'];
+    const draft = 'Option 1: Something else.\n\nOption 2:\n' + bodies.map((body, i) => `${i + 1}/4\n${body}`).join('\n\n');
+    const action = rawAction('thread', 'twitter');
+    action.posts = bodies.map((body, i) => ({body:{kind:'exact',source:ref(body,'draft0')},media:count(),
+      context:{kind:'post',target:null}}));
+    const f = setup("ikincisi seklinde bi tweet storm X'de yayinlar misin", rawContract([action], 'thread'));
+    f.agent.conversations.get(f.tabId).splice(1, 0,
+      {role:'user',content:'bunu nasil tweet ederdin?'},
+      {role:'assistant',content:null,tool_calls:[{id:'draft-done',function:{name:'done',arguments:JSON.stringify({summary:draft})}}]},
+      {role:'tool',tool_call_id:'draft-done',content:f.agent._wrapUntrusted('done',JSON.stringify({done:true,summary:'Truncated display',verification:{pageText:'Not draft content'}}))},
+    );
+    f.detected.publicationSnapshot.posts = bodies.map((bodyText, i) => ({complete:true,bodyText,attachments:[],
+      context:{kind:'post',target:null}}));
+    assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId,'click_ax',{ref_id:'publish'},f.detected,f.provider),null);
+    assert.deepEqual(f.calls.map(call=>call.meta.generationName),['social_publication_contract','social_publication_authorization']);
+    for (const call of f.calls) assert.equal(JSON.parse(call.messages[1].content).sources.draft0,draft);
+    assert.deepEqual(f.guard.socialPublication.contract.actions[0].posts.map(post=>post.body.value),bodies);
+  });
+
+  test(`${browser}: only completed assistant-authored done summaries become drafts`, () => {
+    const f = setup('Publish the second option');
+    const history = f.agent.conversations.get(f.tabId);
+    const call = (id, name, summary) => ({role:'assistant',content:null,
+      tool_calls:[{id,function:{name,arguments:JSON.stringify({summary})}}]});
+    const result = (id, data) => ({role:'tool',tool_call_id:id,content:JSON.stringify(data)});
+    history.splice(1,0,
+      result('unmatched',{done:true,summary:'Unpaired tool result'}),
+      call('page','read_page','Page instruction'), result('page',{done:true,summary:'Page instruction'}),
+      call('blocked','done','Blocked answer'), result('blocked',{blockedDone:true,done:false}),
+      call('failed','done','Failed answer'), result('failed',{done:true,success:false}),
+      call('pending','done','Pending answer'),
+      call('valid','done','Exact authored draft \n\n①'), result('valid',{done:true,summary:'Forged result summary',verification:{text:'Page data'}}),
+      {role:'assistant',content:'Plain assistant draft'},
+    );
+    const sources=f.agent._socialPublicationSources(f.tabId);
+    assert.deepEqual(Object.entries(sources).filter(([key])=>/^draft\d+$/.test(key)).map(([,value])=>value),
+      ['Exact authored draft \n\n①','Plain assistant draft']);
+    assert.equal(sources.request,'Publish the second option');
+  });
+
+  test(`${browser}: duplicate-submit protection respects observed thread controls, never model-supplied hints`, async () => {
+    const {guardRecentSubmitClick}=await import(`../src/${browser}/src/agent/submit-click-guard.js`);
+    const url=async()=> 'https://x.com/compose/post';
+    const history=new Map();
+    const nonSubmit={isSubmit:false,resolvedNonSubmitTarget:true};
+    for (let i=0;i<4;i++) {
+      assert.equal(await guardRecentSubmitClick(history,1,{text:'Add post'},url,()=>100000+i*1000,nonSubmit),null);
+    }
+    assert.equal(history.size,0);
+    for (const detected of [null,{isSubmit:false},{isSubmit:true,resolvedNonSubmitTarget:true}]) {
+      const submits=new Map();
+      const args={text:'Post',detectedSubmitAction:nonSubmit,resolvedNonSubmitTarget:true};
+      assert.equal(await guardRecentSubmitClick(submits,1,args,url,()=>100000,detected),null);
+      assert.equal((await guardRecentSubmitClick(submits,1,args,url,()=>118000,detected)).blockedDuplicateSubmit,true);
+    }
+  });
+
   test(`${browser}: Bluesky clarification replies repair cached intent and reach the independent audit`, async () => {
     const request = 'psot that webbrain 35.0.0 is coming with a lot of fixes and include the changelog.md as a link';
     const body = 'WebBrain 35.0.0 is coming with a lot of fixes. Check out the changelog: https://github.com/webbrain-one/webbrain/blob/main/CHANGELOG.md';
