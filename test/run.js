@@ -93884,6 +93884,73 @@ test('publication workflows classify and bind requested payload fields', async (
     assert.match(prompt, /\bcanonical field names tag, title, notes, body, visibility, attachment, path, branch, or commit_message\b/);
     assert.match(prompt, /for publish-post only, also use account/);
     assert.match(prompt, /For edit-file-and-commit, include path, branch, and commit_message only when the user explicitly supplied them/);
+
+    const xTabId = 8987 + index;
+    const xUrl = 'https://x.com/i/chat/123-456';
+    const xTask = 'Send Alex this exact message on X: "The release is ready."';
+    const xWorkflow = agent._resolvePlannerSiteWorkflow(xUrl, {
+      request_kind: 'execute',
+      requires_submission: true,
+      messaging: { target_kind: 'named', recipients: ['@altryne'] },
+    });
+    assert.equal(xWorkflow?.job?.id, 'send-message');
+    agent.conversations.set(xTabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: xTask },
+    ]);
+    const xGuard = agent._startPlanExecutionGuard(xTabId, 'act', {
+      requestKind: 'execute',
+      requiresStateChange: true,
+      requiresSubmission: true,
+      messaging: { target_kind: 'named', recipients: ['@altryne'] },
+      siteWorkflow: xWorkflow,
+    });
+    let xPrompt = '';
+    agent._chatWithCostAllowance = async (_provider, messages) => {
+      xPrompt = messages[0].content;
+      // This was previously a compliant classifier response for send-message.
+      return { content: JSON.stringify({
+        mode: 'inactive', allowedActions: [], forbiddenActions: [], targets: [],
+        workflowFields: [], confidence: 0.99, pageScopePolicy: 'page',
+      }) };
+    };
+    await agent._ensureProgressSessionForCurrentTask(xTabId, {
+      provider: { chat: async () => ({ content: '{}' }) },
+      progressLedgerPolicy: 'disabled',
+      taskText: xTask,
+      pageScope: xUrl,
+    });
+    assert.match(xPrompt, /siteContext\.workflow\.template="message"/,
+      `${AgentClass.name}: the classifier did not require direct-message fields`);
+    assert.deepEqual(xGuard.workflowMetadataRequirements, [
+      { field: 'body', value: 'The release is ready.' },
+    ], `${AgentClass.name}: an explicit X DM body was not bound after an empty classifier response`);
+    const xTerminal = (body) => {
+      const workflowBinding = agent._workflowSubmitBindingForAttempt(xTabId, xUrl, {
+        messageRecipientGuardRequired: true,
+        messageRecipientDispatchBinding: { token: `x-body-${body}` },
+        messageRecipientBody: body,
+        messageRecipientBodyBaselineCount: 0,
+        messageRecipientExistingMessageIds: [],
+      });
+      return agent._workflowTerminalEvidenceFromDone(xTabId, { liveRegionMessages: [] }, xUrl, {
+        submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: xUrl, workflowBinding },
+        verifiedFinalSubmit: false,
+        relevantForms: 1,
+      }, {
+        success: true,
+        conclusive: true,
+        composerEmpty: true,
+        strongRecipientCandidates: [{ identity: '@altryne', role: 'to' }],
+        existingMessageIds: ['message-new'],
+        matchingOutgoingMessageIds: ['message-new'],
+        matchingOutgoingMessageCount: 1,
+      });
+    };
+    assert.equal(xTerminal('Changed message'), null,
+      `${AgentClass.name}: a sent X DM drifted from the approved body`);
+    assert.equal(xTerminal('The release is ready.')?.verificationKind, 'message_sent',
+      `${AgentClass.name}: the approved X DM body could not complete`);
   }
 });
 
