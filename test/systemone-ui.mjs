@@ -79,7 +79,7 @@ try {
         await page.screenshot({ animations: 'disabled', path: `${output}/${build}-${lang}-${width}-tabs.png` });
         assert.equal(await page.locator('[data-panel="providers"] #system-one-card').count(), 0);
         assert.deepEqual(await page.locator('[data-panel="multimodal"] > .provider-card').evaluateAll(cards => cards.map(card => card.id)), [
-          'vision-card', 'image-budget-card', 'redaction-card', 'transcription-card', 'system-one-card',
+          'vision-card', 'image-budget-card', 'redaction-card', 'transcription-card', 'system-one-card', 'safesocial-card',
         ]);
         // A label change must retain saved tab selection as well as old deep links.
         await page.evaluate(() => history.replaceState(null, '', location.pathname));

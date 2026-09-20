@@ -1,0 +1,20 @@
+.wb-safesocial-blur { filter: blur(24px) !important; }
+.wb-safesocial-hide { opacity: 0 !important; }
+.wb-safesocial-dim { opacity: 0.18 !important; }
+.wb-safesocial-overlay {
+  position: fixed !important; z-index: 2147483646 !important;
+  transform: translate(-50%, -50%) !important; max-width: 90vw;
+}
+.wb-safesocial-overlay[hidden] { display: none !important; }
+.wb-safesocial-overlay button, .wb-safesocial-notice {
+  font: 13px/1.5 system-ui, sans-serif !important;
+  color: #fff !important; background: #202833 !important;
+  border: 1px solid #8995a5 !important; border-radius: 8px !important;
+  padding: 9px 14px !important; box-shadow: 0 3px 12px #0004 !important;
+}
+.wb-safesocial-overlay button { cursor: pointer !important; }
+.wb-safesocial-overlay button:focus-visible { outline: 3px solid #80c7ff !important; }
+.wb-safesocial-notice {
+  position: fixed !important; bottom: 16px !important; right: 16px !important;
+  z-index: 2147483646 !important; max-width: min(360px, 85vw) !important;
+}
