@@ -7024,6 +7024,23 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       left: 910, right: 980, top: 700, bottom: 750, width: 70, height: 50,
     }, { tagName: 'BUTTON', role: 'button', parentElement: hiddenSendWrapper });
     hiddenSendButton.closest = () => hiddenSendButton;
+    const linkedInComposer = element('', {
+      left: 260, right: 780, top: 120, bottom: 680, width: 520, height: 560,
+    }, { role: 'dialog' });
+    const linkedInEditor = element('', {
+      left: 290, right: 750, top: 260, bottom: 500, width: 460, height: 240,
+    }, { parentElement: linkedInComposer });
+    linkedInEditor.isContentEditable = true;
+    const localizedLinkedInPost = element('Gönder', {
+      left: 650, right: 750, top: 610, bottom: 660, width: 100, height: 50,
+    }, {
+      tagName: 'BUTTON', role: 'button', parentElement: linkedInComposer,
+      attributes: { 'data-control-name': 'share.post' },
+    });
+    localizedLinkedInPost.closest = () => localizedLinkedInPost;
+    linkedInComposer.querySelectorAll = (selector) => selector === '[contenteditable="true"],textarea'
+      ? [linkedInEditor]
+      : [];
     const customSendControl = element('Quick send', {
       left: 910, right: 990, top: 755, bottom: 795, width: 80, height: 40,
     }, { dataAction: true });
@@ -7088,15 +7105,23 @@ test('direct-message recipient probe accepts only a unique active-thread header 
           if (refId === 'conversation-row-label') return conversationRowLabel;
           if (refId === 'conversation-row-menu-leaf') return conversationRowMenuLeaf;
           if (refId === 'alternate-composer') return alternateComposer;
+          if (refId === 'localized-linkedin-post') return localizedLinkedInPost;
           return null;
         },
       },
+      location: { pathname: '/sharing/compose/', href: 'https://www.linkedin.com/sharing/compose/' },
       getComputedStyle: (el) => ({
         display: 'block',
         visibility: 'visible',
         overflowY: el === conversationRail ? 'auto' : 'visible',
       }),
       _deepActiveElement: () => activeElement,
+      _composedClosestElement: (node, selector) => {
+        if (node === localizedLinkedInPost && /button|\[role="button"\]/.test(selector)) return node;
+        if ((node === localizedLinkedInPost || node === linkedInEditor)
+            && /dialog|\[role="dialog"\]|\.share-box/.test(selector)) return linkedInComposer;
+        return null;
+      },
     };
     const candidatesStart = source.indexOf('  function _clickTextCandidates(');
     const candidatesEnd = source.indexOf('\n\n  let _lastClickIdent', candidatesStart);
@@ -7153,6 +7178,9 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const conversationMenuResult = probe({ tool: 'click', args: { text: 'More' } });
     const conversationMenuLeafResult = probe({ tool: 'click_ax', args: { ref_id: 'conversation-row-menu-leaf' } });
     const unresolvedClickResult = probe({ tool: 'click', args: { text: 'Sen', textMatch: 'exact' } });
+    const localizedLinkedInPostResult = probe({
+      tool: 'click_ax', args: { ref_id: 'localized-linkedin-post' }, adapterName: 'linkedin',
+    });
     activeElement = composer;
     const gmailAliceChip = element('Alice', {
       left: 430, right: 620, top: 610, bottom: 650, width: 190, height: 40,
@@ -7284,6 +7312,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       conversationMenuResult,
       conversationMenuLeafResult,
       unresolvedClickResult,
+      localizedLinkedInPostResult,
       emptyComposerCustomSendResult,
       gmailMatchingRecipientResult,
       gmailMatchingNameResult,
@@ -7321,6 +7350,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       conversationMenuResult,
       conversationMenuLeafResult,
       unresolvedClickResult,
+      localizedLinkedInPostResult,
       emptyComposerCustomSendResult,
       gmailMatchingRecipientResult,
       gmailMatchingNameResult,
@@ -7384,6 +7414,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(conversationMenuLeafResult.conclusive, false);
     assert.equal(unresolvedClickResult.messageSend, null, `${prefix}: unresolved click target was declared safe`);
     assert.equal(unresolvedClickResult.conclusive, false);
+    assert.equal(localizedLinkedInPostResult.messageSend, false,
+      `${prefix}: localized LinkedIn public post was treated as a direct message`);
+    assert.equal(localizedLinkedInPostResult.publicPost, true,
+      `${prefix}: LinkedIn's app-owned publish control was not recognized without English labels`);
     assert.deepEqual(Array.from(gmailMatchingRecipientResult.strongIdentityCandidates), ['alice@example.com']);
     assert.equal(gmailMatchingRecipientResult.gmailComposeFlow, true,
       `${prefix}: Gmail compose dialog was not bound to the send probe`);

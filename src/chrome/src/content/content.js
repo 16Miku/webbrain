@@ -5437,9 +5437,7 @@
         const messageScope = 'form,[role="log"],[data-message-id],[data-thread-id],[data-conversation-id],'
           + '.msg-form,.msg-overlay-conversation-bubble,.msg-convo-wrapper';
         if (_composedClosestElement(button, messageScope)) return false;
-        const labels = [button.innerText || button.textContent, button.getAttribute?.('aria-label')]
-          .map(value => compact(value).toLowerCase()).filter(Boolean);
-        if (!labels.length || !labels.every(label => label === 'post')) return false;
+        if (compact(button.getAttribute?.('data-control-name')).toLowerCase() !== 'share.post') return false;
         // Identify the public composer itself, not merely a nearby textbox.
         // LinkedIn's dedicated compose route may render as a whole page.
         const root = _composedClosestElement(button, 'dialog,[role="dialog"],.share-box')
@@ -5450,9 +5448,7 @@
           && (_composedClosestElement(el, 'dialog,[role="dialog"],.share-box') || root) === root;
         const editors = Array.from(root.querySelectorAll('[contenteditable="true"],textarea'))
           .filter(owned);
-        const audience = Array.from(root.querySelectorAll('button,[role="button"]')).some(el => owned(el)
-          && /^post to (?:anyone|connections(?: only)?)$/i.test(compact(el.getAttribute('aria-label') || el.innerText || el.textContent)));
-        return editors.length === 1 && audience;
+        return editors.length === 1;
       };
 
       let composer = null;
