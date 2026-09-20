@@ -11,6 +11,7 @@ const ROOT = path.resolve(DIR, '../..');
 const assets = {
   ask: dataUri('assets/screenshot-1-ask-mode.png'),
   modelProviders: dataUri('assets/webstore-explainer-2026/model-providers-short.png'),
+  safeSocial: dataUri('web/assets/webbrain-36-8-safesocial-instagram.png'),
 };
 
 const browserLogos = [
@@ -112,6 +113,9 @@ const baseCss = `
   .apocalypse { --bg1:#11100e; --bg2:#1c1a14; --ink:#f5f0e6; --muted:#a89e8a;
     --accent:#f7bd5f; --accent2:#f0a72f; --border:rgba(247,189,95,0.22);
     --panel:rgba(247,189,95,0.07); --shadow:0 28px 70px rgba(0,0,0,0.5); }
+  .release { --bg1:#f5f7ff; --bg2:#fff3f7; --ink:#171827; --muted:#586174;
+    --accent:#6757ff; --accent2:#ec6797; --border:rgba(37,42,66,0.13);
+    --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(46,42,90,0.18); }
   .content { position: relative; z-index: 1; padding: 38px 48px; }
   h1 {
     margin: 18px 0 0; font-family: var(--display); font-size: 62px; line-height: 1.05;
@@ -541,10 +545,80 @@ function apocalypseScene({ nuke = false, onboarding = false } = {}) {
   };
 }
 
+/* ---------- 10 SAFESOCIAL ---------- */
+function safeSocialScene() {
+  const categories = ['Luxury & status', 'Travel & lifestyle', 'Romance & jealousy'];
+  return {
+    scale: 1.08,
+    file: '010-safesocial.png',
+    theme: 'release',
+    body: `
+      <div style="display:grid; grid-template-columns:430px 1fr; gap:46px; align-items:center; height:100%;">
+        <div>
+          <div style="display:inline-flex; align-items:center; gap:10px; font-family:var(--mono); font-size:15px; font-weight:700;
+            letter-spacing:0.14em; text-transform:uppercase; color:var(--accent);">
+            <span style="width:10px; height:10px; border-radius:99px; background:var(--accent2); box-shadow:0 0 14px rgba(236,103,151,0.45);"></span>
+            SafeSocial
+          </div>
+          <h1 style="font-size:65px; line-height:1.02; margin-top:22px;">A cleaner<br>Instagram.</h1>
+          <div class="sub" style="font-size:25px; max-width:400px; margin-top:24px;">
+            Soften comparison triggers.<br>Keep the feed yours.
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:30px;">
+            ${['Optional', '13.6 MB', 'On device'].map((label, i) => `
+              <span style="padding:10px 14px; border:1px solid var(--border); background:var(--panel); border-radius:999px;
+                color:${i === 2 ? 'var(--accent)' : 'var(--muted)'}; font-family:var(--mono); font-size:12px; font-weight:700;
+                letter-spacing:0.05em; text-transform:uppercase; box-shadow:0 8px 20px rgba(46,42,90,0.05);">${label}</span>`).join('')}
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:center;">
+          <div style="width:640px; background:#ffffff; border:1px solid var(--border); border-radius:26px; overflow:hidden;
+            box-shadow:var(--shadow); transform:rotate(1deg);">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <div style="padding:21px 24px 18px;">
+                <div style="font-size:22px; font-weight:800; color:var(--ink);">SafeSocial</div>
+                <div style="font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:0.08em; color:var(--muted); margin-top:5px;">LOCAL INSTAGRAM IMAGE FILTER</div>
+              </div>
+              <div style="display:flex; align-items:center; gap:9px; padding:0 24px;">
+                <span style="padding:6px 10px; border-radius:999px; background:rgba(101,214,157,0.13); color:#158653;
+                  font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:0.07em;">ON DEVICE</span>
+                <span style="font-family:var(--mono); font-size:18px; font-weight:800; color:var(--accent);">13.6 MB</span>
+              </div>
+            </div>
+            <div style="height:245px; position:relative; overflow:hidden; background:#ececf2;">
+              <img src="${assets.safeSocial}" alt="" style="width:100%; height:100%; object-fit:cover; object-position:70% 51%; display:block; filter:blur(3px) saturate(0.72); transform:scale(1.04); opacity:0.83;">
+              <div style="position:absolute; inset:0; background:linear-gradient(90deg, rgba(255,255,255,0.77), rgba(255,255,255,0.22));"></div>
+              <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;">
+                <div style="padding:14px 20px; border-radius:13px; background:#202a3a; color:#fff; font-size:16px; font-weight:750;
+                  box-shadow:0 10px 20px rgba(32,42,58,0.22);">SafeSocial &middot; Show image</div>
+              </div>
+            </div>
+            <div style="padding:18px 24px 21px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:13px;">
+                <div style="font-size:16px; font-weight:800; color:var(--ink);">Categories to soften</div>
+                <div style="font-family:var(--mono); font-size:11px; font-weight:700; color:var(--muted);">CHOOSE YOURS</div>
+              </div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              ${categories.map(label => `<span style="padding:7px 10px; border-radius:9px; background:#f4f1e8; color:#705e4d; font-size:12px; font-weight:700;">${label}</span>`).join('')}
+              </div>
+              <div style="display:flex; align-items:center; gap:10px; margin-top:18px; padding-top:16px; border-top:1px solid var(--border);">
+                <span style="width:10px; height:10px; border-radius:99px; background:#58c78d; box-shadow:0 0 10px rgba(88,199,141,0.45);"></span>
+                <span style="font-family:var(--mono); font-size:12px; font-weight:700; color:#158653; letter-spacing:0.06em;">CLASSIFICATION RUNS LOCALLY</span>
+                <span style="margin-left:auto; padding:6px 10px; border-radius:999px; background:#f0edff; color:var(--accent); font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:0.07em;">OFF BY DEFAULT</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`,
+  };
+}
+
 const scenes = [
   hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene(), proofScene(),
   apocalypseScene(),
   apocalypseScene({ nuke: true }),
+  safeSocialScene(),
   hero(true), planScene(true),
   // The install page renders localized HTML over these copy-free variants.
   // Keep the Web Store artwork above unchanged: its English copy is intentional.
