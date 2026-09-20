@@ -667,8 +667,16 @@
   function _hasVisibleBox(el, minWidth = 1, minHeight = 1) {
     if (!el || typeof el.getBoundingClientRect !== 'function') return false;
     try {
-      for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
+      let ancestor = el;
+      while (ancestor) {
         if (ancestor.getAttribute?.('aria-hidden') === 'true') return false;
+        const parent = ancestor.parentElement;
+        if (parent) {
+          ancestor = parent;
+          continue;
+        }
+        const root = ancestor.getRootNode?.();
+        ancestor = root && typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot ? root.host : null;
       }
       const r = el.getBoundingClientRect();
       if (r.width < minWidth || r.height < minHeight) return false;
