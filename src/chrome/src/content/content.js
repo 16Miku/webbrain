@@ -4,8 +4,25 @@
  */
 
 (() => {
-  // Prevent double-injection
-  if (window.__webbrain_injected) return;
+  // Prevent double-injection within one extension context — but TAKE OVER
+  // from an orphaned installation. When the extension is reloaded, updated,
+  // or its folder moves, the previous content script stays in the page with
+  // a dead runtime context: it still receives messages but can never answer
+  // them, and because `__webbrain_injected` is already set, re-injecting the
+  // current build used to be a no-op. That made every page tool fail with
+  // "received no answer" until the tab was manually reloaded.
+  //
+  // A monotonic generation counter fixes this: each install bumps
+  // `__webbrain_generation`, and only the listener belonging to the newest
+  // install answers. Older (possibly orphaned) listeners stay registered but
+  // go inert, and a fresh install always takes over.
+  window.__webbrain_generation = (Number(window.__webbrain_generation) || 0) + 1;
+  const WEBBRAIN_GENERATION = window.__webbrain_generation;
+  // No early return: a fresh install ALWAYS takes over. Re-running the body
+  // is safe (everything lives inside this IIFE, so no const redeclaration),
+  // and the generation check in the message handler below makes every
+  // previous copy inert, so exactly one listener ever answers. Orphaned
+  // duplicates only linger as inert JS until the tab is reloaded.
   window.__webbrain_injected = true;
 
   const RECORDING_DOUBLE_ESCAPE_MS = 1400;
@@ -247,7 +264,8 @@
       const descriptor = window.__wbSiteInteractions?.describe?.(el);
       if (descriptor?.name) return descriptor.name;
     } catch {}
-    return (el?.innerText || el?.value || el?.placeholder || el?.title || el?.ariaLabel || '').trim();
+    const aria = el?.getAttribute?.('aria-label') || el?.ariaLabel || '';
+    return (el?.innerText || el?.value || el?.placeholder || el?.title || aria || '').trim();
   }
 
   function _isSiteInteractive(el) {
@@ -1367,11 +1385,46 @@
 
   // Shared by click dispatch and its recipient-safety preflight. In
   // particular, navigation links must participate in text-match ambiguity.
+  //
+  // This walk is the most expensive part of a text click: it scans the page
+  // (including every shadow host) and reads innerText per match. clickElement,
+  // the recipient preflight, and every retry all call it. Cache the result and
+  // reuse it until the DOM actually changes.
+  const _domRevision = { value: 0, observer: null };
+  function _ensureDomRevisionObserver() {
+    if (_domRevision.observer || typeof MutationObserver === 'undefined') return;
+    try {
+      _domRevision.observer = new MutationObserver(() => { _domRevision.value += 1; });
+      _domRevision.observer.observe(document, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        // Only the attributes that can change a text-click match; a broad
+        // filter keeps the callback cheap on busy SPAs.
+        attributeFilter: [
+          'aria-label', 'aria-labelledby', 'title', 'placeholder', 'value', 'disabled',
+          'aria-expanded', 'aria-selected', 'aria-checked', 'aria-hidden', 'hidden',
+          'class', 'style', 'role', 'tabindex',
+        ],
+      });
+    } catch {
+      _domRevision.observer = null;
+    }
+  }
+
+  const _textCandidateCache = new WeakMap();
   function _clickTextCandidates(scope) {
+    _ensureDomRevisionObserver();
+    const revision = _domRevision.value;
+    const cacheScope = scope && typeof scope === 'object' ? scope : document;
+    const cached = _textCandidateCache.get(cacheScope);
+    if (cached && cached.revision === revision) return cached.list.slice();
     const selectors = [
       'a', 'button', '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
+      '[role="menuitemcheckbox"]', '[role="combobox"]', '[role="searchbox"]', '[role="textbox"]',
       'input:not([type="hidden"])', 'textarea', 'select', 'input[type="button"]',
       'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
+      '[aria-label]', '[tabindex]', '[data-tooltip]',
       ..._siteInteractiveSelectors(),
     ].join(', ');
     // LinkedIn can render the feed itself inside an open shadow root. Keep
@@ -1385,11 +1438,24 @@
         if (host.shadowRoot) visit(host.shadowRoot);
       }
     };
-    visit(scope);
-    return candidates
-      .filter(e => _hasVisibleBox(e))
-      .map(e => ({ e, txt: _siteInteractionText(e).toLowerCase() }))
-      .filter(candidate => candidate.txt);
+    visit(cacheScope);
+    const out = [];
+    const seen = new Set();
+    for (const e of candidates) {
+      if (!_hasVisibleBox(e)) continue;
+      const text = _siteInteractionText(e).toLowerCase();
+      if (text && !seen.has(`${text}\u0000${out.length}`)) out.push({ e, txt: text });
+      // A control's aria-label / title / placeholder often names it far better
+      // than its visible glyphs — icon-only buttons and combobox-style fields
+      // ("Search for contacts") are unreachable by visible text alone. Offer
+      // those as extra needles so a text click resolves in one round trip.
+      for (const attr of ['aria-label', 'title', 'placeholder', 'data-tooltip']) {
+        const value = String(e.getAttribute?.(attr) || '').trim().toLowerCase();
+        if (value && value !== text) out.push({ e, txt: value });
+      }
+    }
+    _textCandidateCache.set(cacheScope, { revision, list: out });
+    return out.slice();
   }
 
   function _shadowAwareElementFromPoint(x, y) {
@@ -1463,7 +1529,18 @@
       function tryMode(mode) {
         if (mode === 'exact') return normalized.filter(x => x.txt === needle);
         if (mode === 'prefix') return normalized.filter(x => x.txt.startsWith(needle));
-        if (mode === 'contains') return normalized.filter(x => x.txt.includes(needle));
+        if (mode === 'contains') {
+          // A 1-2 character needle in contains mode matches half the page:
+          // click({text:"X"}) matched 13 controls and burned an entire turn on
+          // an ambiguity report. Short needles must hit a word boundary so they
+          // can only resolve to something that is actually that token.
+          if (needle.length >= 3) return normalized.filter(x => x.txt.includes(needle));
+          const padded = ` ${needle} `;
+          return normalized.filter(x => x.txt === needle
+            || x.txt.startsWith(`${needle} `)
+            || x.txt.endsWith(` ${needle}`)
+            || x.txt.includes(padded));
+        }
         return [];
       }
 
@@ -1543,12 +1620,66 @@
           return { success: false, dispatched: false, error: `No clickable element found for text "${params.text}" (also tried scrolling down)${_noteModal}` };
         }
       }
+      // Collapse text matches that resolve to the SAME actionable element
+      // before treating the text as ambiguous. An icon+label button wraps its
+      // text in nested divs/spans, so an exact text match legitimately matches
+      // the control AND its inner text node — two matches, one button. Gmail's
+      // "Send" is exactly this shape, which made an unambiguous click look
+      // ambiguous and sent the model off to do coordinate arithmetic.
+      // Playwright-style locators resolve to the element that actually
+      // receives the click; doing that here fixes "Send", "Post", "Connect",
+      // and every other label-wrapped control on the web.
+      if (!el && matches.length > 1) {
+        const collapsedByAncestor = new Map();
+        for (const m of matches) {
+          const actionable = _resolveInteractiveAncestor(m.e) || m.e;
+          if (!collapsedByAncestor.has(actionable)) collapsedByAncestor.set(actionable, m);
+        }
+        if (collapsedByAncestor.size < matches.length) {
+          matches = [...collapsedByAncestor.values()];
+        }
+        if (matches.length === 1) {
+          el = _resolveInteractiveAncestor(matches[0].e) || matches[0].e;
+          textResolvedExact = (usedMode === 'exact');
+        }
+      }
       if (!el && matches.length > 1) {
         // Prefer interactive elements over passive children (label, span, etc.)
         const interactiveMatches = matches.filter(m => _isInteractive(m.e));
         if (interactiveMatches.length === 1) {
           matches = interactiveMatches;
         } else {
+          // Playwright-style narrowing: a click must land on the element that
+          // actually receives the event. Prefer candidates that are their own
+          // hit target — visible, enabled, not covered by an overlay. This
+          // usually collapses a reported ambiguity to the one control a real
+          // click would hit, and often to a single element, which then resolves
+          // here instead of spending an entire LLM turn on candidate
+          // coordinates.
+          const hitTargetPool = (interactiveMatches.length > 1 ? interactiveMatches : matches).filter(m => {
+            try {
+              const r = m.e.getBoundingClientRect();
+              if (r.width < 1 || r.height < 1) return false;
+              if (m.e.disabled === true || m.e.getAttribute?.('aria-disabled') === 'true') return false;
+              const hit = _shadowAwareElementFromPoint(
+                Math.round(r.left + r.width / 2),
+                Math.round(r.top + r.height / 2),
+              );
+              return !!hit && (hit === m.e || m.e.contains?.(hit) || hit.contains?.(m.e));
+            } catch {
+              return false;
+            }
+          });
+          if (hitTargetPool.length === 1) {
+            el = _resolveInteractiveAncestor(hitTargetPool[0].e) || hitTargetPool[0].e;
+            textResolvedExact = (usedMode === 'exact');
+            matches = hitTargetPool;
+          } else if (hitTargetPool.length > 1 && hitTargetPool.length < matches.length) {
+            // Still ambiguous, but report only the controls a real click could
+            // hit — fewer, better candidates for the one turn it costs.
+            matches = hitTargetPool;
+          }
+          if (matches.length > 1) {
           // Build rich candidates: position (rect), tag, role, surrounding
           // context (closest landmark/dialog/button text), and a suggested
           // disambiguator. When the same text appears twice (e.g. "Cancel"
@@ -1598,6 +1729,7 @@
             error: `Ambiguous text match for "${params.text}" (mode=${usedMode}, matches=${matches.length})${_scopeNote}. ${candidates.length} candidates returned with cx/cy (precomputed click center, in CSS pixels) and ancestor context. Pick one and call click({x: candidate.cx, y: candidate.cy, coordinate_space: "css"}) — no arithmetic needed. Use the ancestor field to disambiguate (e.g. an alertdialog's Cancel vs a form's Cancel sit in different containers). Do NOT retry click({text: "${params.text}"}) — it will fail the same way.`,
             candidates,
           };
+          }
         }
       }
       if (!el) {
@@ -4970,6 +5102,77 @@
     }
   }
 
+  // A control whose label can commit a message in ONE activation, with no
+  // composer rendered ("Send", "Send without a note", "Send invitation").
+  // Everything else on a composer-less page is provably not a message send.
+  const _MESSAGE_COMMIT_LABEL_RE = new RegExp(
+    '(?:^|[^\\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\\p{L}]|$)',
+    'iu',
+  );
+  // Containers the messaging apps themselves use for their messaging surface.
+  // Anything inside them stays on the recipient-verification path even when no
+  // composer is currently rendered.
+  const _MESSAGING_SURFACE_SELECTOR = [
+    '[class*="msg-"]',
+    '[class*="messaging"]',
+    '[id*="messaging"]',
+    '[data-messaging]',
+    '[data-test-messaging]',
+    '[role="log"]',
+  ].join(',');
+
+  function _hasMessageCommitName(value) {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    return !!text && _MESSAGE_COMMIT_LABEL_RE.test(text);
+  }
+
+  function _inMessagingSurface(el) {
+    try {
+      return !!el?.closest?.(_MESSAGING_SURFACE_SELECTOR);
+    } catch {
+      return false;
+    }
+  }
+
+  // Composer utilities sit at the composer's edge, so the geometry rule would
+  // otherwise treat them as potential sends: Gmail's own toolbar exposes
+  // "Save & close", "Minimize", "Exit full screen (Shift for Pop-out)", plus
+  // attach/formatting/discard controls. None of them can commit a message.
+  // Without this list a click on "Save & close" was reported as a blocked
+  // message send and the task could never finish.
+  const _COMPOSER_UTILITY_LABEL_RE = new RegExp(
+    '^(?:save\\s*(?:&|and)?\\s*(?:close|draft|draft\\s*&\\s*close)|save\\s*&\\s*close'
+    + '|minimi[sz]e|exit\\s+full\\s+screen|full\\s+screen|pop-?out|expand|collapse'
+    + '|discard(?:\\s+draft)?|delete\\s+draft|print|check\\s+spelling|plain\\s+text(?:\\s+mode)?'
+    + '|attach(?:\\s+(?:files?|photos?|images?|documents?))?|insert\\s+(?:link|photo|image|file|drive|emoji|signature|contact|table|drawing|note)'
+    + '|emoji|emoticon|bold|italic|underline|strikethrough|align|numbered\\s+list|bulleted\\s+list'
+    + '|indent|outdent|undo|redo|more\\s+options|formatting(?:\\s+options)?|text\\s+formatting'
+    + '|remove\\s+formatting|font|text\\s+color|highlight|edit\\s+subject|confidential\\s+mode)',
+    'i',
+  );
+
+  function _isComposerUtilityControl(el) {
+    if (!el) return false;
+    try {
+      const label = String(
+        el.getAttribute?.('aria-label')
+        || el.getAttribute?.('title')
+        || el.getAttribute?.('data-tooltip')
+        || el.value
+        || el.innerText
+        || el.textContent
+        || '',
+      ).replace(/\s+/g, ' ').trim();
+      if (label && _COMPOSER_UTILITY_LABEL_RE.test(label)) return true;
+      // Formatting toolbars and pressed toggles are structural non-sends.
+      if (el.closest?.('[role="toolbar"],[aria-label*="formatting" i],[aria-label*="format" i]')) return true;
+      if (el.hasAttribute?.('aria-pressed')) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   // Read-only pre-dispatch probe for adapters that require a verified active
   // conversation before a message can be sent. It deliberately ignores input
   // values and ordinary page text: a searched recipient name is not proof that
@@ -5170,7 +5373,15 @@
       } else if (tool === 'click') {
         // Match dispatch precedence, modal scope, candidate text and match
         // mode. A supplied selector must not approve a different text click.
-        if (typeof args.text === 'string' && args.text) {
+        // Models routinely pass a ref_id to `click` instead of `click_ax`; the
+        // probe must resolve that the same way the dispatch will, otherwise a
+        // perfectly good click was reported as "could not conclusively resolve
+        // the target control".
+        if (typeof args.ref_id === 'string' && args.ref_id
+            && typeof window.__wb_ax_lookup === 'function') {
+          target = window.__wb_ax_lookup(args.ref_id);
+        }
+        if (!target && typeof args.text === 'string' && args.text) {
           const needle = args.text.toLowerCase();
           const scope = _findTopmostModal() || document;
           const candidates = _clickTextCandidates(scope);
@@ -5188,11 +5399,11 @@
             if (matches.length === 1) target = _resolveInteractiveAncestor(matches[0].e);
             if (matches.length) break;
           }
-        } else if (typeof args.selector === 'string' && args.selector) {
+        } else if (!target && typeof args.selector === 'string' && args.selector) {
           target = safeIndexedQuerySelector(args.selector, args.matchIndex).element;
-        } else if (Number.isInteger(args.index) && args.index >= 0) {
+        } else if (!target && Number.isInteger(args.index) && args.index >= 0) {
           target = queryInteractiveForToolIndex()[args.index] || null;
-        } else if (Number.isFinite(args.x) && Number.isFinite(args.y)) {
+        } else if (!target && Number.isFinite(args.x) && Number.isFinite(args.y)) {
           target = _shadowAwareElementFromPoint(args.x, args.y);
         }
         targetResolved = !!target;
@@ -5479,9 +5690,26 @@
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         if (active !== layoutComposer) {
-          return verifiedNavigationEditable(active)
-            ? { success: true, messageSend: false, conclusive: true, identityCandidates: [] }
-            : { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+          if (verifiedNavigationEditable(active)) {
+            return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+          }
+          // Editables that share the compose surface with the message body —
+          // Gmail's To / Subject inputs, chip and autocomplete fields — cannot
+          // send a message on their own, but Enter is how users commit an
+          // autocomplete pick and Tab moves between fields. Blocking those
+          // presses turned normal compose navigation into a dead end. Only a
+          // key inside the composer itself can dispatch a message, and that
+          // path below stays fully guarded.
+          try {
+            const composeScopeOf = (el) => el?.closest?.(
+              'form, [role="dialog"], [role="form"], [aria-label*="compose" i], [class*="compose" i]',
+            );
+            const activeScope = composeScopeOf(active);
+            if (activeScope && activeScope === composeScopeOf(layoutComposer)) {
+              return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+            }
+          } catch { /* fall through to the conservative result */ }
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         composer = layoutComposer;
         dispatchTarget = active;
@@ -5534,6 +5762,23 @@
             identityCandidates: [],
           };
         }
+        // Composer utilities (Gmail's "Save & close" / "Minimize" / "Exit full
+        // screen / Pop-out", attach, formatting, discard, undo) live at the
+        // composer's edge, so the geometry rule below would otherwise classify
+        // them as potential sends and block them — which is how a click on
+        // "Save & close" came back as a blocked message send and the task
+        // could never finish. None of them can commit a message, so they are
+        // proven non-sends regardless of composer presence or geometry.
+        if (_isComposerUtilityControl(control)) {
+          return {
+            success: true,
+            messageSend: false,
+            conclusive: true,
+            composerUtility: true,
+            reasonCode: 'non_messaging_target',
+            identityCandidates: [],
+          };
+        }
         composer = layoutComposer;
         if (!composer) {
           const actionLabel = compact(
@@ -5547,11 +5792,36 @@
           );
           const composerSetup = params.adapterName === 'gmail'
             && /^(?:reply|reply all|forward)$/i.test(actionLabel);
+          // The guard exists to keep a MESSAGE from reaching the wrong
+          // recipient. When the page exposes no composer at all, an ordinary
+          // control (Connect, Follow, Like, a feed row, Inbox nav, a search
+          // box) cannot send a message in this activation, so it is proven
+          // not to be a send and must not be blocked. Only controls that can
+          // still commit without a composer — a send/commit-labelled control,
+          // a messaging app's Reply/Reply all/Forward opener, or anything
+          // inside the app's messaging surface — stay fail-closed.
+          const provenNonMessage = !composerSetup
+            && !_hasMessageCommitName(actionLabel)
+            && !_inMessagingSurface(control);
+          if (provenNonMessage) {
+            return {
+              success: true,
+              messageSend: false,
+              conclusive: true,
+              composerAvailable: false,
+              nonMessagingTarget: true,
+              reasonCode: 'non_messaging_target',
+              identityCandidates: [],
+            };
+          }
           return {
             success: true,
             messageSend: null,
             conclusive: false,
             composerAvailable: false,
+            reasonCode: _hasMessageCommitName(actionLabel)
+              ? 'message_commit_without_composer'
+              : 'no_composer_surface',
             ...(composerSetup ? { composerSetup: true } : {}),
             identityCandidates: [],
           };
@@ -5568,17 +5838,49 @@
             identityCandidates: [],
           };
         }
-        dispatchTarget = target;
+         dispatchTarget = target;
         const composerRect = composer.getBoundingClientRect();
         const controlRect = control.getBoundingClientRect();
+        // Geometry: controls visually next to the composer are the message-send
+        // affordance. Sending from a control that is far from the composer is
+        // almost always wrong on well-behaved chat surfaces, and blocking it there
+        // gives the model a precise, retryable failure instead of silently sending
+        // to the wrong place. Two carpet tolerances are deliberately loose here so
+        // that non-messaging apps (email, forms, social buttons) are not treated
+        // as messenger controls purely by proximity — they will still end up going
+        // through the generic 'inconclusive' path above, which the agent can
+        // reclassify from the surrounding text on the next read.
+        const sameForm = !!composer.closest?.('form') && composer.closest('form') === control.closest?.('form');
         const horizontalGap = Math.max(0, composerRect.left - controlRect.right, controlRect.left - composerRect.right);
         const verticalGap = Math.max(0, composerRect.top - controlRect.bottom, controlRect.top - composerRect.bottom);
-        const sameForm = !!composer.closest?.('form') && composer.closest('form') === control.closest?.('form');
-        // Framework chat controls are often clickable divs rather than native
-        // buttons, and a nearby control can send an attachment even when the
-        // text composer is empty. Geometry must therefore win over tag shape.
         messageSend = sameForm || (horizontalGap <= 240 && verticalGap <= 120);
         if (!messageSend) {
+          // The control is geometrically far from the composer and not in the
+          // same form, so clicking it cannot commit the message. Geometry alone
+          // is enough evidence — but only after also ruling out a send-labelled
+          // control and anything inside the app's messaging surface, both of
+          // which can commit without sitting near the composer. That second
+          // check is what makes far-away controls self-healing instead of
+          // being blocked as "inconclusive" and retried in a loop.
+          const farLabel = compact(
+            control.getAttribute?.('aria-label')
+            || control.getAttribute?.('title')
+            || control.getAttribute?.('data-tooltip')
+            || control.value
+            || control.innerText
+            || control.textContent,
+            120,
+          );
+          if (!_hasMessageCommitName(farLabel) && !_inMessagingSurface(control)) {
+            return {
+              success: true,
+              messageSend: false,
+              conclusive: true,
+              nonMessagingTarget: true,
+              reasonCode: 'non_messaging_target',
+              identityCandidates: [],
+            };
+          }
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
       }
@@ -5744,6 +6046,55 @@
         })();
         gmailComposeRoot = composeRoot;
         const recipients = collectGmailRecipients(composeRoot);
+        // A recipient that was typed but not yet turned into a chip lives only
+        // in the To/Cc/Bcc input VALUE — there is no [email] attribute to read.
+        // Without this pass a compose window whose address was just typed
+        // reported zero observed recipients, so the guard could neither name
+        // the address nor bind a later user confirmation to what is on screen.
+        const collectRecipientInputValues = (root) => {
+          if (!root?.querySelectorAll) return;
+          let inputs = [];
+          try {
+            inputs = Array.from(root.querySelectorAll(
+              'input, textarea, [contenteditable="true"], [contenteditable=""]',
+            )).slice(0, 40);
+          } catch {
+            return;
+          }
+          for (const input of inputs) {
+            if (!visible(input)) continue;
+            if (input === composer || composer?.contains?.(input)) continue;
+            const role = roleFromAttribute('name', input.getAttribute?.('name'))
+              || roleFromAttribute('aria-label', input.getAttribute?.('aria-label'))
+              || '';
+            if (!role) continue;
+            const raw = String(
+              'value' in input ? (input.value || '') : (input.innerText || input.textContent || ''),
+            );
+            if (!raw || raw.length > 2000) continue;
+            for (const piece of raw.split(/[,;\n]+/)) {
+              const candidate = compact(piece, 240);
+              if (!candidate) continue;
+              const match = candidate.match(/[^\s<>@,;]+@[^\s<>@,;.]+\.[^\s<>@,;]+/);
+              if (!match) continue;
+              const email = match[0];
+              const key = normalizedIdentity(email);
+              if (!key) continue;
+              const recipientKey = `${role}:${key}`;
+              const prior = recipients.get(recipientKey) || { identity: email, role, aliases: new Map() };
+              prior.aliases.set(key, email);
+              const display = compact(candidate.replace(/<[^>]*>/g, ''), 240);
+              if (display && display !== email) {
+                const normalizedDisplay = normalizedIdentity(display);
+                if (normalizedDisplay && !prior.aliases.has(normalizedDisplay)) {
+                  prior.aliases.set(normalizedDisplay, display);
+                }
+              }
+              recipients.set(recipientKey, prior);
+            }
+          }
+        };
+        collectRecipientInputValues(composeRoot);
         for (const [recipientKey, recipient] of recipients) {
           const emailKey = recipientKey.slice(recipientKey.indexOf(':') + 1);
           const identity = recipient.aliases.get(emailKey) || [...recipient.aliases.values()][0] || recipient.identity || '';
@@ -5861,6 +6212,100 @@
         }
       }
 
+      // ── Generic recipient discovery (every site) ────────────────────────
+      // The Gmail branch above reads Google's own DOM. Every other webmail,
+      // CRM, ticketing tool, and messaging app needs the same answer: who would
+      // this send actually go to? Read it structurally — a recipient-labelled
+      // field, or an address-bearing chip/link near the composer — instead of
+      // depending on one vendor's markup. This is what makes confirm-then-send
+      // work globally rather than only on Gmail.
+      if (observedRecipientCandidates.length === 0) {
+        const RECIPIENT_FIELD_RE = new RegExp(
+          '(?:^|[^\\p{L}])(?:to|to\\s+recipients?|recipients?|send\\s+to|email|e-?mail(?:\\s+address)?'
+          + '|destinatario|destinataria|destinataire|para|aan|kime|do|til|komu|\\u0644\\u0625\\u0649'
+          + '|\\u6536\\u4ef6\\u4eba|\\u5b9b\\u5148|\\ubc1b\\ub294\\s*\\uc0ac\\ub78c)(?:[^\\p{L}]|$)',
+          'iu',
+        );
+        const fieldLooksLikeRecipient = (el) => {
+          try {
+            if (/^email$/i.test(String(el.getAttribute?.('type') || ''))) return true;
+            if (/^email$/i.test(String(el.getAttribute?.('autocomplete') || ''))) return true;
+            const haystack = [
+              el.getAttribute?.('name'),
+              el.getAttribute?.('aria-label'),
+              el.getAttribute?.('placeholder'),
+              el.getAttribute?.('id'),
+              el.getAttribute?.('data-testid'),
+              el.getAttribute?.('autocomplete'),
+              el.labels ? Array.from(el.labels).map(label => label.innerText).join(' ') : '',
+            ].filter(Boolean).join(' ');
+            return !!haystack && RECIPIENT_FIELD_RE.test(haystack);
+          } catch {
+            return false;
+          }
+        };
+        const pushRecipient = (identity, extraAliases = []) => {
+          const raw = compact(identity, 240);
+          const normalized = raw ? normalizedIdentity(raw) : '';
+          if (!normalized) return;
+          const existing = observedRecipientCandidates.find(
+            item => normalizedIdentity(item.identity) === normalized,
+          );
+          const aliases = Array.from(new Set([
+            raw,
+            ...extraAliases,
+            ...(existing?.aliases || []),
+          ].filter(Boolean)));
+          const entry = { identity: raw, role: 'to', aliases };
+          if (existing) Object.assign(existing, entry);
+          else observedRecipientCandidates.push(entry);
+          if (!strongRecipients.some(item => normalizedIdentity(item.identity) === normalized)) {
+            strongRecipients.push({ identity: raw, role: 'to' });
+          }
+        };
+        const extractAddresses = (rawValue) => {
+          const raw = String(rawValue || '');
+          if (!raw || raw.length > 2000) return;
+          for (const piece of raw.split(/[,;\n]+/)) {
+            const candidate = compact(piece, 240);
+            if (!candidate) continue;
+            const match = candidate.match(/[^\s<>@,;]+@[^\s<>@,;.]+\.[^\s<>@,;]+/);
+            if (!match) continue;
+            const display = compact(candidate.replace(/<[^>]*>/g, ''), 240);
+            pushRecipient(match[0], display && display !== match[0] ? [display] : []);
+          }
+        };
+        try {
+          for (const el of Array.from(document.querySelectorAll(
+            'input, textarea, [contenteditable="true"], [contenteditable=""]',
+          )).slice(0, 60)) {
+            if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
+            if (!fieldLooksLikeRecipient(el)) continue;
+            extractAddresses('value' in el ? el.value : (el.innerText || el.textContent || ''));
+          }
+        } catch { /* structural read is best-effort */ }
+        try {
+          const chipScope = composer.closest?.('[role="dialog"],form,[role="main"]') || document;
+          for (const el of Array.from(chipScope.querySelectorAll(
+            '[email],[data-email],[data-hovercard-id],a[href^="mailto:" i],input[type="email"]',
+          )).slice(0, 40)) {
+            if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
+            const mailto = String(el.getAttribute?.('href') || '')
+              .replace(/^mailto:/i, '').split('?')[0];
+            const address = [
+              el.getAttribute?.('email'),
+              el.getAttribute?.('data-email'),
+              el.getAttribute?.('data-hovercard-id'),
+              mailto,
+              'value' in el ? el.value : '',
+            ].map(value => compact(value, 240)).find(value => String(value || '').includes('@')) || '';
+            if (!address) continue;
+            const display = compact(el.innerText || el.textContent, 240);
+            pushRecipient(address, display && display !== address ? [display] : []);
+          }
+        } catch { /* chip read is best-effort */ }
+      }
+
       const composerText = (() => {
         try {
           if ('value' in composer) return String(composer.value || '');
@@ -5970,6 +6415,12 @@
   // --- Message handler ---
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.target !== 'content') return;
+    // Only the newest installed copy answers. An orphaned copy from a
+    // previous extension load still has a live DOM but a dead runtime
+    // context — it receives this message and can never respond, which used
+    // to shadow the healthy listener and turn every page tool into
+    // "received no answer". Yielding here lets the current install reply.
+    if (WEBBRAIN_GENERATION !== (Number(window.__webbrain_generation) || 0)) return;
     const actionDeadlineAt = Number(msg.actionDeadlineAt) || 0;
     const actionDeadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
     if (actionDeadlineExpired()) {
@@ -7667,7 +8118,19 @@
       return value;
     };
 
-    const result = handler();
+    let result;
+    try {
+      result = handler();
+    } catch (err) {
+      // A synchronous throw used to escape the listener without calling
+      // sendResponse, so the caller saw an undefined response and reported
+      // "<tool> returned no result." with no diagnosis. Always answer.
+      sendResponse(withLiveDocumentScope({
+        success: false,
+        error: `${msg.action} failed: ${err?.message || String(err)}`,
+      }));
+      return;
+    }
     if (result instanceof Promise) {
       // Always settle sendResponse — a rejecting handler (e.g. a throwing
       // DOM API) must not leave the caller's await hanging forever.
@@ -7679,6 +8142,17 @@
         })),
       );
       return true; // async
+    }
+    if (result === undefined || result === null) {
+      // A handler that answers with nothing is a bug, not an empty result:
+      // surface it so the caller can distinguish a real failure from a
+      // silently closed response channel.
+      sendResponse(withLiveDocumentScope({
+        success: false,
+        noResult: true,
+        error: `${msg.action} returned no result (handler produced no payload).`,
+      }));
+      return;
     }
     sendResponse(withLiveDocumentScope(result));
   });
