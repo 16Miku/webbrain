@@ -667,6 +667,9 @@
   function _hasVisibleBox(el, minWidth = 1, minHeight = 1) {
     if (!el || typeof el.getBoundingClientRect !== 'function') return false;
     try {
+      for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
+        if (ancestor.getAttribute?.('aria-hidden') === 'true') return false;
+      }
       const r = el.getBoundingClientRect();
       if (r.width < minWidth || r.height < minHeight) return false;
       const s = getComputedStyle(el);
@@ -3725,6 +3728,30 @@
   }
 
   const _messageRecipientDispatchBindings = new Map();
+  const _twitterEmptyLogObservations = new WeakMap();
+
+  function _settledEmptyTwitterLog(log) {
+    if (!log?.isConnected) return false;
+    let loading = false;
+    try {
+      loading = log.getAttribute('aria-busy') === 'true'
+        || !!log.querySelector('[aria-busy="true"],[role="progressbar"]');
+    } catch {}
+    if (loading) {
+      _twitterEmptyLogObservations.delete(log);
+      return false;
+    }
+    const now = Date.now();
+    const prior = _twitterEmptyLogObservations.get(log);
+    const observation = prior
+      ? { firstSeenAt: prior.firstSeenAt, count: prior.count + 1 }
+      : { firstSeenAt: now, count: 1 };
+    _twitterEmptyLogObservations.set(log, observation);
+    // A first-message conversation has no historic tail to pin. Require the
+    // same empty log to survive two non-loading reads before treating that
+    // exceptional baseline as settled.
+    return observation.count >= 2 && now - observation.firstSeenAt >= 300;
+  }
 
   function _messageRecipientIdentityKey(values = []) {
     return JSON.stringify(Array.from(new Set((Array.isArray(values) ? values : [])
@@ -3779,6 +3806,7 @@
       messageBody: String(dispatch.messageBody || ''),
       messageBodyBaselineCount: Number(dispatch.messageBodyBaselineCount || 0),
       ...(Array.isArray(dispatch.existingMessageIds) ? { existingMessageIds: [...dispatch.existingMessageIds] } : {}),
+      twitterEmptyConversationBaseline: dispatch.twitterEmptyConversationBaseline === true,
       gmailComposeFlow: dispatch.gmailComposeFlow === true,
       composerSubject: String(dispatch.composerSubject || ''),
       composerSubjectAvailable: dispatch.composerSubjectAvailable === true,
@@ -3849,6 +3877,8 @@
       || live?.messageBody !== expected.messageBody
       || (expected.existingMessageIds
         && JSON.stringify(live?.existingMessageIds) !== JSON.stringify(expected.existingMessageIds))
+      || (expected.twitterEmptyConversationBaseline === true
+        && live?.twitterEmptyConversationBaseline !== true)
       || (expected.gmailComposeFlow === true && live?.gmailComposeFlow !== true)
       || (expected.composerSubjectAvailable === true
         && (live?.composerSubjectAvailable !== true || live?.composerSubject !== expected.composerSubject))) {
@@ -4115,6 +4145,9 @@
       const visible = (el) => {
         if (!el || el.nodeType !== 1 || !el.isConnected) return false;
         try {
+          for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
+            if (ancestor.getAttribute?.('aria-hidden') === 'true') return false;
+          }
           const style = getComputedStyle(el);
           const rect = el.getBoundingClientRect();
           return style.display !== 'none'
@@ -4220,12 +4253,15 @@
             .filter(row => /^message-(?!text-)[a-zA-Z0-9_-]{1,128}$/.test(row.getAttribute('data-testid') || ''))
         : [];
       const twitterMessageIds = twitterRows.map(row => row.getAttribute('data-testid'));
-      // An empty mounted log can mean X is still loading older history. Do
-      // not treat it as a proven first-message conversation: without a prior
-      // tail, an old matching row that appears after dispatch is
-      // indistinguishable from the message this run attempted to send.
-      const twitterBaselineComplete = twitterLogs.length === 1 && twitterRows.length > 0
-        && twitterRows.length <= 2000 && new Set(twitterMessageIds).size === twitterMessageIds.length;
+      const twitterEmptyConversationBaseline = twitterLogs.length === 1 && twitterRows.length === 0
+        && _settledEmptyTwitterLog(twitterLogs[0]);
+      if (twitterRows.length > 0 && twitterLogs[0]) _twitterEmptyLogObservations.delete(twitterLogs[0]);
+      // An empty mounted log can mean X is still loading older history. A
+      // first-message conversation is eligible only after the same non-loading
+      // empty log has settled across repeated observations.
+      const twitterBaselineComplete = twitterLogs.length === 1 && twitterRows.length <= 2000
+        && new Set(twitterMessageIds).size === twitterMessageIds.length
+        && (twitterRows.length > 0 || twitterEmptyConversationBaseline);
       const matchingTwitterMessageIds = expectedBody => {
         const expected = normalizedMessageBody(expectedBody);
         if (!expected || !twitterBaselineComplete) return [];
@@ -5012,7 +5048,10 @@
             supportsRecipientSets: params.supportsRecipientSets,
             messageBody,
             messageBodyBaselineCount,
-            ...(twitterConversation ? { existingMessageIds: twitterMessageIds } : {}),
+            ...(twitterConversation ? {
+              existingMessageIds: twitterMessageIds,
+              ...(twitterEmptyConversationBaseline ? { twitterEmptyConversationBaseline: true } : {}),
+            } : {}),
             gmailComposeFlow,
             composerSubject,
             composerSubjectAvailable,
@@ -5039,6 +5078,7 @@
         ...(twitterConversation && twitterBaselineComplete ? {
           existingMessageIds: twitterMessageIds,
           matchingOutgoingMessageIds: matchingTwitterMessageIds(params.expectedMessageBody),
+          ...(twitterEmptyConversationBaseline ? { twitterEmptyConversationBaseline: true } : {}),
         } : {}),
         // Only recipient-specific header evidence is authoritative. Ordinary
         // message text, test-id containers, and other leaf content are never

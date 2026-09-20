@@ -7017,6 +7017,13 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       left: 910, right: 980, top: 700, bottom: 750, width: 70, height: 50,
     }, { tagName: 'BUTTON', role: 'button' });
     sendButton.closest = () => sendButton;
+    const hiddenSendWrapper = element('', {
+      left: 900, right: 990, top: 680, bottom: 760, width: 90, height: 80,
+    }, { attributes: { 'aria-hidden': 'true' } });
+    const hiddenSendButton = element('Send', {
+      left: 910, right: 980, top: 700, bottom: 750, width: 70, height: 50,
+    }, { tagName: 'BUTTON', role: 'button', parentElement: hiddenSendWrapper });
+    hiddenSendButton.closest = () => hiddenSendButton;
     const customSendControl = element('Quick send', {
       left: 910, right: 990, top: 755, bottom: 795, width: 80, height: 40,
     }, { dataAction: true });
@@ -7063,7 +7070,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
       querySelector: (selector) => selector === '#conversation-row' ? conversationRow : null,
       querySelectorAll: (selector) => {
         if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [composer, searchBox, alternateComposer];
-        if (selector.startsWith('a, button,')) return [sendButton, customSendControl, distantControl, conversationRowMenu];
+        if (selector.startsWith('a, button,')) return [sendButton, hiddenSendButton, customSendControl, distantControl, conversationRowMenu];
         if (selector.startsWith('[aria-selected')) return [];
         if (selector.startsWith('h1,')) return [searchedName, activeHeader, conversationMessageHeading];
         if (selector.startsWith('[data-testid')) return [];
@@ -7358,7 +7365,8 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     assert.equal(alternateComposerEnterResult.conclusive, false);
     assert.equal(alternateComposerSubmitResult.messageSend, null, `${prefix}: alternate composer submit bypassed recipient verification`);
     assert.equal(alternateComposerSubmitResult.conclusive, false);
-    assert.equal(unfocusedClickResult.messageSend, true, `${prefix}: unfocused composer made send click fail open`);
+    assert.equal(unfocusedClickResult.messageSend, true,
+      `${prefix}: aria-hidden duplicate Send control made the visible target ambiguous`);
     assert.equal(unfocusedClickResult.conclusive, true);
     assert.equal(emptyComposerCustomSendResult.messageSend, true, `${prefix}: custom attachment/send control failed open`);
     assert.equal(emptyComposerCustomSendResult.conclusive, true);
@@ -94005,6 +94013,46 @@ test('publication workflows classify and bind requested payload fields', async (
     });
     assert.equal(lateHistoricRow, null,
       `${AgentClass.name}: a late-loaded historic X row satisfied an empty dispatch baseline`);
+    const settledEmptyBaselineBinding = agent._workflowSubmitBindingForAttempt(xTabId, xUrl, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: 'x-settled-empty-baseline' },
+      messageRecipientBody: 'Hello there',
+      messageRecipientBodyBaselineCount: 0,
+      messageRecipientExistingMessageIds: [],
+      messageRecipientTwitterEmptyConversationBaseline: true,
+    });
+    const firstXMessage = agent._workflowTerminalEvidenceFromDone(xTabId, { liveRegionMessages: [] }, xUrl, {
+      submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: xUrl, workflowBinding: settledEmptyBaselineBinding },
+      verifiedFinalSubmit: false,
+      relevantForms: 1,
+    }, {
+      success: true,
+      conclusive: true,
+      composerEmpty: true,
+      strongRecipientCandidates: [{ identity: '@altryne', role: 'to' }],
+      existingMessageIds: ['message-first'],
+      matchingOutgoingMessageIds: ['message-first'],
+      matchingOutgoingMessageCount: 1,
+    });
+    assert.equal(firstXMessage?.verificationKind, 'message_sent',
+      `${AgentClass.name}: a settled empty X conversation could not complete its first DM`);
+    const historyAfterSettledEmptyBaseline = agent._workflowTerminalEvidenceFromDone(
+      xTabId, { liveRegionMessages: [] }, xUrl, {
+        submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: xUrl, workflowBinding: settledEmptyBaselineBinding },
+        verifiedFinalSubmit: false,
+        relevantForms: 1,
+      }, {
+        success: true,
+        conclusive: true,
+        composerEmpty: true,
+        strongRecipientCandidates: [{ identity: '@altryne', role: 'to' }],
+        existingMessageIds: ['message-late-history', 'message-first'],
+        matchingOutgoingMessageIds: ['message-first'],
+        matchingOutgoingMessageCount: 1,
+      },
+    );
+    assert.equal(historyAfterSettledEmptyBaseline, null,
+      `${AgentClass.name}: late history satisfied a settled empty X dispatch baseline`);
   }
 });
 

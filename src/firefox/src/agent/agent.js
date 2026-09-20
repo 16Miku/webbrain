@@ -1875,7 +1875,13 @@ export class Agent extends LoopDetector {
         messageBodyBaselineCount,
         ...(siteWorkflow.adapterName === 'twitter'
           && Array.isArray(executionContext.messageRecipientExistingMessageIds)
-          ? { preDispatchMessageIds: [...executionContext.messageRecipientExistingMessageIds] }
+          ? {
+              preDispatchMessageIds: [...executionContext.messageRecipientExistingMessageIds],
+              ...(executionContext.messageRecipientTwitterEmptyConversationBaseline === true
+                && executionContext.messageRecipientExistingMessageIds.length === 0
+                ? { preDispatchEmptyConversationBaseline: true }
+                : {}),
+            }
           : {}),
         ...(siteWorkflow.adapterName === 'gmail'
           && executionContext?.messageRecipientGmailComposeFlow === true
@@ -5238,14 +5244,16 @@ export class Agent extends LoopDetector {
         const sentIds = messageProbe?.matchingOutgoingMessageIds;
         const anchorIndex = Array.isArray(priorIds) && priorIds.length > 0 && Array.isArray(currentIds)
           ? currentIds.indexOf(priorIds[priorIds.length - 1]) : -1;
+        const settledEmptyBaseline = binding.preDispatchEmptyConversationBaseline === true
+          && Array.isArray(priorIds) && priorIds.length === 0;
+        const baselineStillValid = Array.isArray(priorIds) && Array.isArray(currentIds)
+          && ((priorIds.length > 0 && anchorIndex >= 0)
+            || (settledEmptyBaseline && currentIds.length === 1));
         exactOutgoingBodyObserved = !!this._workflowMessageBody(binding.messageBody)
           && Array.isArray(priorIds) && Array.isArray(currentIds) && Array.isArray(sentIds)
-          // The content-side guard records only a settled X log with a
-          // concrete tail. Retain that invariant here as well so a malformed
-          // or older binding cannot turn a late-loaded historic row into
-          // evidence for this dispatch.
-          && priorIds.length > 0 && anchorIndex >= 0
-          && sentIds.some(id => !priorIds.includes(id) && currentIds.indexOf(id) > anchorIndex);
+          && baselineStillValid
+          && sentIds.some(id => !priorIds.includes(id)
+            && currentIds.indexOf(id) > (settledEmptyBaseline ? -1 : anchorIndex));
         sentStatusObserved = exactOutgoingBodyObserved
           && recipientObserved
           && this._normalizeUrl(pageUrl) === this._normalizeUrl(submit?.originatingUrl || '');
@@ -21033,6 +21041,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         executionContext.messageRecipientBodyBaselineCount = messageBodyBaselineCount;
         if (policy.adapterName === 'twitter' && Array.isArray(probe.existingMessageIds)) {
           executionContext.messageRecipientExistingMessageIds = [...probe.existingMessageIds];
+          if (probe.twitterEmptyConversationBaseline === true) {
+            executionContext.messageRecipientTwitterEmptyConversationBaseline = true;
+          }
         }
         if (probe.composerSubjectAvailable === true) {
           executionContext.messageRecipientSubject = this._workflowMetadataValue(probe.composerSubject);
