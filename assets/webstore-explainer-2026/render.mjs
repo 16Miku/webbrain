@@ -560,9 +560,10 @@ function safeSocialScene() {
             <span style="width:10px; height:10px; border-radius:99px; background:var(--accent2); box-shadow:0 0 14px rgba(236,103,151,0.45);"></span>
             SafeSocial
           </div>
-          <h1 style="font-size:65px; line-height:1.02; margin-top:22px;">A cleaner<br>Instagram.</h1>
+          <h1 style="font-size:60px; line-height:1.04; margin-top:22px;">Give your mind<br>a break from<br>the feed.</h1>
           <div class="sub" style="font-size:25px; max-width:400px; margin-top:24px;">
-            Soften comparison triggers.<br>Keep the feed yours.
+            A calmer Instagram.<br>
+            <span style="font-size:22px;">Soften comparison triggers. Keep the feed yours.</span>
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:30px;">
             ${['Optional', '13.6 MB', 'On device'].map((label, i) => `
