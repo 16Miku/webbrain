@@ -62,7 +62,7 @@ export function registerMessageRecipientNavigationFixtures({
         #send {position:fixed;left:820px;bottom:20px}
         [role=log] {position:fixed;left:400px;top:100px;width:400px;height:300px;overflow:auto}
       </style><a id="header" href="https://x.com/altryne"><div data-testid="dm-conversation-username">Alex Volkov</div></a>
-      <div role="log" data-testid="dm-message-scroller"></div>
+      <div role="log" data-testid="dm-message-scroller" aria-busy="false"></div>
       <textarea data-testid="dm-composer-textarea" aria-label="Unencrypted message"></textarea>
       <button id="send" type="button">Send</button>`, kind);
       const body = 'Hey Alex, check out webbrain.one.\nHappy to share a demo.';
@@ -176,7 +176,8 @@ export function registerMessageRecipientNavigationFixtures({
       delete submit.workflowBinding.preDispatchMessageIds;
       assert.equal(evidence(probe),null, 'a legacy count-only binding cannot prove an X send');
       submit.workflowBinding.preDispatchMessageIds = [];
-      assert.equal(evidence(probe)?.verificationKind, 'message_sent', 'a first message has an empty baseline');
+      assert.equal(evidence(probe), null,
+        'relabeling a nonempty X history as empty cannot fabricate a first-message baseline');
       await addRow('new');
       assert.equal(evidence(await observe()),null, 'duplicate message identities fail closed');
     });
@@ -191,7 +192,7 @@ export function registerMessageRecipientNavigationFixtures({
         #send {position:fixed;left:820px;bottom:20px}
         [role=log] {position:fixed;left:400px;top:100px;width:400px;height:300px}
       </style><a id="header" href="/altryne"><span data-testid="dm-conversation-username">Alex Volkov</span></a>
-      <div role="log" data-testid="dm-message-scroller"></div>
+      <div role="log" data-testid="dm-message-scroller" aria-busy="false"></div>
       <textarea data-testid="dm-composer-textarea"></textarea><button id="send" type="button">Send</button>`, kind);
       await page.evaluate(() => {
         window.fixtureSends = 0;
@@ -404,9 +405,17 @@ export function registerMessageRecipientNavigationFixtures({
           await page.evaluate(modal=>{
             document.querySelector('main').innerHTML=`<section id="public" ${modal?'role="dialog" aria-modal="true"':''}>
               <div role="button">Post to Anyone</div><div contenteditable="true" role="textbox">Announcement</div>
-              <button id="publish" type="button"><span>Post</span></button></section>`;
+              <button id="publish" type="button" data-control-name="share.post"><span>Post</span></button></section>`;
             document.getElementById('chat').hidden=true;
           },modal);
+          const publishWorkflow = agent._resolvePlannerSiteWorkflow(page.url(), {
+            request_kind: 'execute', site_job: 'publish-post', requires_submission: true,
+          });
+          assert.equal(publishWorkflow?.job?.id, 'publish-post');
+          agent._startPlanExecutionGuard(1, 'act', {
+            requestKind: 'execute', requiresStateChange: true, requiresSubmission: true,
+            siteWorkflow: publishWorkflow,
+          });
           const target=await page.evaluate(()=>{
             const span=document.querySelector('#publish span'),rect=span.getBoundingClientRect();
             return {ref_id:window.__wb_ax_ref(span),x:rect.x+2,y:rect.y+2};
@@ -429,7 +438,7 @@ export function registerMessageRecipientNavigationFixtures({
             document.getElementById('send').textContent='Post';
           });
           assert.equal((await guard('click',{selector:'#send'}))?.noDispatch,true);
-          assert.equal(agent._planExecutionGuards.get(1)?.messaging,undefined);
+          assert.equal(agent._planExecutionGuards.get(1)?.messaging,null);
         }
       }
     });

@@ -7902,9 +7902,9 @@ test('empty X history baselines require a positive completion signal', () => {
       : '\n\n  function _releaseDispatchBinding', start);
     assert.ok(start >= 0 && end > start, `${label}: empty-X helper should remain independently testable`);
     let now = 0;
-    const { settledEmptyTwitterLog } = vm.runInNewContext(`(() => {
+    const { settledTwitterHistory } = vm.runInNewContext(`(() => {
       ${source.slice(start, end)}
-      return { settledEmptyTwitterLog: _settledEmptyTwitterLog };
+      return { settledTwitterHistory: _settledTwitterHistory };
     })()`, {
       Date: { now: () => now },
     });
@@ -7917,25 +7917,37 @@ test('empty X history baselines require a positive completion signal', () => {
       },
     });
     const ambiguousEmptyLog = log();
-    assert.equal(settledEmptyTwitterLog(ambiguousEmptyLog), false,
+    assert.equal(settledTwitterHistory(ambiguousEmptyLog), false,
       `${label}: a bare empty X log was accepted before history completion`);
     now += 300;
-    assert.equal(settledEmptyTwitterLog(ambiguousEmptyLog), false,
+    assert.equal(settledTwitterHistory(ambiguousEmptyLog), false,
       `${label}: a bare empty X log became a first-message baseline`);
 
     const completedEmptyLog = log({ ariaBusy: 'false' });
-    assert.equal(settledEmptyTwitterLog(completedEmptyLog), false,
-      `${label}: the first completed empty-X observation was accepted`);
-    now += 300;
-    assert.equal(settledEmptyTwitterLog(completedEmptyLog), true,
-      `${label}: a stable aria-busy=false X log did not become a baseline`);
+    assert.equal(settledTwitterHistory(completedEmptyLog), true,
+      `${label}: an explicit aria-busy=false X empty log did not become a baseline`);
 
     const markedEmptyLog = log({ emptyState: true });
-    assert.equal(settledEmptyTwitterLog(markedEmptyLog), false,
-      `${label}: the first explicit X empty-state observation was accepted`);
+    assert.equal(settledTwitterHistory(markedEmptyLog), true,
+      `${label}: an explicit X empty-state marker did not become a baseline`);
+
+    const loadingHistory = log({ ariaBusy: 'true' });
+    assert.equal(settledTwitterHistory(loadingHistory, ['message-existing']), false,
+      `${label}: an explicitly loading X history became a baseline`);
+
+    const completedHistory = log({ ariaBusy: 'false' });
+    assert.equal(settledTwitterHistory(completedHistory, ['message-existing']), true,
+      `${label}: an explicit aria-busy=false X history did not become a baseline`);
+
+    const unmarkedHistory = log();
+    assert.equal(settledTwitterHistory(unmarkedHistory, ['message-existing']), false,
+      `${label}: the first unmarked X history observation was accepted`);
     now += 300;
-    assert.equal(settledEmptyTwitterLog(markedEmptyLog), true,
-      `${label}: a stable X empty-state marker did not become a baseline`);
+    assert.equal(settledTwitterHistory(unmarkedHistory, ['message-existing']), true,
+      `${label}: a stable unmarked X history did not become a baseline`);
+    now += 300;
+    assert.equal(settledTwitterHistory(unmarkedHistory, ['message-existing', 'message-late']), false,
+      `${label}: an appended historical X row kept the previous baseline`);
   }
 });
 

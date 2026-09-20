@@ -4416,35 +4416,47 @@
   }
 
   const _messageRecipientDispatchBindings = new Map();
-  const _twitterEmptyLogObservations = new WeakMap();
+  const _twitterHistoryObservations = new WeakMap();
 
-  function _settledEmptyTwitterLog(log) {
+  function _settledTwitterHistory(log, messageIds = []) {
     if (!log?.isConnected) return false;
     let loading = false;
-    let historyComplete = false;
+    let completionSignal = false;
     try {
       const ariaBusy = log.getAttribute('aria-busy');
       loading = ariaBusy === 'true'
         || !!log.querySelector('[aria-busy="true"],[role="progressbar"]');
-      // An empty log alone is ambiguous: history may still mount after the
-      // submit. Require X to expose either its finished busy state or its
-      // app-owned empty-state marker before pinning a first-message baseline.
-      historyComplete = ariaBusy === 'false'
-        || !!log.querySelector('[data-testid="dm-empty-state"],[data-testid="empty_state"],[data-testid="empty-state"]');
+      // X's explicit idle state is a direct history-completion signal. Empty
+      // logs may alternatively use X's own empty-state marker.
+      completionSignal = ariaBusy === 'false'
+        || (!(Array.isArray(messageIds) && messageIds.length > 0)
+          && !!log.querySelector('[data-testid="dm-empty-state"],[data-testid="empty_state"],[data-testid="empty-state"]'));
     } catch {}
-    if (loading || !historyComplete) {
-      _twitterEmptyLogObservations.delete(log);
+    if (loading) {
+      _twitterHistoryObservations.delete(log);
+      return false;
+    }
+    if (completionSignal) {
+      _twitterHistoryObservations.delete(log);
+      return true;
+    }
+    // Without an explicit X completion marker, an empty history remains
+    // ambiguous. A nonempty history must retain the same row identities long
+    // enough to rule out an in-progress history append.
+    if (!Array.isArray(messageIds) || messageIds.length === 0) {
+      _twitterHistoryObservations.delete(log);
       return false;
     }
     const now = Date.now();
-    const prior = _twitterEmptyLogObservations.get(log);
-    const observation = prior
+    const signature = Array.isArray(messageIds) ? messageIds.join('\u001f') : '';
+    const prior = _twitterHistoryObservations.get(log);
+    const observation = prior?.signature === signature
       ? { firstSeenAt: prior.firstSeenAt, count: prior.count + 1 }
-      : { firstSeenAt: now, count: 1 };
-    _twitterEmptyLogObservations.set(log, observation);
-    // A first-message conversation has no historic tail to pin. Require the
-    // same positively-complete empty log to survive two reads before treating
-    // that exceptional baseline as settled.
+      : { firstSeenAt: now, count: 1, signature };
+    _twitterHistoryObservations.set(log, { ...observation, signature });
+    // A nonempty history without an explicit idle marker can append old
+    // messages. Require the same snapshot to survive two reads before using
+    // it as a dispatch baseline.
     return observation.count >= 2 && now - observation.firstSeenAt >= 300;
   }
 
@@ -5088,15 +5100,15 @@
             .filter(row => /^message-(?!text-)[a-zA-Z0-9_-]{1,128}$/.test(row.getAttribute('data-testid') || ''))
         : [];
       const twitterMessageIds = twitterRows.map(row => row.getAttribute('data-testid'));
-      const twitterEmptyConversationBaseline = twitterLogs.length === 1 && twitterRows.length === 0
-        && _settledEmptyTwitterLog(twitterLogs[0]);
-      if (twitterRows.length > 0 && twitterLogs[0]) _twitterEmptyLogObservations.delete(twitterLogs[0]);
-      // An empty mounted log can mean X is still loading older history. A
-      // first-message conversation is eligible only after the same non-loading
-      // empty log has settled across repeated observations.
+      const twitterHistorySettled = twitterLogs.length === 1
+        && _settledTwitterHistory(twitterLogs[0], twitterMessageIds);
+      const twitterEmptyConversationBaseline = twitterRows.length === 0 && twitterHistorySettled;
+      // A mounted X log can still append older history. Empty conversations
+      // need a positive X completion signal; other histories need that signal
+      // or a stable row snapshot before they become dispatch baselines.
       const twitterBaselineComplete = twitterLogs.length === 1 && twitterRows.length <= 2000
         && new Set(twitterMessageIds).size === twitterMessageIds.length
-        && (twitterRows.length > 0 || twitterEmptyConversationBaseline);
+        && (twitterRows.length > 0 ? twitterHistorySettled : twitterEmptyConversationBaseline);
       const matchingTwitterMessageIds = expectedBody => {
         const expected = normalizedMessageBody(expectedBody);
         if (!expected || !twitterBaselineComplete) return [];
