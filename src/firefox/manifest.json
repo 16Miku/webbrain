@@ -77,6 +77,19 @@
       ],
       "js": ["src/agent/smd-loader.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.instagram.com/*",
+        "https://instagram.com/*"
+      ],
+      "js": [
+        "src/safesocial/content.js"
+      ],
+      "css": [
+        "src/safesocial/content.css"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "options_ui": {

@@ -1,3 +1,5 @@
+import { installSafeSocialBackground } from './safesocial/background.js';
+import { createSafeSocialHost } from './safesocial/host.js';
 import { firefoxBidi } from './bidi/client.js';
 import { ProviderManager } from './providers/manager.js';
 import { Agent } from './agent/agent.js';
@@ -107,6 +109,9 @@ import {
  * WebBrain Background Script (Firefox)
  * Routes messages between sidebar, content scripts, and the agent.
  */
+
+const safeSocialHost = createSafeSocialHost();
+installSafeSocialBackground(browser, (command, payload) => safeSocialHost.handle(command, payload));
 
 const providerManager = new ProviderManager();
 const apocalypseController = createApocalypseController(browser);

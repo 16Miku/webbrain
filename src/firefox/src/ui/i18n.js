@@ -3,6 +3,7 @@
 // Works identically in Chrome MV3 and Firefox MV2.
 
 import en from './locales/en.js';
+import { safeSocialEnglish, safeSocialTranslations } from './locales/safesocial-copy.mjs';
 import es from './locales/es.js';
 import fr from './locales/fr.js';
 import tr from './locales/tr.js';
@@ -31,6 +32,8 @@ const DICTS = Object.fromEntries(Object.entries({ en, es, fr, tr, zh, ru, uk, ar
   .map(([code, dict]) => [code, {
     ...dict,
     ...providerGuideEnglish,
+    ...safeSocialEnglish,
+    ...(safeSocialTranslations[code] || {}),
     ...(providerGuideTranslations[code] || {}),
   }]));
 const LS_KEY = 'wbLocale';

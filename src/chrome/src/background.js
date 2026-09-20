@@ -1,3 +1,4 @@
+import { installSafeSocialBackground } from './safesocial/background.js';
 import { ProviderManager } from './providers/manager.js';
 import {
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
@@ -117,6 +118,21 @@ import {
  * WebBrain Service Worker (Background Script)
  * Routes messages between side panel, content scripts, and the agent.
  */
+
+// SafeSocial never creates an inference worker until an opted-in request arrives.
+let safeSocialHostOpening;
+installSafeSocialBackground(chrome, async (command, payload = {}) => {
+  if (command === 'stop') {
+    if (safeSocialHostOpening) await safeSocialHostOpening;
+    if (!await chrome.offscreen.hasDocument()) return { status: 'idle' };
+  } else {
+    safeSocialHostOpening ||= ensureOffscreen().finally(() => { safeSocialHostOpening = null; });
+    await safeSocialHostOpening;
+  }
+  const result = await chrome.runtime.sendMessage({ target: 'safesocial-host', command, ...payload });
+  if (!result?.ok) throw new Error(result?.error || 'Classifier host unavailable.');
+  return result;
+});
 
 const providerManager = new ProviderManager();
 const apocalypseController = createApocalypseController(chrome);
