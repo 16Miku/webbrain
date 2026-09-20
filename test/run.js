@@ -93935,7 +93935,7 @@ test('publication workflows classify and bind requested payload fields', async (
         messageRecipientDispatchBinding: { token: `x-body-${body}` },
         messageRecipientBody: body,
         messageRecipientBodyBaselineCount: 0,
-        messageRecipientExistingMessageIds: [],
+        messageRecipientExistingMessageIds: ['message-prior'],
       });
       return agent._workflowTerminalEvidenceFromDone(xTabId, { liveRegionMessages: [] }, xUrl, {
         submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: xUrl, workflowBinding },
@@ -93946,7 +93946,7 @@ test('publication workflows classify and bind requested payload fields', async (
         conclusive: true,
         composerEmpty: true,
         strongRecipientCandidates: [{ identity: '@altryne', role: 'to' }],
-        existingMessageIds: ['message-new'],
+        existingMessageIds: ['message-prior', 'message-new'],
         matchingOutgoingMessageIds: ['message-new'],
         matchingOutgoingMessageCount: 1,
       });
@@ -93955,6 +93955,28 @@ test('publication workflows classify and bind requested payload fields', async (
       `${AgentClass.name}: a sent X DM drifted from the approved body`);
     assert.equal(xTerminal('Hello there')?.verificationKind, 'message_sent',
       `${AgentClass.name}: the approved X DM body could not complete`);
+    const emptyBaselineBinding = agent._workflowSubmitBindingForAttempt(xTabId, xUrl, {
+      messageRecipientGuardRequired: true,
+      messageRecipientDispatchBinding: { token: 'x-empty-baseline' },
+      messageRecipientBody: 'Hello there',
+      messageRecipientBodyBaselineCount: 0,
+      messageRecipientExistingMessageIds: [],
+    });
+    const lateHistoricRow = agent._workflowTerminalEvidenceFromDone(xTabId, { liveRegionMessages: [] }, xUrl, {
+      submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: xUrl, workflowBinding: emptyBaselineBinding },
+      verifiedFinalSubmit: false,
+      relevantForms: 1,
+    }, {
+      success: true,
+      conclusive: true,
+      composerEmpty: true,
+      strongRecipientCandidates: [{ identity: '@altryne', role: 'to' }],
+      existingMessageIds: ['message-late-history'],
+      matchingOutgoingMessageIds: ['message-late-history'],
+      matchingOutgoingMessageCount: 1,
+    });
+    assert.equal(lateHistoricRow, null,
+      `${AgentClass.name}: a late-loaded historic X row satisfied an empty dispatch baseline`);
   }
 });
 

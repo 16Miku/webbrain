@@ -5240,7 +5240,11 @@ export class Agent extends LoopDetector {
           ? currentIds.indexOf(priorIds[priorIds.length - 1]) : -1;
         exactOutgoingBodyObserved = !!this._workflowMessageBody(binding.messageBody)
           && Array.isArray(priorIds) && Array.isArray(currentIds) && Array.isArray(sentIds)
-          && (priorIds.length === 0 || anchorIndex >= 0)
+          // The content-side guard records only a settled X log with a
+          // concrete tail. Retain that invariant here as well so a malformed
+          // or older binding cannot turn a late-loaded historic row into
+          // evidence for this dispatch.
+          && priorIds.length > 0 && anchorIndex >= 0
           && sentIds.some(id => !priorIds.includes(id) && currentIds.indexOf(id) > anchorIndex);
         sentStatusObserved = exactOutgoingBodyObserved
           && recipientObserved

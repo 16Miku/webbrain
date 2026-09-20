@@ -4220,8 +4220,12 @@
             .filter(row => /^message-(?!text-)[a-zA-Z0-9_-]{1,128}$/.test(row.getAttribute('data-testid') || ''))
         : [];
       const twitterMessageIds = twitterRows.map(row => row.getAttribute('data-testid'));
-      const twitterBaselineComplete = twitterLogs.length === 1 && twitterRows.length <= 2000
-        && new Set(twitterMessageIds).size === twitterMessageIds.length;
+      // An empty mounted log can mean X is still loading older history. Do
+      // not treat it as a proven first-message conversation: without a prior
+      // tail, an old matching row that appears after dispatch is
+      // indistinguishable from the message this run attempted to send.
+      const twitterBaselineComplete = twitterLogs.length === 1 && twitterRows.length > 0
+        && twitterRows.length <= 2000 && new Set(twitterMessageIds).size === twitterMessageIds.length;
       const matchingTwitterMessageIds = expectedBody => {
         const expected = normalizedMessageBody(expectedBody);
         if (!expected || !twitterBaselineComplete) return [];
