@@ -23069,15 +23069,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return recipients;
   }
 
+  _resolveTwitterNamedMessagingTarget(target, probe) {
+    const named = normalizeMessageTarget(target);
+    if (named?.target_kind !== 'named' || named.recipients.length !== 1
+        || named.recipients[0].role !== 'to'
+        || probe?.success !== true || probe?.conclusive !== true) return null;
+    const candidates = this._messageRecipientCandidates(probe);
+    if (candidates.length !== 1 || candidates[0].role !== 'to') return null;
+    const candidate = candidates[0];
+    const handle = normalizeRecipientIdentity(candidate.identity);
+    if (!/^@[a-z0-9_]{1,15}$/.test(handle)) return null;
+    const expected = normalizeRecipientIdentity(named.recipients[0].identity);
+    // Display names and bare usernames can resolve to the unique observed
+    // header. Once pinned, an @handle must match the account itself: another
+    // account cannot borrow its authorization through a display-name alias.
+    const matches = expected.startsWith('@') ? expected === handle
+      : [candidate.identity, ...(Array.isArray(candidate.aliases) ? candidate.aliases : [])]
+          .some(alias => normalizeRecipientIdentity(alias) === expected);
+    return matches ? { target_kind: 'named', recipients: [{ identity: handle, role: 'to' }] } : null;
+  }
+
   async _pinActiveConversationMessagingTarget(tabId, messaging, pageUrl = '') {
     const target = normalizeMessageTarget(messaging);
-    if (target?.target_kind !== 'active_conversation') return { ok: true, target };
+    if (!target) return { ok: true, target };
 
     let policy = null;
     try {
       policy = getMessageRecipientGuardPolicy(pageUrl || await this._currentUrl(tabId));
     } catch {}
     if (!policy?.verifyActiveRecipient) return { ok: true, target };
+    if (target.target_kind === 'named' && policy.adapterName !== 'twitter') return { ok: true, target };
 
     const probe = await this._messageRecipientContentProbe(tabId, {
       tool: 'observe_active_conversation',
@@ -23085,6 +23106,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       adapterName: policy.adapterName,
       supportsRecipientSets: policy.supportsRecipientSets === true,
     });
+    if (target.target_kind === 'named') {
+      // If the intended conversation is not open yet, retain the requested
+      // name; dispatch will resolve it once the agent reaches that header.
+      return { ok: true, target: this._resolveTwitterNamedMessagingTarget(target, probe) || target };
+    }
     const recipients = this._messageRecipientCandidates(probe);
     const identityCountAccepted = policy.supportsRecipientSets === true
       ? recipients.length > 0
@@ -23195,6 +23221,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
+    const resolvedTwitterTarget = policy.adapterName === 'twitter'
+      && guard?.requiresSubmission === true && guard?.requiresStateChange === true
+      ? this._resolveTwitterNamedMessagingTarget(target, probe) : null;
+    if (resolvedTwitterTarget) target = resolvedTwitterTarget;
     const messageBodyBaselineCount = Number(probe?.messageBodyBaselineCount);
     const verified = probe?.success === true
       && probe.messageSend === true
@@ -23215,6 +23245,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           error: 'Message send blocked because WebBrain could not bind recipient verification to the final action dispatch. Re-read the active conversation and retry once.',
         };
       }
+      if (resolvedTwitterTarget) guard.messaging = resolvedTwitterTarget;
       if (executionContext && typeof executionContext === 'object') {
         executionContext.messageRecipientGuardRequired = true;
         executionContext.messageRecipientDispatchBinding = binding;

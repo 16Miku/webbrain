@@ -181,6 +181,108 @@ export function registerMessageRecipientNavigationFixtures({
       assert.equal(evidence(await observe()),null, 'duplicate message identities fail closed');
     });
 
+    register(`${kind}: X named DM recipients resolve header aliases and retain the canonical handle`, async (page) => {
+      const { agent } = await setup(page);
+      const url = 'https://x.com/i/chat/123-456';
+      await page.goto(url);
+      await setupContentHtml(page, `<!doctype html><style>
+        #header {position:fixed;left:400px;top:20px}
+        textarea {position:fixed;left:400px;bottom:20px;width:400px;height:50px}
+        #send {position:fixed;left:820px;bottom:20px}
+        [role=log] {position:fixed;left:400px;top:100px;width:400px;height:300px}
+      </style><a id="header" href="/altryne"><span data-testid="dm-conversation-username">Alex Volkov</span></a>
+      <div role="log" data-testid="dm-message-scroller"></div>
+      <textarea data-testid="dm-composer-textarea"></textarea><button id="send" type="button">Send</button>`, kind);
+      await page.evaluate(() => {
+        window.fixtureSends = 0;
+        document.querySelector('#send').addEventListener('click', () => {
+          const composer = document.querySelector('textarea');
+          const row = document.createElement('div');
+          row.dataset.testid = 'message-' + ++window.fixtureSends;
+          row.dataset.sendStatus = 'sent'; row.className = 'justify-end';
+          const content = document.createElement('div'); content.dataset.testid = 'message-text-' + window.fixtureSends;
+          const body = document.createElement('span'); body.dir = 'auto'; body.textContent = composer.value;
+          content.append(body); row.append(content); document.querySelector('[role=log]').append(row);
+          composer.value = '';
+        });
+      });
+      const named = identity => ({target_kind:'named', recipients:[{identity,role:'to'}]});
+      const canonical = named('@altryne');
+      const workflow = agent._resolvePlannerSiteWorkflow(url, {
+        request_kind:'execute', requires_submission:true, messaging:named('Alex Volkov'),
+      });
+      const start = messaging => {
+        const guard = agent._startPlanExecutionGuard(1, 'act', {
+          requestKind:'execute', requiresStateChange:true, requiresSubmission:true, messaging, siteWorkflow:workflow,
+        });
+        guard.workflowMetadataRequirementsResolved = true;
+        return guard;
+      };
+      const send = execution => agent._messageRecipientGuardBlock(1,'click',{selector:'#send'},url,execution);
+      for (const timing of ['planning', 'after-navigation']) {
+        for (const identity of ['Alex Volkov', 'altryne', '@altryne']) {
+          // The plan can start on the conversation or reach it later.
+          const pinned = await agent._pinActiveConversationMessagingTarget(
+            1, named(identity), timing === 'planning' ? url : 'https://x.com/home',
+          );
+          assert.equal(pinned.ok, true);
+          assert.deepEqual(pinned.target, timing === 'planning' ? canonical : named(identity));
+          const guard = start(pinned.target);
+          await page.locator('textarea').fill('Hello Alex');
+          const execution = {};
+          assert.equal(await send(execution), null, JSON.stringify({timing,identity}));
+          assert.deepEqual(guard.messaging, canonical, 'bind the account handle before dispatch');
+          const clicked = await call(page, 'click', {selector:'#send', ...execution});
+          assert.equal(clicked.success, true, JSON.stringify(clicked));
+          agent._recordCompletionSubmitAttempt(1,{isSubmit:false},'click',{selector:'#send'},url,url,
+            clicked,'doc','doc',execution);
+          const submit = agent._completionSubmitStates.get(1);
+          assert.deepEqual(submit.workflowBinding.recipientTargets, canonical.recipients);
+          submit.observedAfterSubmit = true;
+          const probe = await call(page,'probe_message_recipient_guard', {
+            tool:'observe_active_conversation', adapterName:'twitter', expectedMessageBody:'Hello Alex',
+          });
+          const terminal = agent._workflowTerminalEvidenceFromDone(1,{relevantFormCount:1},url,
+            {submit,relevantForms:1,verifiedFinalSubmit:false},probe);
+          assert.equal(terminal?.verificationKind, 'message_sent', 'display-name sends can complete');
+        }
+      }
+      assert.equal(await page.evaluate(() => window.fixtureSends), 6);
+
+      await page.locator('textarea').fill('Another message');
+      for (const target of [named('Alex'), named('Someone Else'), named('@someoneelse'),
+        {target_kind:'named', recipients:[{identity:'Alex Volkov',role:'bcc'}]},
+        {target_kind:'named', recipients:['Alex Volkov','Someone Else']}]) {
+        const guard = start(target);
+        const before = structuredClone(guard.messaging);
+        assert.equal((await send({}))?.noDispatch, true, JSON.stringify(target));
+        assert.deepEqual(guard.messaging, before, 'a mismatch cannot change the authorized target');
+      }
+      await page.locator('#header').evaluate(el => {
+        const duplicate = el.cloneNode(true); duplicate.id='other-header';
+        duplicate.href='/someoneelse'; duplicate.style.cssText='position:fixed;left:400px;top:55px'; el.after(duplicate);
+      });
+      start(named('Alex Volkov'));
+      assert.equal((await send({}))?.noDispatch, true, 'ambiguous headers cannot resolve a name');
+      await page.locator('#other-header').evaluate(el => el.remove());
+
+      const guard = start(named('Alex Volkov'));
+      const execution = {};
+      assert.equal(await send(execution), null);
+      assert.deepEqual(guard.messaging, canonical);
+      // A different account must not inherit authorization, even when its
+      // display name is the old handle or the same display-name alias.
+      await page.locator('#header').evaluate(el => { el.href='/someoneelse'; });
+      const stale = await call(page,'click',{selector:'#send', ...execution});
+      assert.equal(stale.noDispatch, true, 'recipient changed between preflight and dispatch');
+      for (const label of ['Alex Volkov','@altryne']) {
+        await page.locator('#header span').evaluate((el,label) => { el.textContent=label; },label);
+        assert.equal((await send({}))?.noDispatch, true, 'canonical handle cannot be rebound through an alias');
+        assert.deepEqual(guard.messaging, canonical);
+      }
+      assert.equal(await page.evaluate(() => window.fixtureSends), 6, 'blocked retries never dispatch');
+    });
+
     register(`${kind}: X conversation navigation is not classified as sending a message`, async (page) => {
       const { agent } = await setup(page);
       await page.goto('https://x.com/i/chat/123-456');
