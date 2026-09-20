@@ -284,6 +284,79 @@ export function registerMessageRecipientNavigationFixtures({
       assert.equal(await page.evaluate(() => window.fixtureSends), 6, 'blocked retries never dispatch');
     });
 
+    register(`${kind}: X group DMs pin the visible conversation route and header`, async (page) => {
+      const { agent } = await setup(page);
+      const url = 'https://x.com/i/chat/group-123';
+      await page.goto(url);
+      await setupContentHtml(page, `<!doctype html><style>
+        #header {position:fixed;left:400px;top:20px}
+        textarea {position:fixed;left:400px;bottom:20px;width:400px;height:50px}
+        #send {position:fixed;left:820px;bottom:20px}
+        [role=log] {position:fixed;left:400px;top:100px;width:400px;height:300px}
+      </style><div id="header" data-testid="dm-conversation-username">Study Group</div>
+      <div role="log" data-testid="dm-message-scroller" aria-busy="false"></div>
+      <textarea data-testid="dm-composer-textarea"></textarea><button id="send" type="button">Send</button>`, kind);
+      await page.evaluate(() => {
+        window.fixtureSends = 0;
+        document.querySelector('#send').addEventListener('click', () => {
+          const composer = document.querySelector('textarea');
+          const row = document.createElement('div');
+          row.dataset.testid = 'message-' + ++window.fixtureSends;
+          row.dataset.sendStatus = 'sent'; row.className = 'justify-end';
+          const content = document.createElement('div'); content.dataset.testid = 'message-text-' + window.fixtureSends;
+          const body = document.createElement('span'); body.dir = 'auto'; body.textContent = composer.value;
+          content.append(body); row.append(content); document.querySelector('[role=log]').append(row);
+          composer.value = '';
+        });
+      });
+      const group = { target_kind: 'named', recipients: [{ identity: 'x-dm-group:group-123', role: 'to' }] };
+      const named = identity => ({ target_kind: 'named', recipients: [{ identity, role: 'to' }] });
+      const activePin = await agent._pinActiveConversationMessagingTarget(
+        1, { target_kind: 'active_conversation', recipients: [] }, url,
+      );
+      assert.equal(activePin.ok, true, JSON.stringify(activePin));
+      assert.equal(activePin.target.target_kind, 'named');
+      assert.deepEqual(activePin.target.recipients.map(({ identity, role }) => ({ identity, role })), group.recipients,
+        'the active group gets a route-bound identity');
+      const namedPin = await agent._pinActiveConversationMessagingTarget(1, named('Study Group'), url);
+      assert.deepEqual(namedPin.target, group, 'the visible group name resolves to that route');
+      const handlePin = await agent._pinActiveConversationMessagingTarget(1, named('@studygroup'), url);
+      assert.deepEqual(handlePin.target, named('@studygroup'), 'a group label cannot stand in for an account handle');
+
+      const workflow = agent._resolvePlannerSiteWorkflow(url, {
+        request_kind: 'execute', requires_submission: true, messaging: activePin.target,
+      });
+      const guard = agent._startPlanExecutionGuard(1, 'act', {
+        requestKind: 'execute', requiresStateChange: true, requiresSubmission: true,
+        messaging: activePin.target, siteWorkflow: workflow,
+      });
+      guard.workflowMetadataRequirementsResolved = true;
+      await page.locator('textarea').fill('Hello Study Group');
+      const execution = {};
+      assert.equal(await agent._messageRecipientGuardBlock(1, 'click', { selector: '#send' }, url, execution), null);
+      assert.deepEqual(guard.messaging, group);
+      const clicked = await call(page, 'click', { selector: '#send', ...execution });
+      assert.equal(clicked.success, true, JSON.stringify(clicked));
+      agent._recordCompletionSubmitAttempt(1, { isSubmit: false }, 'click', { selector: '#send' },
+        url, url, clicked, 'doc', 'doc', execution);
+      const submit = agent._completionSubmitStates.get(1);
+      submit.observedAfterSubmit = true;
+      const terminalProbe = await call(page, 'probe_message_recipient_guard', {
+        tool: 'observe_active_conversation', adapterName: 'twitter', expectedMessageBody: 'Hello Study Group',
+      });
+      const terminal = agent._workflowTerminalEvidenceFromDone(1, { relevantFormCount: 1 }, url,
+        { submit, relevantForms: 1, verifiedFinalSubmit: false }, terminalProbe);
+      assert.equal(terminal?.verificationKind, 'message_sent', 'the group send has delivery evidence');
+
+      await page.locator('textarea').fill('This must not send');
+      const staleExecution = {};
+      assert.equal(await agent._messageRecipientGuardBlock(1, 'click', { selector: '#send' }, url, staleExecution), null);
+      await page.evaluate(() => history.pushState({}, '', '/i/chat/group-456'));
+      const stale = await call(page, 'click', { selector: '#send', ...staleExecution });
+      assert.equal(stale.noDispatch, true, 'a changed conversation route invalidates the dispatch binding');
+      assert.equal(await page.evaluate(() => window.fixtureSends), 1, 'the stale retry never dispatches');
+    });
+
     register(`${kind}: X conversation navigation is not classified as sending a message`, async (page) => {
       const { agent } = await setup(page);
       await page.goto('https://x.com/i/chat/123-456');

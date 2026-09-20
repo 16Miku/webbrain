@@ -4988,6 +4988,25 @@
             strongIdentities.push(identity);
             strongRecipients.push({ identity, role: 'to' });
             observedRecipientCandidates.push({ identity, role: 'to', aliases: [identity, handle, compact(header.innerText)] });
+          } else {
+            // X group DM headers name the conversation instead of linking to a
+            // single account. Bind the visible header to the canonical chat
+            // route so a later conversation cannot inherit this authorization.
+            let groupIdentity = '';
+            try {
+              const groupId = new URL(location.href).pathname
+                .match(/^\/i\/chat\/([a-zA-Z0-9_-]{1,128})\/?$/)?.[1] || '';
+              if (groupId && compact(header.innerText)) groupIdentity = `x-dm-group:${groupId}`;
+            } catch {}
+            if (groupIdentity) {
+              strongIdentities.push(groupIdentity);
+              strongRecipients.push({ identity: groupIdentity, role: 'to' });
+              observedRecipientCandidates.push({
+                identity: groupIdentity,
+                role: 'to',
+                aliases: [groupIdentity, compact(header.innerText)],
+              });
+            }
           }
         }
       } else {

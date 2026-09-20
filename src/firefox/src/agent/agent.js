@@ -20848,16 +20848,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const candidates = this._messageRecipientCandidates(probe);
     if (candidates.length !== 1 || candidates[0].role !== 'to') return null;
     const candidate = candidates[0];
-    const handle = normalizeRecipientIdentity(candidate.identity);
-    if (!/^@[a-z0-9_]{1,15}$/.test(handle)) return null;
+    const identity = normalizeRecipientIdentity(candidate.identity);
+    const accountHandle = /^@[a-z0-9_]{1,15}$/.test(identity);
+    const groupConversation = /^x-dm-group:[a-z0-9_-]{1,128}$/.test(identity);
+    if (!accountHandle && !groupConversation) return null;
     const expected = normalizeRecipientIdentity(named.recipients[0].identity);
     // Display names and bare usernames can resolve to the unique observed
     // header. Once pinned, an @handle must match the account itself: another
     // account cannot borrow its authorization through a display-name alias.
-    const matches = expected.startsWith('@') ? expected === handle
+    // Group names resolve only to the current chat route/header identity; an
+    // @handle never resolves through a group label.
+    const matches = accountHandle && expected.startsWith('@') ? expected === identity
+      : groupConversation && expected.startsWith('@') ? false
       : [candidate.identity, ...(Array.isArray(candidate.aliases) ? candidate.aliases : [])]
           .some(alias => normalizeRecipientIdentity(alias) === expected);
-    return matches ? { target_kind: 'named', recipients: [{ identity: handle, role: 'to' }] } : null;
+    return matches ? { target_kind: 'named', recipients: [{ identity, role: 'to' }] } : null;
   }
 
   async _pinActiveConversationMessagingTarget(tabId, messaging, pageUrl = '') {
