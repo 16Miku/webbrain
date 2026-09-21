@@ -254,7 +254,5 @@ lms clone webbrain/web-tools
 
 WebBrain 33.0.0 及更高版本采用 [GPL-3.0-or-later](LICENSE) 许可证，因为发布的
 浏览器扩展捆绑并集成了采用 GPL 许可证的 Xapian/libzim WebAssembly 运行时。
-33.0.0 之前发布的版本仍采用其发布时适用的 MIT 许可证；历史许可证文本保存在
-[LICENSES/MIT.txt](LICENSES/MIT.txt)。
 
-由 [Emre Sokullu](https://emresokullu.com) 构建。
+由 [Emre Sokullu](https://emresokullu.com) 和[开源贡献者](https://github.com/webbrain-one/webbrain/graphs/contributors)用 ❤️ 构建。
