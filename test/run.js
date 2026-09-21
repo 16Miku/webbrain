@@ -4972,7 +4972,22 @@ test('matches Douyin video and live surfaces with verification and publication g
   assert.equal(getMessageRecipientGuardPolicy('https://www.douyin.com/chat/123')?.adapterName, 'douyin');
   assert.equal(getMessageRecipientGuardPolicy('https://www.douyin.com/video/123'), null);
   assert.equal(getMessageRecipientGuardPolicy('https://creator.douyin.com/creator-micro/content/upload'), null);
-  assert.equal(getMessageRecipientGuardPolicy('https://example.com/chat'), null);
+  assert.deepEqual(getMessageRecipientGuardPolicy('https://example.com/chat'), {
+    adapterName: 'generic-messaging', verifyActiveRecipient: true,
+  });
+  assert.deepEqual(getMessageRecipientGuardPolicyFx('https://example.com/chat'), {
+    adapterName: 'generic-messaging', verifyActiveRecipient: true,
+  });
+  assert.deepEqual(getMessageRecipientGuardPolicy('https://mail.example.com/compose'), {
+    adapterName: 'generic-messaging', verifyActiveRecipient: true, supportsRecipientSets: true,
+  });
+  assert.deepEqual(getMessageRecipientGuardPolicyFx('https://mail.example.com/compose'), {
+    adapterName: 'generic-messaging', verifyActiveRecipient: true, supportsRecipientSets: true,
+  });
+  assert.equal(getMessageRecipientGuardPolicy('https://example.com/contact'), null);
+  assert.equal(getMessageRecipientGuardPolicyFx('https://example.com/contact'), null);
+  assert.equal(getMessageRecipientGuardPolicy('https://example.com/inbox'), null);
+  assert.equal(getMessageRecipientGuardPolicyFx('https://example.com/inbox'), null);
 });
 
 test('direct-message recipient guard uses structured intent and exact active identity evidence', async () => {
@@ -5478,12 +5493,36 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.deepEqual(getPolicy('https://www.linkedin.com/messaging/thread/2-abc/'), {
       adapterName: 'linkedin', verifyActiveRecipient: true,
     });
-    assert.equal(getPolicy('https://linkedin.example.com/messaging/'), null);
+    assert.deepEqual(getPolicy('https://linkedin.example.com/messaging/'), {
+      adapterName: 'generic-messaging', verifyActiveRecipient: true,
+    });
+    assert.deepEqual(getPolicy('https://example.com/chat/rooms/42'), {
+      adapterName: 'generic-messaging', verifyActiveRecipient: true,
+    });
+    assert.deepEqual(getPolicy('https://mail.example.com/compose'), {
+      adapterName: 'generic-messaging', verifyActiveRecipient: true, supportsRecipientSets: true,
+    });
+    assert.equal(getPolicy('https://example.com/contact'), null);
+    assert.equal(getPolicy('https://example.com/inbox'), null);
   }
 
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = label === 'chrome' ? 27101 : 27102;
+    agent.autoScreenshot = 'state_change';
+    assert.equal(agent.autoScreenshotBursts.size, 0, `${label}: screenshot predicate inherited stale burst state`);
+    assert.deepEqual(
+      [1, 2, 3, 4, 5].map(() => agent._advanceAutoScreenshotBurst(tabId, 'click')),
+      [true, false, false, false, true],
+      `${label}: repeated action screenshots were not throttled at the batch boundary`,
+    );
+    assert.equal(agent._advanceAutoScreenshotBurst(tabId + 1, 'click'), true,
+      `${label}: screenshot throttle leaked across tabs`);
+    assert.equal(agent._shouldAutoScreenshot('click'), true,
+      `${label}: screenshot eligibility unexpectedly changed`);
+    assert.equal(agent.autoScreenshotBursts.get(tabId)?.streak, 5,
+      `${label}: screenshot predicate consumed a burst position`);
+    agent.autoScreenshotBursts.clear();
     agent._currentUrl = async () => 'https://www.douyin.com/chat';
     let probe = {
       success: true,
@@ -5527,6 +5566,13 @@ test('direct-message recipient guard uses structured intent and exact active ide
       'https://www.douyin.com/chat',
     );
     assert.equal(ambiguousPin.ok, false, `${label}: ambiguous active conversation was authorized`);
+    const genericGroupPin = await agent._pinActiveConversationMessagingTarget(
+      tabId,
+      { target_kind: 'active_conversation', recipients: [] },
+      'https://example.com/chat/rooms/42',
+    );
+    assert.equal(genericGroupPin.ok, false,
+      `${label}: generic group chat was accepted as a single authorized recipient`);
 
     probe = {
       success: false,
@@ -7049,7 +7095,7 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const distantControl = element('Forward', {
       left: 20, right: 140, top: 300, bottom: 350, width: 120, height: 50,
     }, { tagName: 'BUTTON', role: 'button' });
-    distantControl.closest = () => distantControl;
+    distantControl.closest = (selector) => selector.includes('button') ? distantControl : null;
     const conversationRail = element('', {
       left: 0, right: 340, top: 80, bottom: 900, width: 340, height: 820,
     }, { role: 'list', clientHeight: 820, scrollHeight: 820 });
@@ -7128,7 +7174,10 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const composedParentEnd = source.indexOf('\n\n  function ', composedParentStart + 1);
     assert.ok(composedParentStart >= 0 && composedParentEnd > composedParentStart,
       `${prefix}: composed-parent helper must be available to visibility checks`);
-    const candidatesStart = source.indexOf('  function _clickTextCandidates(');
+    const clickCandidatesStart = source.indexOf('  function _clickTextCandidates(');
+    const candidatesStart = source.lastIndexOf('  const _domRevision', clickCandidatesStart) >= 0
+      ? source.lastIndexOf('  const _domRevision', clickCandidatesStart)
+      : clickCandidatesStart;
     const candidatesEnd = source.indexOf('\n\n  let _lastClickIdent', candidatesStart);
     Object.assign(context, {
       _siteInteractiveSelectors: () => [],
@@ -7141,8 +7190,15 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     });
     const visibilityStart = source.indexOf('  function _hasVisibleBox(');
     const visibilityEnd = source.indexOf('\n\n  function ', visibilityStart + 1);
+    const recipientHelpersStart = [
+      source.indexOf('  const _MESSAGE_COMMIT_LABEL_RE'),
+      source.indexOf('  const _COMPOSER_UTILITY_LABEL_RE'),
+    ].filter(index => index >= 0).sort((a, b) => a - b)[0] ?? -1;
+    const recipientHelpers = recipientHelpersStart >= 0
+      ? source.slice(recipientHelpersStart, start)
+      : '';
     const probe = vm.runInNewContext(
-      `${source.slice(composedParentStart, composedParentEnd)}; ${source.slice(visibilityStart, visibilityEnd)}; ${source.slice(candidatesStart, candidatesEnd)}; (${source.slice(start, end)})`, context,
+      `${source.slice(composedParentStart, composedParentEnd)}; ${source.slice(visibilityStart, visibilityEnd)}; ${source.slice(candidatesStart, candidatesEnd)}; ${recipientHelpers}; (${source.slice(start, end)})`, context,
     );
     const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
     const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
@@ -41868,7 +41924,7 @@ test('web hero social proof uses recognizable brand and users icons', () => {
   );
   assert.match(
     fs.readFileSync(path.join(ROOT, 'web/assets/marktechpost.svg'), 'utf8'),
-    /<svg[^>]+width="32" height="32" viewBox="0 0 32 32"/,
+    /<svg(?=[^>]*\bwidth="32")(?=[^>]*\bheight="32")(?=[^>]*\bviewBox="0 0 32 32")/,
     'web assets: MarkTechPost favicon should preserve its square aspect ratio',
   );
 });
@@ -86730,7 +86786,9 @@ test('browser batches keep leading reads, then require fresh evidence after unsa
       const messages = [];
       agent._ensureGateSetting = async () => {};
       agent._skipPermissionGate = true;
-      agent._currentUrl = async () => 'https://mail.example.test/inbox';
+      // This batching check is deliberately not a messaging surface: generic
+      // recipient guards correctly stop send-like controls on mail routes.
+      agent._currentUrl = async () => 'https://www.example.test/docs';
       agent._rememberMastodonObservation = async () => null;
       agent._recordProgressObservation = async () => null;
       agent._autoRecordProgressAction = () => null;

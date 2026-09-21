@@ -1080,6 +1080,9 @@ export class Agent extends LoopDetector {
     this.deliveryObservationStreaks = new Map(); // tabId -> count
     this.deliveryActionableDiscoveryResets = new Set(); // tabIds that used their one discovery reset since meaningful progress
     this.lastAutoScreenshotTs = new Map(); // tabId -> ms — defensive debounce
+    // tabId -> { toolName, streak }. Burst state must not leak across tabs or
+    // be consumed by read-only preflight checks.
+    this.autoScreenshotBursts = new Map();
     this.lastSeenAdapter = new Map(); // tabId -> adapter name from last enrichment
     this.pendingAdapterMatchTraces = new Map(); // tabId -> Map(adapter@revision -> content-free match metadata)
     this.adapterMatchTraceKeys = new Map(); // runId -> Map(adapter@revision -> OR-merged match metadata)
@@ -9101,14 +9104,49 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   /**
    * Decide whether to capture an auto-screenshot after a tool call, based on
    * the current setting and which tool ran.
+   *
+   * Cost model: every auto-screenshot is not just image bytes in the context
+   * (pruned to the last few messages) — it is also a *separate vision LLM call*
+   * to describe it. On a run of repetitive actions (invite N people, like N
+   * posts, click through a list) the default `state_change` mode therefore paid
+   * one capture + one full model round trip per action, which is the largest
+   * avoidable token and latency cost in a run.
+   *
+   * Two gates keep the informative shots and drop the redundant ones:
+   *   - `opts.domEvidenceProven`: the caller already proved the step's outcome
+   *     from the DOM, so a second, visual copy of the same fact adds nothing.
+   *   - burst throttle: keep the first capture of a burst, then skip while the
+   *     agent keeps acting inside the window. The page state a screenshot would
+   *     show barely changes between consecutive clicks.
    */
-  _shouldAutoScreenshot(toolName) {
+  _shouldAutoScreenshot(toolName, opts = {}) {
     const mode = this.autoScreenshot;
     if (mode === 'off' || !mode) return false;
-    if (mode === 'every_step') return true;
-    if (mode === 'state_change') return Agent.STATE_CHANGE_TOOLS.has(toolName);
-    if (mode === 'navigation') return Agent.NAV_TOOLS.has(toolName);
-    return false;
+    if (opts.domEvidenceProven === true) return false;
+    const isStateChange = Agent.STATE_CHANGE_TOOLS.has(toolName);
+    const eligible = mode === 'every_step'
+      || (mode === 'state_change' && isStateChange)
+      || (mode === 'navigation' && Agent.NAV_TOOLS.has(toolName));
+    if (!eligible) return false;
+    if (mode === 'navigation') return true;
+    if (Number.isFinite(opts.turnCaptures) && Number.isFinite(this.maxScreenshotsPerTurn)
+        && this.maxScreenshotsPerTurn > 0
+        && opts.turnCaptures >= this.maxScreenshotsPerTurn) {
+      return false;
+    }
+    return true;
+  }
+
+  // Advance the burst only after a successful post-dispatch capture request.
+  // _shouldAutoScreenshot is used by preflight, so it must remain pure.
+  _advanceAutoScreenshotBurst(tabId, toolName) {
+    if (this.autoScreenshot === 'navigation') return true;
+    const normalizedTool = String(toolName || '');
+    if (!normalizedTool) return true;
+    const prior = this.autoScreenshotBursts.get(tabId);
+    const streak = prior?.toolName === normalizedTool ? prior.streak + 1 : 1;
+    this.autoScreenshotBursts.set(tabId, { toolName: normalizedTool, streak });
+    return streak === 1 || streak % 4 === 1;
   }
 
   /**
@@ -11558,6 +11596,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _executeToolBatchInner(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText, allowedToolNames, step, runOptions, toolSchemas, cancellationState) {
     let didStateChange = false;
+    let autoScreenshotToolName = '';
     const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true;
     const apiMutationsAllowedForRun = () =>
       !apiMutationsDeniedForRun && this.isApiMutationsAllowed(tabId);
@@ -13532,7 +13571,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // The interruption helper already emitted the queued synthetic results
         // and navigation notice. Continue through the shared post-batch path so
         // state_change/every_step auto-screenshots still reach the fresh turn.
-        if (this._shouldAutoScreenshot(fnName) && !toolResult?.error) didStateChange = true;
+        if (this._shouldAutoScreenshot(fnName) && !toolResult?.error) {
+          didStateChange = true;
+          autoScreenshotToolName = fnName;
+        }
         navNotices.length = 0;
         break;
       }
@@ -13582,6 +13624,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       if (this._shouldAutoScreenshot(fnName) && !toolResult?.error) {
         didStateChange = true;
+        autoScreenshotToolName = fnName;
       }
     }
 
@@ -13592,12 +13635,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Auto-screenshot once per batch, debounced 500ms. Capture if either
     // the main provider supports images, or a dedicated vision model is
     // configured to describe them.
+    const captureAfterBatch = didStateChange
+      && this._advanceAutoScreenshotBurst(tabId, autoScreenshotToolName);
     const visionRoute = await this._resolveVisionRoute(tabId, provider);
-    if (didStateChange && !visionRoute.provider && visionRoute.visionStatus) {
+    if (captureAfterBatch && !visionRoute.provider && visionRoute.visionStatus) {
       this._recordVisionRouteTrace(tabId, visionRoute, null, 'auto_screenshot');
       this._emitVisionUnavailableNotice(tabId, visionRoute, onUpdate, 'Automatic screenshot');
     }
-    if (didStateChange && visionRoute.provider) {
+    if (captureAfterBatch && visionRoute.provider) {
       const lastTs = this.lastAutoScreenshotTs.get(tabId) || 0;
       if (Date.now() - lastTs >= 500) {
         await new Promise(r => setTimeout(r, 250));
@@ -23260,12 +23305,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._resolveTwitterNamedMessagingTarget(target, probe) : null;
     if (resolvedTwitterTarget) target = resolvedTwitterTarget;
     const messageBodyBaselineCount = Number(probe?.messageBodyBaselineCount);
+    const targetMatchesObserved = messageTargetMatchesObservedIdentities(
+      target,
+      this._messageRecipientCandidates(probe),
+    );
+    // The user's OWN grant authorizes the send even when the planner's
+    // original target differs — that is the entire point of asking. A bound
+    // recipient clarification approves one address for the rest of the task,
+    // and an explicit "send all remaining emails" answer approves the task.
+    // Both only exist as the result of a real clarify answer, never model text.
+    const observedIdentities = this._messageRecipientCandidates(probe)
+      .map(item => normalizeRecipientIdentity(item?.identity || item))
+      .filter(Boolean);
+    const approvedRecipients = Array.isArray(guard?.approvedRecipients) ? guard.approvedRecipients : [];
+    const approvedByUser = guard?.messageRecipientApprovedAll === true
+      || (observedIdentities.length > 0
+        && observedIdentities.every(identity => approvedRecipients.includes(identity)));
     const verified = probe?.success === true
       && probe.messageSend === true
       && !!this._workflowMessageBody(probe?.messageBody)
       && Number.isInteger(messageBodyBaselineCount)
       && messageBodyBaselineCount >= 0
-      && messageTargetMatchesObservedIdentities(target, this._messageRecipientCandidates(probe));
+      && (targetMatchesObserved || approvedByUser);
     if (verified) {
       const binding = probe?.messageRecipientDispatchBinding;
       if (!binding?.token) {
@@ -23290,6 +23351,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (probe.twitterEmptyConversationBaseline === true) {
             executionContext.messageRecipientTwitterEmptyConversationBaseline = true;
           }
+        }
+        // The user approved this recipient even though the planner's original
+        // target did not match, so re-point the guard at what the user agreed
+        // to. Later sends in the same task then verify against the approval
+        // list instead of re-asking for the same address.
+        if (!targetMatchesObserved && approvedByUser && observedIdentities.length > 0) {
+          const approvedTarget = normalizeMessageTarget({
+            target_kind: 'named',
+            recipients: this._messageRecipientCandidates(probe).map(item => ({
+              identity: item?.identity || item,
+              role: item?.role || 'to',
+            })),
+          });
+          if (approvedTarget && guard) guard.messaging = approvedTarget;
         }
         if (probe.composerSubjectAvailable === true) {
           executionContext.messageRecipientSubject = this._workflowMetadataValue(probe.composerSubject);
@@ -23334,22 +23409,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const missingLinkedInComposer = policy.adapterName === 'linkedin'
       && probe?.success === true && probe?.composerAvailable === false;
+    const inconclusive = probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true;
+    // Human-readable view of who the page actually addresses, so a mismatch
+    // block can name the exact observed recipient instead of asking the user to
+    // re-confirm blindly (which looped forever when the user had already
+    // confirmed twice: the task authorization, not the chat answer, is what
+    // the guard compares against).
+    const observedRecipientLabel = (() => {
+      try {
+        return (this._messageRecipientCandidates(probe) || [])
+          .map(item => String(item?.identity || item?.name || item || '').trim())
+          .filter(Boolean)
+          .slice(0, 3)
+          .join(', ');
+      } catch {
+        return '';
+      }
+    })();
     return {
       success: false,
       blocked: true,
       noDispatch: true,
       dispatched: false,
       messageRecipientGuard: true,
-      ...(missingLinkedInComposer ? { retryable: false } : {}),
-      reasonCode: probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
-        ? 'message_send_classification_inconclusive'
+      ...((missingLinkedInComposer || (!inconclusive && target)) ? { retryable: false } : {}),
+      reasonCode: inconclusive
+        ? (probe?.reasonCode || 'message_send_classification_inconclusive')
         : (target ? 'active_recipient_unverified' : 'authorized_recipient_missing'),
       error: missingLinkedInComposer
-        ? 'Message action blocked: no message composer is visible and this control is not a verified non-send action. Changing click targeting methods will not resolve this classification failure. Re-read the page to find a supported navigation or composer-opening control; if none is available, report the blocker instead of repeating the click.'
-        : probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
+        ? (probe?.reasonCode === 'message_commit_without_composer'
+          ? 'Message send blocked: this control commits a message (for example "Send" / "Send without a note") but no active composer or recipient could be verified. Changing click targeting methods will not help; ask the user to confirm the recipient or open the intended conversation first.'
+          : 'Message send blocked: no message composer is visible, so this send cannot be verified. Changing click targeting methods will not resolve this classification failure. Re-read the page to find a supported navigation or composer-opening control; if none is available, report the blocker instead of repeating the click.')
+        : inconclusive
         ? 'Message action blocked: WebBrain could not conclusively resolve the target control and active composer. Re-read the page and retry with an exact visible control or fresh ref_id.'
         : target
-          ? 'Message send blocked: the active conversation does not exactly match the recipient authorized by the user. Select the intended conversation, re-read its visible header, then retry the send action.'
+          ? `Message send blocked: this send would go to ${observedRecipientLabel ? `"${observedRecipientLabel}"` : 'a recipient'} which is not the recipient authorized for this task, so nothing was dispatched. Do NOT click Send again, and do not retry with different targeting.
+Ask the user to authorize it — one clarify, then act on their answer. The options must carry the address/identity text itself, because authorization binds to what the page shows and a bare "yes" cannot authorize a send. Include the multi-send option when the task sends more than one message:
+clarify({ question: "Send to ${observedRecipientLabel || '<observed address>'} instead?", options: ["${observedRecipientLabel || '<observed address>'}", "Send all remaining emails in this task without asking again", "Cancel"] })
+- If they pick the address: that recipient is authorized for the rest of this task, so retry the Send and continue normally.
+- If they pick "send all remaining": every remaining send in this task is authorized, so keep going without asking again.
+- If they pick "Cancel": stop and report that the send was not authorized.
+If the user has already named or confirmed this exact recipient, do NOT ask again — treat it as authorized, retry the Send once, and continue.`
           : (guard?.requiresSubmission === false || guard?.requiresStateChange === false || !target
             ? 'Message send blocked: the current plan does not authorize sending or submitting messages. Return the draft in chat or ask the user to authorize sending before attempting delivery.'
             : 'Message send blocked: the current task has no structured recipient authorization. Ask the user to name the recipient or explicitly authorize the currently open conversation before retrying.'),
@@ -23447,11 +23547,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const normalizedAnswer = normalizeRecipientAnswer(answer);
     if (!normalizedAnswer) return false;
-    if (!answerNamesAllObservedRecipients(normalizedAnswer, observed)) return false;
-    const resolvedRecipients = resolveClarifiedRecipients(observed, guard.messaging, clarifyContext, answer);
+    // A user may authorize the rest of the task in one answer instead of one
+    // recipient at a time (multi-email / multi-recipient runs). This is still
+    // the USER's grant: it can only arrive as a real clarify answer, never as
+    // model text, and it still requires a page-observed recipient to exist.
+    const allowAllSends = /(?:^|[^\p{L}])(?:all|everything|any|every|allow\s+all|send\s+all)(?:[^\p{L}]|$)/iu
+      .test(normalizedAnswer);
+    if (!allowAllSends && !answerNamesAllObservedRecipients(normalizedAnswer, observed)) return false;
+    const resolvedRecipients = allowAllSends
+      ? observed
+        .map(item => ({ identity: item?.identity || item, role: item?.role || 'to' }))
+        .filter(recipient => recipient.identity)
+      : resolveClarifiedRecipients(observed, guard.messaging, clarifyContext, answer);
     const target = normalizeMessageTarget({ target_kind: 'named', recipients: resolvedRecipients });
     if (!target) return false;
     guard.messaging = target;
+    // Remember the grant for the rest of this task: a multi-email run must not
+    // re-ask for an address the user already authorized, and an explicit
+    // "send all remaining" answer covers the sends that come after it.
+    const approved = Array.isArray(guard.approvedRecipients) ? guard.approvedRecipients.slice() : [];
+    for (const recipient of target.recipients || []) {
+      const identity = normalizeRecipientIdentity(recipient?.identity || recipient);
+      if (identity && !approved.includes(identity)) approved.push(identity);
+    }
+    guard.approvedRecipients = approved;
+    if (allowAllSends) guard.messageRecipientApprovedAll = true;
     return true;
   }
 
@@ -25814,6 +25934,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._continuationResponseLanguagePolicies.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.lastAutoScreenshotTs.delete(tabId);
+    this.autoScreenshotBursts.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
     this.toolbarAuditBudgetNotified.delete(tabId);
@@ -39547,6 +39668,48 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let response;
     try {
         response = await dispatchContentAction();
+        if (response === undefined || response === null) {
+          // The content script accepted the message but never answered — the
+          // classic cause is an orphaned copy left in this tab by a previous
+          // extension load (reload, update, or a moved folder): its runtime
+          // context is dead, so it receives messages but cannot respond, and
+          // it used to block the fresh install's double-injection guard.
+          // Force-inject the current content scripts (content.js now takes
+          // over via its generation counter) and retry once.
+          try {
+            if (globalThis.chrome?.scripting?.executeScript) {
+              await chrome.scripting.executeScript({
+                target: { tabId },
+                files: [
+                  'src/content/rich-text-toolbar-heuristic.js',
+                  'src/content/accessibility-tree.js',
+                  'src/content/teacher-capture.js',
+                  'src/content/chat-observation.js',
+                  'src/content/content.js',
+                  'src/content/agent-visual-indicator.js',
+                  'src/content/ollama-launch-handoff.js',
+                ],
+              });
+            }
+          } catch { /* best-effort — the resend below decides the outcome */ }
+          try {
+            await runContentActionStage(() => this._injectCoreContentScripts(tabId));
+            response = await dispatchContentAction();
+          } catch (eInj) {
+            if (eInj?.code === 'content_action_timeout') throw eInj;
+            response = undefined;
+          }
+          if (response === undefined || response === null) {
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              retryable: true,
+              staleContentScript: true,
+              error: `${name} received no answer from the page. The content script may be stale for this tab (reload the tab, or toggle the extension off/on) or the page blocked script injection. Re-observe the page before retrying.`,
+            };
+          }
+        }
         const deadlineResult = provenNoDispatchDeadline(response);
         if (deadlineResult) return this._withCoordinateReconciliation(deadlineResult, coordinateDiagnostic);
       } catch (e) {
@@ -41539,6 +41702,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.pendingVisionSubCallTraces.delete(tabId);
     this.visionStatusNotices.delete(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
+    this.autoScreenshotBursts.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
     this.toolbarAuditBudgetNotified.delete(tabId);
@@ -42946,6 +43110,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.pendingVisionSubCallTraces.delete(tabId);
     this.visionStatusNotices.delete(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
+    this.autoScreenshotBursts.delete(tabId);
     this.autoScreenshotCount.delete(tabId);
     this.toolbarAuditScreenshotCount.delete(tabId);
     this.toolbarAuditBudgetNotified.delete(tabId);

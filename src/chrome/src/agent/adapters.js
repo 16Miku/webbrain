@@ -18187,6 +18187,20 @@ export function getFullPageCapturePolicy(url) {
   }
 }
 
+// Generic mail routes may legitimately show a To/Cc/Bcc set. Generic chat
+// routes must resolve to one visible conversation identity before dispatch.
+const GENERIC_MESSAGING_SURFACE_RE = new RegExp(
+  '(?:^|\\.)(?:mail|webmail|outlook|hotmail|yahoo|proton|zoho|fastmail|icloud|gmx|tutanota|roundcube|horde|zimbra)\\b'
+  + '|(?:^|\\.)(?:whatsapp|telegram|discord|slack|messenger|wechat|signal|skype|teams|element|mattermost)\\.'
+  + '|/(?:mail|messag(?:e|es|ing)|chats?|dm|direct|compose|conversations?)(?:/|$)',
+  'i',
+);
+const GENERIC_MESSAGING_MAIL_LIKE_RE = new RegExp(
+  '(?:^|\\.)(?:mail|webmail|outlook|hotmail|yahoo|proton|zoho|fastmail|icloud|gmx|tutanota|roundcube|horde|zimbra)\\b'
+  + '|/(?:mail|compose)(?:/|$)',
+  'i',
+);
+
 /**
  * Return the machine-readable recipient-safety policy for a messaging page.
  * Unlike adapter notes, this is enforced by the runtime before dispatch.
@@ -18200,7 +18214,22 @@ export function getMessageRecipientGuardPolicy(url) {
   } catch {
     enabled = false;
   }
-  if (!enabled) return null;
+  if (!enabled) {
+    let mailLike = false;
+    let chatLike = false;
+    try {
+      const parsed = new URL(url);
+      const hostPath = `${parsed.hostname}${parsed.pathname}`;
+      mailLike = GENERIC_MESSAGING_MAIL_LIKE_RE.test(hostPath);
+      chatLike = !mailLike && GENERIC_MESSAGING_SURFACE_RE.test(hostPath);
+    } catch {}
+    if (!mailLike && !chatLike) return null;
+    return {
+      adapterName: 'generic-messaging',
+      verifyActiveRecipient: true,
+      ...(mailLike ? { supportsRecipientSets: true } : {}),
+    };
+  }
   return {
     adapterName: adapter.name,
     verifyActiveRecipient: true,

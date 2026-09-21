@@ -1702,6 +1702,22 @@ function playCompletionSound() {
   } catch { /* ignore */ }
 }
 
+// Play a short chime when the agent asks the user for clarification or a
+// permission decision. Uses the same asset + toggle as the completion chime.
+// Best-effort: autoplay-blocked or a closed panel just swallows the error.
+function playClarifySound() {
+  if (!notifySoundEnabled) return;
+  try {
+    if (!notifyAudio) {
+      notifyAudio = new Audio(chrome.runtime.getURL('assets/notification.mp3'));
+      notifyAudio.volume = 0.6;
+    }
+    notifyAudio.currentTime = 0;
+    const p = notifyAudio.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch { /* ignore */ }
+}
+
 function triggerCompletionConfetti() {
   if (!completionConfettiEnabled) return;
   if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return;
@@ -10115,6 +10131,8 @@ function workflowHealingTargetLabel(target) {
 
 function renderClarifyCard(data) {
   hideActivity();
+  // A clarification / permission card needs the user's attention right now.
+  playClarifySound();
   const tabId = data?.scheduledTabId ?? data?.tabId ?? currentTabId;
   if (tabId == null) return;
   const scheduledJobId = data?.scheduledJobId ? String(data.scheduledJobId) : '';

@@ -4,8 +4,11 @@
  */
 
 (() => {
-  // Prevent double-injection
-  if (window.__webbrain_injected) return;
+  // Take over from an orphaned installation. A reload or update leaves the
+  // old content script in the page with a dead runtime context; the newest
+  // copy must be the only listener that answers subsequent tool calls.
+  window.__webbrain_generation = (Number(window.__webbrain_generation) || 0) + 1;
+  const WEBBRAIN_GENERATION = window.__webbrain_generation;
   window.__webbrain_injected = true;
 
   const PAGE_GATE_SELECTORS = [
@@ -470,7 +473,8 @@
       const descriptor = window.__wbSiteInteractions?.describe?.(el);
       if (descriptor?.name) return descriptor.name;
     } catch {}
-    return (el?.innerText || el?.value || el?.placeholder || el?.title || el?.ariaLabel || '').trim();
+    const aria = el?.getAttribute?.('aria-label') || el?.ariaLabel || '';
+    return (el?.innerText || el?.value || el?.placeholder || el?.title || aria || '').trim();
   }
 
   function _isSiteInteractive(el) {
@@ -1307,12 +1311,43 @@
 
   // Shared by click dispatch and its recipient-safety preflight. Keep the
   // Firefox option visibility and input-label rules identical in both paths.
+  // Text candidate discovery walks every open shadow root, so each discovered
+  // root must invalidate the cache when its own subtree changes.
+  const _domRevision = { value: 0, observer: null, observedRoots: new WeakSet() };
+  function _observeDomRevisionRoot(root) {
+    if (!root || _domRevision.observedRoots.has(root) || typeof MutationObserver === 'undefined') return;
+    try {
+      if (!_domRevision.observer) {
+        _domRevision.observer = new MutationObserver(() => { _domRevision.value += 1; });
+      }
+      _domRevision.observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: [
+          'aria-label', 'aria-labelledby', 'title', 'placeholder', 'value', 'disabled',
+          'aria-expanded', 'aria-selected', 'aria-checked', 'aria-hidden', 'hidden',
+          'class', 'style', 'role', 'tabindex',
+        ],
+      });
+      _domRevision.observedRoots.add(root);
+    } catch { /* leave other observable roots cacheable */ }
+  }
+
+  const _textCandidateCache = new WeakMap();
   function _clickTextCandidates(scope) {
+    _observeDomRevisionRoot(document);
+    const revision = _domRevision.value;
+    const cacheScope = scope && typeof scope === 'object' ? scope : document;
+    const cached = _textCandidateCache.get(cacheScope);
+    if (cached && cached.revision === revision) return cached.list.slice();
     const sels = [
       'a', 'button', '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
       '[role="option"]', '[role="menuitemradio"]', '[role="menuitemcheckbox"]', '[role="treeitem"]',
+      '[role="combobox"]', '[role="searchbox"]', '[role="textbox"]',
       'input:not([type="hidden"])', 'textarea', 'select', 'input[type="button"]',
       'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
+      '[aria-label]', '[tabindex]', '[data-tooltip]',
       ..._siteInteractiveSelectors(),
     ].join(', ');
     // Candidate filter: listbox/menu option roles are often kept mounted but
@@ -1347,22 +1382,34 @@
     };
     const _normTxt = (el) => {
       const siteText = _isSiteInteractive(el) ? _siteInteractionText(el) : '';
-      return (siteText || el.innerText || (_valIsLabel(el) ? el.value : '') || el.placeholder || el.ariaLabel || '').trim().toLowerCase();
+      return (siteText || el.innerText || (_valIsLabel(el) ? el.value : '') || el.placeholder
+        || el.getAttribute?.('aria-label') || el.ariaLabel || el.title || '').trim().toLowerCase();
     };
     // LinkedIn can render the feed itself inside an open shadow root. Keep
     // preflight and dispatch on the same candidate set, including duplicate
     // labels across roots, without searching outside the selected modal.
     const candidates = [];
     const visit = (root) => {
+      _observeDomRevisionRoot(root);
       candidates.push(...root.querySelectorAll(sels));
       if (root.shadowRoot) visit(root.shadowRoot);
       for (const host of root.querySelectorAll('*')) {
         if (host.shadowRoot) visit(host.shadowRoot);
       }
     };
-    visit(scope);
+    visit(cacheScope);
     const all = candidates.filter(e => _hasVisibleBox(e) && _keepCandidate(e));
-    return all.map(e => ({ e, txt: _normTxt(e) })).filter(x => !!x.txt);
+    const list = [];
+    for (const e of all) {
+      const text = _normTxt(e);
+      if (text) list.push({ e, txt: text });
+      for (const attr of ['aria-label', 'title', 'placeholder', 'data-tooltip']) {
+        const value = String(e.getAttribute?.(attr) || '').trim().toLowerCase();
+        if (value && value !== text) list.push({ e, txt: value });
+      }
+    }
+    _textCandidateCache.set(cacheScope, { revision, list });
+    return list.slice();
   }
 
   let _lastClickIdent = null;
@@ -1711,7 +1758,14 @@
       function tryMode(mode) {
         if (mode === 'exact') return normalized.filter(x => x.txt === needle);
         if (mode === 'prefix') return normalized.filter(x => x.txt.startsWith(needle));
-        if (mode === 'contains') return normalized.filter(x => x.txt.includes(needle));
+        if (mode === 'contains') {
+          if (needle.length >= 3) return normalized.filter(x => x.txt.includes(needle));
+          const padded = ` ${needle} `;
+          return normalized.filter(x => x.txt === needle
+            || x.txt.startsWith(`${needle} `)
+            || x.txt.endsWith(` ${needle}`)
+            || x.txt.includes(padded));
+        }
         return [];
       }
 
@@ -1844,12 +1898,49 @@
           }
         }
       }
+      // Labels nested inside their actionable control are not independent
+      // targets. Collapse them before reporting an ambiguity so a single
+      // visible Send/Post control remains directly clickable.
+      if (!el && matches.length > 1) {
+        const collapsedByAncestor = new Map();
+        for (const match of matches) {
+          const actionable = _resolveInteractiveAncestor(match.e) || match.e;
+          if (!collapsedByAncestor.has(actionable)) collapsedByAncestor.set(actionable, match);
+        }
+        if (collapsedByAncestor.size < matches.length) matches = [...collapsedByAncestor.values()];
+        if (matches.length === 1) {
+          el = _resolveInteractiveAncestor(matches[0].e) || matches[0].e;
+          textResolvedExact = (usedMode === 'exact');
+        }
+      }
       if (!el && matches.length > 1) {
         // Prefer interactive elements over passive children (label, span, etc.)
         const interactiveMatches = matches.filter(m => _isInteractive(m.e));
         if (interactiveMatches.length === 1) {
           matches = interactiveMatches;
         } else {
+          const hitTargetPool = (interactiveMatches.length > 1 ? interactiveMatches : matches).filter(m => {
+            try {
+              const r = m.e.getBoundingClientRect();
+              if (r.width < 1 || r.height < 1) return false;
+              if (m.e.disabled === true || m.e.getAttribute?.('aria-disabled') === 'true') return false;
+              const hit = _shadowAwareElementFromPoint(
+                Math.round(r.left + r.width / 2),
+                Math.round(r.top + r.height / 2),
+              );
+              return !!hit && (hit === m.e || m.e.contains?.(hit) || hit.contains?.(m.e));
+            } catch {
+              return false;
+            }
+          });
+          if (hitTargetPool.length === 1) {
+            el = _resolveInteractiveAncestor(hitTargetPool[0].e) || hitTargetPool[0].e;
+            textResolvedExact = (usedMode === 'exact');
+            matches = hitTargetPool;
+          } else if (hitTargetPool.length > 1 && hitTargetPool.length < matches.length) {
+            matches = hitTargetPool;
+          }
+          if (matches.length > 1) {
           // Build rich candidates: position (rect), tag, role, surrounding
           // context (closest landmark/dialog/button text), and precomputed
           // click centers. When the same text appears twice, the model needs
@@ -1899,6 +1990,7 @@
             error: `Ambiguous text match for "${params.text}" (mode=${usedMode}, matches=${matches.length})${_scopeNote}. ${candidates.length} candidates returned with cx/cy (precomputed click center, in CSS pixels) and ancestor context. Pick one and call click({x: candidate.cx, y: candidate.cy, coordinate_space: "css"}) — no arithmetic needed. Use the ancestor field to disambiguate (e.g. an alertdialog's Cancel vs a form's Cancel sit in different containers). Do NOT retry click({text: "${params.text}"}) — it will fail the same way.`,
             candidates,
           };
+          }
         }
       }
       if (!el) {
@@ -4146,6 +4238,38 @@
       fieldMeta: _fieldMeta(el), rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height } };
   }
 
+  const _COMPOSER_UTILITY_LABEL_RE = new RegExp(
+    '^(?:save\\s*(?:&|and)?\\s*(?:close|draft|draft\\s*&\\s*close)|save\\s*&\\s*close'
+    + '|minimi[sz]e|exit\\s+full\\s+screen|full\\s+screen|pop-?out|expand|collapse'
+    + '|discard(?:\\s+draft)?|delete\\s+draft|print|check\\s+spelling|plain\\s+text(?:\\s+mode)?'
+    + '|attach(?:\\s+(?:files?|photos?|images?|documents?))?|insert\\s+(?:link|photo|image|file|drive|emoji|signature|contact|table|drawing|note)'
+    + '|emoji|emoticon|bold|italic|underline|strikethrough|align|numbered\\s+list|bulleted\\s+list'
+    + '|indent|outdent|undo|redo|more\\s+options|formatting(?:\\s+options)?|text\\s+formatting'
+    + '|remove\\s+formatting|font|text\\s+color|highlight|edit\\s+subject|confidential\\s+mode)',
+    'i',
+  );
+
+  function _isComposerUtilityControl(el) {
+    if (!el) return false;
+    try {
+      const label = String(
+        el.getAttribute?.('aria-label')
+        || el.getAttribute?.('title')
+        || el.getAttribute?.('data-tooltip')
+        || el.value
+        || el.innerText
+        || el.textContent
+        || '',
+      ).replace(/\s+/g, ' ').trim();
+      if (label && _COMPOSER_UTILITY_LABEL_RE.test(label)) return true;
+      const formattingScope = el.closest?.('[role="toolbar"],[aria-label*="formatting" i],[aria-label*="format" i]');
+      if (formattingScope && formattingScope !== el) return true;
+      return !!el.hasAttribute?.('aria-pressed');
+    } catch {
+      return false;
+    }
+  }
+
   function _probeMessageRecipientGuard(params = {}) {
     try {
       const tool = String(params.tool || '');
@@ -4342,7 +4466,11 @@
       } else if (tool === 'click') {
         // Match dispatch precedence, modal scope, candidate text and match
         // mode. A supplied selector must not approve a different text click.
-        if (typeof args.text === 'string' && args.text) {
+        if (typeof args.ref_id === 'string' && args.ref_id
+            && typeof window.__wb_ax_lookup === 'function') {
+          target = window.__wb_ax_lookup(args.ref_id);
+        }
+        if (!target && typeof args.text === 'string' && args.text) {
           const needle = args.text.toLowerCase();
           const scope = _findTopmostModal() || document;
           const candidates = _clickTextCandidates(scope);
@@ -4360,11 +4488,11 @@
             if (matches.length === 1) target = _resolveInteractiveAncestor(matches[0].e);
             if (matches.length) break;
           }
-        } else if (typeof args.selector === 'string' && args.selector) {
+        } else if (!target && typeof args.selector === 'string' && args.selector) {
           target = safeIndexedQuerySelector(args.selector, args.matchIndex).element;
-        } else if (Number.isInteger(args.index) && args.index >= 0) {
+        } else if (!target && Number.isInteger(args.index) && args.index >= 0) {
           target = queryInteractiveForToolIndex()[args.index] || null;
-        } else if (Number.isFinite(args.x) && Number.isFinite(args.y)) {
+        } else if (!target && Number.isFinite(args.x) && Number.isFinite(args.y)) {
           target = _shadowAwareElementFromPoint(args.x, args.y);
         }
         targetResolved = !!target;
@@ -4651,9 +4779,19 @@
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         if (active !== layoutComposer) {
-          return verifiedNavigationEditable(active)
-            ? { success: true, messageSend: false, conclusive: true, identityCandidates: [] }
-            : { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+          if (verifiedNavigationEditable(active)) {
+            return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+          }
+          try {
+            const composeScopeOf = (el) => el?.closest?.(
+              'form, [role="dialog"], [role="form"], [aria-label*="compose" i], [class*="compose" i]',
+            );
+            const activeScope = composeScopeOf(active);
+            if (activeScope && activeScope === composeScopeOf(layoutComposer)) {
+              return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+            }
+          } catch { /* fall through to the conservative result */ }
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         composer = layoutComposer;
         dispatchTarget = active;
@@ -4706,6 +4844,16 @@
             identityCandidates: [],
           };
         }
+        if (_isComposerUtilityControl(control)) {
+          return {
+            success: true,
+            messageSend: false,
+            conclusive: true,
+            composerUtility: true,
+            reasonCode: 'non_messaging_target',
+            identityCandidates: [],
+          };
+        }
         composer = layoutComposer;
         if (!composer) {
           const actionLabel = compact(
@@ -4719,11 +4867,30 @@
           );
           const composerSetup = params.adapterName === 'gmail'
             && /^(?:reply|reply all|forward)$/i.test(actionLabel);
+          const messageCommit = /(?:^|[^\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\p{L}]|$)/iu
+            .test(actionLabel);
+          const messagingSurface = (() => {
+            try {
+              return !!control.closest?.('[class*="msg-"],[class*="messaging"],[id*="messaging"],[data-messaging],[data-test-messaging],[role="log"]');
+            } catch { return false; }
+          })();
+          if (!composerSetup && !messageCommit && !messagingSurface) {
+            return {
+              success: true,
+              messageSend: false,
+              conclusive: true,
+              composerAvailable: false,
+              nonMessagingTarget: true,
+              reasonCode: 'non_messaging_target',
+              identityCandidates: [],
+            };
+          }
           return {
             success: true,
             messageSend: null,
             conclusive: false,
             composerAvailable: false,
+            reasonCode: messageCommit ? 'message_commit_without_composer' : 'no_composer_surface',
             ...(composerSetup ? { composerSetup: true } : {}),
             identityCandidates: [],
           };
@@ -4916,6 +5083,47 @@
         })();
         gmailComposeRoot = composeRoot;
         const recipients = collectGmailRecipients(composeRoot);
+        // A typed, uncommitted Gmail address only exists in the visible
+        // recipient input. Include it so confirmation remains bound to what
+        // is actually on screen before the UI turns it into a chip.
+        const collectRecipientInputValues = (root) => {
+          if (!root?.querySelectorAll) return;
+          let inputs = [];
+          try {
+            inputs = Array.from(root.querySelectorAll(
+              'input, textarea, [contenteditable="true"], [contenteditable=""]',
+            )).slice(0, 40);
+          } catch {
+            return;
+          }
+          for (const input of inputs) {
+            if (!visible(input) || input === composer || composer?.contains?.(input)) continue;
+            const role = recipientRole(input, root);
+            if (!role) continue;
+            const raw = String('value' in input ? (input.value || '') : (input.innerText || input.textContent || ''));
+            if (!raw || raw.length > 2000) continue;
+            for (const piece of raw.split(/[,;\n]+/)) {
+              const candidate = compact(piece, 240);
+              const match = candidate.match(/[^\s<>@,;]+@[^\s<>@,;.]+\.[^\s<>@,;]+/);
+              if (!match) continue;
+              const email = match[0];
+              const key = normalizedIdentity(email);
+              if (!key) continue;
+              const recipientKey = `${role}:${key}`;
+              const prior = recipients.get(recipientKey) || { identity: email, role, aliases: new Map() };
+              prior.aliases.set(key, email);
+              const display = compact(candidate.replace(/<[^>]*>/g, ''), 240);
+              if (display && display !== email) {
+                const normalizedDisplay = normalizedIdentity(display);
+                if (normalizedDisplay && !prior.aliases.has(normalizedDisplay)) {
+                  prior.aliases.set(normalizedDisplay, display);
+                }
+              }
+              recipients.set(recipientKey, prior);
+            }
+          }
+        };
+        collectRecipientInputValues(composeRoot);
         for (const [recipientKey, recipient] of recipients) {
           const emailKey = recipientKey.slice(recipientKey.indexOf(':') + 1);
           const identity = recipient.aliases.get(emailKey) || [...recipient.aliases.values()][0] || recipient.identity || '';
@@ -5033,6 +5241,94 @@
         }
       }
 
+      // Generic mail surfaces expose recipient fields and chips without a
+      // provider-specific adapter. Read only explicit recipient semantics;
+      // an ordinary contact form's email field must not become a message
+      // recipient, and a generic chat still requires one header identity.
+      if (observedRecipientCandidates.length === 0) {
+        const genericMailRecipientMode = params.adapterName === 'generic-messaging'
+          && params.supportsRecipientSets === true;
+        const RECIPIENT_FIELD_RE = new RegExp(
+          '(?:^|[^\\p{L}])(?:to|to\\s+recipients?|recipients?|send\\s+to|email|e-?mail(?:\\s+address)?'
+          + '|destinatario|destinataria|destinataire|para|aan|kime|do|til|komu|\\u0644\\u0625\\u0649'
+          + '|\\u6536\\u4ef6\\u4eba|\\u5b9b\\u5148|\\ubc1b\\ub294\\s*\\uc0ac\\ub78c)(?:[^\\p{L}]|$)',
+          'iu',
+        );
+        const fieldLooksLikeRecipient = (el) => {
+          try {
+            if (/^email$/i.test(String(el.getAttribute?.('type') || ''))) return genericMailRecipientMode;
+            if (/^email$/i.test(String(el.getAttribute?.('autocomplete') || ''))) return genericMailRecipientMode;
+            const haystack = [
+              el.getAttribute?.('name'),
+              el.getAttribute?.('aria-label'),
+              el.getAttribute?.('placeholder'),
+              el.getAttribute?.('id'),
+              el.getAttribute?.('data-testid'),
+              el.getAttribute?.('autocomplete'),
+              el.labels ? Array.from(el.labels).map(label => label.innerText).join(' ') : '',
+            ].filter(Boolean).join(' ');
+            return !!haystack && RECIPIENT_FIELD_RE.test(haystack);
+          } catch { return false; }
+        };
+        const pushRecipient = (identity, extraAliases = []) => {
+          const raw = compact(identity, 240);
+          const normalized = raw ? normalizedIdentity(raw) : '';
+          if (!normalized) return;
+          const existing = observedRecipientCandidates.find(
+            item => normalizedIdentity(item.identity) === normalized,
+          );
+          const aliases = Array.from(new Set([
+            raw, ...extraAliases, ...(existing?.aliases || []),
+          ].filter(Boolean)));
+          const entry = { identity: raw, role: 'to', aliases };
+          if (existing) Object.assign(existing, entry);
+          else observedRecipientCandidates.push(entry);
+          if (!strongRecipients.some(item => normalizedIdentity(item.identity) === normalized)) {
+            strongRecipients.push({ identity: raw, role: 'to' });
+          }
+        };
+        const extractAddresses = (rawValue) => {
+          const raw = String(rawValue || '');
+          if (!raw || raw.length > 2000) return;
+          for (const piece of raw.split(/[,;\n]+/)) {
+            const candidate = compact(piece, 240);
+            const match = candidate.match(/[^\s<>@,;]+@[^\s<>@,;.]+\.[^\s<>@,;]+/);
+            if (!match) continue;
+            const display = compact(candidate.replace(/<[^>]*>/g, ''), 240);
+            pushRecipient(match[0], display && display !== match[0] ? [display] : []);
+          }
+        };
+        try {
+          for (const el of Array.from(document.querySelectorAll(
+            'input, textarea, [contenteditable="true"], [contenteditable=""]',
+          )).slice(0, 60)) {
+            if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
+            if (!fieldLooksLikeRecipient(el)) continue;
+            extractAddresses('value' in el ? el.value : (el.innerText || el.textContent || ''));
+          }
+        } catch { /* structural read is best-effort */ }
+        try {
+          const chipScope = composer.closest?.('[role="dialog"],form,[role="main"]') || document;
+          for (const el of Array.from(chipScope.querySelectorAll(
+            '[email],[data-email],[data-hovercard-id],a[href^="mailto:" i],input[type="email"]',
+          )).slice(0, 40)) {
+            if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
+            if (!genericMailRecipientMode
+                && /^email$/i.test(String(el.getAttribute?.('type') || ''))) continue;
+            const mailto = String(el.getAttribute?.('href') || '')
+              .replace(/^mailto:/i, '').split('?')[0];
+            const address = [
+              el.getAttribute?.('email'), el.getAttribute?.('data-email'),
+              el.getAttribute?.('data-hovercard-id'), mailto,
+              'value' in el ? el.value : '',
+            ].map(value => compact(value, 240)).find(value => String(value || '').includes('@')) || '';
+            if (!address) continue;
+            const display = compact(el.innerText || el.textContent, 240);
+            pushRecipient(address, display && display !== address ? [display] : []);
+          }
+        } catch { /* structural read is best-effort */ }
+      }
+
       const composerText = (() => {
         try {
           if ('value' in composer) return String(composer.value || '');
@@ -5142,6 +5438,7 @@
   // --- Message handler ---
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.target !== 'content') return;
+    if (WEBBRAIN_GENERATION !== (Number(window.__webbrain_generation) || 0)) return;
     const actionDeadlineAt = Number(msg.actionDeadlineAt) || 0;
     const actionDeadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
     if (actionDeadlineExpired()) {
@@ -6760,7 +7057,16 @@
       return value;
     };
 
-    const result = handler();
+    let result;
+    try {
+      result = handler();
+    } catch (err) {
+      sendResponse(withLiveDocumentScope({
+        success: false,
+        error: `${msg.action} failed: ${err?.message || String(err)}`,
+      }));
+      return;
+    }
     if (result instanceof Promise) {
       // Always settle sendResponse — a rejecting handler (e.g. a throwing
       // DOM API) must not leave the caller's await hanging forever.
@@ -6772,6 +7078,14 @@
         })),
       );
       return true; // async
+    }
+    if (result === undefined || result === null) {
+      sendResponse(withLiveDocumentScope({
+        success: false,
+        noResult: true,
+        error: `${msg.action} returned no result (handler produced no payload).`,
+      }));
+      return;
     }
     sendResponse(withLiveDocumentScope(result));
   });
