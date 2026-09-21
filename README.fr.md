@@ -285,10 +285,8 @@ Source : [`lmstudio-plugin/`](lmstudio-plugin/).
 
 ## Licence
 
-WebBrain 33.0.0 et les versions ultérieures sont distribués sous
+WebBrain est distribué sous
 [GPL-3.0-or-later](LICENSE), car l’extension de navigateur distribuée intègre
-le runtime WebAssembly Xapian/libzim sous GPL. Les versions antérieures à
-33.0.0 restent sous la licence MIT applicable lors de leur publication ; ce
-texte historique est conservé dans [LICENSES/MIT.txt](LICENSES/MIT.txt).
+le runtime WebAssembly Xapian/libzim sous GPL. 
 
 Créé par [Emre Sokullu](https://emresokullu.com).
