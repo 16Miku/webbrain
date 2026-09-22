@@ -202,31 +202,24 @@ function lineIsBlankInContainer(line, container) {
   return quoteDepth === container.quoteDepth && !line.slice(quotePrefix.length).trim();
 }
 
-function followingLineBelongsToContainer(remainder, offset, container) {
-  for (const match of remainder.slice(offset).matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
-    if (!match[0]) break;
-    const line = match[0].replace(/\r?\n$/, '');
-    if (line.trim()) return lineBelongsToContainer(line, container);
-  }
-  return false;
-}
-
 function unfinishedContainerEnd(source, start, container) {
   if (!container.quoteDepth && !container.listPrefix) return source.length;
   const remainder = source.slice(start);
   let offset = start;
+  let pendingBlankStart = null;
   for (const match of remainder.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
     if (!match[0]) break;
     const line = match[0].replace(/\r?\n$/, '');
-    if ((container.quoteDepth || container.listPrefix) && lineIsBlankInContainer(line, container)
-      && followingLineBelongsToContainer(remainder, match.index + match[0].length, container)) {
+    if ((container.quoteDepth || container.listPrefix) && lineIsBlankInContainer(line, container)) {
+      if (pendingBlankStart == null) pendingBlankStart = offset;
       offset += match[0].length;
       continue;
     }
-    if (!lineBelongsToContainer(line, container)) return offset;
+    if (!lineBelongsToContainer(line, container)) return pendingBlankStart ?? offset;
+    pendingBlankStart = null;
     offset += match[0].length;
   }
-  return source.length;
+  return pendingBlankStart ?? source.length;
 }
 
 function normalizeContainerCode(code, prefixOrContainer) {

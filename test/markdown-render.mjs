@@ -286,13 +286,13 @@ for (const build of ['chrome', 'firefox']) {
     }), '  > - BLOCK\n  > Outside\n\nAfter');
     assert.deepEqual(quoteListBlocks, [{ info: 'text', code: 'hello\n' }]);
 
-    const quoteBlank = '> ```text\n> hello\n>\n> again\n> ```';
+    const quoteBlank = '> ```text\n> hello\n>\n>\n> again\n> ```';
     const quoteBlankBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(quoteBlank, (info, code) => {
       quoteBlankBlocks.push({ info, code });
       return 'BLOCK';
     }), '> BLOCK');
-    assert.deepEqual(quoteBlankBlocks, [{ info: 'text', code: 'hello\n\nagain\n' }]);
+    assert.deepEqual(quoteBlankBlocks, [{ info: 'text', code: 'hello\n\n\nagain\n' }]);
 
     const noCloser = '> ```text\n> inside\nOutside';
     const noCloserBlocks = [];
