@@ -263,6 +263,7 @@ const scheduler = new ScheduledJobManager({
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
+    await webMcpEnabledReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
   sendUpdate: (tabId, type, data) => {
