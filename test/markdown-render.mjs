@@ -168,6 +168,18 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(formatMarkdown(source), /After/);
   });
 
+  test(`${build}: tab-indented list fences use visual indentation columns`, () => {
+    const source = '-\t```text\n\tvalue\n\t```\nAfter';
+    const blocks = [];
+    const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
+      blocks.push({ info, code });
+      return 'BLOCK';
+    });
+    assert.deepEqual(blocks, [{ info: 'text', code: 'value\n' }]);
+    assert.equal(remaining, '-\tBLOCK\nAfter');
+    assert.equal(helpers.replaceMarkdownCodeFences('\t```js\nIndented example.', () => 'BLOCK'), '\t```js\nIndented example.');
+  });
+
   test(`${build}: saved history uses an outer fence longer than all literal backticks`, () => {
     const text = value => ({ nodeType: 3, nodeValue: value });
     const element = (tagName, ...childNodes) => ({ nodeType: 1, tagName, childNodes });

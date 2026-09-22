@@ -66,19 +66,47 @@ function fenceContainer(prefix, indentation = '') {
   return { quotePrefix, quoteDepth, listPrefix, indentation: String(indentation) };
 }
 
+function indentationColumns(value) {
+  let columns = 0;
+  for (const character of String(value)) {
+    columns += character === '\t' ? 4 - (columns % 4) : 1;
+  }
+  return columns;
+}
+
+function stripIndentationColumns(line, columns) {
+  let offset = 0;
+  let consumed = 0;
+  while (offset < line.length && consumed < columns && /^[ \t]$/.test(line[offset])) {
+    if (line[offset] === '\t') {
+      const tabWidth = 4 - (consumed % 4);
+      if (consumed + tabWidth > columns) {
+        return `${' '.repeat(consumed + tabWidth - columns)}${line.slice(offset + 1)}`;
+      }
+      consumed += tabWidth;
+    } else {
+      consumed += 1;
+    }
+    offset += 1;
+  }
+  return line.slice(offset);
+}
+
 function fenceCloserInContainer(opener, candidate) {
   if (opener.quoteDepth !== candidate.quoteDepth) return false;
-  if (!opener.listPrefix) return !candidate.listPrefix && candidate.indentation.length <= 3;
+  const candidateIndent = indentationColumns(candidate.indentation);
+  if (!opener.listPrefix) return !candidate.listPrefix && candidateIndent <= 3;
+  const listIndent = indentationColumns(opener.listPrefix);
   return !candidate.listPrefix
-    && candidate.indentation.length >= opener.listPrefix.length
-    && candidate.indentation.length <= opener.listPrefix.length + 3;
+    && candidateIndent >= listIndent
+    && candidateIndent <= listIndent + 3;
 }
 
 function normalizeContainerCode(code, prefix) {
   const { quoteDepth, listPrefix } = fenceContainer(prefix);
   if (!quoteDepth && !listPrefix) return code;
 
-  const listIndent = listPrefix.length;
+  const listIndent = indentationColumns(listPrefix);
   const lines = String(code).split(/(\r?\n)/);
   for (let index = 0; index < lines.length; index += 2) {
     let line = lines[index];
@@ -89,9 +117,7 @@ function normalizeContainerCode(code, prefix) {
       line = line.slice(marker[0].length);
       quoteOffset += 1;
     }
-    let consumed = 0;
-    while (consumed < listIndent && /^[ \t]$/.test(line[consumed] || '')) consumed += 1;
-    lines[index] = line.slice(consumed);
+    lines[index] = stripIndentationColumns(line, listIndent);
   }
   return lines.join('');
 }
@@ -117,7 +143,7 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
     if (!block) {
       // Four-space indented code is not a fenced block at the document root,
       // but list continuations may require more than three spaces to close.
-      if (!validOpening || container.indentation.length > 3) continue;
+      if (!validOpening || indentationColumns(container.indentation) > 3) continue;
       output.push(source.slice(cursor, match.index));
       block = { info, prefix, container, start: match.index + match[0].length };
       stack.push({ fence, markdown, container });
