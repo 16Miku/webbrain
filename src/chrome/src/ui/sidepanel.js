@@ -7,7 +7,7 @@
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
-import { codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables } from './markdown-render.js';
+import { codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
 import { applyMode, loadMode, watch } from './theme.js';
 import {
   UI_SCALE_LEVELS,
@@ -3468,7 +3468,7 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
       ['completed', 'clarification_required'].includes(event)
       || watchPollEvent
     ) && job?.lastResult) {
-      textEl.innerHTML = formatMarkdown(job.lastResult);
+      textEl.innerHTML = formatMarkdown(job.lastResult, { recoverNestedMarkdown: true });
       addMessageCopyButton(assistantEl);
     }
   }
@@ -9221,7 +9221,7 @@ async function sendMessage(extraChatParams = {}) {
               retryPayload,
             })
             && !renderSubscribeError(textEl, res.content, modeForSend)) {
-          textEl.innerHTML = formatMarkdown(res.content);
+          textEl.innerHTML = formatMarkdown(res.content, { recoverNestedMarkdown: true });
         }
         addMessageCopyButton(assistantEl);
       }
@@ -10023,7 +10023,7 @@ function handleAgentUpdateMessage(msg) {
                 submittedTurnDurable: data.submittedTurnDurable,
                 retryPayload: activeRetryPayloadForRequest(eventTabId, msg.requestId),
               })
-              && !renderSubscribeError(textEl, data.finalContent)) textEl.innerHTML = formatMarkdown(data.finalContent);
+              && !renderSubscribeError(textEl, data.finalContent)) textEl.innerHTML = formatMarkdown(data.finalContent, { recoverNestedMarkdown: true });
           addMessageCopyButton(currentAssistantEl);
         }
       }
@@ -11200,7 +11200,7 @@ function renderStreamedAssistantMarkdownNow(textEl) {
   if (!textEl || textEl.dataset.suppressToolCallStream === 'true') return;
   const streamedText = getStreamedAssistantText(textEl);
   if (!streamedText) return;
-  textEl.innerHTML = formatMarkdown(streamedText, { enhance: false });
+  textEl.innerHTML = formatMarkdown(streamedText, { enhance: false, recoverNestedMarkdown: true });
   scrollToBottom();
 }
 
@@ -11263,13 +11263,15 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
   const streamedText = getStreamedAssistantText(textEl);
   const hasStreamedText = hasStreamedAssistantText(textEl);
   const restoredStreamNeedsReplacement = hasStreamedText && !streamedText;
+  // Final text must keep the same Markdown fence structure shown during streaming.
+  const renderedContent = formatMarkdown(content, { recoverNestedMarkdown: true });
 
   if (options.replace === true || restoredStreamNeedsReplacement) {
     // A rejected streamed terminal must replace its already-rendered deltas
     // even in Verbose mode; appending would leave the invalid plan visible.
     // Empty content clears the bubble (plan-only retry before recovery tools).
     if (content) {
-      textEl.innerHTML = formatMarkdown(content);
+      textEl.innerHTML = renderedContent;
       streamedAssistantTextByEl.set(textEl, String(content));
     } else {
       textEl.textContent = '';
@@ -11282,12 +11284,12 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
     // content in place even when cleanup changed it from the raw stream.
     const para = document.createElement('div');
     para.className = 'reasoning-step';
-    para.innerHTML = formatMarkdown(content);
+    para.innerHTML = renderedContent;
     textEl.appendChild(para);
   } else {
     // Compact mode keeps only the latest blurb. A streamed final lands here
     // too for one authoritative render with terminal-only enhancements.
-    textEl.innerHTML = formatMarkdown(content);
+    textEl.innerHTML = renderedContent;
   }
 
   clearStreamedAssistantText(textEl);
@@ -12109,7 +12111,7 @@ function addMessage(role, content, options = {}) {
     options.costAllowanceResume,
   )
       && !renderSubscribeError(textEl, content, options.subscribeResumeMode)) {
-    textEl.innerHTML = content ? formatMarkdown(content) : '';
+    textEl.innerHTML = content ? formatMarkdown(content, { recoverNestedMarkdown: role === 'assistant' }) : '';
   }
 
   contentEl.appendChild(textEl);
@@ -12336,7 +12338,7 @@ async function continueAgent(options = {}) {
               submittedTurnDurable: res.submittedTurnDurable,
             })
             && !renderSubscribeError(textEl, res.content)) {
-          textEl.innerHTML = formatMarkdown(res.content);
+          textEl.innerHTML = formatMarkdown(res.content, { recoverNestedMarkdown: true });
         }
         addMessageCopyButton(assistantEl);
       }
@@ -12826,15 +12828,16 @@ function scheduleMathRender() {
 function formatMarkdown(text, options = {}) {
   if (!text) return '';
   const enhance = options.enhance !== false;
+  const streaming = options.recoverNestedMarkdown === true;
 
   // 1. Extract fenced code blocks BEFORE escaping HTML
   const codeBlocks = [];
-  text = text.replace(/```[ \t]*([^`\r\n]*)\r?\n([\s\S]*?)```/g, (_match, info, code) => {
+  text = replaceMarkdownCodeFences(text, (info, code) => {
     const lang = codeFenceLanguage(info);
     const id = `__CODEBLOCK_${codeBlocks.length}__`;
     codeBlocks.push({ lang: lang || '', code });
     return id;
-  });
+  }, { streaming });
 
   // 2. Extract inline code before escaping
   const inlineCodes = [];
