@@ -343,9 +343,11 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       const emptyListMarker = line.length === precedingContainer.containerPrefix.length;
       if (emptyListMarker) {
         container = { ...container, listIndentGroups: [...container.listIndentGroups] };
-        const group = container.listIndentGroups.length - 1;
-        container.listIndentGroups[group] = container.listIndentGroups[group] - container.lastListPrefixWidth
-          + container.lastListMarkerWidth + 1;
+        if (container.lastListPrefixWidth > container.lastListMarkerWidth) {
+          const group = container.listIndentGroups.length - 1;
+          container.listIndentGroups[group] = container.listIndentGroups[group] - container.lastListPrefixWidth
+            + container.lastListMarkerWidth + 1;
+        }
       }
       const listIndent = container.listIndentGroups.at(-1);
       if (listIndent && continuationIndent >= listIndent && continuationIndent <= listIndent + 3) {
