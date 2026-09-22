@@ -269,6 +269,7 @@ for (const build of ['chrome', 'firefox']) {
       ['10. Step\n    ```js\n    const value = true;\n    ```\nAfter', '10. Step\n    BLOCK\nAfter'],
       ['10. Step\n    continuation\n    ```js\n    const value = true;\n    ```\nAfter', '10. Step\n    continuation\n    BLOCK\nAfter'],
       ['> 10. Step\n>     ```js\n>     const value = true;\n>     ```\n> After', '> 10. Step\n>     BLOCK\n> After'],
+      ['- > - item\n  >     ```js\n  >     const value = true;\n  >     ```\nAfter', '- > - item\n  >     BLOCK\nAfter'],
     ];
     for (const [source, expected] of cases) {
       const blocks = [];
@@ -482,6 +483,14 @@ for (const build of ['chrome', 'firefox']) {
       return 'BLOCK';
     }), '> BLOCK');
     assert.deepEqual(quotedTabBlocks, [{ info: 'text', code: 'hello\n' }]);
+
+    const nestedQuotedList = '- > -\t```text\n  > \thello\n  > \t```\nAfter';
+    const nestedQuotedListBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(nestedQuotedList, (info, code) => {
+      nestedQuotedListBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '- > -\tBLOCK\nAfter');
+    assert.deepEqual(nestedQuotedListBlocks, [{ info: 'text', code: 'hello\n' }]);
   });
 
   test(`${build}: saved history uses an outer fence longer than all literal backticks`, () => {

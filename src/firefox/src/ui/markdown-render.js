@@ -142,6 +142,7 @@ function stripContainerPrefix(line, container) {
     const listIndent = container.listIndentGroups[quoteIndex];
     remainder = consumeIndentationColumns(remainder, listIndent, column);
     if (remainder == null) return null;
+    column += listIndent;
     const quote = remainder.match(/^ {0,3}>[ \t]?/);
     if (!quote) return null;
     column = indentationColumnsAt(quote[0], column);
@@ -258,15 +259,14 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       if (source[lineEnd] === '\r') lineEnd -= 1;
       continue;
     }
-    const quotePrefix = line.match(/^(?:[ \t]*>[ \t]?)+/)?.[0] || '';
-    const quoteDepth = (quotePrefix.match(/>/g) || []).length;
-    const missingQuotes = current.quoteDepth - quoteDepth;
+    const precedingContainer = fenceContainer(line);
+    const missingQuotes = current.quoteDepth - precedingContainer.quoteDepth;
     if (missingQuotes < 0 || (missingQuotes && !current.leadingQuoteIndent)) return noList();
 
-    const content = line.slice(quotePrefix.length);
-    const listPrefix = content.match(/^(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)+/)?.[0] || '';
-    if (listPrefix) {
-      const container = fenceContainer(`${quotePrefix}${listPrefix}${'> '.repeat(missingQuotes)}`);
+    if (precedingContainer.listPrefix) {
+      const container = missingQuotes
+        ? fenceContainer(`${precedingContainer.rawPrefix}${'> '.repeat(missingQuotes)}`)
+        : precedingContainer;
       const listIndent = container.listIndentGroups.at(-1);
       if (listIndent && continuationIndent >= listIndent && continuationIndent <= listIndent + 3) {
         return container;
@@ -274,6 +274,8 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       return noList();
     }
 
+    const quotePrefix = line.match(/^(?:[ \t]*>[ \t]?)+/)?.[0] || '';
+    const content = line.slice(quotePrefix.length);
     const lineIndentation = content.match(/^[ \t]*/)?.[0] || '';
     const lineStartColumn = indentationColumns(quotePrefix);
     const lineIndent = indentationColumnsAt(lineIndentation, lineStartColumn) - lineStartColumn;
