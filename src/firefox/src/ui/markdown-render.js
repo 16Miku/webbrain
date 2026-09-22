@@ -534,7 +534,6 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
     if (block) {
       const boundary = block.boundary;
       if (boundary <= match.index) {
-        const wasClosingFence = isFenceCloser(stack[stack.length - 1], container, fence, info);
         const code = source.slice(block.start, boundary);
         const needsBoundaryNewline = (/\r?\n$/.test(code) || (!code && block.openingEndsWithNewline))
           && !/^\r?\n/.test(source.slice(boundary));
@@ -545,7 +544,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         cursor = boundary;
         block = null;
         stack.length = 0;
-        if (!wasClosingFence) matchIndex -= 1;
+        matchIndex -= 1;
         continue;
       }
     }

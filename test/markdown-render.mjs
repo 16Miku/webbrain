@@ -371,6 +371,13 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(remaining, expected);
       assert.equal(preContents(formatMarkdown(source)).length, 1);
     }
+    const siblingUnfinishedFences = '- item\n  ```js\n  one\n- next\n  ```\n  two\nOutside';
+    const siblingBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(siblingUnfinishedFences, (info, code) => {
+      siblingBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '- item\n  BLOCK\n- next\n  BLOCK\nOutside');
+    assert.deepEqual(siblingBlocks, [{ info: 'js', code: 'one\n' }, { info: '', code: 'two\n' }]);
     assert.match(formatMarkdown(cases[0][0]), /Outside/);
     assert.match(formatMarkdown(cases[1][0]), /Next/);
     const unfinishedList = '- ```text\n  hello\n\n  again';
@@ -402,24 +409,24 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(helpers.replaceMarkdownCodeFences(unprefixedQuoteBreak, (info, code) => {
       unprefixedQuoteBlocks.push({ info, code });
       return 'BLOCK';
-    }), '> BLOCK\n> second\n> ```\nAfter');
-    assert.deepEqual(unprefixedQuoteBlocks, [{ info: 'text', code: 'first\n' }]);
+    }), '> BLOCK\n> second\n> BLOCK\nAfter');
+    assert.deepEqual(unprefixedQuoteBlocks, [{ info: 'text', code: 'first\n' }, { info: '', code: '' }]);
 
     const mixedQuoteListBreak = '> - ```text\n>   first\n\n>   second\n>   ```\nAfter';
     const mixedQuoteListBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(mixedQuoteListBreak, (info, code) => {
       mixedQuoteListBlocks.push({ info, code });
       return 'BLOCK';
-    }), '> - BLOCK\n>   second\n>   ```\nAfter');
-    assert.deepEqual(mixedQuoteListBlocks, [{ info: 'text', code: 'first\n' }]);
+    }), '> - BLOCK\n>   second\n>   BLOCK\nAfter');
+    assert.deepEqual(mixedQuoteListBlocks, [{ info: 'text', code: 'first\n' }, { info: '', code: '' }]);
 
     const quotedBlankReset = '> ```text\n> first\n\n>\n> second\n> ```\nAfter';
     const quotedBlankResetBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(quotedBlankReset, (info, code) => {
       quotedBlankResetBlocks.push({ info, code });
       return 'BLOCK';
-    }), '> BLOCK\n>\n> second\n> ```\nAfter');
-    assert.deepEqual(quotedBlankResetBlocks, [{ info: 'text', code: 'first\n' }]);
+    }), '> BLOCK\n>\n> second\n> BLOCK\nAfter');
+    assert.deepEqual(quotedBlankResetBlocks, [{ info: 'text', code: 'first\n' }, { info: '', code: '' }]);
 
     const wideQuotedListBlank = '10. > ```text\n    > hello\n    >\n    > again\n    > ```';
     const wideQuotedListBlocks = [];
@@ -522,8 +529,8 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(helpers.replaceMarkdownCodeFences(escapedQuote, (info, code) => {
       quoteBlocks.push({ info, code });
       return 'BLOCK';
-    }), '> BLOCK\nOutside\n> ```\nAfter');
-    assert.deepEqual(quoteBlocks, [{ info: 'text', code: 'inside\n' }]);
+    }), '> BLOCK\nOutside\n> BLOCK\nAfter');
+    assert.deepEqual(quoteBlocks, [{ info: 'text', code: 'inside\n' }, { info: '', code: '' }]);
 
     const laterBlock = '> ```text\n> inside\nOutside\n```js\ncode\n```\nAfter';
     const laterBlocks = [];
