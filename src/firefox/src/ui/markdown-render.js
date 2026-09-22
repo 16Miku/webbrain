@@ -62,24 +62,31 @@ function fenceContainer(prefix, indentation = '') {
   const quotePrefix = source.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
   const remainder = source.slice(quotePrefix.length);
   const listPrefix = remainder.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/)?.[0] || '';
-  return { quotePrefix, listPrefix, indentation: String(indentation) };
+  const quoteDepth = (quotePrefix.match(/>/g) || []).length;
+  return { quotePrefix, quoteDepth, listPrefix, indentation: String(indentation) };
 }
 
 function fenceCloserInContainer(opener, candidate) {
-  if (opener.quotePrefix !== candidate.quotePrefix) return false;
-  if (!opener.listPrefix) return !candidate.listPrefix;
+  if (opener.quoteDepth !== candidate.quoteDepth) return false;
+  if (!opener.listPrefix) return !candidate.listPrefix && candidate.indentation.length <= 3;
   return !candidate.listPrefix && candidate.indentation.length >= opener.listPrefix.length;
 }
 
 function normalizeContainerCode(code, prefix) {
-  const { quotePrefix, listPrefix } = fenceContainer(prefix);
-  if (!quotePrefix && !listPrefix) return code;
+  const { quoteDepth, listPrefix } = fenceContainer(prefix);
+  if (!quoteDepth && !listPrefix) return code;
 
   const listIndent = listPrefix.length;
   const lines = String(code).split(/(\r?\n)/);
   for (let index = 0; index < lines.length; index += 2) {
     let line = lines[index];
-    if (quotePrefix && line.startsWith(quotePrefix)) line = line.slice(quotePrefix.length);
+    let quoteOffset = 0;
+    while (quoteOffset < quoteDepth) {
+      const marker = line.match(/^ {0,3}>[ \t]?/);
+      if (!marker) break;
+      line = line.slice(marker[0].length);
+      quoteOffset += 1;
+    }
     let consumed = 0;
     while (consumed < listIndent && /^[ \t]$/.test(line[consumed] || '')) consumed += 1;
     lines[index] = line.slice(consumed);
@@ -94,7 +101,7 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
   // renderer preserves (lists and blockquotes). The old unanchored matcher
   // accepted these forms, while a root-only matcher mistakes their closer for
   // a new opener and consumes the rest of the message as code.
-  const fenceLines = /^((?: {0,3}>[ \t]?)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?)([ \t]{0,3})(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/gm;
+  const fenceLines = /^((?: {0,3}>[ \t]?)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?)([ \t]*)(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/gm;
   const output = [];
   let cursor = 0;
   let block = null;
@@ -106,7 +113,9 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
     const validOpening = fence[0] !== '`' || !info.includes('`');
     const markdown = /^(?:md|markdown)$/i.test(codeFenceLanguage(info));
     if (!block) {
-      if (!validOpening) continue;
+      // Four-space indented code is not a fenced block at the document root,
+      // but list continuations may require more than three spaces to close.
+      if (!validOpening || container.indentation.length > 3) continue;
       output.push(source.slice(cursor, match.index));
       block = { info, prefix, container, start: match.index + match[0].length };
       stack.push({ fence, markdown, container });
@@ -128,7 +137,8 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
         cursor = match.index + match[0].replace(/\r?\n$/, '').length;
         block = null;
       }
-    } else if (active.markdown && validOpening && info.trim() && fence === active.fence) {
+    } else if (active.markdown && validOpening && info.trim() && fence === active.fence
+      && fenceCloserInContainer(active.container, container)) {
       // Models sometimes wrap a README in ```markdown and reuse ```lang
       // inside it. Recover only this named Markdown nesting; ordinary code
       // and correctly longer outer fences retain their literal contents.

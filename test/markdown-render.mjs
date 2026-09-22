@@ -133,8 +133,14 @@ for (const build of ['chrome', 'firefox']) {
         /<ul><li><pre><code>value = &quot;\*\*literal\*\*&quot;\n<\/code><\/pre><\/li><\/ul>/,
       ],
       [
+        'wide numbered list',
+        '10. ```text\n    value\n    ```\n\n## Next steps\nCheck the result.',
+        /<h2>Next steps<\/h2>Check the result\./,
+        /<ol><li><pre><code>value\n<\/code><\/pre><\/li><\/ol>/,
+      ],
+      [
         'blockquote',
-        '> ```text\n> hello\n> ```\n\n## Next steps\nCheck the result.',
+        '> ```text\n> hello\n>```\n\n## Next steps\nCheck the result.',
         /<h2>Next steps<\/h2>Check the result\./,
         /<blockquote><pre><code>hello\n<\/code><\/pre><\/blockquote>/,
       ],
