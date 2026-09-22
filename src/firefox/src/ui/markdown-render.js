@@ -142,7 +142,7 @@ function normalizeContainerCode(code, prefix) {
 }
 
 /** Replace whole fenced blocks, including an unfinished block during streaming. */
-export function replaceMarkdownCodeFences(value, renderBlock) {
+export function replaceMarkdownCodeFences(value, renderBlock, { streaming = false } = {}) {
   const source = String(value ?? '');
   // Accept fences at the document root and inside the simple containers this
   // renderer preserves (lists and blockquotes). The old unanchored matcher
@@ -174,11 +174,7 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
     const active = stack[stack.length - 1];
     // A closing fence occupies its own line, has no info string, and is at
     // least as long as its opener. Backticks inside source code are literal.
-    const hasImmediatelyFollowingText = /^[ \t]*[^\r\n]/.test(
-      source.slice(match.index + match[0].length),
-    );
-    if (isFenceCloser(active, container, fence, info)
-      && (!active.pendingNested || hasImmediatelyFollowingText)) {
+    if (isFenceCloser(active, container, fence, info)) {
       stack.pop();
       if (!stack.length) {
         output.push(block.prefix + renderBlock(
@@ -194,12 +190,8 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
       // Models sometimes wrap a README in ```markdown and reuse ```lang
       // inside it. Recover only this named Markdown nesting; ordinary code
       // and correctly longer outer fences retain their literal contents.
-      if (nestedFenceHasOwnCloser(matches, matchIndex, active)) {
+      if (streaming || nestedFenceHasOwnCloser(matches, matchIndex, active)) {
         stack.push({ fence, markdown, container });
-      } else {
-        // During streaming, the only available blank fence may close this
-        // example rather than its still-open Markdown wrapper.
-        active.pendingNested = true;
       }
     }
   }

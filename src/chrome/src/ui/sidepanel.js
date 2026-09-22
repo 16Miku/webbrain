@@ -12834,7 +12834,7 @@ function formatMarkdown(text, options = {}) {
     const id = `__CODEBLOCK_${codeBlocks.length}__`;
     codeBlocks.push({ lang: lang || '', code });
     return id;
-  });
+  }, { streaming: !enhance });
 
   // 2. Extract inline code before escaping
   const inlineCodes = [];

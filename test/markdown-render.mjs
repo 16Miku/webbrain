@@ -85,14 +85,14 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   test(`${build}: unmatched nested example fences do not steal an outer closer`, () => {
-    const source = '```markdown\n```js\nconst value = true;\n```\n## Outside';
+    const source = '```markdown\n```js\nconst value = true;\n```\n\n## Outside';
     const blocks = [];
     const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
       blocks.push({ info, code });
       return 'BLOCK';
     });
     assert.deepEqual(blocks, [{ info: 'markdown', code: '```js\nconst value = true;\n' }]);
-    assert.equal(remaining, 'BLOCK\n## Outside');
+    assert.equal(remaining, 'BLOCK\n\n## Outside');
     assert.match(formatMarkdown(source), /<h2>Outside<\/h2>/);
     const incomplete = '```markdown\n```js\nconst value = true;\n```';
     assert.deepEqual(preContents(formatMarkdown(incomplete, { enhance: false })), [escapeHtml('```js\nconst value = true;\n```')]);

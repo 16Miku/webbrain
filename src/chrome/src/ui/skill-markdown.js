@@ -42,7 +42,7 @@ export function renderSkillMarkdown(content) {
     const placeholder = `__SKILL_CODE_BLOCK_${codeBlocks.length}__`;
     codeBlocks.push(code);
     return placeholder;
-  });
+  }, { streaming: true });
   const inlineCodes = [];
   text = text.replace(/`([^`\n]+)`/g, (_match, code) => {
     const placeholder = `__SKILL_INLINE_CODE_${inlineCodes.length}__`;
