@@ -160,17 +160,24 @@ function isFenceCloser(opener, candidate, fence, info) {
     && fence.length >= opener.fence.length;
 }
 
-function listContinuationContainer(source, position, prefix, indentation) {
+function listContinuationContainer(source, position, prefix, indentation, noListScanPositions) {
   const current = fenceContainer(prefix, indentation);
   const continuationIndent = Math.max(
     indentationColumns(indentation),
     current.leadingQuoteIndent,
   );
+  const cacheKey = `${current.quoteDepth}:${continuationIndent}:${current.leadingQuoteIndent}`;
+  const cachedPosition = noListScanPositions.get(cacheKey);
+  const noList = () => {
+    noListScanPositions.set(cacheKey, position);
+    return null;
+  };
   let lineEnd = position;
   if (source[lineEnd - 1] === '\n') lineEnd -= 1;
   if (source[lineEnd - 1] === '\r') lineEnd -= 1;
 
   while (lineEnd > 0) {
+    if (cachedPosition != null && lineEnd < cachedPosition) return null;
     const lineStart = source.lastIndexOf('\n', lineEnd - 1) + 1;
     const line = source.slice(lineStart, lineEnd);
     if (!line.trim()) {
@@ -183,7 +190,7 @@ function listContinuationContainer(source, position, prefix, indentation) {
     const quotePrefix = line.match(/^(?:[ \t]*>[ \t]?)+/)?.[0] || '';
     const quoteDepth = (quotePrefix.match(/>/g) || []).length;
     const missingQuotes = current.quoteDepth - quoteDepth;
-    if (missingQuotes < 0 || (missingQuotes && !current.leadingQuoteIndent)) break;
+    if (missingQuotes < 0 || (missingQuotes && !current.leadingQuoteIndent)) return noList();
 
     const content = line.slice(quotePrefix.length);
     const listPrefix = content.match(/^(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)+/)?.[0] || '';
@@ -193,20 +200,20 @@ function listContinuationContainer(source, position, prefix, indentation) {
       if (listIndent && continuationIndent >= listIndent && continuationIndent <= listIndent + 3) {
         return container;
       }
-      return null;
+      return noList();
     }
 
     const lineIndent = indentationColumns(content.match(/^[ \t]*/)?.[0] || '');
     // A fenced continuation may be up to three columns deeper than ordinary
     // list content, so continue back to the enclosing list marker first.
-    if (lineIndent < 2) break;
+    if (lineIndent < 2) return noList();
 
     if (!lineStart) break;
     lineEnd = lineStart - 1;
     if (source[lineEnd] === '\n') lineEnd -= 1;
     if (source[lineEnd] === '\r') lineEnd -= 1;
   }
-  return null;
+  return noList();
 }
 
 function lineBelongsToContainer(line, container) {
@@ -294,6 +301,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
   let cursor = 0;
   let block = null;
   const stack = [];
+  const noListScanPositions = new Map();
 
   const matches = markdownFenceLines(source);
   for (let matchIndex = 0; matchIndex < matches.length; matchIndex += 1) {
@@ -327,7 +335,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       let openingPrefix = prefix;
       if (!validOpening) continue;
       const continuation = (indentationColumns(container.indentation) || container.leadingQuoteIndent)
-        ? listContinuationContainer(source, match.index, prefix, indentation)
+        ? listContinuationContainer(source, match.index, prefix, indentation, noListScanPositions)
         : null;
       if (continuation) {
         openingContainer = continuation;
