@@ -102,46 +102,57 @@ function indentationColumns(value) {
   return indentationColumnsAt(value);
 }
 
-function consumeIndentationColumns(line, columns) {
+function fenceIndentationColumns(container) {
+  const startColumn = indentationColumns(container.rawPrefix);
+  return indentationColumnsAt(container.indentation, startColumn) - startColumn;
+}
+
+function consumeIndentationColumns(line, columns, startColumn = 0) {
   let offset = 0;
   let consumed = 0;
+  let column = startColumn;
   while (offset < line.length && consumed < columns && /^[ \t]$/.test(line[offset])) {
     if (line[offset] === '\t') {
-      const tabWidth = 4 - (consumed % 4);
+      const tabWidth = 4 - (column % 4);
       if (consumed + tabWidth > columns) {
         return `${' '.repeat(consumed + tabWidth - columns)}${line.slice(offset + 1)}`;
       }
       consumed += tabWidth;
+      column += tabWidth;
     } else {
       consumed += 1;
+      column += 1;
     }
     offset += 1;
   }
   return consumed === columns ? line.slice(offset) : null;
 }
 
-function stripIndentationColumns(line, columns) {
-  const stripped = consumeIndentationColumns(line, columns);
+function stripIndentationColumns(line, columns, startColumn = 0) {
+  const stripped = consumeIndentationColumns(line, columns, startColumn);
   if (stripped != null) return stripped;
   return String(line).replace(/^[ \t]*/, '');
 }
 
 function stripContainerPrefix(line, container) {
   let remainder = String(line);
+  let column = 0;
   for (let quoteIndex = 0; quoteIndex < container.quoteDepth; quoteIndex += 1) {
     if (!remainder.trim()) return '';
-    remainder = consumeIndentationColumns(remainder, container.listIndentGroups[quoteIndex]);
+    const listIndent = container.listIndentGroups[quoteIndex];
+    remainder = consumeIndentationColumns(remainder, listIndent, column);
     if (remainder == null) return null;
     const quote = remainder.match(/^ {0,3}>[ \t]?/);
     if (!quote) return null;
+    column = indentationColumnsAt(quote[0], column);
     remainder = remainder.slice(quote[0].length);
   }
   if (!remainder.trim()) return '';
-  return consumeIndentationColumns(remainder, container.listIndentGroups.at(-1));
+  return consumeIndentationColumns(remainder, container.listIndentGroups.at(-1), column);
 }
 
 function fenceIndentationInContainer(fence, container) {
-  const indentation = indentationColumns(fence.indentation);
+  const indentation = fenceIndentationColumns(fence);
   if (fence.listPrefix) return indentation;
   return Math.max(0, indentation - container.listIndentGroups.at(-1));
 }
@@ -155,7 +166,7 @@ function fenceCloserInContainer(opener, candidate) {
   const extraIndentation = remainder?.slice(0, -1);
   return remainder?.endsWith('x')
     && /^[ \t]*$/.test(extraIndentation)
-    && indentationColumns(extraIndentation) <= 3;
+    && indentationColumnsAt(extraIndentation, indentationColumns(opener.rawPrefix)) - indentationColumns(opener.rawPrefix) <= 3;
 }
 
 function isFenceCloser(opener, candidate, fence, info) {
@@ -202,7 +213,7 @@ function outerFenceCloserAfterNested(
 
     const validOpening = match.fence[0] !== '`' || !match.info.includes('`');
     if (!validOpening || !match.info.trim()) continue;
-    const nestedContainer = (indentationColumns(container.indentation) > 3 || container.leadingQuoteIndent > 3)
+    const nestedContainer = (fenceIndentationColumns(container) > 3 || container.leadingQuoteIndent > 3)
       ? listContinuationContainer(source, match.index, match.prefix, match.indentation, noListScanPositions)
       : container;
     if (!nestedContainer) continue;
@@ -223,7 +234,7 @@ function outerFenceCloserAfterNested(
 function listContinuationContainer(source, position, prefix, indentation, noListScanPositions) {
   const current = fenceContainer(prefix, indentation);
   const continuationIndent = Math.max(
-    indentationColumns(indentation),
+    fenceIndentationColumns(current),
     current.leadingQuoteIndent,
   );
   const cacheKey = `${current.quoteDepth}:${continuationIndent}:${current.leadingQuoteIndent}`;
@@ -256,14 +267,16 @@ function listContinuationContainer(source, position, prefix, indentation, noList
     const listPrefix = content.match(/^(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)+/)?.[0] || '';
     if (listPrefix) {
       const container = fenceContainer(`${quotePrefix}${listPrefix}${'> '.repeat(missingQuotes)}`);
-      const listIndent = indentationColumns(container.listPrefix);
+      const listIndent = container.listIndentGroups.at(-1);
       if (listIndent && continuationIndent >= listIndent && continuationIndent <= listIndent + 3) {
         return container;
       }
       return noList();
     }
 
-    const lineIndent = indentationColumns(content.match(/^[ \t]*/)?.[0] || '');
+    const lineIndentation = content.match(/^[ \t]*/)?.[0] || '';
+    const lineStartColumn = indentationColumns(quotePrefix);
+    const lineIndent = indentationColumnsAt(lineIndentation, lineStartColumn) - lineStartColumn;
     // A fenced continuation may be up to three columns deeper than ordinary
     // list content, so continue back to the enclosing list marker first.
     if (lineIndent < 2) return noList();
@@ -287,6 +300,10 @@ function lineIsBlankInContainer(line, container) {
   return stripContainerPrefix(line, container) === '';
 }
 
+function lineHasExplicitContainerPrefix(line, container) {
+  return Boolean(String(line).trim()) && stripContainerPrefix(line, container) === '';
+}
+
 function containerBoundaryKey(container) {
   return `${container.quoteDepth}:${container.leadingQuoteIndent}:${container.listPrefix}:${container.listIndentGroups.join(',')}`;
 }
@@ -304,7 +321,8 @@ function unfinishedContainerEnd(source, start, container, boundaryCache) {
     if (!match[0]) break;
     const line = match[0].replace(/\r?\n$/, '');
     if ((container.quoteDepth || container.listPrefix) && lineIsBlankInContainer(line, container)) {
-      if (pendingBlankStart == null) pendingBlankStart = offset;
+      if (lineHasExplicitContainerPrefix(line, container)) pendingBlankStart = null;
+      else if (pendingBlankStart == null) pendingBlankStart = offset;
       offset += match[0].length;
       continue;
     }
@@ -330,7 +348,9 @@ function normalizeContainerCode(code, prefixOrContainer, fenceIndentation = 0) {
   for (let index = 0; index < lines.length; index += 2) {
     const normalized = stripContainerPrefix(lines[index], container);
     const line = normalized != null ? normalized : lines[index];
-    lines[index] = fenceIndentation ? stripIndentationColumns(line, fenceIndentation) : line;
+    lines[index] = fenceIndentation
+      ? stripIndentationColumns(line, fenceIndentation, indentationColumns(container.rawPrefix))
+      : line;
   }
   return lines.join('');
 }
@@ -417,13 +437,13 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       let openingContainer = container;
       let openingPrefix = prefix;
       if (!validOpening) continue;
-      const continuation = (indentationColumns(container.indentation) || container.leadingQuoteIndent)
+      const continuation = (fenceIndentationColumns(container) || container.leadingQuoteIndent)
         ? listContinuationContainer(source, match.index, prefix, indentation, noListScanPositions)
         : null;
       if (continuation) {
         openingContainer = continuation;
         openingPrefix = `${prefix}${indentation}`;
-      } else if (indentationColumns(container.indentation) > 3 || container.leadingQuoteIndent > 3) {
+      } else if (fenceIndentationColumns(container) > 3 || container.leadingQuoteIndent > 3) {
         continue;
       }
       output.push(source.slice(cursor, match.index));
@@ -457,7 +477,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         block = null;
       }
     } else {
-      const nestedContainer = (indentationColumns(container.indentation) > 3 || container.leadingQuoteIndent > 3)
+      const nestedContainer = (fenceIndentationColumns(container) > 3 || container.leadingQuoteIndent > 3)
         ? listContinuationContainer(source, match.index, prefix, indentation, noListScanPositions)
         : container;
       const nestedCloserIndex = nestedContainer

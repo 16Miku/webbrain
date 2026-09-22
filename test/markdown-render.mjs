@@ -398,6 +398,14 @@ for (const build of ['chrome', 'firefox']) {
     }), '> BLOCK');
     assert.deepEqual(trailingQuoteBlocks, [{ info: 'text', code: 'hello\n\n' }]);
 
+    const quotedBlankBeforeProse = '> ~~~text\n> hello\n>\nOutside';
+    const quotedBlankBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(quotedBlankBeforeProse, (info, code) => {
+      quotedBlankBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> BLOCK\nOutside');
+    assert.deepEqual(quotedBlankBlocks, [{ info: 'text', code: 'hello\n\n' }]);
+
     const escapedQuote = '> ```text\n> inside\nOutside\n> ```\nAfter';
     const quoteBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(escapedQuote, (info, code) => {
@@ -455,6 +463,14 @@ for (const build of ['chrome', 'firefox']) {
       return 'BLOCK';
     }), '> -\tBLOCK\nAfter');
     assert.deepEqual(quotedListBlocks, [{ info: 'text', code: 'hello\n' }]);
+
+    const quotedTab = '>   ~~~text\n> \thello\n>   ~~~';
+    const quotedTabBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(quotedTab, (info, code) => {
+      quotedTabBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> BLOCK');
+    assert.deepEqual(quotedTabBlocks, [{ info: 'text', code: 'hello\n' }]);
   });
 
   test(`${build}: saved history uses an outer fence longer than all literal backticks`, () => {
