@@ -187,16 +187,22 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   test(`${build}: list continuation fences use the preceding list indent`, () => {
-    const source = '10. Step\n    ```js\n    const value = true;\n    ```\nAfter';
-    const blocks = [];
-    const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
-      blocks.push({ info, code });
-      return 'BLOCK';
-    });
-    assert.deepEqual(blocks, [{ info: 'js', code: 'const value = true;\n' }]);
-    assert.equal(remaining, '10. Step\n    BLOCK\nAfter');
-    assert.equal(preContents(formatMarkdown(source)).length, 1);
-    assert.match(formatMarkdown(source), /After/);
+    const cases = [
+      ['10. Step\n    ```js\n    const value = true;\n    ```\nAfter', '10. Step\n    BLOCK\nAfter'],
+      ['10. Step\n    continuation\n    ```js\n    const value = true;\n    ```\nAfter', '10. Step\n    continuation\n    BLOCK\nAfter'],
+      ['> 10. Step\n>     ```js\n>     const value = true;\n>     ```\n> After', '> 10. Step\n>     BLOCK\n> After'],
+    ];
+    for (const [source, expected] of cases) {
+      const blocks = [];
+      const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
+        blocks.push({ info, code });
+        return 'BLOCK';
+      });
+      assert.deepEqual(blocks, [{ info: 'js', code: 'const value = true;\n' }]);
+      assert.equal(remaining, expected);
+      assert.equal(preContents(formatMarkdown(source)).length, 1);
+    }
+    assert.match(renderSkillMarkdown(cases[2][0]), /<blockquote>[\s\S]*<pre><code>const value = true;\n<\/code><\/pre>/);
   });
 
   test(`${build}: tab-indented list fences use visual indentation columns`, () => {

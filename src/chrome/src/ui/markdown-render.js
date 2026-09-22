@@ -134,19 +134,34 @@ function nestedFenceHasOwnCloser(matches, startIndex, active, stopAtNamedFence =
   return false;
 }
 
-function listContinuationContainer(source, position, indentation) {
-  const beforeFence = source.slice(0, position).replace(/\r?\n$/, '');
-  const previousLine = beforeFence.slice(beforeFence.lastIndexOf('\n') + 1);
-  const prefix = previousLine.match(
-    /^((?: {0,3}>[ \t]?)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+))/,
-  )?.[1];
-  if (!prefix) return null;
-
-  const container = fenceContainer(prefix);
+function listContinuationContainer(source, position, prefix, indentation) {
+  const current = fenceContainer(prefix, indentation);
   const continuationIndent = indentationColumns(indentation);
-  const listIndent = indentationColumns(container.listPrefix);
-  if (!listIndent || continuationIndent < listIndent || continuationIndent > listIndent + 3) return null;
-  return container;
+  const lines = source.slice(0, position).split(/\r?\n/);
+  if (lines.at(-1) === '') lines.pop();
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line.trim()) continue;
+    const quotePrefix = line.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
+    const quoteDepth = (quotePrefix.match(/>/g) || []).length;
+    if (quoteDepth !== current.quoteDepth) break;
+
+    const content = line.slice(quotePrefix.length);
+    const listPrefix = content.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/)?.[0] || '';
+    if (listPrefix) {
+      const container = fenceContainer(`${quotePrefix}${listPrefix}`);
+      const listIndent = indentationColumns(container.listPrefix);
+      if (listIndent && continuationIndent >= listIndent && continuationIndent <= listIndent + 3) {
+        return container;
+      }
+      return null;
+    }
+
+    const lineIndent = indentationColumns(content.match(/^[ \t]*/)?.[0] || '');
+    if (lineIndent < continuationIndent) break;
+  }
+  return null;
 }
 
 function normalizeContainerCode(code, prefixOrContainer) {
@@ -198,9 +213,9 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       let openingPrefix = prefix;
       if (!validOpening) continue;
       if (indentationColumns(container.indentation) > 3) {
-        openingContainer = listContinuationContainer(source, match.index, indentation);
+        openingContainer = listContinuationContainer(source, match.index, prefix, indentation);
         if (!openingContainer) continue;
-        openingPrefix = indentation;
+        openingPrefix = `${prefix}${indentation}`;
       }
       output.push(source.slice(cursor, match.index));
       block = { info, prefix: openingPrefix, container: openingContainer, start: match.index + match[0].length };
