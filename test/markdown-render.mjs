@@ -433,6 +433,14 @@ for (const build of ['chrome', 'firefox']) {
     }), '-\n  BLOCK\nOutside');
     assert.deepEqual(emptyListBlocks, [{ info: 'text', code: 'hi\n' }]);
 
+    const emptyListBoundary = '-\n  ```text\n Outside';
+    const emptyListBoundaryBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(emptyListBoundary, (info, code) => {
+      emptyListBoundaryBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '-\n  BLOCK\n Outside');
+    assert.deepEqual(emptyListBoundaryBlocks, [{ info: 'text', code: '' }]);
+
     const trailingQuoteBlank = '> ```text\n> hello\n>\n';
     const trailingQuoteBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(trailingQuoteBlank, (info, code) => {

@@ -80,7 +80,9 @@ function fenceContainer(prefix, indentation = '') {
     const list = listPrefixAt(remainder, containerStartColumn);
     if (!list) break;
     listPrefix += list;
-    listIndentGroups[listIndentGroups.length - 1] += indentationColumnsAt(list, containerStartColumn) - containerStartColumn;
+    const implicitListPadding = !/[ \t]$/.test(list) && remainder === list ? 1 : 0;
+    listIndentGroups[listIndentGroups.length - 1] += indentationColumnsAt(list, containerStartColumn) - containerStartColumn
+      + implicitListPadding;
     remainder = remainder.slice(list.length);
   }
   return {
