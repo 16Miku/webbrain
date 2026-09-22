@@ -220,23 +220,49 @@ function normalizeContainerCode(code, prefixOrContainer) {
   return lines.join('');
 }
 
+function parseFenceLine(line) {
+  let offset = 0;
+  while (offset < line.length) {
+    const segment = line.slice(offset);
+    const quote = segment.match(/^ {0,3}>[ \t]?/);
+    if (quote) {
+      offset += quote[0].length;
+      continue;
+    }
+    const list = segment.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/);
+    if (!list) break;
+    offset += list[0].length;
+  }
+  const prefix = line.slice(0, offset);
+  const indentation = line.slice(offset).match(/^[ \t]*/)?.[0] || '';
+  const fence = line.slice(offset + indentation.length).match(/^(`{3,}|~{3,})([^\r\n]*)$/);
+  if (!fence) return null;
+  return { prefix, indentation, fence: fence[1], info: fence[2] };
+}
+
+function markdownFenceLines(source) {
+  const lines = [];
+  for (const match of source.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
+    if (!match[0]) break;
+    const raw = match[0];
+    const parsed = parseFenceLine(raw.replace(/\r?\n$/, ''));
+    if (parsed) lines.push({ ...parsed, index: match.index, raw });
+  }
+  return lines;
+}
+
 /** Replace whole fenced blocks, including an unfinished block during streaming. */
 export function replaceMarkdownCodeFences(value, renderBlock, { streaming = false } = {}) {
   const source = String(value ?? '');
-  // Accept fences at the document root and inside the simple containers this
-  // renderer preserves (lists and blockquotes). The old unanchored matcher
-  // accepted these forms, while a root-only matcher mistakes their closer for
-  // a new opener and consumes the rest of the message as code.
-  const fenceLines = /^((?:(?: {0,3}>[ \t]?)|(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+))*)([ \t]*)(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/gm;
   const output = [];
   let cursor = 0;
   let block = null;
   const stack = [];
 
-  const matches = [...source.matchAll(fenceLines)];
+  const matches = markdownFenceLines(source);
   for (let matchIndex = 0; matchIndex < matches.length; matchIndex += 1) {
     const match = matches[matchIndex];
-    const [, prefix, indentation, fence, info] = match;
+    const { prefix, indentation, fence, info } = match;
     const container = fenceContainer(prefix, indentation);
     if (block) {
       const activeContainer = stack[stack.length - 1].container;
@@ -270,7 +296,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         openingPrefix = `${prefix}${indentation}`;
       }
       output.push(source.slice(cursor, match.index));
-      block = { info, prefix: openingPrefix, container: openingContainer, start: match.index + match[0].length };
+      block = { info, prefix: openingPrefix, container: openingContainer, start: match.index + match.raw.length };
       stack.push({ fence, markdown, container: openingContainer });
       continue;
     }
@@ -286,7 +312,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
           normalizeContainerCode(source.slice(block.start, match.index), block.container),
         ));
         // Leave the closing line's newline for the surrounding Markdown.
-        cursor = match.index + match[0].replace(/\r?\n$/, '').length;
+        cursor = match.index + match.raw.replace(/\r?\n$/, '').length;
         block = null;
       }
     } else if (streaming && active.markdown && validOpening && info.trim() && fence === active.fence
