@@ -366,7 +366,8 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       }
     } else if (streaming && active.markdown && validOpening && info.trim()
       && fence[0] === active.fence[0] && fence.length >= active.fence.length
-      && fenceCloserInContainer(active.container, container)) {
+      && (!active.container.quoteDepth && !active.container.listPrefix
+        || fenceCloserInContainer(active.container, container))) {
       // Models sometimes wrap a README in ```markdown and reuse ```lang
       // inside it. Recover only this named Markdown nesting; ordinary code
       // and correctly longer outer fences retain their literal contents.

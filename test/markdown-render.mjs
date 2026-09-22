@@ -56,6 +56,14 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(`${nested}\n`)]);
   });
 
+  test(`${build}: Markdown wrappers retain list-prefixed nested fences`, () => {
+    const nested = '- ```js\n  code\n  ```\n- after\n';
+    const source = `\`\`\`markdown\n${nested}\`\`\`\nOutside`;
+    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(nested)]);
+    assert.match(formatMarkdown(source), /Outside/);
+    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
+  });
+
   test(`${build}: fence length, marker and whole-line closers protect literal code`, () => {
     const cases = [
       ['````markdown', '```js\nconst x = 1;\n```\n', '````'],
