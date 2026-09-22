@@ -48,6 +48,14 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: Markdown wrappers retain longer nested fences`, () => {
+    const nested = '# Example\n\n````js\nconst value = true;\n````\n\n## After';
+    const source = `\`\`\`markdown\n${nested}\n\`\`\`\n\n## Outside`;
+    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(`${nested}\n`)]);
+    assert.match(formatMarkdown(source), /<h2>Outside<\/h2>/);
+    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(`${nested}\n`)]);
+  });
+
   test(`${build}: fence length, marker and whole-line closers protect literal code`, () => {
     const cases = [
       ['````markdown', '```js\nconst x = 1;\n```\n', '````'],
