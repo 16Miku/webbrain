@@ -160,14 +160,24 @@ function isFenceCloser(opener, candidate, fence, info) {
     && fence.length >= opener.fence.length;
 }
 
-function nestedFenceCloserAhead(matches, startIndex, fence, container) {
-  const nested = { fence, container };
-  for (let index = startIndex + 1; index < matches.length; index += 1) {
-    const candidate = matches[index];
-    const candidateContainer = fenceContainer(candidate.prefix, candidate.indentation);
-    if (isFenceCloser(nested, candidateContainer, candidate.fence, candidate.info)) return true;
+function nestedFenceCloserAhead(matches, containers, closerIndexes, cache, startIndex, fence, container) {
+  const key = `${fence[0]}:${fence.length}:${container.quoteDepth}:${container.listIndentGroups.join(',')}`;
+  let compatible = cache.get(key);
+  if (!compatible) {
+    const nested = { fence, container };
+    compatible = (closerIndexes.get(fence[0]) || []).filter(index => (
+      isFenceCloser(nested, containers[index], matches[index].fence, matches[index].info)
+    ));
+    cache.set(key, compatible);
   }
-  return false;
+  let low = 0;
+  let high = compatible.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (compatible[middle] <= startIndex) low = middle + 1;
+    else high = middle;
+  }
+  return low < compatible.length;
 }
 
 function listContinuationContainer(source, position, prefix, indentation, noListScanPositions) {
@@ -314,10 +324,20 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
   const noListScanPositions = new Map();
 
   const matches = markdownFenceLines(source);
+  const containers = matches.map(match => fenceContainer(match.prefix, match.indentation));
+  const closerIndexes = new Map();
+  for (let index = 0; index < matches.length; index += 1) {
+    if (matches[index].info.trim()) continue;
+    const marker = matches[index].fence[0];
+    const indexes = closerIndexes.get(marker) || [];
+    indexes.push(index);
+    closerIndexes.set(marker, indexes);
+  }
+  const nestedCloserCache = new Map();
   for (let matchIndex = 0; matchIndex < matches.length; matchIndex += 1) {
     const match = matches[matchIndex];
     const { prefix, indentation, fence, info } = match;
-    const container = fenceContainer(prefix, indentation);
+    const container = containers[matchIndex];
     if (block) {
       const boundary = block.boundary;
       if (boundary <= match.index) {
@@ -389,7 +409,15 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       if (streaming && active.markdown && validOpening && info.trim()
         && nestedContainer
         && (fence[0] === active.fence[0]
-          || nestedFenceCloserAhead(matches, matchIndex, fence, nestedContainer))
+          || nestedFenceCloserAhead(
+            matches,
+            containers,
+            closerIndexes,
+            nestedCloserCache,
+            matchIndex,
+            fence,
+            nestedContainer,
+          ))
         && (!active.container.quoteDepth && !active.container.listPrefix
           || fenceCloserInContainer(active.container, nestedContainer))) {
         // Models sometimes wrap a README in ```markdown and reuse ```lang
