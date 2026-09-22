@@ -183,6 +183,14 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(blocks, [{ info: 'text', code: '    ```\nvalue\n' }]);
     assert.equal(remaining, '- BLOCK\nAfter');
     assert.match(formatMarkdown(source), /After/);
+
+    const allowedCloserIndent = '- ```text\n  hello\n   ```\nAfter';
+    const allowedCloserBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(allowedCloserIndent, (info, code) => {
+      allowedCloserBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '- BLOCK\nAfter');
+    assert.deepEqual(allowedCloserBlocks, [{ info: 'text', code: 'hello\n' }]);
   });
 
   test(`${build}: list continuation fences use the preceding list indent`, () => {
@@ -277,6 +285,14 @@ for (const build of ['chrome', 'firefox']) {
       return 'BLOCK';
     }), '  > - BLOCK\n  > Outside\n\nAfter');
     assert.deepEqual(quoteListBlocks, [{ info: 'text', code: 'hello\n' }]);
+
+    const quoteBlank = '> ```text\n> hello\n>\n> again\n> ```';
+    const quoteBlankBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(quoteBlank, (info, code) => {
+      quoteBlankBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> BLOCK');
+    assert.deepEqual(quoteBlankBlocks, [{ info: 'text', code: 'hello\n\nagain\n' }]);
 
     const noCloser = '> ```text\n> inside\nOutside';
     const noCloserBlocks = [];

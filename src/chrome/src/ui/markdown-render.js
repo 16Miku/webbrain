@@ -133,7 +133,11 @@ function fenceCloserInContainer(opener, candidate) {
     return !candidate.quoteDepth && !candidate.listPrefix
       && indentationColumns(candidate.indentation) <= 3;
   }
-  return stripContainerPrefix(`${candidate.rawPrefix}${candidate.indentation}x`, opener) === 'x';
+  const remainder = stripContainerPrefix(`${candidate.rawPrefix}${candidate.indentation}x`, opener);
+  const extraIndentation = remainder?.slice(0, -1);
+  return remainder?.endsWith('x')
+    && /^[ \t]*$/.test(extraIndentation)
+    && indentationColumns(extraIndentation) <= 3;
 }
 
 function isFenceCloser(opener, candidate, fence, info) {
@@ -214,7 +218,7 @@ function unfinishedContainerEnd(source, start, container) {
   for (const match of remainder.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
     if (!match[0]) break;
     const line = match[0].replace(/\r?\n$/, '');
-    if (container.listPrefix && lineIsBlankInContainer(line, container)
+    if ((container.quoteDepth || container.listPrefix) && lineIsBlankInContainer(line, container)
       && followingLineBelongsToContainer(remainder, match.index + match[0].length, container)) {
       offset += match[0].length;
       continue;
