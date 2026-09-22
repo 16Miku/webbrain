@@ -127,6 +127,9 @@ function listPrefixAt(value, startColumn = 0) {
     column += width;
     offset += 1;
   }
+  if (paddingColumns > 4 && source[marker[0].length] === '\t') {
+    return `${source.slice(0, marker[0].length)} `;
+  }
   return source.slice(0, marker[0].length + (paddingColumns <= 4 ? offset - marker[0].length : 1));
 }
 
