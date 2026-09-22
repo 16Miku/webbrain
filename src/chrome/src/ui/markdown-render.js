@@ -109,31 +109,6 @@ function isFenceCloser(opener, candidate, fence, info) {
     && fence.length >= opener.fence.length;
 }
 
-function hasCompatibleFenceAfter(matches, startIndex, active) {
-  for (let index = startIndex + 1; index < matches.length; index += 1) {
-    const [, prefix, indentation, fence, info] = matches[index];
-    if (isFenceCloser(active, fenceContainer(prefix, indentation), fence, info)) return true;
-  }
-  return false;
-}
-
-function nestedFenceHasOwnCloser(matches, startIndex, active, stopAtNamedFence = false) {
-  let closers = 0;
-  for (let index = startIndex + 1; index < matches.length; index += 1) {
-    const [, prefix, indentation, fence, info] = matches[index];
-    if (isFenceCloser(active, fenceContainer(prefix, indentation), fence, info)) {
-      if (stopAtNamedFence && closers && hasCompatibleFenceAfter(matches, index, active)) {
-        return false;
-      }
-      closers += 1;
-      if (closers === 2) return true;
-    } else if (stopAtNamedFence && closers && info.trim()) {
-      return false;
-    }
-  }
-  return false;
-}
-
 function listContinuationContainer(source, position, prefix, indentation) {
   const current = fenceContainer(prefix, indentation);
   const continuationIndent = indentationColumns(indentation);
@@ -176,6 +151,15 @@ function lineBelongsToContainer(line, container) {
   return indent >= indentationColumns(container.listPrefix);
 }
 
+function followingLineBelongsToContainer(remainder, offset, container) {
+  for (const match of remainder.slice(offset).matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
+    if (!match[0]) break;
+    const line = match[0].replace(/\r?\n$/, '');
+    if (line.trim()) return lineBelongsToContainer(line, container);
+  }
+  return false;
+}
+
 function unfinishedContainerEnd(source, start, container) {
   if (!container.quoteDepth && !container.listPrefix) return source.length;
   const remainder = source.slice(start);
@@ -183,6 +167,11 @@ function unfinishedContainerEnd(source, start, container) {
   for (const match of remainder.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
     if (!match[0]) break;
     const line = match[0].replace(/\r?\n$/, '');
+    if (!line.trim() && container.listPrefix
+      && followingLineBelongsToContainer(remainder, match.index + match[0].length, container)) {
+      offset += match[0].length;
+      continue;
+    }
     if (!lineBelongsToContainer(line, container)) return offset;
     offset += match[0].length;
   }
@@ -262,20 +251,12 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         cursor = match.index + match[0].replace(/\r?\n$/, '').length;
         block = null;
       }
-    } else if (active.markdown && validOpening && info.trim() && fence === active.fence
+    } else if (streaming && active.markdown && validOpening && info.trim() && fence === active.fence
       && fenceCloserInContainer(active.container, container)) {
       // Models sometimes wrap a README in ```markdown and reuse ```lang
       // inside it. Recover only this named Markdown nesting; ordinary code
       // and correctly longer outer fences retain their literal contents.
-      const hasMarkdownPreamble = source.slice(block.start, match.index).trim().length > 0;
-      if (streaming || nestedFenceHasOwnCloser(
-        matches,
-        matchIndex,
-        active,
-        !hasMarkdownPreamble,
-      )) {
-        stack.push({ fence, markdown, container });
-      }
+      stack.push({ fence, markdown, container });
     }
   }
 

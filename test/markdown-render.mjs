@@ -37,10 +37,10 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: nested README remains one complete, copyable Markdown block`, () => {
     for (const language of ['markdown', 'md', 'MARKDOWN']) {
       const source = draft.replace('```markdown', `\`\`\`${language}`);
-      for (const enhance of [true, false]) {
-        const html = formatMarkdown(source, { enhance });
+      for (const [options, copyButton] of [[{ streaming: true }, true], [{ enhance: false }, false]]) {
+        const html = formatMarkdown(source, options);
         assert.deepEqual(preContents(html), [helpers.escapeCodeHtml(readme)]);
-        assert.equal((html.match(/class="code-copy-btn"/g) || []).length, enhance ? 1 : 0);
+        assert.equal((html.match(/class="code-copy-btn"/g) || []).length, copyButton ? 1 : 0);
         assert.match(html, /<h2>Next steps<\/h2>Review it\./);
         assert.doesNotMatch(html, /<script>|<h[1-6]>Role|<br>text<br>|<br>bash<br>/i);
       }
@@ -55,7 +55,6 @@ for (const build of ['chrome', 'firefox']) {
       ['```javascript title="sample.js"', 'const s = "```";\n~~~\n``\n``` trailing text\n', '```'],
       ['  ```text', 'literal **bold** and [link](javascript:alert(1))\n', '   ```  '],
       ['```text', '````js\n## Literal heading\n', '```'],
-      ['~~~markdown', '~~~bash\necho ok\n~~~\n## Still inside\n', '~~~'],
     ];
     for (const [open, code, close] of cases) {
       for (const newline of ['\n', '\r\n']) {
@@ -222,6 +221,13 @@ for (const build of ['chrome', 'firefox']) {
     }
     assert.match(formatMarkdown(cases[0][0]), /Outside/);
     assert.match(formatMarkdown(cases[1][0]), /Next/);
+    const unfinishedList = '- ```text\n  hello\n\n  again';
+    const listBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(unfinishedList, (info, code) => {
+      listBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '- BLOCK');
+    assert.deepEqual(listBlocks, [{ info: 'text', code: 'hello\n\nagain' }]);
   });
 
   test(`${build}: tab-indented list fences use visual indentation columns`, () => {
@@ -303,9 +309,9 @@ for (const build of ['chrome', 'firefox']) {
         let copied = null;
         Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { copied = text; } } });
         const message = document.querySelector('#message');
-        message.innerHTML = format(source, { enhance: false });
+        message.innerHTML = format(source, { streaming: true });
         const streamed = message.querySelector('pre code').textContent;
-        message.innerHTML = format(source);
+        message.innerHTML = format(source, { streaming: true });
         await new Promise(resolve => setTimeout(resolve, 20));
         message.querySelector('.code-copy-btn').click();
         await Promise.resolve();

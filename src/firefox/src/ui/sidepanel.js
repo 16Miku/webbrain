@@ -12413,6 +12413,7 @@ function scheduleMathRender() {
 function formatMarkdown(text, options = {}) {
   if (!text) return '';
   const enhance = options.enhance !== false;
+  const streaming = options.streaming === true || !enhance;
 
   // 1. Extract fenced code blocks BEFORE escaping HTML
   const codeBlocks = [];
@@ -12421,7 +12422,7 @@ function formatMarkdown(text, options = {}) {
     const id = `__CODEBLOCK_${codeBlocks.length}__`;
     codeBlocks.push({ lang: lang || '', code });
     return id;
-  }, { streaming: !enhance });
+  }, { streaming });
 
   // 2. Extract inline code before escaping
   const inlineCodes = [];
