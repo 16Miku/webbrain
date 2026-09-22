@@ -115,6 +115,12 @@ function consumeIndentationColumns(line, columns) {
   return consumed === columns ? line.slice(offset) : null;
 }
 
+function stripIndentationColumns(line, columns) {
+  const stripped = consumeIndentationColumns(line, columns);
+  if (stripped != null) return stripped;
+  return String(line).replace(/^[ \t]*/, '');
+}
+
 function stripContainerPrefix(line, container) {
   let remainder = String(line);
   for (let quoteIndex = 0; quoteIndex < container.quoteDepth; quoteIndex += 1) {
@@ -127,6 +133,12 @@ function stripContainerPrefix(line, container) {
   }
   if (!remainder.trim()) return '';
   return consumeIndentationColumns(remainder, container.listIndentGroups.at(-1));
+}
+
+function fenceIndentationInContainer(fence, container) {
+  const indentation = indentationColumns(fence.indentation);
+  if (fence.listPrefix) return indentation;
+  return Math.max(0, indentation - container.listIndentGroups.at(-1));
 }
 
 function fenceCloserInContainer(opener, candidate) {
@@ -228,17 +240,18 @@ function unfinishedContainerEnd(source, start, container) {
   return source.length;
 }
 
-function normalizeContainerCode(code, prefixOrContainer) {
+function normalizeContainerCode(code, prefixOrContainer, fenceIndentation = 0) {
   const container = typeof prefixOrContainer === 'object'
     ? prefixOrContainer
     : fenceContainer(prefixOrContainer);
   const { quoteDepth, listPrefix } = container;
-  if (!quoteDepth && !listPrefix) return code;
+  if (!quoteDepth && !listPrefix && !fenceIndentation) return code;
 
   const lines = String(code).split(/(\r?\n)/);
   for (let index = 0; index < lines.length; index += 2) {
     const normalized = stripContainerPrefix(lines[index], container);
-    if (normalized != null) lines[index] = normalized;
+    const line = normalized != null ? normalized : lines[index];
+    lines[index] = fenceIndentation ? stripIndentationColumns(line, fenceIndentation) : line;
   }
   return lines.join('');
 }
@@ -296,7 +309,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
           && !/^\r?\n/.test(source.slice(boundary));
         output.push(block.prefix + renderBlock(
           block.info,
-          normalizeContainerCode(code, block.container),
+          normalizeContainerCode(code, block.container, block.fenceIndentation),
         ) + (needsBoundaryNewline ? '\n' : ''));
         cursor = boundary;
         block = null;
@@ -330,6 +343,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         container: openingContainer,
         start,
         openingEndsWithNewline: /\r?\n$/.test(match.raw),
+        fenceIndentation: fenceIndentationInContainer(container, openingContainer),
         boundary: unfinishedContainerEnd(source, start, openingContainer),
       };
       stack.push({ fence, markdown, container: openingContainer });
@@ -344,7 +358,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       if (!stack.length) {
         output.push(block.prefix + renderBlock(
           block.info,
-          normalizeContainerCode(source.slice(block.start, match.index), block.container),
+          normalizeContainerCode(source.slice(block.start, match.index), block.container, block.fenceIndentation),
         ));
         // Leave the closing line's newline for the surrounding Markdown.
         cursor = match.index + match.raw.replace(/\r?\n$/, '').length;
@@ -368,7 +382,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       && !/^\r?\n/.test(tail);
     output.push(block.prefix + renderBlock(
       block.info,
-      normalizeContainerCode(code, block.container),
+      normalizeContainerCode(code, block.container, block.fenceIndentation),
     ) + (needsBoundaryNewline ? '\n' : ''));
     output.push(tail);
   } else output.push(source.slice(cursor));

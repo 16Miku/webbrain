@@ -79,6 +79,16 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: opening fence indentation is excluded from code`, () => {
+    const source = '  ~~~text\n  hello\n  ~~~\nAfter';
+    const blocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(source, (info, code) => {
+      blocks.push({ info, code });
+      return 'BLOCK';
+    }), 'BLOCK\nAfter');
+    assert.deepEqual(blocks, [{ info: 'text', code: 'hello\n' }]);
+  });
+
   test(`${build}: container-prefixed markers do not close an outer fenced block`, () => {
     const source = '~~~markdown\n> ~~~\n- ~~~\n> ```text\n~~~\n## Outside';
     const blocks = [];
@@ -235,7 +245,7 @@ for (const build of ['chrome', 'firefox']) {
       extraIndentBlocks.push({ info, code });
       return 'BLOCK';
     }), '10. item\n    continuation\n       BLOCK');
-    assert.deepEqual(extraIndentBlocks, [{ info: 'js', code: '   code\n' }]);
+    assert.deepEqual(extraIndentBlocks, [{ info: 'js', code: 'code\n' }]);
   });
 
   test(`${build}: fences in nested list and quote containers preserve following content`, () => {
