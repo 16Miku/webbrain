@@ -141,6 +141,8 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(renderSkillMarkdown(source), /<strong>Between<\/strong>/);
     const prose = 'Use ``` inline; this is not a block.\n    ```js\nIndented example.';
     assert.equal(helpers.replaceMarkdownCodeFences(prose, () => 'BLOCK'), prose);
+    const indentedQuote = '    > ```text\n    > literal\n    > ```';
+    assert.equal(helpers.replaceMarkdownCodeFences(indentedQuote, () => 'BLOCK'), indentedQuote);
   });
 
   test(`${build}: fences inside list and quote containers do not consume following prose`, () => {
@@ -309,6 +311,14 @@ for (const build of ['chrome', 'firefox']) {
       return 'BLOCK';
     }), '> BLOCK');
     assert.deepEqual(quoteBlankBlocks, [{ info: 'text', code: 'hello\n\n\nagain\n' }]);
+
+    const wideQuotedListBlank = '10. > ```text\n    > hello\n    >\n    > again\n    > ```';
+    const wideQuotedListBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(wideQuotedListBlank, (info, code) => {
+      wideQuotedListBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '10. > BLOCK');
+    assert.deepEqual(wideQuotedListBlocks, [{ info: 'text', code: 'hello\n\nagain\n' }]);
 
     const noCloser = '> ```text\n> inside\nOutside';
     const noCloserBlocks = [];

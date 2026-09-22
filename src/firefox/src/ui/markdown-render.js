@@ -59,13 +59,13 @@ export function codeFenceLanguage(infoString) {
 
 function fenceContainer(prefix, indentation = '') {
   const source = String(prefix);
-  const quotePrefix = source.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
+  const quotePrefix = source.match(/^(?:[ \t]*>[ \t]?)+/)?.[0] || '';
   let remainder = source;
   let listPrefix = '';
   let quoteDepth = 0;
   const listIndentGroups = [0];
   while (remainder) {
-    const quote = remainder.match(/^ {0,3}>[ \t]?/);
+    const quote = remainder.match(/^[ \t]*>[ \t]?/);
     if (quote) {
       quoteDepth += 1;
       listIndentGroups.push(0);
@@ -83,6 +83,7 @@ function fenceContainer(prefix, indentation = '') {
     quoteDepth,
     listPrefix,
     listIndentGroups,
+    leadingQuoteIndent: indentationColumns(source.match(/^[ \t]*(?=>)/)?.[0] || ''),
     rawPrefix: source,
     indentation: String(indentation),
   };
@@ -149,7 +150,10 @@ function isFenceCloser(opener, candidate, fence, info) {
 
 function listContinuationContainer(source, position, prefix, indentation) {
   const current = fenceContainer(prefix, indentation);
-  const continuationIndent = indentationColumns(indentation);
+  const continuationIndent = Math.max(
+    indentationColumns(indentation),
+    current.leadingQuoteIndent,
+  );
   let lineEnd = position;
   if (source[lineEnd - 1] === '\n') lineEnd -= 1;
   if (source[lineEnd - 1] === '\r') lineEnd -= 1;
@@ -164,14 +168,15 @@ function listContinuationContainer(source, position, prefix, indentation) {
       if (source[lineEnd] === '\r') lineEnd -= 1;
       continue;
     }
-    const quotePrefix = line.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
+    const quotePrefix = line.match(/^(?:[ \t]*>[ \t]?)+/)?.[0] || '';
     const quoteDepth = (quotePrefix.match(/>/g) || []).length;
-    if (quoteDepth !== current.quoteDepth) break;
+    const missingQuotes = current.quoteDepth - quoteDepth;
+    if (missingQuotes < 0 || (missingQuotes && !current.leadingQuoteIndent)) break;
 
     const content = line.slice(quotePrefix.length);
     const listPrefix = content.match(/^(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)+/)?.[0] || '';
     if (listPrefix) {
-      const container = fenceContainer(`${quotePrefix}${listPrefix}`);
+      const container = fenceContainer(`${quotePrefix}${listPrefix}${'> '.repeat(missingQuotes)}`);
       const listIndent = indentationColumns(container.listPrefix);
       if (listIndent && continuationIndent >= listIndent && continuationIndent <= listIndent + 3) {
         return container;
@@ -199,9 +204,8 @@ function lineBelongsToContainer(line, container) {
 }
 
 function lineIsBlankInContainer(line, container) {
-  const quotePrefix = line.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
-  const quoteDepth = (quotePrefix.match(/>/g) || []).length;
-  return quoteDepth === container.quoteDepth && !line.slice(quotePrefix.length).trim();
+  if (!container.quoteDepth && !container.listPrefix) return !line.trim();
+  return stripContainerPrefix(line, container) === '';
 }
 
 function unfinishedContainerEnd(source, start, container) {
@@ -243,7 +247,7 @@ function parseFenceLine(line) {
   let offset = 0;
   while (offset < line.length) {
     const segment = line.slice(offset);
-    const quote = segment.match(/^ {0,3}>[ \t]?/);
+    const quote = segment.match(/^[ \t]*>[ \t]?/);
     if (quote) {
       offset += quote[0].length;
       continue;
@@ -308,13 +312,13 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       let openingContainer = container;
       let openingPrefix = prefix;
       if (!validOpening) continue;
-      const continuation = indentationColumns(container.indentation)
+      const continuation = (indentationColumns(container.indentation) || container.leadingQuoteIndent)
         ? listContinuationContainer(source, match.index, prefix, indentation)
         : null;
       if (continuation) {
         openingContainer = continuation;
         openingPrefix = `${prefix}${indentation}`;
-      } else if (indentationColumns(container.indentation) > 3) {
+      } else if (indentationColumns(container.indentation) > 3 || container.leadingQuoteIndent > 3) {
         continue;
       }
       output.push(source.slice(cursor, match.index));
