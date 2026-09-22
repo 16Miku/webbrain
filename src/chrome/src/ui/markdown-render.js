@@ -327,9 +327,15 @@ function listContinuationContainer(source, position, prefix, indentation, noList
     if (missingQuotes < 0 || (missingQuotes && !current.leadingQuoteIndent)) return noList();
 
     if (precedingContainer.listPrefix) {
-      const container = missingQuotes
+      let container = missingQuotes
         ? fenceContainer(`${precedingContainer.containerPrefix}${'> '.repeat(missingQuotes)}`)
         : precedingContainer;
+      const emptyListMarker = line.match(/^[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]*$/);
+      if (emptyListMarker) {
+        const marker = emptyListMarker[0].replace(/[ \t]+$/, '');
+        container = { ...container, listIndentGroups: [...container.listIndentGroups] };
+        container.listIndentGroups[container.listIndentGroups.length - 1] = indentationColumns(marker) + 1;
+      }
       const listIndent = container.listIndentGroups.at(-1);
       if (listIndent && continuationIndent >= listIndent && continuationIndent <= listIndent + 3) {
         return container;
