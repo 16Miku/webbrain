@@ -593,7 +593,7 @@ const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
 async function loadWebMCPEnabled() {
   const stored = await chrome.storage.local.get('webMcpEnabled');
-  agent.setWebMCPEnabled(stored.webMcpEnabled === true);
+  agent.setWebMCPEnabled(stored.webMcpEnabled !== false);
 }
 const webMcpEnabledReady = loadWebMCPEnabled().catch(() => {});
 
@@ -1264,7 +1264,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     refreshPrompts = true;
   }
   if (changes.webMcpEnabled) {
-    agent.setWebMCPEnabled(changes.webMcpEnabled.newValue === true);
+    agent.setWebMCPEnabled(changes.webMcpEnabled.newValue !== false);
   }
   if (changes.profileEnabled) {
     agent.profileEnabled = !!changes.profileEnabled.newValue;

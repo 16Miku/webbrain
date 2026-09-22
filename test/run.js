@@ -61990,33 +61990,37 @@ test('MCP bridge settings are Chromium-only, live under Advanced, and keep setup
   }
 });
 
-test('Experimental WebMCP is Chrome-only, opt-in, and absent from default model context', async () => {
+test('Experimental WebMCP is Chrome-only, on by default, and present in default model context', async () => {
   const html = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const firefoxHtml = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings.html'), 'utf8');
   const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
   const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   const locale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
 
-  assert.match(html, /id="toggle-webmcp"/, 'Chrome Advanced settings should expose the opt-in');
-  assert.doesNotMatch(html, /id="toggle-webmcp"\s+checked/, 'WebMCP must default off');
+  assert.match(html, /id="toggle-webmcp"/, 'Chrome Advanced settings should expose the toggle');
+  assert.match(html, /id="toggle-webmcp"\s+checked/, 'WebMCP must default on');
   assert.doesNotMatch(firefoxHtml, /id="toggle-webmcp"/, 'Firefox should not show an unsupported toggle');
-  assert.match(settings, /webMcpToggle\.checked = stored\.webMcpEnabled === true/, 'setting should load only explicit true');
+  assert.match(settings, /webMcpToggle\.checked = stored\.webMcpEnabled !== false/, 'setting should default on unless explicitly disabled');
   assert.match(settings, /webMcpEnabled:\s*webMcpToggle\.checked/, 'setting should persist changes');
-  assert.match(background, /agent\.setWebMCPEnabled\(stored\.webMcpEnabled === true\)/, 'background should hydrate the default-off gate');
-  assert.match(background, /changes\.webMcpEnabled[\s\S]*agent\.setWebMCPEnabled\(changes\.webMcpEnabled\.newValue === true\)/, 'storage changes should update the live gate');
+  assert.match(background, /agent\.setWebMCPEnabled\(stored\.webMcpEnabled !== false\)/, 'background should hydrate the default-on gate');
+  assert.match(background, /changes\.webMcpEnabled[\s\S]*agent\.setWebMCPEnabled\(changes\.webMcpEnabled\.newValue !== false\)/, 'storage changes should update the live gate');
   assert.match(locale, /'st\.display\.webmcp\.label': 'Experimental WebMCP'/, 'English setting label missing');
-  assert.equal(ConfigTransferCh.DEFAULT_CONFIG_SETTINGS.webMcpEnabled, false, 'Chrome config export should preserve the opt-in default');
-  assert.equal(ConfigTransferFx.DEFAULT_CONFIG_SETTINGS.webMcpEnabled, false, 'Firefox config schema should preserve cross-browser config compatibility');
+  assert.equal(ConfigTransferCh.DEFAULT_CONFIG_SETTINGS.webMcpEnabled, true, 'Chrome config export should preserve the default-on value');
+  assert.equal(ConfigTransferFx.DEFAULT_CONFIG_SETTINGS.webMcpEnabled, true, 'Firefox config schema should preserve cross-browser config compatibility');
 
   const originalDisableAll = cdpClientCh.disableAllWebMCP;
   let cleanupCalls = 0;
   cdpClientCh.disableAllWebMCP = async () => { cleanupCalls++; return 0; };
   try {
     const agent = new AgentCh({});
-    assert.equal(agent.webMcpEnabled, false);
-    assert.doesNotMatch(agent._buildSystemPrompt('ask'), /WEBMCP/i, 'default Ask prompt should not mention WebMCP');
-    assert.equal(getToolsForModeCh('ask', { webMcpAvailable: agent.webMcpEnabled }).some(tool => tool.function.name === 'list_webmcp_tools'), false);
+    assert.equal(agent.webMcpEnabled, true);
+    assert.match(agent._buildSystemPrompt('ask'), /WEBMCP \(experimental/i, 'default Ask prompt should explain WebMCP');
+    assert.equal(getToolsForModeCh('ask', { webMcpAvailable: agent.webMcpEnabled }).some(tool => tool.function.name === 'list_webmcp_tools'), true);
 
+    agent.setWebMCPEnabled(false);
+    await Promise.resolve();
+    assert.equal(cleanupCalls, 1, 'turning the setting off should close active WebMCP sessions');
+    assert.doesNotMatch(agent._buildSystemPrompt('ask'), /WEBMCP/i, 'disabling should remove prompt guidance again');
     const disabledList = await agent.executeTool(77, 'list_webmcp_tools', {});
     assert.equal(disabledList.featureDisabled, true);
     assert.equal(disabledList.noDispatch, true);
@@ -62026,11 +62030,6 @@ test('Experimental WebMCP is Chrome-only, opt-in, and absent from default model 
     agent.setWebMCPEnabled(true);
     assert.match(agent._buildSystemPrompt('ask'), /WEBMCP \(experimental/i, 'enabled Ask prompt should explain WebMCP');
     assert.equal(getToolsForModeCh('ask', { webMcpAvailable: agent.webMcpEnabled }).some(tool => tool.function.name === 'list_webmcp_tools'), true);
-
-    agent.setWebMCPEnabled(false);
-    await Promise.resolve();
-    assert.equal(cleanupCalls, 1, 'turning the setting off should close active WebMCP sessions');
-    assert.doesNotMatch(agent._buildSystemPrompt('ask'), /WEBMCP/i, 'disabling should remove prompt guidance again');
   } finally {
     cdpClientCh.disableAllWebMCP = originalDisableAll;
   }
