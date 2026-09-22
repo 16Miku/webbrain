@@ -453,7 +453,7 @@ for (const build of ['chrome', 'firefox']) {
     }), '- item\n2. continuation\n  BLOCK\nOutside');
     assert.deepEqual(lazyOrderedParagraphBlocks, [{ info: 'text', code: 'hi\n' }]);
 
-    for (const continuation of ['2.', '2. ', '1.', '1. ', '---text', '-_*']) {
+    for (const continuation of ['2.', '2. ', '1.', '1. ', '---text', '-_*', '<span>inline</span>']) {
       const source = `- item\n${continuation}\n  \`\`\`text\n  hi\nOutside`;
       const blocks = [];
       assert.equal(helpers.replaceMarkdownCodeFences(source, (info, code) => {
@@ -461,6 +461,16 @@ for (const build of ['chrome', 'firefox']) {
         return 'BLOCK';
       }), `- item\n${continuation}\n  BLOCK\nOutside`);
       assert.deepEqual(blocks, [{ info: 'text', code: 'hi\n' }]);
+    }
+
+    for (const interruptingHtml of ['<!-- done -->', '<?done?>', '<!DOCTYPE html>', '<![CDATA[x]]>', '<div>', '</div>']) {
+      const source = `- item\n${interruptingHtml}\n  \`\`\`text\n  hi\nOutside`;
+      const blocks = [];
+      assert.equal(helpers.replaceMarkdownCodeFences(source, (info, code) => {
+        blocks.push({ info, code });
+        return 'BLOCK';
+      }), `- item\n${interruptingHtml}\nBLOCK`);
+      assert.deepEqual(blocks, [{ info: 'text', code: 'hi\nOutside' }]);
     }
 
     for (const continuation of ['lazy continuation', '2. continuation', '2.', '---text']) {

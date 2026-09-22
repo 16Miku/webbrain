@@ -18,6 +18,7 @@ const LANGUAGE_ALIASES = Object.freeze({
   go: 'clike', rust: 'clike', rs: 'clike', swift: 'clike',
   php: 'clike', ruby: 'clike', rb: 'clike',
 });
+const INTERRUPTING_HTML_BLOCK_TAGS = new Set(('address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option p param search section summary table tbody td tfoot th thead title tr track ul').split(' '));
 
 const JS_KEYWORDS = new Set(('abstract as async await break case catch class const continue debugger declare default delete do else enum export extends finally for from function get if implements import in infer instanceof interface keyof let namespace new of private protected public readonly return satisfies set static super switch throw try type typeof var void while with yield').split(' '));
 const JS_CONSTANTS = new Set(('true false null undefined NaN Infinity').split(' '));
@@ -300,6 +301,13 @@ function outerFenceCloserAfterNested(
   return -1;
 }
 
+function startsInterruptingHtmlBlock(content) {
+  // CommonMark HTML block types 1–6 interrupt paragraphs; inline tags do not.
+  if (/^(?:<!--|<\?|<![A-Za-z]|<!\[CDATA\[|<(?:pre|script|style|textarea)(?=[ \t>]|$))/i.test(content)) return true;
+  const tag = content.match(/^<\/?([A-Za-z][A-Za-z0-9-]*)(?=[ \t>]|\/>|$)/);
+  return Boolean(tag && INTERRUPTING_HTML_BLOCK_TAGS.has(tag[1].toLowerCase()));
+}
+
 function listContinuationContainer(source, position, prefix, indentation, noListScanPositions) {
   const current = fenceContainer(prefix, indentation);
   const continuationIndent = Math.max(
@@ -383,6 +391,7 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       const thematicBreak = /^(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})$/.test(content);
       const lazyParagraph = sameQuoteContainer && !lineIndent
         && !thematicBreak
+        && !startsInterruptingHtmlBlock(content)
         && !/^(?:#{1,6}(?:\s|$)|(?:[-+*]|1[.)])[ \t]+\S|>|`{3,}|~{3,})/.test(content);
       if (lazyParagraph) {
         if (!lineStart) break;
