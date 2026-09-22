@@ -63,9 +63,11 @@ function fenceContainer(prefix, indentation = '') {
   let remainder = source;
   let listPrefix = '';
   let quoteDepth = 0;
+  let listBeforeQuote = false;
   while (remainder) {
     const quote = remainder.match(/^ {0,3}>[ \t]?/);
     if (quote) {
+      if (listPrefix) listBeforeQuote = true;
       quoteDepth += 1;
       remainder = remainder.slice(quote[0].length);
       continue;
@@ -76,7 +78,14 @@ function fenceContainer(prefix, indentation = '') {
     remainder = remainder.slice(list[0].length);
   }
   const leadingIndent = indentationColumns(source.match(/^[ \t]*(?=>)/)?.[0] || '');
-  return { quotePrefix, quoteDepth, listPrefix, leadingIndent, indentation: String(indentation) };
+  return {
+    quotePrefix,
+    quoteDepth,
+    listPrefix,
+    listBeforeQuote,
+    leadingIndent,
+    indentation: String(indentation),
+  };
 }
 
 function indentationColumns(value) {
@@ -107,7 +116,8 @@ function stripIndentationColumns(line, columns) {
 
 function fenceCloserInContainer(opener, candidate) {
   if (opener.quoteDepth !== candidate.quoteDepth) return false;
-  const candidateIndent = candidate.leadingIndent + indentationColumns(candidate.indentation);
+  const candidateIndent = (opener.listBeforeQuote ? candidate.leadingIndent : 0)
+    + indentationColumns(candidate.indentation);
   if (!opener.listPrefix) return !candidate.listPrefix && candidateIndent <= 3;
   const listIndent = indentationColumns(opener.listPrefix);
   return !candidate.listPrefix
@@ -160,7 +170,9 @@ function lineBelongsToContainer(line, container) {
 
   const content = line.slice(quotePrefix.length);
   if (!content.trim()) return false;
-  const quoteIndent = indentationColumns(quotePrefix.match(/^[ \t]*/)?.[0] || '');
+  const quoteIndent = container.listBeforeQuote
+    ? indentationColumns(quotePrefix.match(/^[ \t]*/)?.[0] || '')
+    : 0;
   const indent = quoteIndent + indentationColumns(content.match(/^[ \t]*/)?.[0] || '');
   return indent >= indentationColumns(container.listPrefix);
 }
@@ -332,11 +344,14 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
 
   if (block) {
     const end = block.boundary;
+    const code = source.slice(block.start, end);
+    const tail = source.slice(end);
+    const needsBoundaryNewline = /\r?\n$/.test(code) && !/^\r?\n/.test(tail);
     output.push(block.prefix + renderBlock(
       block.info,
-      normalizeContainerCode(source.slice(block.start, end), block.container),
-    ));
-    output.push(source.slice(end));
+      normalizeContainerCode(code, block.container),
+    ) + (needsBoundaryNewline ? '\n' : ''));
+    output.push(tail);
   } else output.push(source.slice(cursor));
   return output.join('');
 }

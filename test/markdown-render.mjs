@@ -246,6 +246,22 @@ for (const build of ['chrome', 'firefox']) {
     }), '- BLOCK');
     assert.deepEqual(listBlocks, [{ info: 'text', code: 'hello\n\nagain' }]);
 
+    const quoteListBoundary = '  > - ```text\n  >   hello\n  > Outside\n\nAfter';
+    const quoteListBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(quoteListBoundary, (info, code) => {
+      quoteListBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '  > - BLOCK\n  > Outside\n\nAfter');
+    assert.deepEqual(quoteListBlocks, [{ info: 'text', code: 'hello\n' }]);
+
+    const noCloser = '> ```text\n> inside\nOutside';
+    const noCloserBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(noCloser, (info, code) => {
+      noCloserBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> BLOCK\nOutside');
+    assert.deepEqual(noCloserBlocks, [{ info: 'text', code: 'inside\n' }]);
+
     const escapedQuote = '> ```text\n> inside\nOutside\n> ```\nAfter';
     const quoteBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(escapedQuote, (info, code) => {
