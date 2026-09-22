@@ -65,6 +65,7 @@ function fenceContainer(prefix, indentation = '') {
   let quoteDepth = 0;
   let overIndentedQuote = false;
   let lastListMarkerWidth = 0;
+  let lastListPrefixWidth = 0;
   const listIndentGroups = [0];
   while (remainder) {
     const containerStartColumn = indentationColumns(source.slice(0, source.length - remainder.length));
@@ -81,6 +82,7 @@ function fenceContainer(prefix, indentation = '') {
     const list = listPrefixAt(remainder, containerStartColumn);
     if (!list) break;
     listPrefix += list;
+    lastListPrefixWidth = indentationColumnsAt(list, containerStartColumn) - containerStartColumn;
     lastListMarkerWidth = indentationColumnsAt(list.replace(/[ \t]+$/, ''), containerStartColumn) - containerStartColumn;
     const implicitListPadding = !/[ \t]$/.test(list) && remainder === list ? 1 : 0;
     listIndentGroups[listIndentGroups.length - 1] += indentationColumnsAt(list, containerStartColumn) - containerStartColumn
@@ -93,6 +95,7 @@ function fenceContainer(prefix, indentation = '') {
     quoteDepth,
     listPrefix,
     lastListMarkerWidth,
+    lastListPrefixWidth,
     listIndentGroups,
     overIndentedQuote,
     leadingQuoteIndent: indentationColumns(source.match(/^[ \t]*(?=>)/)?.[0] || ''),
@@ -340,7 +343,9 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       const emptyListMarker = line.length === precedingContainer.containerPrefix.length;
       if (emptyListMarker) {
         container = { ...container, listIndentGroups: [...container.listIndentGroups] };
-        container.listIndentGroups[container.listIndentGroups.length - 1] = container.lastListMarkerWidth + 1;
+        const group = container.listIndentGroups.length - 1;
+        container.listIndentGroups[group] = container.listIndentGroups[group] - container.lastListPrefixWidth
+          + container.lastListMarkerWidth + 1;
       }
       const listIndent = container.listIndentGroups.at(-1);
       if (listIndent && continuationIndent >= listIndent && continuationIndent <= listIndent + 3) {
