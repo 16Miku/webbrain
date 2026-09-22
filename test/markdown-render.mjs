@@ -136,6 +136,9 @@ for (const build of ['chrome', 'firefox']) {
     }), 'BLOCK\nAfter');
     assert.deepEqual(blocks, [{ info: 'text', code: 'hello\n' }]);
 
+    const indentedListFence = '    - ```text\n      hello\n      ```\nAfter';
+    assert.equal(helpers.replaceMarkdownCodeFences(indentedListFence, () => 'BLOCK'), indentedListFence);
+
     const excessListPadding = '-     ```text\n    literal\n    ```\nAfter';
     assert.equal(helpers.replaceMarkdownCodeFences(excessListPadding, () => 'BLOCK'), excessListPadding);
 
@@ -408,6 +411,14 @@ for (const build of ['chrome', 'firefox']) {
       }), expected);
       assert.deepEqual(emptyBlocks, [{ info: 'text', code: '' }]);
     }
+
+    const emptyListItem = '-\n  ```text\n  hi\nOutside';
+    const emptyListBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(emptyListItem, (info, code) => {
+      emptyListBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '-\n  BLOCK\nOutside');
+    assert.deepEqual(emptyListBlocks, [{ info: 'text', code: 'hi\n' }]);
 
     const trailingQuoteBlank = '> ```text\n> hello\n>\n';
     const trailingQuoteBlocks = [];

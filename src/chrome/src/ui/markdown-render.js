@@ -103,8 +103,13 @@ function indentationColumns(value) {
 }
 
 function listPrefixAt(value, startColumn = 0) {
-  const marker = String(value).match(/^[ \t]*(?:[-+*]|\d+[.)])/);
-  if (!marker || !/^[ \t]/.test(value[marker[0].length] || '')) return null;
+  const source = String(value);
+  const marker = source.match(/^[ \t]*(?:[-+*]|\d+[.)])/);
+  const leadingIndentation = marker?.[0].match(/^[ \t]*/)?.[0] || '';
+  const next = source[marker?.[0].length];
+  if (!marker
+    || (startColumn === 0 && indentationColumns(leadingIndentation) > 3)
+    || (next && !/^[ \t]$/.test(next))) return null;
   let offset = marker[0].length;
   let column = indentationColumnsAt(marker[0], startColumn);
   let paddingColumns = 0;
@@ -114,7 +119,7 @@ function listPrefixAt(value, startColumn = 0) {
     column += width;
     offset += 1;
   }
-  return String(value).slice(0, marker[0].length + (paddingColumns <= 4 ? offset - marker[0].length : 1));
+  return source.slice(0, marker[0].length + (paddingColumns <= 4 ? offset - marker[0].length : 1));
 }
 
 function quoteMarkerAt(value, startColumn = 0) {
