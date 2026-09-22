@@ -236,6 +236,25 @@ for (const build of ['chrome', 'firefox']) {
       return 'BLOCK';
     }), '> BLOCK\nOutside\n> ```\nAfter');
     assert.deepEqual(quoteBlocks, [{ info: 'text', code: 'inside\n' }]);
+
+    const laterBlock = '> ```text\n> inside\nOutside\n```js\ncode\n```\nAfter';
+    const laterBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(laterBlock, (info, code) => {
+      laterBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> BLOCK\nOutside\nBLOCK\nAfter');
+    assert.deepEqual(laterBlocks, [
+      { info: 'text', code: 'inside\n' },
+      { info: 'js', code: 'code\n' },
+    ]);
+
+    const quotedList = '> - ```text\n>   hello\n>\n>   again\n>   ```';
+    const quotedListBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(quotedList, (info, code) => {
+      quotedListBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> - BLOCK');
+    assert.deepEqual(quotedListBlocks, [{ info: 'text', code: 'hello\n\nagain\n' }]);
   });
 
   test(`${build}: tab-indented list fences use visual indentation columns`, () => {

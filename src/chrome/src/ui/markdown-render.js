@@ -151,6 +151,12 @@ function lineBelongsToContainer(line, container) {
   return indent >= indentationColumns(container.listPrefix);
 }
 
+function lineIsBlankInContainer(line, container) {
+  const quotePrefix = line.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
+  const quoteDepth = (quotePrefix.match(/>/g) || []).length;
+  return quoteDepth === container.quoteDepth && !line.slice(quotePrefix.length).trim();
+}
+
 function followingLineBelongsToContainer(remainder, offset, container) {
   for (const match of remainder.slice(offset).matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
     if (!match[0]) break;
@@ -167,7 +173,7 @@ function unfinishedContainerEnd(source, start, container) {
   for (const match of remainder.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
     if (!match[0]) break;
     const line = match[0].replace(/\r?\n$/, '');
-    if (!line.trim() && container.listPrefix
+    if (container.listPrefix && lineIsBlankInContainer(line, container)
       && followingLineBelongsToContainer(remainder, match.index + match[0].length, container)) {
       offset += match[0].length;
       continue;
@@ -217,10 +223,12 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
   for (let matchIndex = 0; matchIndex < matches.length; matchIndex += 1) {
     const match = matches[matchIndex];
     const [, prefix, indentation, fence, info] = match;
+    const container = fenceContainer(prefix, indentation);
     if (block) {
       const activeContainer = stack[stack.length - 1].container;
       const boundary = unfinishedContainerEnd(source, block.start, activeContainer);
       if (boundary < match.index) {
+        const wasClosingFence = isFenceCloser(stack[stack.length - 1], container, fence, info);
         const code = source.slice(block.start, boundary);
         const needsBoundaryNewline = /\r?\n$/.test(code) && !/^\r?\n/.test(source.slice(boundary));
         output.push(block.prefix + renderBlock(
@@ -230,10 +238,10 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         cursor = boundary;
         block = null;
         stack.length = 0;
+        if (!wasClosingFence) matchIndex -= 1;
         continue;
       }
     }
-    const container = fenceContainer(prefix, indentation);
     const validOpening = fence[0] !== '`' || !info.includes('`');
     const markdown = /^(?:md|markdown)$/i.test(codeFenceLanguage(info));
     if (!block) {
