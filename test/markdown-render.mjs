@@ -4,12 +4,13 @@ import vm from 'node:vm';
 import { test } from 'node:test';
 
 const readUi = (build, name) => fs.readFileSync(new URL(`../src/${build}/src/ui/${name}`, import.meta.url), 'utf8');
-const panelFormatter = (build) => {
+const panelFunction = (build, name) => {
   const source = readUi(build, 'sidepanel.js');
-  const start = source.indexOf('function formatMarkdown(');
+  const start = source.indexOf(`function ${name}(`);
   assert.ok(start >= 0);
   return source.slice(start, source.indexOf('\n}', start) + 2);
 };
+const panelFormatter = build => panelFunction(build, 'formatMarkdown');
 // Reduced reproduction of a model-authored README with same-length nested
 // fences. Keep user traces and their private page content out of the fixture.
 const readme = [
@@ -671,7 +672,7 @@ for (const build of ['chrome', 'firefox']) {
       });
       await page.goto('http://markdown.test/');
       await page.addStyleTag({ content: fs.readFileSync(new URL(`../src/${build}/styles/sidepanel.css`, import.meta.url), 'utf8') });
-      const result = await page.evaluate(async ({ formatter, source, expected }) => {
+      const result = await page.evaluate(async ({ formatter, terminalRenderer, source, expected }) => {
         const helpers = await import('/markdown-render.js');
         const { sanitizeMarkdownLinks } = await import('/markdown-link.js');
         const { escapeHtml } = await import('/utils.js');
@@ -684,7 +685,25 @@ for (const build of ['chrome', 'firefox']) {
         const message = document.querySelector('#message');
         message.innerHTML = format(source, { recoverNestedMarkdown: true });
         const streamed = message.querySelector('pre code').textContent;
-        message.innerHTML = format(source, { recoverNestedMarkdown: true });
+        const updateDependencies = {
+          formatMarkdown: format,
+          isStoppedByUserStatus: () => false,
+          parseCostAllowanceError: () => false,
+          renderSubscribeError: () => false,
+          getStreamedAssistantText: () => source,
+          hasStreamedAssistantText: () => true,
+          clearStreamedAssistantText() {},
+          streamedAssistantTextByEl: new Map(),
+          addMessageCopyButton() {},
+          verboseMode: false,
+          document,
+        };
+        const renderTerminal = new Function(...Object.keys(updateDependencies), `return (${terminalRenderer})`)(...Object.values(updateDependencies));
+        const assistantEl = { querySelector: selector => selector === '.message-text' ? message : {} };
+        renderTerminal(assistantEl, source);
+        const terminalBlocks = message.querySelectorAll('pre').length;
+        renderTerminal(assistantEl, source, { replace: true });
+        const replacedBlocks = message.querySelectorAll('pre').length;
         await new Promise(resolve => setTimeout(resolve, 20));
         message.querySelector('.code-copy-btn').click();
         await Promise.resolve();
@@ -693,6 +712,8 @@ for (const build of ['chrome', 'firefox']) {
         history.innerHTML = renderSkillMarkdown(saved);
         return {
           blocks: message.querySelectorAll('pre').length,
+          terminalBlocks,
+          replacedBlocks,
           streamedMatches: streamed === expected,
           copiedMatches: copied === expected,
           historyMatches: history.querySelector('pre code').textContent === expected,
@@ -700,8 +721,8 @@ for (const build of ['chrome', 'firefox']) {
           nextHeading: message.querySelector('h2').textContent,
           unsafeElements: message.querySelectorAll('script, img').length,
         };
-      }, { formatter: panelFormatter(build), source: draft, expected: readme });
-      assert.deepEqual(result, { blocks: 1, streamedMatches: true, copiedMatches: true, historyMatches: true, historyBlocks: 1, nextHeading: 'Next steps', unsafeElements: 0 });
+      }, { formatter: panelFormatter(build), terminalRenderer: panelFunction(build, 'renderAssistantTextUpdate'), source: draft, expected: readme });
+      assert.deepEqual(result, { blocks: 1, terminalBlocks: 1, replacedBlocks: 1, streamedMatches: true, copiedMatches: true, historyMatches: true, historyBlocks: 1, nextHeading: 'Next steps', unsafeElements: 0 });
       if (process.env.WEBBRAIN_MARKDOWN_SCREENSHOT_DIR) {
         await page.screenshot({ path: `${process.env.WEBBRAIN_MARKDOWN_SCREENSHOT_DIR}/${build}-markdown.png`, fullPage: true });
       }
