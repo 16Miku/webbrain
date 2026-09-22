@@ -146,12 +146,20 @@ function isFenceCloser(opener, candidate, fence, info) {
 function listContinuationContainer(source, position, prefix, indentation) {
   const current = fenceContainer(prefix, indentation);
   const continuationIndent = indentationColumns(indentation);
-  const lines = source.slice(0, position).split(/\r?\n/);
-  if (lines.at(-1) === '') lines.pop();
+  let lineEnd = position;
+  if (source[lineEnd - 1] === '\n') lineEnd -= 1;
+  if (source[lineEnd - 1] === '\r') lineEnd -= 1;
 
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index];
-    if (!line.trim()) continue;
+  while (lineEnd > 0) {
+    const lineStart = source.lastIndexOf('\n', lineEnd - 1) + 1;
+    const line = source.slice(lineStart, lineEnd);
+    if (!line.trim()) {
+      if (!lineStart) break;
+      lineEnd = lineStart - 1;
+      if (source[lineEnd] === '\n') lineEnd -= 1;
+      if (source[lineEnd] === '\r') lineEnd -= 1;
+      continue;
+    }
     const quotePrefix = line.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
     const quoteDepth = (quotePrefix.match(/>/g) || []).length;
     if (quoteDepth !== current.quoteDepth) break;
@@ -169,6 +177,11 @@ function listContinuationContainer(source, position, prefix, indentation) {
 
     const lineIndent = indentationColumns(content.match(/^[ \t]*/)?.[0] || '');
     if (lineIndent < continuationIndent) break;
+
+    if (!lineStart) break;
+    lineEnd = lineStart - 1;
+    if (source[lineEnd] === '\n') lineEnd -= 1;
+    if (source[lineEnd] === '\r') lineEnd -= 1;
   }
   return null;
 }
