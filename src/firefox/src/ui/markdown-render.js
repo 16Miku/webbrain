@@ -109,13 +109,15 @@ function isFenceCloser(opener, candidate, fence, info) {
     && fence.length >= opener.fence.length;
 }
 
-function nestedFenceHasOwnCloser(matches, startIndex, active) {
+function nestedFenceHasOwnCloser(matches, startIndex, active, stopAtNamedFence = false) {
   let closers = 0;
   for (let index = startIndex + 1; index < matches.length; index += 1) {
     const [, prefix, indentation, fence, info] = matches[index];
     if (isFenceCloser(active, fenceContainer(prefix, indentation), fence, info)) {
       closers += 1;
       if (closers === 2) return true;
+    } else if (stopAtNamedFence && closers && info.trim()) {
+      return false;
     }
   }
   return false;
@@ -190,7 +192,13 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       // Models sometimes wrap a README in ```markdown and reuse ```lang
       // inside it. Recover only this named Markdown nesting; ordinary code
       // and correctly longer outer fences retain their literal contents.
-      if (streaming || nestedFenceHasOwnCloser(matches, matchIndex, active)) {
+      const hasMarkdownPreamble = source.slice(block.start, match.index).trim().length > 0;
+      if (streaming || nestedFenceHasOwnCloser(
+        matches,
+        matchIndex,
+        active,
+        !hasMarkdownPreamble,
+      )) {
         stack.push({ fence, markdown, container });
       }
     }
