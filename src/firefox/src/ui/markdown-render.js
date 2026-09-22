@@ -162,8 +162,7 @@ function isFenceCloser(opener, candidate, fence, info) {
 
 function nestedFenceCloserAhead(matches, startIndex, fence, container) {
   const nested = { fence, container };
-  const limit = Math.min(matches.length, startIndex + 65);
-  for (let index = startIndex + 1; index < limit; index += 1) {
+  for (let index = startIndex + 1; index < matches.length; index += 1) {
     const candidate = matches[index];
     const candidateContainer = fenceContainer(candidate.prefix, candidate.indentation);
     if (isFenceCloser(nested, candidateContainer, candidate.fence, candidate.info)) return true;

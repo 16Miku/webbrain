@@ -72,6 +72,22 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
+  test(`${build}: Markdown wrappers retain alternate nested fence markers`, () => {
+    const nested = '~~~text\n```\n~~~\n';
+    const source = `\`\`\`markdown\n${nested}\`\`\`\nAfter`;
+    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(nested)]);
+    assert.match(formatMarkdown(source), /After/);
+    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
+  });
+
+  test(`${build}: Markdown wrappers retain distant alternate fence closers`, () => {
+    const nested = `~~~text\n${'```x\n'.repeat(64)}~~~\n`;
+    const source = `\`\`\`markdown\n${nested}\`\`\`\nAfter`;
+    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(nested)]);
+    assert.match(formatMarkdown(source), /After/);
+    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
+  });
+
   test(`${build}: fence length, marker and whole-line closers protect literal code`, () => {
     const cases = [
       ['````markdown', '```js\nconst x = 1;\n```\n', '````'],
