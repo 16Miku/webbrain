@@ -72,7 +72,7 @@ function fenceContainer(prefix, indentation = '') {
       remainder = remainder.slice(quote[0].length);
       continue;
     }
-    const list = remainder.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/);
+    const list = remainder.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]/);
     if (!list) break;
     const listStartColumn = indentationColumns(source.slice(0, source.length - remainder.length));
     listPrefix += list[0];
@@ -259,6 +259,10 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       if (source[lineEnd] === '\r') lineEnd -= 1;
       continue;
     }
+    const precedingFence = parseFenceLine(line);
+    if (precedingFence && fenceIndentationColumns(fenceContainer(precedingFence.prefix, precedingFence.indentation)) > 3) {
+      return noList();
+    }
     const precedingContainer = fenceContainer(line);
     const missingQuotes = current.quoteDepth - precedingContainer.quoteDepth;
     if (missingQuotes < 0 || (missingQuotes && !current.leadingQuoteIndent)) return noList();
@@ -366,7 +370,7 @@ function parseFenceLine(line) {
       offset += quote[0].length;
       continue;
     }
-    const list = segment.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/);
+    const list = segment.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]/);
     if (!list) break;
     offset += list[0].length;
   }

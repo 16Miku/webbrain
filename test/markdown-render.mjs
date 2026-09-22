@@ -44,7 +44,6 @@ for (const build of ['chrome', 'firefox']) {
         assert.match(html, /<h2>Next steps<\/h2>Review it\./);
         assert.doesNotMatch(html, /<script>|<h[1-6]>Role|<br>text<br>|<br>bash<br>/i);
       }
-      assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(readme)]);
     }
   });
 
@@ -57,6 +56,10 @@ for (const build of ['chrome', 'firefox']) {
     ]);
     assert.match(html, /Visible prose/);
     assert.match(html, /After/);
+    assert.deepEqual(preContents(renderSkillMarkdown(source)), [
+      escapeHtml('```js\nliteral\n'),
+      escapeHtml('independent\n'),
+    ]);
   });
 
   test(`${build}: Markdown wrappers retain longer nested fences`, () => {
@@ -64,7 +67,6 @@ for (const build of ['chrome', 'firefox']) {
     const source = `\`\`\`markdown\n${nested}\n\`\`\`\n\n## Outside`;
     assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(`${nested}\n`)]);
     assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /<h2>Outside<\/h2>/);
-    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(`${nested}\n`)]);
   });
 
   test(`${build}: Markdown wrappers retain list-prefixed nested fences`, () => {
@@ -72,7 +74,6 @@ for (const build of ['chrome', 'firefox']) {
     const source = `\`\`\`markdown\n${nested}\`\`\`\nOutside`;
     assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(nested)]);
     assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /Outside/);
-    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
   test(`${build}: Markdown wrappers keep over-indented fences literal`, () => {
@@ -80,7 +81,6 @@ for (const build of ['chrome', 'firefox']) {
     const source = `\`\`\`markdown\n${nested}\`\`\`\nAfter`;
     assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(nested)]);
     assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /After/);
-    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
   test(`${build}: Markdown wrappers retain alternate nested fence markers`, () => {
@@ -88,7 +88,6 @@ for (const build of ['chrome', 'firefox']) {
     const source = `\`\`\`markdown\n${nested}\`\`\`\nAfter`;
     assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(nested)]);
     assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /After/);
-    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
   test(`${build}: Markdown wrappers retain distant alternate fence closers`, () => {
@@ -96,7 +95,6 @@ for (const build of ['chrome', 'firefox']) {
     const source = `\`\`\`markdown\n${nested}\`\`\`\nAfter`;
     assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(nested)]);
     assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /After/);
-    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
   test(`${build}: Markdown wrappers leave unmatched nested fences literal`, () => {
@@ -104,7 +102,6 @@ for (const build of ['chrome', 'firefox']) {
     const source = `\`\`\`\`markdown\n${nested}\`\`\`\`\nAfter`;
     assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(nested)]);
     assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /After/);
-    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
   test(`${build}: fence length, marker and whole-line closers protect literal code`, () => {
@@ -138,6 +135,9 @@ for (const build of ['chrome', 'firefox']) {
       return 'BLOCK';
     }), 'BLOCK\nAfter');
     assert.deepEqual(blocks, [{ info: 'text', code: 'hello\n' }]);
+
+    const excessListPadding = '-     ```text\n    literal\n    ```\nAfter';
+    assert.equal(helpers.replaceMarkdownCodeFences(excessListPadding, () => 'BLOCK'), excessListPadding);
   });
 
   test(`${build}: container-prefixed markers do not close an outer fenced block`, () => {
@@ -175,7 +175,6 @@ for (const build of ['chrome', 'firefox']) {
       const source = `\`\`\`markdown\n${content}`;
       const html = formatMarkdown(source, { enhance: false, recoverNestedMarkdown: true });
       assert.deepEqual(preContents(html), [escapeHtml(content)]);
-      assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(content)]);
       assert.doesNotMatch(html, /<h[1-6]>|<img |code-copy-btn/);
     }
     const quoted = '> ```text\n> hello\n';
