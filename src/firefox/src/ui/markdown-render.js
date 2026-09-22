@@ -57,6 +57,55 @@ export function codeFenceLanguage(infoString) {
   return String(infoString || '').trim().split(/\s+/, 1)[0] || '';
 }
 
+/** Replace whole fenced blocks, including an unfinished block during streaming. */
+export function replaceMarkdownCodeFences(value, renderBlock) {
+  const source = String(value ?? '');
+  // Accept fences at the document root and inside the simple containers this
+  // renderer preserves (lists and blockquotes). The old unanchored matcher
+  // accepted these forms, while a root-only matcher mistakes their closer for
+  // a new opener and consumes the rest of the message as code.
+  const fenceLines = /^(?:(?: {0,3}>[ \t]?)*(?:(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?)[ \t]{0,3})(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/gm;
+  const output = [];
+  let cursor = 0;
+  let block = null;
+  const stack = [];
+
+  for (const match of source.matchAll(fenceLines)) {
+    const [, fence, info] = match;
+    const validOpening = fence[0] !== '`' || !info.includes('`');
+    const markdown = /^(?:md|markdown)$/i.test(codeFenceLanguage(info));
+    if (!block) {
+      if (!validOpening) continue;
+      output.push(source.slice(cursor, match.index));
+      block = { info, start: match.index + match[0].length };
+      stack.push({ fence, markdown });
+      continue;
+    }
+
+    const active = stack[stack.length - 1];
+    // A closing fence occupies its own line, has no info string, and is at
+    // least as long as its opener. Backticks inside source code are literal.
+    if (!info.trim() && fence[0] === active.fence[0] && fence.length >= active.fence.length) {
+      stack.pop();
+      if (!stack.length) {
+        output.push(renderBlock(block.info, source.slice(block.start, match.index)));
+        // Leave the closing line's newline for the surrounding Markdown.
+        cursor = match.index + match[0].replace(/\r?\n$/, '').length;
+        block = null;
+      }
+    } else if (active.markdown && validOpening && info.trim() && fence === active.fence) {
+      // Models sometimes wrap a README in ```markdown and reuse ```lang
+      // inside it. Recover only this named Markdown nesting; ordinary code
+      // and correctly longer outer fences retain their literal contents.
+      stack.push({ fence, markdown });
+    }
+  }
+
+  if (block) output.push(renderBlock(block.info, source.slice(block.start)));
+  else output.push(source.slice(cursor));
+  return output.join('');
+}
+
 function tokenSpan(type, value) {
   const escaped = escapeCodeHtml(value);
   return type ? `<span class="syntax-${type}">${escaped}</span>` : escaped;

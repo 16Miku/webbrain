@@ -125,10 +125,17 @@ export function historyTextFromElement(root, { markdown = true } = {}) {
     if (markdown && tagName === 'PRE') {
       const language = String(node.parentElement?.querySelector?.('.code-lang')?.textContent || '').trim();
       ensureBreak();
-      output += `\`\`\`${language}\n`;
+      const beforeCode = output;
+      output = '';
       for (const child of Array.from(node.childNodes || [])) visit(child, false, true);
       ensureBreak();
-      output += '```';
+      const code = output;
+      // History must not reintroduce ambiguous fences around a Markdown
+      // document (or any code sample containing literal backtick runs).
+      let fenceLength = 3;
+      for (const match of code.matchAll(/`{3,}/g)) fenceLength = Math.max(fenceLength, match[0].length + 1);
+      const fence = '`'.repeat(fenceLength);
+      output = `${beforeCode}${fence}${language}\n${code}${fence}`;
       return;
     }
     if (markdown && tagName === 'CODE' && !inPre) {
