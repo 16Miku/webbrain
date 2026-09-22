@@ -84,6 +84,20 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(formatMarkdown(source), /<h2>Outside<\/h2>/);
   });
 
+  test(`${build}: unmatched nested example fences do not steal an outer closer`, () => {
+    const source = '```markdown\n```js\nconst value = true;\n```\n## Outside';
+    const blocks = [];
+    const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
+      blocks.push({ info, code });
+      return 'BLOCK';
+    });
+    assert.deepEqual(blocks, [{ info: 'markdown', code: '```js\nconst value = true;\n' }]);
+    assert.equal(remaining, 'BLOCK\n## Outside');
+    assert.match(formatMarkdown(source), /<h2>Outside<\/h2>/);
+    const incomplete = '```markdown\n```js\nconst value = true;\n```';
+    assert.deepEqual(preContents(formatMarkdown(incomplete, { enhance: false })), [escapeHtml('```js\nconst value = true;\n```')]);
+  });
+
   test(`${build}: streamed open fences keep headings, HTML and nested examples literal`, () => {
     for (const content of [readme, '## Heading\n<img src=x onerror=alert(1)>\n', '']) {
       const source = `\`\`\`markdown\n${content}`;

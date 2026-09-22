@@ -102,6 +102,25 @@ function fenceCloserInContainer(opener, candidate) {
     && candidateIndent <= listIndent + 3;
 }
 
+function isFenceCloser(opener, candidate, fence, info) {
+  return fenceCloserInContainer(opener.container, candidate)
+    && !info.trim()
+    && fence[0] === opener.fence[0]
+    && fence.length >= opener.fence.length;
+}
+
+function nestedFenceHasOwnCloser(matches, startIndex, active) {
+  let closers = 0;
+  for (let index = startIndex + 1; index < matches.length; index += 1) {
+    const [, prefix, indentation, fence, info] = matches[index];
+    if (isFenceCloser(active, fenceContainer(prefix, indentation), fence, info)) {
+      closers += 1;
+      if (closers === 2) return true;
+    }
+  }
+  return false;
+}
+
 function normalizeContainerCode(code, prefix) {
   const { quoteDepth, listPrefix } = fenceContainer(prefix);
   if (!quoteDepth && !listPrefix) return code;
@@ -135,7 +154,9 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
   let block = null;
   const stack = [];
 
-  for (const match of source.matchAll(fenceLines)) {
+  const matches = [...source.matchAll(fenceLines)];
+  for (let matchIndex = 0; matchIndex < matches.length; matchIndex += 1) {
+    const match = matches[matchIndex];
     const [, prefix, indentation, fence, info] = match;
     const container = fenceContainer(prefix, indentation);
     const validOpening = fence[0] !== '`' || !info.includes('`');
@@ -153,8 +174,11 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
     const active = stack[stack.length - 1];
     // A closing fence occupies its own line, has no info string, and is at
     // least as long as its opener. Backticks inside source code are literal.
-    if (fenceCloserInContainer(active.container, container)
-      && !info.trim() && fence[0] === active.fence[0] && fence.length >= active.fence.length) {
+    const hasImmediatelyFollowingText = /^[ \t]*[^\r\n]/.test(
+      source.slice(match.index + match[0].length),
+    );
+    if (isFenceCloser(active, container, fence, info)
+      && (!active.pendingNested || hasImmediatelyFollowingText)) {
       stack.pop();
       if (!stack.length) {
         output.push(block.prefix + renderBlock(
@@ -170,7 +194,13 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
       // Models sometimes wrap a README in ```markdown and reuse ```lang
       // inside it. Recover only this named Markdown nesting; ordinary code
       // and correctly longer outer fences retain their literal contents.
-      stack.push({ fence, markdown, container });
+      if (nestedFenceHasOwnCloser(matches, matchIndex, active)) {
+        stack.push({ fence, markdown, container });
+      } else {
+        // During streaming, the only available blank fence may close this
+        // example rather than its still-open Markdown wrapper.
+        active.pendingNested = true;
+      }
     }
   }
 
