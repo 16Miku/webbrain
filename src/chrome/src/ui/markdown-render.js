@@ -452,6 +452,7 @@ function unfinishedContainerEnd(source, start, container, boundaryCache) {
     pendingBlankStart = null;
     offset += match[0].length;
   }
+  if (pendingBlankStart != null && container.quoteDepth) end = pendingBlankStart;
   boundaryCache.set(key, { start, end });
   return end;
 }

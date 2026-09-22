@@ -516,6 +516,14 @@ for (const build of ['chrome', 'firefox']) {
     }), '> BLOCK');
     assert.deepEqual(trailingQuoteBlocks, [{ info: 'text', code: 'hello\n\n' }]);
 
+    const unprefixedTrailingBlank = '> ~~~text\n> hello\n\n';
+    const unprefixedTrailingBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(unprefixedTrailingBlank, (info, code) => {
+      unprefixedTrailingBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> BLOCK\n');
+    assert.deepEqual(unprefixedTrailingBlocks, [{ info: 'text', code: 'hello\n' }]);
+
     const quotedBlankBeforeProse = '> ~~~text\n> hello\n>\nOutside';
     const quotedBlankBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(quotedBlankBeforeProse, (info, code) => {
