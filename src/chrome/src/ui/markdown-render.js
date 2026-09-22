@@ -57,6 +57,24 @@ export function codeFenceLanguage(infoString) {
   return String(infoString || '').trim().split(/\s+/, 1)[0] || '';
 }
 
+function normalizeContainerCode(code, prefix) {
+  const quotePrefix = String(prefix).match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
+  const listPrefix = String(prefix).slice(quotePrefix.length)
+    .match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+$/)?.[0] || '';
+  if (!quotePrefix && !listPrefix) return code;
+
+  const listIndent = listPrefix.length;
+  const lines = String(code).split(/(\r?\n)/);
+  for (let index = 0; index < lines.length; index += 2) {
+    let line = lines[index];
+    if (quotePrefix && line.startsWith(quotePrefix)) line = line.slice(quotePrefix.length);
+    let consumed = 0;
+    while (consumed < listIndent && /^[ \t]$/.test(line[consumed] || '')) consumed += 1;
+    lines[index] = line.slice(consumed);
+  }
+  return lines.join('');
+}
+
 /** Replace whole fenced blocks, including an unfinished block during streaming. */
 export function replaceMarkdownCodeFences(value, renderBlock) {
   const source = String(value ?? '');
@@ -64,20 +82,20 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
   // renderer preserves (lists and blockquotes). The old unanchored matcher
   // accepted these forms, while a root-only matcher mistakes their closer for
   // a new opener and consumes the rest of the message as code.
-  const fenceLines = /^(?:(?: {0,3}>[ \t]?)*(?:(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?)[ \t]{0,3})(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/gm;
+  const fenceLines = /^((?: {0,3}>[ \t]?)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?)[ \t]{0,3}(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/gm;
   const output = [];
   let cursor = 0;
   let block = null;
   const stack = [];
 
   for (const match of source.matchAll(fenceLines)) {
-    const [, fence, info] = match;
+    const [, prefix, fence, info] = match;
     const validOpening = fence[0] !== '`' || !info.includes('`');
     const markdown = /^(?:md|markdown)$/i.test(codeFenceLanguage(info));
     if (!block) {
       if (!validOpening) continue;
       output.push(source.slice(cursor, match.index));
-      block = { info, start: match.index + match[0].length };
+      block = { info, prefix, start: match.index + match[0].length };
       stack.push({ fence, markdown });
       continue;
     }
@@ -88,7 +106,10 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
     if (!info.trim() && fence[0] === active.fence[0] && fence.length >= active.fence.length) {
       stack.pop();
       if (!stack.length) {
-        output.push(renderBlock(block.info, source.slice(block.start, match.index)));
+        output.push(block.prefix + renderBlock(
+          block.info,
+          normalizeContainerCode(source.slice(block.start, match.index), block.prefix),
+        ));
         // Leave the closing line's newline for the surrounding Markdown.
         cursor = match.index + match[0].replace(/\r?\n$/, '').length;
         block = null;
@@ -101,7 +122,10 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
     }
   }
 
-  if (block) output.push(renderBlock(block.info, source.slice(block.start)));
+  if (block) output.push(block.prefix + renderBlock(
+    block.info,
+    normalizeContainerCode(source.slice(block.start), block.prefix),
+  ));
   else output.push(source.slice(cursor));
   return output.join('');
 }

@@ -80,6 +80,12 @@ for (const build of ['chrome', 'firefox']) {
       assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(content)]);
       assert.doesNotMatch(html, /<h[1-6]>|<img |code-copy-btn/);
     }
+    const quoted = '> ```text\n> hello\n';
+    assert.match(
+      renderSkillMarkdown(quoted),
+      /<blockquote><pre><code>hello\n<\/code><\/pre><\/blockquote>/,
+      'an unfinished quoted fence should retain its container and strip its quote marker',
+    );
     const start = '```markdown\n';
     for (let length = start.length; length <= start.length + readme.length; length += 1) {
       const prefix = (start + readme).slice(0, length);
@@ -104,25 +110,31 @@ for (const build of ['chrome', 'firefox']) {
     const cases = [
       [
         'numbered list',
-        '1. ```python\nvalue = "**literal**"\n```\n\n2. Start the server.',
+        '1. ```python\n   value = "**literal**"\n   ```\n\n2. Start the server.',
         /2\. Start the server\./,
+        /<ol><li><pre><code>value = &quot;\*\*literal\*\*&quot;\n<\/code><\/pre><\/li><\/ol><br><br><ol><li>Start the server\.<\/li><\/ol>/,
       ],
       [
         'list marker',
         '- ```python\n  value = "**literal**"\n  ```\n\n## Next steps\nCheck the result.',
         /<h2>Next steps<\/h2>Check the result\./,
+        /<ul><li><pre><code>value = &quot;\*\*literal\*\*&quot;\n<\/code><\/pre><\/li><\/ul>/,
       ],
       [
         'blockquote',
-        '> ```text\n> **literal**\n> ```\n\n## Next steps\nCheck the result.',
+        '> ```text\n> hello\n> ```\n\n## Next steps\nCheck the result.',
         /<h2>Next steps<\/h2>Check the result\./,
+        /<blockquote><pre><code>hello\n<\/code><\/pre><\/blockquote>/,
       ],
     ];
-    for (const [label, source, followingProse] of cases) {
+    for (const [label, source, followingProse, expectedContainer] of cases) {
       const html = formatMarkdown(source);
       assert.equal(preContents(html).length, 1, `${label}: fence did not render as one code block`);
       assert.doesNotMatch(html, /<strong>literal<\/strong>/, `${label}: code formatting leaked into prose`);
       assert.match(html, followingProse, `${label}: closing fence consumed following prose`);
+      const historyHtml = renderSkillMarkdown(source);
+      assert.match(historyHtml, expectedContainer, `${label}: code block lost its Markdown container`);
+      assert.doesNotMatch(historyHtml, /&gt; hello/, `${label}: blockquote marker leaked into code`);
     }
   });
 
