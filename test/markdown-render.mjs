@@ -85,7 +85,7 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   test(`${build}: unmatched nested example fences do not steal an outer closer`, () => {
-    const source = '```markdown\n```js\nconst value = true;\n```\n\nOutside\n```python\nother\n```\nAfter';
+    const source = '```markdown\n```js\nconst value = true;\n```\n\nOutside\n```\nother\n```\nAfter';
     const blocks = [];
     const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
       blocks.push({ info, code });
@@ -93,7 +93,7 @@ for (const build of ['chrome', 'firefox']) {
     });
     assert.deepEqual(blocks, [
       { info: 'markdown', code: '```js\nconst value = true;\n' },
-      { info: 'python', code: 'other\n' },
+      { info: '', code: 'other\n' },
     ]);
     assert.equal(remaining, 'BLOCK\n\nOutside\nBLOCK\nAfter');
     assert.match(formatMarkdown(source), /Outside/);
@@ -183,6 +183,19 @@ for (const build of ['chrome', 'firefox']) {
     });
     assert.deepEqual(blocks, [{ info: 'text', code: '    ```\nvalue\n' }]);
     assert.equal(remaining, '- BLOCK\nAfter');
+    assert.match(formatMarkdown(source), /After/);
+  });
+
+  test(`${build}: list continuation fences use the preceding list indent`, () => {
+    const source = '10. Step\n    ```js\n    const value = true;\n    ```\nAfter';
+    const blocks = [];
+    const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
+      blocks.push({ info, code });
+      return 'BLOCK';
+    });
+    assert.deepEqual(blocks, [{ info: 'js', code: 'const value = true;\n' }]);
+    assert.equal(remaining, '10. Step\n    BLOCK\nAfter');
+    assert.equal(preContents(formatMarkdown(source)).length, 1);
     assert.match(formatMarkdown(source), /After/);
   });
 

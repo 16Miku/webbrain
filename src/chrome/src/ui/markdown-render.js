@@ -109,11 +109,22 @@ function isFenceCloser(opener, candidate, fence, info) {
     && fence.length >= opener.fence.length;
 }
 
+function hasCompatibleFenceAfter(matches, startIndex, active) {
+  for (let index = startIndex + 1; index < matches.length; index += 1) {
+    const [, prefix, indentation, fence, info] = matches[index];
+    if (isFenceCloser(active, fenceContainer(prefix, indentation), fence, info)) return true;
+  }
+  return false;
+}
+
 function nestedFenceHasOwnCloser(matches, startIndex, active, stopAtNamedFence = false) {
   let closers = 0;
   for (let index = startIndex + 1; index < matches.length; index += 1) {
     const [, prefix, indentation, fence, info] = matches[index];
     if (isFenceCloser(active, fenceContainer(prefix, indentation), fence, info)) {
+      if (stopAtNamedFence && closers && hasCompatibleFenceAfter(matches, index, active)) {
+        return false;
+      }
       closers += 1;
       if (closers === 2) return true;
     } else if (stopAtNamedFence && closers && info.trim()) {
@@ -123,8 +134,25 @@ function nestedFenceHasOwnCloser(matches, startIndex, active, stopAtNamedFence =
   return false;
 }
 
-function normalizeContainerCode(code, prefix) {
-  const { quoteDepth, listPrefix } = fenceContainer(prefix);
+function listContinuationContainer(source, position, indentation) {
+  const beforeFence = source.slice(0, position).replace(/\r?\n$/, '');
+  const previousLine = beforeFence.slice(beforeFence.lastIndexOf('\n') + 1);
+  const prefix = previousLine.match(
+    /^((?: {0,3}>[ \t]?)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+))/,
+  )?.[1];
+  if (!prefix) return null;
+
+  const container = fenceContainer(prefix);
+  const continuationIndent = indentationColumns(indentation);
+  const listIndent = indentationColumns(container.listPrefix);
+  if (!listIndent || continuationIndent < listIndent || continuationIndent > listIndent + 3) return null;
+  return container;
+}
+
+function normalizeContainerCode(code, prefixOrContainer) {
+  const { quoteDepth, listPrefix } = typeof prefixOrContainer === 'object'
+    ? prefixOrContainer
+    : fenceContainer(prefixOrContainer);
   if (!quoteDepth && !listPrefix) return code;
 
   const listIndent = indentationColumns(listPrefix);
@@ -166,10 +194,17 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
     if (!block) {
       // Four-space indented code is not a fenced block at the document root,
       // but list continuations may require more than three spaces to close.
-      if (!validOpening || indentationColumns(container.indentation) > 3) continue;
+      let openingContainer = container;
+      let openingPrefix = prefix;
+      if (!validOpening) continue;
+      if (indentationColumns(container.indentation) > 3) {
+        openingContainer = listContinuationContainer(source, match.index, indentation);
+        if (!openingContainer) continue;
+        openingPrefix = indentation;
+      }
       output.push(source.slice(cursor, match.index));
-      block = { info, prefix, container, start: match.index + match[0].length };
-      stack.push({ fence, markdown, container });
+      block = { info, prefix: openingPrefix, container: openingContainer, start: match.index + match[0].length };
+      stack.push({ fence, markdown, container: openingContainer });
       continue;
     }
 
@@ -181,7 +216,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       if (!stack.length) {
         output.push(block.prefix + renderBlock(
           block.info,
-          normalizeContainerCode(source.slice(block.start, match.index), block.prefix),
+          normalizeContainerCode(source.slice(block.start, match.index), block.container),
         ));
         // Leave the closing line's newline for the surrounding Markdown.
         cursor = match.index + match[0].replace(/\r?\n$/, '').length;
@@ -206,7 +241,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
 
   if (block) output.push(block.prefix + renderBlock(
     block.info,
-    normalizeContainerCode(source.slice(block.start), block.prefix),
+    normalizeContainerCode(source.slice(block.start), block.container),
   ));
   else output.push(source.slice(cursor));
   return output.join('');
