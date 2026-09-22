@@ -86,6 +86,7 @@ function fenceContainer(prefix, indentation = '') {
     remainder = remainder.slice(list.length);
   }
   return {
+    containerPrefix: source.slice(0, source.length - remainder.length),
     quotePrefix,
     quoteDepth,
     listPrefix,
@@ -327,7 +328,7 @@ function listContinuationContainer(source, position, prefix, indentation, noList
 
     if (precedingContainer.listPrefix) {
       const container = missingQuotes
-        ? fenceContainer(`${precedingContainer.rawPrefix}${'> '.repeat(missingQuotes)}`)
+        ? fenceContainer(`${precedingContainer.containerPrefix}${'> '.repeat(missingQuotes)}`)
         : precedingContainer;
       const listIndent = container.listIndentGroups.at(-1);
       if (listIndent && continuationIndent >= listIndent && continuationIndent <= listIndent + 3) {
@@ -385,7 +386,9 @@ function unfinishedContainerEnd(source, start, container, boundaryCache) {
     if (!match[0]) break;
     const line = match[0].replace(/\r?\n$/, '');
     if ((container.quoteDepth || container.listPrefix) && lineIsBlankInContainer(line, container)) {
-      if (lineHasExplicitContainerPrefix(line, container)) pendingBlankStart = null;
+      if (lineHasExplicitContainerPrefix(line, container)) {
+        if (!container.quoteDepth) pendingBlankStart = null;
+      }
       else if (pendingBlankStart == null) pendingBlankStart = offset;
       offset += match[0].length;
       continue;
