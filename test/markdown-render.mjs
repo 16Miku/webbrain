@@ -207,6 +207,12 @@ for (const build of ['chrome', 'firefox']) {
       const blocks = preContents(formatMarkdown(prefix, { enhance: false, recoverNestedMarkdown: true }));
       assert.equal(blocks.length, 1, `stream prefix ${length} split the document`);
     }
+
+    const completeAlternateExample = '```markdown\n~~~text\n```\n~~~\n';
+    assert.deepEqual(
+      preContents(formatMarkdown(completeAlternateExample, { enhance: false, recoverNestedMarkdown: true })),
+      [escapeHtml('~~~text\n```\n~~~\n')],
+    );
   });
 
   test(`${build}: independent code blocks retain their surrounding Markdown`, () => {

@@ -570,12 +570,20 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         // and correctly longer outer fences retain their literal contents.
         stack.push({ fence, markdown, container: nestedContainer });
       } else if (streaming && active.markdown && nestedCloserIndex >= 0
-        && outerCloserIndex === -1
-        && isFenceCloser(active, containers[nestedCloserIndex], matches[nestedCloserIndex].fence, matches[nestedCloserIndex].info)
-        && active.fence.length <= fence.length) {
-        // An unfinished same-length wrapper still needs to retain literal
-        // nested examples. A longer outer fence remains the outer closer.
-        (active.literalNestedCloserIndexes ||= new Set()).add(nestedCloserIndex);
+        && outerCloserIndex === -1) {
+        // An unfinished wrapper keeps every outer-compatible fence inside a
+        // complete nested example literal, including alternate-marker pairs.
+        const protectedClosers = active.literalNestedCloserIndexes ||= new Set();
+        // A longer outer marker at the nested closer is still the real outer
+        // closer; only a same-length or shorter nested fence protects it.
+        const protectedEnd = active.fence.length <= fence.length
+          ? nestedCloserIndex
+          : nestedCloserIndex - 1;
+        for (let index = matchIndex + 1; index <= protectedEnd; index += 1) {
+          if (isFenceCloser(active, containers[index], matches[index].fence, matches[index].info)) {
+            protectedClosers.add(index);
+          }
+        }
       }
     }
   }
