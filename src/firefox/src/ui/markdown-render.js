@@ -64,6 +64,7 @@ function fenceContainer(prefix, indentation = '') {
   let listPrefix = '';
   let quoteDepth = 0;
   let overIndentedQuote = false;
+  let lastListMarkerWidth = 0;
   const listIndentGroups = [0];
   while (remainder) {
     const containerStartColumn = indentationColumns(source.slice(0, source.length - remainder.length));
@@ -80,6 +81,7 @@ function fenceContainer(prefix, indentation = '') {
     const list = listPrefixAt(remainder, containerStartColumn);
     if (!list) break;
     listPrefix += list;
+    lastListMarkerWidth = indentationColumnsAt(list.replace(/[ \t]+$/, ''), containerStartColumn) - containerStartColumn;
     const implicitListPadding = !/[ \t]$/.test(list) && remainder === list ? 1 : 0;
     listIndentGroups[listIndentGroups.length - 1] += indentationColumnsAt(list, containerStartColumn) - containerStartColumn
       + implicitListPadding;
@@ -90,6 +92,7 @@ function fenceContainer(prefix, indentation = '') {
     quotePrefix,
     quoteDepth,
     listPrefix,
+    lastListMarkerWidth,
     listIndentGroups,
     overIndentedQuote,
     leadingQuoteIndent: indentationColumns(source.match(/^[ \t]*(?=>)/)?.[0] || ''),
@@ -336,9 +339,8 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       if (!missingQuotes) container = { ...container, rawPrefix: container.containerPrefix };
       const emptyListMarker = line.length === precedingContainer.containerPrefix.length;
       if (emptyListMarker) {
-        const marker = container.listPrefix.replace(/[ \t]+$/, '');
         container = { ...container, listIndentGroups: [...container.listIndentGroups] };
-        container.listIndentGroups[container.listIndentGroups.length - 1] = indentationColumns(marker) + 1;
+        container.listIndentGroups[container.listIndentGroups.length - 1] = container.lastListMarkerWidth + 1;
       }
       const listIndent = container.listIndentGroups.at(-1);
       if (listIndent && continuationIndent >= listIndent && continuationIndent <= listIndent + 3) {
