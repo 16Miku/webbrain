@@ -863,7 +863,7 @@ async function init() {
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
   alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === undefined || stored.alwaysAllowApiMutations === true;
   apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === undefined || stored.apiMutationObserverEnabled === true;
-  if (webMcpToggle) webMcpToggle.checked = stored.webMcpEnabled === true; // off by default
+  if (webMcpToggle) webMcpToggle.checked = stored.webMcpEnabled !== false; // on by default
   if (openAIAskStreamingToggle) openAIAskStreamingToggle.checked = stored.openaiAskStreamingEnabled !== false;
   if (planBeforeActModeSelect) {
     planBeforeActModeSelect.value = normalizePlanBeforeActMode(stored);

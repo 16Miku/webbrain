@@ -41,7 +41,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   alwaysAllowApiMutations: true,
   apiMutationObserverEnabled: true,
   pdfViewerEnabled: true,
-  webMcpEnabled: false,
+  webMcpEnabled: true,
   openaiAskStreamingEnabled: true,
   planBeforeActMode: 'try',
   planBeforeAct: true,

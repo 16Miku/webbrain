@@ -263,6 +263,7 @@ const scheduler = new ScheduledJobManager({
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
+    await webMcpEnabledReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
   sendUpdate: (tabId, type, data) => {
@@ -593,9 +594,11 @@ const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
 async function loadWebMCPEnabled() {
   const stored = await chrome.storage.local.get('webMcpEnabled');
-  agent.setWebMCPEnabled(stored.webMcpEnabled === true);
+  agent.setWebMCPEnabled(stored.webMcpEnabled !== false);
 }
-const webMcpEnabledReady = loadWebMCPEnabled().catch(() => {});
+const webMcpEnabledReady = loadWebMCPEnabled().catch(() => {
+  agent.setWebMCPEnabled(false);
+});
 
 // Profile auto-fill: user-provided text (name, email, etc.) that gets
 // appended to the system prompt when enabled. Plaintext in storage —
@@ -1264,7 +1267,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     refreshPrompts = true;
   }
   if (changes.webMcpEnabled) {
-    agent.setWebMCPEnabled(changes.webMcpEnabled.newValue === true);
+    agent.setWebMCPEnabled(changes.webMcpEnabled.newValue !== false);
   }
   if (changes.profileEnabled) {
     agent.profileEnabled = !!changes.profileEnabled.newValue;

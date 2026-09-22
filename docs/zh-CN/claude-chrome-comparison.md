@@ -94,7 +94,7 @@ Firefox 不包含 Chrome 独有的 Dev 工具和 `shadow_dom_query`；其余核�
 | 读取/提取 | `read_page`、`read_pdf`、`read_page_source`、`extract_data`、`inspect_element_styles`、`get_selection`、`find_text` |
 | Dev 编辑与诊断 | `inject_css`、`remove_injected_css`、`patch_element`、`revert_patch`、`execute_js`、`read_console`、`inspect_network_requests`、`inspect_event_listeners`、`highlight_element` |
 | Shadow DOM 和框架 | `get_shadow_dom`、`shadow_dom_query`（Chrome）、`get_frames`、`iframe_read`、`iframe_click`、`iframe_type`、`promote_iframe` |
-| WebMCP（实验性） | 在兼容的 Chrome 构建中启用后提供 `list_webmcp_tools`、`execute_webmcp_tool` |
+| WebMCP（实验性，默认启用） | 在兼容的 Chrome 构建中启用后提供 `list_webmcp_tools`、`execute_webmcp_tool` |
 | 网络和文件 | `fetch_url`、`research_url`、`list_downloads`、`read_downloaded_file`、`download_resource_from_page`、`download_files`、`upload_file` |
 | 长时间运行的工作 | `schedule_resume`、`schedule_task`、`scratchpad_write`、`progress_update`、`progress_read` |
 | 安全/工作流 | `verify_form`、`clarify`、`done`、`solve_captcha` |

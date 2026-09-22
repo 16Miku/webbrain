@@ -651,7 +651,7 @@ export default {
   'st.display.api_mutation_observer.label': 'API mutation observer',
   'st.display.api_mutation_observer.desc': 'Observe same-tab XHR/fetch request URLs and methods so WebBrain can detect repeated UI actions and suggest API shortcut patterns. On by default.',
   'st.display.webmcp.label': 'Experimental WebMCP',
-  'st.display.webmcp.desc': 'Allow WebBrain to discover and run structured tools exposed by supported Chrome pages. Enabling this adds experimental WebMCP tools and guidance to the model context. Off by default.',
+  'st.display.webmcp.desc': 'Allow WebBrain to discover and run structured tools exposed by supported Chrome pages. Enabling this adds experimental WebMCP tools and guidance to the model context. On by default.',
   // TRANSLATORS: Updated for multi-provider Ask streaming and silent transport fallback.
   'st.display.openai_ask_streaming.label': 'Stream Ask responses',
   'st.display.openai_ask_streaming.desc': 'Show text as it arrives in Ask mode for supported providers. Interrupted streams show a notice and retry once without streaming; provider/API errors are still shown. Tool calls wait for stream completion; Act, Dev, scheduled, cloud, and Continue runs stay non-streaming. On by default.',
