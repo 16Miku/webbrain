@@ -397,6 +397,14 @@ for (const build of ['chrome', 'firefox']) {
     }), '> BLOCK');
     assert.deepEqual(quoteBlankBlocks, [{ info: 'text', code: 'hello\n\n\nagain\n' }]);
 
+    const unprefixedQuoteBreak = '> ```text\n> first\n\n> second\n> ```\nAfter';
+    const unprefixedQuoteBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(unprefixedQuoteBreak, (info, code) => {
+      unprefixedQuoteBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> BLOCK\n> second\n> ```\nAfter');
+    assert.deepEqual(unprefixedQuoteBlocks, [{ info: 'text', code: 'first\n' }]);
+
     const wideQuotedListBlank = '10. > ```text\n    > hello\n    >\n    > again\n    > ```';
     const wideQuotedListBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(wideQuotedListBlank, (info, code) => {
