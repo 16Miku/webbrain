@@ -164,6 +164,31 @@ function listContinuationContainer(source, position, prefix, indentation) {
   return null;
 }
 
+function lineBelongsToContainer(line, container) {
+  const quotePrefix = line.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
+  const quoteDepth = (quotePrefix.match(/>/g) || []).length;
+  if (quoteDepth !== container.quoteDepth) return false;
+  if (!container.listPrefix) return true;
+
+  const content = line.slice(quotePrefix.length);
+  if (!content.trim()) return false;
+  const indent = indentationColumns(content.match(/^[ \t]*/)?.[0] || '');
+  return indent >= indentationColumns(container.listPrefix);
+}
+
+function unfinishedContainerEnd(source, start, container) {
+  if (!container.quoteDepth && !container.listPrefix) return source.length;
+  const remainder = source.slice(start);
+  let offset = start;
+  for (const match of remainder.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
+    if (!match[0]) break;
+    const line = match[0].replace(/\r?\n$/, '');
+    if (!lineBelongsToContainer(line, container)) return offset;
+    offset += match[0].length;
+  }
+  return source.length;
+}
+
 function normalizeContainerCode(code, prefixOrContainer) {
   const { quoteDepth, listPrefix } = typeof prefixOrContainer === 'object'
     ? prefixOrContainer
@@ -254,11 +279,14 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
     }
   }
 
-  if (block) output.push(block.prefix + renderBlock(
-    block.info,
-    normalizeContainerCode(source.slice(block.start), block.container),
-  ));
-  else output.push(source.slice(cursor));
+  if (block) {
+    const end = unfinishedContainerEnd(source, block.start, block.container);
+    output.push(block.prefix + renderBlock(
+      block.info,
+      normalizeContainerCode(source.slice(block.start, end), block.container),
+    ));
+    output.push(source.slice(end));
+  } else output.push(source.slice(cursor));
   return output.join('');
 }
 

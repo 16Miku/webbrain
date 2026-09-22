@@ -205,6 +205,25 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(renderSkillMarkdown(cases[2][0]), /<blockquote>[\s\S]*<pre><code>const value = true;\n<\/code><\/pre>/);
   });
 
+  test(`${build}: unfinished container fences stop at their container boundary`, () => {
+    const cases = [
+      ['> ```text\n> hello\n\nOutside', '> BLOCK\nOutside'],
+      ['- ```text\n  hello\n\n- Next', '- BLOCK\n- Next'],
+    ];
+    for (const [source, expected] of cases) {
+      const blocks = [];
+      const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
+        blocks.push({ info, code });
+        return 'BLOCK';
+      });
+      assert.deepEqual(blocks, [{ info: 'text', code: 'hello\n' }]);
+      assert.equal(remaining, expected);
+      assert.equal(preContents(formatMarkdown(source)).length, 1);
+    }
+    assert.match(formatMarkdown(cases[0][0]), /Outside/);
+    assert.match(formatMarkdown(cases[1][0]), /Next/);
+  });
+
   test(`${build}: tab-indented list fences use visual indentation columns`, () => {
     const source = '-\t```text\n\tvalue\n\t```\nAfter';
     const blocks = [];
