@@ -139,6 +139,13 @@ for (const build of ['chrome', 'firefox']) {
     const indentedListFence = '    - ```text\n      hello\n      ```\nAfter';
     assert.equal(helpers.replaceMarkdownCodeFences(indentedListFence, () => 'BLOCK'), indentedListFence);
 
+    for (const indentedContainerFence of [
+      '>     > ```text\n>     > hello\n>     > ```\nAfter',
+      '>     - ```text\n>     - hello\n>     - ```\nAfter',
+    ]) {
+      assert.equal(helpers.replaceMarkdownCodeFences(indentedContainerFence, () => 'BLOCK'), indentedContainerFence);
+    }
+
     const excessListPadding = '-     ```text\n    literal\n    ```\nAfter';
     assert.equal(helpers.replaceMarkdownCodeFences(excessListPadding, () => 'BLOCK'), excessListPadding);
 

@@ -59,24 +59,28 @@ export function codeFenceLanguage(infoString) {
 
 function fenceContainer(prefix, indentation = '') {
   const source = String(prefix);
-  const quotePrefix = source.match(/^(?:[ \t]*>[ \t]?)+/)?.[0] || '';
+  const quotePrefix = quotePrefixAt(source);
   let remainder = source;
   let listPrefix = '';
   let quoteDepth = 0;
+  let overIndentedQuote = false;
   const listIndentGroups = [0];
   while (remainder) {
-    const quote = remainder.match(/^[ \t]*>[ \t]?/);
+    const containerStartColumn = indentationColumns(source.slice(0, source.length - remainder.length));
+    // Preserve a deeply indented quote only long enough to resolve a
+    // continuation from an enclosing list; it is never a container itself.
+    const quote = quoteMarkerAt(remainder, containerStartColumn, true);
     if (quote) {
       quoteDepth += 1;
+      overIndentedQuote ||= quote.overIndented;
       listIndentGroups.push(0);
-      remainder = remainder.slice(quote[0].length);
+      remainder = remainder.slice(quote.length);
       continue;
     }
-    const listStartColumn = indentationColumns(source.slice(0, source.length - remainder.length));
-    const list = listPrefixAt(remainder, listStartColumn);
+    const list = listPrefixAt(remainder, containerStartColumn);
     if (!list) break;
     listPrefix += list;
-    listIndentGroups[listIndentGroups.length - 1] += indentationColumnsAt(list, listStartColumn) - listStartColumn;
+    listIndentGroups[listIndentGroups.length - 1] += indentationColumnsAt(list, containerStartColumn) - containerStartColumn;
     remainder = remainder.slice(list.length);
   }
   return {
@@ -84,6 +88,7 @@ function fenceContainer(prefix, indentation = '') {
     quoteDepth,
     listPrefix,
     listIndentGroups,
+    overIndentedQuote,
     leadingQuoteIndent: indentationColumns(source.match(/^[ \t]*(?=>)/)?.[0] || ''),
     rawPrefix: source,
     indentation: String(indentation),
@@ -108,7 +113,7 @@ function listPrefixAt(value, startColumn = 0) {
   const leadingIndentation = marker?.[0].match(/^[ \t]*/)?.[0] || '';
   const next = source[marker?.[0].length];
   if (!marker
-    || (startColumn === 0 && indentationColumns(leadingIndentation) > 3)
+    || indentationColumnsAt(leadingIndentation, startColumn) - startColumn > 3
     || (next && !/^[ \t]$/.test(next))) return null;
   let offset = marker[0].length;
   let column = indentationColumnsAt(marker[0], startColumn);
@@ -122,18 +127,35 @@ function listPrefixAt(value, startColumn = 0) {
   return source.slice(0, marker[0].length + (paddingColumns <= 4 ? offset - marker[0].length : 1));
 }
 
-function quoteMarkerAt(value, startColumn = 0) {
+function quoteMarkerAt(value, startColumn = 0, allowOverIndentation = false) {
   let offset = 0;
   let column = startColumn;
   while (/^[ \t]$/.test(value[offset] || '')) {
     const width = value[offset] === '\t' ? 4 - (column % 4) : 1;
-    if (column + width - startColumn > 3) break;
+    if (!allowOverIndentation && column + width - startColumn > 3) break;
     column += width;
     offset += 1;
   }
   const marker = String(value).slice(offset).match(/^>[ \t]?/);
   if (!marker) return null;
-  return { length: offset + marker[0].length, column: indentationColumnsAt(marker[0], column) };
+  return {
+    length: offset + marker[0].length,
+    column: indentationColumnsAt(marker[0], column),
+    overIndented: column - startColumn > 3,
+  };
+}
+
+function quotePrefixAt(value, startColumn = 0) {
+  const source = String(value);
+  let offset = 0;
+  let column = startColumn;
+  while (offset < source.length) {
+    const quote = quoteMarkerAt(source.slice(offset), column);
+    if (!quote) break;
+    offset += quote.length;
+    column = quote.column;
+  }
+  return source.slice(0, offset);
 }
 
 function fenceIndentationColumns(container) {
@@ -248,7 +270,7 @@ function outerFenceCloserAfterNested(
 
     const validOpening = match.fence[0] !== '`' || !match.info.includes('`');
     if (!validOpening || !match.info.trim()) continue;
-    const nestedContainer = (fenceIndentationColumns(container) > 3 || container.leadingQuoteIndent > 3)
+    const nestedContainer = (fenceIndentationColumns(container) > 3 || container.leadingQuoteIndent > 3 || container.overIndentedQuote)
       ? listContinuationContainer(source, match.index, match.prefix, match.indentation, noListScanPositions)
       : container;
     if (!nestedContainer) continue;
@@ -312,7 +334,7 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       return noList();
     }
 
-    const quotePrefix = line.match(/^(?:[ \t]*>[ \t]?)+/)?.[0] || '';
+    const quotePrefix = quotePrefixAt(line);
     const content = line.slice(quotePrefix.length);
     const lineIndentation = content.match(/^[ \t]*/)?.[0] || '';
     const lineStartColumn = indentationColumns(quotePrefix);
@@ -399,12 +421,13 @@ function parseFenceLine(line) {
   let offset = 0;
   while (offset < line.length) {
     const segment = line.slice(offset);
-    const quote = segment.match(/^[ \t]*>[ \t]?/);
+    const segmentStartColumn = indentationColumns(line.slice(0, offset));
+    const quote = quoteMarkerAt(segment, segmentStartColumn, true);
     if (quote) {
-      offset += quote[0].length;
+      offset += quote.length;
       continue;
     }
-    const list = listPrefixAt(segment, indentationColumns(line.slice(0, offset)));
+    const list = listPrefixAt(segment, segmentStartColumn);
     if (!list) break;
     offset += list.length;
   }
@@ -477,13 +500,13 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       let openingContainer = container;
       let openingPrefix = prefix;
       if (!validOpening) continue;
-      const continuation = (fenceIndentationColumns(container) || container.leadingQuoteIndent)
+      const continuation = (fenceIndentationColumns(container) || container.leadingQuoteIndent || container.overIndentedQuote)
         ? listContinuationContainer(source, match.index, prefix, indentation, noListScanPositions)
         : null;
       if (continuation) {
         openingContainer = continuation;
         openingPrefix = `${prefix}${indentation}`;
-      } else if (fenceIndentationColumns(container) > 3 || container.leadingQuoteIndent > 3) {
+      } else if (fenceIndentationColumns(container) > 3 || container.leadingQuoteIndent > 3 || container.overIndentedQuote) {
         continue;
       }
       output.push(source.slice(cursor, match.index));
@@ -517,7 +540,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         block = null;
       }
     } else {
-      const nestedContainer = (fenceIndentationColumns(container) > 3 || container.leadingQuoteIndent > 3)
+      const nestedContainer = (fenceIndentationColumns(container) > 3 || container.leadingQuoteIndent > 3 || container.overIndentedQuote)
         ? listContinuationContainer(source, match.index, prefix, indentation, noListScanPositions)
         : container;
       const nestedCloserIndex = nestedContainer
