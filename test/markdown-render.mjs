@@ -64,6 +64,14 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
+  test(`${build}: Markdown wrappers keep over-indented fences literal`, () => {
+    const nested = '    ```js\nliteral\n';
+    const source = `\`\`\`markdown\n${nested}\`\`\`\nAfter`;
+    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(nested)]);
+    assert.match(formatMarkdown(source), /After/);
+    assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
+  });
+
   test(`${build}: fence length, marker and whole-line closers protect literal code`, () => {
     const cases = [
       ['````markdown', '```js\nconst x = 1;\n```\n', '````'],
