@@ -651,7 +651,7 @@ export default {
   'st.display.api_mutation_observer.label': "Observador de mutação de API",
   'st.display.api_mutation_observer.desc': "Observe URLs e métodos de solicitação de busca/XHR na mesma guia para que WebBrain possa detectar ações repetidas da interface do usuário e sugerir padrões de atalho de API. Ativado por padrão.",
   'st.display.webmcp.label': "WebMCP Experimental",
-  'st.display.webmcp.desc': "Permitir que WebBrain descubra e execute ferramentas estruturadas expostas pelas páginas Chrome suportadas. Habilitar isso adiciona ferramentas experimentais do WebMCP e orientação ao contexto do modelo. Desativado por padrão.",
+  'st.display.webmcp.desc': "Permitir que WebBrain descubra e execute ferramentas estruturadas expostas pelas páginas Chrome suportadas. Habilitar isso adiciona ferramentas experimentais do WebMCP e orientação ao contexto do modelo. Ativado por padrão.",
   'st.display.openai_ask_streaming.label': "Transmitir respostas no modo Ask",
   'st.display.openai_ask_streaming.desc': "Mostre as respostas do provedor assim que chegarem no modo Ask. As chamadas de ferramenta aguardam um evento final do fluxo; execu??es Act, Dev, agendadas, na nuvem e Continue permanecem sem streaming. Ativado por padr?o.",
   'st.display.plan_before_act.label': "Planeje antes de agir",

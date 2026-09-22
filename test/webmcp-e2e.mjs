@@ -272,6 +272,8 @@ async function initializeExtensionAgent(harness, tabId) {
     const { Agent } = await import(chrome.runtime.getURL('src/agent/agent.js'));
     const agent = new Agent({});
     globalThis.__webMCPAgentSmoke = agent;
+    // Explicitly exercise the disabled gate before running the enabled flow.
+    agent.setWebMCPEnabled(false);
     const disabledCatalog = await agent.executeTool(targetTabId, 'list_webmcp_tools', {});
     agent.setWebMCPEnabled(true);
     return disabledCatalog;

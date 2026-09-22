@@ -651,7 +651,7 @@ export default {
   'st.display.api_mutation_observer.label': "Người quan sát đột biến API",
   'st.display.api_mutation_observer.desc': "Quan sát các URL và phương thức yêu cầu XHR/tìm nạp cùng một tab để WebBrain có thể phát hiện các hành động giao diện người dùng lặp lại và đề xuất các mẫu phím tắt API. Bật theo mặc định.",
   'st.display.webmcp.label': "WebMCP thử nghiệm",
-  'st.display.webmcp.desc': "Cho phép WebBrain khám phá và chạy các công cụ có cấu trúc được hiển thị bởi các trang Chrome được hỗ trợ. Việc kích hoạt tính năng này sẽ bổ sung thêm các công cụ và hướng dẫn WebMCP thử nghiệm vào bối cảnh mô hình. Tắt theo mặc định.",
+  'st.display.webmcp.desc': "Cho phép WebBrain khám phá và chạy các công cụ có cấu trúc được hiển thị bởi các trang Chrome được hỗ trợ. Việc kích hoạt tính năng này sẽ bổ sung thêm các công cụ và hướng dẫn WebMCP thử nghiệm vào bối cảnh mô hình. Bật theo mặc định.",
   'st.display.openai_ask_streaming.label': "Truy?n tr?c tuy?n c?u tr? l?i ? ch? ?? Ask",
   'st.display.openai_ask_streaming.desc': "Hi?n th? c?u tr? l?i c?a nh? cung c?p ngay khi nh?n ???c trong ch? ?? Ask. L?nh g?i c?ng c? ch? s? ki?n k?t th?c lu?ng; c?c l?n ch?y Act, Dev, theo l?ch, ??m m?y v? Continue v?n kh?ng ph?t tr?c tuy?n. B?t theo m?c ??nh.",
   'st.display.plan_before_act.label': "Lập kế hoạch trước khi hành động",

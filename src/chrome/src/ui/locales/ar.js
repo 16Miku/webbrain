@@ -837,7 +837,7 @@ export default {
   'st.display.plan_before_act.strict': 'تخطيط صارم',
   'st.display.plan_before_act.off': 'معطل',
   "st.display.webmcp.label": "WebMCP تجريبي",
-  "st.display.webmcp.desc": "اسمح لـ WebBrain باكتشاف وتشغيل الأدوات المنظمة التي تعرضها صفحات Chrome المدعومة. يؤدي التفعيل إلى إضافة أدوات WebMCP التجريبية وإرشاداتها إلى سياق النموذج. معطل افتراضيًا.",
+  "st.display.webmcp.desc": "اسمح لـ WebBrain باكتشاف وتشغيل الأدوات المنظمة التي تعرضها صفحات Chrome المدعومة. يؤدي التفعيل إلى إضافة أدوات WebMCP التجريبية وإرشاداتها إلى سياق النموذج. مفعّل افتراضيًا.",
   // --- Recording, attachments, queue, progress, and voice input ---
   "sp.record.full_screen_started_html": "بدأ تسجيل الشاشة/النافذة. أوقفه بزر <strong>إيقاف</strong> في شريط التسجيل، أو بالضغط على <code>Escape</code> مرتين في WebBrain أو في صفحة المتصفح، أو باستخدام زر إيقاف المشاركة في Chrome. أضف <code>--hide-recording-indicator</code> لإبقاء الشريط خارج الفيديو.",
   "sp.record.full_screen_started_hidden_html": "بدأ تسجيل الشاشة/النافذة. اضغط على <code>Escape</code> مرتين في WebBrain أو في صفحة المتصفح للإيقاف، أو استخدم زر إيقاف المشاركة في Chrome.",

@@ -837,7 +837,7 @@ export default {
   'st.display.plan_before_act.strict': 'Mahigpit na pagpaplano',
   'st.display.plan_before_act.off': 'Naka-off',
   "st.display.webmcp.label": "Eksperimental na WebMCP",
-  "st.display.webmcp.desc": "Payagan ang WebBrain na tumuklas at magpatakbo ng mga structured tool na inilalantad ng mga suportadong Chrome page. Kapag in-enable, idinaragdag ang mga eksperimental na WebMCP tool at gabay sa context ng model. Naka-off bilang default.",
+  "st.display.webmcp.desc": "Payagan ang WebBrain na tumuklas at magpatakbo ng mga structured tool na inilalantad ng mga suportadong Chrome page. Kapag in-enable, idinaragdag ang mga eksperimental na WebMCP tool at gabay sa context ng model. Naka-on bilang default.",
   // --- Recording, attachments, queue, progress, and voice input ---
   "sp.record.full_screen_started_html": "Nagsimula na ang pag-record ng screen/window. Itigil ito gamit ang <strong>Itigil</strong> sa recording banner, sa pagpindot ng <code>Escape</code> nang dalawang beses sa WebBrain o sa pahina ng browser, o gamit ang Stop sharing control ng Chrome. Idagdag ang <code>--hide-recording-indicator</code> para hindi lumabas ang banner sa video.",
   "sp.record.full_screen_started_hidden_html": "Nagsimula na ang pag-record ng screen/window. Pindutin ang <code>Escape</code> nang dalawang beses sa WebBrain o sa pahina ng browser para huminto, o gamitin ang Stop sharing control ng Chrome.",

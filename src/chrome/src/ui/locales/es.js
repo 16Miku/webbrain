@@ -837,7 +837,7 @@ export default {
   'st.display.plan_before_act.strict': 'Planificación estricta',
   'st.display.plan_before_act.off': 'Desactivado',
   "st.display.webmcp.label": "WebMCP experimental",
-  "st.display.webmcp.desc": "Permite que WebBrain descubra y ejecute herramientas estructuradas expuestas por páginas de Chrome compatibles. Al activarlo, se añaden herramientas WebMCP experimentales y sus indicaciones al contexto del modelo. Desactivado por defecto.",
+  "st.display.webmcp.desc": "Permite que WebBrain descubra y ejecute herramientas estructuradas expuestas por páginas de Chrome compatibles. Al activarlo, se añaden herramientas WebMCP experimentales y sus indicaciones al contexto del modelo. Activado por defecto.",
   // --- Recording, attachments, queue, progress, and voice input ---
   "sp.record.full_screen_started_html": "Grabación de pantalla/ventana iniciada. Detenla con <strong>Detener</strong> en el banner de grabación, pulsando <code>Escape</code> dos veces en WebBrain o en una página del navegador, o con el control Dejar de compartir de Chrome. Añade <code>--hide-recording-indicator</code> para que el banner no aparezca en el vídeo.",
   "sp.record.full_screen_started_hidden_html": "Grabación de pantalla/ventana iniciada. Pulsa <code>Escape</code> dos veces en WebBrain o en una página del navegador para detenerla, o usa el control Dejar de compartir de Chrome.",
