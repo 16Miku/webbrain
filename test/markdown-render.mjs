@@ -156,6 +156,18 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: over-indented list code does not close a contained fence`, () => {
+    const source = '- ```text\n      ```\n  value\n  ```\nAfter';
+    const blocks = [];
+    const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
+      blocks.push({ info, code });
+      return 'BLOCK';
+    });
+    assert.deepEqual(blocks, [{ info: 'text', code: '    ```\nvalue\n' }]);
+    assert.equal(remaining, '- BLOCK\nAfter');
+    assert.match(formatMarkdown(source), /After/);
+  });
+
   test(`${build}: saved history uses an outer fence longer than all literal backticks`, () => {
     const text = value => ({ nodeType: 3, nodeValue: value });
     const element = (tagName, ...childNodes) => ({ nodeType: 1, tagName, childNodes });

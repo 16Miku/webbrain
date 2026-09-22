@@ -69,7 +69,9 @@ function fenceContainer(prefix, indentation = '') {
 function fenceCloserInContainer(opener, candidate) {
   if (opener.quoteDepth !== candidate.quoteDepth) return false;
   if (!opener.listPrefix) return !candidate.listPrefix && candidate.indentation.length <= 3;
-  return !candidate.listPrefix && candidate.indentation.length >= opener.listPrefix.length;
+  return !candidate.listPrefix
+    && candidate.indentation.length >= opener.listPrefix.length
+    && candidate.indentation.length <= opener.listPrefix.length + 3;
 }
 
 function normalizeContainerCode(code, prefix) {
