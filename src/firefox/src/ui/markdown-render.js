@@ -373,7 +373,9 @@ function listContinuationContainer(source, position, prefix, indentation, noList
     // A fenced continuation may be up to three columns deeper than ordinary
     // list content, so continue back to the enclosing list marker first.
     if (lineIndent < 2) {
-      if (!quotePrefix && !lineIndent && !current.quoteDepth) {
+      const lazyParagraph = !quotePrefix && !lineIndent && !current.quoteDepth
+        && !/^(?:#{1,6}(?:\s|$)|(?:[-+*]|\d+[.)])\s+|>|`{3,}|~{3,}|(?:[-*_]\s*){3,})/.test(content);
+      if (lazyParagraph) {
         if (!lineStart) break;
         lineEnd = lineStart - 1;
         if (source[lineEnd] === '\n') lineEnd -= 1;
