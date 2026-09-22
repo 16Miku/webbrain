@@ -308,14 +308,17 @@ function listContinuationContainer(source, position, prefix, indentation, noList
   );
   const cacheKey = `${current.quoteDepth}:${continuationIndent}:${current.leadingQuoteIndent}`;
   const cached = noListScanPositions.get(cacheKey);
-  if (cached?.container) return cached.container;
+  if (cached?.container && position < cached.end) return cached.container;
   const cachedPosition = cached?.noList;
   const noList = () => {
     noListScanPositions.set(cacheKey, { noList: position });
     return null;
   };
   const foundList = container => {
-    noListScanPositions.set(cacheKey, { container });
+    noListScanPositions.set(cacheKey, {
+      container,
+      end: unfinishedContainerEnd(source, position, container, new Map()),
+    });
     return container;
   };
   let lineEnd = position;
