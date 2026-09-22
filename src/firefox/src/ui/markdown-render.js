@@ -344,7 +344,12 @@ function listContinuationContainer(source, position, prefix, indentation, noList
     const missingQuotes = current.quoteDepth - precedingContainer.quoteDepth;
     if (missingQuotes < 0 || (missingQuotes && !current.leadingQuoteIndent)) return noList();
 
-    if (precedingContainer.listPrefix) {
+    const followsNonblankLine = lineStart > 0
+      && Boolean(source.slice(source.lastIndexOf('\n', lineStart - 2) + 1, lineStart - 1).trim());
+    const nonInterruptingOrderedMarker = followsNonblankLine && !current.quoteDepth
+      && /^[ \t]*\d{1,9}[.)][ \t]/.test(line)
+      && !/^[ \t]*1[.)][ \t]/.test(line);
+    if (precedingContainer.listPrefix && !nonInterruptingOrderedMarker) {
       let container = missingQuotes
         ? fenceContainer(`${precedingContainer.containerPrefix}${'> '.repeat(missingQuotes)}`)
         : precedingContainer;
@@ -374,7 +379,7 @@ function listContinuationContainer(source, position, prefix, indentation, noList
     // list content, so continue back to the enclosing list marker first.
     if (lineIndent < 2) {
       const lazyParagraph = !quotePrefix && !lineIndent && !current.quoteDepth
-        && !/^(?:#{1,6}(?:\s|$)|(?:[-+*]|\d+[.)])\s+|>|`{3,}|~{3,}|(?:[-*_]\s*){3,})/.test(content);
+        && !/^(?:#{1,6}(?:\s|$)|(?:[-+*]|1[.)])\s+|>|`{3,}|~{3,}|(?:[-*_]\s*){3,})/.test(content);
       if (lazyParagraph) {
         if (!lineStart) break;
         lineEnd = lineStart - 1;

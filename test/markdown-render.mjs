@@ -437,6 +437,14 @@ for (const build of ['chrome', 'firefox']) {
     }), '- item\n  > BLOCK\nAfter');
     assert.deepEqual(quoteListContinuationBlocks, [{ info: 'text', code: 'hello\n' }]);
 
+    const lazyOrderedParagraph = '- item\n2. continuation\n  ```text\n  hi\nOutside';
+    const lazyOrderedParagraphBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(lazyOrderedParagraph, (info, code) => {
+      lazyOrderedParagraphBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '- item\n2. continuation\n  BLOCK\nOutside');
+    assert.deepEqual(lazyOrderedParagraphBlocks, [{ info: 'text', code: 'hi\n' }]);
+
     const noCloser = '> ```text\n> inside\nOutside';
     const noCloserBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(noCloser, (info, code) => {
