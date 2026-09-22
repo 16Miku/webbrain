@@ -57,10 +57,22 @@ export function codeFenceLanguage(infoString) {
   return String(infoString || '').trim().split(/\s+/, 1)[0] || '';
 }
 
+function fenceContainer(prefix, indentation = '') {
+  const source = String(prefix);
+  const quotePrefix = source.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
+  const remainder = source.slice(quotePrefix.length);
+  const listPrefix = remainder.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/)?.[0] || '';
+  return { quotePrefix, listPrefix, indentation: String(indentation) };
+}
+
+function fenceCloserInContainer(opener, candidate) {
+  if (opener.quotePrefix !== candidate.quotePrefix) return false;
+  if (!opener.listPrefix) return !candidate.listPrefix;
+  return !candidate.listPrefix && candidate.indentation.length >= opener.listPrefix.length;
+}
+
 function normalizeContainerCode(code, prefix) {
-  const quotePrefix = String(prefix).match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
-  const listPrefix = String(prefix).slice(quotePrefix.length)
-    .match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+$/)?.[0] || '';
+  const { quotePrefix, listPrefix } = fenceContainer(prefix);
   if (!quotePrefix && !listPrefix) return code;
 
   const listIndent = listPrefix.length;
@@ -82,28 +94,30 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
   // renderer preserves (lists and blockquotes). The old unanchored matcher
   // accepted these forms, while a root-only matcher mistakes their closer for
   // a new opener and consumes the rest of the message as code.
-  const fenceLines = /^((?: {0,3}>[ \t]?)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?)[ \t]{0,3}(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/gm;
+  const fenceLines = /^((?: {0,3}>[ \t]?)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?)([ \t]{0,3})(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/gm;
   const output = [];
   let cursor = 0;
   let block = null;
   const stack = [];
 
   for (const match of source.matchAll(fenceLines)) {
-    const [, prefix, fence, info] = match;
+    const [, prefix, indentation, fence, info] = match;
+    const container = fenceContainer(prefix, indentation);
     const validOpening = fence[0] !== '`' || !info.includes('`');
     const markdown = /^(?:md|markdown)$/i.test(codeFenceLanguage(info));
     if (!block) {
       if (!validOpening) continue;
       output.push(source.slice(cursor, match.index));
-      block = { info, prefix, start: match.index + match[0].length };
-      stack.push({ fence, markdown });
+      block = { info, prefix, container, start: match.index + match[0].length };
+      stack.push({ fence, markdown, container });
       continue;
     }
 
     const active = stack[stack.length - 1];
     // A closing fence occupies its own line, has no info string, and is at
     // least as long as its opener. Backticks inside source code are literal.
-    if (!info.trim() && fence[0] === active.fence[0] && fence.length >= active.fence.length) {
+    if (fenceCloserInContainer(active.container, container)
+      && !info.trim() && fence[0] === active.fence[0] && fence.length >= active.fence.length) {
       stack.pop();
       if (!stack.length) {
         output.push(block.prefix + renderBlock(
@@ -118,7 +132,7 @@ export function replaceMarkdownCodeFences(value, renderBlock) {
       // Models sometimes wrap a README in ```markdown and reuse ```lang
       // inside it. Recover only this named Markdown nesting; ordinary code
       // and correctly longer outer fences retain their literal contents.
-      stack.push({ fence, markdown });
+      stack.push({ fence, markdown, container });
     }
   }
 

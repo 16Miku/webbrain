@@ -72,6 +72,18 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: container-prefixed markers do not close an outer fenced block`, () => {
+    const source = '~~~markdown\n> ~~~\n- ~~~\n> ```text\n~~~\n## Outside';
+    const blocks = [];
+    const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
+      blocks.push({ info, code });
+      return 'BLOCK';
+    });
+    assert.deepEqual(blocks, [{ info: 'markdown', code: '> ~~~\n- ~~~\n> ```text\n' }]);
+    assert.equal(remaining, 'BLOCK\n## Outside');
+    assert.match(formatMarkdown(source), /<h2>Outside<\/h2>/);
+  });
+
   test(`${build}: streamed open fences keep headings, HTML and nested examples literal`, () => {
     for (const content of [readme, '## Heading\n<img src=x onerror=alert(1)>\n', '']) {
       const source = `\`\`\`markdown\n${content}`;
@@ -150,6 +162,19 @@ for (const build of ['chrome', 'firefox']) {
       assert.deepEqual(preContents(renderSkillMarkdown(saved)), [escapeHtml(code)]);
       assert.deepEqual(preContents(formatMarkdown(saved)), [helpers.escapeCodeHtml(code)]);
     }
+  });
+
+  test(`${build}: history uses tilde fences for language labels containing backticks`, () => {
+    const text = value => ({ nodeType: 3, nodeValue: value });
+    const element = (tagName, ...childNodes) => ({ nodeType: 1, tagName, childNodes });
+    const code = '~~~\nconst value = true;\n';
+    const pre = element('PRE', element('CODE', text(code)));
+    pre.parentElement = { querySelector: () => ({ textContent: '`javascript`' }) };
+    const saved = historyTextFromElement(element('DIV', pre));
+    assert.match(saved, /^~~~~`javascript`\n~~~\nconst value = true;\n~~~~$/);
+    const source = `${saved}\n## After`;
+    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(code)]);
+    assert.match(formatMarkdown(source), /<h2>After<\/h2>/);
   });
 
   // Opt-in native DOM checks: WEBBRAIN_MARKDOWN_DOM=1 npm run test:markdown.

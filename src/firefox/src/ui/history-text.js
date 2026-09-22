@@ -132,9 +132,12 @@ export function historyTextFromElement(root, { markdown = true } = {}) {
       const code = output;
       // History must not reintroduce ambiguous fences around a Markdown
       // document (or any code sample containing literal backtick runs).
+      const fenceCharacter = language.includes('`') ? '~' : '`';
       let fenceLength = 3;
-      for (const match of code.matchAll(/`{3,}/g)) fenceLength = Math.max(fenceLength, match[0].length + 1);
-      const fence = '`'.repeat(fenceLength);
+      for (const match of code.matchAll(new RegExp(`${fenceCharacter}{3,}`, 'g'))) {
+        fenceLength = Math.max(fenceLength, match[0].length + 1);
+      }
+      const fence = fenceCharacter.repeat(fenceLength);
       output = `${beforeCode}${fence}${language}\n${code}${fence}`;
       return;
     }
