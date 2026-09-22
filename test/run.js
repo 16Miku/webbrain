@@ -62003,8 +62003,13 @@ test('Experimental WebMCP is Chrome-only, on by default, and present in default 
   assert.match(settings, /webMcpToggle\.checked = stored\.webMcpEnabled !== false/, 'setting should default on unless explicitly disabled');
   assert.match(settings, /webMcpEnabled:\s*webMcpToggle\.checked/, 'setting should persist changes');
   assert.match(background, /agent\.setWebMCPEnabled\(stored\.webMcpEnabled !== false\)/, 'background should hydrate the default-on gate');
+  assert.match(background, /loadWebMCPEnabled\(\)\.catch\(\(\) => \{\s*agent\.setWebMCPEnabled\(false\);/m, 'failed WebMCP preference hydration must fail closed');
   assert.match(background, /changes\.webMcpEnabled[\s\S]*agent\.setWebMCPEnabled\(changes\.webMcpEnabled\.newValue !== false\)/, 'storage changes should update the live gate');
   assert.match(locale, /'st\.display\.webmcp\.label': 'Experimental WebMCP'/, 'English setting label missing');
+  for (const filename of fs.readdirSync(path.join(ROOT, 'src/chrome/src/ui/locales')).filter((name) => name.endsWith('.js'))) {
+    const localized = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales', filename), 'utf8');
+    assert.doesNotMatch(localized, /["']st\.display\.webmcp\.desc["'][^\n]*(?:off|disabled|关闭|kapalı|вимк|wyłącz|خاموش|tắt|Desactivado|Désactivé|Desativado|выключ|꺼짐|オフ)/i, `${filename}: WebMCP disclosure must reflect the default-on setting`);
+  }
   assert.equal(ConfigTransferCh.DEFAULT_CONFIG_SETTINGS.webMcpEnabled, true, 'Chrome config export should preserve the default-on value');
   assert.equal(ConfigTransferFx.DEFAULT_CONFIG_SETTINGS.webMcpEnabled, true, 'Firefox config schema should preserve cross-browser config compatibility');
 
@@ -62013,7 +62018,8 @@ test('Experimental WebMCP is Chrome-only, on by default, and present in default 
   cdpClientCh.disableAllWebMCP = async () => { cleanupCalls++; return 0; };
   try {
     const agent = new AgentCh({});
-    assert.equal(agent.webMcpEnabled, true);
+    assert.equal(agent.webMcpEnabled, false, 'WebMCP should remain disabled until preference hydration succeeds');
+    agent.setWebMCPEnabled(true);
     assert.match(agent._buildSystemPrompt('ask'), /WEBMCP \(experimental/i, 'default Ask prompt should explain WebMCP');
     assert.equal(getToolsForModeCh('ask', { webMcpAvailable: agent.webMcpEnabled }).some(tool => tool.function.name === 'list_webmcp_tools'), true);
 

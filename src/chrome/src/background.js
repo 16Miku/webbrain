@@ -595,7 +595,9 @@ async function loadWebMCPEnabled() {
   const stored = await chrome.storage.local.get('webMcpEnabled');
   agent.setWebMCPEnabled(stored.webMcpEnabled !== false);
 }
-const webMcpEnabledReady = loadWebMCPEnabled().catch(() => {});
+const webMcpEnabledReady = loadWebMCPEnabled().catch(() => {
+  agent.setWebMCPEnabled(false);
+});
 
 // Profile auto-fill: user-provided text (name, email, etc.) that gets
 // appended to the system prompt when enabled. Plaintext in storage —

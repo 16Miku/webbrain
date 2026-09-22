@@ -837,7 +837,7 @@ export default {
   'st.display.plan_before_act.strict': 'Суворе планування',
   'st.display.plan_before_act.off': 'Вимкнено',
   "st.display.webmcp.label": "Експериментальний WebMCP",
-  "st.display.webmcp.desc": "Дозволяє WebBrain виявляти й запускати структуровані інструменти, які надають підтримувані сторінки Chrome. Увімкнення додає експериментальні інструменти WebMCP та підказки до контексту моделі. Типово вимкнено.",
+  "st.display.webmcp.desc": "Дозволяє WebBrain виявляти й запускати структуровані інструменти, які надають підтримувані сторінки Chrome. Увімкнення додає експериментальні інструменти WebMCP та підказки до контексту моделі. Типово увімкнено.",
   // --- Recording, attachments, queue, progress, and voice input ---
   "sp.record.full_screen_started_html": "Запис екрана/вікна розпочато. Зупиніть його кнопкою <strong>Зупинити</strong> на банері запису, двічі натиснувши <code>Escape</code> у WebBrain або на сторінці браузера, або кнопкою Chrome «Припинити спільний доступ». Додайте <code>--hide-recording-indicator</code>, щоб банер не потрапив у відео.",
   "sp.record.full_screen_started_hidden_html": "Запис екрана/вікна розпочато. Щоб зупинити, двічі натисніть <code>Escape</code> у WebBrain або на сторінці браузера, або скористайтеся кнопкою Chrome «Припинити спільний доступ».",

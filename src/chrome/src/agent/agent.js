@@ -1018,10 +1018,9 @@ export class Agent extends LoopDetector {
     // Defaults to true at extension runtime via background.js and Settings.
     this.strictSecretMode = false;
 
-    // Experimental Chrome WebMCP integration. On by default so supported
-    // pages can expose structured tools without an opt-in step. Users can
-    // opt out from Settings → General → Advanced.
-    this.webMcpEnabled = true;
+    // Keep WebMCP unavailable until the persisted setting is successfully
+    // hydrated. A missing value defaults on, while storage failures fail closed.
+    this.webMcpEnabled = false;
 
     // Profile auto-fill: when enabled, the user's profile text (name,
     // email, throwaway password, etc.) is appended to the system prompt

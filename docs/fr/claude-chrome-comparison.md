@@ -101,7 +101,7 @@ de la surface de base, y compris `execute_js` réservé au mode Dev, est partag�
 | Lecture/extraction | `read_page`, `read_pdf`, `read_page_source`, `extract_data`, `inspect_element_styles`, `get_selection`, `find_text` |
 | Édition et diagnostic Dev | `inject_css`, `remove_injected_css`, `patch_element`, `revert_patch`, `execute_js`, `read_console`, `inspect_network_requests`, `inspect_event_listeners`, `highlight_element` |
 | Shadow DOM et cadres | `get_shadow_dom`, `shadow_dom_query` sur Chrome, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type`, `promote_iframe` |
-| WebMCP (expérimental) | `list_webmcp_tools`, `execute_webmcp_tool` sur les versions Chrome compatibles lorsque l'option est activée |
+| WebMCP (expérimental, activé par défaut) | `list_webmcp_tools`, `execute_webmcp_tool` sur les versions Chrome compatibles lorsque l'option est activée |
 | Réseau et fichiers | `fetch_url`, `research_url`, `list_downloads`, `read_downloaded_file`, `download_resource_from_page`, `download_files`, `upload_file` |
 | Travail longue durée | `schedule_resume`, `schedule_task`, `scratchpad_write`, `progress_update`, `progress_read` |
 | Sécurité/flux de travail | `verify_form`, `clarify`, `done`, `solve_captcha` |
