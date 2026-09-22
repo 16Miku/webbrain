@@ -265,9 +265,8 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
     const { prefix, indentation, fence, info } = match;
     const container = fenceContainer(prefix, indentation);
     if (block) {
-      const activeContainer = stack[stack.length - 1].container;
-      const boundary = unfinishedContainerEnd(source, block.start, activeContainer);
-      if (boundary < match.index) {
+      const boundary = block.boundary;
+      if (boundary <= match.index) {
         const wasClosingFence = isFenceCloser(stack[stack.length - 1], container, fence, info);
         const code = source.slice(block.start, boundary);
         const needsBoundaryNewline = /\r?\n$/.test(code) && !/^\r?\n/.test(source.slice(boundary));
@@ -296,7 +295,14 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         openingPrefix = `${prefix}${indentation}`;
       }
       output.push(source.slice(cursor, match.index));
-      block = { info, prefix: openingPrefix, container: openingContainer, start: match.index + match.raw.length };
+      const start = match.index + match.raw.length;
+      block = {
+        info,
+        prefix: openingPrefix,
+        container: openingContainer,
+        start,
+        boundary: unfinishedContainerEnd(source, start, openingContainer),
+      };
       stack.push({ fence, markdown, container: openingContainer });
       continue;
     }
@@ -325,7 +331,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
   }
 
   if (block) {
-    const end = unfinishedContainerEnd(source, block.start, block.container);
+    const end = block.boundary;
     output.push(block.prefix + renderBlock(
       block.info,
       normalizeContainerCode(source.slice(block.start, end), block.container),

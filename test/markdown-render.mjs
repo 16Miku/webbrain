@@ -265,6 +265,17 @@ for (const build of ['chrome', 'firefox']) {
       { info: 'js', code: 'code\n' },
     ]);
 
+    const adjacentBlock = '> ```text\n> inside\n```js\ncode\n```\nAfter';
+    const adjacentBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(adjacentBlock, (info, code) => {
+      adjacentBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> BLOCK\nBLOCK\nAfter');
+    assert.deepEqual(adjacentBlocks, [
+      { info: 'text', code: 'inside\n' },
+      { info: 'js', code: 'code\n' },
+    ]);
+
     const quotedList = '> - ```text\n>   hello\n>\n>   again\n>   ```';
     const quotedListBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(quotedList, (info, code) => {
