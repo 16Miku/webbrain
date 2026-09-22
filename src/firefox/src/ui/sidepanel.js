@@ -12413,7 +12413,7 @@ function scheduleMathRender() {
 function formatMarkdown(text, options = {}) {
   if (!text) return '';
   const enhance = options.enhance !== false;
-  const streaming = options.streaming === true || !enhance;
+  const streaming = options.recoverNestedMarkdown !== false;
 
   // 1. Extract fenced code blocks BEFORE escaping HTML
   const codeBlocks = [];

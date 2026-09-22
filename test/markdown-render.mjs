@@ -228,6 +228,14 @@ for (const build of ['chrome', 'firefox']) {
       return 'BLOCK';
     }), '- BLOCK');
     assert.deepEqual(listBlocks, [{ info: 'text', code: 'hello\n\nagain' }]);
+
+    const escapedQuote = '> ```text\n> inside\nOutside\n> ```\nAfter';
+    const quoteBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(escapedQuote, (info, code) => {
+      quoteBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> BLOCK\nOutside\n> ```\nAfter');
+    assert.deepEqual(quoteBlocks, [{ info: 'text', code: 'inside\n' }]);
   });
 
   test(`${build}: tab-indented list fences use visual indentation columns`, () => {

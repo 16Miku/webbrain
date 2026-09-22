@@ -217,6 +217,22 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
   for (let matchIndex = 0; matchIndex < matches.length; matchIndex += 1) {
     const match = matches[matchIndex];
     const [, prefix, indentation, fence, info] = match;
+    if (block) {
+      const activeContainer = stack[stack.length - 1].container;
+      const boundary = unfinishedContainerEnd(source, block.start, activeContainer);
+      if (boundary < match.index) {
+        const code = source.slice(block.start, boundary);
+        const needsBoundaryNewline = /\r?\n$/.test(code) && !/^\r?\n/.test(source.slice(boundary));
+        output.push(block.prefix + renderBlock(
+          block.info,
+          normalizeContainerCode(code, block.container),
+        ) + (needsBoundaryNewline ? '\n' : ''));
+        cursor = boundary;
+        block = null;
+        stack.length = 0;
+        continue;
+      }
+    }
     const container = fenceContainer(prefix, indentation);
     const validOpening = fence[0] !== '`' || !info.includes('`');
     const markdown = /^(?:md|markdown)$/i.test(codeFenceLanguage(info));
