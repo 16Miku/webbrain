@@ -344,11 +344,15 @@ function listContinuationContainer(source, position, prefix, indentation, noList
     const missingQuotes = current.quoteDepth - precedingContainer.quoteDepth;
     if (missingQuotes < 0 || (missingQuotes && !current.leadingQuoteIndent)) return noList();
 
+    const quotePrefix = quotePrefixAt(line);
+    const content = line.slice(quotePrefix.length);
+    const sameQuoteContainer = precedingContainer.quoteDepth === current.quoteDepth
+      && (!current.quoteDepth || Boolean(quotePrefix));
     const followsNonblankLine = lineStart > 0
       && Boolean(source.slice(source.lastIndexOf('\n', lineStart - 2) + 1, lineStart - 1).trim());
-    const nonInterruptingOrderedMarker = followsNonblankLine && !current.quoteDepth
-      && (/^[ \t]*\d{1,9}[.)][ \t]*$/.test(line)
-        || (/^[ \t]*\d{1,9}[.)][ \t]/.test(line) && !/^[ \t]*1[.)][ \t]/.test(line)));
+    const nonInterruptingOrderedMarker = followsNonblankLine && sameQuoteContainer
+      && (/^[ \t]*\d{1,9}[.)][ \t]*$/.test(content)
+        || (/^[ \t]*\d{1,9}[.)][ \t]/.test(content) && !/^[ \t]*1[.)][ \t]/.test(content)));
     if (precedingContainer.listPrefix && !nonInterruptingOrderedMarker) {
       let container = missingQuotes
         ? fenceContainer(`${precedingContainer.containerPrefix}${'> '.repeat(missingQuotes)}`)
@@ -370,8 +374,6 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       return noList();
     }
 
-    const quotePrefix = quotePrefixAt(line);
-    const content = line.slice(quotePrefix.length);
     const lineIndentation = content.match(/^[ \t]*/)?.[0] || '';
     const lineStartColumn = indentationColumns(quotePrefix);
     const lineIndent = indentationColumnsAt(lineIndentation, lineStartColumn) - lineStartColumn;
@@ -379,7 +381,7 @@ function listContinuationContainer(source, position, prefix, indentation, noList
     // list content, so continue back to the enclosing list marker first.
     if (lineIndent < 2) {
       const thematicBreak = /^(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})$/.test(content);
-      const lazyParagraph = !quotePrefix && !lineIndent && !current.quoteDepth
+      const lazyParagraph = sameQuoteContainer && !lineIndent
         && !thematicBreak
         && !/^(?:#{1,6}(?:\s|$)|(?:[-+*]|1[.)])[ \t]+\S|>|`{3,}|~{3,})/.test(content);
       if (lazyParagraph) {
