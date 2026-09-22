@@ -160,6 +160,17 @@ function isFenceCloser(opener, candidate, fence, info) {
     && fence.length >= opener.fence.length;
 }
 
+function nestedFenceCloserAhead(matches, startIndex, fence, container) {
+  const nested = { fence, container };
+  const limit = Math.min(matches.length, startIndex + 65);
+  for (let index = startIndex + 1; index < limit; index += 1) {
+    const candidate = matches[index];
+    const candidateContainer = fenceContainer(candidate.prefix, candidate.indentation);
+    if (isFenceCloser(nested, candidateContainer, candidate.fence, candidate.info)) return true;
+  }
+  return false;
+}
+
 function listContinuationContainer(source, position, prefix, indentation, noListScanPositions) {
   const current = fenceContainer(prefix, indentation);
   const continuationIndent = Math.max(
@@ -377,8 +388,9 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         ? listContinuationContainer(source, match.index, prefix, indentation, noListScanPositions)
         : container;
       if (streaming && active.markdown && validOpening && info.trim()
-        && fence[0] === active.fence[0] && fence.length >= active.fence.length
         && nestedContainer
+        && (fence[0] === active.fence[0]
+          || nestedFenceCloserAhead(matches, matchIndex, fence, nestedContainer))
         && (!active.container.quoteDepth && !active.container.listPrefix
           || fenceCloserInContainer(active.container, nestedContainer))) {
         // Models sometimes wrap a README in ```markdown and reuse ```lang
