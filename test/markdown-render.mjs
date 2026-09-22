@@ -202,6 +202,14 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(preContents(formatMarkdown(source)).length, 1);
     }
     assert.match(renderSkillMarkdown(cases[2][0]), /<blockquote>[\s\S]*<pre><code>const value = true;\n<\/code><\/pre>/);
+
+    const shortIndent = '- item\n  ```text\n  hello\n\nAfter';
+    const shortBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(shortIndent, (info, code) => {
+      shortBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '- item\n  BLOCK\nAfter');
+    assert.deepEqual(shortBlocks, [{ info: 'text', code: 'hello\n' }]);
   });
 
   test(`${build}: fences in nested list and quote containers preserve following content`, () => {
@@ -219,6 +227,22 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(remaining, expected);
       assert.equal(preContents(formatMarkdown(source)).length, 1);
     }
+
+    const listQuote = '- > ```text\n  >   hello\n  > ```';
+    const listQuoteBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(listQuote, (info, code) => {
+      listQuoteBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '- > BLOCK');
+    assert.deepEqual(listQuoteBlocks, [{ info: 'text', code: '  hello\n' }]);
+
+    const nestedQuoteList = '> - > ```js\n>   > code\n>   > ```';
+    const nestedQuoteListBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(nestedQuoteList, (info, code) => {
+      nestedQuoteListBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> - > BLOCK');
+    assert.deepEqual(nestedQuoteListBlocks, [{ info: 'js', code: 'code\n' }]);
   });
 
   test(`${build}: unfinished container fences stop at their container boundary`, () => {
