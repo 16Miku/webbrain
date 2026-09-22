@@ -112,7 +112,7 @@ function indentationColumns(value) {
 
 function listPrefixAt(value, startColumn = 0) {
   const source = String(value);
-  const marker = source.match(/^[ \t]*(?:[-+*]|\d+[.)])/);
+  const marker = source.match(/^[ \t]*(?:[-+*]|\d{1,9}[.)])/);
   const leadingIndentation = marker?.[0].match(/^[ \t]*/)?.[0] || '';
   const next = source[marker?.[0].length];
   if (!marker
