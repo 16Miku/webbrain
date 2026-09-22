@@ -405,6 +405,14 @@ for (const build of ['chrome', 'firefox']) {
     }), '> BLOCK\n> second\n> ```\nAfter');
     assert.deepEqual(unprefixedQuoteBlocks, [{ info: 'text', code: 'first\n' }]);
 
+    const mixedQuoteListBreak = '> - ```text\n>   first\n\n>   second\n>   ```\nAfter';
+    const mixedQuoteListBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(mixedQuoteListBreak, (info, code) => {
+      mixedQuoteListBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> - BLOCK\n>   second\n>   ```\nAfter');
+    assert.deepEqual(mixedQuoteListBlocks, [{ info: 'text', code: 'first\n' }]);
+
     const wideQuotedListBlank = '10. > ```text\n    > hello\n    >\n    > again\n    > ```';
     const wideQuotedListBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(wideQuotedListBlank, (info, code) => {

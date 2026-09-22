@@ -394,7 +394,7 @@ function unfinishedContainerEnd(source, start, container, boundaryCache) {
       end = pendingBlankStart ?? offset;
       break;
     }
-    if (pendingBlankStart != null && container.quoteDepth && !container.listPrefix) {
+    if (pendingBlankStart != null && container.quoteDepth) {
       end = pendingBlankStart;
       break;
     }
