@@ -347,8 +347,8 @@ function listContinuationContainer(source, position, prefix, indentation, noList
     const followsNonblankLine = lineStart > 0
       && Boolean(source.slice(source.lastIndexOf('\n', lineStart - 2) + 1, lineStart - 1).trim());
     const nonInterruptingOrderedMarker = followsNonblankLine && !current.quoteDepth
-      && /^[ \t]*\d{1,9}[.)][ \t]/.test(line)
-      && !/^[ \t]*1[.)][ \t]/.test(line);
+      && (/^[ \t]*\d{1,9}[.)][ \t]*$/.test(line)
+        || (/^[ \t]*\d{1,9}[.)][ \t]/.test(line) && !/^[ \t]*1[.)][ \t]/.test(line)));
     if (precedingContainer.listPrefix && !nonInterruptingOrderedMarker) {
       let container = missingQuotes
         ? fenceContainer(`${precedingContainer.containerPrefix}${'> '.repeat(missingQuotes)}`)
@@ -378,8 +378,10 @@ function listContinuationContainer(source, position, prefix, indentation, noList
     // A fenced continuation may be up to three columns deeper than ordinary
     // list content, so continue back to the enclosing list marker first.
     if (lineIndent < 2) {
+      const thematicBreak = /^(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})$/.test(content);
       const lazyParagraph = !quotePrefix && !lineIndent && !current.quoteDepth
-        && !/^(?:#{1,6}(?:\s|$)|(?:[-+*]|1[.)])\s+|>|`{3,}|~{3,}|(?:[-*_]\s*){3,})/.test(content);
+        && !thematicBreak
+        && !/^(?:#{1,6}(?:\s|$)|(?:[-+*]|1[.)])[ \t]+\S|>|`{3,}|~{3,})/.test(content);
       if (lazyParagraph) {
         if (!lineStart) break;
         lineEnd = lineStart - 1;

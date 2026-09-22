@@ -445,6 +445,16 @@ for (const build of ['chrome', 'firefox']) {
     }), '- item\n2. continuation\n  BLOCK\nOutside');
     assert.deepEqual(lazyOrderedParagraphBlocks, [{ info: 'text', code: 'hi\n' }]);
 
+    for (const continuation of ['2.', '2. ', '1.', '1. ', '---text', '-_*']) {
+      const source = `- item\n${continuation}\n  \`\`\`text\n  hi\nOutside`;
+      const blocks = [];
+      assert.equal(helpers.replaceMarkdownCodeFences(source, (info, code) => {
+        blocks.push({ info, code });
+        return 'BLOCK';
+      }), `- item\n${continuation}\n  BLOCK\nOutside`);
+      assert.deepEqual(blocks, [{ info: 'text', code: 'hi\n' }]);
+    }
+
     const noCloser = '> ```text\n> inside\nOutside';
     const noCloserBlocks = [];
     assert.equal(helpers.replaceMarkdownCodeFences(noCloser, (info, code) => {
