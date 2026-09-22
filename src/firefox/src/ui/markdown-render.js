@@ -74,8 +74,9 @@ function fenceContainer(prefix, indentation = '') {
     }
     const list = remainder.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/);
     if (!list) break;
+    const listStartColumn = indentationColumns(source.slice(0, source.length - remainder.length));
     listPrefix += list[0];
-    listIndentGroups[listIndentGroups.length - 1] += indentationColumns(list[0]);
+    listIndentGroups[listIndentGroups.length - 1] += indentationColumnsAt(list[0], listStartColumn) - listStartColumn;
     remainder = remainder.slice(list[0].length);
   }
   return {
@@ -89,12 +90,16 @@ function fenceContainer(prefix, indentation = '') {
   };
 }
 
-function indentationColumns(value) {
-  let columns = 0;
+function indentationColumnsAt(value, startColumn = 0) {
+  let columns = startColumn;
   for (const character of String(value)) {
     columns += character === '\t' ? 4 - (columns % 4) : 1;
   }
   return columns;
+}
+
+function indentationColumns(value) {
+  return indentationColumnsAt(value);
 }
 
 function consumeIndentationColumns(line, columns) {
@@ -282,11 +287,19 @@ function lineIsBlankInContainer(line, container) {
   return stripContainerPrefix(line, container) === '';
 }
 
-function unfinishedContainerEnd(source, start, container) {
+function containerBoundaryKey(container) {
+  return `${container.quoteDepth}:${container.leadingQuoteIndent}:${container.listPrefix}:${container.listIndentGroups.join(',')}`;
+}
+
+function unfinishedContainerEnd(source, start, container, boundaryCache) {
   if (!container.quoteDepth && !container.listPrefix) return source.length;
+  const key = containerBoundaryKey(container);
+  const cached = boundaryCache.get(key);
+  if (cached && start >= cached.start && start <= cached.end) return cached.end;
   const remainder = source.slice(start);
   let offset = start;
   let pendingBlankStart = null;
+  let end = source.length;
   for (const match of remainder.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
     if (!match[0]) break;
     const line = match[0].replace(/\r?\n$/, '');
@@ -295,11 +308,15 @@ function unfinishedContainerEnd(source, start, container) {
       offset += match[0].length;
       continue;
     }
-    if (!lineBelongsToContainer(line, container)) return pendingBlankStart ?? offset;
+    if (!lineBelongsToContainer(line, container)) {
+      end = pendingBlankStart ?? offset;
+      break;
+    }
     pendingBlankStart = null;
     offset += match[0].length;
   }
-  return source.length;
+  boundaryCache.set(key, { start, end });
+  return end;
 }
 
 function normalizeContainerCode(code, prefixOrContainer, fenceIndentation = 0) {
@@ -357,6 +374,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
   let block = null;
   const stack = [];
   const noListScanPositions = new Map();
+  const containerBoundaryCache = new Map();
 
   const matches = markdownFenceLines(source);
   const containers = matches.map(match => fenceContainer(match.prefix, match.indentation));
@@ -417,7 +435,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
         start,
         openingEndsWithNewline: /\r?\n$/.test(match.raw),
         fenceIndentation: fenceIndentationInContainer(container, openingContainer),
-        boundary: unfinishedContainerEnd(source, start, openingContainer),
+        boundary: unfinishedContainerEnd(source, start, openingContainer, containerBoundaryCache),
       };
       stack.push({ fence, markdown, container: openingContainer });
       continue;

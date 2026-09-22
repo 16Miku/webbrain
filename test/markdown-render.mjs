@@ -447,6 +447,14 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(blocks, [{ info: 'text', code: 'value\n' }]);
     assert.equal(remaining, '-\tBLOCK\nAfter');
     assert.equal(helpers.replaceMarkdownCodeFences('\t```js\nIndented example.', () => 'BLOCK'), '\t```js\nIndented example.');
+
+    const quotedList = '> -\t```text\n>   hello\n>   ```\nAfter';
+    const quotedListBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(quotedList, (info, code) => {
+      quotedListBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> -\tBLOCK\nAfter');
+    assert.deepEqual(quotedListBlocks, [{ info: 'text', code: 'hello\n' }]);
   });
 
   test(`${build}: saved history uses an outer fence longer than all literal backticks`, () => {
