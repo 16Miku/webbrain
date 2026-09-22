@@ -372,7 +372,16 @@ function listContinuationContainer(source, position, prefix, indentation, noList
     const lineIndent = indentationColumnsAt(lineIndentation, lineStartColumn) - lineStartColumn;
     // A fenced continuation may be up to three columns deeper than ordinary
     // list content, so continue back to the enclosing list marker first.
-    if (lineIndent < 2) return noList();
+    if (lineIndent < 2) {
+      if (!quotePrefix && !lineIndent && !current.quoteDepth) {
+        if (!lineStart) break;
+        lineEnd = lineStart - 1;
+        if (source[lineEnd] === '\n') lineEnd -= 1;
+        if (source[lineEnd] === '\r') lineEnd -= 1;
+        continue;
+      }
+      return noList();
+    }
 
     if (!lineStart) break;
     lineEnd = lineStart - 1;
