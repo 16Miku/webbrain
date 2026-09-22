@@ -180,7 +180,9 @@ function listContinuationContainer(source, position, prefix, indentation) {
     }
 
     const lineIndent = indentationColumns(content.match(/^[ \t]*/)?.[0] || '');
-    if (lineIndent < continuationIndent) break;
+    // A fenced continuation may be up to three columns deeper than ordinary
+    // list content, so continue back to the enclosing list marker first.
+    if (lineIndent < 2) break;
 
     if (!lineStart) break;
     lineEnd = lineStart - 1;

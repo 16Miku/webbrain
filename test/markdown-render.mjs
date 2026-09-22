@@ -218,6 +218,14 @@ for (const build of ['chrome', 'firefox']) {
       return 'BLOCK';
     }), '- item\n  BLOCK\nAfter');
     assert.deepEqual(shortBlocks, [{ info: 'text', code: 'hello\n' }]);
+
+    const extraIndent = '10. item\n    continuation\n       ```js\n       code\n       ```';
+    const extraIndentBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(extraIndent, (info, code) => {
+      extraIndentBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '10. item\n    continuation\n       BLOCK');
+    assert.deepEqual(extraIndentBlocks, [{ info: 'js', code: '   code\n' }]);
   });
 
   test(`${build}: fences in nested list and quote containers preserve following content`, () => {
