@@ -333,6 +333,7 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       let container = missingQuotes
         ? fenceContainer(`${precedingContainer.containerPrefix}${'> '.repeat(missingQuotes)}`)
         : precedingContainer;
+      if (!missingQuotes) container = { ...container, rawPrefix: container.containerPrefix };
       const emptyListMarker = line.match(/^[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]*$/);
       if (emptyListMarker) {
         const marker = emptyListMarker[0].replace(/[ \t]+$/, '');
