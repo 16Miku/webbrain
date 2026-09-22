@@ -358,10 +358,11 @@ function listContinuationContainer(source, position, prefix, indentation, noList
       && (!current.quoteDepth || Boolean(quotePrefix));
     const followsNonblankLine = lineStart > 0
       && Boolean(source.slice(source.lastIndexOf('\n', lineStart - 2) + 1, lineStart - 1).trim());
-    const nonInterruptingOrderedMarker = followsNonblankLine && sameQuoteContainer
-      && (/^[ \t]*\d{1,9}[.)][ \t]*$/.test(content)
+    const nonInterruptingListMarker = followsNonblankLine && sameQuoteContainer
+      && (/^[ \t]*[-+*][ \t]*$/.test(content)
+        || /^[ \t]*\d{1,9}[.)][ \t]*$/.test(content)
         || (/^[ \t]*\d{1,9}[.)][ \t]/.test(content) && !/^[ \t]*1[.)][ \t]/.test(content)));
-    if (precedingContainer.listPrefix && !nonInterruptingOrderedMarker) {
+    if (precedingContainer.listPrefix && !nonInterruptingListMarker) {
       let container = missingQuotes
         ? fenceContainer(`${precedingContainer.containerPrefix}${'> '.repeat(missingQuotes)}`)
         : precedingContainer;

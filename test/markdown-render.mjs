@@ -463,6 +463,16 @@ for (const build of ['chrome', 'firefox']) {
       assert.deepEqual(blocks, [{ info: 'text', code: 'hi\n' }]);
     }
 
+    for (const marker of ['-', '- ', '*', '+\t']) {
+      const source = `10. item\n${marker}\n    \`\`\`text\n    hi\n  outside`;
+      const blocks = [];
+      assert.equal(helpers.replaceMarkdownCodeFences(source, (info, code) => {
+        blocks.push({ info, code });
+        return 'BLOCK';
+      }), `10. item\n${marker}\n    BLOCK\n  outside`);
+      assert.deepEqual(blocks, [{ info: 'text', code: 'hi\n' }]);
+    }
+
     for (const interruptingHtml of ['<!-- done -->', '<?done?>', '<!DOCTYPE html>', '<![CDATA[x]]>', '<div>', '</div>']) {
       const source = `- item\n${interruptingHtml}\n  \`\`\`text\n  hi\nOutside`;
       const blocks = [];
