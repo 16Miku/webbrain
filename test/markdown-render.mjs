@@ -42,7 +42,7 @@ for (const build of ['chrome', 'firefox']) {
         assert.deepEqual(preContents(html), [helpers.escapeCodeHtml(readme)]);
         assert.equal((html.match(/class="code-copy-btn"/g) || []).length, enhance ? 1 : 0);
         assert.match(html, /<h2>Next steps<\/h2>Review it\./);
-        assert.doesNotMatch(html, /<script>|<h[1-6]>Role|<br>text<br>|<br>bash<br>/);
+        assert.doesNotMatch(html, /<script>|<h[1-6]>Role|<br>text<br>|<br>bash<br>/i);
       }
       assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(readme)]);
     }
