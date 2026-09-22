@@ -10799,7 +10799,7 @@ function renderStreamedAssistantMarkdownNow(textEl) {
   if (!textEl || textEl.dataset.suppressToolCallStream === 'true') return;
   const streamedText = getStreamedAssistantText(textEl);
   if (!streamedText) return;
-  textEl.innerHTML = formatMarkdown(streamedText, { enhance: false });
+  textEl.innerHTML = formatMarkdown(streamedText, { enhance: false, recoverNestedMarkdown: true });
   scrollToBottom();
 }
 
@@ -12413,7 +12413,7 @@ function scheduleMathRender() {
 function formatMarkdown(text, options = {}) {
   if (!text) return '';
   const enhance = options.enhance !== false;
-  const streaming = options.recoverNestedMarkdown !== false;
+  const streaming = options.recoverNestedMarkdown === true;
 
   // 1. Extract fenced code blocks BEFORE escaping HTML
   const codeBlocks = [];

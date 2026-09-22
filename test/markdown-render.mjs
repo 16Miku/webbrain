@@ -37,7 +37,7 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: nested README remains one complete, copyable Markdown block`, () => {
     for (const language of ['markdown', 'md', 'MARKDOWN']) {
       const source = draft.replace('```markdown', `\`\`\`${language}`);
-      for (const [options, copyButton] of [[{ streaming: true }, true], [{ enhance: false }, false]]) {
+      for (const [options, copyButton] of [[{ recoverNestedMarkdown: true }, true], [{ enhance: false, recoverNestedMarkdown: true }, false]]) {
         const html = formatMarkdown(source, options);
         assert.deepEqual(preContents(html), [helpers.escapeCodeHtml(readme)]);
         assert.equal((html.match(/class="code-copy-btn"/g) || []).length, copyButton ? 1 : 0);
@@ -48,51 +48,62 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: completed Markdown keeps standard fence boundaries`, () => {
+    const source = '```markdown\n```js\nliteral\n```\nVisible prose\n```js\nindependent\n```\nAfter';
+    const html = formatMarkdown(source);
+    assert.deepEqual(preContents(html), [
+      helpers.escapeCodeHtml('```js\nliteral\n'),
+      helpers.escapeCodeHtml('independent\n'),
+    ]);
+    assert.match(html, /Visible prose/);
+    assert.match(html, /After/);
+  });
+
   test(`${build}: Markdown wrappers retain longer nested fences`, () => {
     const nested = '# Example\n\n````js\nconst value = true;\n````\n\n## After';
     const source = `\`\`\`markdown\n${nested}\n\`\`\`\n\n## Outside`;
-    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(`${nested}\n`)]);
-    assert.match(formatMarkdown(source), /<h2>Outside<\/h2>/);
+    assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(`${nested}\n`)]);
+    assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /<h2>Outside<\/h2>/);
     assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(`${nested}\n`)]);
   });
 
   test(`${build}: Markdown wrappers retain list-prefixed nested fences`, () => {
     const nested = '- ```js\n  code\n  ```\n- after\n';
     const source = `\`\`\`markdown\n${nested}\`\`\`\nOutside`;
-    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(nested)]);
-    assert.match(formatMarkdown(source), /Outside/);
+    assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(nested)]);
+    assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /Outside/);
     assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
   test(`${build}: Markdown wrappers keep over-indented fences literal`, () => {
     const nested = '    ```js\nliteral\n';
     const source = `\`\`\`markdown\n${nested}\`\`\`\nAfter`;
-    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(nested)]);
-    assert.match(formatMarkdown(source), /After/);
+    assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(nested)]);
+    assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /After/);
     assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
   test(`${build}: Markdown wrappers retain alternate nested fence markers`, () => {
     const nested = '~~~text\n```\n~~~\n';
     const source = `\`\`\`markdown\n${nested}\`\`\`\nAfter`;
-    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(nested)]);
-    assert.match(formatMarkdown(source), /After/);
+    assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(nested)]);
+    assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /After/);
     assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
   test(`${build}: Markdown wrappers retain distant alternate fence closers`, () => {
     const nested = `~~~text\n${'```x\n'.repeat(64)}~~~\n`;
     const source = `\`\`\`markdown\n${nested}\`\`\`\nAfter`;
-    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(nested)]);
-    assert.match(formatMarkdown(source), /After/);
+    assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(nested)]);
+    assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /After/);
     assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
   test(`${build}: Markdown wrappers leave unmatched nested fences literal`, () => {
     const nested = '```js\ncode\n';
     const source = `\`\`\`\`markdown\n${nested}\`\`\`\`\nAfter`;
-    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(nested)]);
-    assert.match(formatMarkdown(source), /After/);
+    assert.deepEqual(preContents(formatMarkdown(source, { recoverNestedMarkdown: true })), [helpers.escapeCodeHtml(nested)]);
+    assert.match(formatMarkdown(source, { recoverNestedMarkdown: true }), /After/);
     assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(nested)]);
   });
 
@@ -156,13 +167,13 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(formatMarkdown(source), /Outside/);
     assert.match(formatMarkdown(source), /After/);
     const incomplete = '```markdown\n```js\nconst value = true;\n```';
-    assert.deepEqual(preContents(formatMarkdown(incomplete, { enhance: false })), [escapeHtml('```js\nconst value = true;\n```')]);
+    assert.deepEqual(preContents(formatMarkdown(incomplete, { enhance: false, recoverNestedMarkdown: true })), [escapeHtml('```js\nconst value = true;\n```')]);
   });
 
   test(`${build}: streamed open fences keep headings, HTML and nested examples literal`, () => {
     for (const content of [readme, '## Heading\n<img src=x onerror=alert(1)>\n', '']) {
       const source = `\`\`\`markdown\n${content}`;
-      const html = formatMarkdown(source, { enhance: false });
+      const html = formatMarkdown(source, { enhance: false, recoverNestedMarkdown: true });
       assert.deepEqual(preContents(html), [escapeHtml(content)]);
       assert.deepEqual(preContents(renderSkillMarkdown(source)), [escapeHtml(content)]);
       assert.doesNotMatch(html, /<h[1-6]>|<img |code-copy-btn/);
@@ -176,7 +187,7 @@ for (const build of ['chrome', 'firefox']) {
     const start = '```markdown\n';
     for (let length = start.length; length <= start.length + readme.length; length += 1) {
       const prefix = (start + readme).slice(0, length);
-      const blocks = preContents(formatMarkdown(prefix, { enhance: false }));
+      const blocks = preContents(formatMarkdown(prefix, { enhance: false, recoverNestedMarkdown: true }));
       assert.equal(blocks.length, 1, `stream prefix ${length} split the document`);
     }
   });
@@ -540,9 +551,9 @@ for (const build of ['chrome', 'firefox']) {
         let copied = null;
         Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { copied = text; } } });
         const message = document.querySelector('#message');
-        message.innerHTML = format(source, { streaming: true });
+        message.innerHTML = format(source, { recoverNestedMarkdown: true });
         const streamed = message.querySelector('pre code').textContent;
-        message.innerHTML = format(source, { streaming: true });
+        message.innerHTML = format(source, { recoverNestedMarkdown: true });
         await new Promise(resolve => setTimeout(resolve, 20));
         message.querySelector('.code-copy-btn').click();
         await Promise.resolve();
