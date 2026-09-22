@@ -160,7 +160,7 @@ function isFenceCloser(opener, candidate, fence, info) {
     && fence.length >= opener.fence.length;
 }
 
-function nestedFenceCloserAhead(matches, containers, closerIndexes, cache, startIndex, fence, container) {
+function nestedFenceCloserIndex(matches, containers, closerIndexes, cache, startIndex, fence, container) {
   const key = `${fence[0]}:${fence.length}:${container.quoteDepth}:${container.listIndentGroups.join(',')}`;
   let compatible = cache.get(key);
   if (!compatible) {
@@ -177,7 +177,42 @@ function nestedFenceCloserAhead(matches, containers, closerIndexes, cache, start
     if (compatible[middle] <= startIndex) low = middle + 1;
     else high = middle;
   }
-  return low < compatible.length;
+  return low < compatible.length ? compatible[low] : -1;
+}
+
+function outerFenceCloserAfterNested(
+  source,
+  matches,
+  containers,
+  closerIndexes,
+  cache,
+  startIndex,
+  outer,
+  noListScanPositions,
+) {
+  for (let index = startIndex + 1; index < matches.length; index += 1) {
+    const match = matches[index];
+    const container = containers[index];
+    if (isFenceCloser(outer, container, match.fence, match.info)) return index;
+
+    const validOpening = match.fence[0] !== '`' || !match.info.includes('`');
+    if (!validOpening || !match.info.trim()) continue;
+    const nestedContainer = (indentationColumns(container.indentation) > 3 || container.leadingQuoteIndent > 3)
+      ? listContinuationContainer(source, match.index, match.prefix, match.indentation, noListScanPositions)
+      : container;
+    if (!nestedContainer) continue;
+    const nestedCloserIndex = nestedFenceCloserIndex(
+      matches,
+      containers,
+      closerIndexes,
+      cache,
+      index,
+      match.fence,
+      nestedContainer,
+    );
+    if (nestedCloserIndex >= 0) index = nestedCloserIndex;
+  }
+  return -1;
 }
 
 function listContinuationContainer(source, position, prefix, indentation, noListScanPositions) {
@@ -391,7 +426,8 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
     const active = stack[stack.length - 1];
     // A closing fence occupies its own line, has no info string, and is at
     // least as long as its opener. Backticks inside source code are literal.
-    if (isFenceCloser(active, container, fence, info)) {
+    const protectedNestedCloser = active.literalNestedCloserIndexes?.has(matchIndex);
+    if (!protectedNestedCloser && isFenceCloser(active, container, fence, info)) {
       stack.pop();
       if (!stack.length) {
         output.push(block.prefix + renderBlock(
@@ -406,24 +442,39 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
       const nestedContainer = (indentationColumns(container.indentation) > 3 || container.leadingQuoteIndent > 3)
         ? listContinuationContainer(source, match.index, prefix, indentation, noListScanPositions)
         : container;
+      const nestedCloserIndex = nestedContainer
+        ? nestedFenceCloserIndex(matches, containers, closerIndexes, nestedCloserCache, matchIndex, fence, nestedContainer)
+        : -1;
+      if (nestedCloserIndex >= 0 && active.nestedOuterCloserIndex === undefined) {
+        active.nestedOuterCloserIndex = outerFenceCloserAfterNested(
+          source,
+          matches,
+          containers,
+          closerIndexes,
+          nestedCloserCache,
+          nestedCloserIndex,
+          active,
+          noListScanPositions,
+        );
+      }
+      const outerCloserIndex = active.nestedOuterCloserIndex;
       if (streaming && active.markdown && validOpening && info.trim()
         && nestedContainer
-        && (fence[0] === active.fence[0]
-          || nestedFenceCloserAhead(
-            matches,
-            containers,
-            closerIndexes,
-            nestedCloserCache,
-            matchIndex,
-            fence,
-            nestedContainer,
-          ))
+        && nestedCloserIndex >= 0
+        && outerCloserIndex >= 0
         && (!active.container.quoteDepth && !active.container.listPrefix
           || fenceCloserInContainer(active.container, nestedContainer))) {
         // Models sometimes wrap a README in ```markdown and reuse ```lang
         // inside it. Recover only this named Markdown nesting; ordinary code
         // and correctly longer outer fences retain their literal contents.
         stack.push({ fence, markdown, container: nestedContainer });
+      } else if (streaming && active.markdown && nestedCloserIndex >= 0
+        && outerCloserIndex === -1
+        && isFenceCloser(active, containers[nestedCloserIndex], matches[nestedCloserIndex].fence, matches[nestedCloserIndex].info)
+        && active.fence.length <= fence.length) {
+        // An unfinished same-length wrapper still needs to retain literal
+        // nested examples. A longer outer fence remains the outer closer.
+        (active.literalNestedCloserIndexes ||= new Set()).add(nestedCloserIndex);
       }
     }
   }
