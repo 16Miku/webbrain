@@ -204,6 +204,23 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(renderSkillMarkdown(cases[2][0]), /<blockquote>[\s\S]*<pre><code>const value = true;\n<\/code><\/pre>/);
   });
 
+  test(`${build}: fences in nested list and quote containers preserve following content`, () => {
+    const cases = [
+      ['- - ```js\n    const x = 1;\n    ```\n    **After**', '- - BLOCK\n    **After**'],
+      ['- > ```js\n  > const x = 1;\n  > ```\n  After', '- > BLOCK\n  After'],
+    ];
+    for (const [source, expected] of cases) {
+      const blocks = [];
+      const remaining = helpers.replaceMarkdownCodeFences(source, (info, code) => {
+        blocks.push({ info, code });
+        return 'BLOCK';
+      });
+      assert.deepEqual(blocks, [{ info: 'js', code: 'const x = 1;\n' }]);
+      assert.equal(remaining, expected);
+      assert.equal(preContents(formatMarkdown(source)).length, 1);
+    }
+  });
+
   test(`${build}: unfinished container fences stop at their container boundary`, () => {
     const cases = [
       ['> ```text\n> hello\n\nOutside', '> BLOCK\nOutside'],

@@ -60,10 +60,23 @@ export function codeFenceLanguage(infoString) {
 function fenceContainer(prefix, indentation = '') {
   const source = String(prefix);
   const quotePrefix = source.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
-  const remainder = source.slice(quotePrefix.length);
-  const listPrefix = remainder.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/)?.[0] || '';
-  const quoteDepth = (quotePrefix.match(/>/g) || []).length;
-  return { quotePrefix, quoteDepth, listPrefix, indentation: String(indentation) };
+  let remainder = source;
+  let listPrefix = '';
+  let quoteDepth = 0;
+  while (remainder) {
+    const quote = remainder.match(/^ {0,3}>[ \t]?/);
+    if (quote) {
+      quoteDepth += 1;
+      remainder = remainder.slice(quote[0].length);
+      continue;
+    }
+    const list = remainder.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/);
+    if (!list) break;
+    listPrefix += list[0];
+    remainder = remainder.slice(list[0].length);
+  }
+  const leadingIndent = indentationColumns(source.match(/^[ \t]*(?=>)/)?.[0] || '');
+  return { quotePrefix, quoteDepth, listPrefix, leadingIndent, indentation: String(indentation) };
 }
 
 function indentationColumns(value) {
@@ -94,7 +107,7 @@ function stripIndentationColumns(line, columns) {
 
 function fenceCloserInContainer(opener, candidate) {
   if (opener.quoteDepth !== candidate.quoteDepth) return false;
-  const candidateIndent = indentationColumns(candidate.indentation);
+  const candidateIndent = candidate.leadingIndent + indentationColumns(candidate.indentation);
   if (!opener.listPrefix) return !candidate.listPrefix && candidateIndent <= 3;
   const listIndent = indentationColumns(opener.listPrefix);
   return !candidate.listPrefix
@@ -123,7 +136,7 @@ function listContinuationContainer(source, position, prefix, indentation) {
     if (quoteDepth !== current.quoteDepth) break;
 
     const content = line.slice(quotePrefix.length);
-    const listPrefix = content.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/)?.[0] || '';
+    const listPrefix = content.match(/^(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)+/)?.[0] || '';
     if (listPrefix) {
       const container = fenceContainer(`${quotePrefix}${listPrefix}`);
       const listIndent = indentationColumns(container.listPrefix);
@@ -147,7 +160,8 @@ function lineBelongsToContainer(line, container) {
 
   const content = line.slice(quotePrefix.length);
   if (!content.trim()) return false;
-  const indent = indentationColumns(content.match(/^[ \t]*/)?.[0] || '');
+  const quoteIndent = indentationColumns(quotePrefix.match(/^[ \t]*/)?.[0] || '');
+  const indent = quoteIndent + indentationColumns(content.match(/^[ \t]*/)?.[0] || '');
   return indent >= indentationColumns(container.listPrefix);
 }
 
@@ -213,7 +227,7 @@ export function replaceMarkdownCodeFences(value, renderBlock, { streaming = fals
   // renderer preserves (lists and blockquotes). The old unanchored matcher
   // accepted these forms, while a root-only matcher mistakes their closer for
   // a new opener and consumes the rest of the message as code.
-  const fenceLines = /^((?: {0,3}>[ \t]?)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?)([ \t]*)(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/gm;
+  const fenceLines = /^((?:(?: {0,3}>[ \t]?)|(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+))*)([ \t]*)(`{3,}|~{3,})([^\r\n]*)(?:\r?\n|$)/gm;
   const output = [];
   let cursor = 0;
   let block = null;
