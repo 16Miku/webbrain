@@ -187,7 +187,7 @@ for (const build of ['chrome', 'firefox']) {
       const pre = element('PRE', element('CODE', text(code)));
       pre.parentElement = { querySelector: () => ({ textContent: 'markdown' }) };
       const saved = historyTextFromElement(element('DIV', pre));
-      const firstFence = saved.match(/^(`+)markdown/)[1];
+      const firstFence = saved.match(/^(`+) markdown/)[1];
       assert.ok([...code.matchAll(/`+/g)].every(match => match[0].length < firstFence.length));
       assert.deepEqual(preContents(renderSkillMarkdown(saved)), [escapeHtml(code)]);
       assert.deepEqual(preContents(formatMarkdown(saved)), [helpers.escapeCodeHtml(code)]);
@@ -201,7 +201,20 @@ for (const build of ['chrome', 'firefox']) {
     const pre = element('PRE', element('CODE', text(code)));
     pre.parentElement = { querySelector: () => ({ textContent: '`javascript`' }) };
     const saved = historyTextFromElement(element('DIV', pre));
-    assert.match(saved, /^~~~~`javascript`\n~~~\nconst value = true;\n~~~~$/);
+    assert.match(saved, /^~~~~ `javascript`\n~~~\nconst value = true;\n~~~~$/);
+    const source = `${saved}\n## After`;
+    assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(code)]);
+    assert.match(formatMarkdown(source), /<h2>After<\/h2>/);
+  });
+
+  test(`${build}: history keeps tilde-prefixed labels separate from the fence`, () => {
+    const text = value => ({ nodeType: 3, nodeValue: value });
+    const element = (tagName, ...childNodes) => ({ nodeType: 1, tagName, childNodes });
+    const code = 'const value = true;\n';
+    const pre = element('PRE', element('CODE', text(code)));
+    pre.parentElement = { querySelector: () => ({ textContent: '~lang`x' }) };
+    const saved = historyTextFromElement(element('DIV', pre));
+    assert.match(saved, /^~~~ ~lang`x\nconst value = true;\n~~~$/);
     const source = `${saved}\n## After`;
     assert.deepEqual(preContents(formatMarkdown(source)), [helpers.escapeCodeHtml(code)]);
     assert.match(formatMarkdown(source), /<h2>After<\/h2>/);

@@ -138,7 +138,10 @@ export function historyTextFromElement(root, { markdown = true } = {}) {
         fenceLength = Math.max(fenceLength, match[0].length + 1);
       }
       const fence = fenceCharacter.repeat(fenceLength);
-      output = `${beforeCode}${fence}${language}\n${code}${fence}`;
+      // Keep an info string separate from the fence so a label beginning with
+      // the same marker cannot extend the opener past its matching closer.
+      const info = language ? ` ${language}` : '';
+      output = `${beforeCode}${fence}${info}\n${code}${fence}`;
       return;
     }
     if (markdown && tagName === 'CODE' && !inPre) {
