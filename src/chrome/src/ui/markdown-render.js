@@ -72,12 +72,12 @@ function fenceContainer(prefix, indentation = '') {
       remainder = remainder.slice(quote[0].length);
       continue;
     }
-    const list = remainder.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]/);
-    if (!list) break;
     const listStartColumn = indentationColumns(source.slice(0, source.length - remainder.length));
-    listPrefix += list[0];
-    listIndentGroups[listIndentGroups.length - 1] += indentationColumnsAt(list[0], listStartColumn) - listStartColumn;
-    remainder = remainder.slice(list[0].length);
+    const list = listPrefixAt(remainder, listStartColumn);
+    if (!list) break;
+    listPrefix += list;
+    listIndentGroups[listIndentGroups.length - 1] += indentationColumnsAt(list, listStartColumn) - listStartColumn;
+    remainder = remainder.slice(list.length);
   }
   return {
     quotePrefix,
@@ -100,6 +100,35 @@ function indentationColumnsAt(value, startColumn = 0) {
 
 function indentationColumns(value) {
   return indentationColumnsAt(value);
+}
+
+function listPrefixAt(value, startColumn = 0) {
+  const marker = String(value).match(/^[ \t]*(?:[-+*]|\d+[.)])/);
+  if (!marker || !/^[ \t]/.test(value[marker[0].length] || '')) return null;
+  let offset = marker[0].length;
+  let column = indentationColumnsAt(marker[0], startColumn);
+  let paddingColumns = 0;
+  while (/^[ \t]$/.test(value[offset] || '')) {
+    const width = value[offset] === '\t' ? 4 - (column % 4) : 1;
+    paddingColumns += width;
+    column += width;
+    offset += 1;
+  }
+  return String(value).slice(0, marker[0].length + (paddingColumns <= 4 ? offset - marker[0].length : 1));
+}
+
+function quoteMarkerAt(value, startColumn = 0) {
+  let offset = 0;
+  let column = startColumn;
+  while (/^[ \t]$/.test(value[offset] || '')) {
+    const width = value[offset] === '\t' ? 4 - (column % 4) : 1;
+    if (column + width - startColumn > 3) break;
+    column += width;
+    offset += 1;
+  }
+  const marker = String(value).slice(offset).match(/^>[ \t]?/);
+  if (!marker) return null;
+  return { length: offset + marker[0].length, column: indentationColumnsAt(marker[0], column) };
 }
 
 function fenceIndentationColumns(container) {
@@ -143,10 +172,10 @@ function stripContainerPrefix(line, container) {
     remainder = consumeIndentationColumns(remainder, listIndent, column);
     if (remainder == null) return null;
     column += listIndent;
-    const quote = remainder.match(/^ {0,3}>[ \t]?/);
+    const quote = quoteMarkerAt(remainder, column);
     if (!quote) return null;
-    column = indentationColumnsAt(quote[0], column);
-    remainder = remainder.slice(quote[0].length);
+    column = quote.column;
+    remainder = remainder.slice(quote.length);
   }
   if (!remainder.trim()) return '';
   return consumeIndentationColumns(remainder, container.listIndentGroups.at(-1), column);
@@ -370,9 +399,9 @@ function parseFenceLine(line) {
       offset += quote[0].length;
       continue;
     }
-    const list = segment.match(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]/);
+    const list = listPrefixAt(segment, indentationColumns(line.slice(0, offset)));
     if (!list) break;
-    offset += list[0].length;
+    offset += list.length;
   }
   const prefix = line.slice(0, offset);
   const indentation = line.slice(offset).match(/^[ \t]*/)?.[0] || '';

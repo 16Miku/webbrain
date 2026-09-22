@@ -138,6 +138,14 @@ for (const build of ['chrome', 'firefox']) {
 
     const excessListPadding = '-     ```text\n    literal\n    ```\nAfter';
     assert.equal(helpers.replaceMarkdownCodeFences(excessListPadding, () => 'BLOCK'), excessListPadding);
+
+    const paddedListFence = '-   ```text\n    hello\n    ```\nAfter';
+    const paddedListBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(paddedListFence, (info, code) => {
+      paddedListBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '-   BLOCK\nAfter');
+    assert.deepEqual(paddedListBlocks, [{ info: 'text', code: 'hello\n' }]);
   });
 
   test(`${build}: container-prefixed markers do not close an outer fenced block`, () => {
@@ -490,6 +498,14 @@ for (const build of ['chrome', 'firefox']) {
       return 'BLOCK';
     }), '- > -\tBLOCK\nAfter');
     assert.deepEqual(nestedQuotedListBlocks, [{ info: 'text', code: 'hello\n' }]);
+
+    const tabbedNestedQuote = '> \t> ```text\n> \t> hello\n> \t> ```\nAfter';
+    const tabbedNestedQuoteBlocks = [];
+    assert.equal(helpers.replaceMarkdownCodeFences(tabbedNestedQuote, (info, code) => {
+      tabbedNestedQuoteBlocks.push({ info, code });
+      return 'BLOCK';
+    }), '> \t> BLOCK\nAfter');
+    assert.deepEqual(tabbedNestedQuoteBlocks, [{ info: 'text', code: 'hello\n' }]);
   });
 
   test(`${build}: saved history uses an outer fence longer than all literal backticks`, () => {
