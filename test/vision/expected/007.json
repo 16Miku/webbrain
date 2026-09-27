@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "007",
+  "image": "images/007.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "loading",
+        "processing",
+        "reconnecting",
+        "import"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": null,
+      "kind": "literal",
+      "value": "Loading messages…",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "spinner",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "any",
+      "values": [
+        "loading",
+        "spinner",
+        "processing",
+        "reconnecting",
+        "progress"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "wait-blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "loading",
+        "wait",
+        "processing",
+        "reconnecting",
+        "not ready"
+      ],
+      "weight": 1,
+      "critical": false
+    }
+  ],
+  "successRubric": "Report the loading state and preserve Loading messages… without inventing completion."
+}

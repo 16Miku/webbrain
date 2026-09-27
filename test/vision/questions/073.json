@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "073",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "kanban-board",
+  "title": "İçerik takvimi",
+  "image": "images/073.png",
+  "question": "Which column contains “Model karşılaştırması”? Focus on the “İçerik takvimi” screen.",
+  "defaultPromptMode": "production"
+}

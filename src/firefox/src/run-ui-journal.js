@@ -43,19 +43,47 @@ export function runUiSnapshotForRequest(snapshot, requestedRequestId = '') {
   return String(snapshot?.requestId || '') === requested ? snapshot : null;
 }
 
+const RUN_UI_TOOL_RESULT_PREVIEW_CHARS = 500;
+
+function compactRunUiToolResult(result) {
+  const source = result && typeof result === 'object' && !Array.isArray(result) ? result : {};
+  const compacted = {};
+  if (typeof source.success === 'boolean') compacted.success = source.success;
+  if (typeof source.ok === 'boolean') compacted.ok = source.ok;
+  if (source.error) compacted.error = String(source.error).slice(0, 1000);
+  if (source.warning) compacted.warning = String(source.warning).slice(0, 1000);
+  if (source.summary) compacted.summary = String(source.summary).slice(0, 2000);
+  if (source.outcome) compacted.outcome = source.outcome;
+  if (typeof source.pageContent === 'string') {
+    compacted.pageContent = source.pageContent.slice(0, RUN_UI_TOOL_RESULT_PREVIEW_CHARS);
+    if (source.pageContentTruncated === true || source.pageContent.length > RUN_UI_TOOL_RESULT_PREVIEW_CHARS) {
+      compacted.pageContentTruncated = true;
+    }
+  } else if (typeof source.text === 'string' && source.text) {
+    compacted.text = source.text.slice(0, RUN_UI_TOOL_RESULT_PREVIEW_CHARS);
+    if (source.textTruncated === true || source.text.length > RUN_UI_TOOL_RESULT_PREVIEW_CHARS) {
+      compacted.textTruncated = true;
+    }
+  }
+  if (source.truncated === true) compacted.truncated = true;
+  if (source.hasMore === true) compacted.hasMore = true;
+  if (source.notice) compacted.notice = String(source.notice).slice(0, 300);
+  if (Object.keys(compacted).length === 0) {
+    try {
+      compacted.preview = String(JSON.stringify(source) || '{}').slice(0, 300);
+    } catch {
+      compacted.preview = '{}';
+    }
+  }
+  return compacted;
+}
+
 export function compactRunUiData(type, data) {
   if (!data || typeof data !== 'object') return data;
   if (type === 'tool_result') {
-    const result = data.result || {};
     return {
       name: data.name,
-      result: {
-        success: result.success,
-        ok: result.ok,
-        error: result.error ? String(result.error).slice(0, 1000) : undefined,
-        warning: result.warning ? String(result.warning).slice(0, 1000) : undefined,
-        summary: result.summary ? String(result.summary).slice(0, 2000) : undefined,
-      },
+      result: compactRunUiToolResult(data.result),
     };
   }
   if (type === 'text' || type === 'text_delta') {
@@ -170,12 +198,17 @@ export class RunUiJournal {
   }
 
   begin(tabId, requestId = '', metadata = {}) {
+    const attachmentCount = Number.isFinite(Number(metadata?.attachmentCount))
+      ? Math.max(0, Number(metadata.attachmentCount))
+      : 0;
     const snapshot = {
       tabId,
       requestId: createRunRequestId(tabId, requestId),
       mode: String(metadata?.mode || ''),
       kind: metadata?.kind === 'continue' ? 'continue' : 'chat',
       foreground: metadata?.foreground === true,
+      attachmentCount,
+      attachmentDeliveryState: attachmentCount ? 'sending' : '',
       runId: null,
       status: 'running',
       seq: 0,
@@ -207,6 +240,12 @@ export class RunUiJournal {
     if (!snapshot || String(snapshot.requestId) !== String(requestId)) return null;
     if (metadata?.mode) snapshot.mode = String(metadata.mode);
     if (typeof metadata?.foreground === 'boolean') snapshot.foreground = metadata.foreground;
+    if (Number.isFinite(Number(metadata?.attachmentCount))) {
+      snapshot.attachmentCount = Math.max(0, Number(metadata.attachmentCount));
+      if (snapshot.attachmentCount && !snapshot.attachmentDeliveryState) {
+        snapshot.attachmentDeliveryState = 'sending';
+      }
+    }
     if (!snapshot.kind && metadata?.kind) {
       snapshot.kind = metadata.kind === 'continue' ? 'continue' : 'chat';
     }
@@ -293,6 +332,9 @@ export class RunUiJournal {
         || (type === 'max_steps_reached' ? 'The run reached its maximum step limit.' : ''),
       ).slice(0, 2000);
     }
+    if (type === 'attachment_rejected' && Number(snapshot.attachmentCount || 0) > 0) {
+      snapshot.attachmentDeliveryState = 'not-sent';
+    }
     this._changed(tabId, snapshot, { eventType: type });
     return { ...event, requestId: snapshot.requestId, runId: snapshot.runId };
   }
@@ -317,7 +359,12 @@ export class RunUiJournal {
     const event = {
       seq: ++snapshot.seq,
       type: 'run_complete',
-      data: { status: snapshot.status, finalContent: snapshot.finalContent, endedAt: snapshot.endedAt },
+      data: {
+        status: snapshot.status,
+        finalContent: snapshot.finalContent,
+        endedAt: snapshot.endedAt,
+        attachmentDeliveryState: snapshot.attachmentDeliveryState || '',
+      },
       ts: snapshot.endedAt,
     };
     snapshot.events.push(event);
@@ -328,6 +375,19 @@ export class RunUiJournal {
       snapshot.truncatedBeforeSeq = snapshot.discardedBeforeSeq;
     }
     return this._changed(tabId, snapshot);
+  }
+
+  setAttachmentDeliveryState(tabId, requestId, state) {
+    const snapshot = this.snapshots.get(tabId);
+    const allowed = new Set(['sending', 'included', 'not-sent', 'unknown']);
+    if (!snapshot || snapshot.requestId !== requestId || !allowed.has(state)) return null;
+    if (Number(snapshot.attachmentCount || 0) <= 0) return snapshot;
+    snapshot.attachmentDeliveryState = state;
+    const terminalEvent = [...snapshot.events].reverse().find(event => event?.type === 'run_complete');
+    if (terminalEvent?.data && typeof terminalEvent.data === 'object') {
+      terminalEvent.data.attachmentDeliveryState = state;
+    }
+    return this._changed(tabId, snapshot, { attachmentDeliveryState: state });
   }
 
   restore(tabId, snapshot) {
@@ -345,6 +405,13 @@ export class RunUiJournal {
     if (typeof snapshot.mode !== 'string') snapshot.mode = '';
     if (snapshot.kind !== 'continue' && snapshot.kind !== 'chat') snapshot.kind = 'chat';
     if (snapshot.foreground !== true) snapshot.foreground = false;
+    const restoredAttachmentCount = Number(snapshot.attachmentCount || 0);
+    snapshot.attachmentCount = Number.isFinite(restoredAttachmentCount)
+      ? Math.max(0, restoredAttachmentCount)
+      : 0;
+    if (!['sending', 'included', 'not-sent', 'unknown'].includes(snapshot.attachmentDeliveryState)) {
+      snapshot.attachmentDeliveryState = snapshot.attachmentCount ? 'sending' : '';
+    }
     if (typeof snapshot.streamedText !== 'string') snapshot.streamedText = '';
     if (snapshot.streamedText.length > RUN_UI_STREAM_TEXT_LIMIT) {
       snapshot.streamedText = '';

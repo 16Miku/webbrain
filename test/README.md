@@ -123,6 +123,22 @@ The prompt asks the model for a 6-section structured caption (page purpose, exac
 
 Keep the two constants at the top of `vision-probe.mjs` in sync with `src/chrome/src/agent/agent.js` (`VISION_SYSTEM_PROMPT` and the user-message text). If the real prompt changes, update the probe so results stay comparable.
 
+### 100-case vision benchmark — `test/vision/`
+
+For model-to-model success rates rather than a one-image sanity check, use the
+100-case suite under `test/vision/`. It keeps the production prompt and request
+parameters, adds deterministic easy-to-challenging viewport images, weighted
+rubrics, per-difficulty/category summaries, and prompt-drift validation.
+
+```bash
+node test/vision/run.mjs --model Gemma-4-E2B-It
+node test/vision/run.mjs --model molmo2-8b --only 1,21,41,61,81
+npm run test:vision:validate
+```
+
+See `test/vision/README.md` for endpoint, hosted-provider, prompt-mode, scoring,
+and corpus-regeneration details.
+
 ## 5. Manual memory tutorial — `test/memory/`
 
 Static HTML tutorial for the user-memory feature. Serve it locally and drive it
@@ -135,3 +151,10 @@ python3 -m http.server 8765 -d test/memory
 Then open `http://127.0.0.1:8765/`. The page walks through `/memory --add`,
 form-derived learning, normal auto-learning, replaying saved memories into a
 later form, and Profile auto-fill.
+
+### Native browser dialogs
+
+`node --test test/browser-dialogs.mjs` covers dialog responses, per-tab ownership,
+Stop/abort, retained Dev sessions, and protocol races (included in `npm test`).
+`node test/browser-dialogs-e2e.mjs` uses installed Chrome through Playwright to
+verify real alert/confirm/prompt and beforeunload continuation.

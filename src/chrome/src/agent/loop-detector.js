@@ -28,7 +28,7 @@ export class LoopDetector {
     this.recentNavUrls = new Map(); // tabId -> [normalized URL, ...]
     // A model can walk ref_1, ref_2, … forever while every call looks unique
     // to the exact-argument loop detector. Track that semantic read pattern.
-    this.axReadStates = new Map(); // tabId -> { total, suspicious, nextPage, seenPages, warned }
+    this.axReadStates = new Map(); // tabId -> { total, suspicious, nextPage, scopeKey, seenPages, warned }
     // Scroll calls can keep returning success even when no pane moved. Track
     // repeated dead-end attempts separately so changing the amount or
     // interleaving reads cannot evade the generic loop detector.
@@ -46,6 +46,10 @@ export class LoopDetector {
     // separately so ref churn and interleaved close/Continue calls cannot
     // disguise the same challenge loop.
     this.verificationChallengeStates = new Map(); // tabId -> { key, active, reopenCount }
+    // Semantic carousel intent survives tool/selector/ref changes so a model
+    // cannot hide Next/Previous ping-pong by alternating arrows, AX clicks,
+    // screenshot points, and adapter navigation.
+    this.carouselIntentStates = new Map(); // tabId -> { history, cycleCount }
   }
 
   /**
@@ -161,6 +165,77 @@ export class LoopDetector {
     return { buf, key };
   }
 
+  _semanticCarouselIntent(name, args = {}, result = {}) {
+    let direction = '';
+    const key = String(args?.key || '');
+    if (name === 'carousel_navigate') direction = result?.traversalDirection === 'reverse' ? 'backward' : 'forward';
+    else if (name === 'press_keys' && key === 'ArrowRight') direction = 'forward';
+    else if (name === 'press_keys' && key === 'ArrowLeft') direction = 'backward';
+    else if (name === 'go_back') direction = 'backward';
+    const label = String(
+      args?.expected_name || args?.text || result?.name || result?.text
+      || result?.coordinateReconciliation?.target?.name || '',
+    ).replace(/\s+/g, ' ').trim().toLowerCase();
+    if (/^(next|sonraki)$/.test(label)) direction = 'forward';
+    if (/^(previous|prev|go back|önceki|geri)$/.test(label)) direction = 'backward';
+    if (!direction) return null;
+
+    const url = String(result?.resolvedUrl || result?.currentUrl || result?.pageUrl || '');
+    let canonical = String(result?.canonicalPostUrl || '');
+    let index = Number(result?.resolvedIndex ?? result?.requestedIndex);
+    try {
+      const parsed = new URL(url);
+      const parsedIndex = Number(parsed.searchParams.get('img_index'));
+      if (!Number.isInteger(index) && Number.isInteger(parsedIndex)) index = parsedIndex;
+      parsed.searchParams.delete('img_index');
+      if (!canonical) canonical = parsed.href;
+    } catch {}
+    return {
+      direction,
+      canonical: canonical || 'carousel',
+      index: Number.isInteger(index) ? index : null,
+      fingerprint: String(result?.visibleMediaFingerprint || '').slice(0, 320),
+    };
+  }
+
+  _checkSemanticCarouselLoop(tabId, name, args, result) {
+    const intent = this._semanticCarouselIntent(name, args, result);
+    if (!intent) return { kind: 'none', intent: null };
+    const previous = this.carouselIntentStates.get(tabId) || { history: [], cycleCount: 0 };
+    const history = previous.history.filter(entry => entry.canonical === intent.canonical);
+    history.push(intent);
+    if (history.length > 8) history.shift();
+    const last4 = history.slice(-4);
+    const directionCycle = last4.length === 4
+      && last4[0].direction === last4[2].direction
+      && last4[1].direction === last4[3].direction
+      && last4[0].direction !== last4[1].direction;
+    const indexCycle = last4.length === 4
+      && last4.every(entry => Number.isInteger(entry.index))
+      && last4[0].index === last4[2].index
+      && last4[1].index === last4[3].index
+      && last4[0].index !== last4[1].index;
+    if (!directionCycle && !indexCycle) {
+      this.carouselIntentStates.set(tabId, { history, cycleCount: previous.cycleCount });
+      return { kind: 'none', intent };
+    }
+    const cycleCount = previous.cycleCount + 1;
+    this.carouselIntentStates.set(tabId, { history, cycleCount });
+    if (cycleCount >= 2) {
+      this.carouselIntentStates.delete(tabId);
+      return {
+        kind: 'stop',
+        intent,
+        message: 'Stopped: carousel state oscillated between the same two slides twice across mixed Next/Previous tools. Re-read the current slide; do not press arrows, click Previous/Next, or reuse screenshot coordinates.',
+      };
+    }
+    return {
+      kind: 'nudge',
+      intent,
+      warning: '[CAROUSEL OSCILLATION: The page returned to a recently visited slide after alternating forward/back actions. Stop using arrows, coordinate clicks, and Previous/Next. On a supported Instagram permalink use carousel_navigate with a strictly increasing index; otherwise re-read the current page once.]',
+    };
+  }
+
   _detectLoop(buf, activeKey = null) {
     if (!buf || buf.length < 3) return null;
     // 1. Same key 3+ times in the window.
@@ -255,6 +330,7 @@ export class LoopDetector {
     this.recentNavUrls.delete(tabId);
     this._clearLoopState(tabId);
     this.verificationChallengeStates.delete(tabId);
+    this.carouselIntentStates.delete(tabId);
   }
 
   /**
@@ -302,35 +378,48 @@ export class LoopDetector {
       total: 0,
       suspicious: 0,
       nextPage: null,
+      scopeKey: null,
       seenPages: new Set(),
       warned: false,
     };
+    const scopeKeyFor = (value = {}) => JSON.stringify({
+      filter: String(value?.filter || 'all'),
+      maxDepth: Number.isFinite(Number(value?.maxDepth)) ? Number(value.maxDepth) : null,
+      maxChars: Number.isFinite(Number(value?.maxChars)) ? Number(value.maxChars) : null,
+      refId: typeof value?.ref_id === 'string' ? value.ref_id.trim() : '',
+    });
     const page = Number(args?.page || 1);
-    const hasRef = typeof args?.ref_id === 'string' && args.ref_id.trim() !== '';
-    const sequentialPage = !hasRef
-      && previous.total > 0
+    const currentScopeKey = scopeKeyFor(args);
+    const currentPageKey = `${currentScopeKey}|${page}`;
+    const sequentialPage = previous.total > 0
       && Number.isFinite(previous.nextPage)
       && page === previous.nextPage
-      && !previous.seenPages.has(page);
-    const repeatedRootOrPage = !hasRef && previous.total > 0 && !sequentialPage;
-    const content = String(result?.pageContent || '').trim();
-    const meaningfulLines = content ? content.split(/\r?\n/).filter(line => line.trim()).length : 0;
-    const suspicious = hasRef || repeatedRootOrPage || (hasRef && meaningfulLines <= 1);
+      && currentScopeKey === previous.scopeKey
+      && !previous.seenPages.has(currentPageKey);
+    const repeatedScopeOutOfSequence = previous.total > 0
+      && currentScopeKey === previous.scopeKey
+      && !sequentialPage;
+    const repeatedExactPage = previous.seenPages.has(currentPageKey);
+    // A first read of a new ref-anchored subtree is legitimate drill-down
+    // progress. Only repeated/out-of-order reads of the same scope are loop
+    // evidence; the total-read cap below still bounds endless ref hopping.
+    const suspicious = !sequentialPage && (repeatedExactPage || repeatedScopeOutOfSequence);
 
     const state = {
       total: previous.total + 1,
       suspicious: previous.suspicious + (suspicious ? 1 : 0),
       nextPage: Number.isFinite(Number(result?.nextPage)) ? Number(result.nextPage) : null,
+      scopeKey: scopeKeyFor(result?.continuationArgs || args),
       seenPages: new Set(previous.seenPages),
       warned: previous.warned,
     };
-    state.seenPages.add(page);
+    state.seenPages.add(currentPageKey);
     this.axReadStates.set(tabId, state);
 
-    // A root read followed by the exact returned nextPage can legitimately span
-    // large applications. Keep the consecutive-read cap for every other AX
-    // pattern, but do not stop a valid sequential pagination step.
-    if (state.suspicious >= 6 || (state.total >= 12 && (state.suspicious > 0 || !sequentialPage))) {
+    // A root or anchored-subtree read followed by the exact returned nextPage
+    // can legitimately span large applications. Keep the consecutive-read cap
+    // for every other AX pattern, but do not stop a valid sequential step.
+    if (state.suspicious >= 6 || (state.total >= 12 && !sequentialPage)) {
       this.axReadStates.delete(tabId);
       return {
         kind: 'stop',
@@ -514,9 +603,14 @@ export class LoopDetector {
       return this._noteHealthyLoopCall(tabId);
     }
     const { buf, key } = this._recordCall(tabId, toolName, toolArgs, toolResult);
+    const carouselLoop = this._checkSemanticCarouselLoop(tabId, toolName, toolArgs, toolResult);
+    if (carouselLoop.kind !== 'none') return carouselLoop;
     if (this._isBrowserMutationTool(toolName)) {
       const normalizeFailureScope = value => String(value).slice(0, 320);
-      const defaultFailureScope = normalizeFailureScope(`${toolName}|${bucketArgsKey(toolName, toolArgs)}`);
+      const carouselIntent = carouselLoop.intent;
+      const defaultFailureScope = normalizeFailureScope(carouselIntent
+        ? `carousel-${carouselIntent.direction}|${carouselIntent.canonical}`
+        : `${toolName}|${bucketArgsKey(toolName, toolArgs)}`);
       const failureScope = normalizeFailureScope(toolResult?.failureScope || defaultFailureScope);
       const equivalentFailureScopes = new Set([failureScope, defaultFailureScope]);
       if ((toolName === 'set_field' || toolName === 'type_ax') && typeof toolArgs?.ref_id === 'string') {

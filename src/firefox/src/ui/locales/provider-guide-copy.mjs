@@ -1,0 +1,141 @@
+export const providerGuideEnglish = Object.freeze({
+  'st.providers.subscription_guide.card_body': 'Have a {product} account or subscription instead of an API key?',
+  'st.providers.subscription_guide.card_link': 'See third-party proxy setup & risks',
+  'st.providers.subscription_guide.local_body': 'Using EasyCLIProxyAPI or CLIProxyAPI?',
+  'st.providers.subscription_guide.local_link': 'Read the setup, security & account-risk guide',
+});
+
+export const providerGuideTranslations = Object.freeze({
+  es: {
+    'st.providers.subscription_guide.card_body': '¿Tienes una cuenta o suscripción de {product} en lugar de una clave de API?',
+    'st.providers.subscription_guide.card_link': 'Ver la configuración y los riesgos del proxy de terceros',
+    'st.providers.subscription_guide.local_body': '¿Usas EasyCLIProxyAPI o CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Lee la guía de configuración, seguridad y riesgos para la cuenta',
+  },
+  fr: {
+    'st.providers.subscription_guide.card_body': 'Vous avez un compte ou un abonnement {product} plutôt qu’une clé API ?',
+    'st.providers.subscription_guide.card_link': 'Voir la configuration et les risques du proxy tiers',
+    'st.providers.subscription_guide.local_body': 'Vous utilisez EasyCLIProxyAPI ou CLIProxyAPI ?',
+    'st.providers.subscription_guide.local_link': 'Lire le guide de configuration, de sécurité et des risques pour le compte',
+  },
+  tr: {
+    'st.providers.subscription_guide.card_body': 'API anahtarı yerine bir {product} hesabınız veya aboneliğiniz mi var?',
+    'st.providers.subscription_guide.card_link': 'Üçüncü taraf proxy kurulumunu ve riskleri görün',
+    'st.providers.subscription_guide.local_body': 'EasyCLIProxyAPI veya CLIProxyAPI mi kullanıyorsunuz?',
+    'st.providers.subscription_guide.local_link': 'Kurulum, güvenlik ve hesap riski rehberini okuyun',
+  },
+  zh: {
+    'st.providers.subscription_guide.card_body': '没有 API 密钥，但有 {product} 账户或订阅？',
+    'st.providers.subscription_guide.card_link': '查看第三方代理设置与风险',
+    'st.providers.subscription_guide.local_body': '正在使用 EasyCLIProxyAPI 或 CLIProxyAPI？',
+    'st.providers.subscription_guide.local_link': '阅读设置、安全与账户风险指南',
+  },
+  ru: {
+    'st.providers.subscription_guide.card_body': 'Есть аккаунт или подписка {product} вместо ключа API?',
+    'st.providers.subscription_guide.card_link': 'Открыть настройку и риски стороннего прокси',
+    'st.providers.subscription_guide.local_body': 'Используете EasyCLIProxyAPI или CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Прочитать руководство по настройке, безопасности и рискам аккаунта',
+  },
+  uk: {
+    'st.providers.subscription_guide.card_body': 'Маєте обліковий запис або підписку {product} замість ключа API?',
+    'st.providers.subscription_guide.card_link': 'Переглянути налаштування й ризики стороннього проксі',
+    'st.providers.subscription_guide.local_body': 'Використовуєте EasyCLIProxyAPI або CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Прочитати посібник із налаштування, безпеки та ризиків для облікового запису',
+  },
+  ar: {
+    'st.providers.subscription_guide.card_body': 'هل لديك حساب أو اشتراك {product} بدلًا من مفتاح API؟',
+    'st.providers.subscription_guide.card_link': 'عرض إعداد وكيل الجهة الخارجية ومخاطره',
+    'st.providers.subscription_guide.local_body': 'هل تستخدم EasyCLIProxyAPI أو CLIProxyAPI؟',
+    'st.providers.subscription_guide.local_link': 'اقرأ دليل الإعداد والأمان ومخاطر الحساب',
+  },
+  ja: {
+    'st.providers.subscription_guide.card_body': 'API キーではなく {product} のアカウントまたはサブスクリプションをお持ちですか？',
+    'st.providers.subscription_guide.card_link': 'サードパーティプロキシの設定方法とリスクを見る',
+    'st.providers.subscription_guide.local_body': 'EasyCLIProxyAPI または CLIProxyAPI を使用していますか？',
+    'st.providers.subscription_guide.local_link': '設定、セキュリティ、アカウントリスクのガイドを読む',
+  },
+  ko: {
+    'st.providers.subscription_guide.card_body': 'API 키 대신 {product} 계정이나 구독이 있나요?',
+    'st.providers.subscription_guide.card_link': '서드파티 프록시 설정 및 위험 보기',
+    'st.providers.subscription_guide.local_body': 'EasyCLIProxyAPI 또는 CLIProxyAPI를 사용하나요?',
+    'st.providers.subscription_guide.local_link': '설정, 보안 및 계정 위험 안내 읽기',
+  },
+  id: {
+    'st.providers.subscription_guide.card_body': 'Punya akun atau langganan {product}, bukan kunci API?',
+    'st.providers.subscription_guide.card_link': 'Lihat penyiapan dan risiko proksi pihak ketiga',
+    'st.providers.subscription_guide.local_body': 'Menggunakan EasyCLIProxyAPI atau CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Baca panduan penyiapan, keamanan, dan risiko akun',
+  },
+  th: {
+    'st.providers.subscription_guide.card_body': 'มีบัญชีหรือการสมัครสมาชิก {product} แทนคีย์ API ใช่ไหม',
+    'st.providers.subscription_guide.card_link': 'ดูการตั้งค่าและความเสี่ยงของพร็อกซีบุคคลที่สาม',
+    'st.providers.subscription_guide.local_body': 'กำลังใช้ EasyCLIProxyAPI หรือ CLIProxyAPI ใช่ไหม',
+    'st.providers.subscription_guide.local_link': 'อ่านคู่มือการตั้งค่า ความปลอดภัย และความเสี่ยงของบัญชี',
+  },
+  ms: {
+    'st.providers.subscription_guide.card_body': 'Ada akaun atau langganan {product} dan bukannya kunci API?',
+    'st.providers.subscription_guide.card_link': 'Lihat persediaan dan risiko proksi pihak ketiga',
+    'st.providers.subscription_guide.local_body': 'Menggunakan EasyCLIProxyAPI atau CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Baca panduan persediaan, keselamatan dan risiko akaun',
+  },
+  tl: {
+    'st.providers.subscription_guide.card_body': 'May {product} account o subscription ka ba sa halip na API key?',
+    'st.providers.subscription_guide.card_link': 'Tingnan ang setup at mga panganib ng third-party proxy',
+    'st.providers.subscription_guide.local_body': 'Gumagamit ng EasyCLIProxyAPI o CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Basahin ang gabay sa setup, seguridad, at panganib sa account',
+  },
+  pl: {
+    'st.providers.subscription_guide.card_body': 'Masz konto lub subskrypcję {product} zamiast klucza API?',
+    'st.providers.subscription_guide.card_link': 'Zobacz konfigurację i ryzyko zewnętrznego proxy',
+    'st.providers.subscription_guide.local_body': 'Używasz EasyCLIProxyAPI lub CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Przeczytaj przewodnik po konfiguracji, bezpieczeństwie i ryzyku dla konta',
+  },
+  he: {
+    'st.providers.subscription_guide.card_body': 'יש לך חשבון או מינוי {product} במקום מפתח API?',
+    'st.providers.subscription_guide.card_link': 'הצגת הגדרת שרת ה-proxy מצד שלישי והסיכונים',
+    'st.providers.subscription_guide.local_body': 'משתמשים ב-EasyCLIProxyAPI או ב-CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'קריאת המדריך להגדרה, אבטחה וסיכוני חשבון',
+  },
+  hi: {
+    'st.providers.subscription_guide.card_body': 'API कुंजी के बजाय {product} खाता या सदस्यता है?',
+    'st.providers.subscription_guide.card_link': 'तृतीय-पक्ष प्रॉक्सी का सेटअप और जोखिम देखें',
+    'st.providers.subscription_guide.local_body': 'EasyCLIProxyAPI या CLIProxyAPI का उपयोग कर रहे हैं?',
+    'st.providers.subscription_guide.local_link': 'सेटअप, सुरक्षा और खाता-जोखिम मार्गदर्शिका पढ़ें',
+  },
+  pt: {
+    'st.providers.subscription_guide.card_body': 'Tem uma conta ou assinatura {product} em vez de uma chave de API?',
+    'st.providers.subscription_guide.card_link': 'Ver a configuração e os riscos do proxy de terceiros',
+    'st.providers.subscription_guide.local_body': 'Usa EasyCLIProxyAPI ou CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Leia o guia de configuração, segurança e riscos da conta',
+  },
+  vi: {
+    'st.providers.subscription_guide.card_body': 'Bạn có tài khoản hoặc gói đăng ký {product} thay vì khóa API?',
+    'st.providers.subscription_guide.card_link': 'Xem thiết lập và rủi ro của proxy bên thứ ba',
+    'st.providers.subscription_guide.local_body': 'Đang dùng EasyCLIProxyAPI hoặc CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Đọc hướng dẫn thiết lập, bảo mật và rủi ro tài khoản',
+  },
+  bn: {
+    'st.providers.subscription_guide.card_body': 'API কী-এর বদলে {product} অ্যাকাউন্ট বা সাবস্ক্রিপশন আছে?',
+    'st.providers.subscription_guide.card_link': 'তৃতীয় পক্ষের প্রক্সি সেটআপ ও ঝুঁকি দেখুন',
+    'st.providers.subscription_guide.local_body': 'EasyCLIProxyAPI বা CLIProxyAPI ব্যবহার করছেন?',
+    'st.providers.subscription_guide.local_link': 'সেটআপ, নিরাপত্তা ও অ্যাকাউন্ট-ঝুঁকির নির্দেশিকা পড়ুন',
+  },
+  fa: {
+    'st.providers.subscription_guide.card_body': 'به‌جای کلید API حساب یا اشتراک {product} دارید؟',
+    'st.providers.subscription_guide.card_link': 'مشاهدهٔ راه‌اندازی و خطرهای پراکسی شخص ثالث',
+    'st.providers.subscription_guide.local_body': 'از EasyCLIProxyAPI یا CLIProxyAPI استفاده می‌کنید؟',
+    'st.providers.subscription_guide.local_link': 'راهنمای راه‌اندازی، امنیت و خطرهای حساب را بخوانید',
+  },
+  nl: {
+    'st.providers.subscription_guide.card_body': 'Heb je een {product}-account of -abonnement in plaats van een API-sleutel?',
+    'st.providers.subscription_guide.card_link': 'Bekijk de installatie en risico’s van de proxy van derden',
+    'st.providers.subscription_guide.local_body': 'Gebruik je EasyCLIProxyAPI of CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Lees de handleiding voor installatie, beveiliging en accountrisico’s',
+  },
+  de: {
+    'st.providers.subscription_guide.card_body': 'Hast du statt eines API-Schlüssels ein {product}-Konto oder -Abonnement?',
+    'st.providers.subscription_guide.card_link': 'Einrichtung und Risiken des Drittanbieter-Proxys ansehen',
+    'st.providers.subscription_guide.local_body': 'Verwendest du EasyCLIProxyAPI oder CLIProxyAPI?',
+    'st.providers.subscription_guide.local_link': 'Anleitung zu Einrichtung, Sicherheit und Kontorisiken lesen',
+  },
+});

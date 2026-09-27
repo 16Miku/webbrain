@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "001",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "authentication",
+  "title": "Welcome back",
+  "image": "images/001.png",
+  "question": "What is preventing the user from completing Sign in? Focus on the “Welcome back” screen.",
+  "defaultPromptMode": "production"
+}

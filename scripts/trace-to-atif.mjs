@@ -109,6 +109,7 @@ export function webbrainTraceToAtif(input) {
   if (input.schema !== SOURCE_SCHEMA) {
     throw new TypeError(`Expected schema "${SOURCE_SCHEMA}".`);
   }
+  if (Array.isArray(input.runs)) return webbrainTraceBundleToAtif(input);
   if (!isObject(input.run)) throw new TypeError('WebBrain trace run must be an object.');
   if (!Array.isArray(input.events)) throw new TypeError('WebBrain trace events must be an array.');
   if (typeof input.run.runId !== 'string' || !input.run.runId.trim()) {
@@ -322,6 +323,145 @@ export function webbrainTraceToAtif(input) {
     steps,
     final_metrics: finalMetrics,
     extra: rootExtra,
+  };
+}
+
+function uniqueValues(values) {
+  return [...new Set(values.filter(value => value != null && value !== ''))];
+}
+
+function summedMetric(trajectories, key) {
+  const values = trajectories
+    .map(({ trajectory }) => finiteNumber(trajectory.final_metrics?.[key]))
+    .filter(value => value !== undefined);
+  return values.length ? values.reduce((total, value) => total + value, 0) : undefined;
+}
+
+function appendBundleSteps(target, trajectory, runId, allocatedToolCallIds) {
+  for (const sourceStep of trajectory.steps) {
+    const remappedCallIds = new Map();
+    const step = {
+      ...sourceStep,
+      step_id: target.length + 1,
+      extra: {
+        ...(sourceStep.extra || {}),
+        webbrain_run_id: runId,
+      },
+    };
+    if (Array.isArray(sourceStep.tool_calls)) {
+      step.tool_calls = sourceStep.tool_calls.map((call) => {
+        const originalId = String(call.tool_call_id || 'webbrain-call');
+        let toolCallId = originalId;
+        if (allocatedToolCallIds.has(toolCallId)) {
+          const stem = `${originalId}-${runId}`;
+          toolCallId = stem;
+          let suffix = 2;
+          while (allocatedToolCallIds.has(toolCallId)) {
+            toolCallId = `${stem}-${suffix}`;
+            suffix += 1;
+          }
+          remappedCallIds.set(originalId, toolCallId);
+        }
+        allocatedToolCallIds.add(toolCallId);
+        return { ...call, tool_call_id: toolCallId };
+      });
+    }
+    if (sourceStep.observation) {
+      step.observation = {
+        ...sourceStep.observation,
+        results: Array.isArray(sourceStep.observation.results)
+          ? sourceStep.observation.results.map((result) => ({
+              ...result,
+              ...(result.source_call_id && remappedCallIds.has(result.source_call_id)
+                ? { source_call_id: remappedCallIds.get(result.source_call_id) }
+                : {}),
+            }))
+          : sourceStep.observation.results,
+      };
+    }
+    target.push(step);
+  }
+}
+
+function webbrainTraceBundleToAtif(input) {
+  const sessionId = isObject(input.session) && typeof input.session.sessionId === 'string'
+    ? input.session.sessionId.trim()
+    : '';
+  if (!sessionId) {
+    throw new TypeError('WebBrain trace bundle session.sessionId must be a non-empty string.');
+  }
+  if (input.runs.length === 0) {
+    throw new TypeError('WebBrain trace bundle runs must be a non-empty array.');
+  }
+
+  const entries = input.runs.map((entry, index) => {
+    if (!isObject(entry)) {
+      throw new TypeError(`WebBrain trace bundle entry ${index} must be an object.`);
+    }
+    return entry;
+  }).sort((left, right) => {
+    const timeDelta = (finiteNumber(left.run?.startedAt) ?? 0)
+      - (finiteNumber(right.run?.startedAt) ?? 0);
+    if (timeDelta !== 0) return timeDelta;
+    return String(left.run?.runId || '').localeCompare(String(right.run?.runId || ''));
+  });
+
+  const trajectories = entries.map((entry) => ({
+    runId: String(entry.run?.runId || '').trim(),
+    trajectory: webbrainTraceToAtif({
+      schema: input.schema,
+      exportedAt: input.exportedAt,
+      exportedByWebBrainVersion: input.exportedByWebBrainVersion,
+      run: entry.run,
+      events: entry.events,
+    }),
+  }));
+  const steps = [];
+  const allocatedToolCallIds = new Set();
+  for (const { runId, trajectory } of trajectories) {
+    appendBundleSteps(steps, trajectory, runId, allocatedToolCallIds);
+  }
+
+  const models = uniqueValues(trajectories.map(({ trajectory }) => trajectory.agent.model_name));
+  const providerIds = uniqueValues(trajectories.map(({ trajectory }) => trajectory.agent.extra?.provider_id));
+  const providerClasses = uniqueValues(trajectories.map(({ trajectory }) => trajectory.agent.extra?.provider_class));
+  const modes = uniqueValues(trajectories.map(({ trajectory }) => trajectory.agent.extra?.mode));
+  const agentExtra = compactObject({
+    webbrain_run_count: trajectories.length,
+    provider_id: providerIds.length === 1 ? providerIds[0] : undefined,
+    provider_class: providerClasses.length === 1 ? providerClasses[0] : undefined,
+    mode: modes.length === 1 ? modes[0] : undefined,
+  });
+  const version = String(
+    input.exportedByWebBrainVersion || trajectories[0].trajectory.agent.version || 'unknown',
+  );
+
+  return {
+    schema_version: ATIF_SCHEMA_VERSION,
+    session_id: sessionId,
+    trajectory_id: sessionId,
+    agent: compactObject({
+      name: 'webbrain',
+      version,
+      model_name: models.length === 1 ? models[0] : undefined,
+      extra: agentExtra,
+    }),
+    steps,
+    final_metrics: compactObject({
+      total_prompt_tokens: summedMetric(trajectories, 'total_prompt_tokens'),
+      total_completion_tokens: summedMetric(trajectories, 'total_completion_tokens'),
+      total_steps: steps.length,
+    }),
+    extra: compactObject({
+      source_schema: SOURCE_SCHEMA,
+      source_exported_at: timestamp(input.exportedAt),
+      source_exported_by_webbrain_version: input.exportedByWebBrainVersion
+        ? String(input.exportedByWebBrainVersion)
+        : undefined,
+      source_session_id: sessionId,
+      source_run_count: trajectories.length,
+      source_run_ids: trajectories.map(({ runId }) => runId),
+    }),
   };
 }
 

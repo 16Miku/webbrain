@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "010",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "chart-reading",
+  "title": "Weekly signups",
+  "image": "images/010.png",
+  "question": "Which category has the tallest bar, and what exact value or annotation is attached to it? Focus on the “Weekly signups” screen.",
+  "defaultPromptMode": "production"
+}

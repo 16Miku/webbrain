@@ -35,6 +35,17 @@
         r.left < window.innerWidth && r.top < window.innerHeight
       )
     );
+    const contributesPixels = (element, r) => {
+      if (!visible(r)) return false;
+      try {
+        for (let current = element; current; current = current.parentElement) {
+          const style = getComputedStyle(current);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse'
+              || Number.parseFloat(style.opacity) === 0) return false;
+        }
+      } catch { /* geometry remains the conservative fallback */ }
+      return true;
+    };
     const looksLikePiiText = (text) => {
       const trimmed = String(text || '').trim();
       const looksLikeEmail = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(trimmed) &&
@@ -61,42 +72,63 @@
 
     const selected = [];
     const MAX_REGIONS = 400;
+    const MAX_SCANNED_TEXT_NODES = 6000;
+    let overflowed = false;
+    let collectionComplete = true;
+    const addRegion = (region) => {
+      if (selected.length >= MAX_REGIONS) {
+        overflowed = true;
+        return false;
+      }
+      selected.push(region);
+      return true;
+    };
     try {
       const fields = document.querySelectorAll(
         'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="range"]):not([type="color"]), textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]'
       );
       for (const el of fields) {
-        if (selected.length >= MAX_REGIONS) break;
         const r = el.getBoundingClientRect();
         if (!visible(r)) continue;
         const tag = (el.tagName || '').toLowerCase();
         const type = tag === 'input' ? String(el.type || 'text').toLowerCase() : tag;
         const kind = tag === 'select' ? 'select' : (tag === 'textarea' || el.isContentEditable ? 'textarea' : 'input');
-        selected.push({ kind, type, rect: toRect(r) });
+        if (!addRegion({ kind, type, rect: toRect(r) })) break;
       }
 
-      const nodes = document.querySelectorAll('p, span, div, a, td, th, li, h1, h2, h3, h4, h5, h6, label, small, b, strong, i');
-      let scanned = 0;
-      for (const el of nodes) {
-        if (scanned++ > 6000 || selected.length >= MAX_REGIONS) break;
-        if (el.children.length > 0) continue;
-        const text = (el.textContent || '').trim();
-        if (text.length < 5 || text.length > 60 || !looksLikePiiText(text)) continue;
-        const r = el.getBoundingClientRect();
-        if (!visible(r)) continue;
-        selected.push({ kind: 'text', type: '', rect: toRect(r), text });
+      if (!overflowed) {
+        const nodes = document.querySelectorAll('p, span, div, a, td, th, li, h1, h2, h3, h4, h5, h6, label, small, b, strong, i');
+        let scanned = 0;
+        for (const el of nodes) {
+          if (scanned >= MAX_SCANNED_TEXT_NODES) {
+            collectionComplete = false;
+            break;
+          }
+          scanned += 1;
+          if (el.children.length > 0) continue;
+          const text = (el.textContent || '').trim();
+          if (text.length < 5 || text.length > 60 || !looksLikePiiText(text)) continue;
+          const r = el.getBoundingClientRect();
+          if (!visible(r)) continue;
+          if (!addRegion({ kind: 'text', type: '', rect: toRect(r), text })) break;
+        }
       }
-    } catch { /* best effort */ }
+    } catch {
+      collectionComplete = false;
+    }
 
     const childFrames = [];
     try {
       for (const frame of document.querySelectorAll('iframe, frame')) {
         const r = frame.getBoundingClientRect();
-        if (!(r.width > 0 && r.height > 0)) continue;
         const transformX = r.width / (frame.offsetWidth || r.width || 1);
         const transformY = r.height / (frame.offsetHeight || r.height || 1);
         childFrames.push({
           url: frame.src || frame.getAttribute('src') || 'about:blank',
+          // Keep non-rendered descriptors so navigation-frame order remains
+          // unambiguous, but do not require privacy inspection for frames that
+          // contribute no pixels to this capture.
+          rendered: contributesPixels(frame, r),
           rect: {
             x: r.left + sx + (frame.clientLeft || 0) * transformX,
             y: r.top + sy + (frame.clientTop || 0) * transformY,
@@ -105,13 +137,22 @@
           },
         });
       }
-    } catch { /* best effort */ }
+    } catch {
+      collectionComplete = false;
+    }
 
-    return { elements: selected, viewport, childFrames };
+    return {
+      elements: selected,
+      viewport,
+      childFrames,
+      overflowed,
+      complete: collectionComplete && !overflowed,
+    };
   }
 
   function waitForExactChildFrameRect(params) {
     const token = String(params?.token || '');
+    const expectedChildOrigin = String(params?.expectedChildOrigin || '');
     if (!token) return Promise.resolve({ found: false });
     return new Promise(resolve => {
       // A single claim is answered after this quiet window so a second frame
@@ -153,11 +194,24 @@
         }
         return frames;
       };
+      const hasOpaqueSandboxOrigin = frame => {
+        const sandboxValue = frame?.getAttribute?.('sandbox');
+        return sandboxValue != null
+          && !String(sandboxValue).toLowerCase().split(/\s+/).includes('allow-same-origin');
+      };
       const onMessage = event => {
         if (event?.data?.__webbrainExactFrameRectToken !== token) return;
         const frame = reachableFrames()
           .find(candidate => candidate.contentWindow === event.source);
         if (!frame) return;
+        // The token is necessarily transported across the page/content-script
+        // boundary. Bind it to the exact child window and its origin. Sandboxed
+        // frames without allow-same-origin (and their descendants) have an
+        // opaque "null" origin, so accept that value only from the matching
+        // frame after the background has verified the sandbox chain.
+        const opaqueSandboxClaim = event.origin === 'null'
+          && (params?.allowOpaqueChildOrigin === true || hasOpaqueSandboxOrigin(frame));
+        if (expectedChildOrigin && event.origin !== expectedChildOrigin && !opaqueSandboxClaim) return;
         // The agent announces this token to exactly one child frame, so a
         // second distinct claimant is a frame answering for a token that was
         // never sent to it. Resolving the first arrival would let it decide
@@ -172,7 +226,9 @@
           contentionTimer = setTimeout(() => resolveClaim(), CLAIM_CONTENTION_MS);
           return;
         }
-        resolveClaim();
+        // Duplicate delivery from the same frame is not independent evidence.
+        // Keep the full contention window open so a different claimant still
+        // has a chance to make this lookup fail closed.
       };
       const resolveClaim = () => {
         const frame = claimedFrame;
@@ -210,6 +266,7 @@
             name: frame.getAttribute?.('name') || null,
             role: frame.getAttribute?.('role') || null,
           },
+          childOriginOpaque: params?.allowOpaqueChildOrigin === true || hasOpaqueSandboxOrigin(frame),
         });
       };
       window.addEventListener('message', onMessage);
@@ -219,9 +276,13 @@
 
   function announceExactChildFrame(params) {
     const token = String(params?.token || '');
+    const parentOrigin = String(params?.parentOrigin || '');
     if (!token || window.parent === window) return { announced: false };
     try {
-      window.parent.postMessage({ __webbrainExactFrameRectToken: token }, '*');
+      window.parent.postMessage(
+        { __webbrainExactFrameRectToken: token },
+        parentOrigin || '*',
+      );
       return { announced: true };
     } catch { return { announced: false }; }
   }

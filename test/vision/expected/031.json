@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "031",
+  "image": "images/031.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "table",
+        "orders",
+        "members",
+        "deployment",
+        "invoice",
+        "audit"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Team members",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "target-row",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "all",
+      "values": [
+        "Noah Park",
+        "Suspended"
+      ],
+      "weight": 3,
+      "critical": true
+    }
+  ],
+  "successRubric": "Keep row association intact: Noah Park — Suspended."
+}

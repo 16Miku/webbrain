@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "072",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "email-compose",
+  "title": "Yeni ileti",
+  "image": "images/072.png",
+  "question": "Who is the message addressed to, what is its subject, and is any send warning visible? Focus on the “Yeni ileti” screen.",
+  "defaultPromptMode": "production"
+}

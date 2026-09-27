@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "015",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "map-and-travel",
+  "title": "Nearby cafés",
+  "image": "images/015.png",
+  "question": "Which map item is selected, what detail is shown, and how many pins are visible? Focus on the “Nearby cafés” screen.",
+  "defaultPromptMode": "production"
+}

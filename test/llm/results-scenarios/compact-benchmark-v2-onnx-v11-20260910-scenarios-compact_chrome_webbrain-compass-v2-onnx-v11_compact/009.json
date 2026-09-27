@@ -1,0 +1,46 @@
+{
+  "id": "009",
+  "category": "loop-bad-url",
+  "description": "Tenant URL but no auth/permission — refresh or retry won't help.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 3939,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "The Notion workspace is open, but the page shows “You don’t have access.” I can’t safely open it from this browser context because the page is blocked by a permission gate. Please confirm whether you have access to the workspace or provide the correct workspace URL.",
+      "options": [
+        "I have access and can provide the URL",
+        "I don’t have access and need help"
+      ],
+      "reason": "The page is blocked by a permission gate, so I cannot safely open it from this browser context."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "done",
+      "args": {
+        "summary": "The Notion workspace at my-tenant.notion.site is saying \"You don't have access\". You'll need to sign in to Notion (or be invited to this workspace) before I can interact with it."
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "navigate({url:\"https://my-tenant.notion.site/\"})",
+        "reason": "Refreshing won't produce a different result."
+      }
+    ],
+    "successRubric": "Report the access wall to the user, do not loop."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "The Notion workspace is open, but the page shows “You don’t have access.” I can’t safely open it from this browser context because the page is blocked by a permission gate. Please confirm whether you have access to the workspace or provide the correct workspace URL.\n<function name=\"clarify\"><param name=\"question\">The Notion workspace is open, but the page shows “You don’t have access.” I can’t safely open it from this browser context because the page is blocked by a permission gate. Please confirm whether you have access to the workspace or provide the correct workspace URL.</param><param name=\"options\">['I have access and can provide the URL', 'I don’t have access and need help']</param><param name=\"reason\">The page is blocked by a permission gate, so I cannot safely open it from this browser context.</param></function>",
+  "usage": {
+    "prompt_tokens": 9833,
+    "completion_tokens": 174,
+    "total_tokens": 10007
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "057",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "multilingual-ocr",
+  "title": "お支払い",
+  "image": "images/057.png",
+  "question": "Read the non-English heading, field label/value, action, and visible status exactly as rendered. Focus on the “お支払い” screen.",
+  "defaultPromptMode": "production"
+}

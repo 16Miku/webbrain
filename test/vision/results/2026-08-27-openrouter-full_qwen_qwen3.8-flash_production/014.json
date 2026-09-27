@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-26T23:22:12.348Z",
+  "id": "014",
+  "model": "qwen/qwen3.8-flash",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "014",
+    "difficulty": {
+      "level": 1,
+      "slug": "easy",
+      "label": "Easy"
+    },
+    "category": "calendar",
+    "title": "August 2026",
+    "image": "images/014.png",
+    "question": "What event is shown on the selected day, and at what exact time? Focus on the “August 2026” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/014.png",
+    "bytes": 73967,
+    "sha256": "99dbb57d690a06263dc5f5a52782da2dd3aa1ec6e783c2cac2c71f980546f9cd"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Monthly calendar view (\"WebScene\" app) showing August 2026 with one event.\n\n2) Visible text:\n- Logo/brand: \"WebScene\"\n- Nav links: \"Home\", \"Workspace\", \"Activity\"\n- Heading: \"August 2026\"\n- Button: \"Today\"\n- Day-of-week headers: \"Mon\", \"Tue\", \"Wed\", \"Thu\", \"Fri\", \"Sat\", \"Sun\"\n- Date cells: 1–31 (1 falls under Thu; 31 under Sat)\n- Event on Wed 21: \"Design review\" / \"10:00\"\n\n3) Inputs: None visible (no form fields, no search box, no date picker).\n\n4) State signals:\n- Day cell \"21\" is highlighted (light-blue fill + blue border), indicating selected/current day.\n- Event \"Design review 10:00\" rendered as a blue pill inside the 21 cell.\n- No loading spinners, toasts, modals, error banners, CAPTCHAs, or cookie banners.\n- Circular avatar (teal/green gradient) top-right; no dropdown open.\n\n5) Blockers: None. Calendar fully rendered and interactive-looking; no overlays blocking clicks.\n\n6) Unknowns: Avatar identity/initials not legible. Whether the highlighted 21 means \"today\" or \"selected\" is ambiguous. No visible controls for adding/editing events (may require clicking a cell). Exact event details beyond title/time unknown.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1234,
+      "completion_tokens": 604,
+      "total_tokens": 1838,
+      "cost": 0.00048132,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00048132,
+        "upstream_inference_prompt_cost": 0.00019744,
+        "upstream_inference_completions_cost": 0.00028388
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 263,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 1403,
+    "total": 8770
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 7,
+    "possible": 7,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 3,
+        "possible": 3,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "calendar",
+          "schedule"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "calendar"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "August 2026",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "August 2026"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "selected-event",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "all",
+        "values": [
+          "21",
+          "Design review",
+          "10:00"
+        ],
+        "weight": 3,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "21",
+          "Design review",
+          "10:00"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

@@ -10,6 +10,9 @@ import {
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
   USER_MEMORY_STORAGE_KEY,
 } from './agent/user-memory.js';
+import { AUTO_GROUP_TABS_KEY } from './tab-group-preference.js';
+import { normalizeSettings as normalizeSafeSocialSettings, SETTINGS_KEY as SAFE_SOCIAL_SETTINGS_KEY } from './safesocial/config.js';
+import { normalizeUiScale, UI_SCALE_STORAGE_KEY } from './ui/ui-scale.js';
 
 export const CONFIG_SCHEMA = 'webbrain-config/1';
 export const MAX_CONFIG_IMPORT_CHARS = 10_000_000;
@@ -20,8 +23,10 @@ export const MAX_CONFIG_IMPORT_CHARS = 10_000_000;
 export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   wbLocale: 'en',
   themeMode: 'system',
+  [UI_SCALE_STORAGE_KEY]: 100,
   verboseMode: false,
   selectionShortcutEnabled: true,
+  [AUTO_GROUP_TABS_KEY]: true,
   helpImproveWebBrain: true,
   screenshotFallback: true,
   maxAgentSteps: 130,
@@ -30,10 +35,13 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   clarifyTimeoutSemanticsV2: true,
   autoScreenshot: 'state_change',
   useSiteAdapters: true,
+  researchEscalationEnabled: false,
+  researchEscalationEngine: 'chatgpt',
   voiceInputEnabled: true,
-  alwaysAllowApiMutations: false,
-  apiMutationObserverEnabled: false,
-  webMcpEnabled: false,
+  alwaysAllowApiMutations: true,
+  apiMutationObserverEnabled: true,
+  pdfViewerEnabled: true,
+  webMcpEnabled: true,
   openaiAskStreamingEnabled: true,
   planBeforeActMode: 'try',
   planBeforeAct: true,
@@ -42,6 +50,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   downloadDirectory: '',
   notifySound: true,
   completionConfetti: true,
+  completionFlashTab: true,
   tracingEnabled: false,
   strictSecretMode: false,
   agentAllowLocalNetwork: false,
@@ -61,14 +70,23 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   profileText: '',
   [USER_MEMORY_STORAGE_KEY]: { version: 1, records: [] },
   [USER_MEMORY_ENABLED_KEY]: true,
-  [USER_MEMORY_AUTO_CAPTURE_KEY]: false,
-  [USER_MEMORY_FORM_CAPTURE_KEY]: false,
+  [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+  [USER_MEMORY_FORM_CAPTURE_KEY]: true,
   [USER_MEMORY_MAX_PROMPT_CHARS_KEY]: USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS,
   [CUSTOM_SKILLS_STORAGE_KEY]: [],
   [DEFAULT_SKILLS_REMOVED_STORAGE_KEY]: [],
   enableAllPackagedSkills: false,
   captchaSolverEnabled: false,
   capsolverApiKey: '',
+  systemOneEnabled: false,
+  systemOneWatchEnabled: false,
+  systemOneCompletionEnabled: false,
+  systemOneFastClassifications: false,
+  systemOneFastBrowser: false,
+  systemOneWatchThreshold: 0.7,
+  systemOneCompletionThreshold: 0.7,
+  typesafeApiKey: '',
+  [SAFE_SOCIAL_SETTINGS_KEY]: normalizeSafeSocialSettings(),
 });
 
 export const CONFIG_STORAGE_KEYS = Object.freeze(Object.keys(DEFAULT_CONFIG_SETTINGS));
@@ -77,18 +95,22 @@ const CONFIG_STORAGE_KEY_SET = new Set(CONFIG_STORAGE_KEYS);
 const BOOLEAN_KEYS = new Set([
   'verboseMode',
   'selectionShortcutEnabled',
+  AUTO_GROUP_TABS_KEY,
   'helpImproveWebBrain',
   'screenshotFallback',
   'clarifyTimeoutSemanticsV2',
   'useSiteAdapters',
+  'researchEscalationEnabled',
   'voiceInputEnabled',
   'alwaysAllowApiMutations',
   'apiMutationObserverEnabled',
+  'pdfViewerEnabled',
   'webMcpEnabled',
   'openaiAskStreamingEnabled',
   'planBeforeAct',
   'notifySound',
   'completionConfetti',
+  'completionFlashTab',
   'tracingEnabled',
   'strictSecretMode',
   'agentAllowLocalNetwork',
@@ -102,6 +124,11 @@ const BOOLEAN_KEYS = new Set([
   USER_MEMORY_FORM_CAPTURE_KEY,
   'enableAllPackagedSkills',
   'captchaSolverEnabled',
+  'systemOneEnabled',
+  'systemOneWatchEnabled',
+  'systemOneCompletionEnabled',
+  'systemOneFastClassifications',
+  'systemOneFastBrowser',
 ]);
 const NUMBER_KEYS = new Set([
   'maxAgentSteps',
@@ -111,11 +138,14 @@ const NUMBER_KEYS = new Set([
   'costAllowanceSessionUsd',
   'costAllowanceTotalUsd',
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
+  'systemOneWatchThreshold',
+  'systemOneCompletionThreshold',
 ]);
 const STRING_KEYS = new Set([
   'wbLocale',
   'themeMode',
   'autoScreenshot',
+  'researchEscalationEngine',
   'planBeforeActMode',
   'planReviewMode',
   'downloadDirectory',
@@ -123,6 +153,7 @@ const STRING_KEYS = new Set([
   'activeProvider',
   'profileText',
   'capsolverApiKey',
+  'typesafeApiKey',
 ]);
 const ARRAY_KEYS = new Set([
   'wb_permissions',
@@ -161,7 +192,7 @@ function validSettingValue(key, value) {
   if (STRING_KEYS.has(key)) return typeof value === 'string';
   if (ARRAY_KEYS.has(key)) return Array.isArray(value);
   if (NULLABLE_OBJECT_KEYS.has(key)) return value === null || isPlainObject(value);
-  if (key === 'providers' || key === USER_MEMORY_STORAGE_KEY) return isPlainObject(value);
+  if (key === 'providers' || key === USER_MEMORY_STORAGE_KEY || key === SAFE_SOCIAL_SETTINGS_KEY) return isPlainObject(value);
   return true;
 }
 
@@ -175,6 +206,18 @@ function normalizeSettings(source, { strict = false } = {}) {
   for (const key of CONFIG_STORAGE_KEYS) {
     if (!Object.hasOwn(source, key)) continue;
     const value = source[key];
+    if (key === UI_SCALE_STORAGE_KEY) {
+      settings[key] = normalizeUiScale(value);
+      continue;
+    }
+    if (key === SAFE_SOCIAL_SETTINGS_KEY) {
+      if (!isPlainObject(value)) {
+        if (strict) throw new Error(`Invalid value for configuration setting "${key}".`);
+        continue;
+      }
+      settings[key] = normalizeSafeSocialSettings(value);
+      continue;
+    }
     if (!validSettingValue(key, value)) {
       if (strict) throw new Error(`Invalid value for configuration setting "${key}".`);
       continue;
@@ -252,7 +295,11 @@ export function parseConfigPatchImport(json) {
     if (!validSettingValue(key, value)) {
       throw new Error(`Invalid value for configuration setting "${key}".`);
     }
-    settings[key] = key === 'providers'
+    settings[key] = key === UI_SCALE_STORAGE_KEY
+      ? normalizeUiScale(value)
+      : key === SAFE_SOCIAL_SETTINGS_KEY
+      ? normalizeSafeSocialSettings(value)
+      : key === 'providers'
       ? sanitizeProviders(value, { strict: true })
       : clone(value);
   }
@@ -270,7 +317,7 @@ export function mergeConfigPatchSettings(current = {}, patch = {}) {
   const patchProviders = isPlainObject(merged.providers) ? merged.providers : {};
   // Cloud provisioning owns this provider's credentials, endpoint and device
   // identity. A portable export may contain a stale copy, so never let it
-  // replace the runtime's current WebBrain Cloud configuration.
+  // replace the runtime's current WebBrain Compass configuration.
   delete patchProviders.webbrain_cloud;
   merged.providers = { ...currentProviders, ...patchProviders };
   return merged;

@@ -407,6 +407,30 @@ async function stopRecordingForSafetyCap({ beforeFinalizeRecording = null } = {}
   return stopTabRecording({ reason: 'safety_cap' });
 }
 
+const DATA_CHUNK_SIZE = 4 * 1024 * 1024; // 4 MiB per chunk — well under the 64 MiB sendResponse limit
+
+async function fetchDataUrlFromOffscreen(totalLength) {
+  let offset = 0;
+  const parts = [];
+  while (offset < totalLength) {
+    const chunk = await chrome.runtime.sendMessage({
+      type: 'recorder-get-data-chunk',
+      offset,
+      length: DATA_CHUNK_SIZE,
+    });
+    if (!chunk?.ok) throw new Error(chunk?.error || 'chunk fetch failed');
+    if (chunk.total != null && chunk.total !== totalLength) {
+      throw new Error(`data URL length mismatch: expected ${totalLength}, got ${chunk.total}`);
+    }
+    if (!chunk.data || chunk.data.length === 0) {
+      throw new Error('received empty chunk before reaching totalLength');
+    }
+    parts.push(chunk.data);
+    offset += chunk.data.length;
+  }
+  return parts.join('');
+}
+
 export async function stopTabRecording(opts = {}) {
   await ensureRecordingStateLoaded();
   if (opts.expectedRecordingId
@@ -450,6 +474,8 @@ export async function stopTabRecording(opts = {}) {
     recordingState = { active: false };
     saveRecordingState();
     broadcast('stopped', { result: { ok: false, error } });
+    // No recorder-release-data needed here: stop() never succeeded, so
+    // pendingDataUrl was never populated in the offscreen doc.
     return { ok: true, cleared: true, warning: error };
   }
 
@@ -475,6 +501,23 @@ export async function stopTabRecording(opts = {}) {
   };
   saveRecordingState();
   broadcast('saving');
+
+  // Retrieve the full data URL in small chunks. The offscreen recorder
+  // keeps it in memory and sendsResponse can't handle payloads > 64 MiB.
+  let fetchError = null;
+  try {
+    res.dataUrl = await fetchDataUrlFromOffscreen(res.dataUrlLength);
+  } catch (e) {
+    fetchError = `data fetch failed: ${e.message}`;
+  }
+  if (fetchError) {
+    clearRecordingSafetyWatchdog();
+    recordingState = { active: false };
+    saveRecordingState();
+    broadcast('stopped', { result: { ok: false, error: fetchError } });
+    await chrome.runtime.sendMessage({ type: 'recorder-release-data' }).catch(() => {});
+    return { ok: true, cleared: true, warning: fetchError };
+  }
 
   // Save webm to Downloads. The data URL is safe — recorder.js strips
   // the codecs param before passing it to FileReader.readAsDataURL, so
@@ -536,6 +579,10 @@ export async function stopTabRecording(opts = {}) {
       console.error('[WebBrain] runTranscription crashed:', e);
     });
   }
+
+  // Free the offscreen copy now that the data URL has been copied into
+  // res.dataUrl (and the async download / transcription have their own ref).
+  chrome.runtime.sendMessage({ type: 'recorder-release-data' }).catch(() => {});
 
   return final;
 }

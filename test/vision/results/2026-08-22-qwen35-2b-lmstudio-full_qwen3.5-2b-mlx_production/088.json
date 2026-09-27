@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-22T08:51:32.058Z",
+  "id": "088",
+  "model": "qwen3.5-2b-mlx",
+  "endpoint": "http://127.0.0.1:1234/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "088",
+    "difficulty": {
+      "level": 5,
+      "slug": "challenging",
+      "label": "Challenging"
+    },
+    "category": "consent-banner",
+    "title": "Consent required",
+    "image": "images/088.png",
+    "question": "Which consent overlay is present and what exact choices does it offer? Focus on the “Consent required” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/088.png",
+    "bytes": 122755,
+    "sha256": "e3f766af35372e2a08c2db89ec415fb8a89f8db483978b270f49f81334b20749"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: A browser page displaying a \"Field Notes\" article with a consent banner at the bottom.\n\n2) Visible text:\n   - \"WebScene\" (Logo in top left)\n   - \"Home\", \"Workspace\", \"Activity\" (Navigation links in top right)\n   - \"Field Notes\" (Main heading)\n   - \"Independent stories about design, technology, and cities.\" (Subheading)\n   - \"A long-form article continues underneath the privacy surface.\" (Footer text)\n\n3) Inputs:\n   - No visible form fields.\n\n4) State signals:\n   - \"Consent required\" (Dark banner at bottom with white text).\n\n5) Blockers:\n   - \"The video is blocked until media cookies are allowed.\" (Message in the consent banner).\n\n6) Unknowns:\n   - None.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 319,
+      "completion_tokens": 183,
+      "total_tokens": 502,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 3,
+    "total": 2612
+  },
+  "score": {
+    "success": false,
+    "ratio": 0.6,
+    "earned": 6,
+    "possible": 10,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [
+      "title",
+      "choice-1"
+    ],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 0,
+        "possible": 4,
+        "ratio": 0
+      },
+      "state_signals": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "blockers": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "privacy",
+          "cookie",
+          "consent",
+          "video"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "consent"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "title",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Consent required",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "choice-1",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Allow media cookies",
+        "weight": 1,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "choice-2",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Keep blocked",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "consent-signal",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "any",
+        "values": [
+          "cookie",
+          "consent",
+          "privacy",
+          "overlay",
+          "banner"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "consent",
+          "banner"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "consent-blocker",
+        "dimension": "blockers",
+        "section": 5,
+        "kind": "any",
+        "values": [
+          "cookie",
+          "consent",
+          "overlay",
+          "blocked"
+        ],
+        "weight": 1,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "cookie",
+          "consent",
+          "blocked"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

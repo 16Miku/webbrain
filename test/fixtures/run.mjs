@@ -19,7 +19,12 @@ import path from 'node:path';
 import { Agent } from '../../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../../src/firefox/src/agent/agent.js';
 import { CDPClient, cdpClient } from '../../src/chrome/src/cdp/cdp-client.js';
+import {
+  SELECTION_SHORTCUT_LOCALES,
+  getSelectionShortcutLocalization,
+} from '../../src/chrome/src/selection-shortcut-i18n.js';
 import { registerRichTextToolbarFixtures } from './rich-text-toolbar.mjs';
+import { registerMessageRecipientNavigationFixtures } from './message-recipient-navigation.mjs';
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -45,6 +50,9 @@ const firefoxFilePickerGuardPageJsPath = path.join(root, 'src', 'firefox', 'src'
 const selectionShortcutJsPath = path.join(root, 'src', 'chrome', 'src', 'content', 'selection-shortcut.js');
 const firefoxSelectionShortcutJsPath = path.join(root, 'src', 'firefox', 'src', 'content', 'selection-shortcut.js');
 const smdJsPath = path.join(root, 'src', 'chrome', 'src', 'agent', 'social-media-downloader.js');
+const selectionShortcutLocalizations = Object.fromEntries(
+  SELECTION_SHORTCUT_LOCALES.map((locale) => [locale, getSelectionShortcutLocalization(locale)]),
+);
 
 function fixtureUrl(name) {
   return 'file://' + path.join(__dirname, name);
@@ -211,6 +219,41 @@ async function setupAccessibilityTreeHtml(page, html, sourcePath) {
   await page.waitForFunction(() => typeof window.__generateAccessibilityTree === 'function');
 }
 
+async function setupAccessibilityTreeGmailHtml(page, html, sourcePath) {
+  await page.route('https://mail.google.com/**', route => {
+    if (route.request().resourceType() === 'document') {
+      return route.fulfill({ body: html, contentType: 'text/html' });
+    }
+    return route.fulfill({ body: '', contentType: 'text/plain' });
+  });
+  await page.goto('https://mail.google.com/mail/u/0/#inbox/FMfc123', { waitUntil: 'domcontentloaded' });
+  const src = await readFile(sourcePath, 'utf-8');
+  await page.addScriptTag({ content: src });
+  await page.waitForFunction(() => typeof window.__generateAccessibilityTree === 'function');
+}
+
+async function setupContentGmailHtml(page, html, browserKind) {
+  const firefox = browserKind === 'firefox';
+  await page.route('https://mail.google.com/**', route => {
+    if (route.request().resourceType() === 'document') {
+      return route.fulfill({ body: html, contentType: 'text/html' });
+    }
+    return route.fulfill({ body: '', contentType: 'text/plain' });
+  });
+  await page.addInitScript(firefox ? stubFirefoxBrowser : stubChrome);
+  await page.goto('https://mail.google.com/mail/u/0/#inbox/FMfc123', { waitUntil: 'domcontentloaded' });
+  await page.addScriptTag({
+    content: await readFile(firefox ? firefoxAccessibilityTreeJsPath : accessibilityTreeJsPath, 'utf-8'),
+  });
+  await page.addScriptTag({
+    content: await readFile(firefox ? firefoxToolbarHeuristicJsPath : toolbarHeuristicJsPath, 'utf-8'),
+  });
+  await page.addScriptTag({
+    content: await readFile(firefox ? firefoxContentJsPath : contentJsPath, 'utf-8'),
+  });
+  await page.waitForFunction(() => typeof window.__wb_handler === 'function');
+}
+
 async function rawContentCall(page, action, params) {
   return page.evaluate(({ action, params }) => new Promise((resolve) => {
     const ret = window.__wb_handler(
@@ -288,11 +331,16 @@ async function setupSelectionShortcut(page, sourcePath, { enabled = true, requir
   await page.addScriptTag({ content: `
     window.__selectionMessages = [];
     window.__selectionStorage = { selectionShortcutEnabled: ${enabled ? 'true' : 'false'}, wbLocale: '${locale}' };
+    window.__selectionLocalizations = ${JSON.stringify(selectionShortcutLocalizations)};
     window.__selectionRuntimeListeners = [];
     window.__selectionStorageListeners = [];
     window.chrome = {
       runtime: {
         sendMessage: async (message) => {
+          if (message.type === 'WB_SELECTION_SHORTCUT_LOCALIZATION') {
+            const locale = String(message.locale || 'en').toLowerCase().split('-')[0];
+            return { ok: true, ...(window.__selectionLocalizations[locale] || window.__selectionLocalizations.en) };
+          }
           window.__selectionMessages.push(message);
           return { ok: true, queued: true, requiresManualOpen: ${requiresManualOpen ? 'true' : 'false'} };
         },
@@ -346,6 +394,493 @@ async function selectFixtureText(page, selector = '#copy') {
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
+
+test('expired content messages are rejected before page mutation in both builds', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <button id="late-action" onclick="window.__lateActionClicks = (window.__lateActionClicks || 0) + 1">Late action</button>
+    `, browserKind);
+    const response = await page.evaluate(() => new Promise((resolve) => {
+      window.__wb_handler({
+        target: 'content',
+        action: 'click',
+        params: { selector: '#late-action' },
+        actionDeadlineAt: Date.now() - 1,
+      }, {}, resolve);
+    }));
+    const clicks = await page.evaluate(() => window.__lateActionClicks || 0);
+    if (
+      response?.success !== false
+      || response.dispatched !== false
+      || response.noDispatch !== true
+      || response.deadlineExpired !== true
+      || clicks !== 0
+    ) {
+      throw new Error(`${browserKind} expired content message mutated the page: ${JSON.stringify({ response, clicks })}`);
+    }
+  }
+});
+
+test('set_field cannot submit after its page-action deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <form id="deadline-form">
+        <input id="deadline-field" aria-label="Deadline field">
+      </form>
+      <script>
+        window.__deadlineSubmits = 0;
+        document.getElementById('deadline-form').addEventListener('submit', event => {
+          event.preventDefault();
+          window.__deadlineSubmits += 1;
+        });
+      </script>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const refId = window.__wb_ax_ref(document.getElementById('deadline-field'));
+      window.__wb_handler({
+        target: 'content',
+        action: 'set_field',
+        params: { ref_id: refId, text: 'typed before expiry', submit: true },
+        actionDeadlineAt: Date.now() + 20,
+      }, {}, response => resolve({
+        response,
+        value: document.getElementById('deadline-field').value,
+        submits: window.__deadlineSubmits,
+      }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.submitted !== false
+      || result.response.dispatched !== true
+      || result.value !== 'typed before expiry'
+      || result.submits !== 0
+    ) {
+      throw new Error(`${browserKind} set_field submitted after expiry: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('set_field stops before mutation when focus handlers cross the deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <input id="late-set-field" aria-label="Late set field">
+      <script>
+        document.getElementById('late-set-field').addEventListener('focus', () => {
+          const stopAt = Date.now() + 30;
+          while (Date.now() < stopAt) {}
+        });
+      </script>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const field = document.getElementById('late-set-field');
+      const refId = window.__wb_ax_ref(field);
+      window.__wb_handler({
+        target: 'content',
+        action: 'set_field',
+        params: { ref_id: refId, text: 'must not appear' },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({ response, value: field.value }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.value !== ''
+    ) {
+      throw new Error(`${browserKind} set_field crossed its mutation deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('set_field releases Enter when a keydown listener crosses the deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <input id="deadline-key-field" aria-label="Deadline key field">
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const field = document.getElementById('deadline-key-field');
+      window.__deadlineKeydowns = 0;
+      window.__deadlineKeyups = 0;
+      window.__deadlineKeyTimes = {};
+      field.addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        window.__deadlineKeydowns += 1;
+        window.__deadlineKeyTimes.keydownStart = Date.now();
+        const stopAt = performance.now() + 650;
+        while (performance.now() < stopAt) {}
+        window.__deadlineKeyTimes.keydownEnd = Date.now();
+      });
+      field.addEventListener('keyup', event => {
+        if (event.key === 'Enter') window.__deadlineKeyups += 1;
+      });
+      const refId = window.__wb_ax_ref(field);
+      const startedAt = Date.now();
+      const deadlineAt = startedAt + 500;
+      window.__wb_handler({
+        target: 'content',
+        action: 'set_field',
+        params: { ref_id: refId, text: 'typed before key dispatch', submit: true },
+        actionDeadlineAt: deadlineAt,
+      }, {}, response => {
+        resolve({
+          response,
+          startedAt,
+          deadlineAt,
+          completedAt: Date.now(),
+          keyTimes: window.__deadlineKeyTimes,
+          keydowns: window.__deadlineKeydowns,
+          keyups: window.__deadlineKeyups,
+        });
+      });
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== true
+      || result.response.outcomeUnknown !== true
+      || result.response.retryable !== false
+      || result.keydowns !== 1
+      || result.keyups !== 1
+    ) {
+      throw new Error(`${browserKind} set_field left Enter pressed after expiry: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('Firefox synthetic hover reports a deadline crossed by its last listener', async (page) => {
+  await setupContentHtml(page, `
+    <button id="deadline-hover">Hover target</button>
+    <script>
+      window.__deadlineMousemoves = 0;
+      document.getElementById('deadline-hover').addEventListener('mousemove', () => {
+        window.__deadlineMousemoves += 1;
+        const stopAt = Date.now() + 150;
+        while (Date.now() < stopAt) {}
+      });
+    </script>
+  `, 'firefox');
+  const result = await page.evaluate(() => new Promise((resolve) => {
+    const target = document.getElementById('deadline-hover');
+    window.__wb_handler({
+      target: 'content',
+      action: 'hover',
+      params: { ref_id: window.__wb_ax_ref(target) },
+      actionDeadlineAt: Date.now() + 100,
+    }, {}, response => resolve({ response, moves: window.__deadlineMousemoves }));
+  }));
+  if (
+    result.response?.success !== false
+    || result.response.deadlineExpired !== true
+    || result.response.dispatched !== true
+    || result.response.outcomeUnknown !== true
+    || result.moves !== 1
+  ) {
+    throw new Error(`firefox hover hid its last-listener deadline: ${JSON.stringify(result)}`);
+  }
+});
+
+test('Firefox synthetic drag releases a held pointer after expiry', async (page) => {
+  await setupContentHtml(page, `
+    <button id="deadline-drag-from">Drag source</button>
+    <button id="deadline-drag-to">Drag target</button>
+    <script>
+      window.__deadlinePointerdowns = 0;
+      window.__deadlinePointerups = 0;
+      document.getElementById('deadline-drag-from').addEventListener('pointerdown', () => {
+        window.__deadlinePointerdowns += 1;
+        const stopAt = Date.now() + 450;
+        while (Date.now() < stopAt) {}
+      });
+      document.getElementById('deadline-drag-to').addEventListener('pointerup', () => {
+        window.__deadlinePointerups += 1;
+      });
+    </script>
+  `, 'firefox');
+  const result = await page.evaluate(() => new Promise((resolve) => {
+    const from = document.getElementById('deadline-drag-from');
+    const to = document.getElementById('deadline-drag-to');
+    window.__wb_handler({
+      target: 'content',
+      action: 'drag_drop',
+      params: {
+        fromRefId: window.__wb_ax_ref(from),
+        toRefId: window.__wb_ax_ref(to),
+        steps: 2,
+      },
+      actionDeadlineAt: Date.now() + 300,
+    }, {}, response => resolve({
+      response,
+      pointerdowns: window.__deadlinePointerdowns,
+      pointerups: window.__deadlinePointerups,
+    }));
+  }));
+  if (
+    result.response?.success !== false
+    || result.response.deadlineExpired !== true
+    || result.response.dispatched !== true
+    || result.response.outcomeUnknown !== true
+    || result.pointerdowns !== 1
+    || result.pointerups !== 1
+  ) {
+    throw new Error(`firefox drag left the pointer held after expiry: ${JSON.stringify(result)}`);
+  }
+});
+
+test('click_ax rechecks its page-action deadline at the click boundary', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <div id="slow-context"><button id="late-click">Late click</button></div>
+      <script>
+        window.__lateAxClicks = 0;
+        document.getElementById('late-click').addEventListener('click', () => { window.__lateAxClicks += 1; });
+        Object.defineProperty(document.getElementById('slow-context'), 'innerText', {
+          configurable: true,
+          get() {
+            const stopAt = Date.now() + 30;
+            while (Date.now() < stopAt) {}
+            return 'Slow click context';
+          },
+        });
+      </script>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const refId = window.__wb_ax_ref(document.getElementById('late-click'));
+      window.__wb_handler({
+        target: 'content',
+        action: 'click_ax',
+        params: { ref_id: refId },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({ response, clicks: window.__lateAxClicks }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.clicks !== 0
+    ) {
+      throw new Error(`${browserKind} click_ax crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('press_keys rechecks its deadline after recipient validation', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <style>
+        #recipient { position: fixed; top: 20px; left: 320px; width: 240px; height: 32px; }
+        #composer { position: fixed; bottom: 20px; left: 280px; width: 360px; height: 80px; }
+      </style>
+      <h1 id="recipient">Alice</h1>
+      <textarea id="composer" aria-label="Message composer"></textarea>
+    `, browserKind);
+    const binding = await page.evaluate(() => new Promise((resolve) => {
+      const composer = document.getElementById('composer');
+      composer.focus();
+      window.__wb_handler({
+        target: 'content',
+        action: 'probe_message_recipient_guard',
+        params: {
+          tool: 'press_keys',
+          args: { key: 'Enter' },
+          bindDispatch: true,
+        },
+      }, {}, response => resolve(response?.messageRecipientDispatchBinding || null));
+    }));
+    if (!binding?.token) {
+      throw new Error(`${browserKind} could not prepare the recipient-bound key fixture`);
+    }
+    const result = await page.evaluate((messageRecipientDispatchBinding) => new Promise((resolve) => {
+      const composer = document.getElementById('composer');
+      const recipient = document.getElementById('recipient');
+      window.__recipientBoundKeyEvents = 0;
+      composer.addEventListener('keydown', () => { window.__recipientBoundKeyEvents += 1; });
+      composer.addEventListener('keyup', () => { window.__recipientBoundKeyEvents += 1; });
+      Object.defineProperty(recipient, 'innerText', {
+        configurable: true,
+        get() {
+          const stopAt = Date.now() + 30;
+          while (Date.now() < stopAt) {}
+          return 'Alice';
+        },
+      });
+      window.__wb_handler({
+        target: 'content',
+        action: 'press_keys',
+        params: {
+          key: 'Enter',
+          messageRecipientGuardRequired: true,
+          messageRecipientDispatchBinding,
+        },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({
+        response,
+        keyEvents: window.__recipientBoundKeyEvents,
+      }));
+    }), binding);
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.keyEvents !== 0
+    ) {
+      throw new Error(`${browserKind} recipient-bound key crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('click rechecks its deadline after recipient validation', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <style>
+        #recipient { position: fixed; top: 20px; left: 320px; width: 240px; height: 32px; }
+        #message-form { position: fixed; bottom: 20px; left: 280px; width: 460px; height: 90px; }
+        #composer { width: 360px; height: 80px; }
+        #send { width: 70px; height: 40px; }
+      </style>
+      <h1 id="recipient">Alice</h1>
+      <form id="message-form">
+        <textarea id="composer" aria-label="Message composer"></textarea>
+        <button id="send" type="button">Send</button>
+      </form>
+      <script>
+        window.__recipientBoundClicks = 0;
+        document.getElementById('send').addEventListener('click', () => { window.__recipientBoundClicks += 1; });
+      </script>
+    `, browserKind);
+    const binding = await page.evaluate(() => new Promise((resolve) => {
+      document.getElementById('composer').focus();
+      window.__wb_handler({
+        target: 'content',
+        action: 'probe_message_recipient_guard',
+        params: {
+          tool: 'click',
+          args: { selector: '#send' },
+          bindDispatch: true,
+        },
+      }, {}, response => resolve(response?.messageRecipientDispatchBinding || null));
+    }));
+    if (!binding?.token) {
+      throw new Error(`${browserKind} could not prepare the recipient-bound click fixture`);
+    }
+    const result = await page.evaluate((messageRecipientDispatchBinding) => new Promise((resolve) => {
+      const recipient = document.getElementById('recipient');
+      Object.defineProperty(recipient, 'innerText', {
+        configurable: true,
+        get() {
+          const stopAt = Date.now() + 30;
+          while (Date.now() < stopAt) {}
+          return 'Alice';
+        },
+      });
+      window.__wb_handler({
+        target: 'content',
+        action: 'click',
+        params: {
+          selector: '#send',
+          messageRecipientGuardRequired: true,
+          messageRecipientDispatchBinding,
+        },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({
+        response,
+        clicks: window.__recipientBoundClicks,
+      }));
+    }), binding);
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.clicks !== 0
+    ) {
+      throw new Error(`${browserKind} recipient-bound click crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('fallback typing stops when focus handlers cross the deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <input id="late-type" aria-label="Late type field">
+      <script>
+        document.getElementById('late-type').addEventListener('focus', () => {
+          const stopAt = Date.now() + 30;
+          while (Date.now() < stopAt) {}
+        });
+      </script>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      window.__wb_handler({
+        target: 'content',
+        action: 'type',
+        params: { selector: '#late-type', text: 'must not appear' },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({
+        response,
+        value: document.getElementById('late-type').value,
+      }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.value !== ''
+    ) {
+      throw new Error(`${browserKind} fallback typing crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test('fallback scrolling stops when target scans cross the deadline', async (page) => {
+  for (const browserKind of ['chrome', 'firefox']) {
+    await setupContentHtml(page, `
+      <style>
+        html, body { margin: 0; height: 100%; overflow: hidden; }
+        #scroller { width: 300px; height: 120px; overflow-y: auto; }
+        #scroll-content { height: 1000px; }
+      </style>
+      <div id="scroller"><div id="scroll-content">Scrollable content</div></div>
+    `, browserKind);
+    const result = await page.evaluate(() => new Promise((resolve) => {
+      const scroller = document.getElementById('scroller');
+      const refId = window.__wb_ax_ref(document.getElementById('scroll-content'));
+      const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+      window.getComputedStyle = (element, ...args) => {
+        if (element === scroller) {
+          const stopAt = Date.now() + 30;
+          while (Date.now() < stopAt) {}
+        }
+        return nativeGetComputedStyle(element, ...args);
+      };
+      window.__wb_handler({
+        target: 'content',
+        action: 'scroll',
+        params: { ref_id: refId, direction: 'down', amount: 100 },
+        actionDeadlineAt: Date.now() + 5,
+      }, {}, response => resolve({ response, scrollTop: scroller.scrollTop }));
+    }));
+    if (
+      result.response?.success !== false
+      || result.response.deadlineExpired !== true
+      || result.response.dispatched !== false
+      || result.response.noDispatch !== true
+      || result.response.retryable !== true
+      || result.scrollTop !== 0
+    ) {
+      throw new Error(`${browserKind} fallback scroll crossed its deadline: ${JSON.stringify(result)}`);
+    }
+  }
+});
 const firefoxTests = [];
 function firefoxTest(name, fn) { firefoxTests.push({ name, fn }); }
 
@@ -589,12 +1124,84 @@ for (const [label, sourcePath, manualOpen] of [
   ['Chrome', selectionShortcutJsPath, false],
   ['Firefox', firefoxSelectionShortcutJsPath, true],
 ]) {
+  test(`${label}: selection shortcut localizes labels, direction, and fixed-action language`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'zh' });
+    const localized = await selectFixtureText(page);
+    if (localized.summarizeLabel !== '总结'
+        || localized.explainLabel !== '解释'
+        || localized.quizLabel !== '测验我'
+        || localized.actionIconCount !== 6
+        || localized.direction !== 'ltr') {
+      throw new Error(`Chinese shortcut localization mismatch: ${JSON.stringify(localized)}`);
+    }
+
+    await page.evaluate(() => window.__webbrainSelectionShortcut.submitPreset('explain'));
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    const submitted = await page.evaluate(() => window.__selectionMessages[0]);
+    if (submitted.action !== 'explain'
+        || submitted.language !== 'zh'
+        || Object.prototype.hasOwnProperty.call(submitted, 'includePageContext')) {
+      throw new Error(`fixed action did not carry the Chinese interface language: ${JSON.stringify(submitted)}`);
+    }
+
+    await page.evaluate(() => window.__setSelectionShortcutLocale('ar'));
+    await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().direction === 'rtl');
+    const rtl = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    if (rtl.summarizeLabel !== 'تلخيص' || rtl.actionIconCount !== 6) {
+      throw new Error(`live Arabic localization mismatch: ${JSON.stringify(rtl)}`);
+    }
+  });
+
+  test(`${label}: custom selection questions default to page context and retain a scoped choice`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'zh' });
+    const initial = await selectFixtureText(page);
+    if (!initial.includePageContextChecked
+        || initial.includePageContextLabel !== '包含页面和对话上下文'
+        || initial.hideLabel !== '隐藏此项') {
+      throw new Error(`full-context choice should be localized and on by default: ${JSON.stringify(initial)}`);
+    }
+    await page.evaluate(() => {
+      window.__webbrainSelectionShortcut.setIncludePageContext(false);
+      return window.__webbrainSelectionShortcut.submitCustom('仅根据选中内容回答。');
+    });
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    const submitted = await page.evaluate(() => window.__selectionMessages[0]);
+    if (submitted.action !== 'custom'
+        || submitted.question !== '仅根据选中内容回答。'
+        || submitted.includePageContext !== false) {
+      throw new Error(`custom question lost its explicit scoped-context choice: ${JSON.stringify(submitted)}`);
+    }
+
+    await page.waitForFunction(() => !window.__webbrainSelectionShortcut.getState().submitting);
+    const nextSelection = await selectFixtureText(page);
+    if (!nextSelection.includePageContextChecked) {
+      throw new Error(`a new selection should restore the default-on page-context choice: ${JSON.stringify(nextSelection)}`);
+    }
+    await page.evaluate(() => window.__webbrainSelectionShortcut.submitCustom('现在有哪些跨平台框架？'));
+    await page.waitForFunction(() => window.__selectionMessages.length === 2);
+    const submittedAgain = await page.evaluate(() => window.__selectionMessages[1]);
+    if (submittedAgain.action !== 'custom'
+        || submittedAgain.question !== '现在有哪些跨平台框架？'
+        || submittedAgain.includePageContext !== true) {
+      throw new Error(`the default custom question did not request page and conversation context: ${JSON.stringify(submittedAgain)}`);
+    }
+  });
+
   test(`${label}: selection shortcut clamps to the viewport and supports keyboard dismissal`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     const state = await selectFixtureText(page);
     const rect = state.shortcutRect;
     if (!rect || rect.left < 8 || rect.top < 8 || rect.right > 352 || rect.bottom > 272) {
       throw new Error(`shortcut was not clamped to the viewport: ${JSON.stringify(rect)}`);
+    }
+    if (!state.selectionRect || rect.bottom > state.selectionRect.top) {
+      throw new Error(`shortcut should prefer the top of the selected text: ${JSON.stringify(state)}`);
+    }
+    if (state.shortcutLabel !== 'Ask WebBrain about this'
+        || state.shortcutBackground !== 'rgb(255, 255, 255)'
+        || state.shortcutColor !== 'rgb(108, 99, 255)'
+        || state.shortcutBoxShadow === 'none') {
+      throw new Error(`shortcut should retain its purple selected-text treatment: ${JSON.stringify(state)}`);
     }
     await page.mouse.click(rect.left + rect.width / 2, rect.top + rect.height / 2);
     let popupState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
@@ -603,6 +1210,21 @@ for (const [label, sourcePath, manualOpen] of [
     popupState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     if (popupState.popupVisible || !popupState.shortcutVisible) {
       throw new Error(`Escape should close the popup and retain the shortcut: ${JSON.stringify(popupState)}`);
+    }
+
+    await page.evaluate(() => {
+      const topCopy = document.createElement('p');
+      topCopy.id = 'top-copy';
+      topCopy.style.cssText = 'position:absolute;left:74px;top:2px;width:210px;margin:0';
+      topCopy.textContent = 'A multiline selection near the top edge must keep the shortcut below every selected line.';
+      document.body.appendChild(topCopy);
+    });
+    const topState = await selectFixtureText(page, '#top-copy');
+    if (!topState.selectionRect
+        || topState.selectionRect.top >= 52
+        || !topState.selectionBottom
+        || topState.shortcutRect.top < topState.selectionBottom + 7) {
+      throw new Error(`top-edge fallback should clear the full visible selection: ${JSON.stringify(topState)}`);
     }
   });
 
@@ -624,6 +1246,12 @@ for (const [label, sourcePath, manualOpen] of [
     const openState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     if (!openState.questionRect || openState.highlightRectCount < 1) {
       throw new Error(`popup should preserve a visual marker for the selected text: ${JSON.stringify(openState)}`);
+    }
+    if (!openState.hideRect
+        || openState.hideLabel !== 'Hide this'
+        || openState.hideRect.width >= openState.translateRect.width
+        || Math.abs(openState.hideRect.right - openState.translateRect.right) > 0.5) {
+      throw new Error(`Hide this should be a compact right-aligned footer action: ${JSON.stringify(openState)}`);
     }
     await page.mouse.click(
       openState.questionRect.left + openState.questionRect.width / 2,
@@ -720,6 +1348,9 @@ for (const [label, sourcePath, manualOpen] of [
     if (result.messages.length !== 1) throw new Error(`expected exactly one submission, got ${result.messages.length}`);
     if (result.messages[0].action !== 'summarize' || !/Editable selection text/.test(result.messages[0].selectionText)) {
       throw new Error(`unexpected selection request: ${JSON.stringify(result.messages[0])}`);
+    }
+    if (result.messages[0].language !== 'en') {
+      throw new Error(`fixed action did not carry the interface language: ${JSON.stringify(result.messages[0])}`);
     }
     if (result.state.shortcutVisible || result.state.popupVisible) {
       throw new Error(`surface should dismiss before delivery: ${JSON.stringify(result.state)}`);
@@ -849,6 +1480,10 @@ function normalizeTreeRefs(content) {
   });
 }
 
+function normalizeTreeRevision(content) {
+  return String(content || '').replace(/fnv1a64:[0-9a-f]{16}/g, 'tree_revision');
+}
+
 function assertGmailComposeRecipientTree(tree, label) {
   const content = String(tree?.pageContent || '');
   if (!/generic "Alex Russell \(gmail\.com\)" \[ref_\d+\]/.test(content)) {
@@ -877,6 +1512,452 @@ test('accessibility tree (Firefox): existing Gmail compose exposes the selected 
   const tree = await page.evaluate(() => window.__generateAccessibilityTree('visible', 10, null, null, 1));
   const firefoxTree = assertGmailComposeRecipientTree(tree, 'firefox');
   if (firefoxTree !== chromeGmailComposeTree) throw new Error('Chrome/Firefox Gmail compose trees differ');
+});
+
+const longConversationFixture = `<!doctype html>
+  <main aria-label="Project conversation">
+    ${Array.from({ length: 90 }, (_, index) => {
+      const number = String(index + 1).padStart(3, '0');
+      return `<article aria-label="Message ${number} from Sender ${number}: project status, decisions, owners, dates, risks, dependencies, and requested follow-up"></article>`;
+    }).join('')}
+  </main>`;
+
+let chromeLongConversationPages = [];
+
+async function readAllConversationTreePages(page, sourcePath, label) {
+  await setupAccessibilityTreeHtml(page, longConversationFixture, sourcePath);
+  const pages = [];
+  let args = { filter: 'all' };
+  for (let guard = 0; guard < 20; guard += 1) {
+    const result = await page.evaluate(current => window.__generateAccessibilityTree(
+      current.filter,
+      current.maxDepth,
+      current.maxChars,
+      null,
+      current.page,
+      current.tree_revision,
+    ), args);
+    if (JSON.stringify(result).length > 8000) {
+      throw new Error(`${label}: structured accessibility page exceeded the model-facing tool cap`);
+    }
+    pages.push(result);
+    if (!result.hasMore) break;
+    const expected = {
+      filter: 'all',
+      maxDepth: 15,
+      maxChars: 6000,
+      page: pages.length + 1,
+    };
+    if (JSON.stringify(result.continuationArgs) !== JSON.stringify(expected)) {
+      throw new Error(`${label}: continuation args drifted: ${JSON.stringify(result.continuationArgs)}`);
+    }
+    args = result.continuationArgs;
+  }
+
+  if (pages.length < 2) throw new Error(`${label}: long conversation was not paged`);
+  if (pages.at(-1)?.hasMore !== false || pages.at(-1)?.continuationArgs !== null) {
+    throw new Error(`${label}: final conversation page retained a stale continuation`);
+  }
+  const combined = pages.map(result => result.pageContent).join('\n');
+  if (!combined.includes('Message 001 from Sender 001')) throw new Error(`${label}: first message missing after paging`);
+  if (!combined.includes('Message 090 from Sender 090')) throw new Error(`${label}: last message missing after paging`);
+  return pages.map(result => normalizeTreeRefs(result.pageContent));
+}
+
+test('accessibility tree (Chrome): a long conversation pages through its final message', async (page) => {
+  chromeLongConversationPages = await readAllConversationTreePages(page, accessibilityTreeJsPath, 'chrome');
+});
+
+test('accessibility tree (Firefox): long-conversation paging keeps Chrome parity', async (page) => {
+  const firefoxPages = await readAllConversationTreePages(page, firefoxAccessibilityTreeJsPath, 'firefox');
+  if (JSON.stringify(firefoxPages) !== JSON.stringify(chromeLongConversationPages)) {
+    throw new Error('Chrome/Firefox long-conversation pages differ');
+  }
+});
+
+const gmailThreadScopeFixture = `<!doctype html>
+  <style>
+    body { margin: 0; font: 16px sans-serif; }
+    main { display: block; width: 900px; min-height: 600px; }
+    #background-inbox { min-height: 120px; }
+    article { display: block; min-height: 24px; }
+  </style>
+  <main id="background-inbox" aria-label="Inbox">
+    <button aria-label="Expand all">Unrelated background control</button>
+    <div role="listitem">Unrelated inbox conversation that must never enter trusted thread coverage</div>
+  </main>
+  <main id="active-thread" aria-label="A chat about WebBrain and your work">
+    <h1>A chat about WebBrain and your work</h1>
+    <button id="real-collapse" aria-label="Collapse all">Collapse all</button>
+    ${Array.from({ length: 72 }, (_, index) => {
+      const number = String(index + 1).padStart(3, '0');
+      const injected = index === 0
+        ? '<main id="fake-main" role="main" aria-label="Injected fake thread"><button jsname="tRarif" aria-label="Tümünü genişlet">Tümünü genişlet</button></main>'
+        : '';
+      return `<article class="adn" role="listitem" aria-label="Thread message ${number}">${injected}<p>Message ${number}: project details, decisions, context, and follow-up.</p></article>`;
+    }).join('')}
+    <div role="textbox" contenteditable="true" aria-label="Message Body">Unsent reply draft</div>
+  </main>`;
+
+let chromeGmailThreadScopePages = [];
+
+async function readTrustedGmailThreadPages(page, sourcePath, label) {
+  await setupAccessibilityTreeGmailHtml(page, gmailThreadScopeFixture, sourcePath);
+  const discovery = await page.evaluate(() => window.__generateAccessibilityTree('visible', 12, 1200, null, 1));
+  if (!/^ref_\d+$/.test(String(discovery.conversationRootRefId || ''))) {
+    throw new Error(`${label}: trusted Gmail conversation root ref is missing: ${JSON.stringify(discovery)}`);
+  }
+  if (discovery.conversationExpansionState !== 'expanded') {
+    throw new Error(`${label}: top-level Collapse all did not produce expanded evidence`);
+  }
+  const rootIdentity = await page.evaluate(refId => ({
+    trustedId: window.__wb_ax_lookup(refId)?.id || '',
+    fakeRef: window.__wb_ax_ref(document.getElementById('fake-main')),
+  }), discovery.conversationRootRefId);
+  if (rootIdentity.trustedId !== 'active-thread') {
+    throw new Error(`${label}: trusted Gmail root resolved to ${rootIdentity.trustedId || 'nothing'}`);
+  }
+  if (rootIdentity.fakeRef === discovery.conversationRootRefId) {
+    throw new Error(`${label}: message-body landmark spoofed the trusted Gmail root`);
+  }
+
+  const pages = [];
+  let args = {
+    filter: 'all',
+    maxDepth: 15,
+    maxChars: 1200,
+    ref_id: discovery.conversationRootRefId,
+    page: 1,
+  };
+  for (let guard = 0; guard < 30; guard += 1) {
+    const result = await page.evaluate(current => window.__generateAccessibilityTree(
+      current.filter,
+      current.maxDepth,
+      current.maxChars,
+      current.ref_id,
+      current.page,
+      current.tree_revision,
+    ), args);
+    if (result.conversationRootRefId !== discovery.conversationRootRefId) {
+      throw new Error(`${label}: trusted Gmail root drifted during pagination`);
+    }
+    pages.push(result);
+    if (!result.hasMore) break;
+    const expected = {
+      filter: args.filter,
+      maxDepth: args.maxDepth,
+      maxChars: args.maxChars,
+      ref_id: args.ref_id,
+      tree_revision: result.treeRevision,
+      page: args.page + 1,
+    };
+    if (JSON.stringify(result.continuationArgs) !== JSON.stringify(expected)) {
+      throw new Error(`${label}: Gmail thread continuation lost its trusted anchor: ${JSON.stringify(result.continuationArgs)}`);
+    }
+    args = result.continuationArgs;
+  }
+  if (pages.length < 2 || pages.at(-1)?.hasMore !== false) {
+    throw new Error(`${label}: trusted Gmail thread did not reach a terminal page`);
+  }
+  const combined = pages.map(result => result.pageContent).join('\n');
+  if (!combined.includes('Message 001') || !combined.includes('Message 072')) {
+    throw new Error(`${label}: trusted Gmail pagination lost thread messages`);
+  }
+  if (combined.includes('Unrelated inbox conversation')) {
+    throw new Error(`${label}: trusted Gmail pagination leaked the background inbox`);
+  }
+
+  const snapshotContinuation = await page.evaluate(continuation => {
+    const message = document.querySelector('#active-thread article p');
+    const previous = message.textContent;
+    message.textContent = previous.replace('project', 'product');
+    const result = window.__generateAccessibilityTree(
+      continuation.filter,
+      continuation.maxDepth,
+      continuation.maxChars,
+      continuation.ref_id,
+      continuation.page,
+      continuation.tree_revision,
+    );
+    message.textContent = previous;
+    return result;
+  }, pages[0].continuationArgs);
+  if (snapshotContinuation.treeRevisionMismatch || snapshotContinuation.error
+      || snapshotContinuation.treeRevision !== pages[0].treeRevision) {
+    throw new Error(`${label}: live Gmail mutations invalidated the bounded page-one snapshot`);
+  }
+
+  const actionableDrift = await page.evaluate(continuation => {
+    const control = document.getElementById('real-collapse');
+    const previous = control.getAttribute('aria-label');
+    control.setAttribute('aria-label', 'Delete permanently');
+    const result = window.__generateAccessibilityTree(
+      continuation.filter,
+      continuation.maxDepth,
+      continuation.maxChars,
+      continuation.ref_id,
+      continuation.page,
+      continuation.tree_revision,
+    );
+    control.setAttribute('aria-label', previous);
+    return result;
+  }, pages[0].continuationArgs);
+  if (actionableDrift.treeRevisionMismatch !== true || !actionableDrift.error
+      || actionableDrift.pageContent) {
+    throw new Error(`${label}: a changed Gmail action reused a stale cached ref`);
+  }
+
+  const revisionMismatch = await page.evaluate(continuation => {
+    window.__wbAxTreeSnapshots.clear();
+    const message = document.querySelector('#active-thread article p');
+    const previous = message.textContent;
+    message.textContent = previous.replace('project', 'product');
+    const result = window.__generateAccessibilityTree(
+      continuation.filter,
+      continuation.maxDepth,
+      continuation.maxChars,
+      continuation.ref_id,
+      continuation.page,
+      continuation.tree_revision,
+    );
+    message.textContent = previous;
+    return result;
+  }, pages[0].continuationArgs);
+  if (revisionMismatch.treeRevisionMismatch !== true || !revisionMismatch.error || revisionMismatch.pageContent) {
+    throw new Error(`${label}: an expired Gmail snapshot did not reject a changed live continuation`);
+  }
+  const expectedRestartArgs = {
+    filter: 'all',
+    maxDepth: 15,
+    maxChars: 1200,
+    ref_id: discovery.conversationRootRefId,
+    page: 1,
+  };
+  if (JSON.stringify(revisionMismatch.continuationArgs) !== JSON.stringify(expectedRestartArgs)
+      || revisionMismatch.nextPage !== 1) {
+    throw new Error(`${label}: revision recovery did not return exact page-one restart arguments`);
+  }
+
+  const restartedPageOne = await page.evaluate(args => window.__generateAccessibilityTree(
+    args.filter,
+    args.maxDepth,
+    args.maxChars,
+    args.ref_id,
+    1,
+    'fnv1a64:0000000000000000',
+  ), expectedRestartArgs);
+  if (restartedPageOne.error || restartedPageOne.treeRevisionMismatch || !restartedPageOne.pageContent
+      || restartedPageOne.page !== 1) {
+    throw new Error(`${label}: stale revision was not ignored while establishing a fresh page-one snapshot`);
+  }
+
+  const subtreeRecovery = await page.evaluate(() => {
+    const subtree = document.createElement('section');
+    subtree.setAttribute('aria-label', 'Paginated message subtree');
+    for (let index = 1; index <= 30; index += 1) {
+      const paragraph = document.createElement('p');
+      paragraph.textContent = `Subtree message ${index}: original details and follow-up context.`;
+      subtree.append(paragraph);
+    }
+    document.getElementById('active-thread').append(subtree);
+    const refId = window.__wb_ax_ref(subtree);
+    const first = window.__generateAccessibilityTree('all', 15, 220, refId, 1);
+    subtree.querySelector('p').textContent = 'Subtree message 1: changed details and follow-up context.';
+    const continuation = first.continuationArgs || {};
+    const second = window.__generateAccessibilityTree(
+      continuation.filter,
+      continuation.maxDepth,
+      continuation.maxChars,
+      continuation.ref_id,
+      continuation.page,
+      continuation.tree_revision,
+    );
+    subtree.remove();
+    return {
+      refId,
+      firstHasMore: first.hasMore,
+      mismatch: second.treeRevisionMismatch,
+      error: second.error || '',
+      pageContent: second.pageContent,
+      nextPage: second.nextPage,
+      continuationArgs: second.continuationArgs,
+    };
+  });
+  if (subtreeRecovery.firstHasMore !== true || subtreeRecovery.mismatch !== true
+      || !subtreeRecovery.error || subtreeRecovery.pageContent) {
+    throw new Error(`${label}: a changed non-root subtree reused a stale cached page`);
+  }
+  const expectedSubtreeRestart = {
+    filter: 'all',
+    maxDepth: 15,
+    maxChars: 220,
+    ref_id: subtreeRecovery.refId,
+    page: 1,
+  };
+  if (JSON.stringify(subtreeRecovery.continuationArgs) !== JSON.stringify(expectedSubtreeRestart)
+      || subtreeRecovery.nextPage !== 1) {
+    throw new Error(`${label}: non-root recovery widened to the Gmail conversation root`);
+  }
+
+  const routeClassification = await page.evaluate(() => {
+    const classify = hash => {
+      window.history.replaceState(null, '', hash);
+      const result = window.__generateAccessibilityTree('visible', 12, 1200, null, 1);
+      return {
+        hasRoot: !!result.conversationRootRefId,
+        expansionState: result.conversationExpansionState || null,
+      };
+    };
+    const results = {
+      searchList: classify('#search/project'),
+      labelList: classify('#label/Work'),
+      categoryList: classify('#category/promotions'),
+      searchHexList: classify('#search/deadbeefcafe'),
+      labelHexList: classify('#label/deadbeefcafe'),
+      categoryHexList: classify('#category/deadbeefcafe'),
+      nestedLabelHexList: classify('#label/Projects/deadbeefcafe'),
+      searchThread: classify('#search/project/FMfc123'),
+      labelThread: classify('#label/Work/FMfc123'),
+      categoryThread: classify('#category/promotions/FMfc123'),
+      inboxLegacyThread: classify('#inbox/deadbeefcafe'),
+      searchLegacyThread: classify('#search/project/deadbeefcafe'),
+      nestedLabelThread: classify('#label/Projects/Subproject/FMfc123'),
+    };
+    window.history.replaceState(null, '', '#inbox/FMfc123');
+    return results;
+  });
+  for (const routeName of ['searchList', 'labelList', 'categoryList', 'searchHexList', 'labelHexList', 'categoryHexList', 'nestedLabelHexList']) {
+    if (routeClassification[routeName].hasRoot || routeClassification[routeName].expansionState != null) {
+      throw new Error(`${label}: Gmail ${routeName} exposed trusted conversation metadata`);
+    }
+  }
+  for (const routeName of ['searchThread', 'labelThread', 'categoryThread', 'inboxLegacyThread', 'searchLegacyThread', 'nestedLabelThread']) {
+    if (!routeClassification[routeName].hasRoot || routeClassification[routeName].expansionState !== 'expanded') {
+      throw new Error(`${label}: Gmail ${routeName} lost trusted conversation metadata`);
+    }
+  }
+
+  const spoofOnlyExpansion = await page.evaluate(() => {
+    document.getElementById('real-collapse').remove();
+    return window.__generateAccessibilityTree('visible', 12, 1200, null, 1);
+  });
+  if (spoofOnlyExpansion.conversationExpansionState != null) {
+    throw new Error(`${label}: message-body Expand all spoofed expansion evidence`);
+  }
+  const detachedRootRead = await page.evaluate(() => {
+    const current = window.__generateAccessibilityTree('visible', 12, 1200, null, 1);
+    document.getElementById('active-thread').remove();
+    return window.__generateAccessibilityTree('all', 15, 1200, current.conversationRootRefId, 1);
+  });
+  if (!/no longer connected/i.test(String(detachedRootRead.error || '')) || detachedRootRead.pageContent) {
+    throw new Error(`${label}: a detached Gmail conversation ref remained readable`);
+  }
+  return pages.map(result => ({
+    page: result.page,
+    totalChars: result.totalChars,
+    hasMore: result.hasMore,
+    truncated: result.truncated,
+    pageContent: normalizeTreeRevision(normalizeTreeRefs(result.pageContent)),
+    treeRevision: 'tree_revision',
+    conversationRootRefId: 'ref_trusted_root',
+    conversationExpansionState: result.conversationExpansionState,
+    continuationArgs: result.continuationArgs
+      ? { ...result.continuationArgs, ref_id: 'ref_trusted_root', tree_revision: 'tree_revision' }
+      : null,
+  }));
+}
+
+test('accessibility tree (Chrome): Gmail whole-thread reads use one trusted active-thread anchor', async (page) => {
+  chromeGmailThreadScopePages = await readTrustedGmailThreadPages(page, accessibilityTreeJsPath, 'chrome');
+});
+
+test('accessibility tree (Firefox): Gmail trusted thread metadata and pagination keep Chrome parity', async (page) => {
+  const firefoxPages = await readTrustedGmailThreadPages(page, firefoxAccessibilityTreeJsPath, 'firefox');
+  if (JSON.stringify(firefoxPages) !== JSON.stringify(chromeGmailThreadScopePages)) {
+    throw new Error('Chrome/Firefox trusted Gmail thread pages differ');
+  }
+});
+
+const collapsedGmailThreadFixture = `<!doctype html>
+  <meta charset="utf-8">
+  <style>
+    body { margin: 0; font: 16px sans-serif; }
+    main { display: block; width: 900px; min-height: 600px; }
+    article { display: block; min-height: 30px; }
+    #older-message[hidden] { display: none; }
+  </style>
+  <main id="active-thread" aria-label="Collapsed project thread">
+    <h1>Collapsed project thread</h1>
+    <button id="expand-all" jsname="tRarif" aria-label="Tümünü genişlet">Tümünü genişlet</button>
+    <article class="adn" role="listitem" aria-label="Latest message">
+      <p>Latest visible project message.</p>
+      <button jsname="tRarif" aria-label="Tümünü genişlet">Untrusted message button</button>
+    </article>
+    <article id="older-message" class="adn" role="listitem" aria-label="Older message" hidden>
+      <p>Older collapsed decision that must be included.</p>
+    </article>
+  </main>
+  <script>
+    document.getElementById('expand-all').addEventListener('click', () => {
+      document.getElementById('older-message').hidden = false;
+      const control = document.getElementById('expand-all');
+      control.setAttribute('jsname', 'xvWlrc');
+      control.setAttribute('aria-label', 'Tümünü daralt');
+      control.textContent = 'Tümünü daralt';
+    });
+  </script>`;
+
+let chromeCollapsedGmailRead = null;
+
+async function readCollapsedGmailThread(page, browserKind) {
+  await setupContentGmailHtml(page, collapsedGmailThreadFixture, browserKind);
+  const discovery = await rawContentCall(page, 'get_accessibility_tree', {
+    filter: 'visible',
+    maxDepth: 12,
+    maxChars: 1200,
+    page: 1,
+  });
+  if (!discovery.conversationRootRefId || discovery.conversationExpansionState !== 'collapsed') {
+    throw new Error(`${browserKind}: collapsed Gmail thread was not discovered safely`);
+  }
+  const result = await rawContentCall(page, 'get_accessibility_tree', {
+    filter: 'all',
+    maxDepth: 15,
+    maxChars: 6000,
+    ref_id: discovery.conversationRootRefId,
+    page: 1,
+  });
+  if (result.error || result.conversationAutoExpanded !== true
+      || result.conversationExpansionState !== 'expanded') {
+    throw new Error(`${browserKind}: anchored whole-thread read did not expand Gmail: ${JSON.stringify(result)}`);
+  }
+  if (!result.pageContent.includes('Older collapsed decision that must be included.')) {
+    throw new Error(`${browserKind}: anchored whole-thread read omitted the revealed older message`);
+  }
+  const state = await page.evaluate(() => ({
+    topLevelLabel: document.getElementById('expand-all').getAttribute('aria-label'),
+    topLevelJsname: document.getElementById('expand-all').getAttribute('jsname'),
+    olderHidden: document.getElementById('older-message').hidden,
+  }));
+  if (state.topLevelLabel !== 'Tümünü daralt' || state.topLevelJsname !== 'xvWlrc' || state.olderHidden) {
+    throw new Error(`${browserKind}: whole-thread preparation did not reveal the trusted conversation: ${JSON.stringify(state)}`);
+  }
+  return {
+    pageContent: normalizeTreeRefs(result.pageContent),
+    conversationExpansionState: result.conversationExpansionState,
+    conversationAutoExpanded: result.conversationAutoExpanded,
+  };
+}
+
+test('content tree (Chrome): anchored Gmail reads reveal collapsed messages in either agent mode', async (page) => {
+  chromeCollapsedGmailRead = await readCollapsedGmailThread(page, 'chrome');
+});
+
+test('content tree (Firefox): collapsed Gmail whole-thread preparation keeps Chrome parity', async (page) => {
+  const firefoxResult = await readCollapsedGmailThread(page, 'firefox');
+  if (JSON.stringify(firefoxResult) !== JSON.stringify(chromeCollapsedGmailRead)) {
+    throw new Error('Chrome/Firefox collapsed Gmail whole-thread reads differ');
+  }
 });
 
 const richEditorVariantsFixture = `<!doctype html>
@@ -1046,6 +2127,7 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
     </div>
     <script>
       document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') window.__escapeActiveId = document.activeElement?.id || '';
         if (event.key === 'Escape' && document.activeElement?.id === 'dialog-select') {
           document.activeElement.blur();
         }
@@ -1080,6 +2162,7 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
     background: document.getElementById('background-select').value,
     dialog: document.getElementById('dialog-select').value,
     backgroundButtonClicked: window.__backgroundYearlyClicked === true,
+    escapeActiveId: window.__escapeActiveId || '',
     leakedTargetSlots: Object.keys(globalThis).filter((key) => key.startsWith('__webbrainAutoSelectTarget_')),
   }));
 
@@ -1088,6 +2171,9 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
   }
   if (values.background !== 'monthly' || values.dialog !== 'yearly' || values.backgroundButtonClicked) {
     throw new Error(`auto-select changed the wrong dropdown after refocus: ${JSON.stringify(values)}`);
+  }
+  if (values.escapeActiveId !== 'dialog-select') {
+    throw new Error(`auto-select sent Escape to the wrong control: ${JSON.stringify(values)}`);
   }
   if (values.leakedTargetSlots.length) {
     throw new Error(`auto-select target reference was not cleaned up: ${JSON.stringify(values.leakedTargetSlots)}`);
@@ -2468,6 +3554,118 @@ for (const browserKind of ['chrome', 'firefox']) {
       throw new Error(`product context bounds regressed: ${JSON.stringify(result.targetContext)}`);
     }
   });
+
+  test(`resolve_visual_target (${browserKind}): nested SVG resolves semantic button`, async (page) => {
+    await setupContentHtml(page, `
+      <style>button { position: fixed; left: 40px; top: 30px; width: 120px; height: 60px; }</style>
+      <button id="target" aria-label="Add to cart" onclick="window.__nestedSvgClicked = true">
+        <svg id="icon" width="100%" height="100%"><circle cx="60" cy="30" r="20"></circle></svg>
+      </button>
+    `, browserKind);
+    const point = await page.locator('#icon circle').evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    const result = await call(page, 'resolve_visual_target', point);
+    if (
+      !result?.success
+      || result.semanticTarget?.role !== 'button'
+      || result.semanticTarget?.name !== 'Add to cart'
+      || !/^ref_\d+$/.test(result.semanticTarget?.ref_id || '')
+      || result.semanticTarget?.eligibility !== 'semantic-button'
+      || Object.hasOwn(result.semanticTarget, 'rect')
+    ) {
+      throw new Error(`nested SVG did not resolve to button: ${JSON.stringify(result)}`);
+    }
+    const clickResult = await call(page, 'click_ax', {
+      ref_id: result.semanticTarget.ref_id,
+      expectedDocumentToken: result.documentToken,
+      expectedPageUrl: result.refScopeUrl,
+    });
+    if (!clickResult?.success || await page.evaluate(() => window.__nestedSvgClicked) !== true) {
+      throw new Error(`nested SVG semantic dispatch did not activate its button: ${JSON.stringify(clickResult)}`);
+    }
+  });
+
+  test(`resolve_visual_target (${browserKind}): plain canvas stays coordinate-only`, async (page) => {
+    await setupContentHtml(page, '<canvas id="canvas" width="200" height="100" style="position:fixed;left:20px;top:20px"></canvas>', browserKind);
+    const point = { x: 70, y: 55 };
+    const result = await call(page, 'resolve_visual_target', point);
+    if (
+      !result?.success
+      || result.semanticTarget?.eligibility !== 'coordinate-only'
+      || !/^ref_\d+$/.test(result.semanticTarget?.ref_id || '')
+      || Object.hasOwn(result.semanticTarget, 'rect')
+    ) {
+      throw new Error(`canvas should stay coordinate-only: ${JSON.stringify(result)}`);
+    }
+  });
+
+  test(`resolve_visual_target (${browserKind}): form controls and iframe boundaries stay coordinate-only`, async (page) => {
+    await setupContentHtml(page, `
+      <style>
+        #frame { position:fixed;left:20px;top:20px;width:120px;height:50px; }
+        #label { position:fixed;left:20px;top:90px;width:160px;height:30px; }
+        #text { position:fixed;left:20px;top:140px;width:160px;height:30px; }
+        #notes { position:fixed;left:20px;top:190px;width:160px;height:30px; }
+        #select { position:fixed;left:20px;top:240px;width:160px;height:30px; }
+        #file { position:fixed;left:20px;top:290px;width:160px;height:30px; }
+      </style>
+      <iframe id="frame" title="Embedded boundary"></iframe>
+      <label id="label" for="text">Account name</label>
+      <input id="text" aria-label="Account name">
+      <textarea id="notes" aria-label="Notes"></textarea>
+      <select id="select" aria-label="Plan"><option>Basic</option></select>
+      <input id="file" type="file" aria-label="Upload receipt">
+    `, browserKind);
+
+    for (const selector of ['#frame', '#label', '#text', '#notes', '#select', '#file']) {
+      const point = await page.locator(selector).evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      const result = await call(page, 'resolve_visual_target', point);
+      if (
+        !result?.success
+        || result.semanticTarget?.eligibility !== 'coordinate-only'
+        || !/^ref_\d+$/.test(result.semanticTarget?.ref_id || '')
+        || Object.hasOwn(result.semanticTarget, 'rect')
+      ) {
+        throw new Error(`${selector} should stay coordinate-only: ${JSON.stringify(result)}`);
+      }
+    }
+  });
+
+  test(`resolve_visual_target (${browserKind}): open shadow button resolves`, async (page) => {
+    await setupContentHtml(page, '<div id="host" style="position:fixed;left:25px;top:25px"></div>', browserKind);
+    await page.evaluate(() => {
+      const root = document.querySelector('#host').attachShadow({ mode: 'open' });
+      root.innerHTML = '<button id="shadow-target" aria-label="Shadow action" style="width:140px;height:50px">Action</button>';
+      root.querySelector('button').addEventListener('click', () => { window.__shadowClicked = true; });
+    });
+    const point = await page.locator('#host').evaluate((host) => {
+      const r = host.shadowRoot.querySelector('button').getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    const result = await call(page, 'resolve_visual_target', point);
+    if (
+      !result?.success
+      || result.semanticTarget?.role !== 'button'
+      || result.semanticTarget?.name !== 'Shadow action'
+      || !/^ref_\d+$/.test(result.semanticTarget?.ref_id || '')
+      || result.semanticTarget?.eligibility !== 'semantic-button'
+    ) {
+      throw new Error(`open shadow target was not resolved: ${JSON.stringify(result)}`);
+    }
+    const clickResult = await call(page, 'click_ax', {
+      ref_id: result.semanticTarget.ref_id,
+      expectedDocumentToken: result.documentToken,
+      expectedPageUrl: result.refScopeUrl,
+    });
+    if (!clickResult?.success || await page.evaluate(() => window.__shadowClicked) !== true) {
+      throw new Error(`open shadow semantic dispatch did not activate its button: ${JSON.stringify(clickResult)}`);
+    }
+  });
 }
 
 test('set_field (chrome): trusted contenteditable input updates framework state and enables submit', async (page) => {
@@ -2547,6 +3745,126 @@ test('set_field (chrome): trusted contenteditable input updates framework state 
     cdpClient.sendCommand = originals.sendCommand;
     if (originalChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = originalChrome;
+  }
+});
+
+test('type_ax (chrome): Gmail-style empty blocks verify without masking text corruption', async (page) => {
+  await setup(page, 'trusted-click-fallback.html');
+  await page.evaluate(() => {
+    const editor = document.getElementById('editable-row');
+    editor.setAttribute('aria-label', 'Message Body');
+    editor.innerHTML = 'Hey Andrew,<div><br></div><div>Thank you!</div>';
+  });
+  const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 30000 });
+  const editorMatch = String(tree?.pageContent || '').match(/textbox "Message Body" \[(ref_\d+)\]/);
+  if (!editorMatch) throw new Error(`expected Gmail-style message body: ${tree?.pageContent}`);
+
+  const originalChrome = globalThis.chrome;
+  const originals = {
+    attach: cdpClient.attach,
+    sendCommand: cdpClient.sendCommand,
+  };
+  const session = await page.context().newCDPSession(page);
+  globalThis.chrome = {
+    tabs: {
+      async sendMessage(_tabId, message) {
+        return call(page, message.action, message.params || {});
+      },
+    },
+  };
+  try {
+    cdpClient.attach = async () => ({ tabId: 42, attached: true });
+    cdpClient.sendCommand = async (_tabId, method, params) => session.send(method, params);
+    const agent = new Agent({});
+    const appendText = '\n\nAre these good enough?';
+    const preflight = await call(page, 'type_ax', {
+      ref_id: editorMatch[1],
+      text: appendText,
+      clear: false,
+    });
+    const result = await agent._maybeFallbackFieldWithCdp(
+      42,
+      'type_ax',
+      { ref_id: editorMatch[1], text: appendText, clear: false },
+      preflight,
+    );
+    const after = await page.evaluate(() => {
+      const editor = document.getElementById('editable-row');
+      return {
+        innerText: editor.innerText,
+        preservedPrefix: editor.innerHTML.startsWith('Hey Andrew,<div><br></div><div>Thank you!</div>'),
+        directBlankBlocks: Array.from(editor.children)
+          .filter(child => child.tagName === 'DIV' && child.innerHTML.toLowerCase() === '<br>').length,
+      };
+    });
+    if (
+      result?.success !== true
+      || result.verified !== true
+      || result.trusted !== true
+      || after.innerText !== 'Hey Andrew,\n\n\nThank you!\n\n\nAre these good enough?'
+      || after.preservedPrefix !== true
+      || after.directBlankBlocks !== 2
+    ) {
+      throw new Error(`Gmail-style block expansion should verify: ${JSON.stringify({ result, after })}`);
+    }
+
+    await page.evaluate(() => {
+      document.getElementById('editable-row').addEventListener('input', (event) => {
+        event.currentTarget.append(document.createTextNode('!'));
+      }, { once: true });
+    });
+    const corruptAppend = '\n\nOne more line.';
+    const corruptPreflight = await call(page, 'type_ax', {
+      ref_id: editorMatch[1],
+      text: corruptAppend,
+      clear: false,
+    });
+    const corruptResult = await agent._maybeFallbackFieldWithCdp(
+      42,
+      'type_ax',
+      { ref_id: editorMatch[1], text: corruptAppend, clear: false },
+      corruptPreflight,
+    );
+    if (
+      corruptResult?.success !== false
+      || corruptResult.verified !== false
+      || corruptResult.dispatched !== true
+    ) {
+      throw new Error(`real rich-editor corruption must remain rejected: ${JSON.stringify(corruptResult)}`);
+    }
+  } finally {
+    cdpClient.attach = originals.attach;
+    cdpClient.sendCommand = originals.sendCommand;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
+firefoxTest('type_ax (firefox engine): rich-editor verification rejects an added blank line', async (page) => {
+  await setupFirefoxHtml(page, `
+    <div id="editor" role="textbox" aria-label="Message Body" contenteditable="true"
+      style="width:400px;height:160px">Original</div>
+  `);
+  await page.evaluate(() => {
+    const editor = document.getElementById('editor');
+    window.__wb_ax_lookup = refId => refId === 'ref_editor' ? editor : null;
+    editor.addEventListener('input', () => {
+      editor.innerHTML = 'First<br><br><br>Second';
+    });
+  });
+  const result = await rawContentCall(page, 'type_ax', {
+    ref_id: 'ref_editor',
+    text: 'First\n\nSecond',
+    clear: true,
+  });
+  const actual = await page.locator('#editor').evaluate(editor => editor.innerText);
+  if (
+    result?.success !== false
+    || result.verified !== false
+    || result.dispatched !== true
+    || actual !== 'First\n\n\nSecond'
+  ) {
+    throw new Error(`Firefox must reject a page-added blank line: ${JSON.stringify({ result, actual })}`);
   }
 });
 
@@ -3338,6 +4656,8 @@ test('Firefox: type_text rejects disabled indexed text input fallback', async (p
   if (value !== 'Locked') throw new Error(`expected disabled value to remain unchanged, got: ${value}`);
 });
 
+
+registerMessageRecipientNavigationFixtures({ test, firefoxTest, setupContentHtml, call, Agent, FirefoxAgent });
 
 registerRichTextToolbarFixtures({
   test,

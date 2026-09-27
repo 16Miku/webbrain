@@ -240,6 +240,7 @@
       "additionalProperties": false
     },
     "verify": {
+      "tools": ["solve_captcha"],
       "result": [
         { "path": "captcha_solved", "equals": true, "weight": 40 }
       ],
@@ -248,5 +249,254 @@
       ]
     },
     "timeout_ms": 480000
+  },
+  {
+    "id": "wikipedia-ask-summary",
+    "title": "Wikipedia: Ask-mode summary",
+    "pack": "cloud-smoke",
+    "mode": "ask",
+    "preload_url": "https://en.wikipedia.org/wiki/Alan_Turing",
+    "start_url": "https://en.wikipedia.org/wiki/Alan_Turing",
+    "task": "The current page is the English Wikipedia article about Alan Turing. In Ask mode, read only the current page and summarize it in three concise sentences. Include three key facts and the current page URL. Do not navigate, click, type, or modify the page. Finish with done_json.",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "summary": { "type": "string" },
+        "key_facts": { "type": "array", "minItems": 3, "items": { "type": "string" } },
+        "source_url": { "type": "string" }
+      },
+      "required": ["summary", "key_facts", "source_url"],
+      "additionalProperties": false
+    },
+    "verify": {
+      "mode": "ask",
+      "result": [
+        { "path": "summary", "contains": "Turing", "weight": 25 },
+        { "path": "key_facts.2", "truthy": true, "weight": 15 },
+        { "path": "source_url", "contains": "/wiki/Alan_Turing", "weight": 15 }
+      ],
+      "forbiddenTools": ["navigate", "click", "click_ax", "type_text", "type_ax", "set_field", "press_keys"],
+      "finalUrlHost": "en.wikipedia.org"
+    },
+    "timeout_ms": 360000
+  },
+  {
+    "id": "nytimes-gated-article-read",
+    "title": "NYTimes: gated article read",
+    "pack": "cloud-smoke",
+    "mode": "ask",
+    "preload_url": "https://www.nytimes.com/2026/08/05/science/butterflies-climate-change-extreme-weather.html",
+    "start_url": "https://www.nytimes.com/2026/08/05/science/butterflies-climate-change-extreme-weather.html",
+    "task": "The current page is a New York Times Science article about butterflies and extreme weather. Stay read-only. Call read_page first and inspect its structured pageGate. When pageGate.blocking is true, explicitly load the freeskillz-xyz skill and call fetch_nytimes_article for the current URL. Do not read hidden DOM content and do not retry the fallback if it fails. Return the headline, byline, three concise key points grounded in the fetched article, the source URL, and fallback_used=true. Finish with done_json.",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "headline": { "type": "string" },
+        "byline": { "type": "string" },
+        "key_points": { "type": "array", "minItems": 3, "items": { "type": "string" } },
+        "source_url": { "type": "string" },
+        "fallback_used": { "type": "boolean" }
+      },
+      "required": ["headline", "byline", "key_points", "source_url", "fallback_used"],
+      "additionalProperties": false
+    },
+    "verify": {
+      "mode": "ask",
+      "skills": ["freeskillz-xyz"],
+      "tools": ["read_page"],
+      "successfulTools": ["fetch_nytimes_article"],
+      "result": [
+        { "path": "headline", "contains": "Butterflies", "weight": 20 },
+        { "path": "byline", "truthy": true, "weight": 10 },
+        { "path": "key_points.2", "truthy": true, "weight": 15 },
+        { "path": "source_url", "contains": "/science/butterflies-climate-change-extreme-weather.html", "weight": 10 },
+        { "path": "fallback_used", "equals": true, "weight": 15 }
+      ],
+      "forbiddenTools": ["navigate", "click", "click_ax", "type_text", "type_ax", "set_field", "press_keys"],
+      "finalUrlHost": "www.nytimes.com"
+    },
+    "timeout_ms": 600000
+  },
+  {
+    "id": "youtube-short-video-download",
+    "title": "YouTube: short public video download",
+    "pack": "cloud-smoke",
+    "mode": "act",
+    "start_url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+    "capture": false,
+    "task": "Open {{START_URL}}. This is a public 19-second video selected to keep the smoke test fast. Explicitly load the freeskillz-xyz skill, call resolve_public_media with the exact video URL, then call download_public_media with the exact URL, kind=video, and max_height=360. After the download tool succeeds, call list_downloads and verify that the completed MP4 is present. Return downloaded=true only after that verification, along with the title, duration_seconds, file_name, and file_type. Do not upload or play the downloaded file. Finish with done_json.",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "downloaded": { "type": "boolean" },
+        "title": { "type": "string" },
+        "duration_seconds": { "type": "number" },
+        "file_name": { "type": "string" },
+        "file_type": { "type": "string" }
+      },
+      "required": ["downloaded", "title", "duration_seconds", "file_name", "file_type"],
+      "additionalProperties": false
+    },
+    "verify": {
+      "mode": "act",
+      "skills": ["freeskillz-xyz"],
+      "successfulTools": ["resolve_public_media", "download_public_media", "list_downloads"],
+      "toolResults": [
+        { "tool": "download_public_media", "path": "downloadId", "truthy": true, "label": "Download returned a browser download ID", "weight": 10 },
+        { "tool": "list_downloads", "path": "downloads.0.filename", "matches": "\\.mp4$", "label": "Newest browser download is an MP4", "weight": 15 },
+        { "tool": "list_downloads", "path": "downloads.0.state", "equals": "complete", "label": "Newest browser download completed", "weight": 10 }
+      ],
+      "result": [
+        { "path": "downloaded", "equals": true, "weight": 20 },
+        { "path": "title", "contains": "Me at the zoo", "weight": 15 },
+        { "path": "duration_seconds", "equals": 19, "weight": 10 },
+        { "path": "file_name", "matches": "\\.mp4$", "weight": 15 },
+        { "path": "file_type", "contains": "mp4", "weight": 10 }
+      ],
+      "finalUrlHost": "www.youtube.com"
+    },
+    "timeout_ms": 480000
+  },
+  {
+    "id": "google-forms-scheduled-double-submit",
+    "title": "Google Forms: two scheduled submissions",
+    "pack": "cloud-smoke",
+    "mode": "act",
+    "preload_url": "https://forms.gle/nDSbn2B6Cym4x9Bi8",
+    "start_url": "https://forms.gle/nDSbn2B6Cym4x9Bi8",
+    "capture": false,
+    "session_settings": {
+      "scheduledRequireConsequentialConfirmation": false
+    },
+    "task": "The current page is the public T-Shirt Sign Up Google Form. Do not fill or submit it during this run. Create exactly two independent one-shot schedule_task jobs in Act mode, both targeting URL https://forms.gle/nDSbn2B6Cym4x9Bi8. Schedule the first with after_seconds=0 and title 'Google Form submission A'. Schedule the second with after_seconds=60 and title 'Google Form submission B'. Give each job a distinct prompt that tells the scheduled run to generate a fresh random test name prefixed 'WebBrain CI A' or 'WebBrain CI B' respectively, choose a random shirt size, enter a fresh random harmless comment, use set_field for text fields, call verify_form before submitting, submit exactly once, and call done with outcome=success only after the visible Google Forms confirmation says the response was recorded. Each scheduled prompt must literally include its matching 'WebBrain CI A' or 'WebBrain CI B' prefix plus the exact phrases 'random shirt size', 'random harmless comment', 'set_field', 'verify_form', 'submit exactly once', and 'response was recorded'; it must not include the other job's prefix. The prompts must forbid editing the form, switching accounts, signing in, reusing values from the other job, or submitting again. After both schedule_task calls succeed, return scheduled_count=2 and both returned job IDs. Finish with done_json.",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "scheduled_count": { "type": "number" },
+        "first_job_id": { "type": "string" },
+        "second_job_id": { "type": "string" }
+      },
+      "required": ["scheduled_count", "first_job_id", "second_job_id"],
+      "additionalProperties": false
+    },
+    "verify": {
+      "mode": "act",
+      "successfulTools": ["schedule_task"],
+      "toolCounts": [
+        { "tool": "schedule_task", "successful": true, "equals": 2, "label": "Created exactly two scheduled form jobs", "weight": 20 }
+      ],
+      "scheduledJobs": {
+        "count": 2,
+        "status": "completed",
+        "lastOutcome": "success",
+        "distinctPrompts": true,
+        "definitions": [
+          {
+            "label": "Scheduled submission A targets the form with the requested timing and prompt",
+            "title": "Google Form submission A",
+            "mode": "act",
+            "scheduleType": "once",
+            "afterSeconds": 0,
+            "targetType": "url",
+            "targetUrl": "https://forms.gle/nDSbn2B6Cym4x9Bi8",
+            "promptContains": ["WebBrain CI A", "random shirt size", "random harmless comment", "set_field", "verify_form", "submit exactly once", "response was recorded"],
+            "promptExcludes": ["WebBrain CI B"],
+            "resultPath": "first_job_id"
+          },
+          {
+            "label": "Scheduled submission B targets the form with the requested timing and prompt",
+            "title": "Google Form submission B",
+            "mode": "act",
+            "scheduleType": "once",
+            "afterSeconds": 60,
+            "targetType": "url",
+            "targetUrl": "https://forms.gle/nDSbn2B6Cym4x9Bi8",
+            "promptContains": ["WebBrain CI B", "random shirt size", "random harmless comment", "set_field", "verify_form", "submit exactly once", "response was recorded"],
+            "promptExcludes": ["WebBrain CI A"],
+            "resultPath": "second_job_id"
+          }
+        ],
+        "countWeight": 15,
+        "statusWeight": 20,
+        "outcomeWeight": 25
+      },
+      "result": [
+        { "path": "scheduled_count", "equals": 2, "weight": 10 },
+        { "path": "first_job_id", "truthy": true, "weight": 5 },
+        { "path": "second_job_id", "truthy": true, "weight": 5 }
+      ],
+      "forbiddenTools": ["navigate", "click", "click_ax", "type_text", "type_ax", "set_field", "press_keys"],
+      "finalUrlHost": "docs.google.com"
+    },
+    "scheduled_timeout_ms": 420000,
+    "timeout_ms": 300000
+  },
+  {
+    "id": "gnippets-signup-otp-disposable",
+    "title": "Gnippets: disposable-email signup",
+    "pack": "cloud-smoke",
+    "setup": "gnippets_e2e",
+    "mode": "act",
+    "requires": ["GNIPPETS_E2E_CONTROL_TOKEN", "CAPSOLVER_API_KEY"],
+    "artifact_policy": "sensitive",
+    "capture": false,
+    "api_mutations_allowed": true,
+    "session_settings": { "strictSecretMode": true },
+    "clarifications": [
+      {
+        "question_matches": "disposable|temporary|mail\\.tm|inbox|recover|unimportant|explicitly deleted",
+        "answer": "Yes. Use a disposable Mail.tm inbox for this isolated, unimportant test signup; I understand that the address is temporary and unrecoverable."
+      }
+    ],
+    "task": "Open {{START_URL}} and go to the Signup + OTP checkpoint. This is the site owner's authorized isolated test surface and it does not create a production member. Explicitly load and use the disposable-email-mailtm and otp-verification-code-helper skills. API mutations are authorized for this isolated run: use fetch_url against https://api.mail.tm to create the disposable account with POST /accounts, authenticate it, and poll GET /messages rather than using the Mail.tm website UI. Use set_field for the signup fields, call verify_form before submission, and call solve_captcha for Turnstile so the configured CapSolver integration is exercised. Create a random test username and a new random password, fill both password fields, submit the form, wait for the Gnippets verification email in the disposable inbox, extract its six-digit one-time code, enter it, and finish the checkpoint. Never expose the password, inbox credentials, message contents, authentication token, or OTP in the final answer. Finish with done_json.",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "form_filled": { "type": "boolean" },
+        "captcha_solved": { "type": "boolean" },
+        "disposable_email_used": { "type": "boolean" },
+        "otp_submitted": { "type": "boolean" },
+        "signup_completed": { "type": "boolean" }
+      },
+      "required": ["form_filled", "captcha_solved", "disposable_email_used", "otp_submitted", "signup_completed"],
+      "additionalProperties": false
+    },
+    "verify": {
+      "mode": "act",
+      "skills": ["disposable-email-mailtm", "otp-verification-code-helper"],
+      "tools": ["set_field", "verify_form", "solve_captcha"],
+      "toolRequests": [
+        {
+          "tool": "fetch_url",
+          "method": "POST",
+          "origin": "https://api.mail.tm",
+          "label": "Created a disposable Mail.tm account",
+          "weight": 10
+        },
+        {
+          "tool": "fetch_url",
+          "method": "GET",
+          "origin": "https://api.mail.tm",
+          "label": "Read the disposable Mail.tm inbox",
+          "weight": 10
+        }
+      ],
+      "result": [
+        { "path": "form_filled", "equals": true, "weight": 10 },
+        { "path": "captcha_solved", "equals": true, "weight": 10 },
+        { "path": "disposable_email_used", "equals": true, "weight": 10 },
+        { "path": "otp_submitted", "equals": true, "weight": 10 },
+        { "path": "signup_completed", "equals": true, "weight": 15 }
+      ],
+      "events": [
+        { "type": "signup_form_validated", "weight": 10 },
+        { "type": "captcha_solved", "weight": 10 },
+        { "type": "otp_sent", "weight": 10 },
+        { "type": "otp_verified", "weight": 10 },
+        { "type": "signup_completed", "weight": 15 }
+      ],
+      "finalUrlHost": "gnippets.com"
+    },
+    "timeout_ms": 600000
   }
 ]

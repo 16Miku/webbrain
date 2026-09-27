@@ -13,6 +13,14 @@ parse it with pdfjs in the background page.
 - Origin: <https://github.com/mozilla/pdf.js>
 - Upstream license: Apache-2.0 (see `LICENSE` in this folder)
 
+## Store-review patch
+
+The upstream legacy files split the strings `<script>`, `</script>`, and
+`javascript:` across constants in an old `core-js` null-prototype fallback.
+Chrome Web Store classifies that string splitting as obfuscation. Our vendored
+copies spell those strings directly; the resulting values and fallback logic
+are unchanged.
+
 ## Why the legacy build
 
 The legacy build targets older JS runtimes than the default modern
@@ -45,8 +53,9 @@ so `browser.runtime.getURL` returns a fetchable URL.
 2. `tar xzf pdfjs-dist-*.tgz package/legacy/build/pdf.mjs
     package/legacy/build/pdf.worker.mjs package/LICENSE`
 3. Move them over `pdf.mjs`, `pdf.worker.mjs`, `LICENSE` here.
-4. Update the version line at the top of this README.
-5. Smoke-test by opening a real PDF tab in the loaded extension and
+4. Reapply the store-review patch described above to both JavaScript files.
+5. Update the version line at the top of this README.
+6. Smoke-test by opening a real PDF tab in the loaded extension and
    running a `read_pdf` from the side panel.
 
 Keep parity with `src/chrome/vendor/pdfjs/` — both extensions ship the

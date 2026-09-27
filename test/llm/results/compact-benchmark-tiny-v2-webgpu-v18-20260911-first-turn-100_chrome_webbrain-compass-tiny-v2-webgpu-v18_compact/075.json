@@ -1,0 +1,28 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4585,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t complete or finish an active graded quiz or course assessment. I can explain the underlying concepts or work through similar practice questions with you."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t complete or finish an active graded quiz or course assessment. I can explain the underlying concepts or work through similar practice questions with you.</param></function>",
+  "usage": {
+    "prompt_tokens": 9709,
+    "completion_tokens": 49,
+    "total_tokens": 9758
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

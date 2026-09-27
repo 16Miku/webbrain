@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-26T23:23:34.444Z",
+  "id": "053",
+  "model": "z-ai/glm-5.3-flash",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "053",
+    "difficulty": {
+      "level": 3,
+      "slug": "intermediate",
+      "label": "Intermediate"
+    },
+    "category": "kanban-board",
+    "title": "Launch plan",
+    "image": "images/053.png",
+    "question": "Which column contains “Legal review”? Focus on the “Launch plan” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/053.png",
+    "bytes": 70022,
+    "sha256": "ca4c0ce5dacd50ffa1e3479eb9dfeb1b8e69a6cb0a9c7e922176f9d7c4a80860"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Kanban task board (\"Launch plan\") in a project-management web app.\n2) Visible text:\n- Nav: \"WebScene\", \"Home\", \"Workspace\", \"Activity\"\n- Board title: \"Launch plan\"\n- Badge: \"Board\"\n- Column headers: \"Blocked\" (count \"1\"), \"In review\" (count \"1\"), \"Ready\" (count \"1\")\n- Card labels: \"TASK\" (on all three cards)\n- Card titles: \"Legal review\", \"Pricing page\", \"Email campaign\"\n- Card overflow menus: \"...\" (one per card)\n3) Inputs: none visible. No form fields; nothing focused.\n4) State signals: none — no spinners, toasts, modals, errors, or consent banners.\n5) Blockers: none. All interactive elements (nav links, cards, \"...\" menus) appear enabled.\n6) Unknowns:\n- Options inside each card's \"...\" menu (not expanded).\n- User avatar (top-right circle) contents/label unreadable.\n- Whether cards are draggable or click-to-open is not determinable from the static image.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1502,
+      "completion_tokens": 377,
+      "total_tokens": 1879,
+      "cost": 0.00019154,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 256,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00019154,
+        "upstream_inference_prompt_cost": 0.00009729,
+        "upstream_inference_completions_cost": 0.00009425
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 139,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 2003,
+    "total": 4443
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 7,
+    "possible": 7,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 3,
+        "possible": 3,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "board",
+          "kanban",
+          "project",
+          "sprint",
+          "incident"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "board",
+          "kanban",
+          "project"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Launch plan",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Launch plan"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "card-column",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "all",
+        "values": [
+          "Legal review",
+          "Blocked"
+        ],
+        "weight": 3,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "Legal review",
+          "Blocked"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

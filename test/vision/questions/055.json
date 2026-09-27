@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "055",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "map-and-travel",
+  "title": "Delivery tracking",
+  "image": "images/055.png",
+  "question": "Which map item is selected, what detail is shown, and how many pins are visible? Focus on the “Delivery tracking” screen.",
+  "defaultPromptMode": "production"
+}

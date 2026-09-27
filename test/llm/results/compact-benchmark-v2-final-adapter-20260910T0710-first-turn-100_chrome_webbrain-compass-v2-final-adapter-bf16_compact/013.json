@@ -1,0 +1,22 @@
+{
+  "id": "013",
+  "user": "open the about config page",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1493,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": " name=\"get_accessibility_tree\"> name=\"filter\">visible",
+  "usage": {
+    "prompt_tokens": 9709,
+    "completion_tokens": 17,
+    "total_tokens": 9726
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

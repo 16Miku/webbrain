@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "083",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "checkout",
+  "title": "Order summary",
+  "image": "images/083.png",
+  "question": "What is the exact total, and can the visible purchase action proceed? Focus on the “Order summary” screen.",
+  "defaultPromptMode": "production"
+}

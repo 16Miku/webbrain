@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "003",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "checkout",
+  "title": "Your cart",
+  "image": "images/003.png",
+  "question": "What is the exact total, and can the visible purchase action proceed? Focus on the “Your cart” screen.",
+  "defaultPromptMode": "production"
+}

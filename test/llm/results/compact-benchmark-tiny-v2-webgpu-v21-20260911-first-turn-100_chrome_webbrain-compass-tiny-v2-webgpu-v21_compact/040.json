@@ -1,0 +1,28 @@
+{
+  "id": "040",
+  "user": "clear the search box",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.google.com/search?q=foo",
+    "title": "foo - Google Search"
+  },
+  "latencyMs": 3846,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 6
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"get_accessibility_tree\"><param name=\"filter\">visible</param><param name=\"maxDepth\">6</param></function>",
+  "usage": {
+    "prompt_tokens": 10007,
+    "completion_tokens": 25,
+    "total_tokens": 10032
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-27T18:22:47.565Z",
+  "id": "006",
+  "model": "deepseek/deepseek-v4-flash-vision-exp",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "006",
+    "difficulty": {
+      "level": 1,
+      "slug": "easy",
+      "label": "Easy"
+    },
+    "category": "toast-notification",
+    "title": "Saved",
+    "image": "images/006.png",
+    "question": "What transient notification is visible, and is it success, warning, error, or informational? Focus on the “Saved” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/006.png",
+    "bytes": 85111,
+    "sha256": "d6dc7841cd258bc41f69a729651c87cb3d791c4f4763b71ebaa87517c03bcdd0"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Settings/preferences page with toggle switches for a \"Notes\" feature.\n2) Visible text:\n- \"WebScene\" (logo)\n- \"Home\"\n- \"Workspace\"\n- \"Activity\"\n- \"Notes\"\n- \"General\"\n- \"Notifications\"\n- \"Privacy\"\n- \"Integrations\"\n- \"Done\"\n- \"Saved\"\n3) Inputs:\n- \"General\" toggle: OFF (grey), not focused/disabled\n- \"Notifications\" toggle: ON (blue), not focused/disabled\n- \"Privacy\" toggle: OFF (grey), not focused/disabled\n- \"Integrations\" toggle: OFF (grey), not focused/disabled\n4) State signals: Dark toast at top-right with checkmark icon and text \"Saved\" (success confirmation).\n5) Blockers: None.\n6) Unknowns: Text/identifier in the top-right profile/avatar icon (a teal circle) is not readable.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 751,
+      "completion_tokens": 436,
+      "total_tokens": 1187,
+      "cost": 0.000398452,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 256,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.000398452,
+        "upstream_inference_prompt_cost": 0.000110692,
+        "upstream_inference_completions_cost": 0.00028776
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 239,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 1160,
+    "total": 5406
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 7,
+    "possible": 7,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "state_signals": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "notes",
+          "settings",
+          "upload",
+          "export"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "notes",
+          "settings"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Notes",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Notes"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "button",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Done",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Done"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "toast",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "Saved",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Saved"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

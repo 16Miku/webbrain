@@ -1,0 +1,27 @@
+{
+  "id": "080",
+  "user": "close all my tabs except this one",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3003,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.google.com/"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"navigate\"><param name=\"url\">https://www.google.com/</param></function>",
+  "usage": {
+    "prompt_tokens": 9711,
+    "completion_tokens": 20,
+    "total_tokens": 9731
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

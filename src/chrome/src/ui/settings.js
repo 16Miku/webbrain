@@ -5,6 +5,14 @@
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
+import {
+  UI_SCALE_LEVELS,
+  UI_SCALE_STORAGE_KEY,
+  loadUiScale,
+  nextUiScale,
+  normalizeUiScale,
+  saveUiScale,
+} from './ui-scale.js';
 import { renderSkillMarkdown } from './skill-markdown.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import {
@@ -33,8 +41,17 @@ import {
   normalizeCapsolverApiKey,
 } from '../agent/capsolver-config.js';
 import {
+  isValidTypesafeApiKey,
+  normalizeSystemOneThreshold,
+  normalizeTypesafeApiKey,
+} from '../agent/systemone-judge.js';
+import {
+  OPENROUTER_ROUTING_VARIANTS,
   detectedCompatibilityPreset,
+  isNewOpenAIContractConfig,
+  normalizeOpenAICompatibleBaseUrl,
   normalizeProviderCompatibility,
+  openRouterRoutingVariant,
   parseProviderExtraBodyJson,
   shouldUseOpenAIResponsesApi,
 } from '../providers/provider-compatibility.js';
@@ -49,18 +66,44 @@ import {
   sniffProviderIdFromBaseUrl,
 } from './provider-icons.js';
 import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
+import { AUTO_VISION_PROVIDER_IDS, visionDetectionMatches } from '../providers/vision-capabilities.js';
+import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
+import {
+  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  WEBGPU_MODEL_PRESETS,
+  WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_CONSENT_VERSION,
+  WEBGPU_VISION_CONSENT_VERSION_KEY,
+  WEBGPU_VISION_ENABLED_KEY,
+  normalizeWebgpuModelId,
+} from '../providers/webgpu.js';
+import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
+
+const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
+const EASY_CLI_PROXY_GUIDE_URL = 'https://webbrain.one/docs/easy-cli-proxy/';
+const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
+  openai: 'ChatGPT/Codex',
+  anthropic: 'Claude',
+  gemini: 'Google/Gemini',
+  xai: 'Grok/xAI',
+  kimi: 'Kimi',
+});
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '26.2.2';
+const EXT_VERSION = '36.8.0';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
 const generalSearchInput = document.getElementById('input-general-search');
 const generalSearchEmpty = document.getElementById('general-search-empty');
 const advancedSettings = document.querySelector('.advanced-settings');
+const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
+const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
+const pdfViewerToggle = document.getElementById('toggle-pdf-viewer');
+const autoGroupTabsToggle = document.getElementById('toggle-auto-group-tabs');
 const helpImproveToggle = document.getElementById('toggle-help-improve');
 const screenshotToggle = document.getElementById('toggle-screenshot-fallback');
 const maxStepsRange = document.getElementById('range-max-steps');
@@ -78,6 +121,7 @@ const imageDetailSelect = document.getElementById('select-image-detail');
 const maxScreenshotsSelect = document.getElementById('select-max-screenshots');
 const maxImageDimensionSelect = document.getElementById('select-max-image-dimension');
 const siteAdaptersToggle = document.getElementById('toggle-site-adapters');
+const researchEscalationToggle = document.getElementById('toggle-research-escalation');
 const voiceInputToggle = document.getElementById('toggle-voice-input');
 const alwaysAllowApiMutationsToggle = document.getElementById('toggle-always-allow-api-mutations');
 const apiMutationObserverToggle = document.getElementById('toggle-api-mutation-observer');
@@ -90,15 +134,24 @@ const planReviewConfidenceValueLabel = document.getElementById('plan-review-conf
 const planReviewConfidenceRow = document.getElementById('row-plan-review-confidence');
 const notifySoundToggle = document.getElementById('toggle-notify-sound');
 const completionConfettiToggle = document.getElementById('toggle-completion-confetti');
+const completionFlashTabToggle = document.getElementById('toggle-completion-flash-tab');
 const tracingToggle = document.getElementById('toggle-tracing');
+const losslessTracingToggle = document.getElementById('toggle-lossless-tracing');
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
 const allowLocalNetworkToggle = document.getElementById('toggle-allow-local-network');
+const cloudBridgeToggle = document.getElementById('toggle-cloud-bridge');
+const cloudBridgeUrlInput = document.getElementById('input-cloud-bridge-url');
+const cloudBridgeStatus = document.getElementById('cloud-bridge-status');
+const cloudBridgeStatusText = document.getElementById('cloud-bridge-status-text');
 const scheduledTasksToggle = document.getElementById('toggle-scheduled-tasks');
 const scheduledConfirmToggle = document.getElementById('toggle-scheduled-confirm');
 const visionBaseUrlInput = document.getElementById('vision-base-url');
 const visionApiKeyInput = document.getElementById('vision-api-key');
 const visionModelInput = document.getElementById('vision-model');
 const btnSaveVision = document.getElementById('btn-save-vision');
+const webgpuVisionOption = document.getElementById('webgpu-vision-option');
+const btnUseWebgpuVision = document.getElementById('btn-use-webgpu-vision');
+const visionEndpointFields = document.getElementById('vision-endpoint-fields');
 const skillNameInput = document.getElementById('skill-name');
 const skillUrlInput = document.getElementById('skill-url');
 const skillTextArea = document.getElementById('skill-text');
@@ -164,8 +217,28 @@ const btnSaveCaptcha = document.getElementById('btn-save-captcha');
 const btnTestCaptcha = document.getElementById('btn-test-captcha');
 const btnClearCaptcha = document.getElementById('btn-clear-captcha');
 const captchaTestResult = document.getElementById('test-captcha');
+const systemOneApiKeyInput = document.getElementById('system-one-api-key');
+const systemOneEnabledToggle = document.getElementById('toggle-system-one');
+const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
+const systemOneCompletionToggle = document.getElementById('toggle-system-one-completion');
+const systemOneWatchThresholdRange = document.getElementById('range-system-one-watch-threshold');
+const systemOneWatchThresholdValue = document.getElementById('system-one-watch-threshold-value');
+const systemOneCompletionThresholdRange = document.getElementById('range-system-one-completion-threshold');
+const systemOneCompletionThresholdValue = document.getElementById('system-one-completion-threshold-value');
+const btnSaveSystemOne = document.getElementById('btn-save-system-one');
+const systemOneClassificationsToggle = document.getElementById('toggle-system-one-classifications');
+const systemOneBrowserToggle = document.getElementById('toggle-system-one-browser');
+const btnTestSystemOne = document.getElementById('btn-test-system-one');
+const btnClearSystemOne = document.getElementById('btn-clear-system-one');
+const systemOneTestResult = document.getElementById('test-system-one');
 const languageSelect = document.getElementById('select-language');
 const themeSelect = document.getElementById('select-theme');
+const settingsUiScaleDecrease = document.getElementById('settings-ui-scale-decrease');
+const settingsUiScaleValue = document.getElementById('settings-ui-scale-value');
+const settingsUiScaleIncrease = document.getElementById('settings-ui-scale-increase');
+const settingsUiScaleReset = document.getElementById('settings-ui-scale-reset');
+const settingsUiScaleShortcuts = document.getElementById('settings-ui-scale-shortcuts');
+const settingsUiScaleManageShortcuts = document.getElementById('settings-ui-scale-manage-shortcuts');
 const downloadDirectoryInput = document.getElementById('input-download-directory');
 const subtitleEl = document.getElementById('subtitle');
 
@@ -201,6 +274,64 @@ if (themeSelect) {
     });
   }
 }
+
+let currentSettingsUiScale = 100;
+let settingsUiScaleReady = false;
+
+function renderSettingsUiScale(value) {
+  currentSettingsUiScale = normalizeUiScale(value);
+  settingsUiScaleReady = true;
+  if (settingsUiScaleValue) settingsUiScaleValue.textContent = `${currentSettingsUiScale}%`;
+  if (settingsUiScaleDecrease) settingsUiScaleDecrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[0];
+  if (settingsUiScaleIncrease) settingsUiScaleIncrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[UI_SCALE_LEVELS.length - 1];
+}
+
+// Serialized so each step reads the scale rendered by the step before it:
+// holding Enter on a focused +/- button repeats faster than the storage write
+// resolves, and an unqueued step would keep re-reading the same stale scale.
+let settingsUiScaleWriteQueue = Promise.resolve();
+
+function changeSettingsUiScale(action) {
+  if (!settingsUiScaleReady) return Promise.resolve();
+  const write = settingsUiScaleWriteQueue.then(async () => {
+    const next = nextUiScale(currentSettingsUiScale, action);
+    await saveUiScale(chrome.storage.local, next);
+    renderSettingsUiScale(next);
+  });
+  // Keep the chain alive after a rejected write while still handing the
+  // failure to this caller.
+  settingsUiScaleWriteQueue = write.catch(() => {});
+  return write;
+}
+
+loadUiScale(chrome.storage.local).then(renderSettingsUiScale);
+if (settingsUiScaleDecrease) settingsUiScaleDecrease.disabled = true;
+if (settingsUiScaleIncrease) settingsUiScaleIncrease.disabled = true;
+settingsUiScaleDecrease?.addEventListener('click', () => changeSettingsUiScale('decrease').catch(() => {}));
+settingsUiScaleIncrease?.addEventListener('click', () => changeSettingsUiScale('increase').catch(() => {}));
+settingsUiScaleReset?.addEventListener('click', () => changeSettingsUiScale('reset').catch(() => {}));
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[UI_SCALE_STORAGE_KEY]) {
+    renderSettingsUiScale(changes[UI_SCALE_STORAGE_KEY].newValue);
+  }
+});
+
+const UI_SCALE_COMMAND_NAMES = ['decrease-ui-scale', 'increase-ui-scale', 'reset-ui-scale'];
+
+async function refreshUiScaleShortcuts() {
+  if (!settingsUiScaleShortcuts) return;
+  const commands = await chrome.commands.getAll();
+  const shortcuts = UI_SCALE_COMMAND_NAMES.map((name) => commands.find((command) => command.name === name)?.shortcut)
+    .filter(Boolean);
+  const summary = shortcuts.length ? shortcuts.join(' · ') : t('st.display.ui_scale.shortcuts_none');
+  settingsUiScaleShortcuts.textContent = t('st.display.ui_scale.shortcuts', { shortcuts: summary });
+}
+
+refreshUiScaleShortcuts().catch(() => {});
+window.addEventListener('focus', () => refreshUiScaleShortcuts().catch(() => {}));
+settingsUiScaleManageShortcuts?.addEventListener('click', () => {
+  chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+});
 
 function renderSubtitle() {
   if (subtitleEl) subtitleEl.textContent = t('st.subtitle', { version: EXT_VERSION });
@@ -281,27 +412,58 @@ if (languageSelect) {
     await setLocale(languageSelect.value);
     // Re-render dynamic bits whose text comes from JS.
     renderSubtitle();
+    refreshUiScaleShortcuts().catch(() => {});
     filterGeneralSettings();
     renderProviders();
   });
   document.addEventListener('wb-locale-changed', () => {
     languageSelect.value = getLocale();
     renderSubtitle();
+    refreshUiScaleShortcuts().catch(() => {});
     filterGeneralSettings();
     if (providersContainer) renderProviders();
     renderSkills();
     renderPermissions();
+    refreshProfileSyncState();
+    refreshApocalypseModeStatus();
   });
 }
+globalThis.addEventListener('focus', () => {
+  refreshApocalypseModeStatus();
+  loadVisionConfig().catch(() => {});
+});
 
 let providersData = {};
 // Unsaved custom-body text must survive provider-card/filter/search renders,
 // including temporarily invalid JSON while the user is still editing it.
 // Keep the raw UI draft separate from the last valid provider config.
 const providerCompatibilityJsonDrafts = new Map();
+const dirtyProviderIds = new Set();
 let activeProviderId = '';
 let providerActivationRequestId = 0;
 let requestedActiveProviderId = '';
+let currentVisionConfig = {};
+let webgpuVisionEnabled = false;
+
+if (globalThis.chrome?.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (changes[WEBGPU_VISION_ENABLED_KEY] || changes[WEBGPU_VISION_CONSENT_VERSION_KEY]) {
+      loadVisionConfig().catch(() => {});
+    }
+    if (!changes.providers?.newValue) return;
+    for (const [id, next] of Object.entries(changes.providers.newValue)) {
+      if (!providersData[id] || next.visionDetection === undefined) continue;
+      // Background detection may finish while the settings page contains
+      // unsaved drafts. Refresh only the detected result.
+      providersData[id].visionDetection = next.visionDetection || null;
+      const definitionId = providerDefinitionId(id);
+      if (VISION_UI_PROVIDER_IDS.has(definitionId)) {
+        refreshVisionStatus(id);
+      }
+    }
+  });
+}
 
 const WEBBRAIN_SUBSCRIBE_URL = 'https://webbrain.one/subscribe';
 const WEBBRAIN_ACCOUNT_URL = 'https://api.webbrain.one/account';
@@ -311,6 +473,11 @@ const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
 const PLAN_BEFORE_ACT_MODES = new Set(['try', 'strict', 'off']);
 const PLAN_REVIEW_MODES = new Set(['confidence', 'always', 'never']);
+const CLOUD_BRIDGE_ENABLED_KEY = 'webbrainCloudBridgeEnabled';
+const CLOUD_BRIDGE_URL_KEY = 'webbrainCloudBridgeUrl';
+const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17374/extension';
+let cloudBridgeStatusPollTimer = null;
+let cloudBridgeStatusRequestPending = false;
 // Product default: auto-approve plans at 75% confidence to reduce review stops.
 // Planner prompt still tells the LLM to reserve 90%+ for straightforward plans;
 // that intentional gap keeps model scoring conservative without over-pausing.
@@ -347,6 +514,203 @@ function updatePlanReviewConfidenceUI() {
 function normalizeCostAmount(value, fallback = DEFAULT_COST_ALLOWANCE_USD) {
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function normalizeCloudBridgeSettingsUrl(value) {
+  const url = new URL(String(value || DEFAULT_CLOUD_BRIDGE_URL));
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) {
+    throw new Error(t('st.display.cloud_bridge.invalid_url'));
+  }
+  return url.href;
+}
+
+function setCloudBridgeStatus(state, message) {
+  if (!cloudBridgeStatus || !cloudBridgeStatusText) return;
+  cloudBridgeStatus.dataset.state = state;
+  cloudBridgeStatusText.textContent = message;
+}
+
+function renderCloudBridgeStatus(status = {}) {
+  if (!cloudBridgeToggle?.checked || status.enabled === false) {
+    setCloudBridgeStatus('disabled', t('st.display.cloud_bridge.status_disabled'));
+    return;
+  }
+  if (status.connected) {
+    setCloudBridgeStatus('connected', t('st.display.cloud_bridge.status_connected'));
+    return;
+  }
+  if (status.lastError === 'WebSocket error') {
+    setCloudBridgeStatus('waiting', t('st.display.cloud_bridge.status_unreachable', {
+      url: status.url || cloudBridgeUrlInput?.value || DEFAULT_CLOUD_BRIDGE_URL,
+    }));
+    return;
+  }
+  if (status.lastError) {
+    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: status.lastError }));
+    return;
+  }
+  if (Number(status.reconnectAttempt) > 0) {
+    setCloudBridgeStatus('waiting', t('st.display.cloud_bridge.status_reconnecting', {
+      attempt: status.reconnectAttempt,
+    }));
+    return;
+  }
+  setCloudBridgeStatus('waiting', t('st.display.cloud_bridge.status_connecting'));
+}
+
+function validateCloudBridgeUrl({ report = false } = {}) {
+  if (!cloudBridgeUrlInput) return '';
+  try {
+    const normalized = normalizeCloudBridgeSettingsUrl(cloudBridgeUrlInput.value);
+    cloudBridgeUrlInput.setCustomValidity('');
+    cloudBridgeUrlInput.removeAttribute('aria-invalid');
+    return normalized;
+  } catch (error) {
+    const message = error?.message || t('st.display.cloud_bridge.invalid_url');
+    cloudBridgeUrlInput.setCustomValidity(message);
+    cloudBridgeUrlInput.setAttribute('aria-invalid', 'true');
+    setCloudBridgeStatus('error', message);
+    if (report) cloudBridgeUrlInput.reportValidity();
+    return '';
+  }
+}
+
+function setCloudBridgeControlsBusy(busy) {
+  if (cloudBridgeToggle) cloudBridgeToggle.disabled = busy;
+  if (cloudBridgeUrlInput) cloudBridgeUrlInput.disabled = busy;
+  const setting = document.getElementById('cloud-bridge-setting');
+  if (busy) setting?.setAttribute('aria-busy', 'true');
+  else setting?.removeAttribute('aria-busy');
+}
+
+async function refreshCloudBridgeStatus() {
+  if (!cloudBridgeToggle?.checked || cloudBridgeUrlInput?.getAttribute('aria-invalid') === 'true' || document.hidden || cloudBridgeStatusRequestPending) return;
+  cloudBridgeStatusRequestPending = true;
+  try {
+    renderCloudBridgeStatus(await sendToBackground('cloud_bridge_status'));
+  } catch (error) {
+    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
+  } finally {
+    cloudBridgeStatusRequestPending = false;
+  }
+}
+
+function startCloudBridgeStatusPolling() {
+  if (cloudBridgeStatusPollTimer) return;
+  cloudBridgeStatusPollTimer = setInterval(refreshCloudBridgeStatus, 2000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshCloudBridgeStatus();
+  });
+}
+
+async function saveCloudBridgeUrl() {
+  const normalized = validateCloudBridgeUrl({ report: true });
+  if (!normalized) return;
+  cloudBridgeUrlInput.value = normalized;
+  try {
+    await chrome.storage.local.set({ [CLOUD_BRIDGE_URL_KEY]: normalized });
+    if (!cloudBridgeToggle.checked) {
+      renderCloudBridgeStatus({ enabled: false });
+      return;
+    }
+    renderCloudBridgeStatus(await sendToBackground('cloud_bridge_start', { url: normalized }));
+  } catch (error) {
+    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
+  }
+}
+
+async function toggleCloudBridge() {
+  if (!cloudBridgeToggle || !cloudBridgeUrlInput) return;
+  if (!cloudBridgeToggle.checked) {
+    setCloudBridgeControlsBusy(true);
+    try {
+      await chrome.storage.local.set({ [CLOUD_BRIDGE_ENABLED_KEY]: false });
+      await sendToBackground('cloud_bridge_stop').catch(() => null);
+      renderCloudBridgeStatus({ enabled: false });
+    } catch (error) {
+      cloudBridgeToggle.checked = true;
+      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
+    } finally {
+      setCloudBridgeControlsBusy(false);
+    }
+    return;
+  }
+
+  const normalized = validateCloudBridgeUrl({ report: true });
+  if (!normalized) {
+    cloudBridgeToggle.checked = false;
+    return;
+  }
+  cloudBridgeUrlInput.value = normalized;
+  setCloudBridgeControlsBusy(true);
+  try {
+    await chrome.storage.local.set({
+      [CLOUD_BRIDGE_ENABLED_KEY]: true,
+      [CLOUD_BRIDGE_URL_KEY]: normalized,
+    });
+    renderCloudBridgeStatus(await sendToBackground('cloud_bridge_start', { url: normalized }));
+  } catch (error) {
+    cloudBridgeToggle.checked = false;
+    await chrome.storage.local.set({ [CLOUD_BRIDGE_ENABLED_KEY]: false }).catch(() => {});
+    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
+  } finally {
+    setCloudBridgeControlsBusy(false);
+  }
+}
+
+async function initCloudBridgeSettings(stored) {
+  if (!cloudBridgeToggle || !cloudBridgeUrlInput) return;
+  cloudBridgeToggle.checked = stored[CLOUD_BRIDGE_ENABLED_KEY] === true;
+  cloudBridgeUrlInput.value = stored[CLOUD_BRIDGE_URL_KEY] || DEFAULT_CLOUD_BRIDGE_URL;
+
+  const normalized = validateCloudBridgeUrl();
+  if (normalized) cloudBridgeUrlInput.value = normalized;
+  if (cloudBridgeToggle.checked && normalized) {
+    try {
+      renderCloudBridgeStatus(await sendToBackground('cloud_bridge_start', { url: normalized }));
+    } catch (error) {
+      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
+    }
+  } else if (normalized) {
+    renderCloudBridgeStatus({ enabled: false });
+  }
+
+  cloudBridgeToggle.addEventListener('change', () => {
+    toggleCloudBridge().catch((error) => {
+      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
+    });
+  });
+  cloudBridgeUrlInput.addEventListener('input', () => {
+    cloudBridgeUrlInput.setCustomValidity('');
+    cloudBridgeUrlInput.removeAttribute('aria-invalid');
+  });
+  cloudBridgeUrlInput.addEventListener('change', () => {
+    saveCloudBridgeUrl().catch((error) => {
+      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
+    });
+  });
+  cloudBridgeUrlInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    cloudBridgeUrlInput.blur();
+  });
+  document.addEventListener('wb-locale-changed', () => {
+    if (cloudBridgeToggle.checked) refreshCloudBridgeStatus();
+    else renderCloudBridgeStatus({ enabled: false });
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (changes[CLOUD_BRIDGE_URL_KEY]?.newValue) {
+      cloudBridgeUrlInput.value = changes[CLOUD_BRIDGE_URL_KEY].newValue;
+    }
+    if (changes[CLOUD_BRIDGE_ENABLED_KEY]) {
+      cloudBridgeToggle.checked = changes[CLOUD_BRIDGE_ENABLED_KEY].newValue === true;
+      if (cloudBridgeToggle.checked) refreshCloudBridgeStatus();
+      else renderCloudBridgeStatus({ enabled: false });
+    }
+  });
+  startCloudBridgeStatusPolling();
 }
 
 function formatUsd(value) {
@@ -390,12 +754,50 @@ function boundedMaxAgentSteps(value) {
 // flat list is unwieldy — filter keeps the visual surface small, and
 // per-card collapse defaults non-active cards to header-only so the page
 // doesn't scroll forever.
-let providerFilter = 'all';     // 'all' | 'local' | 'cloud' | 'router'
+let providerFilter = 'all';     // 'all' | 'active' | 'local' | 'cloud' | 'router'
 let providerSearchQuery = '';
 const expandedProviders = new Set(); // ids the user explicitly expanded this session
+let editingSkillId = null;
 let customSkills = [];
 let skillPreviewRequestId = 0;
 const DEFAULT_SKILL_IDS = new Set(DEFAULT_SKILL_SOURCES.map((source) => source.id));
+
+function formatArchiveBytes(value) {
+  const number = Math.max(0, Number(value) || 0);
+  if (number < 1024) return `${number} B`;
+  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+  let amount = number;
+  let unit = -1;
+  do { amount /= 1024; unit += 1; } while (amount >= 1024 && unit < units.length - 1);
+  return `${amount.toFixed(amount >= 10 ? 1 : 2)} ${units[unit]}`;
+}
+
+async function refreshApocalypseModeStatus() {
+  if (!apocalypseModeStatus) return;
+  try {
+    const status = await sendToBackground('apocalypse_mode', { command: 'status' });
+    const enabled = status?.enabled === true;
+    const summary = enabled
+      ? t('st.display.apocalypse_mode.status.summary', {
+        count: Number(status.installedCount) || 0,
+        size: formatArchiveBytes(status.totalBytes),
+        policy: t(status.updatePolicy === 'automatic' ? 'ap.metric.automatic' : 'ap.metric.manual'),
+      })
+      : t('st.display.apocalypse_mode.status.off');
+    apocalypseModeStatus.textContent = summary;
+    if (apocalypseModeLink) {
+      apocalypseModeLink.dataset.enabled = String(enabled);
+      apocalypseModeLink.title = summary;
+    }
+  } catch {
+    const unavailable = t('st.display.apocalypse_mode.status.unavailable');
+    apocalypseModeStatus.textContent = unavailable;
+    if (apocalypseModeLink) {
+      delete apocalypseModeLink.dataset.enabled;
+      apocalypseModeLink.title = unavailable;
+    }
+  }
+}
 
 // --- Init ---
 
@@ -406,12 +808,14 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'tracingEnabled', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'cloudCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
-  if (typeof stored.providerFilter === 'string' && ['all','local','cloud','router'].includes(stored.providerFilter)) {
+  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
   verboseToggle.checked = stored.verboseMode || false;
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
+  if (pdfViewerToggle) pdfViewerToggle.checked = stored.pdfViewerEnabled === undefined || stored.pdfViewerEnabled === true;
+  if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
   if (helpImproveToggle) helpImproveToggle.checked = stored.helpImproveWebBrain !== false; // on by default
   screenshotToggle.checked = stored.screenshotFallback ?? true; // on by default
   if (isUnlimitedMaxAgentSteps(stored.maxAgentSteps)) {
@@ -455,10 +859,11 @@ async function init() {
   maxScreenshotsSelect.value = String(stored.maxScreenshotsPerTurn != null ? stored.maxScreenshotsPerTurn : 0);
   maxImageDimensionSelect.value = String(stored.maxImageDimension || 1568);
   siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
+  if (researchEscalationToggle) researchEscalationToggle.checked = stored.researchEscalationEnabled === true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
-  alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === true;
-  apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === true;
-  if (webMcpToggle) webMcpToggle.checked = stored.webMcpEnabled === true; // off by default
+  alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === undefined || stored.alwaysAllowApiMutations === true;
+  apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === undefined || stored.apiMutationObserverEnabled === true;
+  if (webMcpToggle) webMcpToggle.checked = stored.webMcpEnabled !== false; // on by default
   if (openAIAskStreamingToggle) openAIAskStreamingToggle.checked = stored.openaiAskStreamingEnabled !== false;
   if (planBeforeActModeSelect) {
     planBeforeActModeSelect.value = normalizePlanBeforeActMode(stored);
@@ -475,10 +880,15 @@ async function init() {
   }
   notifySoundToggle.checked = stored.notifySound ?? true; // on by default
   completionConfettiToggle.checked = stored.completionConfetti ?? true; // on by default
+  completionFlashTabToggle.checked = stored.completionFlashTab ?? true; // on by default
   tracingToggle.checked = stored.tracingEnabled === true;
+  losslessTracingToggle.checked = stored.losslessTrace === true;
+  // Lossless recording only means something when tracing is on; mirror the
+  // disabled state so the disclosure reads honestly.
+  losslessTracingToggle.disabled = tracingToggle.checked !== true;
   const sessionLimit = normalizeCostAmount(stored.costAllowanceSessionUsd);
   const totalLimit = normalizeCostAmount(stored.costAllowanceTotalUsd);
-  const totalSpent = normalizeCostAmount(stored.cloudCostSpentUsd, 0);
+  const totalSpent = normalizeCostAmount(stored.meteredProviderCostSpentUsd, 0);
   if (costSessionLimitInput) costSessionLimitInput.value = sessionLimit.toFixed(2);
   if (costTotalLimitInput) costTotalLimitInput.value = totalLimit.toFixed(2);
   renderCostAllowanceSpent(totalSpent, totalLimit);
@@ -488,19 +898,25 @@ async function init() {
   if (allowLocalNetworkToggle) {
     allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true; // off by default
   }
+  await initCloudBridgeSettings(stored);
   if (scheduledTasksToggle) {
     scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false; // on by default
   }
   if (scheduledConfirmToggle) {
     scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false; // on by default
   }
+  if (systemOneEnabledToggle) systemOneEnabledToggle.checked = stored.systemOneEnabled === true;
+  if (systemOneWatchToggle) systemOneWatchToggle.checked = stored.systemOneWatchEnabled === true;
+  if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = stored.systemOneFastClassifications === true;
+  if (systemOneBrowserToggle) systemOneBrowserToggle.checked = stored.systemOneFastBrowser === true;
+  if (systemOneCompletionToggle) systemOneCompletionToggle.checked = stored.systemOneCompletionEnabled === true;
+  if (systemOneApiKeyInput) systemOneApiKeyInput.value = normalizeTypesafeApiKey(stored.typesafeApiKey);
+  if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
+  if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
+  updateSystemOneThresholdLabels();
 
   // Load vision model config
-  const visionStored = await chrome.storage.local.get(['visionModel']);
-  const vision = visionStored.visionModel || {};
-  visionBaseUrlInput.value = vision.baseUrl || '';
-  visionApiKeyInput.value = vision.apiKey || '';
-  visionModelInput.value = vision.model || '';
+  await loadVisionConfig();
 
   // Load transcription service config. Same shape as visionModel; used by
   // recorder/host.js → transcribe.js when transcribing recorded audio.
@@ -528,6 +944,7 @@ async function init() {
   await initPermissionGateToggle();
   await renderPermissions();
   await initScreenshotRedactionToggle();
+  await refreshApocalypseModeStatus();
 
   // Load providers
   const res = await sendToBackground('get_providers');
@@ -774,7 +1191,7 @@ async function saveCustomSkills(nextSkills, opts = {}) {
   const update = { [CUSTOM_SKILLS_STORAGE_KEY]: customSkills };
   const removedSkill = opts.removedSkill;
   const installedSkill = opts.installedSkill;
-  const removedDefault = removedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(removedSkill.id);
+  const removedDefault = (removedSkill?.sourceType === 'built-in' || DEFAULT_SKILL_IDS.has(removedSkill?.id)) && DEFAULT_SKILL_IDS.has(removedSkill?.id);
   const installedDefault = installedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(installedSkill.id);
   if (removedDefault || installedDefault) {
     const stored = await chrome.storage.local.get(DEFAULT_SKILLS_REMOVED_STORAGE_KEY);
@@ -836,6 +1253,7 @@ function renderSkills() {
                   data-skill-preview-id="${escapeHtml(skill.id)}">${escapeHtml(skill.name)}</button>
           <div class="setting-desc skill-source">${escapeHtml(source)} · ${escapeHtml(t('st.skills.item.chars', { count: skill.content.length }))}${escapeHtml(toolSummary)}</div>
         </div>
+        <button class="btn-secondary" data-skill-edit-id="${escapeHtml(skill.id)}">${escapeHtml(t('st.skills.edit'))}</button>
         <button class="btn-secondary" data-skill-id="${escapeHtml(skill.id)}">${escapeHtml(t('st.skills.remove'))}</button>
       </div>`;
   }).join('');
@@ -843,8 +1261,17 @@ function renderSkills() {
   skillsList.querySelectorAll('button[data-skill-preview-id]').forEach((btn) => {
     btn.addEventListener('click', () => previewEnabledSkill(btn.dataset.skillPreviewId));
   });
+  skillsList.querySelectorAll('button[data-skill-edit-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const skill = customSkills.find((s) => s.id === btn.dataset.skillEditId);
+      if (skill) startSkillEdit(skill);
+    });
+  });
   skillsList.querySelectorAll('button[data-skill-id]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (editingSkillId === btn.dataset.skillId) {
+        cancelSkillEdit();
+      }
       const removedSkill = customSkills.find((skill) => skill.id === btn.dataset.skillId);
       await saveCustomSkills(
         customSkills.filter((skill) => skill.id !== btn.dataset.skillId),
@@ -887,6 +1314,24 @@ async function addPackagedSkill(skillId, button) {
   }
 }
 
+function startSkillEdit(skill) {
+  editingSkillId = skill.id;
+  if (skillNameInput) skillNameInput.value = skill.name || '';
+  if (skillTextArea) skillTextArea.value = skill.content || '';
+  if (btnAddSkillText) btnAddSkillText.textContent = t('st.providers.save');
+  flashSkillsResult('ok', skill.name || t('st.skills.edit'));
+  skillNameInput?.focus?.();
+  if (skillTextArea) skillTextArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelSkillEdit() {
+  if (editingSkillId == null) return;
+  editingSkillId = null;
+  if (btnAddSkillText) btnAddSkillText.textContent = t('st.skills.add_text');
+  if (skillNameInput) skillNameInput.value = '';
+  if (skillTextArea) skillTextArea.value = '';
+}
+
 async function addSkillFromText() {
   const content = (skillTextArea?.value || '').trim();
   if (!content) {
@@ -894,6 +1339,27 @@ async function addSkillFromText() {
     return;
   }
   try {
+    if (editingSkillId) {
+      const original = customSkills.find((s) => s.id === editingSkillId);
+      if (!original) {
+        cancelSkillEdit();
+        throw new Error(t('st.skills.error.add_failed'));
+      }
+      const isBuiltIn = original.sourceType === 'built-in';
+      const updated = {
+        id: original.id,
+        name: (skillNameInput?.value || '').trim() || original.name || '',
+        sourceType: isBuiltIn ? 'text' : (original.sourceType || 'text'),
+        sourceUrl: isBuiltIn ? '' : (original.sourceUrl || ''),
+        content,
+        createdAt: original.createdAt || Date.now(),
+      };
+      const next = customSkills.map((s) => (s.id === editingSkillId ? updated : s));
+      await saveCustomSkills(next);
+      cancelSkillEdit();
+      flashSkillsResult('ok', t('st.providers.saved'));
+      return;
+    }
     await addCustomSkill({
       id: makeSkillId(),
       name: skillNameInput?.value || '',
@@ -963,6 +1429,7 @@ async function addSkillFromUrl() {
 btnAddSkillText?.addEventListener('click', addSkillFromText);
 btnAddSkillUrl?.addEventListener('click', addSkillFromUrl);
 btnClearSkillForm?.addEventListener('click', () => {
+  cancelSkillEdit();
   if (skillNameInput) skillNameInput.value = '';
   if (skillUrlInput) skillUrlInput.value = '';
   if (skillTextArea) skillTextArea.value = '';
@@ -1002,6 +1469,14 @@ verboseToggle.addEventListener('change', async () => {
 
 selectionShortcutToggle?.addEventListener('change', async () => {
   await chrome.storage.local.set({ selectionShortcutEnabled: selectionShortcutToggle.checked }).catch(() => {});
+});
+
+pdfViewerToggle?.addEventListener('change', async () => {
+  await chrome.storage.local.set({ pdfViewerEnabled: pdfViewerToggle.checked }).catch(() => {});
+});
+
+autoGroupTabsToggle?.addEventListener('change', async () => {
+  await chrome.storage.local.set({ [AUTO_GROUP_TABS_KEY]: autoGroupTabsToggle.checked }).catch(() => {});
 });
 
 helpImproveToggle?.addEventListener('change', async () => {
@@ -1088,6 +1563,15 @@ siteAdaptersToggle.addEventListener('change', async () => {
   await chrome.storage.local.set({ useSiteAdapters: siteAdaptersToggle.checked }).catch(() => {});
 });
 
+if (researchEscalationToggle) {
+  researchEscalationToggle.addEventListener('change', async () => {
+    await chrome.storage.local.set({
+      researchEscalationEnabled: researchEscalationToggle.checked,
+      researchEscalationEngine: 'chatgpt',
+    }).catch(() => {});
+  });
+}
+
 if (voiceInputToggle) {
   voiceInputToggle.addEventListener('change', async () => {
     await chrome.storage.local.set({ voiceInputEnabled: voiceInputToggle.checked }).catch(() => {});
@@ -1152,8 +1636,21 @@ completionConfettiToggle.addEventListener('change', async () => {
   await chrome.storage.local.set({ completionConfetti: completionConfettiToggle.checked }).catch(() => {});
 });
 
+completionFlashTabToggle.addEventListener('change', async () => {
+  await chrome.storage.local.set({ completionFlashTab: completionFlashTabToggle.checked }).catch(() => {});
+});
+
 tracingToggle.addEventListener('change', async () => {
   await chrome.storage.local.set({ tracingEnabled: tracingToggle.checked }).catch(() => {});
+  losslessTracingToggle.disabled = tracingToggle.checked !== true;
+  if (!tracingToggle.checked) {
+    losslessTracingToggle.checked = false;
+    await chrome.storage.local.set({ losslessTrace: false }).catch(() => {});
+  }
+});
+
+losslessTracingToggle.addEventListener('change', async () => {
+  await chrome.storage.local.set({ losslessTrace: losslessTracingToggle.checked }).catch(() => {});
 });
 
 costSessionLimitInput?.addEventListener('change', async () => {
@@ -1165,13 +1662,13 @@ costSessionLimitInput?.addEventListener('change', async () => {
 costTotalLimitInput?.addEventListener('change', async () => {
   const value = normalizeCostAmount(costTotalLimitInput.value);
   costTotalLimitInput.value = value.toFixed(2);
-  const stored = await chrome.storage.local.get(['cloudCostSpentUsd']);
-  renderCostAllowanceSpent(normalizeCostAmount(stored.cloudCostSpentUsd, 0), value);
+  const stored = await chrome.storage.local.get(['meteredProviderCostSpentUsd']);
+  renderCostAllowanceSpent(normalizeCostAmount(stored.meteredProviderCostSpentUsd, 0), value);
   await chrome.storage.local.set({ costAllowanceTotalUsd: value }).catch(() => {});
 });
 
 btnResetCostSpend?.addEventListener('click', async () => {
-  await chrome.storage.local.set({ cloudCostSpentUsd: 0 });
+  await chrome.storage.local.set({ meteredProviderCostSpentUsd: 0 });
   renderCostAllowanceSpent(0, normalizeCostAmount(costTotalLimitInput?.value));
 });
 
@@ -1199,7 +1696,168 @@ if (scheduledConfirmToggle) {
   });
 }
 
+function updateSystemOneThresholdLabels() {
+  if (systemOneWatchThresholdValue && systemOneWatchThresholdRange) {
+    systemOneWatchThresholdValue.textContent = `${systemOneWatchThresholdRange.value}%`;
+  }
+  if (systemOneCompletionThresholdValue && systemOneCompletionThresholdRange) {
+    systemOneCompletionThresholdValue.textContent = `${systemOneCompletionThresholdRange.value}%`;
+  }
+}
+
+systemOneWatchThresholdRange?.addEventListener('input', updateSystemOneThresholdLabels);
+systemOneCompletionThresholdRange?.addEventListener('input', updateSystemOneThresholdLabels);
+
+function showSystemOneResult(className, text) {
+  if (!systemOneTestResult) return;
+  systemOneTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
+  systemOneTestResult.textContent = text;
+  if (className) setTimeout(() => systemOneTestResult.classList.remove('show'), 3000);
+}
+
+if (btnSaveSystemOne) {
+  btnSaveSystemOne.addEventListener('click', async () => {
+    const key = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
+    const enabled = systemOneEnabledToggle?.checked === true;
+    if (enabled && !isValidTypesafeApiKey(key)) {
+      showSystemOneResult('fail', t('st.system_one.need_key'));
+      return;
+    }
+    if (systemOneApiKeyInput) systemOneApiKeyInput.value = key;
+    await chrome.storage.local.set({
+      typesafeApiKey: key,
+      systemOneEnabled: enabled && isValidTypesafeApiKey(key),
+      systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
+      systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
+      systemOneFastClassifications: systemOneClassificationsToggle?.checked === true,
+      systemOneFastBrowser: systemOneBrowserToggle?.checked === true,
+      systemOneWatchThreshold: normalizeSystemOneThreshold(Number(systemOneWatchThresholdRange?.value) / 100),
+      systemOneCompletionThreshold: normalizeSystemOneThreshold(Number(systemOneCompletionThresholdRange?.value) / 100),
+    });
+    showSystemOneResult('ok', t('st.providers.saved'));
+  });
+}
+
+if (btnClearSystemOne) {
+  btnClearSystemOne.addEventListener('click', async () => {
+    if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = false;
+    if (systemOneBrowserToggle) systemOneBrowserToggle.checked = false;
+    if (systemOneApiKeyInput) systemOneApiKeyInput.value = '';
+    if (systemOneEnabledToggle) systemOneEnabledToggle.checked = false;
+    if (systemOneWatchToggle) systemOneWatchToggle.checked = false;
+    if (systemOneCompletionToggle) systemOneCompletionToggle.checked = false;
+    await chrome.storage.local.remove([
+      'typesafeApiKey',
+      'systemOneEnabled',
+      'systemOneWatchEnabled',
+      'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser',
+      'systemOneWatchThreshold',
+      'systemOneCompletionThreshold',
+    ]);
+    if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = '70';
+    if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = '70';
+    updateSystemOneThresholdLabels();
+    showSystemOneResult('ok', t('st.captcha.cleared'));
+  });
+}
+
+btnTestSystemOne?.addEventListener('click', async () => {
+  const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
+  if (!apiKey) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  btnTestSystemOne.disabled = true;
+  showSystemOneResult('', t('st.providers.testing'));
+  try {
+    const result = await sendToBackground('test_system_one', { apiKey });
+    showSystemOneResult(result?.success ? 'ok' : 'fail', result?.success
+      ? t('st.providers.connected', { model: result.model })
+      : t('st.providers.failed', { error: result?.error || 'Jev unavailable' }));
+  } catch (error) {
+    showSystemOneResult('fail', t('st.providers.failed', { error: error.message }));
+  } finally { btnTestSystemOne.disabled = false; }
+});
+
 // --- Vision Model ---
+
+function isWebgpuVisionEnabled() {
+  return webgpuVisionEnabled;
+}
+
+function renderVisionConfig(config = {}, localEnabled = webgpuVisionEnabled) {
+  currentVisionConfig = config && typeof config === 'object' && config.type !== 'webgpu'
+    ? config
+    : {};
+  webgpuVisionEnabled = localEnabled === true;
+  const isWebgpu = isWebgpuVisionEnabled();
+  visionBaseUrlInput.value = currentVisionConfig.baseUrl || '';
+  visionApiKeyInput.value = currentVisionConfig.apiKey || '';
+  visionModelInput.value = currentVisionConfig.model || '';
+  webgpuVisionOption?.classList.toggle('enabled', isWebgpu);
+  btnUseWebgpuVision?.setAttribute('aria-pressed', String(isWebgpu));
+  if (btnUseWebgpuVision) {
+    const buttonKey = isWebgpu
+      ? 'st.vision.local.disable'
+      : 'st.vision.local.enable';
+    btnUseWebgpuVision.dataset.i18n = buttonKey;
+    btnUseWebgpuVision.textContent = t(buttonKey);
+  }
+  if (visionEndpointFields) visionEndpointFields.disabled = isWebgpu;
+  updateMultimodalDetectedProvider('vision');
+}
+
+async function saveVisionConfig(config) {
+  if (config && Object.keys(config).length) {
+    await chrome.storage.local.set({ visionModel: config });
+    renderVisionConfig(config, webgpuVisionEnabled);
+    return;
+  }
+  await chrome.storage.local.remove('visionModel');
+  renderVisionConfig({}, webgpuVisionEnabled);
+}
+
+async function loadVisionConfig() {
+  const stored = await chrome.storage.local.get([
+    'visionModel',
+    WEBGPU_VISION_ENABLED_KEY,
+    WEBGPU_VISION_CONSENT_VERSION_KEY,
+    WEBGPU_VISION_AUTO_SELECTED_KEY,
+  ]);
+  let vision = stored.visionModel || {};
+  let localEnabled = stored[WEBGPU_VISION_ENABLED_KEY] === true
+    && stored[WEBGPU_VISION_CONSENT_VERSION_KEY] === WEBGPU_VISION_CONSENT_VERSION;
+  if (vision?.type === 'webgpu') {
+    // Early PR builds stored the Chromium-only choice in the portable endpoint
+    // slot. Migrate that shape once so it cannot sync to Firefox again.
+    localEnabled = true;
+    vision = {};
+    await chrome.storage.local.set({
+      [WEBGPU_VISION_ENABLED_KEY]: true,
+      [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION,
+    });
+    await chrome.storage.local.remove('visionModel');
+  } else if (stored[WEBGPU_VISION_ENABLED_KEY] === true && !localEnabled) {
+    // Older Apocalypse builds could enable this without a dedicated Settings
+    // action. Require one explicit re-enable while retaining cached weights.
+    await chrome.storage.local.remove([WEBGPU_VISION_ENABLED_KEY, WEBGPU_VISION_AUTO_SELECTED_KEY]);
+  }
+  renderVisionConfig(vision, localEnabled);
+}
+
+async function setWebgpuVisionEnabled(enabled) {
+  const nextEnabled = enabled === true;
+  if (nextEnabled) {
+    const result = await sendToBackground('enable_webgpu_vision');
+    if (!result?.ok) throw new Error(result?.error || 'The local vision model download could not be started.');
+  } else {
+    // Release GPU allocations, but keep the browser-cached model download so
+    // re-enabling does not require another ~810 MB transfer.
+    await sendToBackground('dispose_webgpu_vision').catch(() => {});
+    await chrome.storage.local.remove([
+      WEBGPU_VISION_ENABLED_KEY,
+      WEBGPU_VISION_AUTO_SELECTED_KEY,
+    ]);
+  }
+  renderVisionConfig(currentVisionConfig, nextEnabled);
+}
 
 function updateMultimodalDetectedProvider(kind) {
   const baseInput = kind === 'vision' ? visionBaseUrlInput : transcriptionBaseUrlInput;
@@ -1232,39 +1890,54 @@ function flashVisionResult(className, text) {
   setTimeout(() => resultEl.classList.remove('show'), 2000);
 }
 
+btnUseWebgpuVision?.addEventListener('click', async () => {
+  try {
+    if (isWebgpuVisionEnabled()) {
+      await setWebgpuVisionEnabled(false);
+      flashVisionResult('ok', t('st.vision.cleared'));
+      return;
+    }
+    showVisionResult('', t('st.providers.webgpu_download.start'));
+    await setWebgpuVisionEnabled(true);
+    flashVisionResult('ok', t('st.vision.local.saved'));
+  } catch (error) {
+    showVisionResult('error', error?.message || String(error));
+  }
+});
+
 btnSaveVision.addEventListener('click', async () => {
-  const baseUrl = visionBaseUrlInput.value.trim();
+  const baseUrl = normalizeOpenAICompatibleBaseUrl(visionBaseUrlInput.value);
   const apiKey = visionApiKeyInput.value.trim();
   const model = visionModelInput.value.trim();
 
   if (!baseUrl && !apiKey && !model) {
-    await chrome.storage.local.remove('visionModel');
+    await saveVisionConfig(null);
     flashVisionResult('ok', t('st.vision.cleared'));
     return;
   }
 
-  await chrome.storage.local.set({
-    visionModel: { baseUrl, apiKey, model },
-  });
+  await saveVisionConfig({ type: 'openai', baseUrl, apiKey, model });
   flashVisionResult('ok', t('st.vision.saved'));
 });
 
 btnTestVision.addEventListener('click', async () => {
-  const baseUrl = visionBaseUrlInput.value.trim();
+  const isWebgpu = isWebgpuVisionEnabled();
+  const baseUrl = normalizeOpenAICompatibleBaseUrl(visionBaseUrlInput.value);
   const apiKey = visionApiKeyInput.value.trim();
   const model = visionModelInput.value.trim();
 
-  if (!baseUrl || !model) {
+  if (!isWebgpu && (!baseUrl || !model)) {
     const resultEl = showVisionResult('fail', t('st.vision.fill_required'));
     setTimeout(() => resultEl.classList.remove('show'), 2500);
     return;
   }
 
-  await chrome.storage.local.set({
-    visionModel: { baseUrl, apiKey, model },
-  });
+  if (!isWebgpu) {
+    await saveVisionConfig({ type: 'openai', baseUrl, apiKey, model });
+  }
 
   showVisionResult('', t('st.vision.testing'), 'var(--text2)');
+  if (isWebgpu) visionTestResult.textContent = t('st.vision.local.testing');
 
   try {
     const res = await sendToBackground('test_vision_provider');
@@ -1279,11 +1952,12 @@ btnTestVision.addEventListener('click', async () => {
 });
 
 btnClearVision.addEventListener('click', async () => {
-  visionBaseUrlInput.value = '';
-  visionApiKeyInput.value = '';
-  visionModelInput.value = '';
-  updateMultimodalDetectedProvider('vision');
-  await chrome.storage.local.remove('visionModel');
+  if (isWebgpuVisionEnabled()) {
+    await setWebgpuVisionEnabled(false);
+    flashVisionResult('ok', t('st.vision.cleared'));
+    return;
+  }
+  await saveVisionConfig(null);
   flashVisionResult('ok', t('st.vision.cleared'));
 });
 
@@ -1312,7 +1986,7 @@ function flashTranscriptionResult(className, text) {
 
 if (btnSaveTranscription) {
   btnSaveTranscription.addEventListener('click', async () => {
-    const baseUrl = transcriptionBaseUrlInput.value.trim();
+    const baseUrl = normalizeOpenAICompatibleBaseUrl(transcriptionBaseUrlInput.value);
     const apiKey = transcriptionApiKeyInput.value.trim();
     const model = transcriptionModelInput.value.trim();
 
@@ -1325,13 +1999,14 @@ if (btnSaveTranscription) {
     await chrome.storage.local.set({
       transcriptionModel: { baseUrl, apiKey, model },
     });
+    transcriptionBaseUrlInput.value = baseUrl;
     flashTranscriptionResult('ok', t('st.transcription.saved'));
   });
 }
 
 if (btnTestTranscription) {
   btnTestTranscription.addEventListener('click', async () => {
-    const baseUrl = transcriptionBaseUrlInput.value.trim();
+    const baseUrl = normalizeOpenAICompatibleBaseUrl(transcriptionBaseUrlInput.value);
     const apiKey = transcriptionApiKeyInput.value.trim();
     const model = transcriptionModelInput.value.trim();
 
@@ -1345,6 +2020,7 @@ if (btnTestTranscription) {
     await chrome.storage.local.set({
       transcriptionModel: { baseUrl, apiKey, model },
     });
+    transcriptionBaseUrlInput.value = baseUrl;
 
     showTranscriptionResult('', t('st.transcription.testing'), 'var(--text2)');
 
@@ -1379,14 +2055,14 @@ let profileSyncChallenge = null;
 function showProfileSyncResult(ok, text) { if (!profileSyncResult) return; profileSyncResult.className = `test-result show ${ok ? 'ok' : 'fail'}`; profileSyncResult.textContent = text; }
 function setProfileSyncVisible(el, visible) { if (el) el.hidden = !visible; }
 function describeProfileSyncState(state) {
-  if (state.status === 'syncing') return 'Encrypted sync is updating...';
-  if (state.status === 'offline') return 'Encrypted sync is waiting for a connection.';
-  if (state.status === 'subscription') return 'WebBrain Cloud membership is required for encrypted sync.';
-  if (state.status === 'error') return state.error || 'Encrypted sync needs attention.';
-  if (!state.authenticated) return 'Sign in with your WebBrain Cloud email to use encrypted sync.';
-  if (!state.enabled || state.status === 'empty') return 'Signed in. Choose a sync password to turn on encrypted sync.';
-  if (state.unlocked) return 'Encrypted sync is on for this device.';
-  return 'Encrypted sync is locked. Enter your sync password to unlock it on this device.';
+  if (state.status === 'syncing') return t('st.sync.status.syncing');
+  if (state.status === 'offline') return t('st.sync.status.offline');
+  if (state.status === 'subscription') return t('st.sync.status.subscription');
+  if (state.status === 'error') return state.error || t('st.sync.status.error');
+  if (!state.authenticated) return t('st.sync.status.auth_required');
+  if (!state.enabled || state.status === 'empty') return t('st.sync.status.password_required');
+  if (state.unlocked) return t('st.sync.status.unlocked');
+  return t('st.sync.status.locked');
 }
 function renderProfileSyncState(state) {
   const authenticated = !!state.authenticated;
@@ -1406,7 +2082,37 @@ function renderProfileSyncState(state) {
   if (profileSyncStatus) profileSyncStatus.textContent = describeProfileSyncState(state || {});
 }
 async function refreshProfileSyncState() { const state = await sendToBackground('profile_sync_state').catch(e => ({ status: 'error', error: e.message })); renderProfileSyncState(state); return state; }
-async function reloadProfileSyncData() { const stored = await chrome.storage.local.get(['profileEnabled', 'profileText', 'visionModel', 'transcriptionModel']); if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled; if (profileTextArea) profileTextArea.value = stored.profileText || ''; const vision = stored.visionModel || {}; visionBaseUrlInput.value = vision.baseUrl || ''; visionApiKeyInput.value = vision.apiKey || ''; visionModelInput.value = vision.model || ''; const transcription = stored.transcriptionModel || {}; if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || ''; if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || ''; if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || ''; updateMultimodalDetectedProvider('vision'); updateMultimodalDetectedProvider('transcription'); await loadUserMemorySettings(); const res = await sendToBackground('get_providers'); providersData = res.providers; activeProviderId = res.active; renderProviders(); }
+async function reloadProfileSyncData() {
+  const stored = await chrome.storage.local.get([
+    'profileEnabled',
+    'profileText',
+    'visionModel',
+    WEBGPU_VISION_ENABLED_KEY,
+    WEBGPU_VISION_CONSENT_VERSION_KEY,
+    'transcriptionModel',
+  ]);
+  if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled;
+  if (profileTextArea) profileTextArea.value = stored.profileText || '';
+  if (stored.visionModel?.type === 'webgpu') {
+    await loadVisionConfig();
+  } else {
+    renderVisionConfig(
+      stored.visionModel || {},
+      stored[WEBGPU_VISION_ENABLED_KEY] === true
+        && stored[WEBGPU_VISION_CONSENT_VERSION_KEY] === WEBGPU_VISION_CONSENT_VERSION,
+    );
+  }
+  const transcription = stored.transcriptionModel || {};
+  if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || '';
+  if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || '';
+  if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || '';
+  updateMultimodalDetectedProvider('transcription');
+  await loadUserMemorySettings();
+  const res = await sendToBackground('get_providers');
+  providersData = res.providers;
+  activeProviderId = res.active;
+  renderProviders();
+}
 function profileSyncButtonRestore(button, pendingLabel) {
   if (!button) return () => {};
   const previousDisabled = button.disabled;
@@ -1421,39 +2127,39 @@ async function profileSyncAction(action, data = {}, options = {}) {
     if (options.pending) showProfileSyncResult(true, options.pending);
     const result = await sendToBackground(action, data);
     if (['profile_sync_unlock', 'profile_sync_now', 'profile_sync_reset'].includes(action)) await reloadProfileSyncData();
-    showProfileSyncResult(true, options.success || 'Encrypted sync updated.');
+    showProfileSyncResult(true, options.success || t('st.sync.result.updated'));
     await refreshProfileSyncState();
     return result;
   } catch (error) {
-    showProfileSyncResult(false, error?.message || 'Encrypted sync failed.');
+    showProfileSyncResult(false, t('st.sync.error.generic', { error: error?.message || t('st.sync.error.unknown') }));
     throw error;
   } finally {
     restoreButton();
   }
 }
-function checkedSyncPassword(requireConfirmation = false) { const password = profileSyncPassword?.value || ''; const confirmation = profileSyncConfirm?.value || ''; if (password.length < 12) throw new Error('Use a sync password of at least 12 characters.'); if (requireConfirmation && !confirmation) throw new Error('Confirm the new sync password.'); if (confirmation && password !== confirmation) throw new Error('Sync passwords do not match.'); return password; }
-function promptConfirmedSyncPassword(label = 'New sync password') {
-  const password = window.prompt(`${label} (12+ characters):`);
+function checkedSyncPassword(requireConfirmation = false) { const password = profileSyncPassword?.value || ''; const confirmation = profileSyncConfirm?.value || ''; if (password.length < 12) throw new Error(t('st.sync.validation.password_length')); if (requireConfirmation && !confirmation) throw new Error(t('st.sync.validation.confirm_required')); if (confirmation && password !== confirmation) throw new Error(t('st.sync.validation.password_mismatch')); return password; }
+function promptConfirmedSyncPassword(label = t('st.sync.prompt.new_password')) {
+  const password = window.prompt(t('st.sync.prompt.password', { label }));
   if (!password) return null;
-  if (password.length < 12) throw new Error('Use a sync password of at least 12 characters.');
-  const confirmation = window.prompt('Confirm sync password:');
-  if (!confirmation) throw new Error('Confirm the sync password.');
-  if (password !== confirmation) throw new Error('Sync passwords do not match.');
+  if (password.length < 12) throw new Error(t('st.sync.validation.password_length'));
+  const confirmation = window.prompt(t('st.sync.prompt.confirm_password'));
+  if (!confirmation) throw new Error(t('st.sync.validation.confirm_required'));
+  if (password !== confirmation) throw new Error(t('st.sync.validation.password_mismatch'));
   return password;
 }
 btnProfileSyncAuth?.addEventListener('click', async () => {
-  const email = (profileSyncEmail?.value || '').trim(); if (!email) return showProfileSyncResult(false, 'Enter your WebBrain Cloud billing email.');
-  try { profileSyncChallenge = await profileSyncAction('profile_sync_auth_start', { email }); showProfileSyncResult(true, 'Check your email, approve the WebBrain Cloud sign-in link, then return here.');
-    const poll = setInterval(async () => { if (!profileSyncChallenge) return clearInterval(poll); try { const result = await sendToBackground('profile_sync_auth_status', { challengeId: profileSyncChallenge.challenge_id, verifier: profileSyncChallenge.verifier }); if (result.token) { clearInterval(poll); profileSyncChallenge = null; showProfileSyncResult(true, 'Cloud Sync authenticated. Set a password and enable sync.'); await refreshProfileSyncState(); } } catch (error) { clearInterval(poll); profileSyncChallenge = null; showProfileSyncResult(false, error.message); } }, 3000); setTimeout(() => clearInterval(poll), 30 * 60 * 1000);
+  const email = (profileSyncEmail?.value || '').trim(); if (!email) return showProfileSyncResult(false, t('st.sync.validation.email_required'));
+  try { profileSyncChallenge = await profileSyncAction('profile_sync_auth_start', { email }); showProfileSyncResult(true, t('st.sync.auth.check_email'));
+    const poll = setInterval(async () => { if (!profileSyncChallenge) return clearInterval(poll); try { const result = await sendToBackground('profile_sync_auth_status', { challengeId: profileSyncChallenge.challenge_id, verifier: profileSyncChallenge.verifier }); if (result.token) { clearInterval(poll); profileSyncChallenge = null; showProfileSyncResult(true, t('st.sync.auth.success')); await refreshProfileSyncState(); } } catch (error) { clearInterval(poll); profileSyncChallenge = null; showProfileSyncResult(false, t('st.sync.error.generic', { error: error?.message || t('st.sync.error.unknown') })); } }, 3000); setTimeout(() => clearInterval(poll), 30 * 60 * 1000);
   } catch { /* helper displayed the error */ }
 });
-btnProfileSyncEnable?.addEventListener('click', () => { try { profileSyncAction('profile_sync_unlock', { password: checkedSyncPassword(true), create: true }); } catch (e) { showProfileSyncResult(false, e.message); } });
-btnProfileSyncUnlock?.addEventListener('click', () => { try { profileSyncAction('profile_sync_unlock', { password: checkedSyncPassword(), create: false }); } catch (e) { showProfileSyncResult(false, e.message); } });
-btnProfileSyncNow?.addEventListener('click', () => profileSyncAction('profile_sync_now', {}, { button: btnProfileSyncNow, pending: 'Syncing encrypted cloud copy...', pendingLabel: 'Syncing...', success: 'Encrypted sync is up to date.' }).catch(() => {}));
-btnProfileSyncLock?.addEventListener('click', () => profileSyncAction('profile_sync_lock'));
-btnProfileSyncChange?.addEventListener('click', () => { const oldPassword = window.prompt('Current sync password:'); if (!oldPassword) return; try { const newPassword = promptConfirmedSyncPassword('New sync password'); if (newPassword) profileSyncAction('profile_sync_change_password', { oldPassword, newPassword }); } catch (e) { showProfileSyncResult(false, e.message); } });
-btnProfileSyncDisable?.addEventListener('click', () => { if (window.confirm('Turn off encrypted sync on this device? Local data will remain.')) profileSyncAction('profile_sync_disable'); });
-btnProfileSyncReset?.addEventListener('click', () => { if (!window.confirm('Replace the encrypted cloud copy with this device’s current WebBrain setup?')) return; try { const password = promptConfirmedSyncPassword('Sync password for the replacement cloud copy'); if (password) profileSyncAction('profile_sync_reset', { password }); } catch (e) { showProfileSyncResult(false, e.message); } });
+btnProfileSyncEnable?.addEventListener('click', async () => { let password; try { password = checkedSyncPassword(true); } catch (e) { showProfileSyncResult(false, e.message); return; } await profileSyncAction('profile_sync_unlock', { password, create: true }).catch(() => {}); });
+btnProfileSyncUnlock?.addEventListener('click', async () => { let password; try { password = checkedSyncPassword(); } catch (e) { showProfileSyncResult(false, e.message); return; } await profileSyncAction('profile_sync_unlock', { password, create: false }).catch(() => {}); });
+btnProfileSyncNow?.addEventListener('click', () => profileSyncAction('profile_sync_now', {}, { button: btnProfileSyncNow, pending: t('st.sync.pending.syncing'), pendingLabel: t('st.sync.pending.syncing_short'), success: t('st.sync.result.current') }).catch(() => {}));
+btnProfileSyncLock?.addEventListener('click', () => profileSyncAction('profile_sync_lock').catch(() => {}));
+btnProfileSyncChange?.addEventListener('click', async () => { const oldPassword = window.prompt(t('st.sync.prompt.current_password')); if (!oldPassword) return; let newPassword; try { newPassword = promptConfirmedSyncPassword(); } catch (e) { showProfileSyncResult(false, e.message); return; } if (newPassword) await profileSyncAction('profile_sync_change_password', { oldPassword, newPassword }).catch(() => {}); });
+btnProfileSyncDisable?.addEventListener('click', () => { if (window.confirm(t('st.sync.confirm.disable'))) profileSyncAction('profile_sync_disable').catch(() => {}); });
+btnProfileSyncReset?.addEventListener('click', async () => { if (!window.confirm(t('st.sync.confirm.reset'))) return; let password; try { password = promptConfirmedSyncPassword(t('st.sync.prompt.replacement_password')); } catch (e) { showProfileSyncResult(false, e.message); return; } if (password) await profileSyncAction('profile_sync_reset', { password }).catch(() => {}); });
 refreshProfileSyncState();
 
 // Persisted to chrome.storage.local in plaintext; the agent picks the
@@ -1745,12 +2451,97 @@ const PROMPT_TIER_FIELD = {
   ],
 };
 
+const VISION_MODE_FIELD = {
+  key: 'visionMode',
+  labelKey: 'st.provider.field.supports_vision',
+  type: 'select',
+  options: [
+    { value: 'auto', labelKey: 'st.provider.field.vision_auto' },
+    { value: 'on', labelKey: 'st.provider.field.vision_force_on' },
+    { value: 'off', labelKey: 'st.providers.compat.value.off' },
+  ],
+};
+const OLLAMA_VISION_MODE_FIELD = VISION_MODE_FIELD;
+const OPTIONAL_LOCAL_API_KEY_FIELD = {
+  key: 'apiKey',
+  labelKey: 'st.provider.field.api_key',
+  type: 'password',
+  placeholder: 'optional',
+  collapsed: true,
+};
+const SHARE_RESEARCH_FIELD = {
+  key: 'shareQueriesForResearch',
+  labelKey: 'st.providers.share_research.label',
+  hintKey: 'st.providers.share_research.hint',
+  type: 'checkbox',
+};
+
+function providerDefinitionId(id, config = providersData[id]) {
+  return String(config?.sourceProviderId || config?.duplicateOf || id || '');
+}
+
+function visionStatusKey(id, config) {
+  if (!providerVisionDetectionMatches(id, config)) return 'st.provider.field.vision_pending';
+  return config.visionDetection.supportsVision
+    ? 'st.provider.field.vision_detected_vision'
+    : 'st.provider.field.vision_detected_text';
+}
+
+function refreshVisionStatus(id) {
+  const definitionId = providerDefinitionId(id);
+  if (!VISION_UI_PROVIDER_IDS.has(definitionId)) return;
+  const hint = definitionId === 'ollama'
+    ? document.querySelector(`[data-ollama-vision-status="${id}"]`)
+    : document.querySelector(`[data-vision-status="${id}"]`);
+  if (!hint) return;
+  const mode = document.querySelector(`select[data-provider="${id}"][data-key="visionMode"]`)?.value || 'auto';
+  hint.hidden = mode !== 'auto';
+  if (hint.hidden) return;
+  const config = {
+    ...providersData[id],
+    visionMode: mode,
+    model: document.querySelector(`input[data-provider="${id}"][data-key="model"]`)?.value,
+    baseUrl: document.querySelector(`input[data-provider="${id}"][data-key="baseUrl"]`)?.value,
+  };
+  hint.textContent = t(visionStatusKey(id, config));
+}
+
+function refreshOllamaVisionStatus() {
+  refreshVisionStatus('ollama');
+}
+
+function providerVisionDetectionMatches(id, config, detection = config?.visionDetection) {
+  const definitionId = providerDefinitionId(id, config);
+  if (definitionId !== 'ollama') return visionDetectionMatches(definitionId, config, detection, { allowTransient: true });
+  const model = String(config?.model || '').trim();
+  const baseUrl = canonicalizeOllamaBaseUrl(config?.baseUrl);
+  return !!model && !!baseUrl
+    && detection?.source === 'ollama_show'
+    && String(detection?.model || '').trim().toLowerCase() === model.toLowerCase()
+    && canonicalizeOllamaBaseUrl(detection?.baseUrl) === baseUrl
+    && typeof detection?.supportsVision === 'boolean';
+}
+
 const CONTEXT_WINDOW_FIELD = {
   key: 'contextWindow',
   labelKey: 'st.provider.field.context_window',
   type: 'number',
   placeholder: '16384',
   min: 4096,
+  step: 1024,
+};
+
+const WEBGPU_CONTEXT_WINDOW_FIELD = {
+  ...CONTEXT_WINDOW_FIELD,
+  placeholder: '32768',
+};
+
+const MAX_OUTPUT_TOKENS_FIELD = {
+  key: 'maxOutputTokens',
+  labelKey: 'st.provider.field.max_output_tokens',
+  type: 'number',
+  placeholder: '4096',
+  min: 1,
   step: 1024,
 };
 
@@ -1791,6 +2582,7 @@ const ZERO_ALLOWED_NUMBER_FIELDS = new Set([
   'outputCostPerMillionUsd',
 ]);
 const MIN_API_KEY_LENGTH = 12;
+const DUMMY_API_KEYS = new Set(['ollama', 'lm-studio']);
 
 function providerInputValue(input) {
   if (input.dataset.type === 'checkbox' || input.type === 'checkbox') {
@@ -1822,8 +2614,9 @@ function setProviderConfigValue(config, path, value) {
 function providerApiKeyWarning(id, config) {
   const input = document.querySelector(`input[data-provider="${id}"][data-key="apiKey"]`);
   if (!input) return '';
-  const apiKey = String(config.apiKey || '').trim();
-  const keyIsOptional = providersData[id]?.category === 'local';
+  const rawApiKey = String(config.apiKey || '').trim();
+  const apiKey = DUMMY_API_KEYS.has(rawApiKey) ? '' : rawApiKey;
+  const keyIsOptional = providersData[id]?.category === 'local' && config.requiresApiKey !== true;
   const looksInvalid = apiKey ? apiKey.length < MIN_API_KEY_LENGTH : !keyIsOptional;
   input.setAttribute('aria-invalid', looksInvalid ? 'true' : 'false');
   return looksInvalid ? t('st.providers.api_key_warning') : '';
@@ -1837,8 +2630,13 @@ function restoreProviderApiKeyWarnings() {
   }
 }
 
-function supportsProviderCompatibilitySettings(id, config = {}) {
+function supportsProviderCompatibilityControls(id, config = {}) {
   return id !== 'webbrain_cloud' && ['openai', 'llamacpp', 'azure_openai'].includes(config.type);
+}
+
+function supportsProviderCompatibilitySettings(id, config = {}) {
+  return supportsProviderCompatibilityControls(id, config)
+    || ['anthropic', 'anthropic_oauth', 'vertex_anthropic'].includes(config.type);
 }
 
 function providerExtraBodyText(value) {
@@ -1853,17 +2651,36 @@ function prettyCompatibilityValue(value) {
   return translated === key ? (value || '') : translated;
 }
 
+function prettyOpenRouterRoutingVariant(value) {
+  if (value === 'standard') return prettyCompatibilityValue(value);
+  return value === 'nitro' ? 'Nitro' : 'Exacto';
+}
+
+function shouldPersistProviderInput(input) {
+  return input.dataset.key !== 'routingVariant' || input.dataset.routingExplicit === 'true';
+}
+
+function syncInferredOpenRouterRoutingVariant(id, model) {
+  const select = document.querySelector(`select[data-provider="${id}"][data-key="routingVariant"]`);
+  if (!select || select.dataset.routingExplicit === 'true') return;
+  select.value = openRouterRoutingVariant({ model });
+}
+
 function automaticTokenField(config) {
   if (shouldUseOpenAIResponsesApi(config)) return 'max_output_tokens';
-  const model = String(config.model || '').toLowerCase();
-  const isNewOfficialContract = config.type === 'openai'
-    && config.category !== 'local'
-    && config.providerName !== 'lmstudio'
-    && /^(gpt-5|gpt-4\.1|o1|o3|o4)/.test(model);
+  const isNewOfficialContract = config.type === 'openai' && isNewOpenAIContractConfig(config);
   return isNewOfficialContract ? 'max_completion_tokens' : 'max_tokens';
 }
 
 function compatibilitySummary(config) {
+  const extraCount = config.extraBody && typeof config.extraBody === 'object' && !Array.isArray(config.extraBody)
+    ? Object.keys(config.extraBody).length
+    : 0;
+  if (['anthropic', 'anthropic_oauth', 'vertex_anthropic'].includes(config.type)) {
+    return extraCount
+      ? t(extraCount === 1 ? 'st.providers.compat.summary_extra' : 'st.providers.compat.summary_extra_plural', { count: extraCount })
+      : t('st.providers.compat.provider_default');
+  }
   const compat = normalizeProviderCompatibility(config);
   const detected = detectedCompatibilityPreset(config);
   const preset = compat.preset === 'auto'
@@ -1876,19 +2693,20 @@ function compatibilitySummary(config) {
     ? prettyCompatibilityValue('system')
     : prettyCompatibilityValue(compat.systemPromptRole);
   const tokens = compat.maxTokensField === 'auto' ? automaticTokenField(config) : compat.maxTokensField;
-  const extraCount = config.extraBody && typeof config.extraBody === 'object' && !Array.isArray(config.extraBody)
-    ? Object.keys(config.extraBody).length
-    : 0;
   const extra = extraCount
     ? t(extraCount === 1 ? 'st.providers.compat.summary_extra' : 'st.providers.compat.summary_extra_plural', { count: extraCount })
     : '';
-  return t('st.providers.compat.summary', { preset, reasoning, role, tokens, extra });
+  const routing = String(config.providerName || '').toLowerCase() === 'openrouter'
+    ? ` · ${prettyOpenRouterRoutingVariant(openRouterRoutingVariant(config))}`
+    : '';
+  return `${t('st.providers.compat.summary', { preset, reasoning, role, tokens, extra })}${routing}`;
 }
 
 function currentProviderCompatibilityConfig(id) {
   const source = providersData[id] || {};
   const config = { ...source, compat: { ...(source.compat || {}) } };
   document.querySelectorAll(`.provider-compatibility [data-provider="${id}"]`).forEach((input) => {
+    if (!shouldPersistProviderInput(input)) return;
     if (input.dataset.type === 'json') {
       try { config.extraBody = parseProviderExtraBodyJson(input.value); } catch { config.extraBody = {}; }
       return;
@@ -1919,6 +2737,8 @@ function refreshProviderCompatibilitySummary(id) {
 
 function renderProviderCompatibilitySettings(id, config) {
   if (!supportsProviderCompatibilitySettings(id, config)) return '';
+  const showCompatibilityControls = supportsProviderCompatibilityControls(id, config);
+  const showOpenRouterRouting = String(config.providerName || '').toLowerCase() === 'openrouter';
   const compat = normalizeProviderCompatibility(config);
   const extraBody = providerCompatibilityJsonDrafts.has(id)
     ? providerCompatibilityJsonDrafts.get(id)
@@ -1934,14 +2754,24 @@ function renderProviderCompatibilitySettings(id, config) {
         <span class="provider-compatibility-summary">${escapeHtml(compatibilitySummary(config))}</span>
       </summary>
       <div class="provider-compatibility-body">
-        <p>${escapeHtml(t('st.providers.compat.blurb'))}</p>
-        <div class="provider-compatibility-grid">
+        ${showCompatibilityControls ? `
+          <p>${escapeHtml(t('st.providers.compat.blurb'))}</p>
+          <div class="provider-compatibility-grid">
           <div class="field">
             <label>${escapeHtml(t('st.providers.compat.preset'))}</label>
             <select data-provider="${id}" data-key="compat.preset" data-type="select">
               ${options([['auto', valueLabel('auto')], ['openai', valueLabel('openai')], ['qwen', valueLabel('qwen')], ['deepseek', valueLabel('deepseek')], ['openrouter', valueLabel('openrouter')], ['custom', valueLabel('custom')]], compat.preset)}
             </select>
           </div>
+          ${showOpenRouterRouting ? `
+          <div class="field">
+            <label>${escapeHtml(valueLabel('openrouter'))}</label>
+            <select data-provider="${id}" data-key="routingVariant" data-type="select"
+                    data-routing-explicit="${Object.hasOwn(config, 'routingVariant') ? 'true' : 'false'}">
+              ${options(OPENROUTER_ROUTING_VARIANTS.map((value) => [value, prettyOpenRouterRoutingVariant(value)]), openRouterRoutingVariant(config))}
+            </select>
+          </div>
+          ` : ''}
           <div class="field">
             <label>${escapeHtml(t('st.providers.compat.reasoning'))}</label>
             <select data-provider="${id}" data-key="compat.reasoningEffort" data-type="select">
@@ -1960,7 +2790,8 @@ function renderProviderCompatibilitySettings(id, config) {
               ${options([['auto', valueLabel('auto')], ['max_tokens', 'max_tokens'], ['max_completion_tokens', 'max_completion_tokens']], compat.maxTokensField)}
             </select>
           </div>
-        </div>
+          </div>
+        ` : ''}
         <div class="field provider-compatibility-json">
           <label>${escapeHtml(t('st.providers.compat.extra_body'))}</label>
           <textarea data-provider="${id}" data-key="extraBody" data-type="json" spellcheck="false"
@@ -2007,7 +2838,7 @@ function providerSearchTextForEntry(id, config, fieldDefs) {
     config.baseUrl,
     fieldText,
     supportsProviderCompatibilitySettings(id, config)
-      ? 'advanced model compatibility reasoning thinking system developer max tokens custom request body json'
+      ? `advanced model compatibility reasoning thinking system developer max tokens custom request body json${String(config.providerName || '').toLowerCase() === 'openrouter' ? ' openrouter routing standard nitro exacto speed throughput tool quality' : ''}`
       : '',
   ].filter(Boolean).join(' '));
 }
@@ -2020,6 +2851,241 @@ function providerSearchRank(id, config, query) {
   if (names.some((name) => name.startsWith(query))) return 1;
   if (names.some((name) => name.includes(query))) return 2;
   return 3;
+}
+
+function providerSubscriptionGuideHtml(definitionId) {
+  if (definitionId === 'local_openai_proxy') {
+    return `<aside class="provider-subscription-guide provider-local-proxy-guide" role="note">
+      <span class="provider-subscription-guide-icon" aria-hidden="true">🔌</span>
+      <span>${escapeHtml(t('st.providers.subscription_guide.local_body'))}</span>
+      <a href="${EASY_CLI_PROXY_GUIDE_URL}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('st.providers.subscription_guide.local_link'))} ↗</a>
+    </aside>`;
+  }
+  const product = SUBSCRIPTION_GUIDE_PRODUCTS[definitionId];
+  if (!product) return '';
+  return `<aside class="provider-subscription-guide" role="note">
+    <span class="provider-subscription-guide-icon" aria-hidden="true">🔌</span>
+    <span>${escapeHtml(t('st.providers.subscription_guide.card_body', { product }))}</span>
+    <a href="${EASY_CLI_PROXY_GUIDE_URL}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('st.providers.subscription_guide.card_link'))} ↗</a>
+  </aside>`;
+}
+
+// The WebGPU chat error points users at Settings > Providers > WebGPU, so the
+// card needs its own download surface instead of sending everyone to
+// Apocalypse Mode. This drives the same background routes
+// (`start/stop/get_webgpu_download_status`) with a start/stop button and a
+// status line, using only already-translated `webgpu_download` strings.
+let webgpuDownloadPollTimer = null;
+let webgpuDownloadActionInFlight = false;
+
+function normalizeWebgpuDownloadSnapshot(snapshot = {}) {
+  const allowedStatuses = new Set(['checking', 'not-downloaded', 'downloading', 'paused', 'stopping', 'ready', 'error']);
+  const normalizeStatus = status => ['starting', 'queued'].includes(status)
+    ? 'downloading' : allowedStatuses.has(status) ? status : 'not-downloaded';
+  const status = normalizeStatus(snapshot.status);
+  const loaded = Math.max(0, Number(snapshot.loaded) || 0);
+  const total = Math.max(0, Number(snapshot.total) || 0);
+  const progress = status === 'ready'
+    ? 100
+    : Math.max(0, Math.min(100, Number(snapshot.progress) || (total > 0 ? loaded / total * 100 : 0)));
+  const rawTransfer = snapshot.activeTransfer && typeof snapshot.activeTransfer === 'object'
+    ? snapshot.activeTransfer
+    : null;
+  // Preserve the sibling transfer (e.g. Bonsai downloading while the ONNX
+  // card queries Compass): dropping it stops polling and hides Stop control.
+  let activeTransfer = null;
+  if (rawTransfer) {
+    const transferStatus = normalizeStatus(rawTransfer.status);
+    const transferLoaded = Math.max(0, Number(rawTransfer.loaded) || 0);
+    const transferTotal = Math.max(0, Number(rawTransfer.total) || 0);
+    const transferProgress = transferStatus === 'ready'
+      ? 100
+      : Math.max(0, Math.min(100, Number(rawTransfer.progress) || (transferTotal > 0 ? transferLoaded / transferTotal * 100 : 0)));
+    activeTransfer = {
+      status: transferStatus,
+      ready: rawTransfer.ready === true || transferStatus === 'ready',
+      progress: Math.round(transferProgress),
+      error: String(rawTransfer.error || ''),
+      modelId: String(rawTransfer.modelId || rawTransfer.model || ''),
+      dtype: rawTransfer.dtype,
+    };
+  }
+  return {
+    status,
+    ready: snapshot.ready === true || status === 'ready',
+    progress: Math.round(progress),
+    error: String(snapshot.error || ''),
+    modelId: String(snapshot.modelId || snapshot.model || ''),
+    dtype: snapshot.dtype,
+    activeTransfer,
+  };
+}
+
+function isActiveWebgpuTransfer(state) {
+  return !!state && state.ready !== true
+    && ['checking', 'downloading', 'paused', 'stopping'].includes(state.status);
+}
+
+function webgpuDownloadControlState(state) {
+  const sibling = state.activeTransfer;
+  const model = String(state.modelId || '').trim().toLowerCase();
+  const siblingModel = String(sibling?.modelId || '').trim().toLowerCase();
+  if (!siblingModel || siblingModel === model) return state;
+  const priority = item => !isActiveWebgpuTransfer(item) ? 0 : item.status === 'paused' ? 1 : 2;
+  return priority(sibling) > priority(state) ? sibling : state;
+}
+
+function webgpuDownloadCardLabel(state) {
+  if (state.ready || ['downloading', 'paused', 'stopping'].includes(state.status)) {
+    return t('st.providers.webgpu_download.stop');
+  }
+  return t('st.providers.webgpu_download.start');
+}
+
+function webgpuDownloadStatusLine(state) {
+  if (state.ready) return t('st.providers.webgpu_download.ready_detail');
+  switch (state.status) {
+    case 'checking':
+      return t('st.providers.webgpu_download.checking');
+    case 'downloading':
+      return t('st.providers.webgpu_download.downloading', { progress: state.progress });
+    case 'paused':
+      return `${t('st.providers.webgpu_download.paused', { progress: state.progress })} ${t('st.providers.webgpu_download.paused_detail')}`;
+    case 'stopping':
+      return t('st.providers.webgpu_download.stopping');
+    case 'error':
+      return `${t('st.providers.webgpu_download.error')}: ${state.error || t('st.providers.webgpu_download.error_detail')}`;
+    default:
+      return t('st.providers.webgpu_download.required');
+  }
+}
+
+function renderWebgpuDownloadControl(id, state) {
+  const btn = document.querySelector(`.btn-webgpu-download[data-provider="${id}"]`);
+  const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
+  // When the user edits the Model field mid-download, the status for the
+  // newly displayed model is `not-downloaded` while `activeTransfer` still
+  // carries the running sibling transfer. Render the running transfer so its
+  // Stop control stays visible instead of flipping to Start with no way back.
+  // A distinct active transfer wins even when the displayed model is cached
+  // (ready): otherwise its remove action would delete the cached model while
+  // the sibling download runs hidden.
+  const display = webgpuDownloadControlState(state);
+  const transferActive = display !== state;
+  if (btn) {
+    btn.textContent = webgpuDownloadCardLabel(display);
+    btn.disabled = webgpuDownloadActionInFlight || ['checking', 'stopping'].includes(display.status);
+    // Stopping must target the running transfer, not the newly typed model.
+    if (transferActive && display.modelId) btn.dataset.activeTransferModel = display.modelId;
+    else delete btn.dataset.activeTransferModel;
+  }
+  if (line) {
+    line.textContent = transferActive && display.modelId
+      ? `${webgpuDownloadStatusLine(display)} (${display.modelId})`
+      : webgpuDownloadStatusLine(display);
+  }
+}
+
+function getDisplayedWebgpuModel(id = 'webgpu') {
+  const input = document.querySelector(`input[data-provider="${id}"][data-key="model"]`);
+  try {
+    return normalizeWebgpuModelId(input?.value || providersData[id]?.model);
+  } catch {
+    return String(input?.value || providersData[id]?.model || WEBGPU_COMPASS_TINY_V2_MODEL_ID).trim();
+  }
+}
+
+async function refreshWebgpuDownloadControls() {
+  const ids = [...new Set([...document.querySelectorAll('.btn-webgpu-download')].map(btn => btn.dataset.provider))];
+  if (!ids.length) {
+    if (webgpuDownloadPollTimer) {
+      clearInterval(webgpuDownloadPollTimer);
+      webgpuDownloadPollTimer = null;
+    }
+    return;
+  }
+  let active = false;
+  for (const id of ids) {
+    try {
+      const model = getDisplayedWebgpuModel(id);
+      const query = model ? { model } : {};
+      const state = normalizeWebgpuDownloadSnapshot(await sendToBackground('get_webgpu_download_status', query) || {});
+      renderWebgpuDownloadControl(id, state);
+      if (isActiveWebgpuTransfer(state) || isActiveWebgpuTransfer(state.activeTransfer)) active = true;
+    } catch (error) {
+      const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
+      if (line) line.textContent = String(error?.message || error);
+    }
+  }
+  if (active && !webgpuDownloadPollTimer) {
+    webgpuDownloadPollTimer = setInterval(refreshWebgpuDownloadControls, 2000);
+  } else if (!active && webgpuDownloadPollTimer) {
+    clearInterval(webgpuDownloadPollTimer);
+    webgpuDownloadPollTimer = null;
+  }
+}
+
+async function handleWebgpuDownloadButton(btn) {
+  const id = btn.dataset.provider;
+  if (webgpuDownloadActionInFlight) return;
+  webgpuDownloadActionInFlight = true;
+  let didFallbackProvider = false;
+  try {
+    btn.disabled = true;
+    // Persist any form changes on the WebGPU card first so the background
+    // provider configuration stays in sync with the user's selected model.
+    if (dirtyProviderIds.has(id)) {
+      await saveProvider(id, { showFlash: false });
+    }
+    const model = getDisplayedWebgpuModel(id);
+    const msg = model ? { model } : {};
+    const state = normalizeWebgpuDownloadSnapshot(await sendToBackground('get_webgpu_download_status', msg) || {});
+    // If the user typed a new model while a sibling transfer runs, the status
+    // for the displayed model is `not-downloaded` (or ready, when switching
+    // to a cached model) with the running transfer in `activeTransfer`.
+    // Stopping must target the running transfer so its Stop control keeps
+    // working instead of attempting to start a blocked download or deleting
+    // the cached displayed model while the sibling runs hidden.
+    const control = webgpuDownloadControlState(state);
+    const siblingActive = control !== state;
+    const stopTarget = { model: control.modelId || model, ...(control.dtype ? { dtype: control.dtype } : {}) };
+    if (state.ready || ['downloading', 'paused'].includes(state.status) || siblingActive) {
+      const removedReadyModel = state.ready === true && !siblingActive;
+      await sendToBackground('stop_webgpu_download', stopTarget);
+      // Removing a ready model while WebGPU is the selected chat provider
+      // would leave every subsequent chat failing its readiness check until
+      // the user re-downloads or manually picks another provider. Fall back
+      // to a usable provider so the selection stays functional.
+      if (removedReadyModel && id === activeProviderId) {
+        try {
+          const fallback = providersData?.webbrain_cloud
+            ? 'webbrain_cloud'
+            : Object.keys(providersData || {}).find((candidate) => candidate !== id && providerIsActive(candidate, providersData[candidate])) || 'webbrain_cloud';
+          await sendToBackground('set_active_provider', { providerId: fallback });
+          activeProviderId = fallback;
+          requestedActiveProviderId = fallback;
+          didFallbackProvider = true;
+        } catch {
+          // Keep the current selection; chat will report the missing download.
+        }
+      }
+    } else {
+      await sendToBackground('start_webgpu_download', msg);
+    }
+  } catch (error) {
+    const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
+    if (line) line.textContent = String(error?.message || error);
+  } finally {
+    webgpuDownloadActionInFlight = false;
+    await refreshWebgpuDownloadControls();
+    if (didFallbackProvider) {
+      try {
+        renderProviders();
+      } catch {
+        // Card re-render is best-effort; the status line above already updated.
+      }
+    }
+  }
 }
 
 function renderProviders() {
@@ -2036,25 +3102,38 @@ function renderProviders() {
     llamacpp: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:8080' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen/qwen3.5-9b' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'unsloth/Qwen3.8-27B-GGUF' },
         CONTEXT_WINDOW_FIELD,
-        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        VISION_MODE_FIELD,
         PROMPT_TIER_FIELD,
       ],
     },
     ollama: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:11434/v1' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen3.6:35b-a3b' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen3.8:27b' },
         CONTEXT_WINDOW_FIELD,
-        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        OLLAMA_VISION_MODE_FIELD,
         PROMPT_TIER_FIELD,
       ],
     },
     lmstudio: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:1234/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model_optional', type: 'text', placeholderKey: 'st.provider.field.model_loaded_hint' },
+        CONTEXT_WINDOW_FIELD,
+        VISION_MODE_FIELD,
+        PROMPT_TIER_FIELD,
+      ],
+    },
+    osaurus: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:1337/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'llama-3.2-3b-instruct' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
@@ -2063,8 +3142,8 @@ function renderProviders() {
     jan: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:1337/v1' },
-        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemma-4-12b-qat' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'google/gemma-4-12B-it' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
@@ -2073,8 +3152,8 @@ function renderProviders() {
     vllm: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:8000/v1' },
-        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemma/gemma4-31b-qat' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'Qwen/Qwen3.8-27B' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
@@ -2083,8 +3162,8 @@ function renderProviders() {
     sglang: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:30000/v1' },
-        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemma/gemma4-31b-qat' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'Qwen/Qwen3.8-27B' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
@@ -2093,20 +3172,57 @@ function renderProviders() {
     localai: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:8080/v1' },
-        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gpt-4' },
         CONTEXT_WINDOW_FIELD,
-        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        VISION_MODE_FIELD,
         PROMPT_TIER_FIELD,
       ],
     },
     gpt4all: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:4891/v1' },
-        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'optional' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'loaded model' },
         CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        PROMPT_TIER_FIELD,
+      ],
+    },
+    local_openai_proxy: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:8317/v1' },
+        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'required — use the proxy client API key' },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model exposed by the proxy' },
+        CONTEXT_WINDOW_FIELD,
+        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        PROMPT_TIER_FIELD,
+      ],
+    },
+    unsloth: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:8888/v1' },
+        { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-unsloth-...' },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model loaded in Unsloth Studio' },
+        CONTEXT_WINDOW_FIELD,
+        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        PROMPT_TIER_FIELD,
+      ],
+    },
+    webgpu: {
+      fields: [
+        {
+          key: 'model',
+          labelKey: 'st.provider.field.model',
+          type: 'text',
+          placeholder: 'owner/repository',
+          suggestions: [WEBGPU_COMPASS_TINY_V2_MODEL_ID],
+          suggestionLabels: Object.fromEntries(WEBGPU_MODEL_PRESETS.filter(option => option.id === WEBGPU_COMPASS_TINY_V2_MODEL_ID).map(option => [
+            option.id,
+            `${option.label} — ${option.id}${option.supportsVision ? ` — ${t('st.provider.field.supports_vision')}` : ''}`,
+          ])),
+        },
+        WEBGPU_CONTEXT_WINDOW_FIELD,
         PROMPT_TIER_FIELD,
       ],
     },
@@ -2126,7 +3242,7 @@ function renderProviders() {
         { key: 'accessKeyId', labelKey: 'st.provider.field.aws_access_key_id', type: 'text', placeholder: 'AKIA...' },
         { key: 'secretAccessKey', labelKey: 'st.provider.field.aws_secret_access_key', type: 'password', placeholder: '********' },
         { key: 'sessionToken', labelKey: 'st.provider.field.aws_session_token', type: 'password', placeholder: 'optional (STS)' },
-        { key: 'model', labelKey: 'st.provider.field.bedrock_model_id', type: 'text', placeholder: 'anthropic.claude-3-sonnet-20240229-v1:0' },
+        { key: 'model', labelKey: 'st.provider.field.bedrock_model_id', type: 'text', placeholder: 'anthropic.claude-sonnet-5' },
         ...CACHE_AWARE_COST_ESTIMATE_FIELDS,
       ],
     },
@@ -2135,6 +3251,9 @@ function renderProviders() {
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gpt-5.6-terra',
           suggestions: [
+            'gpt-6-luna-pro',
+            'gpt-6-sol',
+            'gpt-6-astra',
             'gpt-5.6-terra',
             'gpt-5.6-sol',
             'gpt-5.6-luna',
@@ -2154,7 +3273,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-or-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'openrouter/free',
-          suggestions: ['openrouter/free', 'minimax/minimax-m3', 'stepfun/step-3.7-flash', 'qwen/qwen3.7-max', 'xiaomi/mimo-v2.5-pro'] },
+          suggestions: ['openrouter/free', 'anthropic/claude-opus-5.5', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k3', 'z-ai/glm-5.3', 'minimax/minimax-m3'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://openrouter.ai/api/v1' },
         PROMPT_TIER_FIELD,
       ],
@@ -2162,8 +3281,8 @@ function renderProviders() {
     huggingface: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'hf_...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'zai-org/GLM-5.2',
-          suggestions: ['zai-org/GLM-5.2', 'Qwen/Qwen3.6-27B'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'moonshotai/Kimi-K3',
+          suggestions: ['moonshotai/Kimi-K3', 'zai-org/GLM-5.2', 'Qwen/Qwen3.8-2.4T-A95B', 'Qwen/Qwen3.6-27B'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://router.huggingface.co/v1' },
         // Hugging Face's catalog is huge and open-ended — unlike curated
         // routers, model-name sniffing (openai.js supportsVision) can't
@@ -2176,12 +3295,13 @@ function renderProviders() {
     fireworks: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'fw_...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'accounts/fireworks/models/kimi-k3',
           suggestions: [
-            'accounts/fireworks/models/llama-v3p3-70b-instruct',
-            'accounts/fireworks/models/llama4-scout-instruct-basic',
-            'accounts/fireworks/models/qwen3-235b-a22b',
-            'accounts/fireworks/models/deepseek-v3',
+            'accounts/fireworks/models/kimi-k3',
+            'accounts/fireworks/models/glm-5p2',
+            'accounts/fireworks/models/minimax-m3',
+            'accounts/fireworks/models/deepseek-v4-pro-0813',
+            'accounts/fireworks/models/qwen3p8-2p4t-a95b',
           ] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.fireworks.ai/inference/v1' },
         PROMPT_TIER_FIELD,
@@ -2190,8 +3310,8 @@ function renderProviders() {
     anthropic: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-ant-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'claude-opus-4-8',
-          suggestions: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'claude-opus-5',
+          suggestions: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.anthropic.com' },
         ...CACHE_AWARE_COST_ESTIMATE_FIELDS,
       ],
@@ -2200,7 +3320,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'AIza...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gemini-3.1-pro',
-          suggestions: ['gemini-3.1-pro', 'gemini-3-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'] },
+          suggestions: ['gemini-3.1-pro', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://generativelanguage.googleapis.com/v1beta/openai' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2211,7 +3331,7 @@ function renderProviders() {
         { key: 'accountId', label: 'Cloudflare Account ID', type: 'text', placeholder: '0123456789abcdef0123456789abcdef' },
         { key: 'gatewayId', label: 'AI Gateway ID (optional; @cf defaults to default)', type: 'text', placeholder: 'my-gateway' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: '@cf/zai-org/glm-5.2',
-          suggestions: ['@cf/zai-org/glm-5.2'] },
+          suggestions: ['@cf/zai-org/glm-5.2', '@cf/qwen/qwen3-30b-a3b-fp8'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2220,7 +3340,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'API key' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'mistral-medium-3.5',
-          suggestions: ['mistral-medium-3.5', 'mistral-small-4', 'codestral-25.08', 'devstral-medium'] },
+          suggestions: ['mistral-medium-3.5', 'mistral-large-latest', 'mistral-small-4', 'codestral-latest'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.mistral.ai/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2228,17 +3348,25 @@ function renderProviders() {
     deepseek: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-v4-flash',
-          suggestions: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
-        { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.deepseek.com/v1' },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-flash',
+          suggestions: ['deepseek-flash', 'deepseek-v4-flash'] },
+        { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.deepseek.com' },
+        // Chat Completions is the default wire format; DeepSeek's Responses API
+        // is an opt-in that mainly adds JSON-schema structured output.
+        { key: 'apiFormat', labelKey: 'st.provider.field.api_format', type: 'select', collapsed: true,
+          options: [
+            { value: 'auto', label: 'Chat Completions (default)' },
+            { value: 'chat', label: 'Chat Completions' },
+            { value: 'responses', label: 'Responses API' },
+          ] },
         ...COST_ESTIMATE_FIELDS,
       ],
     },
     xai: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'xai-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'grok-4.3',
-          suggestions: ['grok-4.3', 'grok-4.1-fast', 'grok-build-0.1'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'grok-4.6',
+          suggestions: ['grok-4.6', 'grok-4.5', 'grok-4.3', 'grok-build-0.1'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.x.ai/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2246,8 +3374,8 @@ function renderProviders() {
     nvidia: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'nvapi-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'nvidia/llama-3.3-nemotron-super-49b',
-          suggestions: ['nvidia/llama-3.3-nemotron-super-49b', 'nvidia/llama-3.1-nemotron-70b-instruct', 'nvidia/nemotron-nano-9b-v2', 'meta/llama-3.3-70b-instruct', 'deepseek-ai/deepseek-r1'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'nvidia/nemotron-3-super-120b-a12b',
+          suggestions: ['nvidia/nemotron-3-super-120b-a12b', 'nvidia/nemotron-3-nano-30b-a3b', 'z-ai/glm-5.2', 'qwen/qwen3.5-397b-a17b', 'nvidia/llama-3.3-nemotron-super-49b-v1.5'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://integrate.api.nvidia.com/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2255,8 +3383,8 @@ function renderProviders() {
     minimax: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'API key' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'minimax-m2.7',
-          suggestions: ['minimax-m2.7', 'minimax-m3'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'MiniMax-M3',
+          suggestions: ['MiniMax-M3', 'MiniMax-M2.7'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.minimax.chat/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2264,8 +3392,8 @@ function renderProviders() {
     kimi: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'kimi-k2.5',
-          suggestions: ['kimi-k2.5', 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k2.6'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'kimi-k3',
+          suggestions: ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k2.6'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.moonshot.ai/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2273,8 +3401,8 @@ function renderProviders() {
     alibaba: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen-max',
-          suggestions: ['qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen3-235b-a22b'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen3.8-max',
+          suggestions: ['qwen3.8-max', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.7-flash'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2282,12 +3410,13 @@ function renderProviders() {
     together: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'tgp_...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'moonshotai/Kimi-K3',
           suggestions: [
-            'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-            'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
-            'Qwen/Qwen2.5-72B-Instruct-Turbo',
-            'deepseek-ai/DeepSeek-V3',
+            'moonshotai/Kimi-K3',
+            'zai-org/GLM-5.2',
+            'MiniMaxAI/MiniMax-M3',
+            'Qwen/Qwen3.8-2.4T-A95B',
+            'google/gemma-4-31B-it',
           ] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.together.xyz/v1' },
         ...COST_ESTIMATE_FIELDS,
@@ -2297,7 +3426,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'gsk_...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'openai/gpt-oss-120b',
-          suggestions: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'qwen/qwen3-32b'] },
+          suggestions: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.6-27b'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.groq.com/openai/v1' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2305,8 +3434,8 @@ function renderProviders() {
     z_ai: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'API key' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'glm-5.2',
-          suggestions: ['glm-5.2', 'glm-5.1', 'glm-5', 'glm-5-turbo'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'glm-5.3',
+          suggestions: ['glm-5.3', 'glm-5.2', 'glm-5.1', 'glm-5-turbo'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.z.ai/api/paas/v4' },
         ...COST_ESTIMATE_FIELDS,
       ],
@@ -2361,6 +3490,18 @@ function renderProviders() {
     providerConfigs[id] = { fields };
   }
 
+  // Model limits are portable provider settings, not local-runtime-only
+  // details. Keep them optional and expose them on every configurable card.
+  for (const [id, definition] of Object.entries(providerConfigs)) {
+    if (id === 'webbrain_cloud' || !Array.isArray(definition.fields)) continue;
+    const keys = new Set(definition.fields.map(field => field.key));
+    if (!keys.has('contextWindow')) definition.fields.push(CONTEXT_WINDOW_FIELD);
+    if (!keys.has('maxOutputTokens')) definition.fields.push(MAX_OUTPUT_TOKENS_FIELD);
+    // Voluntary research sharing is opt-in per provider and never shown for
+    // WebBrain Compass itself.
+    if (!keys.has('shareQueriesForResearch')) definition.fields.push(SHARE_RESEARCH_FIELD);
+  }
+
   providersContainer.appendChild(renderProviderFilterBar());
 
   let entries = Object.entries(providersData);
@@ -2379,16 +3520,21 @@ function renderProviders() {
   for (const [id, config] of entries) {
     const isSelected = id === activeProviderId;
     const isConfigured = id !== 'webbrain_cloud' && config.configured === true;
-    const fieldDefs = providerConfigs[id]?.fields || [];
+    const definitionId = providerDefinitionId(id, config);
+    const fieldDefs = providerConfigs[definitionId]?.fields || [];
 
-    // Filter: hide cards whose category doesn't match (selected always shown).
+    // Active is a strict status filter. Category filters keep the selected
+    // provider visible so users never lose track of the provider in use.
     const category = config.category || 'cloud';
-    if (providerFilter !== 'all' && category !== providerFilter && !isSelected) continue;
+    if (providerFilter === 'active' && !isConfigured) continue;
+    if (providerFilter !== 'all' && providerFilter !== 'active' && category !== providerFilter && !isSelected) continue;
     if (providerQuery && !providerSearchTextForEntry(id, config, fieldDefs).includes(providerQuery)) continue;
     visibleCount++;
 
     let fieldsHTML = '';
+    let collapsedFieldsHTML = '';
     for (const field of fieldDefs) {
+      let fieldHTML = '';
       const label = field.labelKey ? t(field.labelKey) : (field.label || field.key);
       const placeholder = field.placeholderKey ? t(field.placeholderKey) : (field.placeholder || '');
       if (field.type === 'select') {
@@ -2398,32 +3544,40 @@ function renderProviders() {
         const optionsHTML = field.options
           .map(o => `<option value="${escapeHtml(o.value)}"${o.value === current ? ' selected' : ''}>${escapeHtml(o.labelKey ? t(o.labelKey) : o.label)}</option>`)
           .join('');
-        fieldsHTML += `
+        fieldHTML += `
           <div class="field">
             <label>${escapeHtml(label)}</label>
             <select data-provider="${id}" data-key="${field.key}" data-type="select">${optionsHTML}</select>
           </div>
         `;
+        if (VISION_UI_PROVIDER_IDS.has(definitionId) && field.key === 'visionMode') {
+          const statusAttribute = definitionId === 'ollama' ? `data-ollama-vision-status="${id}"` : `data-vision-status="${id}"`;
+          fieldHTML += `<div class="field-hint" ${statusAttribute}${current === 'auto' ? '' : ' hidden'} style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(visionStatusKey(id, config)))}</div>`;
+        }
       } else if (field.type === 'checkbox') {
         const isChecked = !!config[field.key];
         const checked = isChecked ? 'checked' : '';
-        fieldsHTML += `
+        fieldHTML += `
           <div class="field" style="display:flex;align-items:center;gap:8px;flex-direction:row;">
             <input type="checkbox" data-provider="${id}" data-key="${field.key}" data-type="checkbox" ${checked}
                    style="width:auto;cursor:pointer;">
             <label style="margin:0;cursor:pointer;">${escapeHtml(label)}</label>
           </div>
         `;
+        if (field.hintKey) {
+          fieldHTML += `<div class="field-hint" style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(field.hintKey))}</div>`;
+        }
         } else if (field.suggestions && field.key === 'model') {
         const rawVal = config[field.key] || '';
         const isCustom = rawVal && !field.suggestions.includes(rawVal);
-        const effectiveVal = rawVal || field.suggestions[0];
-        const selectVal = isCustom ? '__custom__' : effectiveVal;
-        const optionsHTML = field.suggestions
-          .map(s => `<option value="${escapeHtml(s)}"${s === selectVal ? ' selected' : ''}>${escapeHtml(s)}</option>`)
+        const isBlankDuplicate = config.isDuplicate && !rawVal;
+        const effectiveVal = rawVal || (isBlankDuplicate ? '' : field.suggestions[0]);
+        const selectVal = isBlankDuplicate ? '' : (isCustom ? '__custom__' : effectiveVal);
+        const optionsHTML = (isBlankDuplicate ? '<option value="" selected></option>' : '') + field.suggestions
+          .map(s => `<option value="${escapeHtml(s)}"${s === selectVal ? ' selected' : ''}>${escapeHtml(field.suggestionLabels?.[s] || s)}</option>`)
           .join('') +
           `<option value="__custom__"${isCustom ? ' selected' : ''}>${escapeHtml(t('st.provider.field.model_custom'))}</option>`;
-        fieldsHTML += `
+        fieldHTML += `
           <div class="field">
             <label>${escapeHtml(label)}</label>
             <select class="model-select" data-model-for="${id}">${optionsHTML}</select>
@@ -2433,8 +3587,8 @@ function renderProviders() {
           </div>
         `;
       } else {
-        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all'];
-        const canLoadModels = localModelProviders.includes(id) && field.key === 'model';
+        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+        const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';
         const loadedModelsDialogHTML = canLoadModels
@@ -2463,7 +3617,7 @@ function renderProviders() {
         const minAttr = field.min != null ? ` min="${escapeHtml(field.min)}"` : '';
         const stepAttr = field.step != null ? ` step="${escapeHtml(field.step)}"` : '';
         const value = config[field.key] ?? '';
-        fieldsHTML += `
+        fieldHTML += `
           <div class="field">
             <label>${escapeHtml(label)}${apiKeyLink}</label>
             <input type="${field.type}" data-provider="${id}" data-key="${field.key}" data-type="${field.type}" ${listAttr}${minAttr}${stepAttr}
@@ -2474,6 +3628,19 @@ function renderProviders() {
           </div>
         `;
       }
+      if (field.collapsed) collapsedFieldsHTML += fieldHTML;
+      else fieldsHTML += fieldHTML;
+    }
+    if (collapsedFieldsHTML) {
+      fieldsHTML += `
+        <details class="provider-compatibility provider-local-auth">
+          <summary>
+            <span class="provider-compatibility-title">${escapeHtml(t('st.display.advanced'))}</span>
+            <span class="provider-compatibility-summary">${escapeHtml(t('st.provider.field.api_key'))}</span>
+          </summary>
+          <div class="provider-compatibility-body">${collapsedFieldsHTML}</div>
+        </details>
+      `;
     }
 
     const subscribeHref = id === 'webbrain_cloud' ? webbrainSubscribeUrl(config.deviceGuid) : '';
@@ -2497,11 +3664,12 @@ function renderProviders() {
          </div>`;
     }
     const extensionOrigin = chrome.runtime.getURL('').replace(/\/$/, '');
-    const ollamaWarning = id === 'ollama'
+    const ollamaWarningTitleId = `ollama-warning-title-${id}`;
+    const ollamaWarning = definitionId === 'ollama'
       ? `<aside class="provider-warning provider-ollama-warning" role="note"
-                aria-labelledby="ollama-warning-title">
+                aria-labelledby="${ollamaWarningTitleId}">
            <div class="provider-warning-label">${escapeHtml(t('st.providers.ollama_warning.label'))}</div>
-           <strong class="provider-warning-title" id="ollama-warning-title">${escapeHtml(t('st.providers.ollama_warning.title'))}</strong>
+           <strong class="provider-warning-title" id="${ollamaWarningTitleId}">${escapeHtml(t('st.providers.ollama_warning.title'))}</strong>
            <p>${escapeHtml(t('st.providers.ollama_warning.body'))}</p>
            <p>${escapeHtml(t('st.providers.ollama_warning.restart'))}</p>
            <pre><code>OLLAMA_ORIGINS="${escapeHtml(extensionOrigin)}" ollama serve</code></pre>
@@ -2511,8 +3679,15 @@ function renderProviders() {
          </aside>`
       : '';
     const compatibilitySettings = renderProviderCompatibilitySettings(id, config);
+    const duplicateDisabledKey = config.hasDuplicate
+      ? 'st.providers.duplicate_limit'
+      : (!config.canDuplicate
+        ? 'st.providers.duplicate_unavailable'
+        : ((!isConfigured || dirtyProviderIds.has(id)) ? 'st.providers.duplicate_inactive' : ''));
 
+    const subscriptionGuide = providerSubscriptionGuideHtml(definitionId);
     const body = `
+      ${subscriptionGuide}
       ${fieldsHTML}
       ${providerNote}
       ${ollamaWarning}
@@ -2520,9 +3695,14 @@ function renderProviders() {
       <div class="btn-row">
         <button class="btn-primary btn-save" data-provider="${id}">${escapeHtml(t('st.providers.save'))}</button>
         <button class="btn-secondary btn-test" data-provider="${id}">${escapeHtml(t('st.providers.test'))}</button>
+        ${definitionId === 'webgpu' ? `<button class="btn-secondary btn-webgpu-download" data-provider="${id}">${escapeHtml(t('st.providers.webgpu_download.start'))}</button>` : ''}
         ${billingButton}
         ${!isSelected ? `<button class="btn-secondary btn-activate" data-provider="${id}">${escapeHtml(t('st.providers.select_for_chat'))}</button>` : ''}
+        ${config.isDuplicate
+          ? `<button class="btn-secondary btn-remove-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.remove_duplicate'))}</button>`
+          : `<button class="btn-secondary btn-duplicate" data-provider="${id}"${duplicateDisabledKey ? ` disabled title="${escapeHtml(t(duplicateDisabledKey))}"` : ''}>${escapeHtml(t('st.providers.duplicate'))}</button>`}
       </div>
+      ${definitionId === 'webgpu' ? `<div class="webgpu-download-status" data-webgpu-download-status="${id}" style="margin-top:8px;font-size:12px;color:var(--text2);">${escapeHtml(t('st.providers.webgpu_download.checking'))}</div>` : ''}
       <div class="test-result" id="test-${id}"></div>
     `;
 
@@ -2549,8 +3729,33 @@ function renderProviders() {
   document.querySelectorAll('.btn-test').forEach(btn => {
     btn.addEventListener('click', () => testProvider(btn.dataset.provider));
   });
+  document.querySelectorAll('.btn-webgpu-download').forEach(btn => {
+    btn.addEventListener('click', () => handleWebgpuDownloadButton(btn));
+  });
+  refreshWebgpuDownloadControls();
   document.querySelectorAll('.btn-activate').forEach(btn => {
     btn.addEventListener('click', () => activateProvider(btn.dataset.provider));
+  });
+  document.querySelectorAll('.btn-duplicate').forEach(btn => {
+    btn.addEventListener('click', () => duplicateProvider(btn.dataset.provider));
+  });
+  document.querySelectorAll('input[data-provider], select[data-provider], textarea[data-provider]').forEach(input => {
+    const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
+    input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
+  });
+  document.querySelectorAll('input[data-key="shareQueriesForResearch"]').forEach(input => {
+    input.addEventListener('click', (event) => {
+      // In click handlers, `input.checked` has already updated to the target
+      // state. Only prompt for confirmation when turning the toggle ON.
+      // preventDefault() cancels the click and rolls `checked` back to false.
+      if (!input.checked) return;
+      if (!window.confirm(t('st.providers.share_research.confirm'))) {
+        event.preventDefault();
+      }
+    });
+  });
+  document.querySelectorAll('.btn-remove-duplicate').forEach(btn => {
+    btn.addEventListener('click', () => removeDuplicateProvider(btn.dataset.provider));
   });
   document.querySelectorAll('.btn-load-models').forEach(btn => {
     btn.addEventListener('click', () => loadProviderModels(btn.dataset.provider));
@@ -2575,12 +3780,29 @@ function renderProviders() {
         input.style.display = 'none';
         input.value = sel.value;
       }
+      if (providerId === 'webgpu' && sel.value !== '__custom__') {
+        const preset = WEBGPU_MODEL_PRESETS.find(option => option.id === sel.value);
+        if (preset?.contextWindow) {
+          const contextInput = document.querySelector(`input[data-provider="${providerId}"][data-key="contextWindow"]`);
+          if (contextInput) contextInput.value = String(preset.contextWindow);
+          if (providersData[providerId]) providersData[providerId].contextWindow = preset.contextWindow;
+        }
+      }
+      syncInferredOpenRouterRoutingVariant(providerId, input.value);
+      markProviderDirty(providerId);
       refreshProviderCompatibilitySummary(providerId);
+      refreshVisionStatus(providerId);
+      if (providerId === 'webgpu') refreshWebgpuDownloadControls();
     });
   });
+  document.querySelectorAll('select[data-key="visionMode"]').forEach((select) => {
+    select.addEventListener('change', () => refreshVisionStatus(select.dataset.provider));
+  });
+  document.querySelector('select[data-provider="ollama"][data-key="visionMode"]')?.addEventListener('change', refreshOllamaVisionStatus);
   document.querySelectorAll('.provider-compatibility select[data-provider], .provider-compatibility textarea[data-provider]').forEach((input) => {
     const eventName = input.tagName === 'TEXTAREA' ? 'input' : 'change';
     input.addEventListener(eventName, () => {
+      if (input.dataset.key === 'routingVariant') input.dataset.routingExplicit = 'true';
       if (input.tagName === 'TEXTAREA') {
         providerCompatibilityJsonDrafts.set(input.dataset.provider, input.value);
       }
@@ -2588,18 +3810,32 @@ function renderProviders() {
     });
   });
   document.querySelectorAll('input[data-key="model"], input[data-key="baseUrl"]').forEach((input) => {
-    input.addEventListener('input', () => refreshProviderCompatibilitySummary(input.dataset.provider));
+    input.addEventListener('input', () => {
+      if (input.dataset.key === 'model') syncInferredOpenRouterRoutingVariant(input.dataset.provider, input.value);
+      refreshProviderCompatibilitySummary(input.dataset.provider);
+      refreshVisionStatus(input.dataset.provider);
+      if (providerDefinitionId(input.dataset.provider) === 'ollama') refreshVisionStatus(input.dataset.provider);
+      if (input.dataset.provider === 'webgpu' && input.dataset.key === 'model') refreshWebgpuDownloadControls();
+    });
   });
   document.querySelectorAll('.btn-reset-compatibility').forEach((button) => {
     button.addEventListener('click', () => {
       const id = button.dataset.provider;
       const details = button.closest('.provider-compatibility');
-      details?.querySelectorAll('select[data-provider]').forEach((select) => { select.value = 'auto'; });
+      details?.querySelectorAll('select[data-provider]').forEach((select) => {
+        if (select.dataset.key === 'routingVariant') {
+          select.value = 'standard';
+          select.dataset.routingExplicit = 'true';
+        } else {
+          select.value = 'auto';
+        }
+      });
       const textarea = details?.querySelector('textarea[data-type="json"]');
       if (textarea) {
         textarea.value = '';
         providerCompatibilityJsonDrafts.set(id, '');
       }
+      markProviderDirty(id);
       refreshProviderCompatibilitySummary(id);
     });
   });
@@ -2619,6 +3855,7 @@ function renderProviders() {
       if (!input) return;
       const selectedModel = option.dataset.model || '';
       input.value = selectedModel;
+      syncInferredOpenRouterRoutingVariant(providerId, selectedModel);
       void saveProvider(providerId, { showFlash: false })
         .then(() => detectProviderContextWindowForModel(providerId, selectedModel))
         .catch(() => {});
@@ -2629,7 +3866,7 @@ function renderProviders() {
 
 /**
  * Build the filter pill row. Clicking a pill updates `providerFilter`,
- * persists it to storage, and re-renders. Categories: all / local /
+ * persists it to storage, and re-renders. Filters: all / active / local /
  * cloud / router.
  */
 function renderProviderFilterBar() {
@@ -2641,22 +3878,25 @@ function renderProviderFilterBar() {
   // they track text color (including the active accent state).
   const filterIcons = {
     all: '<svg class="provider-filter-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
+    active: '<svg class="provider-filter-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></svg>',
     local: '<svg class="provider-filter-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>',
     cloud: '<svg class="provider-filter-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>',
     router: '<svg class="provider-filter-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>',
   };
   const filters = [
     { key: 'all',    labelKey: 'st.providers.filter.all' },
+    { key: 'active', labelKey: 'st.providers.active' },
     { key: 'local',  labelKey: 'st.providers.filter.local' },
     { key: 'cloud',  labelKey: 'st.providers.filter.cloud' },
     { key: 'router', labelKey: 'st.providers.filter.router' },
   ];
-  const filterCounts = Object.values(providersData).reduce((counts, config) => {
+  const filterCounts = Object.entries(providersData).reduce((counts, [id, config]) => {
     counts.all += 1;
+    if (providerIsActive(id, config)) counts.active += 1;
     const category = config.category || 'cloud';
     if (Object.hasOwn(counts, category) && category !== 'all') counts[category] += 1;
     return counts;
-  }, { all: 0, local: 0, cloud: 0, router: 0 });
+  }, { all: 0, active: 0, local: 0, cloud: 0, router: 0 });
   for (const f of filters) {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -2688,6 +3928,8 @@ function renderProviderFilterBar() {
   input.value = providerSearchQuery;
   let providerSearchComposing = false;
   const applyProviderSearchInput = () => {
+    // Firefox may emit a final input event while the old search is removed.
+    if (!input.isConnected) return;
     const selectionStart = input.selectionStart ?? input.value.length;
     const selectionEnd = input.selectionEnd ?? input.value.length;
     syncInputsIntoProvidersData();
@@ -2742,7 +3984,7 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   header.innerHTML = `
     <div class="provider-header-left">
       <span class="provider-chevron" aria-hidden="true">${expanded ? '▾' : '▸'}</span>
-      ${providerIconHtml(id, label)}
+      ${providerIconHtml(providerDefinitionId(id, config), label)}
       <span class="provider-name">${escapeHtml(label)}</span>
       <span class="provider-type">${escapeHtml(config.type)}</span>
       ${config.category ? `<span class="provider-category-badge provider-category-${escapeHtml(config.category)}">${escapeHtml(config.category)}</span>` : ''}
@@ -2774,6 +4016,24 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   return card;
 }
 
+function providerIsActive(id, config) {
+  return id !== 'webbrain_cloud' && config?.configured === true;
+}
+
+function markProviderDirty(id) {
+  if (!id || !providersData[id]) return;
+  dirtyProviderIds.add(id);
+  refreshProviderCardStatus(id);
+}
+
+function refreshActiveProviderFilterCount() {
+  const count = Object.entries(providersData)
+    .filter(([id, config]) => providerIsActive(id, config))
+    .length;
+  const countEl = document.querySelector('.provider-filter-pill[data-filter="active"] .provider-filter-count');
+  if (countEl) countEl.textContent = String(count);
+}
+
 function setProviderLoadModelsStatus(id, message, color = 'var(--text2)') {
   const statusEl = document.querySelector(`.load-models-status[data-provider="${id}"]`);
   if (!statusEl) return null;
@@ -2796,6 +4056,7 @@ function applyProviderBaseUrl(id, baseUrl) {
   if (providersData[id]) providersData[id].baseUrl = baseUrl;
   const input = document.querySelector(`input[data-provider="${id}"][data-key="baseUrl"]`);
   if (input && input.value !== baseUrl) input.value = baseUrl;
+  refreshVisionStatus(id);
 }
 
 function applyProviderContextWindow(id, contextWindow) {
@@ -2841,28 +4102,52 @@ function clearProviderLoadedModels(id) {
   if (datalistEl) datalistEl.innerHTML = '';
 }
 
+const providerModelLoadGenerations = new Map();
+const providerModelLoadSaveQueues = new Map();
+
+function queueProviderModelLoadSave(id, save) {
+  const previous = providerModelLoadSaveQueues.get(id) || Promise.resolve();
+  const queued = previous.catch(() => {}).then(save);
+  providerModelLoadSaveQueues.set(id, queued);
+  const clear = () => {
+    if (providerModelLoadSaveQueues.get(id) === queued) providerModelLoadSaveQueues.delete(id);
+  };
+  queued.then(clear, clear);
+  return queued;
+}
+
 async function loadProviderModels(id) {
   let datalistEl = document.getElementById(`models-${id}`);
   if (!datalistEl) return;
+  const generation = (providerModelLoadGenerations.get(id) || 0) + 1;
+  providerModelLoadGenerations.set(id, generation);
+  const isCurrent = () => providerModelLoadGenerations.get(id) === generation;
   clearProviderLoadedModels(id);
   // Persist whatever the user has typed in baseUrl/model so the background
   // call uses the current values, not stale storage.
   try {
-    await saveProvider(id, { showFlash: false, markConfigured: false });
+    await queueProviderModelLoadSave(id, async () => {
+      if (!isCurrent()) return;
+      await saveProvider(id, { showFlash: false, markConfigured: false });
+    });
   } catch (e) {
+    if (!isCurrent()) return;
     setProviderLoadModelsStatus(id, providerModelLoadErrorMessage(e.message), 'var(--danger, #c33)');
     return;
   }
 
+  if (!isCurrent()) return;
   setProviderLoadModelsStatus(id, t('st.providers.loading'));
   let res;
   try {
     res = await sendToBackground('list_provider_models', { providerId: id });
   } catch (e) {
+    if (!isCurrent()) return;
     setProviderLoadModelsStatus(id, providerModelLoadErrorMessage(e.message), 'var(--danger, #c33)');
     return;
   }
 
+  if (!isCurrent()) return;
   datalistEl = document.getElementById(`models-${id}`);
   if (!datalistEl) return;
   if (res?.ok) {
@@ -2903,23 +4188,64 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
 
   try {
     inputs.forEach(input => {
+      if (!shouldPersistProviderInput(input)) return;
       const value = input.dataset.type === 'json'
         ? parseProviderExtraBodyJson(input.value)
         : providerInputValue(input);
       setProviderConfigValue(config, input.dataset.key, value);
     });
     apiKeyWarning = providerApiKeyWarning(id, config);
-    await sendToBackground('update_provider', { providerId: id, config, markConfigured });
+    const updateRes = await sendToBackground('update_provider', { providerId: id, config, markConfigured });
+    // updateProvider may fall back to another active provider (e.g. the active
+    // WebGPU model was edited to an undownloaded target). Sync the page-local
+    // selection so the Selected badge does not lie about subsequent chats.
+    if (updateRes && typeof updateRes.activeProviderId === 'string'
+        && updateRes.activeProviderId !== activeProviderId) {
+      activeProviderId = updateRes.activeProviderId;
+      requestedActiveProviderId = updateRes.activeProviderId;
+    }
   } catch (e) {
     if (showFlash) setProviderTestResult(id, 'fail', t('st.providers.failed', { error: e.message }));
     throw e;
   }
   providerCompatibilityJsonDrafts.delete(id);
   if (providersData[id]) {
+    const priorVisionDetection = providersData[id].visionDetection;
     Object.assign(providersData[id], config);
+    if (VISION_UI_PROVIDER_IDS.has(providerDefinitionId(id, providersData[id])) && (
+      providersData[id].visionMode !== 'auto'
+      || !providerVisionDetectionMatches(id, providersData[id], priorVisionDetection)
+    )) {
+      providersData[id].visionDetection = null;
+    }
     if (markConfigured) providersData[id].configured = id !== 'webbrain_cloud';
   }
+  if (markConfigured) dirtyProviderIds.delete(id);
+  // If the background fell back to another active provider, re-render all
+  // cards so every Selected badge reflects the persisted selection.
+  if (requestedActiveProviderId === activeProviderId && document.querySelector('.provider-card')) {
+    const selectedCards = [...document.querySelectorAll('.provider-card.selected')].map((card) => card.dataset.providerId);
+    const shouldRerender = selectedCards.length !== 1 || selectedCards[0] !== activeProviderId;
+    if (shouldRerender) {
+      try {
+        syncInputsIntoProvidersData();
+      } catch {
+        // Draft preservation is best-effort; selection accuracy wins.
+      }
+      renderProviders();
+      refreshVisionStatus(id);
+      if (showFlash) {
+        if (apiKeyWarning) setProviderTestResult(id, 'warn', apiKeyWarning);
+        else {
+          const testEl = setProviderTestResult(id, 'ok', t('st.providers.saved'));
+          if (testEl) setTimeout(() => testEl.classList.remove('show'), 2000);
+        }
+      }
+      return;
+    }
+  }
   refreshProviderCardStatus(id);
+  refreshVisionStatus(id);
 
   if (showFlash) {
     if (apiKeyWarning) {
@@ -2932,12 +4258,22 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
 }
 
 function refreshProviderCardStatus(id) {
+  // Saving a provider marks it configured without rebuilding the list. Keep
+  // the Active pill in sync even if the card disappeared during the request.
+  refreshActiveProviderFilterCount();
   const card = document.querySelector(`.provider-card[data-provider-id="${id}"]`);
   if (!card) return;
-  const isConfigured = id !== 'webbrain_cloud' && providersData[id]?.configured === true;
+  const isConfigured = providerIsActive(id, providersData[id]);
   const isSelected = id === activeProviderId;
   card.classList.toggle('configured', isConfigured);
   card.classList.toggle('selected', isSelected);
+  const duplicateButton = card.querySelector('.btn-duplicate');
+  if (duplicateButton && providersData[id]?.canDuplicate && !providersData[id]?.hasDuplicate) {
+    const requiresSave = !isConfigured || dirtyProviderIds.has(id);
+    duplicateButton.disabled = requiresSave;
+    if (!requiresSave) duplicateButton.removeAttribute('title');
+    else duplicateButton.title = t('st.providers.duplicate_inactive');
+  }
   const badges = card.querySelector('.provider-status-badges');
   if (!badges) return;
   badges.innerHTML = `
@@ -2983,6 +4319,7 @@ function syncInputsIntoProvidersData() {
     const id = input.dataset.provider;
     const key = input.dataset.key;
     if (!id || !key || !providersData[id]) return;
+    if (!shouldPersistProviderInput(input)) return;
     // Keep extraBody as a parsed object in memory (matches saveProvider and
     // mergeProviderRequestBody). Invalid draft JSON is left unchanged so a
     // partial edit does not corrupt the last-known-good object.
@@ -2997,6 +4334,65 @@ function syncInputsIntoProvidersData() {
     }
     setProviderConfigValue(providersData[id], key, providerInputValue(input));
   });
+}
+
+const PROVIDER_REFRESH_MANAGED_KEYS = new Set([
+  'id',
+  'type',
+  'category',
+  'configured',
+  'duplicateOf',
+  'sourceProviderId',
+  'isDuplicate',
+  'hasDuplicate',
+  'canDuplicate',
+  'visionDetection',
+]);
+
+function restoreProviderDrafts(drafts) {
+  for (const [providerId, draft] of Object.entries(drafts || {})) {
+    const refreshed = providersData[providerId];
+    if (!refreshed || !draft) continue;
+    for (const [key, value] of Object.entries(draft)) {
+      if (!PROVIDER_REFRESH_MANAGED_KEYS.has(key)) refreshed[key] = value;
+    }
+  }
+}
+
+async function duplicateProvider(id) {
+  if (!providerIsActive(id, providersData[id]) || dirtyProviderIds.has(id)) return;
+  try {
+    syncInputsIntoProvidersData();
+    const providerDrafts = providersData;
+    const created = await sendToBackground('duplicate_provider', { providerId: id });
+    const refreshed = await sendToBackground('get_providers');
+    providersData = refreshed.providers;
+    activeProviderId = refreshed.active;
+    restoreProviderDrafts(providerDrafts);
+    expandedProviders.add(created.providerId);
+    renderProviders();
+  } catch (error) {
+    setProviderTestResult(id, 'fail', t('st.providers.failed', { error: error.message }));
+  }
+}
+
+async function removeDuplicateProvider(id) {
+  if (!window.confirm(t('st.providers.remove_duplicate_confirm'))) return;
+  try {
+    syncInputsIntoProvidersData();
+    const providerDrafts = providersData;
+    await sendToBackground('remove_duplicate_provider', { providerId: id });
+    const refreshed = await sendToBackground('get_providers');
+    providersData = refreshed.providers;
+    activeProviderId = refreshed.active;
+    restoreProviderDrafts(providerDrafts);
+    expandedProviders.delete(id);
+    providerCompatibilityJsonDrafts.delete(id);
+    dirtyProviderIds.delete(id);
+    renderProviders();
+  } catch (error) {
+    setProviderTestResult(id, 'fail', t('st.providers.failed', { error: error.message }));
+  }
 }
 
 async function activateProvider(id) {

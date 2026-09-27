@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "062",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "search-results",
+  "title": "Global search",
+  "image": "images/062.png",
+  "question": "What query is active, which result tab is selected, and how many results are shown? Focus on the “Global search” screen.",
+  "defaultPromptMode": "production"
+}

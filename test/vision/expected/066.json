@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "066",
+  "image": "images/066.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "branch protection",
+        "settings",
+        "upload",
+        "export"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Branch protection",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "View warnings",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "toast",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Rule saved with warnings",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "detail",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "2 checks are missing",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Quote Rule saved with warnings and 2 checks are missing, and classify the visible state."
+}

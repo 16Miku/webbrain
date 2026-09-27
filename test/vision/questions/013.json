@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "013",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "kanban-board",
+  "title": "Project board",
+  "image": "images/013.png",
+  "question": "Which column contains “Write brief”? Focus on the “Project board” screen.",
+  "defaultPromptMode": "production"
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "037",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "multilingual-ocr",
+  "title": "Willkommen zurück",
+  "image": "images/037.png",
+  "question": "Read the non-English heading, field label/value, action, and visible status exactly as rendered. Focus on the “Willkommen zurück” screen.",
+  "defaultPromptMode": "production"
+}

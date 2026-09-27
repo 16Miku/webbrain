@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "008",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "consent-banner",
+  "title": "We use cookies",
+  "image": "images/008.png",
+  "question": "Which consent overlay is present and what exact choices does it offer? Focus on the “We use cookies” screen.",
+  "defaultPromptMode": "production"
+}

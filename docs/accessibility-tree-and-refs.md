@@ -36,9 +36,9 @@ dialog "Add a product" [ref_166]
 **Parameters:**
 | Parameter | Default | Description |
 |---|---|---|
-| `filter` | `'all'` | `'all'` (whole DOM), `'visible'` (in-viewport, visible nodes), `'interactive'` (clickable/typeable only) |
+| `filter` | `'all'` | `'all'` (whole rendered document scope), `'visible'` (in-viewport, visible nodes), `'interactive'` (clickable/typeable only) |
 | `maxDepth` | `15` | Max tree depth to descend |
-| `maxChars` | — | Hard cap on output length (auto-slices with `autoDegraded:true` if exceeded) |
+| `maxChars` | Filter-dependent | Structured page size. Defaults to 6,000 for `all`, 3,000 for `visible`, and 3,500 for `interactive`; larger trees return continuation metadata. See [adaptive read windows](#adaptive-read-windows). |
 | `ref_id` | — | Anchor at a specific element's subtree instead of `document.body` |
 | `page` | — | 1-based chunk number for paginated results when tree is truncated |
 
@@ -87,6 +87,58 @@ Without `WeakRef`, the map would pin every element it ever indexed, preventing g
 The primary page-reading tool. Returns the rendered tree string plus metadata (`truncated`, `hasMore`, `autoDegraded`, `notice`).
 
 The agent uses this as its first action on almost every turn — it's faster and cheaper than a screenshot, and works on text-only models.
+
+### Adaptive read windows
+
+Accessibility-tree paging uses two coordinated limits: the `pageContent`
+window returned by the content script and the outer serialized tool result sent
+to the model. The standard pair is 6,000 / 8,000 characters. WebBrain exposes
+an expanded 12,000 / 16,000 pair only when the active provider:
+
+- is Mid or Full rather than Compact; and
+- reports a context window of at least 65,536 tokens (64k).
+
+The 12,000-character value is a maximum, not the ordinary default. Visible and
+interactive UI reads retain their 3,000 / 3,500 defaults, and ordinary
+accessibility results retain the 8,000-character serializer cap. The expanded
+serializer applies only to an accessibility-tree call that actually requests
+more than 6,000 characters. Other tools keep their existing result budgets.
+
+For a required complete-thread read, the runtime automatically adds
+`maxChars:12000` to the first discovery call when the provider is eligible. A
+model may also request the expanded page for a whole-document read. Every
+truncated result remains deterministic: callers must reuse the exact
+`continuationArgs`, including `maxChars`, until `hasMore:false`. Increasing the
+window reduces model round trips; it does not turn a multi-page tree into proof
+of complete coverage. `tree_revision` binds page 2 and later to the snapshot
+created by page 1. Page 1 always starts or restarts a fresh snapshot, so the
+runtime ignores a stale revision if a model carries one into a page-1 call.
+
+Pagination also cannot prove that an application rendered hidden conversation
+content. On a Gmail thread route, a discovery read returns a trusted
+`conversationRootRefId` selected from visible Gmail-owned conversation
+structure. Complete-thread coverage then requires exact page 1-to-terminal
+pagination of that anchored subtree with `filter:"all"` and `maxDepth:15`.
+Document-root continuation pages traverse unrelated inbox UI and never count;
+arbitrary message-body or generic refs cannot substitute for the trusted root.
+
+Gmail expansion remains separate evidence. The page must expose **Collapse all**;
+a terminal anchored tree observed while **Expand all** is active remains
+incomplete. Ask mode is read-only, so if messages are still collapsed it reports
+that limitation and asks the user to expand them or switch to Act mode. Act/Dev
+can activate Expand all and then restart the trusted anchored read at page 1.
+Each newly accepted exact page counts as bounded completeness progress, so a
+long thread can exceed the ordinary eight-observation delivery checkpoint;
+repeated, skipped, stale, changed-tree, and wrong-scope reads still do not.
+When the latest user explicitly narrows a follow-up to a best-effort answer
+from evidence already seen or provided in the conversation, the semantic scope
+classifier uses `none`; an earlier complete-thread request must not force a new
+Gmail read after the user has accepted that narrower evidence boundary.
+
+Trace storage has a separate diagnostic truncation policy. A trace showing only
+the head of a large result does not mean the model received the same truncated
+payload; inspect the recorded total length and the model-facing paging metadata
+when diagnosing incomplete reads.
 
 ### `click_ax({ref_id})`
 
@@ -181,8 +233,8 @@ When an embedded app or form remains difficult to inspect or target reliably,
 `promote_iframe` navigates the **current run tab** to that child frame's own
 standalone URL. Subsequent tools operate on the standalone page, and normal
 browser Back history is preserved so `go_back` or the browser Back button can
-return to the embedding page. This is a same-tab handoff, not a background
-`new_tab`.
+return to the embedding page. This is a same-tab handoff, not background-tab
+creation.
 
 Use this workflow **before editing** the iframe:
 
@@ -217,7 +269,7 @@ Ask or Compact.
 | Stale ref after SPA nav | All refs miss | Agent should read the tree again after `/navigate` or `wait_for_stable` |
 | Shadow DOM closed root | Tree shows `<my-component>` but not its children | Use `get_shadow_dom` + `shadow_dom_query` on Chrome; Firefox cannot pierce a closed root |
 | iframe not in tree | Agent can't find iframe content | Call `get_frames`, then use `iframe_read` / `iframe_click`; before editing, use `promote_iframe` if direct targeting stays unreliable |
-| Truncated tree | `truncated: true` + `hasMore: true` | Call `get_accessibility_tree` with `page: nextPage` or `ref_id` to zoom in |
+| Truncated tree | `truncated: true` + `hasMore: true` | Reuse the exact returned `continuationArgs`; use `ref_id` only to zoom into one already-identified subtree |
 | Portaled overlay not visible | Tree shows the combobox but not the dropdown | The overlay is hoisted to the `[open overlays]` section — re-read with `filter: 'all'` |
 
 ---

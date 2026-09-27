@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "084",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "form-validation",
+  "title": "Publish dataset",
+  "image": "images/084.png",
+  "question": "Which field is invalid, what value does it contain, and what exact error is shown? Focus on the “Publish dataset” screen.",
+  "defaultPromptMode": "production"
+}

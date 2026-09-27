@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "096",
+  "image": "images/096.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "gallery",
+        "archive",
+        "collection",
+        "comparison"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Visual comparison",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "caption",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Modern / Historic",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "badge",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Compare",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "visual-content",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "right",
+        "snow"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Combine the rendered image with its UI labels; do not infer a place or date beyond Modern / Historic."
+}

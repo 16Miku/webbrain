@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "caseCount": 100,
+  "ordering": "difficulty ascending, then category family",
+  "difficultyBands": [
+    {
+      "level": 1,
+      "slug": "easy",
+      "label": "Easy",
+      "count": 20
+    },
+    {
+      "level": 2,
+      "slug": "basic",
+      "label": "Basic",
+      "count": 20
+    },
+    {
+      "level": 3,
+      "slug": "intermediate",
+      "label": "Intermediate",
+      "count": 20
+    },
+    {
+      "level": 4,
+      "slug": "advanced",
+      "label": "Advanced",
+      "count": 20
+    },
+    {
+      "level": 5,
+      "slug": "challenging",
+      "label": "Challenging",
+      "count": 20
+    }
+  ],
+  "categories": [
+    "authentication",
+    "search-results",
+    "checkout",
+    "form-validation",
+    "modal-overlay",
+    "toast-notification",
+    "loading-state",
+    "consent-banner",
+    "dashboard",
+    "chart-reading",
+    "data-table",
+    "email-compose",
+    "kanban-board",
+    "calendar",
+    "map-and-travel",
+    "photo-understanding",
+    "multilingual-ocr",
+    "occlusion-and-contrast",
+    "security-challenge",
+    "uncertainty-calibration"
+  ]
+}

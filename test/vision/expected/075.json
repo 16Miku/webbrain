@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "075",
+  "image": "images/075.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "map",
+        "tracking",
+        "route",
+        "hotel",
+        "café"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Tren rotası",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "selection",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "all",
+      "values": [
+        "Ankara Garı",
+        "18:42 varış"
+      ],
+      "weight": 3,
+      "critical": true
+    },
+    {
+      "id": "pin-count",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "5",
+        "five"
+      ],
+      "weight": 1,
+      "critical": false
+    }
+  ],
+  "successRubric": "Read the selected Ankara Garı card, its 18:42 varış detail, and 5 pins."
+}

@@ -1,0 +1,22 @@
+{
+  "id": "008",
+  "user": "wikipedia please",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1527,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": " name=\"get_accessibility_tree\"> name=\"filter\">visible",
+  "usage": {
+    "prompt_tokens": 9707,
+    "completion_tokens": 17,
+    "total_tokens": 9724
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

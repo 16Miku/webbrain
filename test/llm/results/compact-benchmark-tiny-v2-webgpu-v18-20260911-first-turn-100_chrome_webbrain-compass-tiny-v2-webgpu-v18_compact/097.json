@@ -1,0 +1,32 @@
+{
+  "id": "097",
+  "user": "show me alt text for all images",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.cnn.com/2026/05/world/example-story/index.html",
+    "title": "Example story — CNN"
+  },
+  "latencyMs": 5216,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 10,
+      "maxChars": 6000,
+      "ref_id": "",
+      "page": 1,
+      "tree_revision": ""
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"get_accessibility_tree\"><param name=\"filter\">visible</param><param name=\"maxDepth\">10</param><param name=\"maxChars\">6000</param><param name=\"ref_id\"></param><param name=\"page\">1</param><param name=\"tree_revision\"></param></function>",
+  "usage": {
+    "prompt_tokens": 9727,
+    "completion_tokens": 57,
+    "total_tokens": 9784
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

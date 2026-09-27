@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "id": "005",
+  "image": "images/005.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "files",
+        "dialog",
+        "modal"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "title",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Delete file?",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "primary",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Delete",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "secondary",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Cancel",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "modal-signal",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "all",
+      "values": [
+        "modal",
+        "This action cannot be undone."
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "overlay-blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "modal",
+        "overlay",
+        "dialog"
+      ],
+      "weight": 1,
+      "critical": true
+    }
+  ],
+  "successRubric": "Recognize a blocking modal, quote Delete file?, Delete, and Cancel."
+}

@@ -22,6 +22,16 @@ WebBrain sépare le **niveau du modèle** du **mode de conversation**.
 Les valeurs par défaut et les règles de résolution des niveaux sont documentées
 dans [fournisseurs et modèles](providers-and-models.md#niveaux-de-promptoutils-et-modes).
 
+## Lecture complète d'un fil Gmail
+
+Le premier résultat d'accessibilité d'un fil Gmail expose le
+`conversationRootRefId` fiable de la conversation active. Une lecture complète
+doit paginer uniquement ce sous-arbre ancré avec `filter:"all"`, `maxDepth:15`
+et chaque `continuationArgs` exact jusqu'à `hasMore:false`. Les pages 2 et
+suivantes de la racine du document contiennent des lignes de boîte de réception
+sans rapport et ne comptent pas. **Collapse all** doit aussi confirmer séparément
+que Gmail a développé la conversation.
+
 ## Matrice des outils
 
 Légende : **Oui** = disponible · **-** = indisponible · **C** = Chrome
@@ -56,7 +66,6 @@ uniquement · **Dev** = module Dev (fournisseurs Mid/Full ; pas Compact).
 | `press_keys` | Non | Oui | Oui | Oui | - |
 | `navigate` | Non | Oui | Oui | Oui | - |
 | `wait_for_element` | Non | Oui | Oui | Oui | - |
-| `new_tab` | Non | Oui | Oui | Oui | - |
 | `promote_iframe` | Non | Non | Oui | Oui | - |
 | `scratchpad_write` | Non | Oui | Oui | Oui | - |
 | `progress_update` | Non | Oui | Oui | Oui | - |
@@ -112,11 +121,11 @@ absents. Le mode Ask filtre toujours les outils de mutation et de téléchargeme
 même lorsque la compétence propriétaire est chargée. Voir
 [compétences](skills.md).
 
-**WebMCP (expérimental, sur activation).** Les lignes `list_webmcp_tools` /
+**WebMCP (expérimental, activé par défaut).** Les lignes `list_webmcp_tools` /
 `execute_webmcp_tool` ne s'appliquent que lorsque **WebMCP expérimental** est
-activé dans Paramètres → Général → Avancé. Le réglage est désactivé par défaut ;
-tant qu'il l'est, les outils et leurs consignes de prompt sont omis des requêtes
-au modèle. Les annotations WebMCP telles que `readOnly` sont des indications
+activé dans Paramètres → Général → Avancé. Le réglage est activé par défaut ;
+lorsqu'il est désactivé, les outils et leurs consignes de prompt sont omis des
+requêtes au modèle. Les annotations WebMCP telles que `readOnly` sont des indications
 écrites par la page, pas une frontière de sécurité. Chaque invocation exige Act
 ou Dev, une confirmation fraîche à chaque appel, et la permission normale
 capacité × origine de la frame d'enregistrement. WebMCP nécessite actuellement

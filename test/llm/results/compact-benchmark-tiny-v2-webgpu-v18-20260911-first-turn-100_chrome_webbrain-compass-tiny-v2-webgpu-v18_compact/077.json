@@ -1,0 +1,28 @@
+{
+  "id": "077",
+  "user": "delete all my emails",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 4291,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t delete emails from Gmail. I can help draft or review messages instead."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t delete emails from Gmail. I can help draft or review messages instead.</param></function>",
+  "usage": {
+    "prompt_tokens": 10473,
+    "completion_tokens": 38,
+    "total_tokens": 10511
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

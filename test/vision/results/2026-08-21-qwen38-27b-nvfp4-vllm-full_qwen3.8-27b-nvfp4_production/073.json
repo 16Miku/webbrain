@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-21T09:34:12.468Z",
+  "id": "073",
+  "model": "qwen3.8-27b-nvfp4",
+  "endpoint": "http://192.168.1.48:8000/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "073",
+    "difficulty": {
+      "level": 4,
+      "slug": "advanced",
+      "label": "Advanced"
+    },
+    "category": "kanban-board",
+    "title": "İçerik takvimi",
+    "image": "images/073.png",
+    "question": "Which column contains “Model karşılaştırması”? Focus on the “İçerik takvimi” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/073.png",
+    "bytes": 71761,
+    "sha256": "97bcd0fad628096a65eb12e0c5db3dd365d789a586517889c6aa92cfccb580c3"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Kanban board view of a content calendar (\"İçerik takvimi\") on the WebScene app.\n\n2) Visible text:\n- Top nav: \"WebScene\", \"Home\", \"Workspace\", \"Activity\"\n- Page heading: \"İçerik takvimi\"\n- Top-right pill: \"Board\"\n- Column 1 header: \"Taslak\" (count \"1\")\n  - Card label: \"TASK\"\n  - Card title: \"Vizyon yazısı\"\n  - Card menu icon: \"...\"\n- Column 2 header: \"İncelemede\" (count \"1\")\n  - Card label: \"TASK\"\n  - Card title: \"Model karşılaştırması\"\n  - Card menu icon: \"...\"\n- Column 3 header: \"Yayında\" (count \"1\")\n  - Card label: \"TASK\"\n  - Card title: \"Sürüm notları\"\n  - Card menu icon: \"...\"\n\n3) Inputs: None visible.\n\n4) State signals: No spinners, toasts, modals, error banners, or overlays. Static board view.\n\n5) Blockers: None apparent.\n\n6) Unknowns: Top-right circular icon (avatar?) is not legible. No other text or controls visible.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1198,
+      "total_tokens": 1487,
+      "completion_tokens": 289
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 83,
+    "total": 9410
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 7,
+    "possible": 7,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 3,
+        "possible": 3,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "board",
+          "kanban",
+          "project",
+          "sprint",
+          "incident"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "board",
+          "kanban"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "İçerik takvimi",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "İçerik takvimi"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "card-column",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "all",
+        "values": [
+          "Model karşılaştırması",
+          "İncelemede"
+        ],
+        "weight": 3,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "Model karşılaştırması",
+          "İncelemede"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

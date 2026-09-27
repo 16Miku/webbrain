@@ -31,6 +31,12 @@
   // offscreen doc, and concurrent recordings would conflict anyway).
   let session = null;
 
+  // Holds the full data URL after stop() so the service worker can retrieve
+  // it in small chunks via 'recorder-get-data-chunk'. Chrome's
+  // chrome.runtime.sendMessage / sendResponse channel caps at 64 MiB, which
+  // a base64-encoded .webm recording easily exceeds.
+  let pendingDataUrl = null;
+
   function ts() {
     return new Date().toISOString();
   }
@@ -284,7 +290,7 @@
     for (const t of captureStream.getTracks()) {
       t.addEventListener('ended', () => {
         const s = session;
-        if (!s || s.captureEndedCleanupStarted) return;
+        if (!s || s.stopping || s.captureEndedCleanupStarted) return;
         s.captureEndedCleanupStarted = true;
         log(`${source} track ended unexpectedly:`, t.kind);
         finalizeCaptureEnded(s).catch((e) => {
@@ -293,7 +299,19 @@
       });
     }
 
-    recorder.start(2000); // 2s timeslices → ondataavailable every 2s
+    try {
+      recorder.start(2000); // 2s timeslices → ondataavailable every 2s
+    } catch (e) {
+      try {
+        if (recorder.state !== 'inactive') recorder.stop();
+      } catch {}
+      // Recording never started — don't let track.stop() look like capture loss.
+      activeSession.stopping = true;
+      activeSession.captureEndedCleanupStarted = true;
+      await releaseSession(activeSession);
+      if (session === activeSession) session = null;
+      throw new Error(`Failed to start recorder: ${e.message || e}`);
+    }
     log('recorder started', { source, mimeType: chosenMime, video, mic: !!micStream });
     return {
       ok: true,
@@ -354,13 +372,17 @@
       const blob = new Blob(s.chunks, { type: bareType });
       const dataUrl = await blobToDataUrl(blob);
 
+      // Store the data URL for chunked retrieval. The sendResponse channel
+      // has a 64 MiB limit; a base64-encoded .webm can easily exceed it.
+      pendingDataUrl = dataUrl;
+
       return {
         ok: true,
         mimeType: s.mimeType,        // original, with codecs param
         blobType: bareType,          // what the data URL actually carries
         sizeBytes: blob.size,
         durationMs: Date.now() - s.startedAt,
-        dataUrl,
+        dataUrlLength: dataUrl.length,
       };
     } finally {
       if (session === s) session = null;
@@ -478,6 +500,22 @@
           sendResponse(r);
         } else if (msg.type === 'recorder-state') {
           sendResponse(stateSnapshot());
+        } else if (msg.type === 'recorder-get-data-chunk') {
+          if (!pendingDataUrl) {
+            sendResponse({ ok: false, error: 'no pending recording data' });
+          } else {
+            const offset = msg.offset || 0;
+            const length = msg.length || 4 * 1024 * 1024;
+            sendResponse({
+              ok: true,
+              data: pendingDataUrl.substring(offset, offset + length),
+              offset,
+              total: pendingDataUrl.length,
+            });
+          }
+        } else if (msg.type === 'recorder-release-data') {
+          pendingDataUrl = null;
+          sendResponse({ ok: true });
         } else {
           sendResponse({ ok: false, error: `unknown recorder message: ${msg.type}` });
         }

@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-27T18:26:33.008Z",
+  "id": "092",
+  "model": "deepseek/deepseek-v4-flash-vision-exp",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "092",
+    "difficulty": {
+      "level": 5,
+      "slug": "challenging",
+      "label": "Challenging"
+    },
+    "category": "email-compose",
+    "title": "Confidential message",
+    "image": "images/092.png",
+    "question": "Who is the message addressed to, what is its subject, and is any send warning visible? Focus on the “Confidential message” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/092.png",
+    "bytes": 83674,
+    "sha256": "ea1d86e63142b56a1856093d97da1202b5f506554237160473e2c71c678c4d33"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Webmail compose interface with external-recipient warning requiring confirmation to send.\n2) Visible text:\n   - \"WebScene\"\n   - \"Home\"\n   - \"Workspace\"\n   - \"Activity\"\n   - \"Mail\"\n   - \"Compose\"\n   - \"Inbox\" (followed by \"12\")\n   - \"Starred\"\n   - \"Sent\"\n   - \"Drafts\" (followed by \"3\")\n   - \"Confidential message\"\n   - \"To\"\n   - \"Subject\"\n   - \"Message\"\n   - \"Send anyway\"\n   - \"External recipient warning\"\n   - \"×\" (close icon, top-right of message area)\n3) Inputs:\n   - To: value \"outside@vendor.test\", not focused, not disabled\n   - Subject: value \"Q3 forecast\", not focused, not disabled\n   - Message: value \"The attached file contains internal estimates.\", not focused, not disabled\n4) State signals: Orange/amber \"External recipient warning\" text adjacent to a \"Send anyway\" button (confirmation override for blocked normal send).\n5) Blockers: Sending via normal action is likely blocked due to external recipient; \"Send anyway\" is the override button.\n6) Unknowns: None. All text is clearly readable.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 751,
+      "completion_tokens": 701,
+      "total_tokens": 1452,
+      "cost": 0.000573352,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 256,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.000573352,
+        "upstream_inference_prompt_cost": 0.000110692,
+        "upstream_inference_completions_cost": 0.00046266
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 427,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 736,
+    "total": 6942
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 12,
+    "possible": 12,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 3,
+        "possible": 3,
+        "ratio": 1
+      },
+      "inputs": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "state_signals": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "blockers": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "email",
+          "compose",
+          "message"
+        ],
+        "weight": 1,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "compose"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Confidential message",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Confidential message"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "button",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Send anyway",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Send anyway"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "to-input",
+        "dimension": "inputs",
+        "section": 3,
+        "kind": "all",
+        "values": [
+          "To",
+          "outside@vendor.test"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "To",
+          "outside@vendor.test"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "subject-input",
+        "dimension": "inputs",
+        "section": 3,
+        "kind": "all",
+        "values": [
+          "Subject",
+          "Q3 forecast"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "Subject",
+          "Q3 forecast"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "status",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "External recipient warning",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "External recipient warning"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "external-blocker",
+        "dimension": "blockers",
+        "section": 5,
+        "kind": "any",
+        "values": [
+          "external",
+          "warning",
+          "recipient"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "external",
+          "recipient"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

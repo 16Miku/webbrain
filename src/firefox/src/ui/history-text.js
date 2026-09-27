@@ -19,6 +19,60 @@ const BLOCK_TAGS = new Set([
 
 const SKIPPED_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE']);
 
+function elementChildren(node) {
+  return Array.from(node?.childNodes || []).filter((child) => child && child.nodeType === ELEMENT_NODE);
+}
+
+function tableRowsFromElement(table) {
+  const rows = [];
+  const visit = (node) => {
+    if (!node || node.nodeType !== ELEMENT_NODE) return;
+    if (String(node.tagName || '').toUpperCase() === 'TR') {
+      rows.push(node);
+      return;
+    }
+    for (const child of node.childNodes || []) visit(child);
+  };
+  visit(table);
+  return rows;
+}
+
+function tableRowCells(row) {
+  return elementChildren(row).filter((child) => {
+    const tag = String(child.tagName || '').toUpperCase();
+    return tag === 'TH' || tag === 'TD';
+  });
+}
+
+function markdownTableCellText(cell) {
+  return historyTextFromElement(cell, { markdown: true })
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\|/g, '\\|');
+}
+
+function markdownTableFromElement(table) {
+  const rows = tableRowsFromElement(table);
+  if (!rows.length) return '';
+  const header = tableRowCells(rows[0]).map(markdownTableCellText);
+  if (!header.length) return '';
+  const lines = [
+    `| ${header.join(' | ')} |`,
+    `|${header.map(() => '---').join('|')}|`,
+  ];
+  for (const row of rows.slice(1)) {
+    const cells = tableRowCells(row).map(markdownTableCellText);
+    while (cells.length < header.length) cells.push('');
+    lines.push(`| ${cells.slice(0, header.length).join(' | ')} |`);
+  }
+  return lines.join('\n');
+}
+
+function tableElementFromNode(node) {
+  if (String(node?.tagName || '').toUpperCase() === 'TABLE') return node;
+  return elementChildren(node).find((child) => String(child.tagName || '').toUpperCase() === 'TABLE') || null;
+}
+
 export function historyTextFromElement(root, { markdown = true } = {}) {
   if (!root) return '';
   let output = '';
@@ -71,10 +125,23 @@ export function historyTextFromElement(root, { markdown = true } = {}) {
     if (markdown && tagName === 'PRE') {
       const language = String(node.parentElement?.querySelector?.('.code-lang')?.textContent || '').trim();
       ensureBreak();
-      output += `\`\`\`${language}\n`;
+      const beforeCode = output;
+      output = '';
       for (const child of Array.from(node.childNodes || [])) visit(child, false, true);
       ensureBreak();
-      output += '```';
+      const code = output;
+      // History must not reintroduce ambiguous fences around a Markdown
+      // document (or any code sample containing literal backtick runs).
+      const fenceCharacter = language.includes('`') ? '~' : '`';
+      let fenceLength = 3;
+      for (const match of code.matchAll(new RegExp(`${fenceCharacter}{3,}`, 'g'))) {
+        fenceLength = Math.max(fenceLength, match[0].length + 1);
+      }
+      const fence = fenceCharacter.repeat(fenceLength);
+      // Keep an info string separate from the fence so a label beginning with
+      // the same marker cannot extend the opener past its matching closer.
+      const info = language ? ` ${language}` : '';
+      output = `${beforeCode}${fence}${info}\n${code}${fence}`;
       return;
     }
     if (markdown && tagName === 'CODE' && !inPre) {
@@ -100,6 +167,15 @@ export function historyTextFromElement(root, { markdown = true } = {}) {
       if (href) output += '[';
       for (const child of Array.from(node.childNodes || [])) visit(child, false, inPre);
       if (href) output += `](${href})`;
+      return;
+    }
+    if (markdown && (tagName === 'TABLE' || node.classList?.contains?.('markdown-table-wrapper'))) {
+      const markdownTable = markdownTableFromElement(tableElementFromNode(node) || node);
+      if (markdownTable) {
+        ensureBreak();
+        output += markdownTable;
+        ensureBreak();
+      }
       return;
     }
 

@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "id": "081",
+  "image": "images/081.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "sign in",
+        "login",
+        "identity verification",
+        "session expired"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Session expired",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Sign in again",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "email-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Email",
+        "nora@example.com"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "rate",
+        "limit"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "status",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Too many attempts. Try again in 14:32",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "disabled",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "any",
+      "values": [
+        "disabled",
+        "unavailable"
+      ],
+      "weight": 1,
+      "critical": false
+    }
+  ],
+  "successRubric": "Identify the Session expired authentication surface, quote Sign in again, and report rate limit."
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "005",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "modal-overlay",
+  "title": "Delete file?",
+  "image": "images/005.png",
+  "question": "What modal is blocking the page, and what are its two exact actions? Focus on the “Delete file?” screen.",
+  "defaultPromptMode": "production"
+}

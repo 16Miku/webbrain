@@ -1,7 +1,38 @@
+import {
+  deepSeekPlannerExtras,
+  deepSeekThinkingExtras,
+  deepSeekVisionExtras,
+  isDeepSeekEndpoint,
+  isDeepSeekRootUrl,
+  stripDisabledDeepSeekReasoningEffort,
+} from './deepseek-config.js';
+
 const COMPATIBILITY_PRESETS = new Set(['auto', 'openai', 'qwen', 'deepseek', 'openrouter', 'custom']);
 const REASONING_EFFORTS = new Set(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const SYSTEM_PROMPT_ROLES = new Set(['auto', 'system', 'developer']);
 const MAX_TOKEN_FIELDS = new Set(['auto', 'max_tokens', 'max_completion_tokens']);
+const OPENROUTER_ROUTING_VARIANT_VALUES = new Set(['standard', 'nitro', 'exacto']);
+const OPENROUTER_MODEL_VARIANT_SUFFIXES = /(?::(?:free|extended|thinking|online|nitro|floor|exacto))+$/i;
+export const OPENROUTER_ROUTING_VARIANTS = Object.freeze(['standard', 'nitro', 'exacto']);
+const STRUCTURED_OUTPUT_PROVIDER_NAMES = new Set([
+  'azure-openai',
+  'llamacpp',
+  'lmstudio',
+  'localai',
+  'ollama',
+  'openai',
+  'openrouter',
+  'sglang',
+  'vllm',
+]);
+const LOCAL_OPENAI_COMPAT_PROVIDER_NAMES = new Set([
+  'llamacpp',
+  'lmstudio',
+  'localai',
+  'ollama',
+  'sglang',
+  'vllm',
+]);
 
 export const RESERVED_EXTRA_BODY_KEYS = new Set([
   'model',
@@ -20,6 +51,123 @@ const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function clean(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+export function openRouterRoutingVariant(config = {}) {
+  const configured = clean(config.routingVariant);
+  if (OPENROUTER_ROUTING_VARIANT_VALUES.has(configured)) return configured;
+  const suffix = String(config.model || '').trim().match(/:(nitro|exacto)$/i);
+  return suffix ? suffix[1].toLowerCase() : 'standard';
+}
+
+export function applyOpenRouterRoutingVariant(body, config = {}) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  if (clean(config.providerName) !== 'openrouter' || !Object.hasOwn(config, 'routingVariant')) return body;
+  const variant = clean(config.routingVariant);
+  if (!OPENROUTER_ROUTING_VARIANT_VALUES.has(variant)) return body;
+
+  const next = { ...body };
+  if (typeof next.model === 'string') {
+    next.model = variant === 'exacto'
+      ? `${next.model.replace(OPENROUTER_MODEL_VARIANT_SUFFIXES, '')}:exacto`
+      : next.model.replace(/:(?:nitro|exacto)$/i, '');
+  }
+
+  const hasProviderPreferences = next.provider
+    && typeof next.provider === 'object'
+    && !Array.isArray(next.provider);
+  if (variant !== 'nitro') {
+    if (hasProviderPreferences && Object.hasOwn(next.provider, 'sort')) {
+      const provider = { ...next.provider };
+      delete provider.sort;
+      if (Object.keys(provider).length) next.provider = provider;
+      else delete next.provider;
+    }
+    return next;
+  }
+
+  next.provider = {
+    ...(hasProviderPreferences ? next.provider : {}),
+    sort: 'throughput',
+  };
+  return next;
+}
+
+/**
+ * Normalize an OpenAI-compatible API base without rewriting provider-specific
+ * paths. Bare origins such as LM Studio's http://127.0.0.1:1234 need /v1;
+ * explicit paths such as /api/v1 or /compatible-mode/v1 are already complete.
+ */
+export function normalizeOpenAICompatibleBaseUrl(value) {
+  const trimmed = String(value || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  try {
+    const url = new URL(trimmed);
+    // DeepSeek's OpenAI-compatible endpoint is rooted at the origin, unlike
+    // most OpenAI-compatible servers whose API lives below /v1.
+    if (isDeepSeekRootUrl(url)) return trimmed;
+    if ((url.protocol === 'http:' || url.protocol === 'https:')
+        && url.pathname === '/'
+        && !url.search
+        && !url.hash) {
+      return `${trimmed}/v1`;
+    }
+  } catch { /* preserve validation behavior at the eventual request site */ }
+  return trimmed;
+}
+
+export function openAiCompatiblePayloadError(payload, maxLength = 500) {
+  const error = payload?.error;
+  if (!error) return '';
+  if (typeof error === 'object' && !Array.isArray(error) && Object.keys(error).length === 0) return '';
+  const detail = typeof error === 'string'
+    ? error
+    : String(error.message || error.detail || JSON.stringify(error));
+  return detail.slice(0, maxLength);
+}
+
+export function visionGenerationOptions(maxTokens = 800, {
+  reasoningControl = true,
+  providerConfig = null,
+} = {}) {
+  const extraBody = {};
+  if (reasoningControl) {
+    if (isDirectDeepSeekConfig(providerConfig || {})) {
+      // DeepSeek does not use the local Qwen/LM Studio template controls; its
+      // native thinking switch is owned by the DeepSeek contract module.
+      return deepSeekVisionExtras(maxTokens, {
+        responses: shouldUseOpenAIResponsesApi(providerConfig || {}),
+      });
+    }
+    // LM Studio 0.4.8+ honors these fields for Chat Completions. They prevent
+    // Qwen vision models from spending the entire output budget in a hidden
+    // reasoning channel and leaving no caption for the browser agent.
+    extraBody.reasoning_effort = 'none';
+    extraBody.reasoning_tokens = 0;
+    extraBody.chat_template_kwargs = { enable_thinking: false };
+  }
+  return { maxTokens, temperature: 0, extraBody };
+}
+
+export function unsupportedVisionGenerationControl(error) {
+  const message = String(error?.message || error || '');
+  return /reasoning_effort|reasoning_tokens|chat_template_kwargs|enable_thinking/i.test(message);
+}
+
+/**
+ * Whether a config speaks DeepSeek's own API contract rather than a
+ * DeepSeek-flavoured OpenAI-compatible server. Local servers and the local
+ * runtime provider names are always excluded; an explicit `deepseek` preset in
+ * the Advanced panel opts a custom endpoint in. The DeepSeek-specific endpoint
+ * knowledge lives in `deepseek-config.js`.
+ */
+export function isDirectDeepSeekConfig(config = {}) {
+  const providerName = clean(config.providerName);
+  if (clean(config.category) === 'local' || LOCAL_OPENAI_COMPAT_PROVIDER_NAMES.has(providerName)) {
+    return false;
+  }
+  if (isDeepSeekEndpoint(config)) return true;
+  return normalizeProviderCompatibility(config).preset === 'deepseek';
 }
 
 export function isPlainObject(value) {
@@ -56,16 +204,79 @@ export function isOfficialOpenAIConfig(config = {}) {
   }
 }
 
+export function isOpenCodeZenConfig(config = {}) {
+  try {
+    const url = new URL(config.baseUrl || '');
+    return url.protocol === 'https:'
+      && url.hostname.toLowerCase() === 'opencode.ai'
+      && url.pathname.replace(/\/+$/, '') === '/zen/v1';
+  } catch {
+    return false;
+  }
+}
+
 export function shouldUseOpenAIResponsesApi(config = {}) {
   if (config.apiFormat === 'responses') return true;
+  if (config.apiFormat === 'chat') return false;
+  // OpenCode Zen: https://opencode.ai/zen/v1/responses for muse-spark, gpt-5.x, claude, gemini, grok
+  // WebBrain's OpenCode Zen provider previously forced Chat Completions for all Zen models (404 for Responses models).
+  const rawModel = String(config.model || '');
+  const model = rawModel.replace(/^opencode\//i, '').trim().toLowerCase();
+  if (isOpenCodeZenConfig(config)) {
+    return /^(muse-spark|gpt-5|claude|gemini|grok)(?:$|[-_.\/])/.test(model);
+  }
   if (!isOfficialOpenAIConfig(config)) return false;
-  const model = String(config.model || '').trim().toLowerCase();
   // GPT-5.6 needs Responses for reliable reasoning/tool replay. GPT-5 Pro,
   // GPT-5.2 Pro, GPT-5.4 Pro, and GPT-5.5 Pro are Responses-only. Proxies and
   // compatible providers keep their existing Chat Completions wire format even
   // when they reuse an OpenAI model id.
   return /^gpt-5\.6(?:$|-(?:sol|terra|luna)(?:$|-))/.test(model)
     || /^gpt-5(?:\.(?:2|4|5))?-pro(?:$|-\d{4}-\d{2}-\d{2}$)/.test(model);
+}
+
+/**
+ * Whether a model id uses the newer OpenAI wire contract (max_completion_tokens,
+ * no non-default temperature) — the gpt-5 line and the o-series. gpt-4.1 is
+ * deliberately excluded: it accepts both parameter sets, so it stays on the
+ * legacy contract and keeps explicit temperatures. OpenAI's Responses-only
+ * Pro families also stay legacy when routed through a Chat Completions
+ * provider: those routed endpoints advertise `max_tokens`, while direct
+ * OpenAI calls are selected as Responses before this helper is consulted.
+ * OpenRouter's routed allowlist is intentionally narrow: only GPT-5.6 Terra
+ * variants use max_completion_tokens there; o-series, Pro, batch, and image
+ * routes remain on max_tokens.
+ */
+export function isNewOpenAIContractModel(model) {
+  const m = String(model || '').toLowerCase();
+  if (/(?:^|\/)gpt-5(?:\.(?:2|4|5))?-pro(?:$|[-_.\/:])/.test(m)) return false;
+  return /(?:^|\/)(?:gpt-5|o1|o3|o4)(?:$|[-_.\/])/.test(m);
+}
+
+export function isNewOpenAIContractConfig(config = {}) {
+  const providerName = String(config.providerName || '').trim().toLowerCase();
+  if (config.category === 'local' || providerName === 'lmstudio') return false;
+  if (providerName === 'openrouter') {
+    return /(?:^|\/)gpt-5\.6-terra(?:$|[-_.\/:])/.test(String(config.model || '').toLowerCase());
+  }
+  // Only OpenRouter is covered by the routed-model contract table. Other
+  // compatible endpoints may use slash-prefixed ids with legacy fields.
+  if (String(config.model || '').includes('/') && providerName !== 'openrouter') return false;
+  return isNewOpenAIContractModel(config.model);
+}
+
+/**
+ * Supported GPT-6 models use Chat Completions with `max_tokens`, but reject an
+ * explicit temperature. Keep this separate from the GPT-5/o-series contract,
+ * whose token-field migration is different.
+ */
+export function requiresOpenAIDefaultTemperature(config = {}) {
+  if (isNewOpenAIContractConfig(config)) return true;
+  const providerName = clean(config.providerName);
+  const model = clean(config.model);
+  if (providerName === 'openrouter') {
+    return /(?:^|\/)openai\/gpt-6-(?:luna-pro|sol|astra)(?:$|[-_.\/:])/.test(model);
+  }
+  return isOfficialOpenAIConfig(config) && /^gpt-6-(?:luna-pro|sol|astra)(?:$|[-_.:])/.test(model);
 }
 
 export function supportsOpenAIAskStreaming(config = {}) {
@@ -78,6 +289,7 @@ export function supportsOpenAIAskStreaming(config = {}) {
   if (shouldUseOpenAIResponsesApi(config)) return true;
 
   return [
+    /^gpt-6-luna-pro(?:$|[-_.:])/,
     /^gpt-5\.5(?:$|-\d{4}-\d{2}-\d{2}$)/,
     /^gpt-5\.4(?:$|-\d{4}-\d{2}-\d{2}$|-(?:mini|nano)(?:$|-\d{4}-\d{2}-\d{2}$))/,
     /^gpt-5\.(?:1|2)(?:$|-\d{4}-\d{2}-\d{2}$)/,
@@ -179,7 +391,11 @@ function mappedReasoningEffort(effort, preset) {
 
 export function compatibilityRequestBody(config = {}) {
   const compat = normalizeProviderCompatibility(config);
-  if (compat.reasoningEffort === 'auto') return {};
+  // Direct DeepSeek Responses requests need an explicit effort. Its documented
+  // default is high, unlike the generic OpenAI Responses default of medium.
+  if (compat.reasoningEffort === 'auto' && !(
+    isDirectDeepSeekConfig(config) && shouldUseOpenAIResponsesApi(config)
+  )) return {};
 
   const preset = effectiveCompatibilityPreset(config);
   const enabled = compat.reasoningEffort !== 'off';
@@ -191,7 +407,14 @@ export function compatibilityRequestBody(config = {}) {
     };
   }
   if (preset === 'deepseek') {
-    return { chat_template_kwargs: { thinking: enabled } };
+    // The native contract (thinking object, effort ladder, Responses shape) and
+    // the hosted/local template fallback are both owned by deepseek-config.js.
+    return deepSeekThinkingExtras({
+      direct: isDirectDeepSeekConfig(config),
+      enabled,
+      effort: compat.reasoningEffort,
+      responses: shouldUseOpenAIResponsesApi(config),
+    });
   }
   if (preset === 'openrouter') {
     return enabled
@@ -205,6 +428,68 @@ export function compatibilityRequestBody(config = {}) {
       : { reasoning_effort: effort };
   }
   return {};
+}
+
+/**
+ * Per-request controls for classifier/planner calls that need short,
+ * machine-readable JSON instead of hidden reasoning or free-form prose.
+ *
+ * This maps protocol families, not individual model ids. Unknown endpoints
+ * receive no non-standard fields and continue to rely on the planner prompt
+ * plus local parsing. Callers can set includeResponseFormat:false for the
+ * repair attempt so a server that rejects structured-output parameters still
+ * gets one portable prompt-only retry.
+ */
+export function plannerRequestBody(config = {}, {
+  schema = null,
+  schemaName = 'webbrain_planner',
+  includeResponseFormat = true,
+  disableThinking = true,
+} = {}) {
+  const providerName = clean(config.providerName);
+  const preset = effectiveCompatibilityPreset(config);
+  const isLocalOpenAICompat = clean(config.category) === 'local'
+    || LOCAL_OPENAI_COMPAT_PROVIDER_NAMES.has(providerName);
+  const isDirectDeepSeek = isDirectDeepSeekConfig(config) && !isLocalOpenAICompat;
+  const body = {};
+
+  if (isDirectDeepSeek) {
+    // DeepSeek owns its classifier controls: the native thinking switch on Chat
+    // Completions (JSON Object mode only) and `reasoning.effort` on Responses.
+    return deepSeekPlannerExtras({
+      direct: true,
+      responses: shouldUseOpenAIResponsesApi(config),
+      includeResponseFormat,
+      disableThinking,
+      schema,
+      schemaName,
+    });
+  }
+
+  if (disableThinking) {
+    if (preset === 'openrouter') {
+      body.reasoning = { enabled: false };
+    } else if ((preset === 'qwen' && isLocalOpenAICompat) || providerName === 'vllm' || providerName === 'sglang') {
+      body.chat_template_kwargs = { enable_thinking: false };
+    } else if (preset === 'openai' && shouldUseOpenAIResponsesApi(config)) {
+      // Responses reasoning models may not accept a fully disabled mode. Keep
+      // the classifier budget small without recreating a provider error.
+      body.reasoning = { effort: 'minimal' };
+    }
+  }
+
+  if (!includeResponseFormat) return body;
+  if (schema && STRUCTURED_OUTPUT_PROVIDER_NAMES.has(providerName)) {
+    body.response_format = {
+      type: 'json_schema',
+      json_schema: {
+        name: String(schemaName || 'webbrain_planner').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64),
+        strict: true,
+        schema,
+      },
+    };
+  }
+  return body;
 }
 
 export function mergeProviderRequestBody(body, config = {}, perRequestExtraBody = undefined) {
@@ -227,6 +512,10 @@ export function mergeProviderRequestBody(body, config = {}, perRequestExtraBody 
       result[key] = isPlainObject(value) || Array.isArray(value) ? safeClone(value) : value;
     }
   }
+  // DeepSeek's disabled-thinking contract omits reasoning_effort entirely, so a
+  // per-call planner/vision override must clear an effort inherited from the
+  // configured compatibility preset (see deepseek-config.js).
+  if (isDirectDeepSeekConfig(config)) stripDisabledDeepSeekReasoningEffort(result);
   return result;
 }
 

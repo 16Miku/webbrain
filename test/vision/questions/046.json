@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "046",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "toast-notification",
+  "title": "Upload failed",
+  "image": "images/046.png",
+  "question": "What transient notification is visible, and is it success, warning, error, or informational? Focus on the “Upload failed” screen.",
+  "defaultPromptMode": "production"
+}

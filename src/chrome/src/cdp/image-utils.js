@@ -71,56 +71,62 @@ export async function combineImages(tiles, cssWidth, cssHeight, dpr = 1, options
   if (goodTiles.length === 0) {
     return assemblyFallback(decodeErrors[0] || 'no screenshot tile could be decoded');
   }
-  if (goodTiles.length < tiles.length) {
-    warn(
-      `Full-page screenshot assembly skipped ${tiles.length - goodTiles.length} tile(s) that could not be decoded; the combined image may be incomplete.`
-    );
-  }
-
-  // Canvas dims are native pixels. Guard against the occasional 0-dim input
-  // (empty page, very short pages where contentHeight == 0).
-  const canvasW = Math.max(1, Math.round(cssWidth * dpr));
-  const canvasH = Math.max(1, Math.round(cssHeight * dpr));
-  let canvas;
-  let ctx;
   try {
-    canvas = new OffscreenCanvas(canvasW, canvasH);
-    ctx = canvas.getContext('2d');
-  } catch (error) {
-    return assemblyFallback(error?.message || String(error));
-  }
-  if (!ctx) return assemblyFallback('the browser could not create a 2D canvas context');
-
-  let drawFailures = 0;
-  for (const t of goodTiles) {
-    const dx = Math.round(t.x * dpr);
-    const dy = Math.round(t.y * dpr);
-    // Draw the whole bitmap — its intrinsic size already matches the
-    // tile's CSS width/height × dpr. If it's larger than the destination
-    // slot (e.g. last-row or last-column tiles captured at native viewport
-    // even though only part is content), clip via width/height args.
-    const dw = Math.min(bmpWidth(t.bmp), canvasW - dx);
-    const dh = Math.min(bmpHeight(t.bmp), canvasH - dy);
-    if (dw <= 0 || dh <= 0) continue;
-    try {
-      ctx.drawImage(t.bmp, 0, 0, dw, dh, dx, dy, dw, dh);
-    } catch {
-      drawFailures++;
+    if (goodTiles.length < tiles.length) {
+      warn(
+        `Full-page screenshot assembly skipped ${tiles.length - goodTiles.length} tile(s) that could not be decoded; the combined image may be incomplete.`
+      );
     }
-  }
-  if (drawFailures > 0) {
-    warn(
-      `Full-page screenshot assembly could not draw ${drawFailures} tile(s); the combined image may be incomplete.`
-    );
-  }
 
-  // Re-encode as PNG, return base64 (no data URL prefix).
-  try {
-    const blob = await canvas.convertToBlob({ type: 'image/png' });
-    const buf = await blob.arrayBuffer();
-    return arrayBufferToBase64(buf);
-  } catch (error) {
-    return assemblyFallback(error?.message || String(error));
+    // Canvas dims are native pixels. Guard against the occasional 0-dim input
+    // (empty page, very short pages where contentHeight == 0).
+    const canvasW = Math.max(1, Math.round(cssWidth * dpr));
+    const canvasH = Math.max(1, Math.round(cssHeight * dpr));
+    let canvas;
+    let ctx;
+    try {
+      canvas = new OffscreenCanvas(canvasW, canvasH);
+      ctx = canvas.getContext('2d');
+    } catch (error) {
+      return assemblyFallback(error?.message || String(error));
+    }
+    if (!ctx) return assemblyFallback('the browser could not create a 2D canvas context');
+
+    let drawFailures = 0;
+    for (const t of goodTiles) {
+      const dx = Math.round(t.x * dpr);
+      const dy = Math.round(t.y * dpr);
+      // Draw the whole bitmap — its intrinsic size already matches the
+      // tile's CSS width/height × dpr. If it's larger than the destination
+      // slot (e.g. last-row or last-column tiles captured at native viewport
+      // even though only part is content), clip via width/height args.
+      const dw = Math.min(bmpWidth(t.bmp), canvasW - dx);
+      const dh = Math.min(bmpHeight(t.bmp), canvasH - dy);
+      if (dw <= 0 || dh <= 0) continue;
+      try {
+        ctx.drawImage(t.bmp, 0, 0, dw, dh, dx, dy, dw, dh);
+      } catch {
+        drawFailures++;
+      }
+    }
+    if (drawFailures > 0) {
+      warn(
+        `Full-page screenshot assembly could not draw ${drawFailures} tile(s); the combined image may be incomplete.`
+      );
+    }
+
+    // Re-encode as PNG, return base64 (no data URL prefix).
+    try {
+      const blob = await canvas.convertToBlob({ type: 'image/png' });
+      const buf = await blob.arrayBuffer();
+      return arrayBufferToBase64(buf);
+    } catch (error) {
+      return assemblyFallback(error?.message || String(error));
+    }
+  } finally {
+    for (const tile of goodTiles) {
+      try { tile.bmp.close?.(); } catch {}
+    }
   }
 }
 

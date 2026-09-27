@@ -4,8 +4,12 @@
  * Chrome MV3 allows only ONE offscreen document per extension at a time,
  * and the set of `reasons` declared at createDocument time is fixed — you
  * cannot add reasons later. So both consumers of the offscreen document
- * (the localhost-fetch proxy in offscreen.js, large-file staging in
- * skill-download.js, the tab-recorder in recorder.js, and the cloud bridge in
+ * (the localhost-fetch proxy in offscreen.js, local WebGPU inference worker,
+ * PDF text extraction in pdf-extraction-host.js,
+ * offline SQLite/E5 retrieval workers,
+ * large-file staging in
+ * skill-download.js, Emergency Box downloads in emergency-download-host.js,
+ * the tab-recorder in recorder.js, and the local controller bridge in
  * cloud-bridge.js) must agree on a single
  * createDocument call that lists
  * every reason either of them might ever need.
@@ -15,8 +19,8 @@
  *     to a localhost LLM server fails (Private Network Access workaround).
  *   • background.js (record routes) — needs the doc to host the
  *     MediaRecorder and Web Audio mixer when recording starts.
- *   • background.js (cloud bridge routes) — needs the doc to keep an outbound
- *     WebSocket open to the local sidecar.
+ *   • background.js (local controller bridge routes) — needs the doc to keep
+ *     an outbound WebSocket open to the local sidecar.
  *
  * Both call `ensureOffscreen()` lazily; whichever fires first creates the
  * doc with the unified reason set, and the second one no-ops via the
@@ -31,6 +35,10 @@ const OFFSCREEN_REASONS = [
   // Large validated skill downloads are staged in OPFS and exposed through a
   // short-lived blob URL so chrome.downloads never re-fetches the remote URL.
   'BLOBS',
+  // The local inference bridge creates a dedicated module Worker for WebGPU/ONNX
+  // inference. Reasons are immutable after the document is created, so this
+  // must be present even when another consumer creates the shared host first.
+  'WORKERS',
   // Tab recorder needs DISPLAY_MEDIA (chrome.tabCapture stream pulls in as
   // display media) and USER_MEDIA (mic via getUserMedia).
   'DISPLAY_MEDIA',
@@ -39,7 +47,7 @@ const OFFSCREEN_REASONS = [
   'AUDIO_PLAYBACK',
 ];
 const OFFSCREEN_JUSTIFICATION =
-  'Proxy localhost requests; stage validated large downloads; capture active tab and mic; maintain a localhost cloud bridge WebSocket; play conditional watch alerts.';
+  'Proxy localhost requests; parse PDFs; run local WebGPU models and offline reference search; stage validated large downloads; capture active tab and mic; maintain a localhost controller WebSocket; play conditional watch alerts.';
 
 let ready = false;
 let inflight = null;

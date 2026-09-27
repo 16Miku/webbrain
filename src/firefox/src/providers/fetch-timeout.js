@@ -50,6 +50,11 @@ async function _ensureTimeoutInitialized() {
   } catch { /* keep the hardcoded default */ }
 }
 
+export async function getRequestTimeoutMs() {
+  await _ensureTimeoutInitialized();
+  return _cachedTimeoutMs;
+}
+
 /**
  * fetch() with a connection-phase abort timer wired to the user's
  * `requestTimeoutMs` setting. On abort, throws a descriptive Error
@@ -57,21 +62,36 @@ async function _ensureTimeoutInitialized() {
  * straight to the user.
  *
  * @param {string} url
- * @param {RequestInit} [options]
+ * @param {RequestInit & { timeoutMs?: number }} [options]
  * @returns {Promise<Response>}
  */
 export async function fetchWithTimeout(url, options = {}) {
   await _ensureTimeoutInitialized();
-  const timeoutMs = _cachedTimeoutMs;
+  const { timeoutMs = _cachedTimeoutMs, signal: callerSignal, ...fetchOptions } = options;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let connectionTimedOut = false;
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+  const timeoutId = setTimeout(() => {
+    connectionTimedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
+    const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
     clearTimeout(timeoutId);
+    // Keep the caller signal linked after headers arrive so a stalled body
+    // read remains cancellable by the caller's stricter deadline.
     return res;
   } catch (e) {
     clearTimeout(timeoutId);
-    if (e.name === 'AbortError') {
+    callerSignal?.removeEventListener('abort', abortFromCaller);
+    if (callerSignal?.aborted) {
+      throw callerSignal.reason instanceof Error
+        ? callerSignal.reason
+        : new DOMException('The operation was aborted', 'AbortError');
+    }
+    if (connectionTimedOut) {
       throw new Error(
         `Request to ${url} timed out after ${timeoutMs}ms. ` +
         `The endpoint may be unreachable, blocked by CORS, or stalled. ` +

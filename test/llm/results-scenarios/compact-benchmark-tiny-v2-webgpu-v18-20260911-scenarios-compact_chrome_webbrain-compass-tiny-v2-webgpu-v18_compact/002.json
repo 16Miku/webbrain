@@ -1,0 +1,50 @@
+{
+  "id": "002",
+  "category": "loop-bad-url",
+  "description": "Auto-completed AMO URL hit a 404. Should pivot rather than retry.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 12102,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "The requested URL returned a 404 error. I can’t safely open the Tabby Cat extension page from the current context because the navigation result points to an error page rather than the intended addon page. Please provide the correct URL or the exact addon page you want me to open.",
+      "options": [
+        "Provide the correct URL",
+        "Open the Tabby Cat extension page from the current context"
+      ],
+      "reason": "The navigation result points to an error page rather than the intended addon page."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "navigate",
+      "args": {
+        "url": "https://addons.mozilla.org/en-US/firefox/search/?q=tabby+cat"
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "navigate({url:\"https://addons.mozilla.org/en-US/firefox/addon/tabby-cat-extension/\"})",
+        "reason": "Same URL that just 404ed."
+      },
+      {
+        "match": "navigate({url:\"https://addons.mozilla.org/en-US/firefox/addon/tabby-cat/\"})",
+        "reason": "Acceptable single retry with corrected slug, but only once; flagged as anti-pattern only if combined with no fallback plan."
+      }
+    ],
+    "successRubric": "Acceptable: search AMO for \"tabby cat\" to find the real slug, OR clarify with user. Trying ONE slug variant is fine; looping on the same slug is the failure."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "The requested URL returned a 404 error. I can’t safely open the Tabby Cat extension page from the current context because the navigation result points to an error page rather than the intended addon page. Please provide the correct URL or the exact addon page you want me to open.\n<function name=\"clarify\"><param name=\"question\">The requested URL returned a 404 error. I can’t safely open the Tabby Cat extension page from the current context because the navigation result points to an error page rather than the intended addon page. Please provide the correct URL or the exact addon page you want me to open.</param><param name=\"options\">['Provide the correct URL', 'Open the Tabby Cat extension page from the current context']</param><param name=\"reason\">The navigation result points to an error page rather than the intended addon page.</param></function>",
+  "usage": {
+    "prompt_tokens": 9870,
+    "completion_tokens": 177,
+    "total_tokens": 10047
+  }
+}

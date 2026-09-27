@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "042",
+  "image": "images/042.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "search",
+        "results"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Research library",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "tab",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Articles",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "count",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "1,248 results",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "query",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Search",
+        "urban heat island"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "chip",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Since 2024",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "notice",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Sorted by relevance",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Read the active query urban heat island, selected tab Articles, and exact count 1,248 results."
+}

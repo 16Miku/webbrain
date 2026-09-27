@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "079",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "security-challenge",
+  "title": "Güvenlik doğrulaması",
+  "image": "images/079.png",
+  "question": "What security challenge is present, and can the visible action proceed? Focus on the “Güvenlik doğrulaması” screen.",
+  "defaultPromptMode": "production"
+}

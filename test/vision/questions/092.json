@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "092",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "email-compose",
+  "title": "Confidential message",
+  "image": "images/092.png",
+  "question": "Who is the message addressed to, what is its subject, and is any send warning visible? Focus on the “Confidential message” screen.",
+  "defaultPromptMode": "production"
+}

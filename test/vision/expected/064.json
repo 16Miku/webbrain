@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "064",
+  "image": "images/064.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "form",
+        "profile",
+        "shipping",
+        "invite",
+        "dataset",
+        "tax"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Vergi bilgileri",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Kaydet",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Vergi kimlik no",
+        "348 91 2",
+        "10 hane"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "error",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "3 hane eksik",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "invalid",
+        "required",
+        "incomplete",
+        "missing",
+        "format"
+      ],
+      "weight": 1,
+      "critical": true
+    }
+  ],
+  "successRubric": "Name Vergi kimlik no, preserve its current value and placeholder, and quote 3 hane eksik."
+}

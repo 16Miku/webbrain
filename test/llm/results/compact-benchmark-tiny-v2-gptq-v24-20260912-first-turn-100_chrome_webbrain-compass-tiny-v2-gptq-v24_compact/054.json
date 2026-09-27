@@ -1,0 +1,28 @@
+{
+  "id": "054",
+  "user": "download this image",
+  "mode": "act",
+  "tab": {
+    "url": "https://example.com/photo.jpg",
+    "title": "photo.jpg"
+  },
+  "latencyMs": 5628,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t download or host a file from an external URL. I can help you find a legitimate source or create the image locally."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t download or host a file from an external URL. I can help you find a legitimate source or create the image locally.</param></function>",
+  "usage": {
+    "prompt_tokens": 9710,
+    "completion_tokens": 47,
+    "total_tokens": 9757
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

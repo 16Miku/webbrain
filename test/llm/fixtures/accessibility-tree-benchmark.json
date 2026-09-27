@@ -1,0 +1,169 @@
+{
+  "schema": "webbrain-accessibility-tree-benchmark/1",
+  "description": "Representative accessibility-tree records for a text-vs-compact-JSON benchmark. The records intentionally keep the same stable refs and hierarchy across formats.",
+  "sourceAssets": [
+    {
+      "path": "docs/accessibility-tree-and-refs.md",
+      "purpose": "Current line-oriented format, ref stability, and pagination contract."
+    },
+    {
+      "path": "test/llm/scenarios/034.json",
+      "purpose": "Listing pagination and continuation behavior."
+    },
+    {
+      "path": "test/llm/scenarios/051.json",
+      "purpose": "GitHub release control selection."
+    },
+    {
+      "path": "test/llm/scenarios/053.json",
+      "purpose": "Composer control selection."
+    },
+    {
+      "path": "test/llm/scenarios/058.json",
+      "purpose": "Duplicate labels and ref disambiguation."
+    },
+    {
+      "path": "test/llm/scenarios/060.json",
+      "purpose": "Form submission control selection."
+    }
+  ],
+  "trees": [
+    {
+      "id": "product-dialog",
+      "category": "dialog-form",
+      "description": "A modal product form with a selected option and a populated field.",
+      "metadata": { "depthTruncated": false, "autoDegraded": true },
+      "nodes": [
+        { "depth": 0, "role": "dialog", "name": "Add a product", "ref_id": "ref_166" },
+        { "depth": 1, "role": "heading", "name": "Add a product", "ref_id": "ref_167" },
+        { "depth": 1, "role": "button", "name": "Close", "ref_id": "ref_169", "attrs": { "type": "button" } },
+        { "depth": 1, "role": "textbox", "name": "Name", "ref_id": "ref_170", "attrs": { "type": "text", "placeholder": "Product name", "value": "namaz", "dom_id": "product-name", "field_name": "name" } },
+        { "depth": 1, "role": "combobox", "name": "Billing period", "ref_id": "ref_180", "attrs": { "type": "button", "value": "Monthly" } },
+        { "depth": 2, "role": "option", "name": "Monthly", "ref_id": "ref_181", "attrs": { "selected": true } },
+        { "depth": 2, "role": "option", "name": "Yearly", "ref_id": "ref_182", "attrs": { "value": "yearly" } },
+        { "depth": 1, "role": "spinbutton", "name": "Price", "ref_id": "ref_183", "attrs": { "type": "number", "value": "12.50", "field_name": "price" } },
+        { "depth": 1, "role": "checkbox", "name": "Visible in catalog", "ref_id": "ref_184", "attrs": { "checked": true } },
+        { "depth": 1, "role": "textbox", "name": "Description", "ref_id": "ref_186", "attrs": { "type": "text", "value": "A reusable tea product for the catalog and the monthly subsc...", "value_len": 71, "value_fp": "a44c42b4" } },
+        { "depth": 1, "role": "radio", "name": "Personal plan", "ref_id": "ref_187", "attrs": { "type": "radio", "checked": false, "required": true, "group": "Plan type" } },
+        { "depth": 1, "role": "textbox", "name": "API token", "ref_id": "ref_188", "attrs": { "type": "password", "required": true, "hidden": true } },
+        { "depth": 1, "role": "button", "name": "Create product", "ref_id": "ref_185", "attrs": { "type": "submit" } }
+      ],
+      "selectionTasks": [
+        { "id": "product-name", "prompt": "Fill the Name field with 'tea'.", "targetRef": "ref_170", "targetRole": "textbox", "targetName": "Name" },
+        { "id": "product-submit", "prompt": "Create the product.", "targetRef": "ref_185", "targetRole": "button", "targetName": "Create product" },
+        { "id": "billing-yearly", "prompt": "Choose Yearly in the Billing period menu.", "targetRef": "ref_182", "targetRole": "option", "targetName": "Yearly" }
+      ],
+      "continuation": { "filter": "all", "maxDepth": 15, "maxChars": 420 }
+    },
+    {
+      "id": "github-release",
+      "category": "nested-action-surface",
+      "description": "A release page with repeated controls under distinct landmarks.",
+      "metadata": { "depthTruncated": false },
+      "nodes": [
+        { "depth": 0, "role": "main", "name": "webbrain Releases", "ref_id": "ref_300" },
+        { "depth": 1, "role": "heading", "name": "Create a new release", "ref_id": "ref_301" },
+        { "depth": 1, "role": "textbox", "name": "Choose a tag", "ref_id": "ref_302", "attrs": { "placeholder": "Find or create a new tag", "value": "v36.6.2" } },
+        { "depth": 1, "role": "combobox", "name": "Target", "ref_id": "ref_303", "attrs": { "value": "main", "type": "button" } },
+        { "depth": 1, "role": "textbox", "name": "Release title", "ref_id": "ref_304", "attrs": { "value": "WebBrain 36.6.2", "dom_id": "release-title", "field_name": "release_title" } },
+        { "depth": 1, "role": "textbox", "name": "Describe this release", "ref_id": "ref_305", "attrs": { "placeholder": "Describe this release", "dom_id": "release-notes" } },
+        { "depth": 1, "role": "checkbox", "name": "Set as the latest release", "ref_id": "ref_306", "attrs": { "checked": true } },
+        { "depth": 1, "role": "checkbox", "name": "Set as a pre-release", "ref_id": "ref_307", "attrs": { "checked": false } },
+        { "depth": 1, "role": "region", "name": "Attach binaries", "ref_id": "ref_308" },
+        { "depth": 2, "role": "button", "name": "Attach files", "ref_id": "ref_309", "attrs": { "type": "button" } },
+        { "depth": 2, "role": "list", "name": "Attached files", "ref_id": "ref_310" },
+        { "depth": 3, "role": "listitem", "name": "webbrain-chrome.zip", "ref_id": "ref_311" },
+        { "depth": 1, "role": "button", "name": "Cancel", "ref_id": "ref_312", "attrs": { "type": "button" } },
+        { "depth": 1, "role": "button", "name": "Publish release", "ref_id": "ref_313", "attrs": { "type": "submit" } }
+      ],
+      "selectionTasks": [
+        { "id": "publish-release", "prompt": "Publish this release.", "targetRef": "ref_313", "targetRole": "button", "targetName": "Publish release" },
+        { "id": "release-notes", "prompt": "Enter the release notes in the Describe this release field.", "targetRef": "ref_305", "targetRole": "textbox", "targetName": "Describe this release" },
+        { "id": "attach-files", "prompt": "Attach the release files.", "targetRef": "ref_309", "targetRole": "button", "targetName": "Attach files" }
+      ],
+      "continuation": { "filter": "visible", "maxDepth": 10, "maxChars": 500 }
+    },
+    {
+      "id": "gmail-thread",
+      "category": "long-thread",
+      "description": "A long conversation whose message rows and controls require exact pagination and a stable conversation root.",
+      "metadata": { "depthTruncated": false, "conversationRootRefId": "ref_410", "conversationExpansionState": "expanded" },
+      "nodes": [
+        { "depth": 0, "role": "main", "name": "Inbox", "ref_id": "ref_400" },
+        { "depth": 1, "role": "navigation", "name": "Mail folders", "ref_id": "ref_401" },
+        { "depth": 2, "role": "link", "name": "Inbox", "ref_id": "ref_402", "attrs": { "href": "/mail/u/0/#inbox" } },
+        { "depth": 2, "role": "link", "name": "Sent", "ref_id": "ref_403", "attrs": { "href": "/mail/u/0/#sent" } },
+        { "depth": 1, "role": "region", "name": "Conversation: Launch plan", "ref_id": "ref_410" },
+        { "depth": 2, "role": "heading", "name": "Launch plan", "ref_id": "ref_411" },
+        { "depth": 2, "role": "button", "name": "Archive", "ref_id": "ref_412" },
+        { "depth": 2, "role": "button", "name": "Reply", "ref_id": "ref_413" },
+        { "depth": 2, "role": "article", "name": "Mina Chen, Sep 10", "ref_id": "ref_420" },
+        { "depth": 3, "role": "button", "name": "Show details", "ref_id": "ref_421" },
+        { "depth": 3, "role": "paragraph", "name": "The launch checklist is ready for review.", "ref_id": "ref_422" },
+        { "depth": 2, "role": "article", "name": "Omar Kaya, Sep 11", "ref_id": "ref_430" },
+        { "depth": 3, "role": "button", "name": "Show details", "ref_id": "ref_431" },
+        { "depth": 3, "role": "paragraph", "name": "I added the browser compatibility notes.", "ref_id": "ref_432" },
+        { "depth": 2, "role": "article", "name": "Mina Chen, Sep 12", "ref_id": "ref_440" },
+        { "depth": 3, "role": "button", "name": "Show details", "ref_id": "ref_441" },
+        { "depth": 3, "role": "paragraph", "name": "Please confirm the final publish window.", "ref_id": "ref_442" },
+        { "depth": 2, "role": "article", "name": "Omar Kaya, Sep 13", "ref_id": "ref_450" },
+        { "depth": 3, "role": "button", "name": "Show details", "ref_id": "ref_451" },
+        { "depth": 3, "role": "paragraph", "name": "Confirmed for Thursday at 09:00 UTC.", "ref_id": "ref_452" },
+        { "depth": 2, "role": "textbox", "name": "Reply", "ref_id": "ref_460", "attrs": { "placeholder": "Reply", "dom_id": "reply-editor" } },
+        { "depth": 2, "role": "button", "name": "Send", "ref_id": "ref_461", "attrs": { "type": "submit" } }
+      ],
+      "selectionTasks": [
+        { "id": "conversation-root", "prompt": "Read the complete Launch plan conversation from its conversation root.", "targetRef": "ref_410", "targetRole": "region", "targetName": "Conversation: Launch plan" },
+        { "id": "reply", "prompt": "Reply to the conversation.", "targetRef": "ref_460", "targetRole": "textbox", "targetName": "Reply" },
+        { "id": "send", "prompt": "Send the reply after filling it.", "targetRef": "ref_461", "targetRole": "button", "targetName": "Send" }
+      ],
+      "continuation": { "filter": "all", "maxDepth": 15, "maxChars": 460 }
+    },
+    {
+      "id": "duplicate-actions",
+      "category": "duplicate-labels",
+      "description": "Two same-named controls are separated by named row hierarchy; the correct ref must be selected without enumerating refs blindly.",
+      "metadata": { "depthTruncated": false },
+      "nodes": [
+        { "depth": 0, "role": "main", "name": "Team members", "ref_id": "ref_500" },
+        { "depth": 1, "role": "heading", "name": "Team members", "ref_id": "ref_501" },
+        { "depth": 1, "role": "table", "name": "Members", "ref_id": "ref_502" },
+        { "depth": 2, "role": "row", "name": "Aylin Demir", "ref_id": "ref_510" },
+        { "depth": 3, "role": "cell", "name": "Aylin Demir", "ref_id": "ref_511" },
+        { "depth": 3, "role": "cell", "name": "Editor", "ref_id": "ref_512" },
+        { "depth": 3, "role": "button", "name": "Edit", "ref_id": "ref_513" },
+        { "depth": 2, "role": "row", "name": "Bora Yilmaz", "ref_id": "ref_520" },
+        { "depth": 3, "role": "cell", "name": "Bora Yilmaz", "ref_id": "ref_521" },
+        { "depth": 3, "role": "cell", "name": "Viewer", "ref_id": "ref_522" },
+        { "depth": 3, "role": "button", "name": "Edit", "ref_id": "ref_523" },
+        { "depth": 2, "role": "row", "name": "Cem Aksoy", "ref_id": "ref_530" },
+        { "depth": 3, "role": "cell", "name": "Cem Aksoy", "ref_id": "ref_531" },
+        { "depth": 3, "role": "cell", "name": "Admin", "ref_id": "ref_532" },
+        { "depth": 3, "role": "button", "name": "Edit", "ref_id": "ref_533" },
+        { "depth": 1, "role": "button", "name": "Invite member", "ref_id": "ref_540", "attrs": { "type": "button" } }
+      ],
+      "selectionTasks": [
+        { "id": "edit-bora", "prompt": "Edit Bora Yilmaz's team-member access.", "targetRef": "ref_523", "targetRole": "button", "targetName": "Edit" },
+        { "id": "edit-cem", "prompt": "Edit Cem Aksoy's team-member access.", "targetRef": "ref_533", "targetRole": "button", "targetName": "Edit" },
+        { "id": "invite", "prompt": "Invite a new team member.", "targetRef": "ref_540", "targetRole": "button", "targetName": "Invite member" }
+      ],
+      "continuation": { "filter": "visible", "maxDepth": 10, "maxChars": 440 }
+    }
+  ],
+  "refReuse": [
+    {
+      "id": "product-field-update",
+      "tree": "product-dialog",
+      "before": ["ref_166", "ref_167", "ref_169", "ref_170", "ref_180", "ref_181", "ref_182", "ref_183", "ref_184", "ref_186", "ref_187", "ref_188", "ref_185"],
+      "after": ["ref_166", "ref_167", "ref_169", "ref_170", "ref_180", "ref_181", "ref_182", "ref_183", "ref_184", "ref_186", "ref_187", "ref_188", "ref_185"],
+      "targetRef": "ref_170"
+    },
+    {
+      "id": "gmail-reply-update",
+      "tree": "gmail-thread",
+      "before": ["ref_400", "ref_401", "ref_402", "ref_403", "ref_410", "ref_411", "ref_412", "ref_413", "ref_420", "ref_421", "ref_422", "ref_430", "ref_431", "ref_432", "ref_440", "ref_441", "ref_442", "ref_450", "ref_451", "ref_452", "ref_460", "ref_461"],
+      "after": ["ref_400", "ref_401", "ref_402", "ref_403", "ref_410", "ref_411", "ref_412", "ref_413", "ref_420", "ref_421", "ref_422", "ref_430", "ref_431", "ref_432", "ref_440", "ref_441", "ref_442", "ref_450", "ref_451", "ref_452", "ref_460", "ref_461"],
+      "targetRef": "ref_461"
+    }
+  ]
+}

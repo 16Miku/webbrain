@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "023",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "checkout",
+  "title": "Checkout",
+  "image": "images/023.png",
+  "question": "What is the exact total, and can the visible purchase action proceed? Focus on the “Checkout” screen.",
+  "defaultPromptMode": "production"
+}

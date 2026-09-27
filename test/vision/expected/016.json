@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "id": "016",
+  "image": "images/016.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "gallery",
+        "archive",
+        "collection",
+        "comparison"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Street archive",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "caption",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Talad Noi",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "badge",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Color photo",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "visual-content",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "Talad Noi"
+      ],
+      "weight": 2,
+      "critical": false
+    }
+  ],
+  "successRubric": "Combine the rendered image with its UI labels; do not infer a place or date beyond Talad Noi."
+}

@@ -82,25 +82,89 @@ function sanitizeMessage(message, state, caps) {
   return out;
 }
 
-function reduceToBudget(messages, maxBytes, state) {
+function reduceToBudget(messages, maxBytes, state, preserveMessageIndices = []) {
   if (byteLength(messages) <= maxBytes) return messages;
   const out = messages.map(message => ({ ...message }));
-  const keepRecentFrom = Math.max(1, out.length - 14);
+  const preserved = new Set(
+    Array.isArray(preserveMessageIndices)
+      ? preserveMessageIndices.filter(index => Number.isInteger(index) && index >= 0 && index < out.length)
+      : [],
+  );
+  let keepRecentFrom = Math.max(1, out.length - 14);
   for (let index = 1; index < keepRecentFrom && byteLength(out) > maxBytes; index++) {
     const message = out[index];
-    if (!message || message.role === 'system') continue;
+    // The agent supplies the active task binding's original user turn,
+    // clarification questions, and answers. Keep those small authority-bearing
+    // messages intact even when a long tool loop pushes them outside the
+    // ordinary recent-message window; otherwise a worker restart can promote
+    // only the latest answer fragment as a new task.
+    if (!message || message.role === 'system' || preserved.has(index)) continue;
     state.compacted = true;
     out[index] = {
       role: message.role,
       ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
+      // The collapsed text is gone, so this turn no longer carries any task
+      // authority. Mark it app-owned or the agent's task binding would treat
+      // the placeholder as the latest genuine user request after a restart.
+      ...(message.role === 'user'
+        ? { webbrainAppOwned: true, webbrainAppOwnedKind: 'session_recovery_placeholder' }
+        : {}),
       content: '[Earlier message omitted from bounded session recovery snapshot.]',
     };
+  }
+  // A compacted assistant message loses its tool_calls, which orphans the
+  // paired `tool` result messages that carry the same tool_call_id. Restoring
+  // such a snapshot into the live conversation makes the next provider call
+  // fail with "tool call ID not found", so drop every `tool` message whose id
+  // is no longer referenced by any remaining assistant tool_calls.
+  if (state.compacted) {
+    const presentCallIds = new Set();
+    for (const message of out) {
+      if (message?.role !== 'assistant' || !Array.isArray(message.tool_calls)) continue;
+      for (const call of message.tool_calls) {
+        if (call && typeof call.id === 'string') presentCallIds.add(call.id);
+      }
+    }
+    for (let index = out.length - 1; index >= 0; index--) {
+      const message = out[index];
+      if (message?.role === 'tool' && typeof message.tool_call_id === 'string' && !presentCallIds.has(message.tool_call_id)) {
+        state.compacted = true;
+        out.splice(index, 1);
+      }
+    }
+    keepRecentFrom = Math.max(1, out.length - 14);
   }
   for (let index = keepRecentFrom; index < out.length && byteLength(out) > maxBytes; index++) {
     const message = out[index];
     if (!message || typeof message.content !== 'string' || message.content.length <= 4_000) continue;
     state.compacted = true;
     out[index] = { ...message, content: `${message.content.slice(0, 3_900)}\n[content truncated for session recovery]` };
+  }
+  // Signed provider state is opaque. If the snapshot is still oversized,
+  // remove whole replay/tool pairs instead of truncating a signature.
+  let droppedReplay = false;
+  for (let index = 0; index < out.length && byteLength(out) > maxBytes; index++) {
+    const message = out[index];
+    if (!message?._reasoning_replay?.providerState) continue;
+    const rest = { ...message };
+    delete rest._reasoning_replay;
+    delete rest.tool_calls;
+    out[index] = typeof rest.content !== 'string' || !rest.content.trim()
+      ? { ...rest, content: '[Provider reasoning omitted from session recovery.]' }
+      : rest;
+    state.compacted = true;
+    droppedReplay = true;
+  }
+  if (droppedReplay) {
+    const presentCallIds = new Set(out.flatMap(message => (
+      message?.role === 'assistant' && Array.isArray(message.tool_calls)
+        ? message.tool_calls.map(call => call?.id).filter(Boolean)
+        : []
+    )));
+    for (let index = out.length - 1; index >= 0; index--) {
+      const message = out[index];
+      if (message?.role === 'tool' && !presentCallIds.has(message.tool_call_id)) out.splice(index, 1);
+    }
   }
   return out;
 }
@@ -113,7 +177,7 @@ export function serializeConversationForSession(messages, options = {}) {
     : { textChars: 96_000, toolChars: 32_000, toolArgsChars: 24_000 };
   const state = { compacted: false };
   const sanitized = Array.isArray(messages) ? messages.map(message => sanitizeMessage(message, state, caps)) : [];
-  const bounded = reduceToBudget(sanitized, maxBytes, state);
+  const bounded = reduceToBudget(sanitized, maxBytes, state, options.preserveMessageIndices);
   return { messages: bounded, bytes: byteLength(bounded), compacted: state.compacted };
 }
 

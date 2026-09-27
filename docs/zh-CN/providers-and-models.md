@@ -37,14 +37,16 @@ class BaseLLMProvider {
 | 提供商 ID | 类型 | 类别 | 默认模型 | 视觉能力 |
 |---|---|---|---|---|
 | `webbrain_cloud` | `openai` | 云端 | `webbrain-cloud 1.0` | 是 |
-| `llamacpp` | `llamacpp` | 本地 | （已加载模型） | 是（默认开启） |
-| `ollama` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
-| `lmstudio` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
+| `llamacpp` | `llamacpp` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
+| `ollama` | `openai` | 本地 | （已加载模型） | 通过 `/api/show` 自动检测 / 覆盖 |
+| `lmstudio` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `jan` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `vllm` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `sglang` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
-| `localai` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
+| `localai` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `gpt4all` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
+| `local_openai_proxy` | `openai` | 本地 | （必填） | 默认关闭 / 手动开关 |
+| `webgpu`（Chromium） | `webgpu` | 本地 | Compass Tiny v2.1（唯一预设）；实验性自定义 HF ONNX 仓库 | 否 |
 | `azure_openai` | `azure_openai` | 云端 | （部署） | 手动开关 |
 | `aws_bedrock` | `aws_bedrock` | 云端 | （模型 ID） | 否 |
 | `openai` | `openai` | 云端 | `gpt-5.6-terra` | 模型名正则 |
@@ -52,7 +54,7 @@ class BaseLLMProvider {
 | `gemini` | `openai` | 云端 | `gemini-3.1-flash` | 模型名正则 |
 | `cloudflare` | `openai` | 路由器 | `@cf/zai-org/glm-5.2` | 模型名正则 |
 | `mistral` | `openai` | 云端 | `mistral-large-latest` | 模型名正则 |
-| `deepseek` | `openai` | 云端 | `deepseek-v4-flash` | 模型名正则 |
+| `deepseek` | `openai` | 云端 | `deepseek-flash` | 模型名正则 |
 | `xai`（Grok） | `openai` | 云端 | `grok-4.3` | 模型名正则 |
 | `nvidia`（NIM） | `openai` | 路由器 | `meta/llama-3.1-8b-instruct` | 模型名正则 |
 | `groq` | `openai` | 路由器 | `llama-3.3-70b-versatile` | 模型名正则 |
@@ -69,7 +71,8 @@ class BaseLLMProvider {
 
 WebBrain 从 OpenCode 提供商目录提交
 `62e4641235d7847dadc60da37cca8a023dd54fc1` 的快照中新增了 76 张默认禁用的
-提供商卡片。加上原有 28 张，设置中共有 **104 个内置提供商**。完整 ID
+提供商卡片。设置中在 **Chromium 上共有 106 个内置提供商**，在 **Firefox
+上共有 105 个**；两者的差异是仅 Chromium 提供的本地 WebGPU 运行时。完整 ID
 列表如下：
 
 `302ai`、`abacus`、`aihubmix`、`alibaba-coding-plan`、
@@ -108,7 +111,10 @@ WebBrain 会直接记录；若服务省略用量，则记录基于字符数的�
 
 ### 本地提供商
 
-七个本地提供商默认启用，无需 API 密钥（除非本地服务器启动时启用了认证）：
+在 Chromium 上，**WebGPU（浏览器内）** 是无端点的本地提供商。末日模式文本选择器仅提供一个内置预设：**Compass Tiny v2.1**（`q4f16`，约 1.87 GB），走 Transformers.js / ONNX，启用末日模式时会自动开始下载。缓存完成后，即使未启用末日模式，Compass 也可正常使用。该提供商仅支持文本，默认上下文窗口为 32k；在显存受限的 GPU 上，可在 Settings → Providers 中将其调低。Firefox 不提供该卡片。
+
+九个本地端点提供商默认启用。模型运行时无需 API 密钥（除非服务器启用了认证）；
+通用代理卡片必须填写客户端密钥：
 
 - **llama.cpp**：`http://localhost:8080` — 运行 `llama-server -m model.gguf`
 - **Ollama**：`http://localhost:11434/v1` — `ollama serve`，或 `ollama launch webbrain --model <model>`
@@ -117,8 +123,36 @@ WebBrain 会直接记录；若服务省略用量，则记录基于字符数的�
 - **vLLM**：`http://localhost:8000/v1` — vLLM 的 OpenAI 兼容服务器
 - **SGLang**：`http://localhost:30000/v1` — SGLang 的 OpenAI 兼容服务器
 - **LocalAI**：`http://localhost:8080/v1` — LocalAI 的 OpenAI 兼容服务器
+- **GPT4All**：`http://localhost:4891/v1` — GPT4All 本地 API 服务器
+- **本地 OpenAI 兼容代理**：`http://127.0.0.1:8317/v1` — 通用的、带认证的
+  本地网关；模型和代理客户端 API 密钥均为必填
 
-以上七个均默认 `supportsVision: true`，因为 2026 年本地加载的大多数模型都是多模态的。
+#### 订阅代理示例（CLIProxyAPI）
+
+**本地 OpenAI 兼容代理**卡片可连接单独管理的
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 实例。按照
+[官方快速入门](https://help.router-for.me/introduction/quick-start)安装，或从源码执行
+`go build -o cli-proxy-api ./cmd/server` 并把 `config.example.yaml` 复制为
+`config.yaml`。先设置 `host: "127.0.0.1"`、`port: 8317`，并在 `api-keys` 中生成
+强随机密钥。使用 `./cli-proxy-api --config ./config.yaml --codex-login` 登录
+ChatGPT/Codex，或用 `--claude-login` 登录 Claude；Gemini CLI 需先安装
+[官方插件](https://github.com/router-for-me/cpa-plugin-gemini-cli)：启用可信插件，在
+CLIProxyAPI 官方插件商店安装 `gemini-cli`，重启代理，再使用 `--geminicli-login`
+（参见[插件管理说明](https://help.router-for.me/cn/management/api#插件)）。最后运行
+`./cli-proxy-api --config ./config.yaml` 启动服务。
+在 WebBrain 中保留 `http://127.0.0.1:8317/v1`，填写同一密钥，加载并选择模型，
+最后测试连接。
+
+不要把代理暴露到局域网或公网：CLIProxyAPI 的空 host 默认监听所有网络接口，TLS
+默认关闭，空 `api-keys` 列表会允许未认证请求。这是一条实验性、由社区支持的兼容
+路径。代理进程在本机运行，但可能把请求上下文转发给上游账户；上游 OAuth 凭据始终
+保留在 CLIProxyAPI 中。
+
+Ollama、llama.cpp、LM Studio 和 LocalAI 默认使用 `visionMode: auto`。WebBrain 在
+页面上下文增强前读取所选模型的原生服务器元数据，只有服务器明确报告支持图像输入时才
+发送截图。元数据请求失败或格式错误时，本回合按纯文本处理，之后会重试。设置中
+可选择自动、强制开启或关闭。模型字段为空时，每个用户回合都会重新检测当前加载
+模型的能力，以便服务端热切换立即生效；其他本地提供商保持现有的显式开关行为。
 
 #### Ollama 启动交接（预览）
 
@@ -167,9 +201,16 @@ Ask 模式忽略提供商层级，保持只读。Act 模式使用所选层级的
 | 提供商 | 机制 |
 |---|---|
 | OpenAI 兼容 | 根据模型名称进行正则匹配（`gpt-4o`、`gpt-5`、`claude-3`、`claude-sonnet-4`、`gemini-2.0-flash` 等） |
+| DeepSeek | `deepseek-flash` 系列（含已退役的 `deepseek-v4-flash` 别名）支持多模态；`deepseek-v4-pro` 与 V3 时代标识为纯文本 |
 | Anthropic | `claude-(3\|sonnet-4\|opus-4)` 模式 |
-| llama.cpp | 显式 `supportsVision` 配置开关 |
-| Ollama / LM Studio / Jan / vLLM / SGLang / LocalAI | 显式 `supportsVision` 配置开关（通过 OpenAI 提供商） |
+| Ollama | `POST /api/show` 的 `capabilities`，并兼容旧版 `projector_info` / `.vision.` 元数据 |
+| llama.cpp | `GET /props` → `modalities.vision`，支持自动 / 强制开启 / 关闭 |
+| LM Studio | `GET /api/v1/models` → `capabilities.vision`；旧版本回退到 `/api/v0/models` 的 `type` |
+| LocalAI | `GET /v1/models/capabilities` → `input_modalities` / `capabilities` |
+| Jan / vLLM / SGLang | 显式 `supportsVision` 配置开关（通过 OpenAI 提供商） |
+
+检测结果按提供商、精确模型和规范化基础 URL 绑定。并发检测会合并为一次请求，旧
+配置的延迟响应不能修改当前设置。单独配置的视觉提供商继续使用现有的分流路径。
 
 ### Anthropic 转换
 
@@ -181,6 +222,30 @@ Ask 模式忽略提供商层级，保持只读。Act 模式使用所选层级的
 | `assistant` + `tool_calls` | `assistant` + `tool_use` 内容块 |
 | `tool` 角色 | `user` + `tool_result` 内容块 |
 | `image_url`（data URL） | `image` 源块 |
+
+### DeepSeek
+
+出厂模型是 `deepseek-flash`（DeepSeek-V4.1-Flash）。已退役的 `deepseek-v4-flash` 与
+`deepseek-v4-flash-vision-exp` 仍由同一模型承接并按 Flash 计费，因此保留完整支持
+（1M 上下文、384K 输出、图片输入）。其他 DeepSeek 标识（包括已退役的
+`deepseek-v4-pro`）保持保守配置（64K 上下文、8K 输出、纯文本），不会继承它未必具备
+的更大容量。
+
+| 方面 | 行为 |
+|---|---|
+| 线路格式 | 默认 Chat Completions（`apiFormat: 'auto'`）；Responses API 需在「高级」面板显式选择 |
+| 思考模式 | 顶层 `thinking` 对象 + `reasoning_effort`；关闭思考时完全省略 `reasoning_effort`。共享 UI 档位把 `minimal` 映射为 `low`、`medium`/`xhigh` 映射为 `high` |
+| 思维链回传 | 跨轮回传 `reasoning_content`，因为带 `tools` 的后续请求丢弃它会返回 400 |
+| 流式 | 每次请求都带 `stream_options.include_usage`；解析器忽略 DeepSeek 的 SSE `: keep-alive` 注释 |
+| 结构化输出 | Chat Completions 使用 JSON Object 模式；Responses API 为规划器使用 `text.format` JSON Schema |
+| 图片 | `deepseek-flash` 接受 `user` 消息中的 `image_url`（data URL 或公网 URL） |
+| 计费 | 空闲时段单价按 1 USD = 7.1 CNY 折算（输入 1、缓存命中 0.02、输出 4；高峰 2 / 0.04 / 8）。缓存命中以顶层 `prompt_cache_hit_tokens` 返回，按缓存读取价计费 |
+| Anthropic 端点 | `https://api.deepseek.com/anthropic` 可通过覆盖内置 `anthropic` 卡片的 base URL 使用 |
+
+契约位于 `providers/deepseek-config.js`（纯函数与常量）与 `providers/deepseek.js`
+（`DeepSeekProvider`）。共享的 `openai.js` 与 `provider-compatibility.js` 不含任何
+DeepSeek 知识；`ProviderManager#_createProvider()` 会把 `deepseek` 卡片、任何指向
+`api.deepseek.com` 的卡片，或显式选择 `deepseek` 兼容性预设的卡片分派给该专用类。
 
 ---
 
@@ -266,4 +331,4 @@ myprovider: {
 },
 ```
 
-视觉能力通过模型名称正则自动检测。如果提供商有已知的视觉模型集，请将它们添加到 `openai.js` 的正则表达式中。仅对接受 OpenAI 风格 `stream_options.include_usage` 的提供商设置 `supportsStreamUsageOptions: true`；当提供商在不接受该请求字段的情况下返回使用量时，请将其保持为 false。
+视觉能力通过模型名称正则自动检测。如果提供商有已知的视觉模型集，请在 `openai.js` 的 `_modelNameSniffedVision()` 中扩展，或像 DeepSeek 那样新增厂商子类（`providers/deepseek.js`）。仅对接受 OpenAI 风格 `stream_options.include_usage` 的提供商设置 `supportsStreamUsageOptions: true`；当提供商在不接受该请求字段的情况下返回使用量时，请将其保持为 false。

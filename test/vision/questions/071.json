@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "071",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "data-table",
+  "title": "Fatura listesi",
+  "image": "images/071.png",
+  "question": "Locate the target row and report its exact status without mixing it with neighboring rows. Focus on the “Fatura listesi” screen.",
+  "defaultPromptMode": "production"
+}

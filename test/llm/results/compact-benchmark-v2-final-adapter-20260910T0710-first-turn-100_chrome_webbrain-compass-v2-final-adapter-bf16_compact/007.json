@@ -1,0 +1,22 @@
+{
+  "id": "007",
+  "user": "open linkedin in this tab",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1956,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": " name=\"navigate\"> name=\"url\">https://www.linkedin.com/",
+  "usage": {
+    "prompt_tokens": 9710,
+    "completion_tokens": 22,
+    "total_tokens": 9732
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

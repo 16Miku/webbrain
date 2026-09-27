@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "011",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "data-table",
+  "title": "Recent orders",
+  "image": "images/011.png",
+  "question": "Locate the target row and report its exact status without mixing it with neighboring rows. Focus on the “Recent orders” screen.",
+  "defaultPromptMode": "production"
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "032",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "email-compose",
+  "title": "Compose",
+  "image": "images/032.png",
+  "question": "Who is the message addressed to, what is its subject, and is any send warning visible? Focus on the “Compose” screen.",
+  "defaultPromptMode": "production"
+}

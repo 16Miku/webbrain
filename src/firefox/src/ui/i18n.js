@@ -3,6 +3,7 @@
 // Works identically in Chrome MV3 and Firefox MV2.
 
 import en from './locales/en.js';
+import { safeSocialEnglish, safeSocialTranslations } from './locales/safesocial-copy.mjs';
 import es from './locales/es.js';
 import fr from './locales/fr.js';
 import tr from './locales/tr.js';
@@ -25,8 +26,16 @@ import bn from './locales/bn.js';
 import fa from './locales/fa.js';
 import nl from './locales/nl.js';
 import de from './locales/de.js';
+import { providerGuideEnglish, providerGuideTranslations } from './locales/provider-guide-copy.mjs';
 
-const DICTS = { en, es, fr, tr, zh, ru, uk, ar, ja, ko, id, th, ms, tl, pl, he, hi, pt, vi, bn, fa, nl, de };
+const DICTS = Object.fromEntries(Object.entries({ en, es, fr, tr, zh, ru, uk, ar, ja, ko, id, th, ms, tl, pl, he, hi, pt, vi, bn, fa, nl, de })
+  .map(([code, dict]) => [code, {
+    ...dict,
+    ...providerGuideEnglish,
+    ...safeSocialEnglish,
+    ...(safeSocialTranslations[code] || {}),
+    ...(providerGuideTranslations[code] || {}),
+  }]));
 const LS_KEY = 'wbLocale';
 const RTL_LOCALES = new Set(['ar', 'he', 'fa']);
 
@@ -66,7 +75,27 @@ function detect() {
   return DICTS[nav] ? nav : 'en';
 }
 
+function persistDetectedLocaleIfUnset(code) {
+  if (!code || !DICTS[code]) return;
+  try {
+    const saved = localStorage.getItem(LS_KEY);
+    if (!saved || !DICTS[saved]) localStorage.setItem(LS_KEY, code);
+  } catch { /* ignore */ }
+  try {
+    const api = (typeof browser !== 'undefined' && browser?.storage) ? browser : (typeof chrome !== 'undefined' ? chrome : null);
+    const get = api?.storage?.local?.get;
+    const set = api?.storage?.local?.set;
+    if (typeof get !== 'function' || typeof set !== 'function') return;
+    Promise.resolve(get.call(api.storage.local, { wbLocale: '' })).then((stored) => {
+      const existing = String(stored?.wbLocale || '').trim();
+      if (existing) return;
+      return set.call(api.storage.local, { wbLocale: code });
+    }).catch(() => {});
+  } catch { /* ignore */ }
+}
+
 let currentLocale = detect();
+persistDetectedLocaleIfUnset(currentLocale);
 
 export function getLocale() {
   return currentLocale;
@@ -94,6 +123,13 @@ export function t(key, params) {
     s = s.replace(/\{(\w+)\}/g, (_, k) => (params[k] != null ? String(params[k]) : `{${k}}`));
   }
   return s;
+}
+
+export function translationsForKey(key) {
+  const fallback = DICTS.en[key];
+  return [...new Set(Object.values(DICTS)
+    .map((dict) => dict[key] ?? fallback)
+    .filter((value) => typeof value === 'string'))];
 }
 
 export function applyDOMTranslations(root) {

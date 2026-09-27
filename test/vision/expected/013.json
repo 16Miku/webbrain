@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "013",
+  "image": "images/013.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "board",
+        "kanban",
+        "project",
+        "sprint",
+        "incident"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Project board",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "card-column",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "all",
+      "values": [
+        "Write brief",
+        "To do"
+      ],
+      "weight": 3,
+      "critical": true
+    }
+  ],
+  "successRubric": "Preserve the spatial association: Write brief is in To do."
+}

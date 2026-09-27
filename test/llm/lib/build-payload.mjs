@@ -67,9 +67,18 @@ export function isActionMode(mode) {
   return key === 'act' || key === 'dev';
 }
 
+// Compact-tier Dev is blocked in production, so the harness cannot build a
+// payload for it. Runners ask first and report the case as skipped; callers
+// that have already committed to a surface assert instead.
+export const UNRUNNABLE_MODE_TIER = 'Dev mode requires a Mid or Full prompt tier; Compact-tier Dev is blocked.';
+
+export function isRunnableModeTier(mode, tier) {
+  return !(normalizeMode(mode) === 'dev' && normalizeTier(tier) === 'compact');
+}
+
 export function assertRunnableModeTier(mode, tier) {
-  if (mode === 'dev' && tier === 'compact') {
-    throw new Error('Dev mode requires a Mid or Full prompt tier; Compact-tier Dev is blocked.');
+  if (!isRunnableModeTier(mode, tier)) {
+    throw new Error(UNRUNNABLE_MODE_TIER);
   }
 }
 
@@ -162,6 +171,7 @@ export function getFrozenSnapshot() { return FROZEN_BASELINE; }
  * @param {object} caseRec - { id?, mode: 'act'|'ask'|'dev', tab: {url, title}, user }
  * @param {object} opts    - { useSiteAdapters?: boolean, strictSecretMode?: boolean,
  *                             profile?: {enabled, text}, captchaSolver?: boolean,
+ *                             researchEscalationEnabled?: boolean,
  *                             browser?: 'chrome'|'firefox',
  *                             tier?: 'full'|'mid'|'compact'   // ACT-mode prompt+tools tier
  *                           }
@@ -224,7 +234,11 @@ export function buildPayload(caseRec, opts = {}) {
   // tier, and mode options have no effect on a frozen baseline by design.
   const tools = FROZEN_BASELINE
     ? FROZEN_BASELINE.tools
-    : browser.getToolsForMode(mode, { strictSecretMode, tier });
+    : browser.getToolsForMode(mode, {
+      strictSecretMode,
+      tier,
+      researchEscalationEnabled: opts.researchEscalationEnabled === true,
+    });
 
   return {
     messages: [

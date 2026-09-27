@@ -1,0 +1,205 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-26T23:22:08.481Z",
+  "id": "021",
+  "model": "z-ai/glm-5.3-flash",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "021",
+    "difficulty": {
+      "level": 2,
+      "slug": "basic",
+      "label": "Basic"
+    },
+    "category": "authentication",
+    "title": "Sign in to Atlas",
+    "image": "images/021.png",
+    "question": "What is preventing the user from completing Continue? Focus on the “Sign in to Atlas” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/021.png",
+    "bytes": 126348,
+    "sha256": "8ccaa8d7e5a9824abcd3ced72262009867f7340c45868b39f7c67f48e3783df9"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Sign-in page for \"Atlas\" account on WebScene site.\n\n2) Visible text:\n- Nav: \"WebScene\", \"Home\", \"Workspace\", \"Activity\"\n- Heading: \"Sign in to Atlas\"\n- Subheading: \"Use your account to continue\"\n- Labels: \"Email\", \"Password\"\n- Button: \"Continue\"\n- Link: \"Need help?\"\n\n3) Inputs:\n- Email field — label \"Email\", value \"maya@example.com\", not focused.\n- Password field — label \"Password\", placeholder \"Enter password\", empty, currently focused (green focus ring).\n\n4) State signals: None. No spinners, toasts, modals, error banners, CAPTCHAs, or consent overlays. Green circular avatar icon in top-right nav (no readable text).\n\n5) Blockers: Password field is empty; \"Continue\" will likely fail or be invalid until a password is entered. Button itself appears enabled.\n\n6) Unknowns: Cannot confirm whether \"Continue\" is disabled without input (visually it looks active). Avatar in top-right is a plain green circle — no identifiable user info.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1502,
+      "completion_tokens": 453,
+      "total_tokens": 1955,
+      "cost": 0.00021054,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 256,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00021054,
+        "upstream_inference_prompt_cost": 0.00009729,
+        "upstream_inference_completions_cost": 0.00011325
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 218,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 1999,
+    "total": 4873
+  },
+  "score": {
+    "success": false,
+    "ratio": 0.8181818181818182,
+    "earned": 9,
+    "possible": 11,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [
+      "purpose"
+    ],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 0,
+        "possible": 1,
+        "ratio": 0
+      },
+      "visible_text": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      },
+      "inputs": {
+        "earned": 1,
+        "possible": 2,
+        "ratio": 0.5
+      },
+      "blockers": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "sign in",
+          "login",
+          "identity verification",
+          "session expired"
+        ],
+        "weight": 1,
+        "critical": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Sign in to Atlas",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Sign in to Atlas"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "button",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Continue",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Continue"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "email-input",
+        "dimension": "inputs",
+        "section": 3,
+        "kind": "all",
+        "values": [
+          "Email",
+          "maya@example.com"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "Email",
+          "maya@example.com"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "blocker",
+        "dimension": "blockers",
+        "section": 5,
+        "kind": "any",
+        "values": [
+          "missing",
+          "password"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "password"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "disabled",
+        "dimension": "inputs",
+        "section": 3,
+        "kind": "any",
+        "values": [
+          "disabled",
+          "unavailable"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

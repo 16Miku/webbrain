@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-26T23:27:24.752Z",
+  "id": "086",
+  "model": "qwen/qwen3.8-flash",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "086",
+    "difficulty": {
+      "level": 5,
+      "slug": "challenging",
+      "label": "Challenging"
+    },
+    "category": "toast-notification",
+    "title": "Export queued",
+    "image": "images/086.png",
+    "question": "What transient notification is visible, and is it success, warning, error, or informational? Focus on the “Export queued” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/086.png",
+    "bytes": 100816,
+    "sha256": "f99038ae9d1f044ac86558e1f413c3ccd730cae620a76931394d817fc00b7837"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Data export settings panel (WebScene app) with an active export-queue notification.\n\n2) Visible text:\n- Brand: \"WebScene\"\n- Nav links: \"Home\", \"Workspace\", \"Activity\"\n- Heading: \"Data export\"\n- Toggle labels: \"General\", \"Notifications\", \"Privacy\", \"Integrations\"\n- Button: \"Cancel export\"\n- Toast title: \"Export queued\"\n- Toast body: \"Position 14 of 32\"\n\n3) Inputs:\n- Toggle \"General\" — OFF (gray)\n- Toggle \"Notifications\" — ON (dark)\n- Toggle \"Privacy\" — OFF (gray)\n- Toggle \"Integrations\" — OFF (gray)\n- No text fields, dropdowns, or checkboxes present.\n\n4) State signals:\n- Toast/notification (top-right, dark teal): \"Export queued — Position 14 of 32\" with an \"i\" info icon.\n- No loading spinner, no error banner, no modal, no cookie banner, no CAPTCHA.\n- Green circular avatar indicator top-right of nav.\n\n5) Blockers: None. \"Cancel export\" button appears enabled. Toast is informational and does not overlay interactive controls.\n\n6) Unknowns: None significant; all text legible. Toggle interaction targets are not explicitly labeled as buttons/checkboxes (rendered as switches).",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1234,
+      "completion_tokens": 491,
+      "total_tokens": 1725,
+      "cost": 0.00042821,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00042821,
+        "upstream_inference_prompt_cost": 0.00019744,
+        "upstream_inference_completions_cost": 0.00023077
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 186,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 1427,
+    "total": 8422
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 9,
+    "possible": 9,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "state_signals": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "data export",
+          "settings",
+          "upload",
+          "export"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "data export",
+          "settings",
+          "export"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Data export",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Data export"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "button",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Cancel export",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Cancel export"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "toast",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "Export queued",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Export queued"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "detail",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "Position 14 of 32",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Position 14 of 32"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

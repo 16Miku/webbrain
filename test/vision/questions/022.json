@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "022",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "search-results",
+  "title": "Product search",
+  "image": "images/022.png",
+  "question": "What query is active, which result tab is selected, and how many results are shown? Focus on the “Product search” screen.",
+  "defaultPromptMode": "production"
+}

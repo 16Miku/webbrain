@@ -1,18 +1,32 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 26.2.2 · Manifest V2 · Background Page
+> Version 36.8.0 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
 Firefox uses Manifest V2 (background page, not service worker) and has **no access to the Chrome DevTools Protocol (CDP)**. Starting with v3.6.x, the Firefox build has been brought to functional parity with Chrome for the accessibility-tree (AX) subsystem — the same tree builder, the same four AX tools (`get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`), and the same ref_id registry. What Firefox still lacks:
 
-- **No trusted events** — clicks and key presses are synthetic (`el.click()`, `new KeyboardEvent()`), and some sites reject `event.isTrusted === false`. All AX-tool click/type paths use synthetic dispatch in Firefox; the CDP-backed trusted-event path in Chrome has no Firefox equivalent.
-- **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureTab()` instead of CDP `Page.captureScreenshot`; it can capture the run tab while that tab is inactive. Firefox has exposed `tabs.captureTab()` since Firefox 59, before WebBrain's Firefox 109 minimum, and the manifest declares the required `<all_urls>` permission.
+- **Optional trusted events** — standard mode uses synthetic events. The experimental [BiDi companion](../../firefox-companion/README.md) adds trusted click, hover, text, supported keys, file-input attachment, and native JavaScript-dialog handling. It requires a local helper and Firefox remote automation; other tools retain their existing implementations. This is a Firefox-specific transport, not a Chrome CDP adapter.
+- **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureTab()` instead of CDP `Page.captureScreenshot`; it can capture the run tab while that tab is inactive. Firefox has exposed `tabs.captureTab()` since Firefox 59, before WebBrain's current minimum, and the manifest declares the required `<all_urls>` permission.
 - **No shadow DOM piercing** — content script can read open shadow roots via `element.shadowRoot`, but cannot pierce closed roots.
 - **No offscreen document** — no HTTP fetch proxy for localhost LLM servers with Private Network Access / CORS issues. User must ensure their local LLM server sends permissive CORS headers.
 - **Some Chrome-only tools/features remain absent** — no CDP full-page screenshot, CDP upload automation, tab recording, offscreen fetch proxy, Chrome-only `shadow_dom_query`, or closed-shadow-root traversal.
 
 Everything else — the agent loop, LLM providers, site adapters, Ask/Act/Dev mode routing, Plan before Act, loop detection, API shortcut observer, trace recorder, scheduler, context management — is architecturally identical to Chrome unless noted below.
+
+PDF handling is an intentional platform exception: Firefox has no equivalent
+to Chrome's global `mime_types_handler`/`chrome.mimeHandler` route in this
+extension. Firefox therefore keeps its native PDF viewer as the default and
+uses an explicit WebBrain PDF viewer context-menu entry when the user chooses
+it. The Chrome-only automatic PDF viewer setting (on by default) does not apply to
+Firefox; the explicit Firefox entry remains available independently.
+
+The explicit Firefox route is URL/GET based. It cannot replay an arbitrary
+POST navigation because the context-menu event does not expose the original
+request body; those documents remain in the native viewer unless a stable PDF
+URL is available. Chrome's MIME-handler route receives the browser's one-time
+stream and therefore also covers PDF responses that originated from POST
+navigations.
 
 ---
 
@@ -118,7 +132,7 @@ Notably **missing** vs Chrome: `debugger`, `sidePanel`, `scripting`, `offscreen`
 - No `debugger` → no CDP, no trusted events
 - No `offscreen` → no HTTP fetch proxy; direct fetch from background page only
 - No `privateNetworkAccess` → localhost LLM servers must send CORS headers themselves
-- `webRequest` is used for the same opt-in in-memory API shortcut observer as Chrome. The setting is off by default.
+- `webRequest` is used for the same in-memory API shortcut observer as Chrome. The setting is on by default and can be disabled in Settings.
 - Uses `sidebar_action` (MV2) instead of `side_panel` (MV3)
 - Uses `browser.tabs.executeScript()` / `browser.tabs.sendMessage()` instead of `chrome.scripting.executeScript()`
 
@@ -229,6 +243,13 @@ permission gate before saving files. Third-party results should use
 `resultPolicy: "untrusted"` so the agent wraps and digests them like page
 content instead of trusted instructions.
 
+The exact packaged Wikipedia skill uses `agent/wikipedia-offline.js` to fall
+back to user-installed Kiwix/ZIM archives after a live request fails.
+`agent/apocalypse-mode.js` owns the opt-in archive manager, resumable verified
+downloads, durable IndexedDB state, OPFS bytes, and local openZIM title lookup.
+No archive is downloaded by enabling the skill. Local passages retain their
+canonical URL, language, archive date, and license metadata and stay untrusted.
+
 ---
 
 ## Agent Loop
@@ -328,7 +349,7 @@ Legacy tier (kept for compatibility with older prompts and for non-AX flows):
 |---|---|
 | `read_page`, `screenshot`, `get_interactive_elements` | Page content / image / indexed elements |
 | `click`, `type_text`, `press_keys` | Text/selector/index-based interaction |
-| `scroll`, `navigate`, `go_back`, `go_forward`, `new_tab`, `promote_iframe`, `wait_for_element`, `wait_for_stable` | Page control. `promote_iframe` resolves one child frame and navigates the current run tab to its standalone URL. `wait_for_stable` polls MutationObserver + in-flight fetch/XHR — works identically to Chrome. |
+| `scroll`, `navigate`, `go_back`, `go_forward`, `promote_iframe`, `wait_for_element`, `wait_for_stable` | Page control. `promote_iframe` resolves one child frame and navigates the current run tab to its standalone URL. `wait_for_stable` polls MutationObserver + in-flight fetch/XHR — works identically to Chrome. |
 | `extract_data`, `get_selection` | Data extraction / selected text |
 | `get_shadow_dom`, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type` | Frame / shadow DOM. Iframe reads enumerate labels, values, and per-selector `matchIndex` values; mutations fail before dispatch on ambiguity. An iframe type must be followed by same-scope `verify_form({urlFilter})` before successful completion. `get_shadow_dom` and `get_frames` are Full Act and Dev-extended for Mid Dev. |
 | `fetch_url`, `research_url` | HTTP / open-and-read |
@@ -442,7 +463,7 @@ Plus the legacy handlers: `read_page`, `click`, `type_text`, `press_keys`, `scro
 ## Provider System
 
 Identical to Chrome at the provider-class and configuration layer:
-WebBrain Cloud, seven local backends, Azure OpenAI, AWS Bedrock, Anthropic, and
+WebBrain Compass, nine local endpoints, Azure OpenAI, AWS Bedrock, Anthropic, and
 the current direct-cloud/router OpenAI-compatible configs use the same message
 format and conversion logic. The canonical current ID and default-model table
 is maintained in
@@ -486,7 +507,8 @@ All identical to Chrome:
   it classifies against differ and live in `agent/mutation-tools.js`
 - **Context management** — auto-trim at >50 messages or >80,000 chars, LLM-powered summarization, emergency trim on context overflow, image pruning (last 4 only), tool-result cap at 8,000 chars
 - **Verbose mode** — three levels: Normal / Verbose ON / Deep verbose (Shift+click dumps the LLM-payload ring buffer to DevTools console). Deep verbose works identically; there's just no persisted trace UI to browse it from
-- **Site adapters** — same adapter set as Chrome (58 sites across code/dev, productivity, social, messaging, e-commerce, travel, finance, news paywalls, job portals, etc.); same `getActiveAdapter(url)` matching, same mid-conversation re-injection on navigation. Only ONE adapter fires at a time so prompt cost is fixed regardless of total count.
+- **Site adapters** — same 110+ adapter set as Chrome across code/dev, productivity, social, messaging, e-commerce, travel, finance, news paywalls, job portals, and other regional surfaces; same `getActiveAdapter(url)` matching and mid-conversation re-injection. Only ONE adapter fires at a time so prompt cost is fixed regardless of total count. Every match emits content-free adapter/revision/notes-injected trace metadata. Selected high-evidence adapters also expose identical `webbrain-adapter-workflow/2` jobs: both planner variants receive bounded app-owned IDs/descriptions, the binding is revalidated against the live URL immediately before execution, and trusted Continue fallback retains it only for the same adapter/revision/schema/job. The executor receives the selected stages/evidence contract. Required submissions need job-bound terminal evidence after dispatch (for example paid/ticket-issued transaction state or recipient-bound sent-message state); repeated jobs must exactly reconcile terminal ledger IDs against a complete app-owned accessibility-tree or seeded inventory. Edited reviews clear hidden routing, and selected jobs additionally retain only adapter/revision/job/template identity.
+- **Recipient guard** — same structured planner target and URL-scoped runtime policy as Chrome. On Douyin `/chat`, Firefox pins an `active_conversation` request to exactly one strong visible header before any page tool runs, then uses a read-only content-script probe immediately before send-like dispatch. Only one unique exact identity from the narrow, non-scrollable header above a lower-page layout composer can authorize the send. Enter in another editable such as recipient search is non-message, and a structurally verified conversation row in the separate left rail remains selectable even when a short list does not overflow, while distant controls and nested row actions remain inconclusive. Protected composer Enter dispatch is limited to one keypress per verification. Send-capable clicks, accessibility clicks, submitted fields, and Enter presses carry a one-use binding to the action target, composer, URL, and identity set and consume it immediately before the consequential click or key event. Ordinary message text, mismatches, unresolved controls/composers, ambiguity, and dispatch paths that cannot bind their effects to the verified recipient all fail closed. `upload_file` is included because attaching a file can trigger an immediate page-side send. Saved workflows cannot inherit a planner recipient target, so any potentially dispatching step scoped to a protected messaging route stops before deterministic replay and must be run as a normal Act task with a freshly named recipient.
 
 ---
 
@@ -551,7 +573,10 @@ Same end-to-end shape as Chrome, minus the CDP-trusted-event path and the offscr
 
 Planner prompts follow Chrome's token-minimal gating: the base planner prompt
 includes general repeated-task pacing, while API replay guidance is appended only
-when the tab conversation already has `/allow-api`.
+when API mutations are authorized by the persistent setting or the tab's
+`/allow-api` override. Both compact and full planner schemas carry a
+language-neutral messaging target only when the trusted request authorizes an
+external message.
 
 ---
 
@@ -579,8 +604,8 @@ Same as Chrome, minus CDP:
 - Cross-origin iframes accessible via extension privilege
 - Ask is read-only; Act and Dev are action modes. Dev adds source/style/page-inspection tools and is blocked for Compact-tier providers.
 - Plan before Act can require user approval before any action-mode tool executes
-- API shortcut observer is off by default; when enabled, it records bounded same-tab XHR/fetch replay metadata in memory only
-- `/allow-api` flag required for API mutations (POST/PUT/PATCH/DELETE via `fetch_url`)
+- API shortcut observer is on by default and can be disabled in Settings; when enabled, it records bounded same-tab XHR/fetch replay metadata in memory only
+- The persistent **Always allow API mutations** setting (on by default) or the conversation's `/allow-api` override waives permission prompts for API mutations (POST/PUT/PATCH/DELETE via `fetch_url` / `research_url`). If the persistent setting cannot be read from storage, it grants no authorization.
 - Finance adapters get extra safety warnings
 - Tool results capped at 8KB
 - No remote code execution: all providers called via `fetch()` with user-supplied keys; no eval of LLM responses

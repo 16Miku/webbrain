@@ -3,7 +3,7 @@
  * The Chrome and Firefox copies of this file are identical — edit both together.
  */
 
-import { SELECTION_ONLY_SOURCE_GROUNDING, normalizeSelectionAction } from '../context-menu-storage.js';
+import { normalizeSelectionAction, normalizeSelectionSourceGrounding } from '../context-menu-storage.js';
 
 export function createContextMenuPromptHandler({
   getCurrentTabId,
@@ -33,18 +33,18 @@ export function createContextMenuPromptHandler({
     const id = payload?.id
       ? String(payload.id)
       : `ctx-${tabId ?? 'unknown'}-${payload?.createdAt || Date.now()}-${text.length}`;
-    const sourceGrounding = payload?.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-      ? SELECTION_ONLY_SOURCE_GROUNDING
-      : null;
+    const sourceGrounding = normalizeSelectionSourceGrounding(payload?.sourceGrounding) || null;
     // Only a source-bound prompt has a shortcut action to report; anything
     // else would be an unattributed id riding into the run options.
     const selectionAction = sourceGrounding ? normalizeSelectionAction(payload?.selectionAction) : '';
+    const restoreSelectionScope = !sourceGrounding && payload?.restoreSelectionScope === true;
     return {
       id,
       tabId,
       text,
       ...(sourceGrounding ? { sourceGrounding } : {}),
       ...(selectionAction ? { selectionAction } : {}),
+      ...(restoreSelectionScope ? { restoreSelectionScope: true } : {}),
     };
   }
 
@@ -129,6 +129,16 @@ export function createContextMenuPromptHandler({
     }
   }
 
+  function hasQueuedForTab(tabId) {
+    const numericTabId = Number(tabId);
+    if (!Number.isFinite(numericTabId)) return false;
+    const matchesTab = (prompt) => (
+      prompt?.tabId == null || Number(prompt.tabId) === numericTabId
+    );
+    return queuedContextMenuPrompts.some(matchesTab)
+      || deferredContextMenuPrompts.some(matchesTab);
+  }
+
   async function runContextMenuPrompt(payload) {
     if (!payload?.text) return;
     clearClaimRetry(payload.id);
@@ -146,12 +156,12 @@ export function createContextMenuPromptHandler({
     const clearPayload = { tabId: payload.tabId ?? currentTabId, promptId: payload.id };
     const releasePromptClaim = async () => {
       try {
-        await sendToBackground('release_context_menu_prompt_claim', {
+        return await sendToBackground('release_context_menu_prompt_claim', {
           tabId: clearPayload.tabId,
           promptId: payload.id,
           claimantId,
         });
-      } catch { /* the durable lease still expires if release fails */ }
+      } catch { return null; /* the durable lease still expires if release fails */ }
     };
     let claimResult = null;
     try {
@@ -197,11 +207,10 @@ export function createContextMenuPromptHandler({
     // immediately when it starts the run — after receiving the request (so a
     // pre-acceptance crash preserves the prompt) but before the agent loop
     // (so a mid-run panel close does not replay it on reopen).
-    // Don't re-queue on failure: by the time sendMessage() resolves or rejects,
-    // the user message is already shown in the UI and the background has already
-    // cleared storage, so re-queuing would duplicate the submission on the next
-    // drain.  On a pre-receipt SW crash, storage is still intact and
-    // consumePendingContextMenuPrompt() recovers the prompt on the next panel load.
+    // Generic failures are normally delivery-ambiguous and must not replay a
+    // prompt that the background already cleared. If releasing this exact claim
+    // proves the durable prompt survived a pre-run cleanup failure, however,
+    // schedule a fresh claim instead of stranding it until a panel remount.
     let accepted = false;
     let rejectedClaim = null;
     try {
@@ -216,8 +225,19 @@ export function createContextMenuPromptHandler({
         },
         ...(payload.sourceGrounding ? { sourceGrounding: payload.sourceGrounding } : {}),
         ...(payload.selectionAction ? { selectionAction: payload.selectionAction } : {}),
+        ...(payload.restoreSelectionScope === true ? { restoreSelectionScope: true } : {}),
       });
-    } catch { /* storage recovery can retry the prompt later */ }
+    } catch { /* confirm durable ownership below before retrying */ }
+    if (!accepted && !rejectedClaim) {
+      const releaseResult = await releasePromptClaim();
+      if (releaseResult?.released || releaseResult?.reason === 'storage') {
+        rejectedClaim = {
+          reason: 'start-failed',
+          leaseExpiresAt: releaseResult.leaseExpiresAt,
+          retryAfterMs: releaseResult.retryAfterMs || (releaseResult.released ? 250 : 1_000),
+        };
+      }
+    }
     runningContextMenuPromptId = null;
     trackedContextMenuPromptIds.delete(payload.id);
     if (accepted) {
@@ -239,13 +259,23 @@ export function createContextMenuPromptHandler({
     } catch { /* best effort */ }
   }
 
-  // Called when the background reports that a tab navigated to a new URL.
-  // Drops any in-panel queued/deferred prompts for that tab so they aren't
-  // submitted against the wrong page.
-  function clearQueuedForTab(tabId) {
+  // Navigation drops every prompt for the tab. Conversation clear passes the
+  // exact durably removed prompt ID so work created behind that transaction
+  // remains queued for the fresh conversation.
+  function clearQueuedForTab(tabId, { promptId = null } = {}) {
     const numericTabId = Number(tabId);
     if (!Number.isFinite(numericTabId)) return;
-    const keep = (p) => Number(p.tabId) !== numericTabId;
+    const normalizedPromptId = promptId == null ? '' : String(promptId);
+    const matchesTarget = (prompt) => Number(prompt?.tabId) === numericTabId
+      && (!normalizedPromptId || prompt?.id === normalizedPromptId);
+    const keep = (prompt) => !matchesTarget(prompt);
+    if (normalizedPromptId) {
+      // A notification already in flight for the durably cleared prompt may
+      // arrive after this sweep. Treat its ID as consumed without suppressing
+      // a newer prompt created behind the clear transaction.
+      acceptedContextMenuPromptIds.add(normalizedPromptId);
+      clearClaimRetry(normalizedPromptId);
+    }
     for (const p of queuedContextMenuPrompts) {
       if (!keep(p)) trackedContextMenuPromptIds.delete(p.id);
     }
@@ -257,13 +287,15 @@ export function createContextMenuPromptHandler({
     deferredContextMenuPrompts.splice(0, deferredContextMenuPrompts.length,
       ...deferredContextMenuPrompts.filter(keep));
     for (const [promptId, retry] of claimRetryTimers) {
-      if (Number(retry?.tabId) === numericTabId) clearClaimRetry(promptId);
+      if (Number(retry?.tabId) === numericTabId
+          && (!normalizedPromptId || promptId === normalizedPromptId)) clearClaimRetry(promptId);
     }
   }
 
   return {
     acceptContextMenuPrompt,
     drainQueuedContextMenuPrompts,
+    hasQueuedForTab,
     consumePendingContextMenuPrompt,
     clearQueuedForTab,
   };

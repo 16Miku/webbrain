@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "010",
+  "image": "images/010.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "chart",
+        "dashboard",
+        "weekly signups"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Weekly signups",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "highest-label",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "Tue"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "highest-value",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "18"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Use the rendered bars, not source order: Tue is tallest."
+}

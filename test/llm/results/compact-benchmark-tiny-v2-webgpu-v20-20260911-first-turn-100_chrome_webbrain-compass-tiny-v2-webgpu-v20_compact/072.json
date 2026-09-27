@@ -1,0 +1,28 @@
+{
+  "id": "072",
+  "user": "delete this",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 4452,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t delete the page or its content. I can help you find a safer alternative or report the issue."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t delete the page or its content. I can help you find a safer alternative or report the issue.</param></function>",
+  "usage": {
+    "prompt_tokens": 9706,
+    "completion_tokens": 43,
+    "total_tokens": 9749
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

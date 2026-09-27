@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "id": "045",
+  "image": "images/045.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "api keys",
+        "dialog",
+        "modal"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "title",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Rotate production key?",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "primary",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Rotate key",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "secondary",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Not now",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "modal-signal",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "all",
+      "values": [
+        "modal",
+        "Existing clients will stop working immediately."
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "overlay-blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "modal",
+        "overlay",
+        "dialog"
+      ],
+      "weight": 1,
+      "critical": true
+    }
+  ],
+  "successRubric": "Recognize a blocking modal, quote Rotate production key?, Rotate key, and Not now."
+}

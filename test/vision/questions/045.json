@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "045",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "modal-overlay",
+  "title": "Rotate production key?",
+  "image": "images/045.png",
+  "question": "What modal is blocking the page, and what are its two exact actions? Focus on the “Rotate production key?” screen.",
+  "defaultPromptMode": "production"
+}

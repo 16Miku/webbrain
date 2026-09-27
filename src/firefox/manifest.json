@@ -1,10 +1,11 @@
 {
   "manifest_version": 2,
   "name": "WebBrain",
-  "version": "26.2.2",
+  "version": "36.8.0",
   "description": "Open-source AI browser agent — chat with pages, automate tasks, multi-provider LLM support.",
   "permissions": [
     "activeTab",
+    "nativeMessaging",
     "menus",
     "webNavigation",
     "webRequest",
@@ -12,6 +13,7 @@
     "unlimitedStorage",
     "tabs",
     "tabGroups",
+    "notifications",
     "downloads",
     "alarms",
     "clipboardWrite",
@@ -42,6 +44,8 @@
       "js": [
         "src/content/rich-text-toolbar-heuristic.js",
         "src/content/accessibility-tree.js",
+        "src/content/teacher-capture.js",
+        "src/content/chat-observation.js",
         "src/content/content.js",
         "src/content/agent-visual-indicator.js",
         "src/content/ollama-launch-handoff.js"
@@ -73,6 +77,19 @@
       ],
       "js": ["src/agent/smd-loader.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.instagram.com/*",
+        "https://instagram.com/*"
+      ],
+      "js": [
+        "src/safesocial/content.js"
+      ],
+      "css": [
+        "src/safesocial/content.css"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "options_ui": {
@@ -102,11 +119,61 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "webbrain@esokullu.com",
-      "strict_min_version": "109.0",
+      "strict_min_version": "140.0",
       "data_collection_permissions": {
         "required": ["none"],
         "optional": ["personallyIdentifyingInfo", "authenticationInfo", "personalCommunications", "websiteContent", "technicalAndInteraction"]
       }
+    }
+  },
+  "commands": {
+    "_execute_sidebar_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+W"
+      },
+      "description": "Open WebBrain panel"
+    },
+    "switch-to-ask": {
+      "suggested_key": {
+        "default": "Alt+Shift+A"
+      },
+      "description": "Switch to Ask mode"
+    },
+    "switch-to-act": {
+      "suggested_key": {
+        "default": "Alt+Shift+X"
+      },
+      "description": "Switch to Act mode"
+    },
+    "switch-to-dev": {
+      "suggested_key": {
+        "default": "Alt+Shift+D"
+      },
+      "description": "Switch to Dev mode"
+    },
+    "focus-input": {
+      "suggested_key": {
+        "default": "Alt+Shift+I"
+      },
+      "description": "Focus the input"
+    },
+    "decrease-ui-scale": {
+      "suggested_key": {
+        "default": "Alt+Shift+Comma"
+      },
+      "description": "Zoom WebBrain UI out"
+    },
+    "increase-ui-scale": {
+      "suggested_key": {
+        "default": "Alt+Shift+Period"
+      },
+      "description": "Zoom WebBrain UI in"
+    },
+    "reset-ui-scale": {
+      "suggested_key": {
+        "default": "Alt+Shift+0"
+      },
+      "description": "Reset WebBrain UI zoom"
     }
   }
 }

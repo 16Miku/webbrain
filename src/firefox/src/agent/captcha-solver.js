@@ -19,7 +19,7 @@ import {
   normalizeCaptchaType,
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
-import { buildCaptchaDiagnostics } from './captcha-gate.js';
+import { buildCaptchaDiagnostics, captchaChallengeMatcherOptions } from './captcha-gate.js';
 
 export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
 
@@ -220,9 +220,11 @@ export async function detectCaptcha(tabId, constraints = {}) {
     frames = [{ frameId: 0, url: '' }];
   }
   if (!Array.isArray(frames) || !frames.length) frames = [{ frameId: 0, parentFrameId: -1, url: '' }];
+  const matcherOptions = JSON.stringify(captchaChallengeMatcherOptions());
   const code = `(() => {
     const detect = ${detectCaptchaCandidatesInPage.toString()};
-    const direct = detect();
+    const matcherOptions = ${matcherOptions};
+    const direct = detect(null, matcherOptions);
     const inheritedCandidates = [];
     const seenDocuments = new Set();
     const rootDocument = typeof document !== 'undefined' ? document : null;
@@ -263,7 +265,10 @@ export async function detectCaptcha(tabId, constraints = {}) {
           return;
         }
         if (!childDocument || !childWindow || !isInheritedOriginFrame(element, childUrl)) return;
-        const childResult = detect({ document: childDocument, window: childWindow });
+        const childResult = detect(
+          { document: childDocument, window: childWindow },
+          matcherOptions,
+        );
         const childContext = childResult?.frameContext || {};
         const childVisible = ancestorsVisible && childFrames[index]?.visible === true;
         const childDialogAssociated = ancestorsDialogAssociated

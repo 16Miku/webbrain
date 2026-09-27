@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "009",
+  "image": "images/009.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "dashboard",
+        "overview",
+        "system health",
+        "incident"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Overview",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "target-metric",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "all",
+      "values": [
+        "Orders",
+        "86"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Read Orders = 86 and report the alert without guessing unknown values."
+}

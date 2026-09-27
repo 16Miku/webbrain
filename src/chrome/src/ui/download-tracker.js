@@ -1,0 +1,632 @@
+import { getLocale, t } from './i18n.js';
+import { createEmergencyCorpusStore } from '../agent/emergency-corpus.js';
+import {
+  CORPUS_DOWNLOAD_ID,
+  EMERGENCY_DOWNLOAD_STATE_MESSAGE,
+  EMERGENCY_SEMANTIC_STATE_KEY,
+  SEMANTIC_DOWNLOAD_ID,
+  sendEmergencyDownloadCommand,
+} from './emergency-download-client.js';
+
+const runtimeApi = globalThis.browser || globalThis.chrome;
+const corpusStore = createEmergencyCorpusStore();
+const EMERGENCY_DB_NAME = 'webbrain_emergency_box';
+const EMERGENCY_DB_VERSION = 1;
+const EMERGENCY_STORE = 'resources';
+const VISION_STATE_KEY = 'webgpuVisionDownloadState';
+const EXPANDED_KEY = 'wbDownloadTrackerExpanded';
+const EMERGENCY_COMPONENT_STATE_EVENT = 'wb-emergency-component-download-state';
+const EMERGENCY_COMPONENT_STATE_CHANNEL = 'webbrain-emergency-download-state';
+const ACTIVE_STATUSES = new Set([
+  'starting', 'queued', 'downloading', 'retrying', 'verifying', 'extracting', 'indexing', 'stopping',
+]);
+const ATTENTION_STATUSES = new Set(['downloaded', 'paused', 'error']);
+const PDF_STALE_AFTER_MS = 8_000;
+const telemetry = new Map();
+const activeActions = new Set();
+const componentDownloadItems = new Map();
+const componentDownloadStateChannel = typeof BroadcastChannel === 'function'
+  ? new BroadcastChannel(EMERGENCY_COMPONENT_STATE_CHANNEL)
+  : null;
+
+const DOWNLOAD_LABELS = Object.freeze({
+  en: 'Downloads', zh: '下载', ar: 'التنزيلات', bn: 'ডাউনলোড', nl: 'Downloads',
+  tl: 'Mga download', fr: 'Téléchargements', de: 'Downloads', he: 'הורדות', hi: 'डाउनलोड',
+  id: 'Unduhan', ja: 'ダウンロード', ko: '다운로드', ms: 'Muat turun', fa: 'دانلودها',
+  pl: 'Pobieranie', pt: 'Downloads', ru: 'Загрузки', es: 'Descargas', th: 'ดาวน์โหลด',
+  tr: 'İndirmeler', uk: 'Завантаження', vi: 'Tải xuống',
+});
+
+let emergencyDatabasePromise;
+let textModelState = null;
+let textModelStateRequested = false;
+let expanded = false;
+let refreshing = false;
+let timer = 0;
+let renderedItems = new Map();
+
+function label() {
+  return DOWNLOAD_LABELS[getLocale()] || DOWNLOAD_LABELS.en;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[character]));
+}
+
+function clampProgress(value) {
+  return Math.max(0, Math.min(100, Number(value) || 0));
+}
+
+function progressFor(item) {
+  if (Number(item.progress) > 0) return clampProgress(item.progress);
+  const loaded = Math.max(0, Number(item.loaded) || 0);
+  const total = Math.max(0, Number(item.total) || 0);
+  return total > 0 ? clampProgress(loaded / total * 100) : 0;
+}
+
+function formatBytes(value) {
+  const number = Math.max(0, Number(value) || 0);
+  if (number < 1024) return `${Math.round(number)} B`;
+  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+  let amount = number;
+  let unit = -1;
+  do { amount /= 1024; unit += 1; } while (amount >= 1024 && unit < units.length - 1);
+  return `${amount.toFixed(amount >= 100 ? 0 : amount >= 10 ? 1 : 2)} ${units[unit]}`;
+}
+
+function formatDuration(value) {
+  let seconds = Math.max(0, Math.round(Number(value) || 0));
+  if (seconds < 60) return `${seconds}s`;
+  const days = Math.floor(seconds / 86_400);
+  seconds %= 86_400;
+  const hours = Math.floor(seconds / 3_600);
+  seconds %= 3_600;
+  const minutes = Math.floor(seconds / 60);
+  return [days ? `${days}d` : '', hours ? `${hours}h` : '', `${minutes}m`].filter(Boolean).slice(0, 2).join(' ');
+}
+
+function addTelemetry(items) {
+  const now = Date.now();
+  const liveIds = new Set(items.map(item => item.id));
+  for (const id of telemetry.keys()) {
+    if (!liveIds.has(id)) telemetry.delete(id);
+  }
+  return items.map(item => {
+    const loaded = Math.max(0, Number(item.loaded) || 0);
+    const previous = telemetry.get(item.id);
+    const observedAt = now;
+    const advanced = previous && loaded > previous.loaded;
+    const elapsed = advanced ? Math.max(0.25, (observedAt - previous.observedAt) / 1000) : 0;
+    const instantSpeed = advanced ? (loaded - previous.loaded) / elapsed : 0;
+    const speed = instantSpeed > 0
+      ? (previous?.speed > 0 ? previous.speed * 0.65 + instantSpeed * 0.35 : instantSpeed)
+      : (previous?.speed || 0);
+    const lastAdvancedAt = advanced
+      ? observedAt
+      : (previous?.lastAdvancedAt || Number(item.updatedAt) || observedAt);
+    const next = { loaded, observedAt, speed, lastAdvancedAt };
+    telemetry.set(item.id, next);
+    return {
+      ...item,
+      speed,
+      secondsSinceProgress: Math.max(0, (observedAt - lastAdvancedAt) / 1000),
+    };
+  });
+}
+
+function statusText(status) {
+  if (status === 'starting') return t('ap.status.queued');
+  if (status === 'stopping') return t('st.providers.webgpu_download.stopping');
+  if (['verifying', 'downloaded', 'extracting', 'indexing'].includes(status)) {
+    const componentKey = `eb.rag.status.${status}`;
+    const componentTranslation = t(componentKey);
+    if (componentTranslation !== componentKey) return componentTranslation;
+  }
+  const key = `ap.status.${status}`;
+  const translated = t(key);
+  return translated === key ? status : translated;
+}
+
+function pageUrl(filename) {
+  try {
+    return runtimeApi?.runtime?.getURL?.(`src/ui/${filename}`) || filename;
+  } catch {
+    return filename;
+  }
+}
+
+function openEmergencyDatabase() {
+  if (emergencyDatabasePromise) return emergencyDatabasePromise;
+  if (!globalThis.indexedDB) return Promise.resolve(null);
+  emergencyDatabasePromise = new Promise((resolve, reject) => {
+    const request = globalThis.indexedDB.open(EMERGENCY_DB_NAME, EMERGENCY_DB_VERSION);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(EMERGENCY_STORE)) {
+        request.result.createObjectStore(EMERGENCY_STORE, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return emergencyDatabasePromise;
+}
+
+async function emergencyRecords() {
+  try {
+    const database = await openEmergencyDatabase();
+    if (!database) return [];
+    return await new Promise((resolve, reject) => {
+      const request = database.transaction(EMERGENCY_STORE, 'readonly').objectStore(EMERGENCY_STORE).getAll();
+      request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+      request.onerror = () => reject(request.error);
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function send(message) {
+  if (!runtimeApi?.runtime?.sendMessage) return null;
+  try {
+    const response = await runtimeApi.runtime.sendMessage(message);
+    return response?.error ? null : response;
+  } catch {
+    return null;
+  }
+}
+
+async function apocalypseSnapshot() {
+  return await send({ target: 'background', action: 'apocalypse_mode', command: 'status' });
+}
+
+async function readVisionState() {
+  try {
+    const stored = await runtimeApi?.storage?.local?.get?.(VISION_STATE_KEY);
+    return stored?.[VISION_STATE_KEY] || null;
+  } catch {
+    return null;
+  }
+}
+
+function isTrackedTextTransfer(state) {
+  return Boolean(normalizedStatus(state?.status));
+}
+
+function resolveTextModelState(polled) {
+  if (isTrackedTextTransfer(polled?.activeTransfer)) return { ...polled.activeTransfer };
+  if (isTrackedTextTransfer(polled)) {
+    const next = { ...polled };
+    delete next.activeTransfer;
+    return next;
+  }
+  if (isTrackedTextTransfer(textModelState)
+      && String(textModelState.modelId || '')
+      && String(textModelState.modelId) !== String(polled?.modelId || '')) {
+    return textModelState;
+  }
+  if (!polled) return textModelState;
+  const next = { ...polled };
+  delete next.activeTransfer;
+  return next;
+}
+
+async function requestTextModelState(enabled) {
+  if (enabled !== true || !globalThis.chrome?.offscreen) return;
+  const state = await send({ target: 'background', action: 'get_webgpu_download_status' });
+  if (state) textModelState = resolveTextModelState(state);
+}
+
+function normalizedStatus(value) {
+  const status = String(value || '').toLowerCase();
+  return ACTIVE_STATUSES.has(status) || ATTENTION_STATUSES.has(status) ? status : '';
+}
+
+function textModelTitle(state) {
+  const modelId = String(state?.modelId || '');
+  if (modelId === 'prism-ml/Bonsai-27B-gguf') return t('ap.models.text.bonsai');
+  if (modelId === 'LiquidAI/LFM2.5-2.6B-ONNX') return t('ap.models.text.lfm');
+  return t('ap.models.text.title');
+}
+
+function modelItem(state, kind) {
+  const status = normalizedStatus(state?.status);
+  if (!ACTIVE_STATUSES.has(status) && !ATTENTION_STATUSES.has(status)) return null;
+  return {
+    id: `model-${kind}`,
+    title: kind === 'text' ? textModelTitle(state) : t('ap.models.vision.title'),
+    status,
+    progress: progressFor(state || {}),
+    loaded: state?.loaded,
+    total: state?.total,
+    updatedAt: state?.updatedAt,
+    href: pageUrl('apocalypse-mode.html'),
+    kind: 'model',
+    modelKind: kind,
+    modelId: state?.modelId,
+  };
+}
+
+function archiveItems(snapshot) {
+  return (snapshot?.archives || []).flatMap(record => {
+    const status = normalizedStatus(record?.status);
+    if (!ACTIVE_STATUSES.has(status) && !ATTENTION_STATUSES.has(status)) return [];
+    return [{
+      id: `archive-${record.id}`,
+      title: record.archiveTitle || record.title || record.name || t('ap.models.wikipedia.title'),
+      status,
+      progress: progressFor({ loaded: record.bytesDownloaded, total: record.size }),
+      loaded: record.bytesDownloaded,
+      total: record.size,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      href: pageUrl('wikipedia-library.html'),
+      kind: 'archive',
+      sourceId: record.id,
+    }];
+  });
+}
+
+function pdfItems(records) {
+  const now = Date.now();
+  return records.flatMap(record => {
+    let status = normalizedStatus(record?.status);
+    const stale = status === 'downloading'
+      && now - (Number(record.updatedAt) || 0) > PDF_STALE_AFTER_MS;
+    if (stale) status = 'paused';
+    if (!ACTIVE_STATUSES.has(status) && !ATTENTION_STATUSES.has(status)) return [];
+    return [{
+      id: `pdf-${record.id}`,
+      title: record.title || t('ep.document'),
+      status,
+      progress: progressFor({ loaded: record.bytesReceived, total: record.totalBytes }),
+      loaded: record.bytesReceived,
+      total: record.totalBytes,
+      updatedAt: record.updatedAt,
+      href: pageUrl('emergency-box.html'),
+      detail: status === 'downloading' ? t('eb.keep_open') : '',
+      kind: 'pdf',
+      sourceId: record.id,
+    }];
+  });
+}
+
+function observeEmergencyComponentState(value = {}) {
+  const sourceId = String(value.id || '');
+  if (sourceId !== CORPUS_DOWNLOAD_ID && sourceId !== SEMANTIC_DOWNLOAD_ID) return;
+  const rawStatus = String(value.status || '').toLowerCase();
+  const status = normalizedStatus(rawStatus);
+  if (!status) {
+    // Incomplete progress ticks have no status. Keep the last live item instead
+    // of treating the pack as missing, then downloaded, on the next poll.
+    if (!rawStatus) return;
+    if (['ready', 'not-installed', 'model-missing', 'unknown', 'deleted'].includes(rawStatus)) {
+      componentDownloadItems.delete(sourceId);
+    }
+    return;
+  }
+  componentDownloadItems.set(sourceId, {
+    sourceId,
+    componentKind: sourceId === CORPUS_DOWNLOAD_ID ? 'corpus' : 'semantic',
+    status,
+    progress: clampProgress(Number(value.progress) * (Number(value.progress) <= 1 ? 100 : 1)),
+    loaded: Math.max(0, Number(value.loaded) || 0),
+    total: Math.max(0, Number(value.total) || 0),
+    updatedAt: Number(value.updatedAt) || Date.now(),
+    detail: String(value.detail || '').slice(0, 500),
+  });
+}
+
+function emergencyComponentItems() {
+  return [...componentDownloadItems.values()].map(record => ({
+    ...record,
+    id: `component-${record.sourceId}`,
+    title: t(record.componentKind === 'corpus' ? 'eb.rag.corpus_title' : 'eb.rag.semantic_title'),
+    href: `${pageUrl('apocalypse-mode.html')}#offline-answer-engine`,
+    kind: 'component',
+  }));
+}
+
+function priority(item) {
+  if (item.status === 'error') return 0;
+  if (ACTIVE_STATUSES.has(item.status)) return 1;
+  return 2;
+}
+
+async function readSemanticState() {
+  try {
+    const stored = await runtimeApi?.storage?.local?.get?.(EMERGENCY_SEMANTIC_STATE_KEY);
+    return stored?.[EMERGENCY_SEMANTIC_STATE_KEY] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function collectItems() {
+  const [snapshot, vision, pdfs, corpusRecord, semantic] = await Promise.all([
+    apocalypseSnapshot(), readVisionState(), emergencyRecords(), corpusStore.get().catch(() => null), readSemanticState(),
+  ]);
+  if (corpusRecord?.status && corpusRecord.status !== 'ready' && corpusRecord.status !== 'not-installed') {
+    observeEmergencyComponentState({
+      id: CORPUS_DOWNLOAD_ID,
+      status: corpusRecord.status,
+      loaded: Number(corpusRecord.staging?.bytesReceived) || 0,
+      total: Number(corpusRecord.staging?.totalBytes) || 0,
+      progress: Number(corpusRecord.staging?.totalBytes) > 0 ? (Number(corpusRecord.staging?.bytesReceived) || 0) / Number(corpusRecord.staging?.totalBytes) : 0,
+      updatedAt: Number(corpusRecord.updatedAt) || Date.now(),
+      detail: corpusRecord.status === 'error' ? String(corpusRecord.error || '') : '',
+    });
+  }
+  if (semantic?.status) {
+    observeEmergencyComponentState({
+      id: SEMANTIC_DOWNLOAD_ID,
+      status: semantic.status,
+      loaded: Number(semantic.loaded) || 0,
+      total: Number(semantic.total) || 0,
+      progress: Number(semantic.progress) || 0,
+      updatedAt: Date.now(),
+    });
+  }
+  await requestTextModelState(snapshot?.enabled);
+  return addTelemetry([
+    modelItem(textModelState, 'text'),
+    modelItem(vision, 'vision'),
+    ...archiveItems(snapshot),
+    ...pdfItems(pdfs),
+    ...emergencyComponentItems(),
+  ].filter(Boolean).sort((left, right) => priority(left) - priority(right)
+    || String(left.title).localeCompare(String(right.title))));
+}
+
+function glyphFor(item) {
+  if (item.kind === 'model') return 'GPU';
+  if (item.kind === 'archive') return 'ZIM';
+  if (item.kind === 'component') return item.componentKind === 'corpus' ? 'TXT' : 'E5';
+  return 'PDF';
+}
+
+function livenessFor(item) {
+  if (!ACTIVE_STATUSES.has(item.status) || item.status === 'stopping') return item.status;
+  if (item.secondsSinceProgress <= 12) return 'moving';
+  if (item.secondsSinceProgress <= 60) return 'working';
+  return 'quiet';
+}
+
+function metricsFor(item) {
+  const parts = [];
+  if (Number(item.total) > 0) parts.push(`${formatBytes(item.loaded)} / ${formatBytes(item.total)}`);
+  else if (Number(item.loaded) > 0) parts.push(formatBytes(item.loaded));
+  if (ACTIVE_STATUSES.has(item.status) && item.status !== 'stopping') {
+    if (item.speed > 0 && item.secondsSinceProgress <= 15) {
+      parts.push(`${formatBytes(item.speed)}/s`);
+      const remaining = Math.max(0, Number(item.total) - Number(item.loaded));
+      if (remaining > 0) parts.push(`ETA ${formatDuration(remaining / item.speed)}`);
+    } else if (item.secondsSinceProgress >= 2) {
+      parts.push(`↻ ${formatDuration(item.secondsSinceProgress)}`);
+    }
+  }
+  return parts.join(' · ');
+}
+
+function actionButton(action, label, item, className = '') {
+  const disabled = activeActions.has(item.id) ? ' disabled' : '';
+  return `<button type="button" class="wb-dl-action ${className}" data-download-action="${action}" data-download-id="${escapeHtml(item.id)}"${disabled}>${escapeHtml(label)}</button>`;
+}
+
+function actionsFor(item) {
+  if (item.status === 'stopping') return '';
+  const actions = [];
+  if (ACTIVE_STATUSES.has(item.status)) actions.push(actionButton('pause', t('ap.pause'), item));
+  if (ATTENTION_STATUSES.has(item.status)) actions.push(actionButton('resume', t('ap.resume'), item, 'primary'));
+  actions.push(actionButton('stop', t('st.providers.webgpu_download.stop'), item, 'danger'));
+  return actions.join('');
+}
+
+function summaryText(items) {
+  const counts = new Map();
+  for (const item of items) {
+    const status = ACTIVE_STATUSES.has(item.status) ? 'downloading' : item.status;
+    counts.set(status, (counts.get(status) || 0) + 1);
+  }
+  return ['downloading', 'downloaded', 'paused', 'error']
+    .filter(status => counts.has(status))
+    .map(status => `${statusText(status)} ${counts.get(status)}`)
+    .join(' · ');
+}
+
+function renderRuler(items) {
+  return items.map(item => `
+    <span class="wb-dl-ruler-segment" data-status="${escapeHtml(item.status)}" style="flex-grow:${Math.max(1, Number(item.total) || 1)}">
+      <span style="width:${progressFor(item)}%"></span>
+    </span>`).join('');
+}
+
+function renderItems(items) {
+  const manage = t('st.display.apocalypse_mode.manage');
+  return items.map(item => `
+    <li class="wb-dl-item" data-status="${escapeHtml(item.status)}" data-liveness="${livenessFor(item)}">
+      <span class="wb-dl-kind" aria-hidden="true">${glyphFor(item)}</span>
+      <span class="wb-dl-copy">
+        <strong title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</strong>
+        <span class="wb-dl-state"><i aria-hidden="true"></i>${escapeHtml(statusText(item.status))}${item.total ? ` · ${Math.round(progressFor(item))}%` : ''}</span>
+        ${metricsFor(item) ? `<small class="wb-dl-metrics">${escapeHtml(metricsFor(item))}</small>` : ''}
+        ${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ''}
+      </span>
+      <span class="wb-dl-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progressFor(item))}">
+        <span style="width:${progressFor(item)}%"></span>
+      </span>
+      <span class="wb-dl-actions">${actionsFor(item)}</span>
+      <a class="wb-dl-manage" href="${escapeHtml(item.href)}" title="${escapeHtml(manage)}" aria-label="${escapeHtml(`${manage}: ${item.title}`)}">→</a>
+    </li>`).join('');
+}
+
+async function stopPausedPdf(item) {
+  await sendEmergencyDownloadCommand('stop_resource', { id: item.sourceId });
+}
+
+async function runEmergencyAction(item, action) {
+  if (item.kind === 'component' && item.componentKind === 'corpus') {
+    if (action === 'pause') return await sendEmergencyDownloadCommand('pause_corpus');
+    if (action === 'resume') return await sendEmergencyDownloadCommand('start_corpus');
+    if (action === 'stop') return await sendEmergencyDownloadCommand('cancel_corpus');
+  }
+  if (item.kind === 'component' && item.componentKind === 'semantic') {
+    if (action === 'pause') return await sendEmergencyDownloadCommand('pause_semantic');
+    if (action === 'resume') return await sendEmergencyDownloadCommand('start_semantic');
+    if (action === 'stop') return await sendEmergencyDownloadCommand('stop_semantic');
+  }
+  if (item.kind === 'pdf') {
+    if (action === 'pause') return await sendEmergencyDownloadCommand('pause_resource', { id: item.sourceId });
+    if (action === 'resume') {
+      const records = await emergencyRecords();
+      const record = records.find(entry => entry.id === item.sourceId);
+      if (!record) return null;
+      return await sendEmergencyDownloadCommand('start_resource', { resource: record });
+    }
+    if (action === 'stop') return await sendEmergencyDownloadCommand('stop_resource', { id: item.sourceId });
+  }
+  return null;
+}
+
+async function runItemAction(item, action) {
+  if (!item || activeActions.has(item.id)) return;
+  if (action === 'stop' && !globalThis.confirm(t('wl.confirm_stop'))) return;
+  activeActions.add(item.id);
+  render([...renderedItems.values()]);
+  try {
+    if (item.kind === 'archive') {
+      const command = action === 'stop' ? 'delete' : action;
+      await send({ target: 'background', action: 'apocalypse_mode', command, id: item.sourceId });
+    } else if (item.kind === 'model') {
+      const suffix = item.modelKind === 'vision' ? '_vision' : '';
+      const command = action === 'resume' ? `start_webgpu${suffix}_download` : `${action}_webgpu${suffix}_download`;
+      const state = await send({
+        target: 'background',
+        action: command,
+        model: item.modelId,
+      });
+      if (item.modelKind === 'text' && state) textModelState = resolveTextModelState(state);
+    } else if (item.kind === 'component' || item.kind === 'pdf') {
+      if (action === 'stop' && item.kind === 'pdf' && !ACTIVE_STATUSES.has(item.status)) {
+        await stopPausedPdf(item);
+      } else {
+        await runEmergencyAction(item, action);
+      }
+    }
+  } finally {
+    activeActions.delete(item.id);
+    await refresh();
+  }
+}
+
+function ensureTracker() {
+  let tracker = document.getElementById('wb-download-tracker');
+  if (tracker) return tracker;
+  tracker = document.createElement('aside');
+  tracker.id = 'wb-download-tracker';
+  tracker.className = 'wb-download-tracker';
+  tracker.hidden = true;
+  tracker.innerHTML = `
+    <button type="button" class="wb-dl-summary" aria-expanded="false">
+      <span class="wb-dl-beacon" aria-hidden="true">↓</span>
+      <span class="wb-dl-title"></span>
+      <span class="wb-dl-stats" role="status" aria-live="polite"></span>
+      <span class="wb-dl-chevron" aria-hidden="true">⌃</span>
+    </button>
+    <div class="wb-dl-ruler" aria-hidden="true"></div>
+    <section class="wb-dl-panel">
+      <ol class="wb-dl-list"></ol>
+    </section>`;
+  tracker.querySelector('.wb-dl-summary').addEventListener('click', () => {
+    expanded = !expanded;
+    try { localStorage.setItem(EXPANDED_KEY, String(expanded)); } catch {}
+    applyExpandedState(tracker);
+  });
+  tracker.querySelector('.wb-dl-list').addEventListener('click', event => {
+    const button = event.target.closest('[data-download-action][data-download-id]');
+    if (!button) return;
+    void runItemAction(renderedItems.get(button.dataset.downloadId), button.dataset.downloadAction);
+  });
+  document.body.append(tracker);
+  return tracker;
+}
+
+function applyExpandedState(tracker) {
+  tracker.dataset.expanded = String(expanded);
+  tracker.querySelector('.wb-dl-summary').setAttribute('aria-expanded', String(expanded));
+}
+
+function render(items) {
+  const tracker = ensureTracker();
+  renderedItems = new Map(items.map(item => [item.id, item]));
+  tracker.querySelector('.wb-dl-title').textContent = label();
+  tracker.querySelector('.wb-dl-summary').setAttribute('aria-label', `${label()}: ${summaryText(items)}`);
+  tracker.querySelector('.wb-dl-stats').textContent = summaryText(items);
+  tracker.querySelector('.wb-dl-ruler').innerHTML = renderRuler(items);
+  tracker.querySelector('.wb-dl-list').innerHTML = renderItems(items);
+  tracker.hidden = items.length === 0;
+  document.documentElement.classList.toggle('wb-download-tracker-visible', items.length > 0);
+  applyExpandedState(tracker);
+}
+
+async function refresh() {
+  if (refreshing || document.hidden) return;
+  refreshing = true;
+  try {
+    render(await collectItems());
+  } catch {
+    // A tracker must never interfere with the page that owns a download.
+  } finally {
+    refreshing = false;
+  }
+}
+
+try { expanded = localStorage.getItem(EXPANDED_KEY) === 'true'; } catch {}
+
+runtimeApi?.runtime?.onMessage?.addListener?.(message => {
+  if (message?.type === 'webgpu-text-download-state') {
+    textModelState = message.state || null;
+    void refresh();
+    return false;
+  }
+  if (message?.type === EMERGENCY_DOWNLOAD_STATE_MESSAGE) {
+    if (message.semantic) {
+      observeEmergencyComponentState({
+        id: SEMANTIC_DOWNLOAD_ID,
+        status: message.semantic.status,
+        loaded: Number(message.semantic.loaded) || 0,
+        total: Number(message.semantic.total) || 0,
+        progress: Number(message.semantic.progress) || 0,
+        updatedAt: Date.now(),
+      });
+    }
+    void refresh();
+    return false;
+  }
+  return false;
+});
+
+runtimeApi?.storage?.onChanged?.addListener?.((changes, area) => {
+  if (area === 'local' && (changes[VISION_STATE_KEY] || changes[EMERGENCY_SEMANTIC_STATE_KEY])) void refresh();
+});
+
+globalThis.addEventListener(EMERGENCY_COMPONENT_STATE_EVENT, event => {
+  observeEmergencyComponentState(event.detail);
+  void refresh();
+});
+componentDownloadStateChannel?.addEventListener('message', event => {
+  observeEmergencyComponentState(event.data);
+  void refresh();
+});
+try { componentDownloadStateChannel?.postMessage({ type: 'request' }); } catch {}
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
+document.addEventListener('wb-locale-changed', () => void refresh());
+
+void refresh();
+timer = globalThis.setInterval(() => void refresh(), 2_000);
+globalThis.addEventListener('pagehide', () => {
+  globalThis.clearInterval(timer);
+  componentDownloadStateChannel?.close();
+}, { once: true });

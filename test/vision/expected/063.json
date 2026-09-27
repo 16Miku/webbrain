@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "id": "063",
+  "image": "images/063.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "checkout",
+        "cart",
+        "order",
+        "purchase"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Confirm purchase",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "item",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Kulaklık",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "total",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "₺4.799,00",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Siparişi onayla",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "banner",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "3D Secure verification required",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Quote ₺4.799,00 and Siparişi onayla; correctly report whether the action is disabled and why."
+}

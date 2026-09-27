@@ -1,6 +1,6 @@
 # WebBrain Chrome/Edge Extension — Architecture
 
-> Version 26.2.2 · Manifest V3 · Service Worker background
+> Version 36.8.0 · Manifest V3 · Service Worker background
 
 ## High-Level Overview
 
@@ -59,7 +59,9 @@ src/chrome/
 │   │   └── network-tools.js    # fetch_url, research_url, downloads, skill HTTP tools
 │   ├── offscreen/
 │   │   ├── offscreen.html      # Offscreen document host
-│   │   └── offscreen.js        # HTTP fetch proxy (localhost/PNA fallback)
+│   │   ├── offscreen.js        # HTTP fetch proxy (localhost/PNA fallback)
+│   │   ├── vision-inference-host.js # Local WebGPU worker bridge
+│   │   └── inference-worker.js # Transformers.js WebGPU inference worker
 │   ├── providers/
 │   │   ├── base.js             # Provider interface
 │   │   ├── manager.js          # Provider lifecycle
@@ -68,6 +70,7 @@ src/chrome/
 │   │   ├── aws-bedrock.js      # AWS Bedrock Converse
 │   │   ├── anthropic.js        # Anthropic Claude
 │   │   ├── llamacpp.js         # Local llama.cpp server
+│   │   ├── webgpu.js           # Chrome-only endpoint-free text + vision providers
 │   │   └── fetch-with-fallback.js  # Uses offscreen proxy on direct-fetch failure
 │   ├── trace/
 │   │   └── recorder.js         # Optional IndexedDB run recorder
@@ -100,10 +103,10 @@ src/chrome/
 | Permission | Why |
 |---|---|
 | `debugger` | CDP access — trusted mouse/keyboard, pixel-perfect screenshots, shadow-DOM piercing. The single most important differentiator in the Chrome/Edge build vs Firefox. |
-| `webRequest` | Opt-in, in-memory same-tab XHR/fetch observer for repeated-click API shortcut hints and opaque same-origin replay. Off by default. |
+| `webRequest` | In-memory same-tab XHR/fetch observer for repeated-click API shortcut hints and opaque same-origin replay. On by default; can be disabled in Settings. |
 | `alarms` | Scheduled tasks and scheduled resumes across browser sessions. |
 | `unlimitedStorage` | Optional trace recorder persists agent runs (LLM I/O + screenshots) into IndexedDB. A multi-step run can be 1–10 MB; the default ~10 MB origin cap fills after a few runs. |
-| `offscreen` | Localhost LLM servers (llama.cpp, LM Studio, Ollama) are unreachable from the MV3 service worker due to CORS / Private Network Access restrictions. An offscreen document hosts the fetch proxy AND the tab recorder. |
+| `offscreen` | Hosts the localhost/PNA fetch proxy, tab recorder, and optional on-device WebGPU model worker. Chrome MV3 service workers cannot provide those document APIs directly. |
 | `privateNetworkAccess` | Same motivation — allow calling `http://localhost:8080` from the extension. |
 | `tabCapture` | Optional "Record this tab" feature in the sidepanel. Pulls a MediaStream of the active tab's video+audio via `chrome.tabCapture.getMediaStreamId()`, hands it to the offscreen document which runs the MediaRecorder. |
 
@@ -114,7 +117,8 @@ src/chrome/
 Manual action-mode runs (Act or Dev) always call `agent/planner.js` before the
 first tool loop. Off uses the compact structured intent schema; Try and Strict
 use the full bounded JSON plan with steps, memory strategy, scheduling hints,
-and risks. The side panel renders a full plan
+risks, and a language-neutral structured messaging target when the trusted
+request authorizes an external message. The side panel renders a full plan
 as an editable approval card; approving it pins the plan to the scratchpad so it
 survives context compaction. Rejecting, timing out, or pressing Stop cancels
 before browser tools execute. In the default Try mode, invalid JSON after one
@@ -128,8 +132,8 @@ same cost allowance and abort checks as the main loop.
 
 Planner prompts keep optional policy text mechanically gated. The base planner
 prompt includes general repeated-task pacing, but API replay guidance is appended
-only when the tab conversation already has `/allow-api`; unavailable paths should
-not bloat every planner request.
+only when API mutations are authorized by the persistent setting or the tab's
+`/allow-api` override; unavailable paths should not bloat every planner request.
 
 ---
 
@@ -160,6 +164,13 @@ Download-job tools still run in action modes and use the normal Downloads
 permission gate before saving files. Third-party results should use
 `resultPolicy: "untrusted"` so the agent wraps and digests them like page
 content instead of trusted instructions.
+
+The exact packaged Wikipedia skill uses `agent/wikipedia-offline.js` to fall
+back to user-installed Kiwix/ZIM archives after a live request fails.
+`agent/apocalypse-mode.js` owns the opt-in archive manager, resumable verified
+downloads, durable IndexedDB state, OPFS or user-selected file bytes, and local openZIM title lookup.
+No archive is downloaded by enabling the skill. Local passages retain their
+canonical URL, language, archive date, and license metadata and stay untrusted.
 
 ---
 
@@ -251,11 +262,17 @@ that would feed back).
 Chrome/Edge MV3 allows exactly one offscreen document per extension. The
 localhost-fetch proxy already needs one for Private Network Access
 workarounds. Rather than fight over it, `offscreen/offscreen.html` loads
-both `offscreen.js` (fetch proxy) and `recorder.js` (tab recorder).
+`offscreen.js` (fetch proxy), `recorder.js` (tab recorder), and
+`vision-inference-host.js` (local WebGPU model worker bridge).
+`offline-rag-host.js` exclusively owns the OPFS SQLite SAH-pool worker used by
+both Emergency Box installation and standalone retrieval. Extension pages proxy
+index imports/deletions to that host because two workers cannot hold sync access
+handles for the same pool concurrently.
 `src/offscreen/ensure.js` is the single creation helper, declaring all
-reasons up front: `LOCAL_STORAGE` (fetch), `DISPLAY_MEDIA` (tab/display
-capture), `USER_MEDIA` (mic). Each script binds its own `runtime.onMessage` filter
-(`offscreen-fetch` vs `recorder-*`) so they don't collide.
+  reasons up front: `LOCAL_STORAGE` (fetch), `WORKERS` (WebGPU inference),
+  `BLOBS` (download staging), `DISPLAY_MEDIA` (tab/display capture),
+  `USER_MEDIA` (mic), and `AUDIO_PLAYBACK` (watch alerts). Each script binds its own `runtime.onMessage` filter
+(`offscreen-fetch`, `recorder-*`, or `webgpu-*`) so they don't collide.
 
 ### Transcription provider selection
 
@@ -426,11 +443,13 @@ Before any submit-like text `click`, the agent checks a per-tab+URL 45-second wi
 
 When the API mutation observer setting is enabled, `background.js` records the
 last 40 same-tab XHR/fetch requests using `chrome.webRequest.onBeforeRequest`.
-The setting is off by default. When loop detection sees the same `click` /
-`click_ax` repeat, `_detectApiShortcut()` checks whether each click produced the
-same exact URL + method within 3 seconds. If so, the warning suggests
+The setting is on by default and can be disabled in Settings. When loop detection
+sees the same `click` / `click_ax` repeat, `_detectApiShortcut()` checks whether
+each click produced the same exact URL + method within 3 seconds. If so, the warning suggests
 `fetch_url({url, method})` instead of another click. This is advisory only:
-POST/PUT/PATCH/DELETE still depend on the conversation's `/allow-api` state, and
+POST/PUT/PATCH/DELETE still depend on the persistent **Always allow API mutations**
+setting (on by default) or the conversation's `/allow-api` override. If the
+persistent setting cannot be read from storage, it grants no authorization.
 GET/non-network capabilities still follow the normal permission gate.
 
 ### Ambiguous-click CDP enrichment (v3.6.4+)
@@ -466,7 +485,7 @@ tier:
 > whitespace-normalising rich-text bodies. Only the toolbar recovery contract
 > requires a positive `true`.
 
-`click_ax`, `type_ax`, `set_field`, `click` (by text/selector/index/coords), `type_text`, `press_keys`, `scroll`, `navigate`, `go_back`, `go_forward`, `new_tab`, `promote_iframe`, `wait_for_element`, `iframe_read`, `iframe_click`, `iframe_type`, `upload_file`
+`click_ax`, `type_ax`, `set_field`, `click` (by text/selector/index/coords), `type_text`, `press_keys`, `scroll`, `navigate`, `go_back`, `go_forward`, `promote_iframe`, `wait_for_element`, `iframe_read`, `iframe_click`, `iframe_type`, `upload_file`
 
 Iframe reads enumerate semantic labels, values, and stable per-selector `matchIndex` values. Iframe click/type calls first resolve exactly one frame and element and fail before dispatch on ambiguity. `promote_iframe` is the current-tab escape hatch for unreliable embeds: it resolves a child-frame URL from `webNavigation`, applies the normal navigation and unsaved-state guards, and preserves Back history. An `iframe_type` action opens a completion obligation that only `verify_form({urlFilter})` against the same iframe scope can clear.
 
@@ -538,9 +557,11 @@ class BaseProvider {
 | `AnthropicProvider` | `/v1/messages` | `claude-(3\|sonnet-4\|opus-4)` patterns |
 | `LlamaCppProvider` | `localhost:8080/v1/chat/completions` | Enabled by default, configurable |
 | OpenAI-compatible configs | Provider-specific `/v1` endpoint | Model-name regex or explicit config |
+| `WebGPUProvider` | Chrome offscreen worker; no endpoint | Text-only selectable Hugging Face ONNX model |
+| `WebGPUVisionProvider` | Chrome offscreen worker; no endpoint | Always; dedicated screenshot-description sidecar only |
 
-`ProviderManager` seeds WebBrain Cloud, seven local backends, Azure OpenAI, AWS
-Bedrock, direct cloud providers, and router providers. The canonical current ID
+`ProviderManager` seeds WebBrain Compass, one Chromium in-browser WebGPU provider,
+nine local endpoints, Azure OpenAI, AWS Bedrock, direct cloud providers, and router providers. The canonical current ID
 and default-model table is maintained in
 [`docs/providers-and-models.md`](../../docs/providers-and-models.md).
 
@@ -550,13 +571,27 @@ OpenAI format → Anthropic blocks: system → separate `system` field; `assista
 
 ### fetch-with-fallback
 
-`providers/fetch-with-fallback.js` tries a direct `fetch` first. On failure (typically a `TypeError: Failed to fetch` against localhost), it lazily creates an offscreen document and proxies through it. This is the only reason the `offscreen` permission exists.
+`providers/fetch-with-fallback.js` tries a direct `fetch` first. On failure
+(typically a `TypeError: Failed to fetch` against localhost), it lazily creates
+an offscreen document and proxies through it. The shared offscreen host also
+supports recording, validated download staging, audio, the local controller
+bridge, and the optional local WebGPU model worker.
 
 ---
 
 ## Scheduled Tasks (`scheduler.js`)
 
 `ScheduledJobManager` (Chrome/Edge build: `src/chrome/src/agent/scheduler.js`) is instantiated in `background.js` and uses `chrome.alarms` to fire deferred work.
+
+The optional `systemone-judge.js` module is a separate, browser-neutral HTTP
+sidecar. It is disabled by default and is wired into scheduled watch and task
+completion only after the user enables the global switch, the relevant feature
+switch, and supplies a TypeSafe API key. The sidecar receives bounded task and
+observation state, uses the documented `jev-latest` System One contract, and
+can only downgrade a scheduler success to `partial`. It never runs browser
+tools or supplies instructions to the agent. Its retry, timeout, answer-shape,
+privacy, and fail-open behavior lives in the shared module so the Chrome and
+Firefox copies remain byte-identical.
 
 **Chromium/Edge-specific behavior vs Firefox:**
 
@@ -691,9 +726,14 @@ in-progress Markdown after older delta events have been acknowledged.
 Off by default. Enabled via Settings → Display → "Record traces". When on, every agent run writes to an IndexedDB database (`webbrain-traces`):
 
 - `runs` store: one row per user message — model, provider, token totals, timestamps.
-- `events` store: one row per LLM request/response, tool call, screenshot. Rows are indexed by `(runId, seq)`.
+- `events` store: one row per LLM request/response, tool call, screenshot. LLM requests retain content-free prompt provenance (controlled variant, counts, declared prompt/tool policy revisions, and runtime-mode alignment), not fingerprints or raw system prompts, message text, tool schemas, or tool names. Policy revisions are bumped when controlled prompt templates or tool-exposure rules change; private request content does not affect them. Rows are indexed by `(runId, seq)`.
 
 The Traces page (`ui/traces.html`) lists runs and renders their event timelines. Exporting produces a JSON blob identical to the ones used in this session's debugging. Data never leaves the machine — this is why `unlimitedStorage` is requested (a multi-step run with screenshots is 1–10 MB).
+
+The browser-owned trusted runtime context also carries the effective mode once
+per run. Both planner and executor receive the same envelope. Act/Dev envelopes
+advertise mutation availability and route still-missing required inputs through
+`clarify`; `done` remains terminal.
 
 ---
 
@@ -705,7 +745,7 @@ The Traces page (`ui/traces.html`) lists runs and renders their event timelines.
 |---|---|
 | Verbose mode | Shows full tool args + JSON results in chat instead of compact labels. |
 | Screenshot fallback | Capture a screenshot when DOM read fails or returns insufficient content. |
-| Site adapters | Inject per-site guidance into the first user message (default on). |
+| Site adapters | Inject per-site guidance and expose validated app-owned workflow jobs to the planner (default on). |
 | Auto-screenshot | `off` / `navigation` / `state_change` (default) / `every_step`. |
 | Record traces | Enable the trace recorder (see above). |
 | Completion sound | Play a chime in the side panel when the agent finishes. |
@@ -715,13 +755,13 @@ The Traces page (`ui/traces.html`) lists runs and renders their event timelines.
 
 ## Site Adapters
 
-58 adapters inject site-specific guidance into the first user message. Re-injected mid-conversation if the user navigates to a different matched site. Only ONE adapter fires at a time (the first matching `match(url)` wins), so the prompt cost is fixed regardless of total adapter count — what grows is the maintenance surface.
+110+ adapters inject site-specific guidance into the first user message. Re-injected mid-conversation if the user navigates to a different matched site. Only ONE adapter fires at a time (the first matching `match(url)` wins), so the prompt cost is fixed regardless of total adapter count — what grows is the maintenance surface. Every match emits content-free adapter/revision/notes-injected trace metadata. Selected high-evidence adapters also expose `webbrain-adapter-workflow/2` jobs. Both planner variants see only bounded app-owned job IDs/descriptions; the binding is revalidated against the live URL immediately before execution and a trusted Continue fallback retains it only on the same adapter/revision/schema/job. The executor receives the selected stages and evidence contract. Required submissions need job-bound terminal evidence after dispatch (for example paid/ticket-issued transaction state or recipient-bound sent-message state), and repeated jobs must exactly reconcile terminal ledger IDs against a complete app-owned accessibility-tree or seeded inventory. Edited review text clears hidden job routing, and selected jobs additionally record only adapter/revision/job/template identity.
 
 | Category | Sites |
 |---|---|
 | Code & Dev | GitHub, GitLab, Stack Overflow, Hacker News |
 | Coding practice | LeetCode, HackerRank |
-| Productivity | Gmail, Outlook, Google Docs, Google Sheets, Google Calendar, Slack, Notion, Jira, Trello |
+| Productivity | Microsoft Forms, Gmail, Outlook, Google Docs, Google Sheets, Google Calendar, Slack, Notion, Jira, Trello |
 | Social | Twitter/X, LinkedIn, Reddit, YouTube, Instagram, TikTok, Facebook |
 | Messaging | Discord, WhatsApp Web, Telegram |
 | Publishing | Medium, Substack, WordPress |
@@ -729,10 +769,12 @@ The Traces page (`ui/traces.html`) lists runs and renders their event timelines.
 | Travel | Airbnb, Booking.com, Expedia, Google Maps, Google Flights, Kayak, OpenTable |
 | Cloud / Infra | AWS, GCP, Cloudflare, Vercel |
 | News (paywalls) | NYT, WSJ, FT, Bloomberg, Economist, Washington Post |
-| Job portals | Greenhouse, Workday |
+| Job portals | NaukriGulf, Greenhouse, Workday |
 | Finance | Stripe, Coinbase, Robinhood, TradingView, `finance-generic` (banks/exchanges/payments) |
 
 Finance adapters carry a `[FINANCE / HIGH-STAKES]` banner and extra confirmation guidance. The `finance-generic` adapter matches a curated regex of bank, brokerage, crypto exchange, and payment domains as a catch-all when no site-specific adapter exists.
+
+Adapters may also opt into narrow runtime enforcement. On Douyin `/chat`, an `active_conversation` planner target must first be pinned to exactly one strong visible header identity before any page tool runs. Send-like actions then run a read-only content probe immediately before dispatch. Only one unique exact normalized identity from the narrow, non-scrollable header above a lower-page layout composer can match the pinned or explicitly named recipient; unresolved controls/composers, ambiguous evidence, and mismatches return a no-dispatch blocker. Enter in another editable such as recipient search is non-message, and a structurally verified conversation row in the separate left rail remains selectable even when a short list does not overflow, but distant controls and nested row actions remain inconclusive. Protected composer Enter dispatch is limited to one keypress per verification. Send-capable clicks, accessibility clicks, submitted fields, and Enter presses carry a one-use binding to the action target, composer, URL, and identity set; direct content paths and trusted CDP mouse/key paths consume and revalidate it immediately before the consequential click or key event. Protected accessibility clicks never issue a second no-progress fallback click. Search text, message content, and form values never count as recipient evidence. Dispatch-capable tools that cannot bind effects to the probed recipient are blocked on the protected route, including `upload_file` because a page change handler may auto-send the attachment. Saved workflows cannot inherit a planner recipient target, so any potentially dispatching step scoped to a protected messaging route stops before deterministic replay and must be run as a normal Act task with a freshly named recipient.
 
 ---
 
@@ -804,7 +846,7 @@ Finance adapters carry a `[FINANCE / HIGH-STAKES]` banner and extra confirmation
 - `debugger` → trusted events on any tab.
 - Cross-origin iframes reachable via content-script injection (extension privilege).
 - Plan before Act can require user approval before any action-mode tool executes.
-- `/allow-api` flag required for API mutations (POST/PUT/PATCH/DELETE via `fetch_url`).
+- The persistent **Always allow API mutations** setting (on by default) or the conversation's `/allow-api` override waives permission prompts for API mutations (POST/PUT/PATCH/DELETE via `fetch_url` / `research_url`).
 - Finance adapters layer extra confirmation guidance.
 - Tool results capped at 8 KB to limit prompt-injection surface.
 - Offscreen proxy only forwards requests the user's own code initiated (provider SDK traffic).

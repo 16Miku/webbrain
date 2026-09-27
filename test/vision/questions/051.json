@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "051",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "data-table",
+  "title": "Deployment history",
+  "image": "images/051.png",
+  "question": "Locate the target row and report its exact status without mixing it with neighboring rows. Focus on the “Deployment history” screen.",
+  "defaultPromptMode": "production"
+}

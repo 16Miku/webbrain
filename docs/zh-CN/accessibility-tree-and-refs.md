@@ -86,6 +86,13 @@ role "accessible name" [ref_id] href="..." type="..." placeholder="..." value=".
 
 代理在几乎每一轮中都将此作为首个操作——它比截图更快、更便宜，并且适用于纯文本模型。
 
+对于完整的 Gmail 会话读取，第一个结果会提供活动会话可信的
+`conversationRootRefId`。覆盖要求使用 `filter:"all"` 和 `maxDepth:15`
+从第 1 页到终止页读取该锚定子树，并原样复用每个 `continuationArgs`。
+文档根节点的续页还会遍历收件箱，因此不计入覆盖。**Collapse all**
+状态是所有邮件已展开的独立证据。每个新的精确页面都算作有界进展；
+重复、跳页、过期、树已变化或错误 `ref_id` 的读取则不算。
+
 ### `click_ax({ref_id})`
 
 1. 通过 `__wb_ax_lookup()` 解析 `ref_id`
@@ -175,7 +182,7 @@ await cdpClient.evaluate(tabId, `
 如果嵌入式应用或表单仍然难以可靠检查或定位，`promote_iframe` 会让**当前运行
 标签页**导航到该子框架自己的独立 URL。后续工具会在独立页面上运行，同时保留正常
 的浏览器后退历史，因此可用 `go_back` 或浏览器的后退按钮返回嵌入页面。这是在同一
-标签页内切换，不是在后台打开 `new_tab`。
+标签页内切换，不是在后台创建新标签页。
 
 请在 iframe 中进行**编辑之前**使用以下流程：
 

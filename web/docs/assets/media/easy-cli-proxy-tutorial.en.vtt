@@ -1,0 +1,100 @@
+WEBVTT
+
+00:00:00.200 --> 00:00:01.566
+Hello everyone!
+
+00:00:01.766 --> 00:00:06.066
+In this tutorial, I’ll show you how to connect your
+AI subscriptions to WebBrain.
+
+00:00:06.100 --> 00:00:15.166
+Currently, you can use WebBrain with your own API keys or local AI
+tools like Ollama, llama.cpp, or LM Studio.
+
+00:00:15.200 --> 00:00:22.233
+However, you can also integrate your existing subscriptions,
+including Claude, ChatGPT, and Gemini.
+
+00:00:22.233 --> 00:00:26.766
+To get started, you'll need a simple application
+called Easy CLI Proxy API.
+
+00:00:26.966 --> 00:00:29.200
+I'll provide the link for you.
+
+00:00:29.433 --> 00:00:35.566
+It features a clean graphical interface, and the installation process
+is standard, so we'll dive right in.
+
+00:00:35.566 --> 00:00:38.266
+In the app, navigate to the OAuth tab.
+
+00:00:38.300 --> 00:00:42.766
+Even if the runtime is stopped, this section remains active.
+
+00:00:42.766 --> 00:00:45.833
+From here, you can sign in to your various subscriptions.
+
+00:00:45.866 --> 00:00:48.233
+Let's use Google Antigravity as an example.
+
+00:00:48.266 --> 00:00:52.966
+A browser window will open for you to complete the
+authentication process.
+
+00:00:52.966 --> 00:00:58.766
+Once finished, you'll see a success message, and you can return to
+the Easy CLI Proxy app.
+
+00:00:58.800 --> 00:01:03.966
+Now, back on the home screen, you'll find your local API endpoint and
+authentication key.
+
+00:01:03.966 --> 00:01:09.733
+Simply copy the API URL for the model you want to use, along with the
+authentication key.
+
+00:01:09.733 --> 00:01:15.100
+Next, switch over to WebBrain and open the settings
+menu to configure your provider.
+
+00:01:15.100 --> 00:01:20.400
+Under the Providers tab, search for the “Local
+OpenAI-compatible Proxy” option.
+
+00:01:20.400 --> 00:01:25.500
+Paste the Server URL and your API Key into the designated fields.
+
+00:01:25.533 --> 00:01:29.633
+Click “Load Models” to see your available options.
+
+00:01:29.633 --> 00:01:33.166
+In this case, we'll select Gemini 3.7 Flash.
+
+00:01:33.200 --> 00:01:40.533
+For Gemini, you can set a large context window—up to one million
+tokens—though we'll use a standard range for this test.
+
+00:01:40.533 --> 00:01:46.166
+Ensure “Model Supports Vision” is checked and set the Prompt Tier to
+“Full” for the best performance.
+
+00:01:46.166 --> 00:01:49.433
+Save your settings and run a connection test.
+
+00:01:49.466 --> 00:01:52.300
+You should see a green success message.
+
+00:01:52.500 --> 00:01:53.866
+Let's test it out!
+
+00:01:54.100 --> 00:01:57.933
+We'll start with “Ask Mode” on Bluesky to see if
+the model responds correctly.
+
+00:02:01.166 --> 00:02:07.400
+Finally, we'll test “Act Mode” by having WebBrain draft and publish a
+post automatically.
+
+00:02:17.066 --> 00:02:18.233
+And that's it!

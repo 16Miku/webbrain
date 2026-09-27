@@ -1,5 +1,6 @@
 import {
   ADAPTER_WORKFLOW_SCHEMA,
+  cloneAdapterWorkflowJob,
   validateAdapterWorkflowProfile,
 } from './adapter-workflow.js';
 
@@ -15,6 +16,10 @@ import {
  *   - category: 'general' | 'finance' — finance gets an extra safety warning
  *   - notes: short bulleted guidance, injected into the first user message
  *   - fullPageCapture?.infiniteScroll(url): optional machine-readable capture policy
+ *   - messaging?.verifyActiveRecipient: optional URL-aware pre-dispatch recipient guard
+ *   - messaging?.deferActiveConversationUntilComposer: allow composer setup before pinning
+ *   - messaging?.supportsRecipientSets: require exact multi-recipient set equality
+ *   - revision?: positive workflow-contract revision for trace attribution
  *   - regions?: stable region identifiers for structured adapter discovery
  *   - jobs?: stable job identifiers covered by the optional workflow profile
  *   - workflow?: versioned state, evidence, confirmation, and terminal metadata
@@ -15729,6 +15734,34 @@ function isDirectBaiduSearchUrl(url) {
   return host === 'news.baidu.com' && /^\/ns(?:\/|$)/.test(path);
 }
 
+function isDirectBaiduTiebaUrl(url) {
+  let parts;
+  try {
+    parts = adapterUrlParts(url);
+  } catch (e) {
+    return false;
+  }
+  return Boolean(parts) && normalizedHostname(parts.parsed.hostname) === 'tieba.baidu.com';
+}
+
+function isBaiduTiebaUrl(url) {
+  if (isDirectBaiduTiebaUrl(url)) return true;
+  let parts;
+  try {
+    parts = adapterUrlParts(url);
+  } catch (e) {
+    return false;
+  }
+  if (!parts) return false;
+  const host = parts.parsed.hostname.toLowerCase();
+  if (host !== 'passport.baidu.com' && host !== 'wappass.baidu.com') return false;
+  const targets = [];
+  for (const param of ['backurl', 'u']) {
+    targets.push(...parts.parsed.searchParams.getAll(param));
+  }
+  return targets.length > 0 && targets.every(isDirectBaiduTiebaUrl);
+}
+
 function isBaiduSearchUrl(url) {
   if (isDirectBaiduSearchUrl(url)) return true;
   let parts;
@@ -15747,6 +15780,31 @@ function isBaiduSearchUrl(url) {
   return targets.length > 0 && targets.every(isDirectBaiduSearchUrl);
 }
 
+function applicationWorkflowJobs() {
+  return {
+    'prepare-application': {
+      description: 'Fill and review an application without submitting it.',
+      template: 'form',
+      stateChange: true,
+      requiresSubmission: false,
+      requiresLedger: true,
+      stages: ['access_gate', 'inventory', 'fill', 'review', 'reconcile', 'verify'],
+      successEvidence: ['Every requested field is reconciled against supplied information and the application remains unsubmitted.'],
+      partialEvidence: ['Completed, unresolved, and intentionally unanswered fields plus the exact blocker are reported.'],
+    },
+    'submit-application': {
+      description: 'Fill, review, submit, and verify an application.',
+      template: 'form',
+      stateChange: true,
+      requiresSubmission: true,
+      requiresLedger: true,
+      stages: ['access_gate', 'inventory', 'fill', 'review', 'reconcile', 'commit', 'verify'],
+      successEvidence: ['A post-submit confirmation, receipt, or application identifier is visible for the intended role.'],
+      partialEvidence: ['Completed, unresolved, and intentionally unanswered fields plus the exact submission blocker are reported.'],
+    },
+  };
+}
+
 const ADAPTERS = [
   // ─── Code & Dev Tools ─────────────────────────────────────────────────
   {
@@ -15761,6 +15819,64 @@ const ADAPTERS = [
   {
     name: 'github',
     category: 'general',
+    revision: 4,
+    regions: ['global'],
+    jobs: ['edit-file-and-commit', 'publish-release', 'upload-release-assets', 'review-pull-request', 'resolve-review-threads'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      jobs: {
+        'edit-file-and-commit': {
+          description: 'Edit one repository file, commit it, and verify the committed blob exactly.',
+          template: 'publish',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'fill', 'review', 'commit', 'verify', 'deliver'],
+          successEvidence: ['A new commit in the intended repository contains the intended path with the exact verified editor content.'],
+          partialEvidence: ['The edited path, commit state, and exact content or submission verification blocker are reported without claiming success.'],
+        },
+        'publish-release': {
+          description: 'Prepare, publish, and verify a GitHub release.',
+          template: 'publish',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'fill', 'review', 'commit', 'verify', 'deliver'],
+          successEvidence: ['The intended tag has a published release page with the reviewed title and notes.'],
+          partialEvidence: ['The prepared tag, title, notes, and exact publication blocker are reported without claiming a release exists.'],
+        },
+        'upload-release-assets': {
+          description: 'Upload, save, and verify one or more GitHub release assets.',
+          template: 'publish',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: true,
+          stages: ['access_gate', 'inventory', 'fill', 'review', 'commit', 'reconcile', 'verify', 'deliver'],
+          successEvidence: ['Every requested filename appears on the saved release page for the intended tag.'],
+          partialEvidence: ['Uploaded, saved, failed, and remaining filenames plus the exact blocker are reconciled.'],
+        },
+        'review-pull-request': {
+          description: 'Inspect a pull request and deliver evidence-backed review findings.',
+          template: 'reading',
+          stateChange: false,
+          requiresSubmission: false,
+          requiresLedger: false,
+          stages: ['scope', 'collect', 'verify', 'deliver'],
+          successEvidence: ['Every file in the requested review scope is inspected, and every actionable finding is supported by code evidence.'],
+          partialEvidence: ['Reviewed and unread files, current findings, and the exact access or scale blocker are reported.'],
+        },
+        'resolve-review-threads': {
+          description: 'Address, reply to, and resolve requested pull-request review threads.',
+          template: 'form',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: true,
+          stages: ['access_gate', 'inventory', 'fill', 'review', 'commit', 'reconcile', 'verify'],
+          successEvidence: ['Every requested thread shows the intended reply and resolved state on the current pull-request head.'],
+          partialEvidence: ['Addressed, replied, resolved, and remaining thread counts plus the exact blocker are reported.'],
+        },
+      },
+    },
     matches: (url) => /^https?:\/\/(www\.)?github\.com\//.test(url),
     notes: `
 - Username may only contain alphanumeric characters or single hyphens, and cannot begin or end with a hyphen.
@@ -15769,7 +15885,7 @@ const ADAPTERS = [
 - EDITING an existing release (URL pattern /<owner>/<repo>/releases/edit/<tag>): the file upload input is \`input#releases-upload\` (NOT a generic input[type="file"] — there are several on the page). Use \`upload_file({selector: "input#releases-upload", filePath: "..."})\` for each binary. After each upload, GitHub renders a small chip listing the filename in the "Attach binaries" area below the body editor — verify the chip appears with the correct filename before moving on. The commit button is green and says "Update release"; navigating away from the edit page WITHOUT clicking it discards the uploads. If you can't see "Update release" without scrolling, scroll down before clicking — don't navigate back to the dist folder thinking you need to re-fetch.
 - Files in a /tree/.../<folder> view (e.g. /tree/main/dist) can be downloaded via raw URLs of the form https://github.com/<owner>/<repo>/raw/<branch>/<path>. Once downloaded, the file is on local disk; do not re-download to "verify".
 - Creating a pull request: when no exact title was supplied, prefer the title field's Copilot button; for a blank description, prefer Copilot > "Summary". Review both suggestions and add missing rationale/testing context. Summary ignores existing description text, so preserve repository templates and user content; if Copilot is unavailable, draft normally. PR descriptions/comments use CodeMirror with a separate Markdown preview.
-- File browser: pressing "t" opens the fuzzy file finder (faster than navigating folders).
+- File browser: pressing "t" opens the fuzzy file finder (faster than navigating folders). When editing a repository file, verify the complete editor value before clicking "Commit changes"; then open or observe the new /commit/<sha> link so WebBrain can verify the raw file at that exact commit and reject duplicated or partial content.
 - Settings/admin actions often require re-entering the repo name as a confirmation — read the modal carefully.`,
   },
   {
@@ -15823,12 +15939,137 @@ const ADAPTERS = [
 - Comments are nested via indentation (the "indent" image's width tells you the depth). To find the top-level reply chain for a comment, walk back to the matching depth.
 - "More" link at the bottom of comment pages loads the next page — the URL has a "next" token, not a numeric page.`,
   },
+  {
+    name: 'producthunt',
+    category: 'general',
+    revision: 2,
+    regions: ['global'],
+    jobs: ['collect-ranked-products'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      jobs: {
+        'collect-ranked-products': {
+          description: 'Collect and reconcile a requested ranked Product Hunt list.',
+          template: 'collection',
+          stateChange: false,
+          requiresSubmission: false,
+          requiresLedger: false,
+          stages: ['scope', 'collect', 'verify', 'deliver'],
+          requiredRowFields: ['product_name', 'product_url', 'rank_context'],
+          successEvidence: ['Every requested row is reconciled with product name, stable product URL, observed rank context, and requested fields.'],
+          partialEvidence: ['Collected, duplicate, promoted, inaccessible, and remaining rows plus the exact coverage blocker are reported.'],
+        },
+      },
+    },
+    matches: (url) => /^https?:\/\/(?:www\.)?producthunt\.com(?:[/?#]|$)/i.test(url),
+    notes: `
+- Product Hunt rankings depend on the selected day, topic, and sort. Verify and report that scope before collecting; a personalized home feed is not automatically the requested leaderboard.
+- Keep promoted/sponsored cards separate from organic ranked products. A card's visual position alone is not proof of its organic rank.
+- Record each product's name and stable /products/... or /posts/... URL before scrolling because feeds can rerank or virtualize.
+- For multi-item requests, add one ledger row per requested rank or product, deduplicate stable URLs, and reconcile collected versus remaining rows before finishing.
+- Open product pages to verify requested details; do not infer taglines, maker identity, launch date, pricing, or availability from a truncated card.
+- Upvotes, comments, follows, collection saves, and submissions change account or public state. Do not activate them during collection tasks.`,
+  },
 
   // ─── Communication & Productivity ─────────────────────────────────────
   {
+    name: 'microsoft-forms',
+    category: 'general',
+    revision: 1,
+    regions: ['global'],
+    jobs: ['prepare-form', 'submit-form'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      jobs: {
+        'prepare-form': {
+          description: 'Fill and review a Microsoft Form without submitting it.',
+          template: 'form',
+          stateChange: true,
+          requiresSubmission: false,
+          requiresLedger: true,
+          stages: ['access_gate', 'inventory', 'fill', 'review', 'reconcile', 'verify'],
+          successEvidence: ['Every visible or conditionally revealed question is reconciled and the form remains unsubmitted.'],
+          partialEvidence: ['Answered, unanswered, hidden, and ambiguous questions plus the exact blocker are reported.'],
+        },
+        'submit-form': {
+          description: 'Fill, review, submit, and verify a Microsoft Form.',
+          template: 'form',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: true,
+          stages: ['access_gate', 'inventory', 'fill', 'review', 'reconcile', 'commit', 'verify'],
+          successEvidence: ['Microsoft Forms shows a post-submit response confirmation for the intended form.'],
+          partialEvidence: ['Answered, unanswered, hidden, and ambiguous questions plus the exact submit blocker are reported.'],
+        },
+      },
+    },
+    matches: (url) => /^https?:\/\/forms\.(?:cloud\.microsoft|office\.com)(?:[/?#]|$)/i.test(url),
+    notes: `
+- Inventory the current section's question labels, required state, answer type, and supplied answer before filling. Never invent personal, confidential, demographic, preference, or attestation answers.
+- A choice can reveal, hide, or replace later questions. After each branching answer or Next action, wait for stability, re-read the current section, and use fresh refs.
+- Long forms and grids can scroll inside a form region. Scroll the region that contains the unanswered questions rather than repeatedly scrolling the document.
+- Keep one progress row per question or stable question label, and reconcile answered, intentionally unanswered, ambiguous, and remaining questions before review.
+- Validation errors can appear only after Next or Submit. Treat them as evidence that the form is incomplete, correct only fields supported by user input, and do not loop unchanged actions.
+- Review the full visible response state before final Submit. A filled page, navigation to the last section, or successful click is not submission evidence.
+- Report success only from the post-submit confirmation. If sign-in, organization access, CAPTCHA, a missing answer, or an unavailable file blocks progress, preserve completed answers and report the exact blocker.`,
+  },
+  {
     name: 'gmail',
     category: 'general',
+    revision: 6,
+    regions: ['global'],
+    jobs: ['read-complete-thread', 'count-results', 'draft-email', 'send-email'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      jobs: {
+        'read-complete-thread': {
+          description: 'Read an entire Gmail conversation from oldest to newest.',
+          template: 'reading',
+          stateChange: false,
+          requiresSubmission: false,
+          requiresLedger: false,
+          stages: ['access_gate', 'scope', 'collect', 'verify', 'deliver'],
+          successEvidence: ['Trusted conversation-root coverage reaches its terminal page after every message is expanded and read oldest to newest.'],
+          partialEvidence: ['Read and unread message coverage plus the exact expansion, pagination, or access blocker are reported.'],
+        },
+        'count-results': {
+          description: 'Count all conversations in the active Gmail label or search.',
+          template: 'collection',
+          stateChange: false,
+          requiresSubmission: false,
+          requiresLedger: false,
+          stages: ['scope', 'search', 'collect', 'reconcile', 'verify', 'deliver'],
+          successEvidence: ['The deterministic Gmail count tool reports an exact conversation count for the verified query or label.'],
+          partialEvidence: ['The verified query, observed range, and exact reason an exact terminal count was unavailable are reported.'],
+        },
+        'draft-email': {
+          description: 'Create or revise and verify an unsent Gmail draft.',
+          template: 'message',
+          stateChange: true,
+          requiresSubmission: false,
+          requiresLedger: false,
+          stages: ['access_gate', 'scope', 'fill', 'review', 'verify'],
+          successEvidence: ['Gmail shows its own saved-draft state while the intended recipients, subject, and complete body are visible in the unsent draft.'],
+          partialEvidence: ['Verified draft fields and every missing or ambiguous field are reported without claiming the email was sent.'],
+        },
+        'send-email': {
+          description: 'Review, send, and verify a Gmail message.',
+          template: 'message',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'scope', 'fill', 'review', 'commit', 'verify'],
+          successEvidence: ['Gmail shows the reviewed message as sent to the intended recipients.'],
+          partialEvidence: ['The verified draft state and exact recipient, authorization, validation, or send blocker are reported.'],
+        },
+      },
+    },
     matches: (url) => /^https?:\/\/mail\.google\.com\//.test(url),
+    messaging: {
+      verifyActiveRecipient: true,
+      deferActiveConversationUntilComposer: true,
+      supportsRecipientSets: true,
+    },
     notes: `
 - Composing: the "Compose" button opens a floating window. The "To" field is a contact picker — type the name and pick from the dropdown, don't just type the raw email.
 - For a task that explicitly starts a new email or saves a new draft, if no compose window is open and the user named a recipient, click Compose immediately and use the To contact picker. Do not inspect the current thread or search the page merely to discover the recipient's raw email first; do that only if the picker fails, returns multiple ambiguous matches, or the user explicitly asked for the address. This fast path does not apply to reply or forward tasks; use the thread's Reply/Forward controls for those.
@@ -15836,8 +16077,10 @@ const ADAPTERS = [
 - The body is a contenteditable div (rich text), not a textarea. When the user asks to revise or replace the whole draft body and the accessibility tree exposes textbox "Message Body" [ref_N], use exactly one set_field({ref_id:"ref_N", text:"<complete revised body>", clear:true, submit:false}) call. Do not click the body first, do not use press_keys to clear it, and do not use click-by-text or coordinates. Re-read the body afterward to verify the replacement. If the user says not to send, never click Send.
 - Sending: the "Send" button is bottom-left of the compose window; "Send + Schedule" arrow is next to it for scheduled send.
 - Search uses operators: from:, to:, subject:, has:attachment, before:YYYY/MM/DD.
+- When the user needs the exact number of conversations in the current Gmail label or search results, verify the search query, then call gmail_count_results. It deterministically probes /p100, /p200 and binary-searches the final valid page. Do not click the "1-50 of many" range, choose Oldest, invent date buckets, or manually guess /pN. The result is a Gmail conversation count, not automatically a count of unique emails or deduplicated pull requests.
 - Before drafting a reply or forward, make the whole conversation visible and read it from oldest to newest. Prefer Gmail's top-level "Expand all" control; if it is not exposed and Gmail keyboard shortcuts are available, press ; to expand the entire conversation. Expand any still-collapsed message header individually. "Show trimmed content" reveals quoted text inside one message and is not a substitute for expanding the conversation; open it only when that quoted material is needed.
-- Gmail's accessibility tree is large and noisy. Prefer visible/interactive reads, use compose fields as soon as they appear, and never inspect generic or sibling ref_ids one-by-one; continue with the returned nextPage when truncated.`,
+- For a complete-thread Gmail read, use the first accessibility result's trusted conversationRootRefId as ref_id with filter:"all" and maxDepth:15, then reuse every exact returned continuationArgs until hasMore:false. Never paginate document-root page 2+, because that walks unrelated inbox rows instead of the active conversation.
+- Gmail's accessibility tree is large and noisy. Prefer visible/interactive reads for ordinary current-message or compose tasks, use compose fields as soon as they appear, and never inspect generic or sibling ref_ids one-by-one.`,
   },
   {
     name: 'yahoo-mail',
@@ -15926,6 +16169,18 @@ const ADAPTERS = [
 - If wappass.baidu.com/static/captcha shows "百度安全验证", stop and ask the user to complete it manually. After completion, continue the encoded backurl and re-read the results; do not bypass the challenge, discard the query, or loop on the search URL.`,
   },
   {
+    name: 'baidu-tieba',
+    category: 'general',
+    matches: isBaiduTiebaUrl,
+    notes: `
+- Tieba thread pages use a custom Vue action bar. The first-floor转发、点赞、收藏和更多 controls are icon-based custom elements; the comment count remains a native link. Use the accessibility tree or interactive-element list and prefer semantic controls over screenshot coordinates.
+- Reply rows expose separate "赞", "回复", and "更多" controls. Re-read the active post or comment container after scrolling, switching "只看楼主", or changing 热门/正序/倒序; indices and visible rows can change.
+- The reply prompt and visible "关注楼主"/"关注本吧" controls may be custom wrappers; treat them as state-changing or login-gated actions and verify the resulting UI.
+- "点赞", "关注", "回复", and "发帖" change account or public state. Perform them only when explicitly requested, then verify the icon/count or resulting state; a successful mouse dispatch alone is not proof.
+- The first-floor action bar may be below the initial viewport, while images open a viewer when clicked. Do not click nearby image coordinates or repeat a coordinate after an unexpected viewer opens; close or go back, then re-read the page.
+- Public pages may require Baidu sign-in. If "登录", QR verification, or "百度安全验证" appears, stop for the user and do not bypass, retry, or claim that the requested action succeeded.`,
+  },
+  {
     name: 'slack',
     category: 'general',
     matches: (url) => /^https?:\/\/app\.slack\.com\//.test(url) || /\.slack\.com\//.test(url),
@@ -15960,10 +16215,42 @@ const ADAPTERS = [
   {
     name: 'twitter',
     category: 'general',
+    revision: 2,
+    regions: ['global'],
+    jobs: ['publish-post', 'send-message'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      jobs: {
+        'send-message': {
+          description: 'Send and verify a direct message in the active X conversation.',
+          template: 'message',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'scope', 'fill', 'review', 'commit', 'verify'],
+          successEvidence: ['A new outgoing message matches the reviewed body in the intended conversation and has the provider sent status.'],
+          partialEvidence: ['The recipient, composer state, and exact send or verification blocker are reported.'],
+        },
+        'publish-post': {
+          description: 'Prepare, publish, and verify an X post.',
+          template: 'publish',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'fill', 'review', 'commit', 'verify', 'deliver'],
+          successEvidence: ['The reviewed post appears on the intended account with matching text and a stable status URL.'],
+          partialEvidence: ['The verified composer content and exact account, validation, publication, or verification blocker are reported.'],
+        },
+      },
+    },
     matches: (url) => /^https?:\/\/(www\.)?(twitter\.com|x\.com)\//.test(url),
+    messaging: {
+      verifyActiveRecipient: url => /^\/i\/chat\/[^/]+\/?$/.test(new URL(url).pathname),
+    },
     fullPageCapture: { infiniteScroll: isTwitterInfiniteScrollUrl },
     notes: `
-- The composer is a contenteditable, not a textarea. Character count is enforced client-side at 280 (or higher for Premium).
+- On /i/chat/<conversation>, the DM composer stays visible after sending. Verify the exact new outgoing message and its sent status in the same conversation; do not resend because the composer remains open.
+- The public post composer is a contenteditable, not a textarea. Character count is enforced client-side at 280 (or higher for Premium).
 - On /compose/post, call wait_for_stable before filling the composer. After typing, re-read the visible accessibility tree and require the Post control to be enabled (no disabled=true) before clicking it.
 - If the exact text is visible but Post remains disabled, keep the composer open and refill the editor with type_text({selector:"[data-testid=\\\"tweetTextarea_0\\\"]", text:"<exact complete post>", clear:true}); this uses the trusted Chrome typing path. Do not dismiss the composer to recover.
 - A click_ax result with verified:false or no observable posting evidence is not proof that the post was published. Keep the composer open and verify a new status URL or matching feed item before reporting success.
@@ -15988,7 +16275,36 @@ const ADAPTERS = [
   {
     name: 'linkedin',
     category: 'general',
+    revision: 3,
+    regions: ['global'],
+    jobs: ['publish-post', 'send-message'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      jobs: {
+        'publish-post': {
+          description: 'Prepare, publish, and verify a LinkedIn post.',
+          template: 'publish',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'fill', 'review', 'commit', 'verify', 'deliver'],
+          successEvidence: ['The reviewed post appears on the intended profile or page with a stable post URL.'],
+          partialEvidence: ['The verified composer content and exact account, validation, publication, or verification blocker are reported.'],
+        },
+        'send-message': {
+          description: 'Prepare, send, and verify a LinkedIn message.',
+          template: 'message',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'scope', 'fill', 'review', 'commit', 'verify'],
+          successEvidence: ['The exact message is visible in the intended recipient conversation as sent.'],
+          partialEvidence: ['The verified recipient and composer state plus the exact send blocker are reported.'],
+        },
+      },
+    },
     matches: (url) => /^https?:\/\/(www\.)?linkedin\.com\//.test(url),
+    messaging: { verifyActiveRecipient: true },
     fullPageCapture: { infiniteScroll: isLinkedInInfiniteScrollUrl },
     notes: `
 - LinkedIn aggressively lazy-loads everything; scroll to populate the feed/profile, but most content lives in modal-style detail panes.
@@ -15998,6 +16314,38 @@ const ADAPTERS = [
 - In Messaging, after filling the composer, the reliable send path is usually Enter. If the composer footer says "Press Enter to Send" or the send-options popover shows "Press Enter to Send", call press_keys({key:"Enter"}) from the composer. Do NOT keep scrolling to find a Send button that is already visible/implicit.
 - The three-dot / send-options control near the composer opens send preferences ("Press Enter to Send" vs "Click Send"); it is not the Send action. If you opened that popover by mistake, choose/keep "Press Enter to Send", close it if needed, then press Enter to send the focused composer.
 - Search has filters (People, Posts, Jobs, Companies) as tabs at the top.`,
+  },
+  {
+    name: 'bluesky',
+    category: 'general',
+    revision: 1,
+    regions: ['global'],
+    jobs: ['publish-post'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      jobs: {
+        'publish-post': {
+          description: 'Prepare, publish, and verify a Bluesky post.',
+          template: 'publish',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'fill', 'review', 'commit', 'verify', 'deliver'],
+          successEvidence: ['The reviewed post appears on the intended account with matching text and a stable post URL.'],
+          partialEvidence: ['The verified composer content and exact account, validation, publication, or verification blocker are reported.'],
+        },
+      },
+    },
+    matches: (url) => /^https?:\/\/(www\.)?bsky\.app\//.test(url),
+    notes: `
+- The composer opens from "Compose new post" (also the "New Post" button on wider layouts) and renders as a dialog over the current feed; the URL does not change while it is open.
+- The post body is a contenteditable rich-text editor, not a textarea. Use set_field / type_ax against the composer textbox ref rather than clicking into it by coordinates. Re-read it after filling and verify the complete text, mentions, link card, media, language, and account before publishing.
+- Images attach through a hidden <input type=file> behind "Add media to post" / "Add images". Do NOT click that control to open an OS file dialog — call upload_file with the file input's selector and the downloadId or absolute path, which attaches the file without any dialog.
+- Bluesky enforces a 300-character graphene limit and shows a live counter; a post over the limit leaves "Post" disabled rather than reporting an error.
+- Alt text is a separate per-image control. Add it only when the user asked for it.
+- "Post" (labelled "Publish post") commits. There is no <form> submit: the composer closes and the new post is inserted into the feed via XHR, so a closed composer alone is not proof.
+- Treat a cleared or closed composer as an intermediate signal only. Require one new bsky.app/profile/<account>/post/<id> link whose post card contains the complete reviewed text.
+- Report publication only after the post is reachable at its own /profile/<handle>/post/<id> URL under the intended handle, with the requested text and any attached image visible there.`,
   },
   {
     name: 'reddit',
@@ -16014,15 +16362,41 @@ const ADAPTERS = [
   {
     name: 'youtube',
     category: 'general',
-    matches: (url) => /^https?:\/\/((www|m)\.)?youtube\.com\//.test(url) || /^https?:\/\/youtu\.be\//.test(url),
+    revision: 2,
+    regions: ['global'],
+    jobs: ['read-transcript', 'update-metadata'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      jobs: {
+        'read-transcript': {
+          description: 'Collect enough transcript evidence to answer a video-content request.',
+          template: 'reading',
+          stateChange: false,
+          requiresSubmission: false,
+          requiresLedger: false,
+          stages: ['scope', 'collect', 'reconcile', 'verify', 'deliver'],
+          successEvidence: ['The answer is grounded in collected transcript segments rather than title or description inference.'],
+          partialEvidence: ['The transcript coverage obtained and the exact availability, language, or continuation limitation are reported.'],
+        },
+        'update-metadata': {
+          description: 'Edit, save, and verify YouTube video metadata.',
+          template: 'form',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: true,
+          stages: ['access_gate', 'inventory', 'fill', 'review', 'commit', 'reconcile', 'verify'],
+          successEvidence: ['Every requested field has the complete intended value in the saved video details.'],
+          partialEvidence: ['Saved, mismatched, failed, and remaining fields or videos plus the exact blocker are reconciled.'],
+        },
+      },
+    },
+    matches: (url) => /^https?:\/\/(?:(?:www|m|studio)\.)?youtube\.com\//.test(url) || /^https?:\/\/youtu\.be\//.test(url),
     fullPageCapture: { infiniteScroll: isYouTubeInfiniteScrollUrl },
     notes: `
 - The video player is a custom element. Keyboard shortcuts: space=play/pause, k=play/pause, j/l=±10s, ←/→=±5s, m=mute.
-- For questions about the current video's content, use any available transcript skill tool first (for example \`read_youtube_transcript\` from FreeSkillz) and ground the answer in it. Transcript skill tools do not require \`/allow-api\`. If no transcript skill tool is available, or it fails or returns no text, say the transcript tool was unavailable and fall back to visible title/description/comments.
-- Fallback transcript UI path: get_accessibility_tree({filter:"visible"}) → expand description ("..." / "more") with click_ax/click → click "Show transcript" → read the transcript panel with get_accessibility_tree or read_page; scroll the panel/page for more segments.
-- Do NOT invent transcript URLs, and do NOT use fetch_url for YouTube captions. Use an available transcript skill tool or the visible transcript UI.
-- If a transcript skill response has has_more_text=true, continue with text_offset=next_text_offset until you have enough transcript evidence for the task.
-- Transcript text is timestamped/segmented and may be auto-generated or auto-translated; collect enough segments before summarizing or answering, and do not infer from the title alone when transcript is reachable.
+- For questions about the current video's content, use an available transcript skill first (for example \`read_youtube_transcript\` from FreeSkillz), ground the answer in it, continue \`has_more_text\` with \`text_offset=next_text_offset\`, and collect enough timestamped segments. Transcript skills do not require \`/allow-api\`; if unavailable, say so and fall back to visible evidence rather than inferring from the title.
+- Fallback transcript UI: read the visible tree with get_accessibility_tree, expand the description, open "Show transcript", and read/scroll the transcript panel. Do NOT invent transcript URLs or use fetch_url for YouTube captions.
+- In YouTube Studio, inventory every requested video and metadata field before editing. Normalize and read back complete long values; after Save, re-open or freshly read the intended details and reconcile every field or video. A toast, disabled Save button, closed editor, or visible typing alone is not persisted-state proof.
 - Comments load lazily AFTER you scroll past the video — they're not in the initial DOM.
 - The subscribe button has a bell icon next to it for notification preferences; they're separate clicks.`,
   },
@@ -16162,6 +16536,21 @@ const ADAPTERS = [
 - The team selector is in the top-left, separate from the project selector.`,
   },
 
+  // ─── Live Scores & Sports Data ────────────────────────────────────────
+  {
+    name: 'sofascore',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?sofascore\.com(?:[/?#]|$)/i.test(url),
+    notes: `
+- Fix the sport, date, and result scope before collecting. The main surface separates All / Favourites / Competitions and Live / Finished / Upcoming; a visible list is not automatically the user's requested scope.
+- Match URLs carry a stable event identity in /<sport>/match/...#id:<event-id>. Record that URL or event ID with the team names before scrolling or opening details.
+- Rows can show bookmaker odds (1 / X / 2) beside status, clock, and score. Never report an odds value as a score; anchor the result to both team labels and the explicit status/score fields.
+- Interpret status explicitly: a live minute is provisional, FT is full time, AET is after extra time, and AP is after penalties. Do not collapse those outcomes into a bare number.
+- Live scores can change while the task is running. For freshness-sensitive answers, re-read the requested match immediately before delivery and state the observed status/time.
+- Search and trending surfaces are discovery aids, not authoritative rankings or complete schedules. Open the match or competition page to verify requested details.
+- FAVOURITE, VOTE NOW, fantasy, and challenge controls change account state or submit a choice. Do not activate them during a read-only score or statistics task.`,
+  },
+
   // ─── News Paywalls ────────────────────────────────────────────────────
   // For each of these, full article bodies are subscription-gated. The
   // universal paywall note already says "don't bypass" — these adapters
@@ -16228,6 +16617,17 @@ const ADAPTERS = [
   },
 
   // ─── Finance / High-Stakes ────────────────────────────────────────────
+  {
+    name: 'adsense',
+    category: 'finance',
+    matches: (url) => /^https?:\/\/adsense\.google\.com(?:[/?#]|$)/i.test(url),
+    notes: `
+- Distinguish the public /start marketing site from the authenticated /adsense application. A landing page, sign-in link, or signup link is not evidence about the user's account, earnings, sites, ads, or payments.
+- AdSense, Google Ads, Ad Manager, and AdMob are separate products even when the public footer links them together. Do not carry data or actions from one product into another.
+- For account reports, verify the active account/property, date range, comparison period, currency, and any filters before reading totals. Preserve qualifiers such as estimated versus finalized earnings.
+- Prefer labelled metrics and tables over chart geometry. Never infer an exact amount, date, or trend from pixel position alone.
+- Treat payment, tax, identity, site-ownership, ad-unit, blocking-control, and account-setting changes as high-stakes state changes. Stop at an authentication or verification gate and report the exact blocker rather than substituting public help content.`,
+  },
   {
     name: 'stripe',
     category: 'finance',
@@ -16445,43 +16845,21 @@ const ADAPTERS = [
   {
     name: 'railway-12306',
     category: 'general',
+    revision: 1,
     regions: ['CN'],
     jobs: ['rail-booking'],
     workflow: {
       schema: ADAPTER_WORKFLOW_SCHEMA,
-      states: {
-        access_gate: {
-          readOnly: true,
-          evidence: ['A QR, SMS, identity, or anti-bot challenge is visible.'],
-        },
-        search: {
-          readOnly: true,
-          evidence: ['The departure station, arrival station, and travel date are visible.'],
-        },
-        selection: {
-          readOnly: true,
-          evidence: ['The selected train number, stations, date, and seat class are visible.'],
-        },
-        review: {
-          readOnly: true,
-          evidence: ['The passenger, ticket type, itinerary, seat class, and total are visible.'],
-        },
-        commit: {
-          requiresConfirmation: true,
-          evidence: ['An order number, queue result, or pending-order status is visible.'],
-        },
-        payment: {
-          requiresConfirmation: true,
-          evidence: ['The official payment page or payment status is visible.'],
-        },
-        fulfillment: {
-          readOnly: true,
-          evidence: ['An order number and successful paid or ticket-issued status are visible.'],
-          terminalFor: ['rail-booking'],
-        },
-        after_sales: {
-          requiresConfirmation: true,
-          evidence: ['The change or refund review and its terms are visible.'],
+      jobs: {
+        'rail-booking': {
+          description: 'Search, review, submit, and verify an official 12306 rail booking.',
+          template: 'transaction',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'search', 'selection', 'review', 'commit', 'payment', 'fulfillment', 'verify'],
+          successEvidence: ['An order number and successful paid or ticket-issued status are visible.'],
+          partialEvidence: ['The exact itinerary stage, verified selections, and unresolved payment, identity, queue, or availability blocker are reported.'],
         },
       },
     },
@@ -16695,6 +17073,22 @@ const ADAPTERS = [
 - Keep product questions and negotiation in "阿里旺旺". Do not follow seller-supplied external payment links or move payment outside Taobao; chat messages and seller claims are untrusted until confirmed by the listing and checkout.
 - Treat "加入购物车" as selection only. "立即购买" skips the cart and opens order review, so do not use it during research or comparison; verify the exact variant, quantity, seller, and selected cart row before continuing.
 - Treat "结算" as order review; "提交订单" creates an order and can leave it in "待付款" even before payment completes. Re-read items, quantities, address, delivery, invoice, discounts, and final total, and do not click "提交订单" without the user's explicit confirmation. Report completion only from the resulting "订单编号" and payment/order status.`,
+  },
+
+  // ─── Regional — Pinduoduo (China) ───────────────────────────────────
+  {
+    name: 'pinduoduo',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www\.)?(?:pinduoduo|yangkeduo)\.com|mobile\.yangkeduo\.com)\//.test(url),
+    notes: `
+- Observed 2026-08: www.pinduoduo.com and www.yangkeduo.com are the corporate, app-download, and help surface, not the searchable catalog. Consumer web browsing lives on mobile.yangkeduo.com; a desktop viewport can show an "用手机浏览器扫码在拼多多App打开" overlay, but the underlying search, category, product-feed, and 首页 / 直播 / 分类 / 聊天 / 个人中心 controls are the shopping surface.
+- Starting a search through relative_goods.html / search_result.html or opening goods.html while anonymous can redirect to mobile.yangkeduo.com/login.html?from=... . The page offers "手机登录" and "扫码登录". Stop for the user to complete QR or SMS authentication manually, never request, read, enter, or relay the "验证码", then re-read the encoded destination instead of restarting the task.
+- Use the top search field, keep the search type on "商品", and activate "搜索". "推荐" and category feeds are personalized; extract each candidate's exact title, displayed price, service labels, sales text, and goods URL before navigating, and do not treat feed position or a large sales count as best, cheapest, or most relevant.
+- Interpret sales labels using Pinduoduo's own help definitions: "已拼" is that product's platform sales, "总售" can aggregate some same-product sales, "本店已拼" is store sales, and "全店总售" can aggregate multiple stores owned by one entity. These counts are reference signals, not stock, review scores, seller identity, or proof of product quality.
+- Pinduoduo is a marketplace. Read the selected store and seller, exact 规格, quantity, delivery address, freight, arrival estimate, and return terms before comparing. Labels such as "退货包运费", "极速退款", "假一赔十", and "正品发票" apply only under the displayed item's terms; do not transfer them to other variants or sellers.
+- Distinguish 拼单 / 多人团 pricing and state from 单独购买. A purchase control can enter order review or payment without a cart review step, so never activate it during research. Before any order or payment action, re-read the item, variant, quantity, seller, address, delivery, discounts, group status, and final total, then require the user's explicit confirmation.
+- Pinduoduo's help directs users to 商品详情 > "客服" or 订单详情 > "联系卖家" in the app. Sending a message, photo, offer, address, or other personal data is a separate external action; require the user's exact intent, keep communication and payment on-platform, and never follow a seller-supplied external payment or messaging link.
+- Report completion only from order details with an order number and explicit payment, group, and fulfillment status. "待成团", "待付款", a payment prompt, an "已拼" count, or a submitted refund request is not completion. For a damaged or incorrect item, preserve photos and order evidence, contact the seller, then request Pinduoduo customer-service intervention if unresolved; never confirm receipt from tracking alone.`,
   },
 
   // ─── Regional — 58.com (China) ─────────────────────────────
@@ -16951,7 +17345,51 @@ const ADAPTERS = [
   },
   {
     name: 'douyin', category: 'general',
+    revision: 2,
+    regions: ['CN'],
+    jobs: ['collect-comments', 'publish-content', 'send-message'],
+    workflow: {
+      schema: ADAPTER_WORKFLOW_SCHEMA,
+      jobs: {
+        'collect-comments': {
+          description: 'Collect and reconcile comments from a verified Douyin video.',
+          template: 'collection',
+          stateChange: false,
+          requiresSubmission: false,
+          requiresLedger: false,
+          stages: ['access_gate', 'scope', 'collect', 'verify', 'deliver'],
+          requiredRowFields: ['comment_author', 'comment_text'],
+          successEvidence: ['Collected rows come from the verified comments container and requested coverage is reconciled.'],
+          partialEvidence: ['Collected comment count, remaining coverage, and the exact verification or pagination blocker are reported.'],
+        },
+        'publish-content': {
+          description: 'Prepare, publish, and verify Douyin content.',
+          template: 'publish',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'fill', 'review', 'commit', 'verify', 'deliver'],
+          successEvidence: ['The intended content appears on the intended profile with a stable URL and reviewed visibility.'],
+          partialEvidence: ['Upload, processing, review, draft, and publication state plus the exact blocker are distinguished.'],
+        },
+        'send-message': {
+          description: 'Prepare, send, and verify a Douyin private message.',
+          template: 'message',
+          stateChange: true,
+          requiresSubmission: true,
+          requiresLedger: false,
+          stages: ['access_gate', 'scope', 'fill', 'review', 'commit', 'verify'],
+          successEvidence: ['The exact message appears as sent in the verified active-recipient conversation.'],
+          partialEvidence: ['The verified recipient and composer state plus the exact send or verification blocker are reported.'],
+        },
+      },
+    },
     matches: (url) => /^https?:\/\/(?:(?:www|live|v|creator)\.)?douyin\.com\//.test(url),
+    messaging: {
+      verifyActiveRecipient: (url) => {
+        try { return /^\/chat(?:\/|$)/.test(new URL(url).pathname); } catch { return false; }
+      },
+    },
     notes: `
 - Observed 2026-08: www.douyin.com and /search/video can return HTTP 200 with title "验证码中间页" and no readable body, while live.douyin.com remains readable. Treat that as verification, not empty search results; do not retry or bypass it.
 - Use the visible "搜索你感兴趣的内容" field. Search tabs include 综合, 视频, 用户, and 直播; select the requested type and preserve the query rather than substituting the personalized 推荐 feed.
@@ -17009,12 +17447,24 @@ const ADAPTERS = [
     category: 'general',
     matches: (url) => /^https?:\/\/(www\.)?instagram\.com\//.test(url),
     fullPageCapture: { infiniteScroll: isInstagramInfiniteScrollUrl },
+    carousel: {
+      kind: 'indexed-query',
+      indexParam: 'img_index',
+      matches: (url) => {
+        try {
+          const parsed = new URL(url);
+          return /^(?:www\.)?instagram\.com$/i.test(parsed.hostname)
+            && /^\/p\/[^/]+\/?$/.test(parsed.pathname);
+        } catch { return false; }
+      },
+    },
     notes: `
 - Login wall pops mid-scroll on the home feed (/), Explore (/explore), and Reels (/reels). Without sign-in, beyond a handful of posts the user can't view anything — surface that, don't loop trying to scroll past.
 - Story bar at top of profile / feed is keyboard-driven: left/right arrows advance, Esc closes. Clicking is unreliable.
 - Profile grid (/<user>) lazy-loads via IntersectionObserver — scroll the page (not a sub-container) to load more posts.
 - DMs at /direct/inbox — sign-in required.
 - Hashtag pages: /explore/tags/<tag>. Location pages: /explore/locations/<id>.
+- Post carousels at /p/<id>/ expose deterministic ?img_index=N routes. Use carousel_navigate({index:N}) to visit slides directly and monotonically; decrease only for a fresh user-requested reverse scan. Never use ArrowLeft/ArrowRight, coordinate clicks, or alternate Next/Go back while enumerating a carousel.
 - "Add to story / Add to post" actions require the mobile app for most content types — surface the limitation.
 - Saving images / videos directly is blocked by the UI. If the user asks to download, use an enabled media download skill tool such as \`download_public_media\` first; otherwise use \`download_social_media\`.`,
   },
@@ -17075,6 +17525,23 @@ const ADAPTERS = [
 
   // ─── Job Portals ──────────────────────────────────────────────────────
   {
+    name: 'naukrigulf',
+    category: 'general',
+    revision: 1,
+    regions: ['MENA'],
+    jobs: ['prepare-application', 'submit-application'],
+    workflow: { schema: ADAPTER_WORKFLOW_SCHEMA, jobs: applicationWorkflowJobs() },
+    matches: (url) => /^https?:\/\/(?:[a-z0-9-]+\.)*naukrigulf\.com(?:[/?#]|$)/i.test(url),
+    notes: `
+- Verify the exact role, company, location, and stable job URL before opening Apply. Similar job cards, recommendations, and sponsored listings are not interchangeable.
+- Sign-in, profile-completion, and application forms can appear as separate dialogs or routes. After each transition, wait for stability, re-read the active form, and use fresh refs.
+- Inventory every required field, screening question, résumé/attachment, and consent before filling. Use only user-supplied facts; never invent salary, notice period, visa, experience, demographic, or eligibility answers.
+- Keep one progress row per field or screening question and, for bulk requests, per job. Reconcile prepared, submitted, skipped, failed, and unresolved items rather than restarting completed applications.
+- Resume upload or a populated profile is not an application. Review the intended résumé, contact visibility, answers, role, and company immediately before final submission.
+- Stop for CAPTCHA, OTP, account verification, missing personal answers, or a final submit that the user did not authorize. Preserve entered data and report the exact blocker.
+- Report application success only from a post-submit confirmation or application-history state tied to the intended role. An Apply click, closed dialog, toast, or changed URL alone is not proof.`,
+  },
+  {
     name: 'boss-zhipin',
     category: 'general',
     matches: (url) => /^https?:\/\/(?:(?:www|m)\.)?zhipin\.com\//.test(url),
@@ -17093,6 +17560,10 @@ const ADAPTERS = [
   {
     name: 'greenhouse',
     category: 'general',
+    revision: 1,
+    regions: ['global'],
+    jobs: ['prepare-application', 'submit-application'],
+    workflow: { schema: ADAPTER_WORKFLOW_SCHEMA, jobs: applicationWorkflowJobs() },
     // Greenhouse hosts ATS for many employers under boards.greenhouse.io
     // (or job-boards.greenhouse.io for the newer build).
     matches: (url) => /^https?:\/\/(boards|job-boards)\.greenhouse\.io\//.test(url),
@@ -17108,6 +17579,10 @@ const ADAPTERS = [
   {
     name: 'workday',
     category: 'general',
+    revision: 2,
+    regions: ['global'],
+    jobs: ['prepare-application', 'submit-application'],
+    workflow: { schema: ADAPTER_WORKFLOW_SCHEMA, jobs: applicationWorkflowJobs() },
     // Workday's tenant URLs are like myworkdayjobs.com or <company>.wd1.myworkdayjobs.com.
     matches: (url) => /^https?:\/\/[^\/]*\.myworkdayjobs\.com\//.test(url) || /^https?:\/\/[^\/]*\.wd[0-9]+\.myworkdayjobs\.com\//.test(url),
     notes: `
@@ -17116,7 +17591,7 @@ const ADAPTERS = [
 - Many fields are nested in collapsed accordions (Education, Experience, References). EXPAND each accordion before reading or filling — collapsed required fields will fail validation but you can't see what's missing.
 - Date pickers are custom widgets. Click the field, type MM/DD/YYYY (or DD/MM/YYYY depending on tenant locale), then Tab. Don't try to click calendar cells — the popup is portal-rendered outside the field's subtree.
 - "Add Another" buttons for experiences / education clone the entire panel — fill the FIRST one fully before clicking Add Another, or the new clone may copy partial state.
-- Some employers wrap Workday in an iframe — if get_accessibility_tree shows almost no form fields, check for an iframe and switch to iframe_read / iframe_type.
+- Some employers wrap Workday in an iframe — if get_accessibility_tree shows almost no form fields, use iframe_read with one broad control selector and limit 50 before filling. A truncated read is not a complete inventory: repeat the identical selector with offset set to the returned nextOffset until truncated is false. Narrow reads are only for follow-up inspection. Reuse the returned selector + matchIndex with iframe_type.
 - File upload (resume, CV) lives in the "My Information" or "Resume/CV" step. The drop zone has a "Select Files" button — use upload_file against the underlying input.
 - "Review" step at the end shows everything filled — read it back to the user before clicking Submit; mistakes at this stage usually require restarting the whole application.`,
   },
@@ -17167,6 +17642,261 @@ const ADAPTERS = [
 - DO NOT send a message unless the user named the recipient AND the exact message body in this conversation.
 - "Edit message" works for a window after sending (~48h); "Delete for everyone" within a shorter window — both have explicit confirms.`,
   },
+  // ─── Regional — CIS + MENA (RU/TR/AE) ──────────────────────────────
+  // High-priority CONTRIBUTING.md coverage: Wildberries, Avito, VK, noon.
+  // Keep before the federated Mastodon matcher.
+  {
+    name: 'wildberries',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?wildberries\.ru\//.test(url),
+    notes: `
+- Wildberries is Russia's largest e-commerce MARKETPLACE (fashion-first, sells everything). As of 2026-09, Russian labels: "Добавить в корзину" = add to cart, "Корзина" = cart, "Войти" = log in, "Сортировка" = sort, "Фильтры" = filters.
+- Variant trap: pick size ("Размер") and color BEFORE adding — apparel listings block the add until a size is chosen.
+- Seller/price trap: the same item ships from different warehouses with different delivery ETAs ("Способ доставки"). Check the delivery estimate before quoting; the card price is not the arrival date.
+- WB Wallet ("WB Кошелёк") vs card pricing may differ — quote the cart/payment total, not the card price.
+- Sort with "Сортировка" (price low→high "Дешевле", rating, new) and filter in the left rail (brand, price, size, rating) rather than URL edits. Cart lives at /lk/basket; checkout needs login.`,
+  },
+  {
+    name: 'avito',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.|m\.)?avito\.ru\//.test(url),
+    notes: `
+- Avito is Russia's largest CLASSIFIEDS site (like sahibinden: vehicles, real estate, goods, jobs, services). Most listings are "contact the seller", NOT checkout — do NOT hunt for a cart button on a typical listing.
+- Anti-scam trap: contact via "Показать номер" (show number) or "Написать" (message) often needs login; phone numbers may be partially masked. Never promise a revealed number without clicking through.
+- Filter in the left/top rail: price, "Город" (city), category facets, "С фото"/"С доставкой" toggles. Sort via "Сначала дешевле/дороже" rather than URL params.
+- Avito Delivery ("Авито Доставка") is a SEPARATE escrow flow from local pickup — confirm which one the user wants before advising.
+- Posting ("Разместить объявление") needs login and moderation; new ads show "На проверке" (under review), not live. Do not report as published until active.`,
+  },
+  {
+    name: 'vk',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:vk\.(?:com|ru)|(?:www|m)\.vk\.(?:com|ru)|id\.vk\.ru)\//.test(url),
+    notes: `
+- VK (vk.com) is Russia/CIS social + services (Feed, Messages, Communities, Video, Market, Mini-apps). Login is phone/QR; 2FA may appear — surface it to the user and stop, do not loop.
+- Messages: dialog list on the LEFT, active chat on the RIGHT; input is a contenteditable box, Enter sends. DO NOT send unless the user named the recipient AND the exact body in this conversation.
+- Communities/Groups vs personal pages look alike — check the header ("Сообщество"/subscribers vs "Друзья"/friends) before acting as/against the wrong entity.
+- VK Video/Clips and Market are separate tabs with their own players/carts — do not mix Market checkout with social actions.
+- Language trap: UI may be Russian ("Войти", "Сообщения", "Новости") or English depending on locale — read visible button text instead of assuming.`,
+  },
+  {
+    name: 'noon',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.|supermall\.)?noon\.com\//.test(url),
+    notes: `
+- noon.com is the MENA mega-marketplace (UAE/Saudi/Egypt storefronts share one domain with country switcher). Prices/availability are PER COUNTRY — set the country ("Ship to UAE/Saudi/Egypt") first or listings are meaningless.
+- Variant trap: pick size/color ("Size", "Colour") BEFORE "Add To Cart" — required options block the add.
+- Seller trap ("Sold by noon" vs marketplace sellers): check "Sold by" + ratings before quoting; fulfillment speed ("Get it by") varies by seller/warehouse.
+- Price trap: coupons ("Apply code") and noon VIP/"noon One" discounts apply only at cart — quote the cart total, not the card price.
+- Sort via "Sort by" (price low→high, popularity) and filter via the left rail (Brand, Price, Fulfilment) rather than URL edits. Cart at /cart; checkout needs login/OTP.`,
+  },
+  // ─── Regional — India daily-use (IN) ────────────────────────────────
+  // High-priority CONTRIBUTING.md coverage: food, rail, payments, value
+  // marketplace. Keep before the federated Mastodon matcher.
+  {
+    name: 'swiggy',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?swiggy\.com\//.test(url),
+    notes: `
+- Swiggy is India's food-delivery + quick-commerce site (Food, Instamart grocery, Dineout). As of 2026-09, ordering needs a delivery LOCATION first — set it via the location pin/header ("Enter delivery address") before the restaurant list is meaningful; without it listings are generic.
+- Restaurant discovery: search by dish/restaurant, then open the restaurant page. Veg-only toggle ("Veg"), "Offers" filter, ratings ("4.0+"), cost-for-two, and delivery-time sort live above the list — set them instead of guessing URL params.
+- Dish trap: many dishes have REQUIRED customisations (size, spice, add-ons) in a modal. Pick them before "Add". "Add" becomes "ADD +" stepper; the cart is the header "Cart" drawer, not a page.
+- Instamart is a SEPARATE tab/flow from Food with its own cart — do not mix Food and Instamart items in one checkout.
+- Checkout requires login (phone OTP). Do NOT place the order without explicit user confirmation — payment/UPI is irreversible. Success = order-tracking page with ETA, not the cart drawer.`,
+  },
+  {
+    name: 'irctc',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?irctc\.co\.in\//.test(url),
+    notes: `
+- IRCTC (irctc.co.in) is Indian Railways ticketing. Login ("LOGIN") needs username/password + CAPTCHA; booking also needs passenger details (name, age, berth preference) and an explicit user confirm before "Book Now".
+- Search with station CODES (e.g. NDLS, BCT, HWH) in "From"/"To", journey date, and quota ("General", "Tatkal", "Ladies"). Sort/filter by class (SL/3A/2A/1A/CC) and train type; availability colours (Available/RAC/WL + number) are per class — read the exact class row before quoting.
+- Tatkal trap: booking opens at 10:00 IST for AC classes and 11:00 IST for non-AC classes on the calendar day before the train's departure date at its originating station. Online Tatkal/Premium Tatkal booking requires an Aadhaar-authenticated account and Aadhaar-based OTP during booking; surface authentication or OTP needs to the user instead of retrying. Do not calculate from a later boarding-station date; check live availability before promising a berth.
+- PNR/status trap: "PNR Status" is a separate flow from booking history ("Booked Ticket History"). Cancel via "Cancel Ticket" with confirmation; partial-cancel needs per-passenger selection.
+- Never submit payment or final booking without the user confirming train number, class, date, quota, and passenger list. Success = PNR on the booking-confirmation page.`,
+  },
+  {
+    name: 'paytm',
+    category: 'finance',
+    matches: (url) => /^https?:\/\/(www\.)?paytm\.com\//.test(url),
+    notes: `
+- Paytm is Indian recharge/bills/UPI/payments. Top flows: Mobile Recharge, DTH, Electricity, Gas, Broadband, Credit-card bill. Pick the operator/circle (e.g. "Airtel Prepaid", state electricity board) BEFORE entering the number — plans and bill-fetch depend on it.
+- Bill-fetch trap: postpaid/utility pages "Fetch Bill" from the account/consumer number first; the payable amount appears only after fetch. Do NOT pay a stale or typed amount without fetching.
+- Pay-via choice matters: UPI vs Wallet vs card/netbanking are separate radios at checkout. Wallet balance may be insufficient — check it before promising a wallet payment.
+- Login is phone-OTP; KYC-gated features (Wallet top-up limits) fail without it. Surface OTP/login to the user and stop — do not loop retries.
+- Do NOT complete any payment without explicit user confirmation of payee, amount, and method. Success = transaction/UPI reference ID page, not the "Pay" button state.`,
+  },
+  {
+    name: 'snapdeal',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?snapdeal\.com\//.test(url),
+    notes: `
+- Snapdeal is an Indian value-goods MARKETPLACE (unbranded/apparel/home). Prices are low but sizes/sellers vary — open the product page and read the exact variant before quoting.
+- Pincode-first trap: delivery/availability depends on the delivery "Pincode" set near the buy box. Set it first; "Check" reveals COD availability and delivery ETA.
+- Variant trap: pick Size/Color BEFORE "Add To Cart"/"Buy Now" — required options block the add until chosen.
+- COD vs prepaid: many listings offer Cash on Delivery; prepaid may show extra discount. Confirm the payment choice with the user — do not assume.
+- Sort via "Sort by" (popularity, price low→high) and filter via the left rail (Brand, Price, Size, Ratings) rather than URL edits. Cart lives at /cart; checkout needs login/OTP.`,
+  },
+  // ─── Regional — EU + SEA (NL/DE/AT/ID) ──────────────────────────
+  // High-priority CONTRIBUTING.md coverage: bol.com, otto.de, willhaben.at,
+  // tokopedia.com. Keep before the federated Mastodon matcher.
+  {
+    name: 'bol',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?bol\.com\//.test(url),
+    notes: `
+- bol.com (bol) is Netherlands/Belgium marketplace. Dutch labels: "In winkelwagen" = add to cart, "Winkelwagen" = cart, "Nu kopen" = buy now. Many products have multiple sellers — check "Andere aanbieders" / "Bekijk alle aanbieders" before quoting "the price".
+- Variant trap: pick variant (kleur/maat) BEFORE "In winkelwagen" — required options block the add until chosen. "Gratis verzending" is conditional (often bol-executed, minimum order, or Select membership) — verify at cart instead of promising free shipping from the card.
+- Price trap: "Select" membership pricing or coupons apply only at cart; quote the cart total, not the product card price. Selling via bol vs third-party sellers have different return terms — read the seller line.
+- Sort via "Relevantie" / "Prijs laag - hoog" and filter via left rail rather than URL edits. Cart at /winkelwagen; checkout needs login. "bol Select" benefits are membership-conditional.`,
+  },
+  {
+    name: 'otto',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?otto\.de\//.test(url),
+    notes: `
+- OTTO.de is German marketplace (fashion/home-heavy). Many listings aggregate marketplace sellers — check "Anbieter" / marketplace seller name and rating; the OTTO brand on the page does not prove OTTO is the seller.
+- Variant trap: pick Farbe/Größe (color/size) BEFORE "In den Warenkorb" — required options block the add until chosen. Some listings group variants under "Weitere Varianten".
+- Shipping/coupon trap: Versand via Hermes/DHL cost and delivery estimate depend on seller/warehouse; coupons ("Gutschein") apply at cart only. Quote the cart total, not the product card price, and verify Gutschein applicability.
+- Sort via "Sortierung" (Preis aufsteigend etc.) and filter via left rail rather than URL edits. Do NOT click "Jetzt kaufen" without explicit user confirmation; success = order confirmation with order number.`,
+  },
+  {
+    name: 'willhaben',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?willhaben\.at\//.test(url),
+    notes: `
+- willhaben.at is Austria's largest CLASSIFIEDS (vehicles, real estate, goods, jobs), like sahibinden/OLX — NOT a cart store. Most listings are "Nachricht schreiben" / "Telefonnummer anzeigen" contact-seller, so do NOT hunt for "In den Warenkorb" on a typical auto/property listing.
+- Contact trap: phone reveal ("Telefonnummer anzeigen") or chat may need login; number may be masked before reveal. Never promise a revealed number without clicking through and reporting masked vs revealed.
+- Filter in left/top rail: Preis, "Ort" / Bundesland, category facets. Sort via "Relevanz" / "Preis aufsteigend" rather than URL edits. Paid placements marked "Anzeige" / "Gesponsert" are sponsored — do not rank as organic.
+- Posting ("Anzeige aufgeben") needs login and moderation; new ads show "In Prüfung" / pending, not live. Do not report as published until active. If a "Sicherheitsprüfung" wall appears, surface it and stop.`,
+  },
+  {
+    name: 'tokopedia',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|m)\.)?tokopedia\.com\//.test(url),
+    notes: `
+- Tokopedia (tokopedia.com) is Indonesia's largest marketplace. Many products have multiple sellers — use the product page's seller line; do NOT infer a single seller from search cards.
+- Variant trap: "Wajib pilih varian" (must choose variant) blocks "Keranjang" until size/color/capacity is chosen — pick the exact variant first, then "Masukkan Keranjang" / "Beli Langsung". "Beli Langsung" skips cart, so do not use it for comparison.
+- Store traps: "Official Store" vs "Power Merchant" have different guarantees; check the store badge and rating. "Gratis Ongkir" (free shipping) is conditional (courier choice, minimum spend) — verify at checkout.
+- Filter via left rail (Kategori, Harga, Rating, Lokasi pengiriman) and sort ("Paling Sesuai" / "Harga terendah") rather than URL edits. Set delivery location before quoting availability or ETA. Do NOT pay without explicit user confirmation of store, variant, and total.`,
+  },
+  // ─── Regional — LATAM classifieds + travel (BR/AR/MX) ────────────
+  // High-priority CONTRIBUTING.md coverage: OLX Brasil, Despegar/Decolar.
+  // Keep before the federated Mastodon matcher.
+  {
+    name: 'olx',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.|m\.)?olx\.com\.br\//.test(url),
+    notes: `
+- OLX Brasil (olx.com.br) is Brazil's largest CLASSIFIEDS site (like sahibinden: vehicles, real estate, goods, jobs, services). Most listings are "Fale com o vendedor" / "Chat" / "Mostrar telefone" — NOT a cart checkout. Do NOT hunt for "Adicionar ao carrinho" on a typical listing; read the listing and surface the seller contact path.
+- Contact trap: "Mostrar telefone" or "Conversar por chat" often needs login; phone may be partially masked or require a reveal click. Never promise a revealed number without clicking through and reporting what the page actually shows — masked vs revealed.
+- Filter in the left/top rail: price range, "Localização" (Estado/Cidade/Bairro), category facets, "Com foto" toggle, "Aceita troca" etc. Sort via "Relevância" / "Menor preço" / "Maior preço" / "Mais recentes" rather than URL param edits. Set the location filter before quoting availability — listings are geo-targeted.
+- Paid-placement trap: cards marked "Destaque" / "Patrocinado" are sponsored — do not rank them as organic relevance, best price, or highest quality.
+- Posting ("Anunciar" / "Inserir anúncio") needs login and moderation; new ads show "Em análise" / "Aguardando aprovação", not live. Do not report as published until the status is active.`,
+  },
+  {
+    name: 'despegar',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(www\.)?(?:despegar\.cl|despegar\.com(?:\.(?:ar|mx|co|pe|uy|ec|ve))?|decolar\.com)\//.test(url),
+    notes: `
+- Despegar (despegar.com / decolar.com in Brazil) is LATAM's largest OTA — flights, packages (Voo+Hôtel), hotels, cars. Tabs "Passagens"/"Pacotes"/"Hotéis" are SEPARATE flows with separate carts — do not mix a flight search with a hotel add.
+- Search trap: dates, passengers, origem/destino, and cabin class are chosen via the header form. Results URL carries encoded params — set filters via the left rail (escalas, horário, cia aérea, bagagem) and sort ("Menor preço", "Menor duração") instead of editing URL params.
+- Fare-class trap: "Econômica" / "Econômica Premium" / "Executiva" fares for the SAME flight have different bagagem, change/refund rules, and seat choice. Open "Detalhes da tarifa" / "Detalles de la tarifa" before quoting rules — default cheapest may be non-reembolsável / não reembolsável.
+- Price trap: quoted price may be "por pessoa" or total for all passengers. Check "Preço total" / "Precio total" plus taxas y cargos in the cart before stating the payable total; bagagem despachada may be extra.
+- Do NOT click "Comprar" / "Reservar" without explicit user confirmation of flight/hotel, dates, passengers, tarifa, and total. Success = confirmation page with reservation code / "Reserva confirmada", not the cart or payment form. If a "Verificação" / login wall appears, surface it and stop — do not loop.`,
+  },
+  // ─── Regional — Africa + MENA super-apps (AF/ME) ────────────────
+  // High-priority CONTRIBUTING.md coverage: Jumia, Kilimall, Careem, talabat.
+  // Keep before the federated Mastodon matcher.
+  {
+    name: 'jumia',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?jumia\.(?:com|com\.ng|co\.ke|com\.eg|co\.za|com\.gh|dz|ma|sn|ci|co\.ug|ug)\//.test(url),
+    notes: `
+- Jumia (jumia.com + country stores .com.ng/.co.ke/.com.eg/.co.za/.dz/.ma/.sn/.ci/.ug) is Africa's marketplace. "Jumia Express" means Jumia-fulfilled; other sellers are marketplace with separate ratings and returns — check "Sold by" and seller rating before quoting.
+- Variant trap: pick size/color/capacity BEFORE "Add to cart" — required options block the add until chosen. "Add to cart" opens a drawer; cart lives at /cart.
+- Price trap: JumiaPay discounts and coupons apply only at checkout — quote the cart total, not the product card price. Delivery fee and COD surcharge appear at cart; verify before promising total.
+- Location-first: delivery availability and fee depend on city/address set in the header. Set it first or availability is meaningless. Use "Filters" and "Sort by" (price low→high) rather than URL edits.
+- Do NOT click "Proceed to checkout" without explicit user confirmation. Success = order confirmation with order number in "Orders", not cart state.`,
+  },
+  {
+    name: 'kilimall',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www\.)?kilimall\.(?:co\.ke|ug|com)|(?:m|h5)\.kilimall\.co\.ke)\//.test(url),
+    notes: `
+- Kilimall (kilimall.co.ke / kilimall.ug / kilimall.com) is an East Africa marketplace. Marketplace sellers per product — check "Sold by" and store rating; the card price is not the fulfillment total across sellers.
+- Variant trap: pick size/color BEFORE "Add to Cart" — the button is inert until required options are chosen. "Add to Cart" vs "Buy Now" are distinct — use cart for comparison.
+- Price trap: coupons, Kilimall points, and M-Pesa discounts apply at cart/checkout only — quote the cart total, not the product card price. Shipping cost appears at checkout based on origin/weight.
+- Set delivery county/town before quoting availability or ETA; sort via "Sort by" and filter via left rail rather than URL edits. Do NOT pay without explicit user confirmation of seller, variant, and total.`,
+  },
+  {
+    name: 'careem',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:(?:www|app|food|pay)\.)?careem\.com\//.test(url),
+    notes: `
+- Careem (careem.com) is MENA super-app — Rides, Food, Quik (grocery), Pay, Shops are SEPARATE verticals with separate carts/flows. Pick the vertical that matches the task — a Food cart does not contain a Ride booking.
+- Location-first trap: set pickup/delivery address (map pin or "Delivery address") BEFORE the catalog or fare is meaningful — restaurants, stores, and ride availability are geo-fenced.
+- Ride trap: "Ride Now" vs "Ride Later" plus car type (Go, Comfort, Max) have different fare estimates and surge. Food trap: single-restaurant cart — cannot mix two restaurants in one order.
+- Pay trap: Careem Pay wallet vs COD vs card are distinct radios at checkout; verify balance before promising wallet payment. Login is phone OTP — surface it and stop.
+- Do NOT place any order/ride without explicit user confirmation of vertical, address, items/route, and total. Success = order/ride confirmation with ID and tracking, not cart state.`,
+  },
+  {
+    name: 'talabat',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?talabat\.com\//.test(url),
+    notes: `
+- talabat.com is MENA food-delivery + grocery (UAE/Saudi/Egypt/Kuwait/Qatar/Bahrain/Oman/Jordan). Set delivery address/area via the header pin ("Deliver to") BEFORE any restaurant list — which restaurants, menus, and fees appear depends on it.
+- Single-restaurant cart trap: talabat allows ONE restaurant per order. Pick a restaurant, then add dishes — you CANNOT combine two restaurants in one checkout. Finish one order before starting another.
+- Availability gates: restaurant may be "Closed" (cannot order now) and has minimum order ("Minimum order") plus delivery fee — check both before promising delivery. Dish customisations (size, add-ons) are required modals — pick them before "Add".
+- Price trap: menu price is NOT total — delivery fee, service fee, and tip are added at checkout. Use on-page search and filters (cuisine, rating, delivery time) rather than URL edits.
+- Do NOT place without explicit user confirmation of restaurant, dishes, quantities, address, and total. Success = order-tracking page with order ID and ETA, not the cart drawer.`,
+  },
+  // ─── Regional — East Asia + Yandex Market (JP/KR/RU) ────────────
+  // High-priority CONTRIBUTING.md coverage: Mercari, Yahoo! JAPAN, Naver,
+  // Yandex Market. Keep before the federated Mastodon matcher.
+  {
+    name: 'mercari',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www\.)?(?:mercari\.com|mercari\.jp|jp\.mercari\.com)\//.test(url),
+    notes: `
+- Mercari (mercari.com / mercari.jp / jp.mercari.com) is Japan/US peer-to-peer marketplace. Most listings are single-item peer sales — NOT retail carts with multiple sellers. "購入手続きへ" / "Buy" proceeds to checkout for that one item; do NOT hunt for a multi-seller cart.
+- Condition/size trap: listings show seller-provided "商品の状態" (condition), size, and brand. Read the listed condition before quoting, or use condition as a search filter when comparing items — there is no buyer-selectable condition on a listing. "美品" vs "未使用" carry different pricing and return expectations.
+- Offer vs Buy trap: "値下げ交渉" / "Make offer" sends a seller offer (not a purchase). Use "購入" / "Buy Now" only when the user wants to buy at the listed price and after confirming shipping.
+- Shipping trap: "送料込み" (seller pays) vs "着払い" (buyer pays) changes the total — read the shipping badge before quoting. Delivery estimate depends on seller dispatch, not a warehouse ETA.
+- Do NOT pay without explicit user confirmation of item, condition, price, and shipping. Success = order confirmation with transaction ID, not the product page. If a "本人確認" / login wall appears, surface it and stop.`,
+  },
+  {
+    name: 'yahoo-jp',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:www|shopping|store\.shopping|auctions|page\.auctions|paypayfleamarket)\.yahoo\.co\.jp\//.test(url),
+    notes: `
+- Yahoo! JAPAN (yahoo.co.jp) splits shopping across subdomains: shopping.yahoo.co.jp (Yahoo!ショッピング), auctions.yahoo.co.jp (ヤフオク!), paypayfleamarket.yahoo.co.jp, plus www.yahoo.co.jp portal. Treat each as a separate flow — a shopping cart on shopping.yahoo.co.jp does not contain auction bids.
+- Auction trap: auctions.yahoo.co.jp uses "入札" (bid) vs "即決" (buy now). Bids are commitments — do NOT bid without explicit user confirmation; report only the resulting bid status, not the product page.
+- Points/coupon trap: "PayPayポイント" / "クーポン" and "送料無料" apply conditionally at cart. Quote the cart/payment total, not the product card price, and check expiry/minimum spend.
+- Variant trap: shopping listings require size/color/option selection BEFORE "カートに入れる" — the button is inert until required options are chosen.
+- Login may require Yahoo! JAPAN ID + 2FA / SMS — surface it to the user and stop, do not loop. Sort via "おすすめ順" / "価格が安い順" rather than URL edits.`,
+  },
+  {
+    name: 'naver',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:shopping|m\.shopping|smartstore|pay|m\.pay|order\.pay)\.naver\.com\//.test(url),
+    notes: `
+- Naver Shopping (shopping.naver.com / smartstore.naver.com) aggregates many Smart Stores under one search — it is NOT a single retailer. The buy box is for ONE store; open "다른 판매처" / "판매처 비교" to compare seller, price, and delivery before quoting.
+- Naver Pay vs store checkout trap: "N Pay 구매" routes through Naver Pay with its own total; store-direct "구매하기" may have different shipping. Check which checkout the button triggers before confirming total.
+- Variant trap: pick size/color/option ("옵션 선택") BEFORE "장바구니" / "구매하기" — required options block the add until chosen. Membership ("Naver Plus") free-shipping or points are conditional; verify at cart.
+- Search hosts: m.shopping.naver.com is the mobile storefront — same login/cart/checkout as desktop, so treat www. and m. as the same flow.
+- Sort via "낮은 가격순" / "리뷰 많은 순" and filter via left rail rather than URL edits. Do NOT submit payment without explicit user confirmation of store, variant, and total.`,
+  },
+  {
+    name: 'yandex-market',
+    category: 'general',
+    matches: (url) => /^https?:\/\/(?:market\.yandex\.(?:ru|com|by|kz)|www\.yandex\.ru\/market)\//.test(url),
+    notes: `
+- Yandex Market (market.yandex.ru / market.yandex.com) is Russia's aggregator marketplace — many sellers under one product card. The card price is NOT the seller's fulfillment total; open "Предложения продавцов" to compare seller, rating, delivery, and return terms before quoting.
+- Variant/delivery trap: pick size/color/config AND delivery method ("Доставка курьером" vs "Пункт выдачи") BEFORE quoting ETA or total — fulfillment speed and cost vary by seller/warehouse and selected method.
+- Bonus/coupon trap: "Плюсы" / Yandex Plus points, coupons, and installment ("Сплит") apply conditionally at cart. Quote cart total, not card price, and verify applicability.
+- Sort via "Сортировка" (price low→high "Дешевле", rating) and filter via left rail rather than URL edits. Anti-bot may show CAPTCHA or 403 with "Доступ ограничен" — surface it and stop, do not loop fetch retries.
+- Do NOT click "Заказать" / "Оформить" without explicit user confirmation of seller, variant, delivery, and total. Success = order confirmation with number in "Заказы", not cart state.`,
+  },
   {
     // Mastodon is federated and self-hosted across many domains. Keep this
     // host-agnostic matcher after site-specific adapters so @profile paths on
@@ -17198,6 +17928,244 @@ export function getActiveAdapter(url) {
   return null;
 }
 
+const GMAIL_LIST_ROUTE_ROOTS = new Set([
+  'inbox', 'all', 'starred', 'snoozed', 'sent', 'drafts', 'important',
+  'spam', 'trash', 'scheduled', 'label', 'search', 'category',
+]);
+
+/**
+ * Return a stable Gmail list/search route that can be probed with /pN.
+ * Thread routes are rejected so result counting can never walk out of an
+ * opened conversation. Gmail's /pN hash route is not a public API, so callers
+ * must still verify the resolved route and visible result range after every
+ * probe.
+ */
+export function getGmailResultCountPolicy(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== 'mail.google.com') return null;
+    const rawHash = parsed.hash.replace(/^#\/?/, '').replace(/\/+$/, '');
+    if (!rawHash) return null;
+    const segments = rawHash.split('/').filter(Boolean);
+    let currentPage = 1;
+    const pageMatch = /^p(\d+)$/i.exec(segments.at(-1) || '');
+    if (pageMatch) {
+      currentPage = Number(pageMatch[1]);
+      segments.pop();
+    }
+    const root = String(segments[0] || '').toLowerCase();
+    if (!GMAIL_LIST_ROUTE_ROOTS.has(root)) return null;
+    if (['label', 'search', 'category'].includes(root) && segments.length < 2) return null;
+    if (!['label', 'search', 'category'].includes(root) && segments.length !== 1) return null;
+    const tail = segments.at(-1) || '';
+    if (segments.length > 2 && (/^FMfc[A-Za-z0-9_-]+$/.test(tail) || /^[a-f0-9]{10,}$/i.test(tail))) {
+      return null;
+    }
+    parsed.hash = `#${segments.join('/')}`;
+    return {
+      baseUrl: parsed.href,
+      baseHashPath: segments.join('/'),
+      currentPage: Number.isInteger(currentPage) && currentPage >= 1 ? currentPage : 1,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function getGmailResultPageUrl(url, page) {
+  const policy = getGmailResultCountPolicy(url);
+  const requestedPage = Number(page);
+  if (!policy || !Number.isInteger(requestedPage) || requestedPage < 1) return null;
+  const parsed = new URL(policy.baseUrl);
+  parsed.hash = `#${policy.baseHashPath}${requestedPage === 1 ? '' : `/p${requestedPage}`}`;
+  return parsed.href;
+}
+
+function gmailCountNumber(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return null;
+  const parsed = Number(digits);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+/** Parse Gmail toolbar labels such as "1-50 of many" and "551-575 of 575". */
+export function parseGmailPaginationRange(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const match = /(\d[\d\s.,]*)\s*[\u2012\u2013\u2014-]\s*(\d[\d\s.,]*?)(?:\s*(?:of|de|sur|von|di|van|z|av|af|iz|共|\/)\s*(many|\d[\d\s.,]*))?(?=\D|$)/iu.exec(text);
+  if (!match) return null;
+  const start = gmailCountNumber(match[1]);
+  const end = gmailCountNumber(match[2]);
+  const total = /^many$/i.test(match[3] || '') ? null : gmailCountNumber(match[3]);
+  const empty = start === 0 && end === 0 && total === 0;
+  if (start == null || end == null || (!empty && (start < 1 || end < start)) || end - start >= 1000) return null;
+  if (total != null && total < end) return null;
+  return {
+    text: match[0].trim(),
+    start,
+    end,
+    total,
+    approximate: /many/i.test(match[3] || ''),
+    ...(empty ? { empty: true } : {}),
+  };
+}
+
+/**
+ * Find the final Gmail result page with bounded exponential bracketing and
+ * binary search. The probe owns navigation and must return {valid, range}.
+ */
+export async function findLastGmailResultPage(probe, { initialPage = 100, maxProbes = 32 } = {}) {
+  if (typeof probe !== 'function') return { success: false, error: 'A Gmail page probe is required.' };
+  const observations = [];
+  const byPage = new Map();
+  const inspect = async (page) => {
+    if (byPage.has(page)) return byPage.get(page);
+    if (observations.length >= maxProbes) {
+      const exhausted = { page, valid: false, probeLimitReached: true };
+      byPage.set(page, exhausted);
+      return exhausted;
+    }
+    let observed;
+    try {
+      observed = await probe(page);
+    } catch (error) {
+      observed = { valid: false, error: error?.message || String(error) };
+    }
+    const normalized = {
+      page,
+      ...(observed || {}),
+      valid: observed?.valid === true,
+      outOfRange: observed?.outOfRange === true,
+    };
+    observations.push(normalized);
+    byPage.set(page, normalized);
+    return normalized;
+  };
+
+  const first = await inspect(1);
+  if (!first.valid || !first.range) {
+    return { success: false, error: first.error || 'Could not verify Gmail result page 1.', observations };
+  }
+  if (first.range.empty === true || first.range.total === 0) {
+    return { success: true, total: 0, lastPage: 0, exactFromToolbar: true, observations };
+  }
+  if (Number.isSafeInteger(first.range.total)) {
+    return {
+      success: true,
+      total: first.range.total,
+      lastPage: Math.max(1, Math.ceil(first.range.total / Math.max(1, first.range.end - first.range.start + 1))),
+      exactFromToolbar: true,
+      observations,
+    };
+  }
+
+  const startPage = Math.max(2, Math.min(10000, Math.trunc(Number(initialPage) || 100)));
+  let low = 1;
+  let high = startPage;
+  let highObservation = await inspect(high);
+  while (highObservation.valid && !highObservation.probeLimitReached) {
+    low = high;
+    high = Math.min(1000000, high * 2);
+    if (high === low) break;
+    highObservation = await inspect(high);
+  }
+  if (!highObservation.valid && !highObservation.outOfRange && !highObservation.probeLimitReached) {
+    return { success: false, error: highObservation.error || `Could not verify whether Gmail result page ${high} exists.`, observations };
+  }
+  if (highObservation.probeLimitReached || highObservation.valid) {
+    return { success: false, error: 'Gmail result counting reached its bounded probe limit before finding an invalid page.', observations };
+  }
+
+  while (high - low > 1) {
+    const middle = low + Math.floor((high - low) / 2);
+    const middleObservation = await inspect(middle);
+    if (middleObservation.probeLimitReached) {
+      return { success: false, error: 'Gmail result counting reached its bounded probe limit during binary search.', observations };
+    }
+    if (middleObservation.valid) {
+      low = middle;
+    } else if (middleObservation.outOfRange) {
+      high = middle;
+    } else {
+      return { success: false, error: middleObservation.error || `Could not verify whether Gmail result page ${middle} exists.`, observations };
+    }
+  }
+
+  const last = await inspect(low);
+  if (!last.valid || !last.range || !Number.isSafeInteger(last.range.end)) {
+    return { success: false, error: 'The final Gmail result page did not expose a verifiable range.', observations };
+  }
+  return {
+    success: true,
+    total: last.range.end,
+    lastPage: low,
+    nextInvalidPage: high,
+    exactFromToolbar: false,
+    observations,
+  };
+}
+
+/** Return deterministic indexed-carousel metadata for the active URL. */
+export function getCarouselNavigationPolicy(url) {
+  const adapter = getActiveAdapter(url);
+  const carousel = adapter?.carousel;
+  if (!carousel || carousel.kind !== 'indexed-query') return null;
+  try {
+    if (typeof carousel.matches === 'function' && !carousel.matches(url)) return null;
+    const parsed = new URL(url);
+    const rawIndex = Number(parsed.searchParams.get(carousel.indexParam));
+    const currentIndex = Number.isInteger(rawIndex) && rawIndex >= 1 ? rawIndex : 1;
+    parsed.search = '';
+    parsed.hash = '';
+    return {
+      adapterName: adapter.name,
+      kind: carousel.kind,
+      indexParam: carousel.indexParam,
+      currentIndex,
+      canonicalPostUrl: parsed.href,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function getCarouselNavigationTarget(url, index) {
+  const policy = getCarouselNavigationPolicy(url);
+  const targetIndex = Number(index);
+  if (!policy || !Number.isInteger(targetIndex) || targetIndex < 1) return null;
+  const target = new URL(policy.canonicalPostUrl);
+  target.searchParams.set(policy.indexParam, String(targetIndex));
+  return { ...policy, requestedIndex: targetIndex, targetUrl: target.href };
+}
+
+/**
+ * Infer a carousel total from aria-labels. Prefer an explicit "N of M" / "N/M"
+ * total; never treat a lone current-position label such as "Slide 3" as the
+ * last slide, which would abort a forward scan.
+ */
+export function parseCarouselSlideCount(labels) {
+  if (!Array.isArray(labels) || !labels.length) return null;
+  let total = null;
+  const indexes = [];
+  for (const raw of labels) {
+    const label = String(raw || '');
+    const ofMatch = /(?:slide|image)\s+(\d+)\s*(?:of|\/|de|von|sur)\s+(\d+)/i.exec(label);
+    if (ofMatch) {
+      const count = Number(ofMatch[2]);
+      if (Number.isInteger(count) && count >= 1) total = Math.max(total || 0, count);
+      continue;
+    }
+    const slideMatch = /(?:slide|image)\s+(\d+)/i.exec(label);
+    if (slideMatch) {
+      const n = Number(slideMatch[1]);
+      if (Number.isInteger(n) && n >= 1) indexes.push(n);
+    }
+  }
+  if (Number.isInteger(total) && total >= 1) return total;
+  const unique = [...new Set(indexes)];
+  if (unique.length < 2) return null;
+  return Math.max(...unique);
+}
+
 /**
  * Return machine-readable full-page capture behavior for the active URL.
  * This is runtime policy, not prompt guidance, so callers do not need an LLM
@@ -17219,11 +18187,100 @@ export function getFullPageCapturePolicy(url) {
   }
 }
 
+// Generic mail routes may legitimately show a To/Cc/Bcc set. Generic chat
+// routes must resolve to one visible conversation identity before dispatch.
+const GENERIC_MESSAGING_SURFACE_RE = new RegExp(
+  '(?:^|\\.)(?:mail|webmail|outlook|hotmail|yahoo|proton|zoho|fastmail|icloud|gmx|tutanota|roundcube|horde|zimbra)\\b'
+  + '|(?:^|\\.)(?:whatsapp|telegram|discord|slack|messenger|wechat|signal|skype|teams|element|mattermost)\\.'
+  + '|/(?:mail|messag(?:e|es|ing)|chats?|dm|direct|compose|conversations?)(?:/|$)',
+  'i',
+);
+const GENERIC_MESSAGING_MAIL_LIKE_RE = new RegExp(
+  '(?:^|\\.)(?:mail|webmail|outlook|hotmail|yahoo|proton|zoho|fastmail|icloud|gmx|tutanota|roundcube|horde|zimbra)\\b'
+  + '|/(?:mail|compose)(?:/|$)',
+  'i',
+);
+
+/**
+ * Return the machine-readable recipient-safety policy for a messaging page.
+ * Unlike adapter notes, this is enforced by the runtime before dispatch.
+ */
+export function getMessageRecipientGuardPolicy(url) {
+  const adapter = getActiveAdapter(url);
+  const verifier = adapter?.messaging?.verifyActiveRecipient;
+  let enabled = false;
+  try {
+    enabled = typeof verifier === 'function' ? verifier(url) : verifier === true;
+  } catch {
+    enabled = false;
+  }
+  if (!enabled) {
+    let mailLike = false;
+    let chatLike = false;
+    try {
+      const parsed = new URL(url);
+      const hostPath = `${parsed.hostname}${parsed.pathname}`;
+      mailLike = GENERIC_MESSAGING_MAIL_LIKE_RE.test(hostPath);
+      chatLike = !mailLike && GENERIC_MESSAGING_SURFACE_RE.test(hostPath);
+    } catch {}
+    if (!mailLike && !chatLike) return null;
+    return {
+      adapterName: 'generic-messaging',
+      verifyActiveRecipient: true,
+      ...(mailLike ? { supportsRecipientSets: true } : {}),
+    };
+  }
+  return {
+    adapterName: adapter.name,
+    verifyActiveRecipient: true,
+    ...(adapter.messaging.deferActiveConversationUntilComposer === true
+      ? { deferActiveConversationUntilComposer: true }
+      : {}),
+    ...(adapter.messaging.supportsRecipientSets === true
+      ? { supportsRecipientSets: true }
+      : {}),
+  };
+}
+
 /**
  * Get a printable list of all registered adapters (for settings UI / docs).
  */
 export function listAdapters() {
   return ADAPTERS.map(a => ({ name: a.name, category: a.category }));
+}
+
+/** Return bounded app-owned routing metadata for the planner. */
+export function getAdapterWorkflowRouting(url) {
+  const adapter = getActiveAdapter(url);
+  if (!adapter?.workflow) return null;
+  const validation = validateAdapterWorkflowProfile(adapter);
+  if (!validation.ok) return null;
+  return {
+    adapterName: adapter.name,
+    revision: adapter.revision,
+    schema: adapter.workflow.schema,
+    jobs: adapter.jobs.map(id => ({
+      id,
+      description: adapter.workflow.jobs[id].description,
+    })),
+  };
+}
+
+/** Resolve a planner-selected job only against the adapter for this exact URL. */
+export function resolveAdapterWorkflowJob(url, jobId) {
+  const id = String(jobId || '').trim();
+  if (!id) return null;
+  const adapter = getActiveAdapter(url);
+  if (!adapter?.workflow || !adapter.jobs?.includes(id)) return null;
+  const validation = validateAdapterWorkflowProfile(adapter);
+  if (!validation.ok) return null;
+  const job = cloneAdapterWorkflowJob(id, adapter.workflow.jobs[id]);
+  return job ? {
+    adapterName: adapter.name,
+    revision: adapter.revision,
+    schema: adapter.workflow.schema,
+    job,
+  } : null;
 }
 
 /**
@@ -17236,7 +18293,8 @@ export function listAdapterWorkflowProfiles() {
   for (const adapter of ADAPTERS) {
     const hasProfile = adapter.regions !== undefined
       || adapter.jobs !== undefined
-      || adapter.workflow !== undefined;
+      || adapter.workflow !== undefined
+      || adapter.revision !== undefined;
     if (!hasProfile) continue;
 
     const validation = validateAdapterWorkflowProfile(adapter);
@@ -17245,19 +18303,17 @@ export function listAdapterWorkflowProfiles() {
     }
     profiles.push({
       name: adapter.name,
+      revision: adapter.revision,
       regions: [...adapter.regions],
       jobs: [...adapter.jobs],
       workflow: {
         schema: adapter.workflow.schema,
-        states: Object.fromEntries(
-          Object.entries(adapter.workflow.states).map(([stateName, state]) => [
-            stateName,
-            {
-              ...state,
-              evidence: [...state.evidence],
-              ...(state.terminalFor === undefined ? {} : { terminalFor: [...state.terminalFor] }),
-            },
-          ]),
+        jobs: Object.fromEntries(
+          Object.entries(adapter.workflow.jobs).map(([jobName, job]) => {
+            const snapshot = cloneAdapterWorkflowJob(jobName, job);
+            delete snapshot.id;
+            return [jobName, snapshot];
+          }),
         ),
       },
     });

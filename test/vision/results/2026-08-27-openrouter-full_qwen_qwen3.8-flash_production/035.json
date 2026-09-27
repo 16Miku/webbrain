@@ -1,0 +1,172 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-26T23:23:39.711Z",
+  "id": "035",
+  "model": "qwen/qwen3.8-flash",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "035",
+    "difficulty": {
+      "level": 2,
+      "slug": "basic",
+      "label": "Basic"
+    },
+    "category": "map-and-travel",
+    "title": "Hotel map",
+    "image": "images/035.png",
+    "question": "Which map item is selected, what detail is shown, and how many pins are visible? Focus on the “Hotel map” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/035.png",
+    "bytes": 106441,
+    "sha256": "42cd4f52b35a2de3af08d64a5fb7a23164621d80010d62a04c864b42e7a9b744"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Hotel map interface with selectable hotel list and numbered map pins.\n\n2) Visible text:\n- Top nav: \"WebScene\", \"Home\", \"Workspace\", \"Activity\"\n- Sidebar heading: \"Hotel map\"\n- Hotel card 1 (selected, green highlight): \"Harbor House\", \"$142/night\"\n- Hotel card 2: \"Oak Corner\", \"View details\"\n- Hotel card 3: \"River Point\", \"View details\"\n- Hotel card 4: \"Central Stop\", \"View details\"\n- Map pins (red teardrop markers): \"1\", \"2\", \"3\"\n\n3) Inputs: None visible (no form fields, search boxes, or text inputs).\n\n4) State signals: \"Harbor House\" card is in selected/active state (green border + light green fill). Map shows a green diagonal line/connector across the canvas. No spinners, modals, toasts, banners, or overlays.\n\n5) Blockers: None apparent. No disabled elements or auth prompts. Map background is a placeholder pattern (crossed lines), suggesting map tiles may not be loaded.\n\n6) Unknowns: The green diagonal line's purpose is unclear (possible route/path or rendering artifact). The map tiles appear to be a placeholder pattern rather than a real map. No visible controls (zoom, pan) on the map.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1234,
+      "completion_tokens": 376,
+      "total_tokens": 1610,
+      "cost": 0.00037416,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00037416,
+        "upstream_inference_prompt_cost": 0.00019744,
+        "upstream_inference_completions_cost": 0.00017672
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 77,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 1407,
+    "total": 7970
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 8,
+    "possible": 8,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "map",
+          "tracking",
+          "route",
+          "hotel",
+          "café"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "map",
+          "hotel"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Hotel map",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Hotel map"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "selection",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "all",
+        "values": [
+          "Harbor House",
+          "$142/night"
+        ],
+        "weight": 3,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "Harbor House",
+          "$142/night"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "pin-count",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "3",
+          "three"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "3"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

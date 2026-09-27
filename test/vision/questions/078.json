@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "078",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "occlusion-and-contrast",
+  "title": "Canvas editor",
+  "image": "images/078.png",
+  "question": "What action is partially covered, and what visible overlay or widget causes the obstruction? Focus on the “Canvas editor” screen.",
+  "defaultPromptMode": "production"
+}

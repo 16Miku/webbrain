@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "id": "052",
+  "image": "images/052.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "email",
+        "compose",
+        "message"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "New Message",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Send",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "to-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "To",
+        "finance@example.com"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "subject-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Subject",
+        "Invoice 8832"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "status",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Attachment scanning…",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Report the compose fields exactly and surface Attachment scanning…."
+}

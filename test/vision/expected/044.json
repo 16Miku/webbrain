@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "044",
+  "image": "images/044.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "form",
+        "profile",
+        "shipping",
+        "invite",
+        "dataset",
+        "tax"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Invite teammate",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Send invite",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Work email",
+        "lee@sample",
+        "name@company.com"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "error",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Email domain is incomplete",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "invalid",
+        "required",
+        "incomplete",
+        "missing",
+        "format"
+      ],
+      "weight": 1,
+      "critical": true
+    }
+  ],
+  "successRubric": "Name Work email, preserve its current value and placeholder, and quote Email domain is incomplete."
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "016",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "photo-understanding",
+  "title": "Street archive",
+  "image": "images/016.png",
+  "question": "Which place name appears beneath the street photograph? Focus on the “Street archive” screen.",
+  "defaultPromptMode": "production"
+}

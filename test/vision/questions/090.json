@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "090",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "chart-reading",
+  "title": "Forecast vs actual",
+  "image": "images/090.png",
+  "question": "Which category has the tallest bar, and what exact value or annotation is attached to it? Focus on the “Forecast vs actual” screen.",
+  "defaultPromptMode": "production"
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "007",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "loading-state",
+  "title": "Loading messages…",
+  "image": "images/007.png",
+  "question": "Is the page ready for interaction, and what exact progress signal is visible? Focus on the “Loading messages…” screen.",
+  "defaultPromptMode": "production"
+}

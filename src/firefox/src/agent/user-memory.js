@@ -228,6 +228,16 @@ export function clearUserMemoryStore(opts = {}) {
   return { version: STORE_VERSION, updatedAt: ts, records: [] };
 }
 
+function normalizeUserMemoryExtractionConfidence(value) {
+  if (value === undefined) return USER_MEMORY_EXTRACTION_CONFIDENCE_THRESHOLD;
+  const numeric = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim()
+      ? Number(value)
+      : NaN;
+  return Number.isFinite(numeric) ? Math.max(0, Math.min(1, numeric)) : 0;
+}
+
 export function parseUserMemoryExtractionResult(content) {
   let parsed = null;
   const text = String(content || '').trim();
@@ -245,7 +255,7 @@ export function parseUserMemoryExtractionResult(content) {
     id: item?.id ? String(item.id) : '',
     text: normalizeUserMemoryText(item?.text),
     kind: normalizeUserMemoryKind(item?.kind),
-    confidence: Number.isFinite(Number(item?.confidence)) ? Math.max(0, Math.min(1, Number(item.confidence))) : 0,
+    confidence: normalizeUserMemoryExtractionConfidence(item?.confidence),
   })).filter((item) => item.op !== 'none');
 }
 
@@ -290,6 +300,7 @@ export function applyUserMemoryExtractionOperations(storeInput, operations, opts
   const threshold = Number.isFinite(Number(opts.threshold)) ? Number(opts.threshold) : USER_MEMORY_EXTRACTION_CONFIDENCE_THRESHOLD;
   let store = normalizeUserMemoryStore(storeInput, { now: ts });
   let changed = false;
+  let created = false;
   const applied = [];
   for (const op of Array.isArray(operations) ? operations : []) {
     if (!op || op.confidence < threshold) continue;
@@ -314,10 +325,11 @@ export function applyUserMemoryExtractionOperations(storeInput, operations, opts
     if (result?.changed) {
       store = result.store;
       changed = true;
+      if (op.op === 'add' && !result.deduped) created = true;
       applied.push({ op: op.op, id: result.record?.id || op.id });
     }
   }
-  return { store, changed, applied };
+  return { store, changed, created, applied };
 }
 
 export function createUserMemoryStore(storageArea, opts = {}) {

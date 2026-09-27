@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "077",
+  "image": "images/077.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "sign",
+        "payment",
+        "order",
+        "security",
+        "login",
+        "checkout",
+        "settings"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Sipariş ayrıntıları",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Güncelle",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Teslimat notu",
+        "Kapıya bırak"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "status",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Adres doğrulanamadı",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Preserve Unicode exactly: Sipariş ayrıntıları; Teslimat notu; Güncelle; Adres doğrulanamadı."
+}

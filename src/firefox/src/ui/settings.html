@@ -61,6 +61,14 @@
       text-decoration: none;
       -webkit-text-fill-color: inherit;
     }
+    /* Brain mark next to the wordmark. The gradient text fill above only
+       touches glyphs, so the logo keeps its own colors in both themes. */
+    .brand-mark {
+      width: 26px;
+      height: 26px;
+      vertical-align: -5px;
+      margin-right: 9px;
+    }
     .subtitle { color: var(--text2); font-size: 13px; margin-bottom: 24px; }
 
     .header-row {
@@ -68,6 +76,13 @@
       align-items: flex-start;
       justify-content: space-between;
       gap: 16px;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
     }
     .support-link {
       display: inline-flex;
@@ -86,6 +101,23 @@
     }
     .support-link:hover { color: var(--accent); border-color: var(--accent); }
     .support-link svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .apocalypse-icon { color: var(--warning); font-size: 15px; line-height: 1; }
+    .apocalypse-link[data-enabled="true"] {
+      color: var(--warning);
+      border-color: var(--warning);
+      background: rgba(255, 200, 112, 0.08);
+    }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
 
     h2 {
       font-size: 14px;
@@ -97,10 +129,10 @@
     }
     h2:first-of-type { margin-top: 0; }
 
-    /* Tab bar — sticky so it survives long provider lists. */
+    /* Keep translated labels on one line; narrow windows scroll the tab bar. */
     .tabs {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      display: flex;
+      overflow-x: auto;
       gap: 2px;
       margin: 4px 0 20px 0;
       padding: 4px;
@@ -112,6 +144,7 @@
       z-index: 10;
     }
     .tab-btn {
+      flex: 1 0 auto;
       min-width: 0;
       background: transparent;
       color: var(--text2);
@@ -123,7 +156,7 @@
       line-height: 1.2;
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
     }
     .tab-btn:hover { color: var(--text); }
     .tab-btn.active {
@@ -133,10 +166,8 @@
     .tab-btn.active:hover { color: #fff; }
 
     @media (max-width: 600px) {
-      .tabs {
-        grid-template-columns: repeat(6, minmax(90px, 1fr));
-        overflow-x: auto;
-      }
+      .header-row { flex-direction: column; gap: 10px; }
+      .header-actions { justify-content: flex-start; }
     }
 
     .tab-panel { display: none; }
@@ -263,6 +294,10 @@
       transition: border-color 0.2s;
     }
     .provider-card.selected { border-color: var(--accent); }
+    #firefox-bidi-card h3 { font-size: 14px; margin-bottom: 8px; }
+    #firefox-bidi-card p { font-size: 12px; line-height: 1.55; color: var(--text2); margin: 8px 0; }
+    #firefox-bidi-card > label { display: block; font-size: 12px; margin: 12px 0; }
+    #firefox-bidi-card code { overflow-wrap: anywhere; }
     .provider-card.collapsed { padding: 12px 16px; }
     .provider-card.collapsed .provider-header { margin-bottom: 0; }
 
@@ -301,7 +336,7 @@
       flex-shrink: 0;
       display: block;
     }
-    /* Multimodal section headings always show a mono feature icon so the
+    /* Assistive model section headings always show a mono feature icon so the
        tab has visual anchors even when base URL is empty (brand chip only
        appears after a known endpoint is sniffed). */
     .mm-section-heading {
@@ -391,6 +426,37 @@
       white-space: nowrap;
     }
 
+    /* Provider-specific subscription proxy guidance. */
+    .provider-subscription-guide a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .provider-subscription-guide a:hover { text-decoration: underline; }
+    .provider-subscription-guide a:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .provider-subscription-guide {
+      margin: 0 0 12px;
+      padding: 8px 10px;
+      border-inline-start: 2px solid var(--warning);
+      border-radius: 0 6px 6px 0;
+      background: rgba(255, 152, 0, 0.055);
+      color: var(--text2);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    [dir="rtl"] .provider-subscription-guide { border-radius: 6px 0 0 6px; }
+    .provider-subscription-guide-icon {
+      display: inline-block;
+      margin-inline-end: 5px;
+      font-size: 13px;
+      line-height: 1;
+    }
+    .provider-subscription-guide a { margin-inline-start: 4px; }
+    .provider-local-proxy-guide { border-inline-start-color: var(--accent); }
+
     .provider-filter-bar {
       display: flex;
       align-items: center;
@@ -458,8 +524,8 @@
       border-color: currentColor;
     }
     .provider-search {
-      flex: 0 1 240px;
-      min-width: 180px;
+      flex: 0 1 200px;
+      min-width: 160px;
       margin: 0 0 0 auto;
     }
     .provider-search input {
@@ -689,6 +755,12 @@
       background: var(--bg3);
       color: var(--text);
       border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
     }
     .btn-secondary:hover { background: rgba(255,255,255,0.05); }
 
@@ -808,6 +880,37 @@
     .setting-input:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 2px rgba(108,99,255,0.22);
+    }
+    .ui-scale-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .ui-scale-controls button {
+      min-width: 32px;
+      min-height: 32px;
+      padding: 5px 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg3);
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+    }
+    .ui-scale-controls button:hover { border-color: var(--accent); }
+    .ui-scale-controls button:disabled { opacity: 0.45; cursor: default; }
+    .ui-scale-controls output { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+    .ui-scale-shortcut-summary { margin-top: 6px; font-size: 11px; color: var(--text2); }
+    .ui-scale-manage-shortcuts {
+      margin-top: 7px;
+      padding: 0;
+      border: 0;
+      background: none;
+      color: var(--accent);
+      font: inherit;
+      font-size: 11px;
+      cursor: pointer;
     }
     .skill-source {
       max-width: 340px;
@@ -968,6 +1071,27 @@
       background: transparent;
       border-radius: 0;
     }
+    .skill-preview-rendered .markdown-table-wrapper {
+      max-width: 100%;
+      margin: 8px 0;
+      overflow-x: auto;
+    }
+    .skill-preview-rendered table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .skill-preview-rendered th,
+    .skill-preview-rendered td {
+      padding: 5px 7px;
+      border: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+    .skill-preview-rendered th {
+      background: var(--bg);
+      font-weight: 600;
+    }
     .skill-preview-raw {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       tab-size: 2;
@@ -1071,6 +1195,7 @@
     }
     .btn-sign-in:hover { background: var(--accent2); }
     .btn-sign-in:disabled { opacity: 0.55; cursor: default; transform: none; }
+    .provider-card .btn-duplicate:disabled { cursor: not-allowed; opacity: 0.48; transform: none; }
     .btn-sign-out {
       background: var(--bg3);
       color: var(--text);
@@ -1093,18 +1218,32 @@
     :root[data-theme="light"] .btn-secondary:hover { background: rgba(89,55,25,0.06); }
     :root[data-theme="light"] .btn-sign-out:hover  { background: rgba(89,55,25,0.06); }
     :root[data-theme="light"] .info-box code       { background: rgba(89,55,25,0.08); }
+    .safesocial-labels-fieldset { border: 0; padding: 0; margin: 18px 0; min-width: 0; }
+    #safesocial-labels { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-top: 10px; }
+    #safesocial-labels .safesocial-label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
+    #safesocial-labels input { width: auto; margin: 0; flex-shrink: 0; }
+    #safesocial-status { margin-top: 12px; }
   </style>
+  <link rel="stylesheet" href="apocalypse-comm.css">
+  <link rel="stylesheet" href="download-tracker.css">
 </head>
 <body>
   <div class="header-row">
     <div>
-      <h1><a id="settings-title-link" href="#" data-i18n="st.title"></a></h1>
+      <h1><img class="brand-mark" src="../../icons/icon128.png" alt="" aria-hidden="true"><a id="settings-title-link" href="#" data-i18n="st.title"></a></h1>
       <p class="subtitle" id="subtitle"></p>
     </div>
-    <a class="support-link" href="https://webbrain.one/docs" target="_blank" rel="noopener noreferrer">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-      Support
-    </a>
+    <div class="header-actions">
+      <a id="apocalypse-mode-link" class="support-link apocalypse-link" href="apocalypse-mode.html" target="_blank" rel="noopener" aria-describedby="apocalypse-mode-status">
+        <span class="apocalypse-icon" aria-hidden="true">☢</span>
+        <span data-i18n="st.display.apocalypse_mode.label"></span>
+      </a>
+      <a class="support-link" href="https://webbrain.one/docs" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        Support
+      </a>
+      <span id="apocalypse-mode-status" class="visually-hidden" aria-live="polite" data-i18n="st.display.apocalypse_mode.status.loading"></span>
+    </div>
   </div>
 
   <nav class="tabs" role="tablist">
@@ -1142,21 +1281,25 @@
       </div>
       <div class="setting-row">
         <div class="setting-info">
+          <div class="setting-label" data-i18n="st.display.ui_scale.label"></div>
+          <div class="setting-desc" data-i18n="st.display.ui_scale.desc"></div>
+          <div class="ui-scale-shortcut-summary" id="settings-ui-scale-shortcuts"></div>
+          <button type="button" class="ui-scale-manage-shortcuts" id="settings-ui-scale-manage-shortcuts" data-i18n="st.display.ui_scale.manage_shortcuts"></button>
+        </div>
+        <div class="ui-scale-controls" role="group" data-i18n-aria-label="st.display.ui_scale.label">
+          <button type="button" id="settings-ui-scale-decrease" data-i18n-title="st.display.ui_scale.decrease" data-i18n-aria-label="st.display.ui_scale.decrease">−</button>
+          <output id="settings-ui-scale-value" aria-live="polite">100%</output>
+          <button type="button" id="settings-ui-scale-increase" data-i18n-title="st.display.ui_scale.increase" data-i18n-aria-label="st.display.ui_scale.increase">+</button>
+          <button type="button" id="settings-ui-scale-reset" data-i18n="st.display.ui_scale.reset"></button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
           <div class="setting-label" data-i18n="st.display.download_directory.label"></div>
           <div class="setting-desc" data-i18n="st.display.download_directory.desc"></div>
         </div>
         <input class="setting-input" type="text" id="input-download-directory" autocomplete="off" spellcheck="false"
                data-i18n-placeholder="st.display.download_directory.placeholder">
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.verbose.label"></div>
-          <div class="setting-desc" data-i18n="st.display.verbose.desc"></div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-verbose">
-          <span class="toggle-slider"></span>
-        </label>
       </div>
       <div class="setting-row">
         <div class="setting-info">
@@ -1200,46 +1343,6 @@
       </div>
       <div class="setting-row">
         <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.scheduled_tasks.label"></div>
-          <div class="setting-desc" data-i18n="st.display.scheduled_tasks.desc"></div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-scheduled-tasks" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.scheduled_confirm.label"></div>
-          <div class="setting-desc" data-i18n="st.display.scheduled_confirm.desc"></div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-scheduled-confirm" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.notify_sound.label"></div>
-          <div class="setting-desc" data-i18n="st.display.notify_sound.desc"></div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-notify-sound" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.completion_confetti.label"></div>
-          <div class="setting-desc" data-i18n="st.display.completion_confetti.desc"></div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-completion-confetti" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
           <div class="setting-label"><span data-i18n="st.display.max_steps.label"></span> <span id="steps-value" style="color:var(--accent);font-weight:700;margin-left:4px;">50</span></div>
           <div class="setting-desc" data-i18n="st.display.max_steps.desc"></div>
         </div>
@@ -1256,29 +1359,52 @@
       </div>
       <div class="setting-row">
         <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.traces_link.label"></div>
-          <div class="setting-desc" data-i18n="st.display.traces_link.desc"></div>
+          <div class="setting-label" data-i18n="st.display.auto_screenshot.label"></div>
+          <div class="setting-desc" data-i18n="st.display.auto_screenshot.desc"></div>
         </div>
-        <a id="btn-open-traces" href="traces.html" target="_blank"
-           style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap;"
-           data-i18n="st.display.traces_link.open"></a>
+        <select id="select-auto-screenshot" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-family:inherit;cursor:pointer;">
+          <option value="off" data-i18n="st.display.auto_screenshot.off"></option>
+          <option value="navigation" data-i18n="st.display.auto_screenshot.navigation"></option>
+          <option value="state_change" data-i18n="st.display.auto_screenshot.state_change"></option>
+          <option value="every_step" data-i18n="st.display.auto_screenshot.every_step"></option>
+        </select>
       </div>
       <div class="setting-row">
         <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.history_link.label"></div>
-          <div class="setting-desc" data-i18n="st.display.history_link.desc"></div>
+          <div class="setting-label" data-i18n="st.display.cost_session_limit.label"></div>
+          <div class="setting-desc" data-i18n="st.display.cost_session_limit.desc"></div>
+          <div class="setting-desc" style="margin-top:4px;color:var(--accent);" data-i18n="st.display.cost_allowance_scope"></div>
         </div>
-        <a id="btn-open-history" href="history.html" target="_blank"
-           style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap;"
-           data-i18n="st.display.history_link.open"></a>
+        <label style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text2);font-size:12px;">
+          <span>$</span>
+          <input type="number" id="input-cost-session-limit" min="0" step="0.01" value="10"
+                 style="width:76px;background:transparent;border:0;color:var(--text);font:inherit;outline:none;">
+        </label>
       </div>
       <div class="setting-row">
         <div class="setting-info">
-          <div class="setting-label" data-i18n="st.display.help_improve.label"></div>
-          <div class="setting-desc" data-i18n-html="st.display.help_improve.desc_html"></div>
+          <div class="setting-label"><span data-i18n="st.display.cost_total_limit.label"></span> <span id="cost-spent-value" style="color:var(--accent);font-weight:700;margin-left:4px;">$0.00 / $10.00</span></div>
+          <div class="setting-desc" data-i18n="st.display.cost_total_limit.desc"></div>
+          <div class="setting-desc" style="margin-top:4px;color:var(--accent);" data-i18n="st.display.cost_allowance_scope"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+          <label style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text2);font-size:12px;">
+            <span>$</span>
+            <input type="number" id="input-cost-total-limit" min="0" step="0.01" value="10"
+                   style="width:76px;background:transparent;border:0;color:var(--text);font:inherit;outline:none;">
+          </label>
+          <button type="button" id="btn-reset-cost-spend"
+                  style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;"
+                  data-i18n="st.display.cost_reset"></button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label" data-i18n="st.display.research_escalation.label"></div>
+          <div class="setting-desc" data-i18n="st.display.research_escalation.desc"></div>
         </div>
         <label class="toggle">
-          <input type="checkbox" id="toggle-help-improve" checked>
+          <input type="checkbox" id="toggle-research-escalation">
           <span class="toggle-slider"></span>
         </label>
       </div>
@@ -1286,6 +1412,106 @@
       <details class="advanced-settings">
         <summary data-i18n="st.display.advanced"></summary>
         <div class="advanced-settings-body">
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.help_improve.label"></div>
+              <div class="setting-desc" data-i18n-html="st.display.help_improve.desc_html"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-help-improve" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.tracing.label"></div>
+              <div class="setting-desc" data-i18n-html="st.display.tracing.desc_html"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-tracing">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.lossless_tracing.label"></div>
+              <div class="setting-desc" data-i18n-html="st.display.lossless_tracing.desc_html"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-lossless-tracing">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.verbose.label"></div>
+              <div class="setting-desc" data-i18n="st.display.verbose.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-verbose">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.scheduled_tasks.label"></div>
+              <div class="setting-desc" data-i18n="st.display.scheduled_tasks.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-scheduled-tasks" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.scheduled_confirm.label"></div>
+              <div class="setting-desc" data-i18n="st.display.scheduled_confirm.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-scheduled-confirm" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.notify_sound.label"></div>
+              <div class="setting-desc" data-i18n="st.display.notify_sound.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-notify-sound" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.completion_confetti.label"></div>
+              <div class="setting-desc" data-i18n="st.display.completion_confetti.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-completion-confetti" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.completion_flash_tab.label"></div>
+              <div class="setting-desc" data-i18n="st.display.completion_flash_tab.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-completion-flash-tab" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" id="auto-group-tabs-label" data-i18n="st.display.auto_group_tabs.label"></div>
+              <div class="setting-desc" id="auto-group-tabs-desc" data-i18n="st.display.auto_group_tabs.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-auto-group-tabs" aria-labelledby="auto-group-tabs-label" aria-describedby="auto-group-tabs-desc" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-label" data-i18n="st.display.screenshot.label"></div>
@@ -1356,55 +1582,6 @@
           </div>
           <div class="setting-row">
             <div class="setting-info">
-              <div class="setting-label" data-i18n="st.display.auto_screenshot.label"></div>
-              <div class="setting-desc" data-i18n="st.display.auto_screenshot.desc"></div>
-            </div>
-            <select id="select-auto-screenshot" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-family:inherit;cursor:pointer;">
-              <option value="off" data-i18n="st.display.auto_screenshot.off"></option>
-              <option value="navigation" data-i18n="st.display.auto_screenshot.navigation"></option>
-              <option value="state_change" data-i18n="st.display.auto_screenshot.state_change"></option>
-              <option value="every_step" data-i18n="st.display.auto_screenshot.every_step"></option>
-            </select>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <div class="setting-label" data-i18n="st.display.tracing.label"></div>
-              <div class="setting-desc" data-i18n-html="st.display.tracing.desc_html"></div>
-            </div>
-            <label class="toggle">
-              <input type="checkbox" id="toggle-tracing">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <div class="setting-label" data-i18n="st.display.cost_session_limit.label"></div>
-              <div class="setting-desc" data-i18n="st.display.cost_session_limit.desc"></div>
-            </div>
-            <label style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text2);font-size:12px;">
-              <span>$</span>
-              <input type="number" id="input-cost-session-limit" min="0" step="0.01" value="10"
-                     style="width:76px;background:transparent;border:0;color:var(--text);font:inherit;outline:none;">
-            </label>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <div class="setting-label"><span data-i18n="st.display.cost_total_limit.label"></span> <span id="cost-spent-value" style="color:var(--accent);font-weight:700;margin-left:4px;">$0.00 / $10.00</span></div>
-              <div class="setting-desc" data-i18n="st.display.cost_total_limit.desc"></div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-              <label style="display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text2);font-size:12px;">
-                <span>$</span>
-                <input type="number" id="input-cost-total-limit" min="0" step="0.01" value="10"
-                       style="width:76px;background:transparent;border:0;color:var(--text);font:inherit;outline:none;">
-              </label>
-              <button type="button" id="btn-reset-cost-spend"
-                      style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;"
-                      data-i18n="st.display.cost_reset"></button>
-            </div>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
               <div class="setting-label" data-i18n="st.display.strict_secret.label"></div>
               <div class="setting-desc" data-i18n="st.display.strict_secret.desc"></div>
             </div>
@@ -1424,6 +1601,15 @@
             </label>
           </div>
 
+          <div class="provider-card" id="firefox-bidi-card">
+            <h3 data-i18n="st.bidi.title">Firefox trusted automation (experimental)</h3>
+            <p data-i18n="st.bidi.desc">Use a local companion for browser dialogs, trusted clicks and typing, and file uploads. Requires Node.js 22+ and Firefox started with remote automation enabled.</p>
+            <p data-i18n-html="st.bidi.setup_html">Install the companion using <code>node firefox-companion/install.mjs</code> from the WebBrain checkout. Restart Firefox with <code>--remote-debugging-port 9222</code>. Keep the connection on this computer.</p>
+            <label><input type="checkbox" id="firefox-bidi-enabled"> <span data-i18n="st.bidi.enable">Use trusted Firefox automation</span></label>
+            <div class="field"><label for="firefox-bidi-port" data-i18n="st.bidi.port">Local Firefox port</label><input id="firefox-bidi-port" type="number" min="1024" max="65535" value="9222"></div>
+            <button type="button" id="firefox-bidi-connect" class="btn-secondary" data-i18n="st.bidi.test">Test connection</button>
+            <p id="firefox-bidi-status" role="status"></p>
+          </div>
           <div class="provider-card" id="captcha-card">
             <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.captcha.desc_html"></div>
 
@@ -1441,6 +1627,8 @@
 
             <div class="info-box" style="margin-top:16px;" data-i18n-html="st.captcha.security_html"></div>
           </div>
+
+
         </div>
       </details>
     </div>
@@ -1486,43 +1674,6 @@
         <button class="btn-secondary" id="btn-clear-vision" data-i18n="st.vision.clear"></button>
       </div>
       <div class="test-result" id="test-vision"></div>
-    </div>
-
-    <h3 class="mm-section-heading">
-      <svg class="mm-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-        <line x1="12" y1="19" x2="12" y2="23"/>
-        <line x1="8" y1="23" x2="16" y2="23"/>
-      </svg>
-      <span data-i18n="st.transcription.heading"></span>
-    </h3>
-    <div class="provider-card" id="transcription-card">
-      <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.5;" data-i18n="st.transcription.desc"></div>
-      <div class="field">
-        <label class="mm-field-label">
-          <span data-i18n="st.provider.field.api_base_url"></span>
-          <span class="mm-detected-provider" id="transcription-detected" hidden>
-            <img class="provider-icon" id="transcription-detected-icon" alt="" width="16" height="16" decoding="async" draggable="false">
-            <span id="transcription-detected-label"></span>
-          </span>
-        </label>
-        <input type="text" id="transcription-base-url" placeholder="https://api.openai.com/v1">
-      </div>
-      <div class="field">
-        <label data-i18n="st.provider.field.api_key"></label>
-        <input type="password" id="transcription-api-key" placeholder="sk-...">
-      </div>
-      <div class="field">
-        <label data-i18n="st.provider.field.model"></label>
-        <input type="text" id="transcription-model" placeholder="whisper-1">
-      </div>
-      <div class="btn-row">
-        <button class="btn-primary" id="btn-save-transcription" data-i18n="st.transcription.save"></button>
-        <button class="btn-secondary" id="btn-test-transcription" data-i18n="st.transcription.test"></button>
-        <button class="btn-secondary" id="btn-clear-transcription" data-i18n="st.transcription.clear"></button>
-      </div>
-      <div class="test-result" id="test-transcription"></div>
     </div>
 
     <h3 data-i18n="st.imageBudget.heading" style="margin:24px 0 12px;font-size:14px;font-weight:600;"></h3>
@@ -1582,29 +1733,183 @@
       </div>
       <div class="info-box" data-i18n-html="st.redaction.warning"></div>
     </div>
+
+    <h3 class="mm-section-heading">
+      <svg class="mm-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+      <span data-i18n="st.transcription.heading"></span>
+    </h3>
+    <div class="provider-card" id="transcription-card">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.5;" data-i18n="st.transcription.desc"></div>
+      <div class="field">
+        <label class="mm-field-label">
+          <span data-i18n="st.provider.field.api_base_url"></span>
+          <span class="mm-detected-provider" id="transcription-detected" hidden>
+            <img class="provider-icon" id="transcription-detected-icon" alt="" width="16" height="16" decoding="async" draggable="false">
+            <span id="transcription-detected-label"></span>
+          </span>
+        </label>
+        <input type="text" id="transcription-base-url" placeholder="https://api.openai.com/v1">
+      </div>
+      <div class="field">
+        <label data-i18n="st.provider.field.api_key"></label>
+        <input type="password" id="transcription-api-key" placeholder="sk-...">
+      </div>
+      <div class="field">
+        <label data-i18n="st.provider.field.model"></label>
+        <input type="text" id="transcription-model" placeholder="whisper-1">
+      </div>
+      <div class="btn-row">
+        <button class="btn-primary" id="btn-save-transcription" data-i18n="st.transcription.save"></button>
+        <button class="btn-secondary" id="btn-test-transcription" data-i18n="st.transcription.test"></button>
+        <button class="btn-secondary" id="btn-clear-transcription" data-i18n="st.transcription.clear"></button>
+      </div>
+      <div class="test-result" id="test-transcription"></div>
+    </div>
+
+    <h3 class="mm-section-heading" id="system-one-heading">
+      <svg class="mm-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="m8 12 3 3 5-6"/>
+      </svg>
+      <span data-i18n="st.system_one.title"></span>
+    </h3>
+    <div class="provider-card" id="system-one-card" aria-labelledby="system-one-heading">
+            <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.system_one.desc_html"></div>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label" data-i18n="st.system_one.enabled.label"></div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toggle-system-one">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="field">
+              <label for="system-one-api-key" data-i18n="st.system_one.api_key.label"></label>
+              <input type="password" id="system-one-api-key" placeholder="ts_…" autocomplete="off" spellcheck="false">
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label" data-i18n="st.system_one.watch.label"></div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toggle-system-one-watch">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label" data-i18n="st.system_one.completion.label"></div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="toggle-system-one-completion">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-info"><div class="setting-label" data-i18n="st.system_one.fast_classifications"></div></div>
+              <label class="toggle"><input type="checkbox" id="toggle-system-one-classifications"><span class="toggle-slider"></span></label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><div class="setting-label" data-i18n="st.system_one.fast_browser"></div></div>
+              <label class="toggle"><input type="checkbox" id="toggle-system-one-browser"><span class="toggle-slider"></span></label>
+            </div>
+            <details class="advanced-settings">
+              <summary data-i18n="st.display.advanced"></summary>
+            <div class="field">
+              <label for="range-system-one-watch-threshold"><span data-i18n="st.system_one.watch_threshold"></span> <span id="system-one-watch-threshold-value">70%</span></label>
+              <input type="range" id="range-system-one-watch-threshold" min="50" max="95" step="5" value="70">
+            </div>
+            <div class="field">
+              <label for="range-system-one-completion-threshold"><span data-i18n="st.system_one.completion_threshold"></span> <span id="system-one-completion-threshold-value">70%</span></label>
+              <input type="range" id="range-system-one-completion-threshold" min="50" max="95" step="5" value="70">
+            </div>
+
+            </details>
+            <div class="btn-row">
+              <button class="btn-primary" id="btn-save-system-one" data-i18n="st.providers.save"></button>
+              <button class="btn-secondary" id="btn-test-system-one" data-i18n="st.providers.test"></button>
+              <button class="btn-secondary" id="btn-clear-system-one" data-i18n="st.system_one.clear"></button>
+            </div>
+            <div class="test-result" id="test-system-one"></div>
+
+            <div class="info-box" style="margin-top:16px;" data-i18n-html="st.system_one.security_html"></div>
+          </div>
+
+    <h3 id="safesocial-heading" class="mm-section-heading" data-i18n="st.safesocial.heading"></h3>
+    <div class="provider-card" id="safesocial-card" aria-labelledby="safesocial-heading">
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label" id="safesocial-enable-label" data-i18n="st.safesocial.enable"></div>
+          <div class="setting-desc" data-i18n="st.safesocial.desc"></div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="safesocial-enabled" aria-labelledby="safesocial-enable-label">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <p class="setting-desc" data-i18n="st.safesocial.download"></p>
+      <p class="setting-desc"><a href="https://huggingface.co/webbrain-one/safesocial-trigger-classifier-efficientnet-lite0" target="_blank" rel="noopener noreferrer" data-i18n="st.safesocial.model"></a></p>
+      <div class="field">
+        <label for="safesocial-action" data-i18n="st.safesocial.action"></label>
+        <select id="safesocial-action">
+          <option value="blur" data-i18n="st.safesocial.blur"></option>
+          <option value="hide" data-i18n="st.safesocial.hide"></option>
+          <option value="dim" data-i18n="st.safesocial.dim"></option>
+          <option value="warn" data-i18n="st.safesocial.warn"></option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="safesocial-threshold" data-i18n="st.safesocial.threshold"></label>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <input id="safesocial-threshold" type="range" min="50" max="99" step="1" value="95" style="flex:1;min-width:0;">
+          <output for="safesocial-threshold">95%</output>
+        </div>
+        <div class="setting-desc" data-i18n="st.safesocial.threshold_desc"></div>
+      </div>
+      <fieldset class="safesocial-labels-fieldset">
+        <legend class="setting-label" data-i18n="st.safesocial.categories"></legend>
+        <div id="safesocial-labels"></div>
+      </fieldset>
+      <p class="setting-desc" data-i18n="st.safesocial.scope"></p>
+      <div id="safesocial-status" class="setting-desc" role="status" aria-live="polite"></div>
+      <div class="btn-row" style="margin-top:12px;">
+        <button type="button" class="btn-secondary" id="safesocial-retry" hidden data-i18n="st.safesocial.retry"></button>
+        <button type="button" class="btn-secondary" id="safesocial-remove" data-i18n="st.safesocial.remove"></button>
+      </div>
+    </div>
   </section>
 
   <section class="tab-panel" data-panel="memory" role="tabpanel">
     <div class="provider-card" id="profile-sync-card">
-      <h3 style="margin:0 0 12px;font-size:14px;font-weight:600;">Encrypted Cloud Sync</h3>
-      <div class="profile-sync-lede"><strong>WebBrain Cloud members only.</strong> Sync memories, profile autofill, and API-key provider settings across devices. Everything is encrypted with your sync password before upload. WebBrain cannot read or recover it. Chat history and OAuth sign-ins are not synced.</div>
+      <h3 data-i18n="st.sync.title" style="margin:0 0 12px;font-size:14px;font-weight:600;"></h3>
+      <div class="profile-sync-lede" data-i18n-html="st.sync.lede_html"></div>
       <div id="profile-sync-status" class="profile-sync-status"></div>
-      <div class="field profile-sync-stage" id="profile-sync-email-field"><label>WebBrain Cloud email</label><input type="email" id="profile-sync-email" autocomplete="email"></div>
-      <div class="field profile-sync-stage" id="profile-sync-password-field"><label>Sync password for encryption (12+ characters)</label><input type="password" id="profile-sync-password" autocomplete="new-password" minlength="12"></div>
-      <div class="field profile-sync-stage" id="profile-sync-confirm-field"><label>Confirm sync password</label><input type="password" id="profile-sync-confirm" autocomplete="new-password" minlength="12"></div>
+      <div class="field profile-sync-stage" id="profile-sync-email-field"><label data-i18n="st.sync.email.label"></label><input type="email" id="profile-sync-email" autocomplete="email"></div>
+      <div class="field profile-sync-stage" id="profile-sync-password-field"><label data-i18n="st.sync.password.label"></label><input type="password" id="profile-sync-password" autocomplete="new-password" minlength="12"></div>
+      <div class="field profile-sync-stage" id="profile-sync-confirm-field"><label data-i18n="st.sync.confirm.label"></label><input type="password" id="profile-sync-confirm" autocomplete="new-password" minlength="12"></div>
       <div class="btn-row profile-sync-actions">
-        <button class="btn-primary" id="btn-profile-sync-auth">Send sign-in link</button>
-        <button class="btn-primary" id="btn-profile-sync-enable">Turn on encrypted sync</button>
-        <button class="btn-primary" id="btn-profile-sync-unlock">Unlock encrypted sync</button>
-        <button class="btn-secondary" id="btn-profile-sync-now">Sync now</button>
+        <button class="btn-primary" id="btn-profile-sync-auth" data-i18n="st.sync.action.auth"></button>
+        <button class="btn-primary" id="btn-profile-sync-enable" data-i18n="st.sync.action.enable"></button>
+        <button class="btn-primary" id="btn-profile-sync-unlock" data-i18n="st.sync.action.unlock"></button>
+        <button class="btn-secondary" id="btn-profile-sync-now" data-i18n="st.sync.action.now"></button>
       </div>
       <details class="profile-sync-advanced" id="profile-sync-advanced">
-        <summary>Advanced</summary>
+        <summary data-i18n="st.display.advanced"></summary>
         <div class="btn-row">
-          <button class="btn-secondary" id="btn-profile-sync-lock">Lock</button>
-          <button class="btn-secondary" id="btn-profile-sync-change">Change sync password</button>
-          <button class="btn-secondary" id="btn-profile-sync-disable">Turn off sync on this device</button>
-          <button class="btn-secondary" id="btn-profile-sync-reset">Replace cloud copy with this device</button>
+          <button class="btn-secondary" id="btn-profile-sync-lock" data-i18n="st.sync.action.lock"></button>
+          <button class="btn-secondary" id="btn-profile-sync-change" data-i18n="st.sync.action.change_password"></button>
+          <button class="btn-secondary" id="btn-profile-sync-disable" data-i18n="st.sync.action.disable"></button>
+          <button class="btn-secondary" id="btn-profile-sync-reset" data-i18n="st.sync.action.reset"></button>
         </div>
       </details>
       <div class="test-result" id="test-profile-sync"></div>
@@ -1793,6 +2098,9 @@
   <!-- Tab switcher must be an external script — Manifest V3's default
        CSP (`script-src 'self'`) blocks inline <script> execution. -->
   <script src="settings-tabs.js"></script>
+  <script type="module" src="apocalypse-comm.js"></script>
+  <script type="module" src="download-tracker.js"></script>
   <script src="settings.js" type="module"></script>
+  <script src="safesocial-settings.js" type="module"></script>
 </body>
 </html>

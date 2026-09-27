@@ -5,7 +5,9 @@
  * the background owns prompt construction and untrusted-content wrapping.
  */
 (function () {
-  if (window.top !== window || window.__webbrainSelectionShortcutInjected) return;
+  const shortcutConfig = globalThis.__webbrainSelectionShortcutConfig;
+  if ((window.top !== window && shortcutConfig?.allowNestedFrame !== true)
+      || window.__webbrainSelectionShortcutInjected) return;
   window.__webbrainSelectionShortcutInjected = true;
 
   const api = globalThis.browser || globalThis.chrome;
@@ -13,7 +15,16 @@
 
   const STORAGE_KEY = 'selectionShortcutEnabled';
   const LOCALE_STORAGE_KEY = 'wbLocale';
-  const SUBMIT_MESSAGE = 'WB_SELECTION_SHORTCUT_SUBMIT';
+  const SUBMIT_MESSAGE = typeof shortcutConfig?.submitMessage === 'string'
+    && shortcutConfig.submitMessage.trim()
+    ? shortcutConfig.submitMessage.trim()
+    : 'WB_SELECTION_SHORTCUT_SUBMIT';
+  const SUBMIT_FIELDS = shortcutConfig?.submitFields
+    && typeof shortcutConfig.submitFields === 'object'
+    && !Array.isArray(shortcutConfig.submitFields)
+    ? { ...shortcutConfig.submitFields }
+    : {};
+  const LOCALIZATION_MESSAGE = 'WB_SELECTION_SHORTCUT_LOCALIZATION';
   const GAP = 8;
   const BUTTON_SIZE = 44;
   const POPUP_WIDTH = 316;
@@ -21,6 +32,12 @@
   const TRANSLATION_LANGUAGES = Object.freeze([
     'en', 'es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar',
     'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he',
+    'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de',
+  ]);
+  const LOCALIZATION_KEYS = Object.freeze([
+    'askSelection', 'askHighlightedText', 'openChat', 'summarize', 'explain', 'quiz',
+    'proofread', 'humanize', 'translate', 'translateTo', 'askAbout',
+    'askQuestion', 'sendQuestion', 'includePageContext', 'hideShortcut', 'sentManual', 'sendFailed',
   ]);
 
   let enabled = true;
@@ -34,8 +51,11 @@
   let shortcut = null;
   let popup = null;
   let question = null;
+  let includePageContext = null;
   let sendButton = null;
   let interfaceLanguage = resolveInterfaceLanguage('');
+  let localization = null;
+  let localizationRequestId = 0;
   let toast = null;
   let toastTimer = null;
   let selectionTimer = null;
@@ -84,6 +104,59 @@
     return isSupportedTranslationLanguage(browserLanguage) ? browserLanguage : 'en';
   }
 
+  function normalizeLocalization(response) {
+    if (!response?.ok || !response.strings || typeof response.strings !== 'object') return null;
+    const strings = {};
+    for (const key of LOCALIZATION_KEYS) {
+      const value = response.strings[key];
+      if (typeof value !== 'string' || !value.trim()) return null;
+      strings[key] = value;
+    }
+    return {
+      locale: resolveInterfaceLanguage(response.locale),
+      dir: response.dir === 'rtl' ? 'rtl' : 'ltr',
+      strings,
+    };
+  }
+
+  function applyLocalization() {
+    if (!localization || !shadow) return;
+    const strings = localization.strings;
+host.lang = localization.locale;
+    host.dir = localization.dir;
+    shortcut.setAttribute('aria-label', strings.askHighlightedText);
+    shortcut.title = strings.askHighlightedText;
+    popup.setAttribute('aria-label', strings.askHighlightedText);
+    for (const action of ['summarize', 'explain', 'quiz', 'proofread', 'humanize', 'translate']) {
+      const label = shadow.querySelector(`[data-action="${action}"] .action-label`);
+      if (label) label.textContent = strings[action];
+    }
+    question.setAttribute('aria-label', strings.askQuestion);
+    question.placeholder = strings.askQuestion;
+    sendButton.setAttribute('aria-label', strings.sendQuestion);
+    const contextOptionLabel = shadow.querySelector('.context-option span');
+    if (contextOptionLabel) contextOptionLabel.textContent = strings.includePageContext;
+    const hideButton = shadow.querySelector('.hide');
+    if (hideButton) hideButton.textContent = strings.hideShortcut;
+  }
+
+  async function refreshLocalization(value) {
+    interfaceLanguage = resolveInterfaceLanguage(value);
+    const requestId = ++localizationRequestId;
+    try {
+      const response = await api.runtime.sendMessage({
+        type: LOCALIZATION_MESSAGE,
+        locale: interfaceLanguage,
+      });
+      if (requestId !== localizationRequestId) return;
+      const next = normalizeLocalization(response);
+      if (!next) return;
+      interfaceLanguage = next.locale;
+      localization = next;
+      applyLocalization();
+    } catch { /* English markup remains the offline fallback. */ }
+  }
+
   function readSelection() {
     if (!enabled || suppressed || submitting || isTextField(document.activeElement)) return null;
     const selection = window.getSelection();
@@ -98,13 +171,13 @@
     if (ancestor?.closest?.('input, textarea')) return null;
 
     const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
-    const rect = rects.at(-1) || range.getBoundingClientRect();
+    const visibleRects = collectVisibleHighlightRects(rects);
+    const rect = visibleRects[0] || rects[0] || range.getBoundingClientRect();
     if (!rect || (!rect.width && !rect.height)) return null;
-    const highlightRects = collectVisibleHighlightRects(rects);
     return {
       text,
       rect: serializeRect(rect),
-      rects: (highlightRects.length ? highlightRects : [rect]).map(serializeRect),
+      rects: (visibleRects.length ? visibleRects : [rect]).map(serializeRect),
     };
   }
 
@@ -149,12 +222,22 @@
           color:var(--text); box-shadow:var(--shadow); pointer-events:auto;
           font:15px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
         }
-        .actions { display:grid; gap:2px; }
+        .actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px; }
         .action,.hide {
-          width:100%; border:0; border-radius:10px; background:transparent;
-          color:var(--text); text-align:left; cursor:pointer;
+          border:0; border-radius:10px; background:transparent;
+          color:var(--text); text-align:start; cursor:pointer;
         }
-        .action { padding:10px 12px; font-size:15px; font-weight:550; }
+        .action {
+          width:100%; min-width:0; display:flex; align-items:center; gap:9px;
+          padding:10px 12px; font-size:15px; font-weight:550;
+        }
+        .action-icon {
+          width:17px; height:17px; flex:0 0 17px; color:var(--accent);
+          fill:none; stroke:currentColor; stroke-width:1.7;
+          stroke-linecap:round; stroke-linejoin:round;
+        }
+        .action-label { min-width:0; }
+        .action:hover .action-icon { color:var(--accent-strong); }
         .action:hover,.hide:hover { background:var(--hover); }
         .question-wrap { position:relative; margin-top:8px; }
         textarea {
@@ -172,9 +255,18 @@
         .send:hover:not(:disabled) { background:var(--accent-strong); }
         .send:disabled { opacity:.38; cursor:default; }
         .send svg { width:15px; height:15px; }
+        .context-option {
+          display:flex; align-items:flex-start; gap:8px; margin:8px 2px 2px;
+          color:var(--muted); font-size:13px; line-height:1.35; cursor:pointer;
+        }
+        .context-option input { margin:2px 0 0; accent-color:var(--accent); }
         .divider { height:1px; margin:10px 0 4px; background:var(--border); }
-        .hide { padding:9px 12px; color:var(--muted); font-size:13px; }
-        .shortcut:focus-visible,.action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible {
+        .hide-row { display:flex; }
+        .hide {
+          width:auto; margin-left:auto; padding:5px 8px;
+          color:var(--muted); font-size:12px; line-height:1.25;
+        }
+        .shortcut:focus-visible,.action:focus-visible,.hide:focus-visible,.send:focus-visible,textarea:focus-visible,.context-option input:focus-visible {
           outline:3px solid rgba(108,99,255,.34); outline-offset:2px;
         }
         .toast {
@@ -193,18 +285,50 @@
         @media (prefers-reduced-motion:reduce) { .shortcut { transition:none; } }
       </style>
       <div class="selection-highlights" aria-hidden="true"></div>
-      <button class="shortcut" type="button" aria-label="Ask WebBrain about selected text" title="Ask WebBrain" hidden>
+      <button class="shortcut" type="button" aria-label="Ask WebBrain about this" title="Ask WebBrain about this" hidden>
         <span class="shortcut-icon" aria-hidden="true">?</span>
       </button>
-      <div class="popup" role="dialog" aria-label="Ask WebBrain about selected text" hidden>
+      <div class="popup" role="dialog" aria-label="Ask WebBrain about this" hidden>
         <div class="main-view">
           <div class="actions">
-            <button class="action" type="button" data-action="summarize">Summarize</button>
-            <button class="action" type="button" data-action="explain">Explain</button>
-            <button class="action" type="button" data-action="quiz">Quiz me</button>
-            <button class="action" type="button" data-action="proofread">Proofread</button>
-            <button class="action" type="button" data-action="humanize">Humanize</button>
-            <button class="action" type="button" data-action="translate">Translate</button>
+            <button class="action" type="button" data-action="summarize">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <path d="M4 5h12M4 9h9M4 13h12M4 17h7"/>
+              </svg>
+              <span class="action-label">Summarize</span>
+            </button>
+            <button class="action" type="button" data-action="explain">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <path d="M6.5 11.5a5 5 0 1 1 7 0c-.9.8-1.3 1.6-1.4 2.5H7.9c-.1-.9-.5-1.7-1.4-2.5ZM8.2 17h3.6M8 14h4"/>
+              </svg>
+              <span class="action-label">Explain</span>
+            </button>
+            <button class="action" type="button" data-action="quiz">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <circle cx="10" cy="10" r="7"/>
+                <path d="M7.8 7.8a2.5 2.5 0 0 1 4.8 1c0 1.8-2.6 2.1-2.6 3.7M10 15.5h.01"/>
+              </svg>
+              <span class="action-label">Quiz me</span>
+            </button>
+            <button class="action" type="button" data-action="proofread">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <path d="M5 3.5h7l3 3v10H5zM12 3.5v3h3M7.3 11.8l1.6 1.6 3.5-3.7"/>
+              </svg>
+              <span class="action-label">Proofread</span>
+            </button>
+            <button class="action" type="button" data-action="humanize">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <circle cx="10" cy="7" r="2.5"/>
+                <path d="M4.8 16.5C5.6 13.5 7.4 12 10 12s4.4 1.5 5.2 4.5"/>
+              </svg>
+              <span class="action-label">Humanize</span>
+            </button>
+            <button class="action" type="button" data-action="translate">
+              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <path d="M3.5 5h9M8 3v2M5.2 8.5c1.2 2 3 3.6 5.4 4.7M11.2 7.5c-1 2.6-3.2 4.8-6.5 6.5M12.5 16.5l2.8-7 2.8 7M13.5 14h3.6"/>
+              </svg>
+              <span class="action-label">Translate</span>
+            </button>
           </div>
           <div class="question-wrap">
             <textarea maxlength="2000" rows="3" aria-label="Ask WebBrain a question" placeholder="Ask WebBrain…"></textarea>
@@ -212,8 +336,14 @@
               <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h11M11 6l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
           </div>
+          <label class="context-option">
+            <input type="checkbox" checked>
+            <span>Include page &amp; conversation context</span>
+          </label>
           <div class="divider"></div>
-          <button class="hide" type="button">Hide selection shortcut</button>
+          <div class="hide-row">
+            <button class="hide" type="button">Hide this</button>
+          </div>
         </div>
       </div>
       <div class="toast" role="status" aria-live="polite" hidden></div>
@@ -223,8 +353,10 @@
     shortcut = shadow.querySelector('.shortcut');
     popup = shadow.querySelector('.popup');
     question = shadow.querySelector('textarea');
+    includePageContext = shadow.querySelector('.context-option input');
     sendButton = shadow.querySelector('.send');
     toast = shadow.querySelector('.toast');
+    applyLocalization();
 
     shortcut.addEventListener('click', (event) => {
       if (event.isTrusted && snapshot && !submitting) openPopup();
@@ -232,8 +364,7 @@
     shadow.querySelectorAll('[data-action]').forEach((button) => {
       button.addEventListener('click', (event) => {
         if (!event.isTrusted) return;
-        if (button.dataset.action === 'translate') submitSelection('translate', '', interfaceLanguage);
-        else submitSelection(button.dataset.action);
+        submitSelection(button.dataset.action, '', interfaceLanguage);
       });
     });
     question.addEventListener('input', () => {
@@ -252,12 +383,20 @@
     (document.documentElement || document.body).appendChild(host);
   }
 
+  function getVisibleSelectionBottom() {
+    if (!snapshot) return 0;
+    return (snapshot.rects || []).reduce(
+      (bottom, selectionRect) => Math.max(bottom, selectionRect.bottom),
+      snapshot.rect.bottom,
+    );
+  }
+
   function positionShortcut() {
     if (!snapshot || !shortcut) return;
     const rect = snapshot.rect;
     let left = rect.left + rect.width / 2 - BUTTON_SIZE / 2;
-    let top = rect.bottom + 8;
-    if (top + BUTTON_SIZE > window.innerHeight - GAP) top = rect.top - BUTTON_SIZE - 8;
+    let top = rect.top - BUTTON_SIZE - GAP;
+    if (top < GAP) top = getVisibleSelectionBottom() + GAP;
     left = clamp(left, GAP, Math.max(GAP, window.innerWidth - BUTTON_SIZE - GAP));
     top = clamp(top, GAP, Math.max(GAP, window.innerHeight - BUTTON_SIZE - GAP));
     shortcut.style.left = `${Math.round(left)}px`;
@@ -316,14 +455,18 @@
     snapshot = nextSnapshot;
     popup.hidden = true;
     question.value = '';
+    includePageContext.checked = true;
     sendButton.disabled = true;
     shortcut.hidden = false;
     positionShortcut();
   }
 
-  function openPopup() {
+  async function openPopup() {
+    if (!snapshot || submitting) return;
+    if (!localization) await refreshLocalization(interfaceLanguage);
     if (!snapshot || submitting) return;
     ensureSurface();
+    applyLocalization();
     popup.hidden = false;
     popup.style.visibility = 'hidden';
     positionPopup();
@@ -336,6 +479,7 @@
     if (!popup) return;
     popup.hidden = true;
     question.value = '';
+    includePageContext.checked = true;
     sendButton.disabled = true;
     clearSelectionHighlight();
     if (restoreFocus && shortcut && !shortcut.hidden) shortcut.focus();
@@ -347,13 +491,14 @@
     if (shortcut) shortcut.hidden = true;
     if (popup) popup.hidden = true;
     if (question) question.value = '';
+    if (includePageContext) includePageContext.checked = true;
     if (sendButton) sendButton.disabled = true;
   }
 
   function destroySurface() {
     hideToast();
     host?.remove();
-    host = shadow = highlightLayer = shortcut = popup = question = sendButton = toast = null;
+    host = shadow = highlightLayer = shortcut = popup = question = includePageContext = sendButton = toast = null;
     snapshot = null;
   }
 
@@ -380,20 +525,22 @@
     if (action === 'custom' && !String(customQuestion || '').trim()) return;
     if (action === 'translate' && !isSupportedTranslationLanguage(language)) return;
     const request = {
+      ...SUBMIT_FIELDS,
       type: SUBMIT_MESSAGE,
       action,
       selectionText: snapshot.text,
       question: action === 'custom' ? String(customQuestion).trim() : undefined,
-      language: action === 'translate' ? language : undefined,
+      ...(action === 'custom' ? { includePageContext: includePageContext?.checked === true } : {}),
+      language: action === 'custom' ? undefined : (language || interfaceLanguage),
     };
     submitting = true;
     dismissSurface();
     try {
       const response = await api.runtime.sendMessage(request);
       if (!response?.ok) throw new Error(response?.error || 'Selection request was not accepted.');
-      if (response.requiresManualOpen) showToast('Sent to WebBrain. Open the sidebar if it doesn’t start.');
+      if (response.requiresManualOpen) showToast(localization?.strings.sentManual || 'Sent to WebBrain. Open the sidebar if it does not start.');
     } catch {
-      showToast('Couldn’t send to WebBrain. Use the right-click menu and choose “Ask WebBrain about this”.');
+      showToast(localization?.strings.sendFailed || 'Could not send to WebBrain. Try the right-click menu instead.');
     } finally {
       submitting = false;
     }
@@ -449,12 +596,12 @@
       enabled = changes[STORAGE_KEY].newValue !== false;
       if (!enabled) destroySurface();
     }
-    if (changes[LOCALE_STORAGE_KEY]) interfaceLanguage = resolveInterfaceLanguage(changes[LOCALE_STORAGE_KEY].newValue);
+    if (changes[LOCALE_STORAGE_KEY]) void refreshLocalization(changes[LOCALE_STORAGE_KEY].newValue);
   });
   Promise.resolve(api.storage.local.get({ [STORAGE_KEY]: true, [LOCALE_STORAGE_KEY]: '' }))
     .then((stored) => {
       enabled = stored?.[STORAGE_KEY] !== false;
-      interfaceLanguage = resolveInterfaceLanguage(stored?.[LOCALE_STORAGE_KEY]);
+      void refreshLocalization(stored?.[LOCALE_STORAGE_KEY]);
       if (!enabled) destroySurface();
     })
     .catch(() => { enabled = true; });
@@ -463,10 +610,11 @@
   window.__webbrainSelectionShortcut = {
     refreshFromSelection,
     openPopup,
-    submitPreset: (action) => action === 'translate'
-      ? submitSelection('translate', '', interfaceLanguage)
-      : submitSelection(action),
+    submitPreset: (action) => submitSelection(action, '', interfaceLanguage),
     submitCustom: (value) => submitSelection('custom', value),
+    setIncludePageContext: (value) => {
+      if (includePageContext) includePageContext.checked = value === true;
+    },
     hideShortcut: disableShortcut,
     getState: () => ({
       enabled,
@@ -479,14 +627,31 @@
       highlightRectCount: highlightLayer?.childElementCount || 0,
       toastVisible: !!toast && !toast.hidden,
       shortcutRect: shortcut && !shortcut.hidden ? shortcut.getBoundingClientRect().toJSON() : null,
+      selectionRect: snapshot?.rect || null,
+      selectionBottom: snapshot ? getVisibleSelectionBottom() : null,
+      shortcutLabel: shortcut?.getAttribute('aria-label') || '',
+      shortcutBackground: shortcut ? getComputedStyle(shortcut).backgroundColor : '',
+      shortcutColor: shortcut ? getComputedStyle(shortcut).color : '',
+      shortcutBoxShadow: shortcut ? getComputedStyle(shortcut).boxShadow : '',
       summarizeRect: popup && !popup.hidden
         ? shadow.querySelector('[data-action="summarize"]')?.getBoundingClientRect().toJSON() || null
         : null,
       translateRect: popup && !popup.hidden
         ? shadow.querySelector('[data-action="translate"]')?.getBoundingClientRect().toJSON() || null
         : null,
+      hideRect: popup && !popup.hidden
+        ? shadow.querySelector('.hide')?.getBoundingClientRect().toJSON() || null
+        : null,
       questionRect: popup && !popup.hidden ? question?.getBoundingClientRect().toJSON() || null : null,
       questionValue: question?.value || '',
+      includePageContextChecked: includePageContext?.checked === true,
+      includePageContextLabel: shadow?.querySelector('.context-option span')?.textContent || '',
+      hideLabel: shadow?.querySelector('.hide')?.textContent || '',
+      actionIconCount: shadow?.querySelectorAll('.action > .action-icon').length || 0,
+      direction: host?.dir || 'ltr',
+      summarizeLabel: shadow?.querySelector('[data-action="summarize"] .action-label')?.textContent || '',
+      explainLabel: shadow?.querySelector('[data-action="explain"] .action-label')?.textContent || '',
+      quizLabel: shadow?.querySelector('[data-action="quiz"] .action-label')?.textContent || '',
     }),
   };
 })();

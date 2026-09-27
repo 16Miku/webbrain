@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "id": "040",
+  "image": "images/040.png",
+  "threshold": 0.74,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "account",
+        "label",
+        "receipt",
+        "contract",
+        "telemetry",
+        "document"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Shipment label",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "visible-fragment",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "ZX-81",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "unknown",
+      "dimension": "unknowns",
+      "section": 6,
+      "kind": "any",
+      "values": [
+        "unknown",
+        "unreadable",
+        "blurred",
+        "smudged",
+        "redacted",
+        "cannot read"
+      ],
+      "weight": 3,
+      "critical": true
+    },
+    {
+      "id": "no-guess",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "any",
+      "values": [
+        "ZX-81"
+      ],
+      "weight": 1,
+      "critical": false
+    }
+  ],
+  "successRubric": "Transcribe only ZX-81 and explicitly say last 3 characters blurred."
+}

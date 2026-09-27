@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "070",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "chart-reading",
+  "title": "Dönüşüm hunisi",
+  "image": "images/070.png",
+  "question": "Which category has the tallest bar, and what exact value or annotation is attached to it? Focus on the “Dönüşüm hunisi” screen.",
+  "defaultPromptMode": "production"
+}

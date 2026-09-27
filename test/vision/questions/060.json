@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "060",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "uncertainty-calibration",
+  "title": "Scanned receipt",
+  "image": "images/060.png",
+  "question": "Which characters are actually legible, and which information must remain unknown? Focus on the “Scanned receipt” screen.",
+  "defaultPromptMode": "production"
+}

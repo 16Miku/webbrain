@@ -6,11 +6,110 @@ const TAB_CHAT_QUOTA_RETRY_BUDGET = 256 * 1024;
 export const TRANSPARENT_PIXEL_PNG_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
+const IMAGE_DATA_URL_PREFIX = 'data:image/';
+const BASE64_DATA_URL_MARKER = ';base64,';
+
+function asciiLowerCode(code) {
+  return code >= 65 && code <= 90 ? code + 32 : code;
+}
+
+function matchesAsciiIgnoreCase(source, offset, expected) {
+  if (offset + expected.length > source.length) return false;
+  for (let i = 0; i < expected.length; i++) {
+    if (asciiLowerCode(source.charCodeAt(offset + i))
+      !== asciiLowerCode(expected.charCodeAt(i))) return false;
+  }
+  return true;
+}
+
+function isMimeTypeCode(code) {
+  return (code >= 48 && code <= 57)
+    || (code >= 65 && code <= 90)
+    || (code >= 97 && code <= 122)
+    || code === 43
+    || code === 45
+    || code === 46;
+}
+
+function isBase64Code(code) {
+  return (code >= 48 && code <= 57)
+    || (code >= 65 && code <= 90)
+    || (code >= 97 && code <= 122)
+    || code === 43
+    || code === 47
+    || code === 61;
+}
+
+function isMediaParameterCode(code) {
+  return isMimeTypeCode(code)
+    || code === 33
+    || code === 37
+    || code === 39
+    || code === 42
+    || code === 61
+    || code === 95
+    || code === 126;
+}
+
+function findImageDataUrl(source, start) {
+  const firstCode = IMAGE_DATA_URL_PREFIX.charCodeAt(0);
+  for (let index = start; index <= source.length - IMAGE_DATA_URL_PREFIX.length; index++) {
+    if (asciiLowerCode(source.charCodeAt(index)) !== firstCode) continue;
+    if (matchesAsciiIgnoreCase(source, index, IMAGE_DATA_URL_PREFIX)) return index;
+  }
+  return -1;
+}
+
+function imageDataPayloadEnd(source, marker) {
+  let cursor = marker + IMAGE_DATA_URL_PREFIX.length;
+  const mimeStart = cursor;
+  while (cursor < source.length && isMimeTypeCode(source.charCodeAt(cursor))) cursor++;
+  if (cursor === mimeStart) return -1;
+
+  // Walk the short metadata section without applying a regexp to the image
+  // bytes. Only `;name=value` media-type parameters may sit between the MIME
+  // type and `;base64,`, so the walk stops at the first character that cannot
+  // belong to one (a quote, a tag boundary, whitespace, or the comma that
+  // starts a non-base64 payload). Without that bound the scan would run past
+  // the attribute it started in and swallow every character up to the next
+  // image in the document.
+  while (cursor < source.length && source.charCodeAt(cursor) === 59) {
+    if (matchesAsciiIgnoreCase(source, cursor, BASE64_DATA_URL_MARKER)) {
+      cursor += BASE64_DATA_URL_MARKER.length;
+      const payloadStart = cursor;
+      while (cursor < source.length && isBase64Code(source.charCodeAt(cursor))) cursor++;
+      return cursor > payloadStart ? cursor : -1;
+    }
+    cursor++;
+    while (cursor < source.length && isMediaParameterCode(source.charCodeAt(cursor))) cursor++;
+  }
+  return -1;
+}
+
 export function stripImagePayloadsForPersist(html) {
-  return String(html || '').replace(
-    /data:image\/[a-z0-9.+-]+(?:;[^,]*)?;base64,[a-z0-9+/=]+/gi,
-    TRANSPARENT_PIXEL_PNG_DATA_URL,
-  );
+  const source = String(html || '');
+  const chunks = [];
+  let copyCursor = 0;
+  let searchCursor = 0;
+  let replaced = false;
+
+  while (searchCursor < source.length) {
+    const marker = findImageDataUrl(source, searchCursor);
+    if (marker < 0) break;
+    const end = imageDataPayloadEnd(source, marker);
+    if (end < 0) {
+      searchCursor = marker + IMAGE_DATA_URL_PREFIX.length;
+      continue;
+    }
+    chunks.push(source.slice(copyCursor, marker), TRANSPARENT_PIXEL_PNG_DATA_URL);
+    copyCursor = end;
+    searchCursor = end;
+    replaced = true;
+  }
+
+  if (!replaced) return source;
+  chunks.push(source.slice(copyCursor));
+  return chunks.join('');
 }
 
 function findHtmlTagEnd(source, start) {
@@ -120,6 +219,28 @@ export function compactTabChatForPersist(html, budget = TAB_CHAT_PERSIST_BUDGET)
   return fallback.slice(0, boundedBudget);
 }
 
+async function tabChatKeyBelongsToOpenTab(storedKey) {
+  const rawTabId = String(storedKey || '').slice(TAB_CHAT_PREFIX.length);
+  const tabId = Number(rawTabId);
+  const tabs = globalThis.browser?.tabs || globalThis.chrome?.tabs;
+  // Without a tab API there is no proof that removal is safe.
+  if (!Number.isFinite(tabId) || !tabs?.get) return true;
+  try {
+    await tabs.get(tabId);
+    return true;
+  } catch (error) {
+    // Only the browser's explicit "tab does not exist" errors prove closure.
+    // A transient API/context failure leaves ownership unknown and must retain
+    // the other tab's chat.
+    const message = String(error?.message || error || '').toLowerCase();
+    return !(
+      /no tab with id\b/.test(message)
+      || /invalid tab id\b/.test(message)
+      || /no such tab\b/.test(message)
+    );
+  }
+}
+
 export async function persistTabChatToSession(storageArea, key, html, warn = console.warn) {
   const source = String(html || '');
   const initialValue = source.length > TAB_CHAT_PERSIST_BUDGET
@@ -137,6 +258,39 @@ export async function persistTabChatToSession(storageArea, key, html, warn = con
       // still fail. First retry this write with a tightly bounded stored copy.
       await storageArea.set({ [key]: retryValue });
       return { ok: true, degraded: true, recoveredFromQuota: true };
+    } catch (error) {
+      retryError = error;
+    }
+
+    try {
+      // Tab-close cleanup can be interrupted by a background-page shutdown.
+      // Reclaim only chats whose tab is provably gone; never delete another
+      // open tab's history merely to make the current write fit.
+      const stored = await storageArea.get(null);
+      const candidates = Object.entries(stored || {})
+        .filter(([storedKey, value]) => (
+          storedKey !== key
+          && storedKey.startsWith(TAB_CHAT_PREFIX)
+          && typeof value === 'string'
+        ))
+        .sort((a, b) => b[1].length - a[1].length);
+      const evictedKeys = [];
+      for (const [storedKey] of candidates) {
+        if (await tabChatKeyBelongsToOpenTab(storedKey)) continue;
+        await storageArea.remove(storedKey);
+        evictedKeys.push(storedKey);
+        try {
+          await storageArea.set({ [key]: retryValue });
+          return {
+            ok: true,
+            degraded: true,
+            recoveredFromQuota: true,
+            evictedKeys,
+          };
+        } catch (error) {
+          retryError = error;
+        }
+      }
     } catch (error) {
       retryError = error;
     }
@@ -303,12 +457,20 @@ export function createTabChatHandoffCoordinator(storageArea, {
     });
   }
 
-  function clear(tabId, { ownerId = '', handoffGeneration = null } = {}) {
+  function clear(tabId, {
+    ownerId = '',
+    handoffGeneration = null,
+    additionalKeys = [],
+    commitAfterRemove = null,
+  } = {}) {
     const numericTabId = normalizeTabId(tabId);
     if (numericTabId == null) return Promise.resolve({ ok: false, error: 'No tab ID' });
     return enqueue(numericTabId, async (queuedTabId) => {
       const normalizedOwnerId = String(ownerId || '');
       const normalizedGeneration = Number(handoffGeneration);
+      if (normalizedOwnerId && typeof commitAfterRemove === 'function') {
+        throw new Error('A transactional clear cannot retain an existing handoff owner.');
+      }
       if (normalizedOwnerId) {
         if (!Number.isFinite(normalizedGeneration) || normalizedGeneration <= 0) {
           return { ok: true, skipped: true, reason: 'stale-handoff' };
@@ -320,7 +482,6 @@ export function createTabChatHandoffCoordinator(storageArea, {
           return { ok: true, skipped: true, reason: 'stale-handoff' };
         }
       }
-      latestHtml.delete(queuedTabId);
       const keys = [TAB_CHAT_PREFIX + queuedTabId];
       let nextGeneration = null;
       if (normalizedOwnerId) {
@@ -334,7 +495,33 @@ export function createTabChatHandoffCoordinator(storageArea, {
       } else {
         keys.push(TAB_CHAT_HANDOFF_PREFIX + queuedTabId);
       }
-      await storageArea.remove(keys);
+      for (const additionalKey of additionalKeys) {
+        if (typeof additionalKey === 'string' && additionalKey) keys.push(additionalKey);
+      }
+      const removalKeys = [...new Set(keys)];
+      const hadLatestHtml = latestHtml.has(queuedTabId);
+      const previousLatestHtml = latestHtml.get(queuedTabId);
+      const rollbackSnapshot = {};
+      if (typeof commitAfterRemove === 'function') {
+        for (const removalKey of removalKeys) {
+          const stored = await storageArea.get(removalKey);
+          if (Object.prototype.hasOwnProperty.call(stored || {}, removalKey)) {
+            rollbackSnapshot[removalKey] = stored[removalKey];
+          }
+        }
+      }
+      await storageArea.remove(removalKeys);
+      latestHtml.delete(queuedTabId);
+      try {
+        await commitAfterRemove?.();
+      } catch (error) {
+        if (hadLatestHtml) latestHtml.set(queuedTabId, previousLatestHtml);
+        else latestHtml.delete(queuedTabId);
+        if (Object.keys(rollbackSnapshot).length) {
+          await storageArea.set(rollbackSnapshot);
+        }
+        throw error;
+      }
       return {
         ok: true,
         handoffOwnerId: normalizedOwnerId || null,

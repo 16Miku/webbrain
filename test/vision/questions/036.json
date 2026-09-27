@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "036",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "photo-understanding",
+  "title": "Winter collection",
+  "image": "images/036.png",
+  "question": "What weather condition is visible and what is the caption? Focus on the “Winter collection” screen.",
+  "defaultPromptMode": "production"
+}

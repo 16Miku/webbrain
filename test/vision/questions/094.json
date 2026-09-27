@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "094",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "calendar",
+  "title": "Release calendar",
+  "image": "images/094.png",
+  "question": "What event is shown on the selected day, and at what exact time? Focus on the “Release calendar” screen.",
+  "defaultPromptMode": "production"
+}

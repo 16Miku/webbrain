@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "042",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "search-results",
+  "title": "Research library",
+  "image": "images/042.png",
+  "question": "What query is active, which result tab is selected, and how many results are shown? Focus on the “Research library” screen.",
+  "defaultPromptMode": "production"
+}

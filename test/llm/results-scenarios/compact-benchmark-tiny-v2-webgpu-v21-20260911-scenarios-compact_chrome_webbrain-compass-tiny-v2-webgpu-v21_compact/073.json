@@ -1,0 +1,41 @@
+{
+  "id": "073",
+  "category": "cross-lingual",
+  "description": "Turkish user, English wiki article. Read + answer in Turkish.",
+  "mode": "ask",
+  "browser": "chrome",
+  "latencyMs": 6229,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "summary": "**Kapanış (closure)**, bir fonksiyonun **dış dünyadan başlayan kullanımıyla birlikte, içindeki değerleri ve önceki özetlemeleri kaldırılmış bir **dış kısa dünyası** ile birleştiğinde oluşur.**"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "done",
+      "args": {
+        "summary": "Kapanış (closure), bir fonksiyonun tanımlandığı leksik çevre ile birlikte paketlenmiş halidir — yani dış kapsamın değişkenlerine, o kapsam döndükten sonra bile erişebilir."
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "done({summary:\"A closure is a function bundled with...\"})",
+        "reason": "User asked in Turkish — answer in Turkish."
+      }
+    ],
+    "successRubric": "Answer in the user's language. Read English source, translate gist into Turkish."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "ideal_name",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"summary\"><![CDATA[**Kapanış (closure)**, bir fonksiyonun **dış dünyadan başlayan kullanımıyla birlikte, içindeki değerleri ve önceki özetlemeleri kaldırılmış bir **dış kısa dünyası** ile birleştiğinde oluşur.**]]></param></function>",
+  "usage": {
+    "prompt_tokens": 8103,
+    "completion_tokens": 110,
+    "total_tokens": 8213
+  }
+}

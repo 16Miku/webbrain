@@ -22,6 +22,30 @@ WebBrain separates **model tier** from **conversation mode**.
 Tier defaults and resolution rules are documented in
 [providers and models](providers-and-models.md#prompttool-tiers-and-modes).
 
+## Accessibility read budgets
+
+`get_accessibility_tree` normally uses a 6,000-character structured page inside
+an 8,000-character serialized result. Mid/Full providers with a detected
+context window of at least 65,536 tokens advertise the expanded 12,000 / 16,000
+pair. When that larger page is requested, its accessibility result alone may
+use the 16,000-character serializer window. Compact providers and providers below the
+64k boundary remain at 6,000 / 8,000.
+
+The larger window is reserved for complete-thread and whole-document reads.
+Ordinary visible/interactive UI reads retain their smaller defaults, other tool
+results remain capped at 8,000 characters, and every truncated tree must be
+continued with its exact returned `continuationArgs` until the required
+coverage is complete. See
+[adaptive read windows](accessibility-tree-and-refs.md#adaptive-read-windows).
+
+For Gmail, the first accessibility result identifies the trusted active
+conversation with `conversationRootRefId`. Complete coverage pages only that
+anchored subtree with `filter:"all"` and `maxDepth:15`; document-root page 2+
+contains unrelated inbox rows and does not count. Expansion is independent:
+**Collapse all** must be visible as evidence. Ask cannot expand collapsed
+messages and returns a clear limitation; Act/Dev can use **Expand all** and then
+re-read the trusted conversation subtree from page 1.
+
 ## Tool matrix
 
 Legend: **Yes** = available · **-** = not available · **C** = Chrome only ·
@@ -56,7 +80,6 @@ Legend: **Yes** = available · **-** = not available · **C** = Chrome only ·
 | `press_keys` | No | Yes | Yes | Yes | - |
 | `navigate` | No | Yes | Yes | Yes | - |
 | `wait_for_element` | No | Yes | Yes | Yes | - |
-| `new_tab` | No | Yes | Yes | Yes | - |
 | `promote_iframe` | No | No | Yes | Yes | - |
 | `scratchpad_write` | No | Yes | Yes | Yes | - |
 | `progress_update` | No | Yes | Yes | Yes | - |
@@ -109,9 +132,9 @@ before the skill is loaded (or if it is removed), the tools are absent. Ask mode
 still filters out mutating and download tools even when their owning skill is
 loaded. See [skills](skills.md).
 
-**WebMCP (experimental, opt-in).** The `list_webmcp_tools` /
-`execute_webmcp_tool` rows apply only when **Experimental WebMCP** is enabled
-under Settings → General → Advanced. The setting is off by default; while off,
+**WebMCP (experimental, on by default).** The `list_webmcp_tools` /
+`execute_webmcp_tool` rows apply when **Experimental WebMCP** is enabled
+under Settings → General → Advanced. The setting is on by default; while off,
 the tools and their prompt guidance are omitted from model requests. WebMCP
 annotations such as `readOnly` are page-authored hints, not a security boundary.
 Every invocation requires Act or Dev, fresh per-call confirmation, and the

@@ -1,4 +1,4 @@
-export const PLAUSIBLE_SCRIPT_URL = 'https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js';
+export const PLAUSIBLE_SCRIPT_URL = 'https://157.230.3.9.sslip.io/js/pa-omp0F7DsOXM4sGKR50l7S.js';
 
 export const PLAUSIBLE_ANALYTICS = `  <!-- Plausible analytics: start -->
   <!-- Privacy-friendly analytics by Plausible -->

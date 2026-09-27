@@ -1,0 +1,18 @@
+{
+  "id": "050",
+  "user": "reply to this",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox/abc123",
+    "title": "Invoice from Acme — Gmail"
+  },
+  "latencyMs": 62,
+  "error": "HTTP 500: {\"error\": {\"message\": \"HTTP Error 500: Internal Server Error\", \"type\": \"HTTPError\"}}",
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": null,
+  "content": null,
+  "usage": null,
+  "attempts": 1,
+  "retryErrors": []
+}

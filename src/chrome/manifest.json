@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WebBrain",
-  "version": "26.2.2",
+  "version": "36.8.0",
   "description": "Open-source AI browser agent — chat with pages, automate tasks, multi-provider LLM support.",
   "permissions": [
     "sidePanel",
@@ -11,6 +11,7 @@
     "tabGroups",
     "scripting",
     "storage",
+    "notifications",
     "webNavigation",
     "webRequest",
     "debugger",
@@ -29,6 +30,12 @@
     "http://127.0.0.1/*",
     "http://*/*"
   ],
+  "mime_types_handler": {
+    "application/pdf": {
+      "handler_url": "src/ui/pdf-handler.html",
+      "can_embed": true
+    }
+  },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src * data: blob:;"
   },
@@ -48,6 +55,8 @@
       "js": [
         "src/content/rich-text-toolbar-heuristic.js",
         "src/content/accessibility-tree.js",
+        "src/content/teacher-capture.js",
+        "src/content/chat-observation.js",
         "src/content/content.js",
         "src/content/agent-visual-indicator.js",
         "src/content/ollama-launch-handoff.js"
@@ -80,6 +89,19 @@
       "js": ["src/agent/social-media-downloader.js"],
       "run_at": "document_start",
       "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.instagram.com/*",
+        "https://instagram.com/*"
+      ],
+      "js": [
+        "src/safesocial/content.js"
+      ],
+      "css": [
+        "src/safesocial/content.css"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "options_page": "src/ui/settings.html",
@@ -102,6 +124,24 @@
         "default": "Alt+Shift+W"
       },
       "description": "Open WebBrain panel"
+    },
+    "decrease-ui-scale": {
+      "suggested_key": {
+        "default": "Alt+Shift+Comma"
+      },
+      "description": "Zoom WebBrain UI out"
+    },
+    "increase-ui-scale": {
+      "suggested_key": {
+        "default": "Alt+Shift+Period"
+      },
+      "description": "Zoom WebBrain UI in"
+    },
+    "reset-ui-scale": {
+      "suggested_key": {
+        "default": "Alt+Shift+0"
+      },
+      "description": "Reset WebBrain UI zoom"
     }
   },
   "web_accessible_resources": [

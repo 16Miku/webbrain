@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-22T08:51:43.461Z",
+  "id": "096",
+  "model": "qwen3.5-2b-mlx",
+  "endpoint": "http://127.0.0.1:1234/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "096",
+    "difficulty": {
+      "level": 5,
+      "slug": "challenging",
+      "label": "Challenging"
+    },
+    "category": "photo-understanding",
+    "title": "Visual comparison",
+    "image": "images/096.png",
+    "question": "Which panel shows snow, left or right, and what comparison caption is visible? Focus on the “Visual comparison” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/096.png",
+    "bytes": 564947,
+    "sha256": "7c353d2fc1f38ad9f3a9f24829ca7800e50210c7faa385045efd0c59282fa09d"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Visual comparison tool for \"Open Archive\" content.\n2) Visible text:\n   - Top left header: \"WebScene\" (bold), followed by navigation links: \"Home\", \"Workspace\", \"Activity\".\n   - Top right header: A green circular status indicator.\n   - Main section title (large, bold): \"Visual comparison\".\n   - Section subtitle: \"OPEN ARCHIVE\" (uppercase).\n   - Top right button: \"Compare\".\n   - Main content area header: \"Modern / Historic\" (centered, bold).\n   - Left image panel label: \"Modern\".\n   - Right image panel label: \"Historic\".\n3) Inputs: None visible. The interface is a static comparison view with no form fields or interactive controls currently active.\n4) State signals: None (no loading spinners, modals, or error banners).\n5) Blockers: None. The page is fully interactive and functional.\n6) Unknowns: None.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 319,
+      "completion_tokens": 213,
+      "total_tokens": 532,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 8,
+    "total": 3046
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 9,
+    "possible": 9,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "gallery",
+          "archive",
+          "collection",
+          "comparison"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "archive",
+          "comparison"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Visual comparison",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Visual comparison"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "caption",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Modern / Historic",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Modern / Historic"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "badge",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Compare",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Compare"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "visual-content",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "right",
+          "snow"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "right"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

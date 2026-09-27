@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "099",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "security-challenge",
+  "title": "Additional verification",
+  "image": "images/099.png",
+  "question": "What security challenge is present, and can the visible action proceed? Focus on the “Additional verification” screen.",
+  "defaultPromptMode": "production"
+}

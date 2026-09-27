@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "047",
+  "image": "images/047.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "loading",
+        "processing",
+        "reconnecting",
+        "import"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Processing 12 files",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "spinner",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "any",
+      "values": [
+        "loading",
+        "spinner",
+        "processing",
+        "reconnecting",
+        "progress"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "wait-blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "loading",
+        "wait",
+        "processing",
+        "reconnecting",
+        "not ready"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "detail",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "File 7 of 12",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "progress",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "58%",
+      "weight": 2,
+      "critical": false,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Report the loading state and preserve 58% without inventing completion."
+}

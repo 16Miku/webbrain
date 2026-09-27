@@ -1,0 +1,22 @@
+{
+  "id": "009",
+  "user": "open chatgpt in a new tab",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 1691,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": " name=\"navigate\"> name=\"url\">https://chat.openai.com",
+  "usage": {
+    "prompt_tokens": 9712,
+    "completion_tokens": 20,
+    "total_tokens": 9732
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

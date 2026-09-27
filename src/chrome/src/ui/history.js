@@ -29,6 +29,7 @@ let allRecords = [];
 let allRuns = [];
 let selectedRecordId = null;
 let historyRecordRenderRequestId = 0;
+let historyRefreshRequestId = 0;
 
 function traceRunsForRecord(record) {
   if (!record?.conversationId) return [];
@@ -75,10 +76,12 @@ function clearFilter({ focus = false } = {}) {
 }
 
 async function refresh() {
+  const requestId = ++historyRefreshRequestId;
   const [records, runs] = await Promise.all([
     listChatHistoryRecords({ limit: 1000 }),
     listRuns({ limit: 1000 }).catch(() => []),
   ]);
+  if (requestId !== historyRefreshRequestId) return;
   allRecords = records;
   allRuns = runs;
   const selectedRecordStillExists = selectedRecordId && allRecords.some((record) => record.id === selectedRecordId);
@@ -259,10 +262,22 @@ function renderMessage(message) {
   const renderedText = message?.format === 'markdown'
     ? renderHistoryMarkdown(text)
     : escapeHtml(text);
+  const attachments = (Array.isArray(message?.attachments) ? message.attachments : []);
+  const attachmentHtml = attachments.length
+    ? `<div class="message-attachments">${attachments.map((attachment) => {
+        const state = attachment.deliveryState === 'not-sent'
+          ? '!'
+          : attachment.deliveryState === 'unknown'
+            ? '?'
+            : attachment.deliveryState === 'sending' ? '…' : '✓';
+        return `<div class="message-attachment"><span aria-hidden="true">📎</span><span>${escapeHtml(attachment.name || 'attachment')}</span><strong aria-hidden="true">${state}</strong></div>`;
+      }).join('')}</div>`
+    : '';
   return `
     <article class="message ${escapeAttr(role)}">
       <div class="message-role">${escapeHtml(t(`hist.role.${role}`))}</div>
       <div class="message-text">${renderedText}</div>
+      ${attachmentHtml}
     </article>
   `;
 }
@@ -287,6 +302,13 @@ function recordToMarkdown(record) {
     lines.push(`## ${t(`hist.role.${message.role}`)}`);
     lines.push('');
     lines.push(displayMessageText(message));
+    if (Array.isArray(message.attachments) && message.attachments.length) {
+      lines.push('');
+      lines.push('Attachments:');
+      for (const attachment of message.attachments) {
+        lines.push(`- [${attachment.deliveryState || 'included'}] ${attachment.kind || 'file'}: ${attachment.name || 'attachment'}`);
+      }
+    }
     lines.push('');
   }
   return lines.join('\n');

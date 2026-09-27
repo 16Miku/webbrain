@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "004",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "form-validation",
+  "title": "Create profile",
+  "image": "images/004.png",
+  "question": "Which field is invalid, what value does it contain, and what exact error is shown? Focus on the “Create profile” screen.",
+  "defaultPromptMode": "production"
+}

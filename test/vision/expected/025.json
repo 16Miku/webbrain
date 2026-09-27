@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "id": "025",
+  "image": "images/025.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "team settings",
+        "dialog",
+        "modal"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "title",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Leave workspace?",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "primary",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Leave",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "secondary",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Stay",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "modal-signal",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "all",
+      "values": [
+        "modal",
+        "You will lose access to 12 projects."
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "overlay-blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "modal",
+        "overlay",
+        "dialog"
+      ],
+      "weight": 1,
+      "critical": true
+    }
+  ],
+  "successRubric": "Recognize a blocking modal, quote Leave workspace?, Leave, and Stay."
+}

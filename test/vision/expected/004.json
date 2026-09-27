@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "004",
+  "image": "images/004.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "form",
+        "profile",
+        "shipping",
+        "invite",
+        "dataset",
+        "tax"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Create profile",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Save profile",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Display name",
+        "empty",
+        "e.g. Maya"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "error",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Display name is required",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "invalid",
+        "required",
+        "incomplete",
+        "missing",
+        "format"
+      ],
+      "weight": 1,
+      "critical": true
+    }
+  ],
+  "successRubric": "Name Display name, preserve its current value and placeholder, and quote Display name is required."
+}

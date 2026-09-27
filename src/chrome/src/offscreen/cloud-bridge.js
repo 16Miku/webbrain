@@ -1,9 +1,10 @@
 /**
- * Offscreen document — outbound WebSocket bridge for managed cloud sessions.
+ * Offscreen document — outbound WebSocket bridge for MCP and other local
+ * controllers.
  *
- * The droplet sidecar listens on localhost. The extension connects outbound
- * from this offscreen page, receives command messages, forwards them to the
- * background service worker, then returns the response over the socket.
+ * The selected local controller listens on localhost. The extension connects
+ * outbound from this offscreen page, receives command messages, forwards them
+ * to the background service worker, then returns the response over the socket.
  */
 
 (() => {
@@ -11,12 +12,13 @@
   // bridge starts. Keep configuration mutations out of the WebSocket command
   // surface; the bridge is intentionally limited to managed run operations.
   const BRIDGE_PROTOCOL_VERSION = 2;
-  const BRIDGE_CAPABILITIES = ['saved_workflows_v1'];
+  const BRIDGE_CAPABILITIES = ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1'];
   const ALLOWED_BRIDGE_ACTIONS = new Set([
     'cloud_run',
     'cloud_workflow_compile',
     'cloud_workflow_run',
     'cloud_status',
+    'cloud_scheduled_jobs',
     'cloud_respond',
     'cloud_abort',
   ]);
@@ -28,12 +30,12 @@
   let lastError = '';
 
   function normalizeBridgeUrl(value) {
-    const url = new URL(String(value || 'ws://127.0.0.1:17373/extension'));
+    const url = new URL(String(value || 'ws://127.0.0.1:17374/extension'));
     const host = url.hostname.toLowerCase();
     // WHATWG URL keeps the brackets on IPv6 literals: ws://[::1]/… parses to
     // hostname "[::1]", so both spellings must be allowlisted.
     if (url.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) {
-      throw new Error('Cloud bridge URL must use ws:// on localhost.');
+      throw new Error('MCP URL must use ws:// on localhost.');
     }
     return url.href;
   }

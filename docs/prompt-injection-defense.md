@@ -67,8 +67,11 @@ Treat **all** of the following as attacker-controllable:
 
 Model-authored text (a tool's own status string, the agent's `summary`) and the
 **user's** messages are trusted. `clarify` answers are also trusted when the
-tool is available in action modes; Ask mode handles clarification as ordinary
-conversation and does not expose a `clarify` tool.
+generic tool is available in action modes. Ask handles ordinary clarification
+as conversation and does not receive that generic schema. If the user opts in
+to Research escalation, Ask receives a narrowed `clarify` schema that can only
+request explicit consent for one exact ChatGPT research prompt; timeout and
+automatic answers cannot authorize that third-party disclosure.
 
 ---
 

@@ -46,6 +46,14 @@
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
+    /* Brain mark next to the wordmark. The gradient text fill above only
+       touches glyphs, so the logo keeps its own colors in both themes. */
+    .brand-mark {
+      width: 22px;
+      height: 22px;
+      vertical-align: -4px;
+      margin-right: 8px;
+    }
     .spacer { flex: 1; }
     .pill {
       background: var(--bg2);
@@ -118,6 +126,17 @@
       text-overflow: ellipsis;
       margin-bottom: 3px;
     }
+    .lossless-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 4px;
+      border: 1px solid rgba(255,152,0,0.55);
+      border-radius: 4px;
+      color: var(--warning);
+      font-size: 9px;
+      font-weight: 600;
+      vertical-align: 1px;
+    }
     .run-item .run-meta {
       font-size: 10px;
       color: var(--text2);
@@ -188,6 +207,15 @@
       margin-bottom: 14px;
       flex-wrap: wrap;
     }
+    .lossless-warning {
+      margin: 0 0 14px;
+      padding: 9px 12px;
+      border-left: 3px solid var(--warning);
+      background: rgba(255,152,0,0.12);
+      color: var(--warning);
+      border-radius: 0 6px 6px 0;
+      font-size: 12px;
+    }
     /* Costly-failure highlight — runs ≥ $0.50 with empty finalContent. */
     .cost-warn {
       color: #ff9d4d;
@@ -218,6 +246,11 @@
       text-transform: uppercase;
       letter-spacing: 0.04em;
       margin-bottom: 6px;
+    }
+    .conv-summary {
+      margin-bottom: 7px;
+      color: var(--text2);
+      font-size: 11px;
     }
     .conv-turns {
       display: flex;
@@ -256,6 +289,94 @@
       white-space: nowrap;
       max-width: 230px;
     }
+    .lineage-incomplete {
+      margin: 4px 4px 8px;
+      padding: 7px 9px;
+      border-left: 3px solid var(--warning);
+      background: rgba(255,152,0,0.10);
+      color: var(--warning);
+      border-radius: 0 6px 6px 0;
+      font-size: 11px;
+    }
+    .lineage-group {
+      margin: 2px 0 6px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(22,33,62,0.42);
+      overflow: hidden;
+    }
+    .lineage-group-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 9px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+    }
+    .lineage-group-toggle:hover { background: var(--bg2); }
+    .lineage-group-chevron,
+    .lineage-toggle,
+    .lineage-toggle-spacer {
+      flex: 0 0 18px;
+      width: 18px;
+      color: var(--text3);
+      text-align: center;
+      font-size: 12px;
+    }
+    .lineage-group-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .lineage-group-summary {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--text2);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .lineage-group-runs { padding: 0 4px 4px 8px; }
+    .lineage-node + .lineage-node { margin-top: 2px; }
+    .lineage-node .lineage-node {
+      margin-left: 17px;
+      border-left: 1px solid var(--border);
+      padding-left: 8px;
+    }
+    .lineage-row {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      align-items: stretch;
+      gap: 4px;
+    }
+    .lineage-toggle {
+      align-self: center;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    .lineage-toggle:hover { color: var(--text); background: transparent; }
+    .lineage-badge {
+      display: inline-block;
+      margin-left: 5px;
+      color: var(--warning);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .lineage-badge.cross-session-parent { color: var(--accent); }
+    .lineage-parent-ref {
+      display: inline-block;
+      margin-left: 5px;
+      color: var(--text3);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 9px;
+    }
     .stat {
       font-size: 11px;
       color: var(--text2);
@@ -264,6 +385,76 @@
       color: var(--text);
       font-family: ui-monospace, monospace;
     }
+
+    /* Step trajectory */
+    .trajectory {
+      margin: 14px 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg2);
+      overflow: hidden;
+    }
+    .trajectory-heading {
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .trajectory-scroll { overflow-x: auto; }
+    .trajectory-table {
+      width: 100%;
+      min-width: 620px;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    .trajectory-table th,
+    .trajectory-table td {
+      padding: 8px 10px;
+      border-top: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+    .trajectory-table thead th {
+      border-top: 0;
+      color: var(--text3);
+      font-size: 10px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .trajectory-table tbody th { min-width: 220px; font-weight: 500; }
+    .trajectory-row.running { background: rgba(108,99,255,0.06); }
+    .trajectory-row.error { background: rgba(239,68,68,0.08); }
+    .trajectory-step,
+    .trajectory-status,
+    .trajectory-metric {
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+    .trajectory-activity {
+      margin-top: 3px;
+      color: var(--text2);
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .trajectory-errors { margin-top: 5px; }
+    .trajectory-errors summary {
+      cursor: pointer;
+      color: var(--error);
+      font-size: 10px;
+      user-select: none;
+    }
+    .trajectory-error-details {
+      margin-top: 4px;
+      color: var(--error);
+      font-size: 10px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .trajectory.compact { margin-top: 0; }
 
     /* Timeline */
     .timeline { display: flex; flex-direction: column; gap: 6px; }
@@ -358,7 +549,7 @@
 </head>
 <body>
   <header>
-    <h1 data-i18n="tr.title"></h1>
+    <h1><img class="brand-mark" src="../../icons/icon128.png" alt="" aria-hidden="true"><span data-i18n="tr.title"></span></h1>
     <span id="count-pill" class="pill"></span>
     <div class="spacer"></div>
     <button id="btn-refresh" data-i18n="tr.btn.refresh" data-i18n-title="tr.btn.refresh.title"></button>

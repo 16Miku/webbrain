@@ -1,0 +1,18 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 70,
+  "error": "HTTP 500: {\"error\": {\"message\": \"HTTP Error 500: Internal Server Error\", \"type\": \"HTTPError\"}}",
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": null,
+  "content": null,
+  "usage": null,
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-21T08:31:34.282Z",
+  "id": "083",
+  "model": "lfm2.5-vl-450m-mlx",
+  "endpoint": "http://127.0.0.1:1234/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "083",
+    "difficulty": {
+      "level": 5,
+      "slug": "challenging",
+      "label": "Challenging"
+    },
+    "category": "checkout",
+    "title": "Order summary",
+    "image": "images/083.png",
+    "question": "What is the exact total, and can the visible purchase action proceed? Focus on the “Order summary” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/083.png",
+    "bytes": 125079,
+    "sha256": "a364c773403657279eb511b54d0a0f482007e9cd3f1154c71a02976f2ab4f733"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "The screenshot shows a web-automation agent's browser viewport for an order summary page. The page has the following elements:\n\n1) Header with \"Order Summary\" and a subheader listing:\n   - \"Studio monitor pad\"\n   - \"Sales 1\"\n\n2) Order summary section:\n   - A gray square icon representing a monitor pad\n   - \"Order summary\" text in black\n   - Price: \"$3,814.80\"\n   - Shipping: \"Included\"\n\n3) Total section:\n   - A white box with the total amount \"$1,204.08\"\n   - Price change: \"Purchased from $3,814.80\"\n\n4) Footer with options:\n   - \"Order summary\"\n   - \"Shipping\"\n   - \"Included\"\n\n5) Navigation bar at the top with options: \"Home\", \"Overview\", \"Activity\".",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 340,
+      "completion_tokens": 192,
+      "total_tokens": 532,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 5,
+    "total": 441
+  },
+  "score": {
+    "success": false,
+    "ratio": 0.28205128205128205,
+    "earned": 3.666666666666667,
+    "possible": 13,
+    "threshold": 0.72,
+    "sectionCount": 5,
+    "criticalFailures": [
+      "total",
+      "button",
+      "banner",
+      "blocked"
+    ],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 6,
+        "ratio": 0.16666666666666666
+      },
+      "state_signals": {
+        "earned": 0,
+        "possible": 2,
+        "ratio": 0
+      },
+      "blockers": {
+        "earned": 0,
+        "possible": 2,
+        "ratio": 0
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "checkout",
+          "cart",
+          "order",
+          "purchase"
+        ],
+        "weight": 1,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "order"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Order summary",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Order summary"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "item",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Studio monitor pair",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "total",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "$1,204.08",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "button",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Submit payment",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "banner",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "Price changed from $1,199.00",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "blocked",
+        "dimension": "blockers",
+        "section": 5,
+        "kind": "any",
+        "values": [
+          "price",
+          "changed"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

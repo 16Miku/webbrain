@@ -11,6 +11,8 @@
  *
  *   WB_SHOW_AGENT_INDICATORS  — agent run started → fade in border + button
  *   WB_HIDE_AGENT_INDICATORS  — agent run ended → fade out + remove
+ *   WB_AGENT_INDICATOR_HEARTBEAT — refresh the active-run lease without
+ *                                  changing screenshot visibility
  *   WB_HIDE_FOR_TOOL_USE      — temporarily hide so screenshots don't
  *                                capture our own UI
  *   WB_SHOW_AFTER_TOOL_USE    — restore visibility after the screenshot
@@ -30,6 +32,10 @@
   window.__webbrainAgentIndicatorInjected = true;
 
   const TARGET_CURSOR_TTL_MS = 3000;
+  // The background refreshes this lease every 20 seconds. If its service
+  // worker disappears before the normal HIDE message, the page-owned UI
+  // cleans itself up instead of leaving a permanent glow and Stop button.
+  const INDICATOR_HEARTBEAT_TIMEOUT_MS = 65_000;
   let borderEl = null;
   let stopContainerEl = null;
   let targetCursorEl = null;
@@ -38,6 +44,7 @@
   let targetRectOverride = null;
   let targetTimer = null;
   let targetRaf = 0;
+  let indicatorHeartbeatTimer = null;
   let indicatorsActive = false;
   // Saved visibility state during HIDE_FOR_TOOL_USE so SHOW_AFTER_TOOL_USE
   // can restore the right thing (don't want to show indicators that
@@ -399,6 +406,7 @@
 
   function show() {
     indicatorsActive = true;
+    armIndicatorHeartbeat();
     injectStyles();
 
     const root = document.body || document.documentElement;
@@ -434,6 +442,7 @@
   }
 
   function hide() {
+    clearIndicatorHeartbeat();
     if (!indicatorsActive) return;
     indicatorsActive = false;
     if (borderEl) borderEl.style.opacity = '0';
@@ -451,6 +460,19 @@
       borderEl = null;
       stopContainerEl = null;
     }, 320);
+  }
+
+  function clearIndicatorHeartbeat() {
+    if (indicatorHeartbeatTimer != null) clearTimeout(indicatorHeartbeatTimer);
+    indicatorHeartbeatTimer = null;
+  }
+
+  function armIndicatorHeartbeat() {
+    clearIndicatorHeartbeat();
+    indicatorHeartbeatTimer = setTimeout(() => {
+      indicatorHeartbeatTimer = null;
+      if (indicatorsActive) hide();
+    }, INDICATOR_HEARTBEAT_TIMEOUT_MS);
   }
 
   /**
@@ -494,6 +516,10 @@
       case 'WB_HIDE_AGENT_INDICATORS':
         hide();
         sendResponse({ ok: true });
+        break;
+      case 'WB_AGENT_INDICATOR_HEARTBEAT':
+        if (indicatorsActive) armIndicatorHeartbeat();
+        sendResponse({ ok: true, active: indicatorsActive });
         break;
       case 'WB_HIDE_FOR_TOOL_USE':
         hideForToolUse();

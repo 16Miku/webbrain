@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "063",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "checkout",
+  "title": "Confirm purchase",
+  "image": "images/063.png",
+  "question": "What is the exact total, and can the visible purchase action proceed? Focus on the “Confirm purchase” screen.",
+  "defaultPromptMode": "production"
+}

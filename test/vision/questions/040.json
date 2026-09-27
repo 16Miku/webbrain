@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "040",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "uncertainty-calibration",
+  "title": "Shipment label",
+  "image": "images/040.png",
+  "question": "Which characters are actually legible, and which information must remain unknown? Focus on the “Shipment label” screen.",
+  "defaultPromptMode": "production"
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "025",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "modal-overlay",
+  "title": "Leave workspace?",
+  "image": "images/025.png",
+  "question": "What modal is blocking the page, and what are its two exact actions? Focus on the “Leave workspace?” screen.",
+  "defaultPromptMode": "production"
+}

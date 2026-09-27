@@ -1,0 +1,21 @@
+{
+  "runTag": "compact-benchmark-tiny-v2-webgpu-v17-20260911-smoke",
+  "model": "webbrain-compass-tiny-v2-webgpu-v17",
+  "browser": "chrome",
+  "base": "http://127.0.0.1:8344/v1",
+  "saveRequest": false,
+  "tier": "compact",
+  "modeOverride": null,
+  "chatTemplateCompat": "off",
+  "structuredToolsSent": true,
+  "reasoningEffort": null,
+  "freeze": null,
+  "cases": 5,
+  "totalLatencyMs": 1251,
+  "errors": 5,
+  "withToolCall": 0,
+  "withToolCallFromContent": 0,
+  "byTool": {
+    "(error)": 5
+  }
+}

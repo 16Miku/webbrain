@@ -2,9 +2,12 @@
 /**
  * WebBrain marketing-site build.
  *
- * Reads web/build/template.html + web/build/locales/*.json and writes:
+ * Reads web/build/template.html, web/build/faq-template.html, and
+ * web/build/locales/*.json and writes:
  *   web/index.html
  *   web/{es,fr,tr,zh}/index.html
+ *   web/docs/faq/index.html
+ *   web/docs/{es,fr,tr,zh,...}/faq/index.html
  *   web/sitemap.xml
  *   web/robots.txt
  *
@@ -15,6 +18,8 @@
  *   {{locale_home_url}}  e.g. "https://webbrain.one/" or ".../es/"
  *   {{docs_url}}         English docs, or the secondary Chinese docs for zh
  *   {{hreflang_links}}   <link rel="alternate" ...> block for this page
+ *   {{faq_url}}          localized FAQ path under /docs/
+ *   {{faq_language_routes}} safe locale-to-FAQ route map for the selector
  *   {{faq_jsonld}}       FAQPage schema block generated from faq.* keys
  *   {{plausible_analytics}} shared privacy-friendly analytics partial
  *
@@ -37,6 +42,7 @@ const ROOT = path.resolve(__dirname, '..');           // web/
 const BUILD_DIR = __dirname;                          // web/build/
 const LOCALES_DIR = path.join(BUILD_DIR, 'locales');
 const TEMPLATE_PATH = path.join(BUILD_DIR, 'template.html');
+const FAQ_TEMPLATE_PATH = path.join(BUILD_DIR, 'faq-template.html');
 const SITE_ORIGIN = 'https://webbrain.one';
 const SOCIAL_IMAGE_URL = `${SITE_ORIGIN}/og-image.png`;
 const LOGO_IMAGE_URL = `${SITE_ORIGIN}/logo-github.png`;
@@ -97,6 +103,25 @@ const LANGUAGE_FLAG_CODES = {
 const FLAG_SOURCE_DIR = path.resolve(ROOT, '../src/chrome/icons/flags');
 const FLAG_OUTPUT_DIR = path.join(ROOT, 'assets', 'flags');
 
+// Reuse the exact provider marks shown in Settings instead of maintaining a
+// second website-only icon set. These filenames intentionally match provider
+// ids so adding or auditing a homepage node stays straightforward.
+const PROVIDER_ICON_FILES = [
+  'llamacpp.svg',
+  'ollama.svg',
+  'openai.svg',
+  'anthropic.svg',
+  'openrouter.svg',
+  'lmstudio.svg',
+  'vllm.svg',
+  'xai.svg',
+  'gemini.svg',
+  'deepseek.svg',
+  'mistral.svg',
+];
+const PROVIDER_ICON_SOURCE_DIR = path.resolve(ROOT, '../src/chrome/icons/providers');
+const PROVIDER_ICON_OUTPUT_DIR = path.join(ROOT, 'assets', 'providers');
+
 async function syncLanguageFlagAssets() {
   const missingFlagLocale = LOCALES.find((locale) => !LANGUAGE_FLAG_CODES[locale.code]);
   if (missingFlagLocale) {
@@ -116,19 +141,31 @@ async function syncLanguageFlagAssets() {
   );
 }
 
+async function syncProviderIconAssets() {
+  await mkdir(PROVIDER_ICON_OUTPUT_DIR, { recursive: true });
+  await Promise.all(PROVIDER_ICON_FILES.map((file) => copyFile(
+    path.join(PROVIDER_ICON_SOURCE_DIR, file),
+    path.join(PROVIDER_ICON_OUTPUT_DIR, file),
+  )));
+}
+
 const FAQ_KEYS = [
   // Order matters — this is the rendered order in-page AND in JSON-LD.
   'faq.alt_claude',
   'faq.cloud_subscription',
+  'faq.manage_subscription',
   'faq.cloud_sync',
   'faq.vs_frameworks',
   'faq.offline',
+  'faq.emergency_box',
   'faq.models_supported',
   'faq.recommended_model',
+  'faq.webgpu_apocalypse',
   'faq.cors',
   'faq.ollama_origins',
   'faq.firefox',
   'faq.firefox_sidebar_move',
+  'faq.vivaldi_dialogs',
   'faq.safe',
   'faq.cdp',
   'faq.disable_approval_questions',
@@ -141,14 +178,64 @@ const FAQ_KEYS = [
   'faq.screenshot_redaction',
   'faq.cookies_paywalls',
   'faq.multilingual',
+  'faq.page_context',
+  'faq.offline_licensing',
   'faq.token_conscious',
   'faq.contribute',
+];
+
+const FAQ_GROUPS = ['about', 'cloud', 'models', 'browsers', 'safety'];
+const FAQ_CATEGORY = {
+  'faq.alt_claude': 'about',
+  'faq.vs_frameworks': 'about',
+  'faq.firefox': 'about',
+  'faq.scraping': 'about',
+  'faq.multilingual': 'about',
+  'faq.contribute': 'about',
+  'faq.cloud_subscription': 'cloud',
+  'faq.manage_subscription': 'cloud',
+  'faq.cloud_sync': 'cloud',
+  'faq.token_conscious': 'cloud',
+  'faq.offline': 'models',
+  'faq.emergency_box': 'models',
+  'faq.models_supported': 'models',
+  'faq.recommended_model': 'models',
+  'faq.webgpu_apocalypse': 'models',
+  'faq.cors': 'models',
+  'faq.ollama_origins': 'models',
+  'faq.lm_studio': 'models',
+  'faq.firefox_sidebar_move': 'browsers',
+  'faq.vivaldi_dialogs': 'browsers',
+  'faq.scroll_during_run': 'browsers',
+  'faq.tab_switch_during_run': 'browsers',
+  'faq.cookies_paywalls': 'browsers',
+  'faq.safe': 'safety',
+  'faq.cdp': 'safety',
+  'faq.disable_approval_questions': 'safety',
+  'faq.api_mutations': 'safety',
+  'faq.profile': 'safety',
+  'faq.screenshot_redaction': 'safety',
+  'faq.page_context': 'safety',
+  'faq.offline_licensing': 'safety',
+};
+
+const FAQ_PAGE_KEYS = [
+  'faq.label',
+  'faq.title',
+  'faq.page.skip_to_main',
+  'faq.page.lede',
+  'faq.page.search',
+  'faq.page.no_results',
+  'faq.page.topics',
+  ...FAQ_GROUPS.map((group) => `faq.category.${group}`),
+  ...FAQ_KEYS.flatMap((base) => [`${base}.q`, `${base}.a_html`]),
 ];
 
 const STRIPE_SUBSCRIBE_URL = 'https://buy.stripe.com/bJebJ13at2kc5XP7eY8g00a';
 const MASTODON_PROFILE_URL = 'https://mastoturk.org/@webbrain';
 const BLUESKY_PROFILE_URL = 'https://bsky.app/profile/webbrain-one.bsky.social';
 const DISCORD_INVITE_URL = 'https://discord.gg/cgC325ssfw';
+const HUGGINGFACE_PROFILE_URL = 'https://huggingface.co/webbrain-one';
 
 function escHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
@@ -165,6 +252,18 @@ function homeUrlFor(locale) {
   return locale.isDefault ? `${SITE_ORIGIN}/` : `${SITE_ORIGIN}/${locale.code}/`;
 }
 
+function faqPathFor(locale) {
+  return locale.isDefault ? '/docs/faq/' : `/docs/${locale.code}/faq/`;
+}
+
+function faqUrlFor(locale) {
+  return `${SITE_ORIGIN}${faqPathFor(locale)}`;
+}
+
+function docsPathFor(locale) {
+  return locale.code === 'zh' ? '/docs/zh/' : '/docs/';
+}
+
 function buildHreflangBlock() {
   const links = LOCALES.map(
     (l) => `  <link rel="alternate" hreflang="${l.code}" href="${homeUrlFor(l)}">`,
@@ -172,6 +271,80 @@ function buildHreflangBlock() {
   // x-default points at the default (English) homepage.
   const xDefault = `  <link rel="alternate" hreflang="x-default" href="${SITE_ORIGIN}/">`;
   return [...links, xDefault].join('\n');
+}
+
+function buildFaqHreflangBlock() {
+  const links = LOCALES.map(
+    (locale) => `  <link rel="alternate" hreflang="${locale.code}" href="${faqUrlFor(locale)}">`,
+  );
+  const xDefault = `  <link rel="alternate" hreflang="x-default" href="${faqUrlFor(LOCALES[0])}">`;
+  return [...links, xDefault].join('\n');
+}
+
+function faqAnchorFor(base) {
+  return base.replace(/^faq\./, '').replace(/_/g, '-');
+}
+
+function faqKeysForGroup(group) {
+  return FAQ_KEYS.filter((base) => FAQ_CATEGORY[base] === group);
+}
+
+function answerHtml(value) {
+  const html = String(value || '').trim();
+  return /^<p(?:\s|>)/i.test(html) ? html : `<p>${html}</p>`;
+}
+
+function buildFaqSections(dict) {
+  return FAQ_GROUPS.map((group) => {
+    const items = faqKeysForGroup(group);
+    const questions = items.map((base) => {
+      const id = faqAnchorFor(base);
+      return `      <details class="faq-question" id="${id}" data-faq-item>
+        <summary><span>${escHtml(dict[`${base}.q`])}</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer">${answerHtml(dict[`${base}.a_html`])}</div>
+      </details>`;
+    }).join('\n');
+    return `    <section class="faq-topic" id="topic-${group}" data-faq-topic>
+      <header class="faq-topic-header">
+        <h2>${escHtml(dict[`faq.category.${group}`])}</h2>
+        <span aria-label="${items.length}">${items.length}</span>
+      </header>
+${questions}
+    </section>`;
+  }).join('\n');
+}
+
+function buildFaqSidebarLinks(dict) {
+  return FAQ_GROUPS.map((group) => (
+    `<a href="#topic-${group}">${escHtml(dict[`faq.category.${group}`])}</a>`
+  )).join('');
+}
+
+function buildFaqLanguageOptions(activeLocale) {
+  return LOCALES.map((locale) => (
+    `<option value="${locale.code}"${locale.code === activeLocale.code ? ' selected' : ''}>${escHtml(locale.label)}</option>`
+  )).join('');
+}
+
+function buildFaqLanguageRoutes() {
+  return JSON.stringify(Object.fromEntries(
+    LOCALES.map((locale) => [locale.code, faqPathFor(locale)]),
+  ));
+}
+
+function validateFaqLocale(dict, localeCode) {
+  const missing = FAQ_PAGE_KEYS.filter((key) => !String(dict[key] || '').trim());
+  if (missing.length) {
+    throw new Error(`[${localeCode}] missing FAQ translations: ${missing.join(', ')}`);
+  }
+}
+
+function validateFaqRegistry() {
+  const uncategorized = FAQ_KEYS.filter((base) => !FAQ_CATEGORY[base]);
+  const unknown = Object.keys(FAQ_CATEGORY).filter((base) => !FAQ_KEYS.includes(base));
+  if (uncategorized.length || unknown.length) {
+    throw new Error(`Invalid FAQ category registry. Uncategorized: ${uncategorized.join(', ') || 'none'}; unknown: ${unknown.join(', ') || 'none'}`);
+  }
 }
 
 function htmlToPlain(html) {
@@ -227,7 +400,7 @@ function buildSoftwareJsonLd(dict, locale) {
     downloadUrl: 'https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb',
     softwareVersion: dict['meta.software_version'],
     author: { '@type': 'Person', name: 'Emre Sokullu', url: 'https://emresokullu.com' },
-    license: 'https://opensource.org/licenses/MIT',
+    license: 'https://www.gnu.org/licenses/gpl-3.0.html',
     isAccessibleForFree: true,
     image: LOGO_IMAGE_URL,
     screenshot: SOCIAL_IMAGE_URL,
@@ -241,7 +414,7 @@ function buildSubscribeHtml() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebBrain Cloud Subscribe</title>
+  <title>WebBrain Compass Subscribe</title>
   <meta name="robots" content="noindex, follow">
   <link rel="canonical" href="${SITE_ORIGIN}/subscribe/">
   <style>
@@ -294,7 +467,7 @@ function buildSubscribeHtml() {
 </head>
 <body>
   <main>
-    <div class="brand">WebBrain Cloud</div>
+    <div class="brand">WebBrain Compass</div>
     <h1 id="subscribe-title">Redirecting to Stripe</h1>
     <p id="subscribe-copy">The payment page will open in a few seconds.</p>
     <p id="checkout-row">If redirect does not work, <a id="checkout-link" href="${STRIPE_SUBSCRIBE_URL}">open Stripe checkout</a>.</p>
@@ -322,7 +495,7 @@ function buildSubscribeHtml() {
 
 function applyTemplate(template, dict, locale) {
   const canonical = homeUrlFor(locale);
-  const docsUrl = locale.code === 'zh' ? '/docs/zh/' : '/docs/';
+  const docsUrl = docsPathFor(locale);
 
   // Build-time placeholders first (they're fixed per locale, not per key).
   let out = template
@@ -334,8 +507,16 @@ function applyTemplate(template, dict, locale) {
     .replace(/\{\{locale_dir\}\}/g, locale.dir || 'ltr')
     .replace(/\{\{locale_home_url\}\}/g, canonical)
     .replace(/\{\{docs_url\}\}/g, docsUrl)
+    .replace(/\{\{docs_language_label\}\}/g, locale.code === 'zh' ? '中文' : 'EN')
+    .replace(/\{\{faq_url\}\}/g, faqPathFor(locale))
+    .replace(/\{\{faq_canonical\}\}/g, faqUrlFor(locale))
     .replace(/\{\{plausible_analytics\}\}/g, PLAUSIBLE_ANALYTICS)
     .replace(/\{\{hreflang_links\}\}/g, buildHreflangBlock())
+    .replace(/\{\{faq_hreflang_links\}\}/g, buildFaqHreflangBlock())
+    .replace(/\{\{faq_language_options\}\}/g, buildFaqLanguageOptions(locale))
+    .replace(/\{\{faq_language_routes\}\}/g, buildFaqLanguageRoutes())
+    .replace(/\{\{faq_sidebar_links\}\}/g, buildFaqSidebarLinks(dict))
+    .replace(/\{\{faq_sections\}\}/g, buildFaqSections(dict))
     .replace(/\{\{faq_jsonld\}\}/g, buildFaqJsonLd(dict, locale.bcp47))
     .replace(/\{\{software_jsonld\}\}/g, buildSoftwareJsonLd(dict, locale));
 
@@ -369,16 +550,23 @@ function applyTemplate(template, dict, locale) {
 
 async function main() {
   const template = await readFile(TEMPLATE_PATH, 'utf8');
+  const faqTemplate = await readFile(FAQ_TEMPLATE_PATH, 'utf8');
+  validateFaqRegistry();
   await syncLanguageFlagAssets();
+  await syncProviderIconAssets();
 
   // Load English first so others can fall back for missing keys.
   const en = JSON.parse(await readFile(path.join(LOCALES_DIR, 'en.json'), 'utf8'));
 
   let totalMissing = 0;
   for (const locale of LOCALES) {
-    let dict = en;
+    const raw = locale.isDefault
+      ? en
+      : JSON.parse(await readFile(path.join(LOCALES_DIR, `${locale.code}.json`), 'utf8'));
+    validateFaqLocale(raw, locale.code);
+
+    let dict = raw;
     if (!locale.isDefault) {
-      const raw = JSON.parse(await readFile(path.join(LOCALES_DIR, `${locale.code}.json`), 'utf8'));
       // Fall back to English for any untranslated key so the build never
       // produces an empty slot.
       dict = { ...en, ...raw };
@@ -399,6 +587,7 @@ async function main() {
       'social.mastodon_url': MASTODON_PROFILE_URL,
       'social.bluesky_url': BLUESKY_PROFILE_URL,
       'social.discord_url': DISCORD_INVITE_URL,
+      'social.huggingface_url': HUGGINGFACE_PROFILE_URL,
     };
 
     const { html, missing } = applyTemplate(template, dict, locale);
@@ -415,21 +604,38 @@ async function main() {
     }
     await writeFile(outPath, html, 'utf8');
     console.log(`✓ wrote ${path.relative(process.cwd(), outPath)} (${html.length.toLocaleString()} bytes)`);
+
+    const { html: faqHtml, missing: faqMissing } = applyTemplate(faqTemplate, dict, locale);
+    if (faqMissing.size) {
+      totalMissing += faqMissing.size;
+      console.warn(`[${locale.code}] ${faqMissing.size} missing FAQ page keys:`, [...faqMissing].join(', '));
+    }
+    const faqOutPath = path.join(ROOT, faqPathFor(locale).replace(/^\//, ''), 'index.html');
+    await mkdir(path.dirname(faqOutPath), { recursive: true });
+    await writeFile(faqOutPath, faqHtml, 'utf8');
+    console.log(`✓ wrote ${path.relative(process.cwd(), faqOutPath)} (${faqHtml.length.toLocaleString()} bytes)`);
   }
 
   // sitemap.xml — localized homes plus public utility, blog, and user-doc pages.
   const sitemapUrls = [
-    ...LOCALES.map((l) => ({ loc: homeUrlFor(l), hreflang: l.code })),
+    ...LOCALES.map((l) => ({ loc: homeUrlFor(l), alternates: 'home' })),
+    ...LOCALES.map((l) => ({ loc: faqUrlFor(l), alternates: 'faq' })),
     { loc: `${SITE_ORIGIN}/privacy` },
     { loc: `${SITE_ORIGIN}/subscribe/` },
     { loc: `${SITE_ORIGIN}/blog/` },
     { loc: `${SITE_ORIGIN}/docs/` },
     { loc: `${SITE_ORIGIN}/docs/settings/` },
     { loc: `${SITE_ORIGIN}/docs/providers/` },
+    { loc: `${SITE_ORIGIN}/docs/easy-cli-proxy/`, alternates: 'easy-cli-proxy' },
     { loc: `${SITE_ORIGIN}/docs/safety/` },
+    { loc: `${SITE_ORIGIN}/docs/apocalypse-mode/` },
+    { loc: `${SITE_ORIGIN}/docs/mcp/` },
+    { loc: `${SITE_ORIGIN}/docs/lm-studio/` },
+    { loc: `${SITE_ORIGIN}/docs/ollama/` },
     { loc: `${SITE_ORIGIN}/docs/zh/` },
     { loc: `${SITE_ORIGIN}/docs/zh/settings/` },
     { loc: `${SITE_ORIGIN}/docs/zh/providers/` },
+    { loc: `${SITE_ORIGIN}/docs/zh/easy-cli-proxy/`, alternates: 'easy-cli-proxy' },
     { loc: `${SITE_ORIGIN}/docs/zh/safety/` },
   ];
   const sitemap = [
@@ -437,11 +643,18 @@ async function main() {
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"',
     '        xmlns:xhtml="http://www.w3.org/1999/xhtml">',
     ...sitemapUrls.map((u) => {
-      const alts = u.hreflang
-        ? LOCALES.map(
-            (l) => `    <xhtml:link rel="alternate" hreflang="${l.code}" href="${homeUrlFor(l)}"/>`,
-          ).concat([`    <xhtml:link rel="alternate" hreflang="x-default" href="${SITE_ORIGIN}/"/>`]).join('\n') + '\n'
-        : '';
+      const alternateUrlFor = u.alternates === 'faq' ? faqUrlFor : homeUrlFor;
+      const alts = u.alternates === 'easy-cli-proxy'
+        ? [
+            `    <xhtml:link rel="alternate" hreflang="en" href="${SITE_ORIGIN}/docs/easy-cli-proxy/"/>`,
+            `    <xhtml:link rel="alternate" hreflang="zh" href="${SITE_ORIGIN}/docs/zh/easy-cli-proxy/"/>`,
+            `    <xhtml:link rel="alternate" hreflang="x-default" href="${SITE_ORIGIN}/docs/easy-cli-proxy/"/>`,
+          ].join('\n') + '\n'
+        : u.alternates
+          ? LOCALES.map(
+              (l) => `    <xhtml:link rel="alternate" hreflang="${l.code}" href="${alternateUrlFor(l)}"/>`,
+            ).concat([`    <xhtml:link rel="alternate" hreflang="x-default" href="${alternateUrlFor(LOCALES[0])}"/>`]).join('\n') + '\n'
+          : '';
       return `  <url>\n    <loc>${u.loc}</loc>\n${alts}  </url>`;
     }),
     '</urlset>',

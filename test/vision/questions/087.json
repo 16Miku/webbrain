@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "087",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "loading-state",
+  "title": "Finalizing import",
+  "image": "images/087.png",
+  "question": "Is the page ready for interaction, and what exact progress signal is visible? Focus on the “Finalizing import” screen.",
+  "defaultPromptMode": "production"
+}

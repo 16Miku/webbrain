@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "028",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "consent-banner",
+  "title": "Privacy choices",
+  "image": "images/028.png",
+  "question": "Which consent overlay is present and what exact choices does it offer? Focus on the “Privacy choices” screen.",
+  "defaultPromptMode": "production"
+}

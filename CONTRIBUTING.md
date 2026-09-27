@@ -1,6 +1,7 @@
 # Contributing to WebBrain
 
-Thanks for thinking about contributing. WebBrain is MIT-licensed, runs entirely
+Thanks for thinking about contributing. WebBrain 33.0.0 and later is licensed
+under GPL-3.0-or-later, runs entirely
 in your browser, and is built by a small group — your help makes a real
 difference.
 
@@ -232,9 +233,10 @@ want a code task.
 
 ## Code of conduct
 
-Be civil. Disagree with the code, not with the person. We don't have a CLA
-and we won't add one — your contribution stays MIT, attributed to you in
-the commit history, forever.
+Be civil. Disagree with the code, not with the person. We don't have a CLA.
+Unless a file says otherwise, contributions to WebBrain 33.0.0 and later are
+submitted under GPL-3.0-or-later. You retain your copyright and attribution in
+the commit history.
 
 ---
 

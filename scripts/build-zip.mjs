@@ -19,6 +19,7 @@
  *   dist/webbrain-chrome-<version>.zip
  *   dist/webbrain-edge-<version>.zip
  *   dist/webbrain-firefox-<version>.zip
+ *   dist/webbrain-<source-name>-corresponding-source.zip
  *
  * <version> is read from package.json at HEAD, and every archived manifest
  * must match it. An uncommitted version bump is rejected instead of creating
@@ -40,9 +41,32 @@ const targets = [
   { packageName: 'firefox', sourceDir: 'firefox' },
 ];
 
+const CORRESPONDING_SOURCE_ROOT = 'dist/corresponding-source';
+
+export function correspondingSourceArchivePath(sourceName) {
+  return `dist/webbrain-${sourceName}-corresponding-source.zip`;
+}
+
+export function assertCorrespondingSourceArchiveEntries(entries, sourceName, trackedFiles, label) {
+  const prefix = `${sourceName}/`;
+  for (const relativePath of trackedFiles) {
+    if (!entries.includes(`${prefix}${relativePath}`)) {
+      throw new Error(`${label} is missing tracked corresponding source ${relativePath}.`);
+    }
+  }
+}
+
 export function assertMatchingArchiveVersion(expected, actual, label) {
   if (actual !== expected) {
     throw new Error(`${label} is ${actual}, but the release package version is ${expected}.`);
+  }
+}
+
+export function assertPackageRootGplLicense(source, label) {
+  const text = String(source || '');
+  if (!/combined work under GPL-3\.0-or-later/.test(text)
+      || !/GNU GENERAL PUBLIC LICENSE\s+Version 3, 29 June 2007/.test(text)) {
+    throw new Error(`${label} must identify the combined package as GPL-3.0-or-later and include GPLv3.`);
   }
 }
 
@@ -87,6 +111,18 @@ export function listZipEntryNames(filePath) {
   return entries;
 }
 
+export function assertSingleRootExtensionManifest(entries, label) {
+  const manifests = entries.filter(entry => (
+    String(entry || '').split('/').pop()?.toLowerCase() === 'manifest.json'
+  ));
+  if (manifests.length !== 1 || manifests[0] !== 'manifest.json') {
+    const found = manifests.length ? manifests.join(', ') : 'none';
+    throw new Error(
+      `${label} must contain exactly one manifest.json at the package root; found: ${found}.`
+    );
+  }
+}
+
 export function assertStoreSafeFlagLicenseEntries(entries, label) {
   if (!entries.includes(FLAG_LICENSE_PATH)) {
     throw new Error(`${label} is missing ${FLAG_LICENSE_PATH}.`);
@@ -96,19 +132,64 @@ export function assertStoreSafeFlagLicenseEntries(entries, label) {
   }
 }
 
-function readJsonAtHead(relativePath) {
-  const json = execFileSync('git', ['show', `HEAD:${relativePath}`], {
+const STORE_REVIEWED_JAVASCRIPT_PATHS = [
+  'vendor/pdfjs/pdf.mjs',
+  'vendor/pdfjs/pdf.worker.mjs',
+  'src/providers/manager.js',
+];
+
+const STORE_REJECTION_PATTERNS = [
+  {
+    pattern: /\bLT\s*\+\s*SCRIPT\s*\+\s*GT\s*\+\s*content\s*\+\s*LT\s*\+\s*['"]\/['"]\s*\+\s*SCRIPT\s*\+\s*GT\b/,
+    reason: 'split PDF.js <script> construction',
+  },
+  {
+    pattern: /['"]java['"]\s*\+\s*SCRIPT\s*\+\s*['"]:['"]/,
+    reason: 'split javascript: scheme',
+  },
+  {
+    pattern: /data:(?:image|audio)\/[a-z0-9.+-]+;base64,[a-z0-9+/=]{128,}/i,
+    reason: 'long inline base64 media payload',
+  },
+];
+
+export function assertStoreReviewableJavaScript(source, label) {
+  for (const { pattern, reason } of STORE_REJECTION_PATTERNS) {
+    if (pattern.test(source)) {
+      throw new Error(`${label} contains ${reason}; use transparent source or a packaged asset.`);
+    }
+  }
+}
+
+function readTextAtHead(relativePath) {
+  return execFileSync('git', ['show', `HEAD:${relativePath}`], {
     cwd: root,
     encoding: 'utf8',
+    maxBuffer: 8 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  return JSON.parse(json);
+}
+
+function readJsonAtHead(relativePath) {
+  return JSON.parse(readTextAtHead(relativePath));
 }
 
 function listTreeEntryNamesAtHead(relativePath) {
   return execFileSync(
     'git',
     ['ls-tree', '-r', '--name-only', `HEAD:${relativePath}`],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  ).split(/\r?\n/).filter(Boolean);
+}
+
+function listTreeDirectoryNamesAtHead(relativePath) {
+  return execFileSync(
+    'git',
+    ['ls-tree', '-d', '--name-only', `HEAD:${relativePath}`],
     {
       cwd: root,
       encoding: 'utf8',
@@ -130,10 +211,17 @@ function runCli() {
   for (const { sourceDir } of targets) {
     const manifest = readJsonAtHead(`src/${sourceDir}/manifest.json`);
     assertMatchingArchiveVersion(version, manifest.version, `HEAD src/${sourceDir}/manifest.json version`);
-    assertStoreSafeFlagLicenseEntries(
-      listTreeEntryNamesAtHead(`src/${sourceDir}`),
-      `HEAD src/${sourceDir}`
+    assertPackageRootGplLicense(
+      readTextAtHead(`src/${sourceDir}/LICENSE`),
+      `HEAD src/${sourceDir}/LICENSE`
     );
+    const sourceEntries = listTreeEntryNamesAtHead(`src/${sourceDir}`);
+    assertSingleRootExtensionManifest(sourceEntries, `HEAD src/${sourceDir}`);
+    assertStoreSafeFlagLicenseEntries(sourceEntries, `HEAD src/${sourceDir}`);
+    for (const relativePath of STORE_REVIEWED_JAVASCRIPT_PATHS) {
+      const archivePath = `src/${sourceDir}/${relativePath}`;
+      assertStoreReviewableJavaScript(readTextAtHead(archivePath), `HEAD ${archivePath}`);
+    }
   }
 
   const distDir = path.join(root, 'dist');
@@ -149,11 +237,39 @@ function runCli() {
       ['archive', '--format=zip', '-o', out, `HEAD:src/${sourceDir}`],
       { stdio: 'inherit', cwd: root }
     );
-    assertStoreSafeFlagLicenseEntries(
-      listZipEntryNames(out),
-      `dist/webbrain-${packageName}-${version}.zip`
-    );
+    const packageEntries = listZipEntryNames(out);
+    const packageLabel = `dist/webbrain-${packageName}-${version}.zip`;
+    assertSingleRootExtensionManifest(packageEntries, packageLabel);
+    assertStoreSafeFlagLicenseEntries(packageEntries, packageLabel);
     console.log(`  ✓ dist/webbrain-${packageName}-${version}.zip`);
+  }
+
+  // These sources are a release artifact, not scratch output. Build their ZIPs
+  // from HEAD just like the browser packages so the tagged tree and uploaded
+  // assets describe exactly the same GPL-covered runtime source.
+  for (const sourceName of listTreeDirectoryNamesAtHead(CORRESPONDING_SOURCE_ROOT)) {
+    const sourcePath = `${CORRESPONDING_SOURCE_ROOT}/${sourceName}`;
+    const relativeOut = correspondingSourceArchivePath(sourceName);
+    const out = path.join(root, relativeOut);
+    execFileSync(
+      'git',
+      [
+        'archive',
+        '--format=zip',
+        '-o',
+        out,
+        `--prefix=${sourceName}/`,
+        `HEAD:${sourcePath}`,
+      ],
+      { stdio: 'inherit', cwd: root }
+    );
+    assertCorrespondingSourceArchiveEntries(
+      listZipEntryNames(out),
+      sourceName,
+      listTreeEntryNamesAtHead(sourcePath),
+      relativeOut
+    );
+    console.log(`  ✓ ${relativeOut}`);
   }
 }
 

@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "id": "068",
+  "image": "images/068.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "privacy",
+        "cookie",
+        "consent",
+        "video"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "title",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Çerez tercihleri",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "choice-1",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Tümünü kabul et",
+      "weight": 1,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "choice-2",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Yalnızca gerekli",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "consent-signal",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "any",
+      "values": [
+        "cookie",
+        "consent",
+        "privacy",
+        "overlay",
+        "banner"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "consent-blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "cookie",
+        "consent",
+        "overlay",
+        "blocked"
+      ],
+      "weight": 1,
+      "critical": false
+    }
+  ],
+  "successRubric": "Recognize the consent UI and quote Tümünü kabul et / Yalnızca gerekli."
+}

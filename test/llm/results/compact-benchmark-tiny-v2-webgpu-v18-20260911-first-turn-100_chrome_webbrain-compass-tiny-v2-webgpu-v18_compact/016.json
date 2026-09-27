@@ -1,0 +1,27 @@
+{
+  "id": "016",
+  "user": "search youtube for lo-fi study music",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.youtube.com/",
+    "title": "YouTube"
+  },
+  "latencyMs": 3552,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://www.google.com/search?q=lo-fi+study+music"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"navigate\"><param name=\"url\">https://www.google.com/search?q=lo-fi+study+music</param></function>",
+  "usage": {
+    "prompt_tokens": 9998,
+    "completion_tokens": 28,
+    "total_tokens": 10026
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

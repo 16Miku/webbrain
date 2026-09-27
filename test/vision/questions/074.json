@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "074",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "calendar",
+  "title": "Ağustos 2026",
+  "image": "images/074.png",
+  "question": "What event is shown on the selected day, and at what exact time? Focus on the “Ağustos 2026” screen.",
+  "defaultPromptMode": "production"
+}

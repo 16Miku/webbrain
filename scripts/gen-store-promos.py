@@ -209,7 +209,7 @@ def render_marquee_tile(icon: Image.Image) -> Image.Image:
 
     # Feature pills along the bottom of the text block — calls out the
     # "free, multi-provider, open source" story the listing also emphasises.
-    pills = ["MIT LICENSED", "11+ PROVIDERS", "LOCAL OR CLOUD", "MV3 & MV2"]
+    pills = ["GPL-3.0+", "11+ PROVIDERS", "LOCAL OR CLOUD", "MV3 & MV2"]
     px = text_x
     py = 426
     pill_pad_x, pill_pad_y = 18, 10

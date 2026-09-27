@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "068",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "consent-banner",
+  "title": "Çerez tercihleri",
+  "image": "images/068.png",
+  "question": "Which consent overlay is present and what exact choices does it offer? Focus on the “Çerez tercihleri” screen.",
+  "defaultPromptMode": "production"
+}

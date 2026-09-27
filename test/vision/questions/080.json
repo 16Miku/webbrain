@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "080",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "uncertainty-calibration",
+  "title": "Redacted contract",
+  "image": "images/080.png",
+  "question": "Which characters are actually legible, and which information must remain unknown? Focus on the “Redacted contract” screen.",
+  "defaultPromptMode": "production"
+}

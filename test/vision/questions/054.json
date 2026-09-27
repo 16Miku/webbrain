@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "054",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "calendar",
+  "title": "Conference schedule",
+  "image": "images/054.png",
+  "question": "What event is shown on the selected day, and at what exact time? Focus on the “Conference schedule” screen.",
+  "defaultPromptMode": "production"
+}

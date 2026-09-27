@@ -74,6 +74,7 @@
       // element with the same local traversal number.
       window.__wbElementMap = Object.create(null);
       window.__wbRefCounter = 0;
+      window.__wbAxTreeSnapshots = new Map();
       window.__wbAxRefScope = { pageUrl, id: mintRefScopeId() };
     }
     return window.__wbAxRefScope;
@@ -154,6 +155,21 @@
       ['.publish-btn', '发布'],
       ['.publish-button', '发布'],
     ],
+    baiduTieba: [
+      // Match the stable action wrapper, then inspect SVG href/xlink:href via
+      // the DOM API because namespaced attribute selectors vary by engine.
+      ['.pc-pb-first-floor-interactive .action-item', '转发', '#share_pb'],
+      ['.pc-pb-first-floor-interactive .action-item', '点赞', '#agree_pb'],
+      ['.pc-pb-first-floor-interactive .action-item', '收藏', '#collect'],
+      ['.pc-pb-first-floor-interactive .more-action', '更多', '#ellipsis'],
+      ['.pc-pb-comments-desc .zan-container-dark', '赞', '#agree_comment'],
+      ['.pc-pb-comments-desc .reply-container', '回复', '#comment_comment'],
+      ['.pc-pb-comments-desc .more-action', '更多', '#ellipsis_comment'],
+      ['.follow-person-btn', '关注楼主'],
+      ['.follow-forum-btn', '关注本吧'],
+      ['.pc-pb-reply-box', '回复'],
+      ['.pc-pb-reply-box .publish-btn', '发布'],
+    ],
   };
 
   function currentSiteInteractionConfig() {
@@ -161,6 +177,7 @@
     const onHost = (domain) => hostname === domain || hostname.endsWith(`.${domain}`);
     if (onHost('bilibili.com')) return { key: 'bilibili', rules: SITE_INTERACTION_RULES.bilibili };
     if (onHost('xiaohongshu.com')) return { key: 'xiaohongshu', rules: SITE_INTERACTION_RULES.xiaohongshu };
+    if (onHost('tieba.baidu.com')) return { key: 'baiduTieba', rules: SITE_INTERACTION_RULES.baiduTieba };
     // LinkedIn's interop shell renders major surfaces (the post composer
     // dialog among them) inside the open #interop-outlet shadow root. No
     // custom interaction rules needed — piercing alone makes the dialog's
@@ -171,11 +188,18 @@
 
   function getSiteInteractionDescriptor(el) {
     if (!el || typeof el.matches !== 'function') return null;
-    for (const [selector, label] of currentSiteInteractionConfig().rules) {
+    for (const [selector, label, iconHref] of currentSiteInteractionConfig().rules) {
       try {
         if (!el.matches(selector)) continue;
       } catch {
         continue;
+      }
+      if (iconHref) {
+        const hasIcon = Array.from(el.querySelectorAll?.('use') || []).some(use => (
+          use.getAttribute('href') === iconHref
+          || use.getAttribute('xlink:href') === iconHref
+        ));
+        if (!hasIcon) continue;
       }
       const explicit = String(
         el.getAttribute('aria-label') || el.getAttribute('title') || ''
@@ -270,14 +294,6 @@
     const siteInteraction = getSiteInteractionDescriptor(el);
     if (siteInteraction) return siteInteraction.name;
 
-    // <select> — prefer the currently selected option's label.
-    if (tag === 'select') {
-      const opt = el.querySelector('option[selected]') || (el.options && el.options[el.selectedIndex]);
-      if (opt && opt.textContent && opt.textContent.trim()) {
-        return opt.textContent.trim();
-      }
-    }
-
     const ariaLabel = el.getAttribute('aria-label');
     if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
 
@@ -342,6 +358,16 @@
           : wrappingText;
       }
     } catch {}
+
+    // A native select's accessible name is its associated field label. Only
+    // fall back to the selected option when the control has no label; the
+    // selected option is emitted separately as its current value.
+    if (tag === 'select') {
+      const opt = (el.options && el.options[el.selectedIndex]) || el.querySelector('option[selected]');
+      if (opt && opt.textContent && opt.textContent.trim()) {
+        return opt.textContent.trim();
+      }
+    }
 
     if (tag === 'input') {
       const t = (el.getAttribute('type') || '').toLowerCase();
@@ -463,6 +489,67 @@
     return true;
   }
 
+  // A checkbox, radio, select, or file input is routinely made transparent or
+  // clipped and driven through a visible label or wrapper. Such a control is
+  // still operable by set_checked or by activating its label, so it is not
+  // hidden in the sense a conditional or honeypot field is.
+  function _axGroupLabelledByText(el) {
+    try {
+      const ids = String(el.getAttribute('aria-labelledby') || '').trim();
+      if (!ids) return '';
+      const root = el.getRootNode && el.getRootNode() || document;
+      return ids.split(/\s+/)
+        .map(id => (root.getElementById && root.getElementById(id)) || document.getElementById(id))
+        .filter(Boolean)
+        .map(node => node.innerText || node.textContent || '')
+        .join(' ');
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function isLabelDrivenControl(el) {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'select') return true;
+    if (tag !== 'input') return false;
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    return type === 'checkbox' || type === 'radio' || type === 'file';
+  }
+
+  function hasVisibleControlActivator(el) {
+    try {
+      const id = el.getAttribute('id');
+      if (id) {
+        const escaped = window.CSS && CSS.escape ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&');
+        const root = el.getRootNode && el.getRootNode() || document;
+        const label = (root.querySelector && root.querySelector('label[for="' + escaped + '"]'))
+          || document.querySelector('label[for="' + escaped + '"]');
+        if (label && isVisible(label)) return true;
+      }
+      const wrapping = el.closest && el.closest('label');
+      if (wrapping && isVisible(wrapping)) return true;
+      // An ordinary container is not an activator. A custom control wraps its
+      // input in a label or in something that carries the control's own role,
+      // and that is what a click can actually drive.
+      const ACTIVATOR_ROLES = [
+        'checkbox', 'radio', 'switch', 'button', 'option',
+        'menuitemcheckbox', 'menuitemradio', 'combobox', 'listbox',
+      ];
+      let parent = el.parentElement;
+      for (let depth = 0; parent && depth < 3; depth += 1, parent = parent.parentElement) {
+        const parentTag = parent.tagName ? parent.tagName.toLowerCase() : '';
+        const parentRole = String(
+          (parent.getAttribute && parent.getAttribute('role')) || '',
+        ).toLowerCase();
+        const activates = parentTag === 'label'
+          || parentTag === 'button'
+          || ACTIVATOR_ROLES.includes(parentRole);
+        if (activates && isVisible(parent)) return true;
+      }
+    } catch (e) { /* fall through */ }
+    return false;
+  }
+
   function isInViewport(el) {
     const r = el.getBoundingClientRect();
     return r.top < window.innerHeight && r.bottom > 0 && r.left < window.innerWidth && r.right > 0;
@@ -482,6 +569,61 @@
     if (role === 'button' || role === 'link') return true;
     if (isEditableRoot(el)) return true;
     return false;
+  }
+
+  function composedParent(node) {
+    if (!node) return null;
+    if (node.assignedSlot) return node.assignedSlot;
+    const parent = node.parentNode;
+    if (parent) {
+      return (typeof ShadowRoot !== 'undefined' && parent instanceof ShadowRoot)
+        ? parent.host
+        : parent;
+    }
+    const root = node.getRootNode?.();
+    return (typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot)
+      ? root.host
+      : null;
+  }
+
+  function deepestOpenShadowHit(x, y) {
+    let hit = document.elementFromPoint(x, y);
+    const seen = new Set();
+    while (hit?.shadowRoot?.mode === 'open' && !seen.has(hit)) {
+      seen.add(hit);
+      const inner = hit.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === hit) break;
+      hit = inner;
+    }
+    return hit;
+  }
+
+  function visualTargetEligibility(el) {
+    const tag = el.tagName?.toLowerCase() || '';
+    if (tag === 'button') return 'semantic-button';
+    if (['canvas', 'iframe', 'label', 'input', 'textarea', 'select'].includes(tag)) {
+      return 'coordinate-only';
+    }
+    return isInteractive(el) ? 'coordinate-only' : '';
+  }
+
+  function resolveVisualTargetAtPoint(x, y) {
+    const cssX = Number(x);
+    const cssY = Number(y);
+    if (!Number.isFinite(cssX) || !Number.isFinite(cssY)) return null;
+
+    for (let el = deepestOpenShadowHit(cssX, cssY); el; el = composedParent(el)) {
+      if (el.nodeType !== Node.ELEMENT_NODE) continue;
+      const eligibility = visualTargetEligibility(el);
+      if (!eligibility) continue;
+      return {
+        ref_id: getOrMintRef(el),
+        role: getRole(el),
+        name: (getAccessibleName(el) || '').slice(0, 160),
+        eligibility,
+      };
+    }
+    return null;
   }
 
   function isLandmark(el) {
@@ -568,11 +710,71 @@
     }
   }
 
+
+  // Internal Jev inventory is collected by the existing AX walker. It never
+  // parses page-authored ref strings and cannot target frames or shadow roots.
+  let jevCollector = null;
+  let lastJevSnapshot = null;
+  let jevSensitiveControlSeen = false;
+  function jevControl(el) {
+    if (window.top !== window || el.getRootNode() !== document || !isInteractive(el)) return null;
+    const tag = el.tagName.toLowerCase();
+    const type = String(el.type || '').toLowerCase();
+    const name = String(getAccessibleName(el) || '').slice(0, 120);
+    const identity = [name, el.name, el.id, el.autocomplete].join(' ');
+    if (['password', 'file', 'hidden'].includes(type)
+        || /\b(?:password|passwd|passcode|pin|otp|token|secret|cvv|cvc|csc|ssn|iban)\b|\bcc-(?:name|given-name|additional-name|family-name|number|exp|exp-month|exp-year|csc|type)\b|api.?key|one[-_\s]?time(?:[-_\s]?code)?|verification.?code|security.?code|auth(?:entication)?.?code|credit.?card|card.?number|social.?security|(?:routing|account).?number/i.test(identity)) {
+      jevSensitiveControlSeen = true;
+      return null;
+    }
+    const role = getRole(el);
+    const kinds = [];
+    if (tag === 'select') kinds.push('select');
+    else if (type === 'checkbox' || role === 'checkbox' || role === 'switch') kinds.push('check');
+    else if ((tag === 'input' && !['submit', 'button', 'reset', 'image', 'radio', 'range', 'color'].includes(type)) || tag === 'textarea') kinds.push('fill');
+    else if (['button', 'a', 'option'].includes(tag) || ['button', 'link', 'option', 'menuitem', 'tab', 'radio'].includes(role)) kinds.push('click');
+    if (!kinds.length) return null;
+    const disabled = !!el.disabled || el.getAttribute('aria-disabled') === 'true' || !!el.readOnly;
+    const control = { ref: getOrMintRef(el), role, name, kinds, disabled,
+      form: el.form ? getOrMintRef(el.form) : '',
+      value: kinds.includes('fill') ? String(el.value || '').slice(0, 500) : '',
+      checked: kinds.includes('check') ? (el.checked === true || el.getAttribute('aria-checked') === 'true') : null,
+      options: tag === 'select' ? Array.from(el.options).filter(o => !o.disabled).slice(0, 20).map(o => ({ value: o.value, label: o.text.slice(0, 100) })) : [],
+    };
+    // The signature remains internal. A changed destination or field identity
+    // invalidates a selected target even if its DOM node/ref survived.
+    control.signature = fingerprintTreeContent(JSON.stringify({ ...control, id: el.id, fieldName: el.name, href: el.getAttribute('href'), type }));
+    return control;
+  }
+  function collectJevControl(el) {
+    if (!jevCollector) return;
+    try {
+      const control = jevControl(el);
+      if (control && jevCollector.size < 24) jevCollector.set(control.ref, control);
+    } catch { /* Optional inventory must not break the normal AX reader. */ }
+  }
+  function jevSnapshot() { return lastJevSnapshot; }
+  function jevValidate(binding) {
+    if (!binding || binding.pageUrl !== location.href) return false;
+    generateAccessibilityTree('interactive', 10, 3500);
+    const snapshot = lastJevSnapshot;
+    if (!snapshot || snapshot.hasSensitiveControls === true || snapshot.structure !== binding.structure) return false;
+    const target = snapshot.controls.find(c => c.ref === binding.ref);
+    const el = lookup(binding.ref);
+    if (!target || target.disabled || target.signature !== binding.signature || !el || el.getRootNode() !== document) return false;
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    if (rect.width <= 0 || rect.height <= 0 || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return false;
+    const hit = document.elementFromPoint(x, y);
+    return hit === el || el.contains(hit);
+  }
+
   // ── Line formatting ────────────────────────────────────────────────────
   function formatLine(el, depth) {
     const role = getRole(el);
     let name = getAccessibleName(el);
     const ref = getOrMintRef(el);
+    const tag = el.tagName.toLowerCase();
 
     let line = ' '.repeat(depth) + role;
     if (name) {
@@ -585,6 +787,18 @@
     if (href) line += ' href="' + href + '"';
     const type = el.getAttribute('type');
     if (type) line += ' type="' + type + '"';
+    // A React-style form can replace a control node on every change, which
+    // mints a new ref for the same logical field. The app-owned id and name
+    // survive that, so a form inventory can key on them instead of the ref.
+    {
+      const encodeIdentity = value => String(value || '')
+        .replace(/\s+/g, ' ').trim().substring(0, 160)
+        .replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const domId = encodeIdentity(el.getAttribute('id'));
+      const fieldName = encodeIdentity(el.getAttribute('name'));
+      if (domId) line += ' dom_id="' + domId + '"';
+      if (fieldName) line += ' field_name="' + fieldName + '"';
+    }
     const ph = el.getAttribute('placeholder');
     if (ph) line += ' placeholder="' + ph + '"';
 
@@ -603,40 +817,141 @@
     // Checkbox/radio state is an action-critical value, not decorative
     // metadata. Without it the model has to infer state from a focus ring or
     // screenshot and can accidentally toggle a control back off.
-    const tag = el.tagName.toLowerCase();
     const inputType = tag === 'input'
       ? (el.getAttribute('type') || 'text').toLowerCase()
       : '';
+    const attrRole = (el.getAttribute('role') || '').toLowerCase();
+    const inventoryRole = (role || attrRole || '').toLowerCase();
+    const isInventoryFormControl = tag === 'textarea' || tag === 'select'
+      || (tag === 'input' && !['submit', 'button', 'reset', 'image', 'hidden'].includes(inputType))
+      || isEditableRoot(el)
+      || ['textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton', 'listbox'].includes(inventoryRole);
+    if (isInventoryFormControl) {
+      try {
+        const ariaRequired = String(el.getAttribute('aria-required') || '').trim().toLowerCase();
+        // HTML answers this for a native control: an optional input, textarea,
+        // or select reports required === false while carrying no attribute at
+        // all. Only a custom ARIA control can leave the answer unknown.
+        const nativeControl = tag === 'input' || tag === 'textarea' || tag === 'select';
+        if (el.required === true || ariaRequired === 'true') line += ' required=true';
+        else if (ariaRequired === 'false' || (nativeControl && el.required === false)) line += ' required=false';
+      } catch {}
+      // A readonly control is excluded from constraint validation and cannot
+      // take the mutation a processed row needs, so the inventory has to know.
+      try {
+        if (el.readOnly === true || el.getAttribute('aria-readonly') === 'true') {
+          line += ' readonly=true';
+        }
+      } catch {}
+      // A custom radio group carries no HTML name, so nothing else says which
+      // options are alternatives to each other.
+      try {
+        if (inventoryRole === 'radio' && !el.getAttribute('name')) {
+          const group = el.closest('[role="radiogroup"]');
+          const groupIdentity = group
+            ? String(
+              group.getAttribute('id')
+              || group.getAttribute('aria-label')
+              || _axGroupLabelledByText(group)
+              || '',
+            ).replace(/\s+/g, ' ').trim().substring(0, 160)
+              .replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+            : '';
+          if (groupIdentity) line += ' group="' + groupIdentity + '"';
+        }
+      } catch {}
+      // filter=all deliberately keeps aria-hidden and invisible nodes, which
+      // pulls conditional and honeypot inputs into the tree. Mark them so a
+      // form inventory can leave out controls the user was never shown and
+      // cannot act on. Under the other filters these are already excluded.
+      // A control that is merely transparent or clipped behind a visible label
+      // or wrapper is a custom control, not a hidden field, so it stays.
+      try {
+        const style = window.getComputedStyle(el);
+        const notRendered = style.display === 'none' || style.visibility === 'hidden';
+        const ariaHidden = el.getAttribute('aria-hidden') === 'true'
+          || !!el.closest('[aria-hidden="true"]');
+        const visuallyReplaced = !notRendered
+          && isLabelDrivenControl(el)
+          && hasVisibleControlActivator(el);
+        if (ariaHidden || notRendered || (!isVisible(el) && !visuallyReplaced)) {
+          line += ' hidden=true';
+        }
+      } catch {}
+    }
     if (inputType === 'checkbox' || inputType === 'radio') {
       line += ` checked=${el.checked ? 'true' : 'false'}`;
-    } else {
-      const role = (el.getAttribute('role') || '').toLowerCase();
-      if (['checkbox', 'radio', 'switch'].includes(role) || el.hasAttribute('aria-checked')) {
-        const ariaChecked = el.getAttribute('aria-checked');
-        if (ariaChecked != null) line += ` checked=${ariaChecked}`;
-      }
+    } else if (['checkbox', 'radio', 'switch'].includes(attrRole) || el.hasAttribute('aria-checked')) {
+      const ariaChecked = el.getAttribute('aria-checked');
+      if (ariaChecked != null) line += ` checked=${ariaChecked}`;
     }
 
     // Surface the current value for text-like inputs/textareas so the model
     // can see what's already filled in. Skipped for submit/button/reset/file
-    // (value is the label there), checkboxes/radios, and when the value
-    // already matches the rendered name.
+    // (value is the label there) and checkboxes/radios. Always emit even when
+    // the value equals the accessible name so inventory verification can
+    // read it back; the model-facing cap is 60 characters plus '...'.
+    // Truncated values also emit value_len and value_fp so verification can
+    // bind the full app-owned string without putting it in the tree.
+    const AX_VALUE_MAX_LEN = 60;
+    const axInventoryValue = (raw) => {
+      let text = String(raw ?? '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+      try { text = text.normalize('NFKC'); } catch { /* ignore */ }
+      return text.trim();
+    };
+    const axValueFingerprint = (text) => {
+      let hash = 0x811c9dc5;
+      const value = String(text || '');
+      for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+      }
+      return hash.toString(16).padStart(8, '0');
+    };
+    const appendAxValue = (current, raw) => {
+      const v = axInventoryValue(raw);
+      if (!v) return current;
+      const truncated = v.length > AX_VALUE_MAX_LEN;
+      const trimmed = truncated ? v.substring(0, AX_VALUE_MAX_LEN) + '...' : v;
+      const escaped = trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      current += ' value="' + escaped + '"';
+      if (truncated) {
+        current += ' value_len=' + v.length;
+        current += ' value_fp=' + axValueFingerprint(v);
+      }
+      return current;
+    };
     if (tag === 'input' || tag === 'textarea') {
-      const inputType = (el.getAttribute('type') || 'text').toLowerCase();
       const skipValueTypes = new Set(['submit', 'button', 'reset', 'file', 'checkbox', 'radio', 'image', 'hidden', 'color', 'range', 'password']);
       if (!skipValueTypes.has(inputType)) {
-        const v = (el.value == null ? '' : String(el.value));
-        if (v && v !== name) {
-          const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
-          line += ' value="' + trimmed.replace(/"/g, '\\"') + '"';
-        }
+        line = appendAxValue(line, el.value == null ? '' : String(el.value));
       }
     } else if (isEditableRoot(el)) {
-      const v = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (v && v !== name) {
-        const trimmed = v.length > 60 ? v.substring(0, 60) + '...' : v;
-        line += ' value="' + trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+      line = appendAxValue(line, String(el.innerText || el.textContent || '').replace(/\s+/g, ' '));
+    } else if (tag === 'select' || ['combobox', 'listbox'].includes(attrRole)) {
+      let v = '';
+      if (tag === 'select') {
+        const selected = (el.options && el.options[el.selectedIndex])
+          || el.querySelector('option[selected]');
+        v = String(selected?.textContent || '').replace(/\s+/g, ' ').trim();
+      } else {
+        v = String(
+          el.getAttribute('aria-valuetext')
+          || el.getAttribute('aria-valuenow')
+          || (el.value == null ? '' : el.value),
+        ).replace(/\s+/g, ' ').trim();
+        if (!v) {
+          let selected = null;
+          try {
+            selected = el.querySelector('[aria-selected="true"],[role="option"][data-selected="true"]');
+          } catch {}
+          v = String(selected?.innerText || selected?.textContent || '').replace(/\s+/g, ' ').trim();
+        }
+        if (!v) v = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
       }
+      line = appendAxValue(line, v);
     }
 
     return line;
@@ -657,8 +972,45 @@
   }
 
   // ── Walker ─────────────────────────────────────────────────────────────
+  function nodeHasWalkableChildren(el) {
+    if (!el) return false;
+    if (el.children && el.children.length) return true;
+    try {
+      return !!(window.__wbSiteInteractions.shouldPierceShadowRoots()
+        && el.shadowRoot
+        && el.shadowRoot.children
+        && el.shadowRoot.children.length);
+    } catch {
+      return false;
+    }
+  }
+
+  function pushWalkableChildren(el, stack) {
+    for (const child of el.children || []) stack.push(child);
+    try {
+      if (window.__wbSiteInteractions.shouldPierceShadowRoots() && el.shadowRoot) {
+        for (const child of el.shadowRoot.children || []) stack.push(child);
+      }
+    } catch {}
+  }
+
+  // depthTruncated is form-relevant: set it only if an omitted descendant
+  // would have been included. Decorative wrappers at the depth cap stay silent.
+  function omittedDescendantWouldBeIncluded(el, opts) {
+    const stack = [];
+    pushWalkableChildren(el, stack);
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node || !node.tagName) continue;
+      if (opts._skipPrioritySet && opts._skipPrioritySet.has(node)) continue;
+      if (opts._skipOverlaySet && opts._skipOverlaySet.has(node)) continue;
+      if (shouldInclude(node, opts)) return true;
+      pushWalkableChildren(node, stack);
+    }
+    return false;
+  }
+
   function walk(el, depth, opts, lines) {
-    if (depth > opts.maxDepth) return;
     if (!el || !el.tagName) return;
 
     // Skip nodes already emitted in the priority/action prelude.
@@ -669,11 +1021,19 @@
     // explicit walk root.
     if (depth > 0 && opts._skipOverlaySet && opts._skipOverlaySet.has(el)) return;
 
+    if (depth > opts.maxDepth) {
+      if (shouldInclude(el, opts) || omittedDescendantWouldBeIncluded(el, opts)) {
+        opts.depthTruncated = true;
+      }
+      return;
+    }
+
     // An element anchored via refId is always included at depth 0, even if
     // it wouldn't normally pass the include filter.
     const included = shouldInclude(el, opts) || (opts.refId != null && depth === 0);
 
     if (included) {
+      opts._onIncluded?.(el);
       lines.push(formatLine(el, depth));
 
       if (el.tagName.toLowerCase() === 'select' && el.options) {
@@ -683,9 +1043,9 @@
       }
     }
 
-    if (el.children && depth < opts.maxDepth) {
+    if (nodeHasWalkableChildren(el) && depth < opts.maxDepth) {
       const nextDepth = included ? depth + 1 : depth;
-      for (const child of el.children) {
+      for (const child of el.children || []) {
         walk(child, nextDepth, opts, lines);
       }
       // Bilibili's current comment system is a hierarchy of open custom-
@@ -696,6 +1056,8 @@
           walk(child, nextDepth, opts, lines);
         }
       }
+    } else if (nodeHasWalkableChildren(el) && omittedDescendantWouldBeIncluded(el, opts)) {
+      opts.depthTruncated = true;
     }
   }
 
@@ -778,7 +1140,7 @@
     return { elements: out, set: collected };
   }
 
-  function sliceTreePage(output, lines, chunkSize, page) {
+  function sliceTreePage(output, lines, chunkSize, page, continuationBase = {}) {
     const safePage = Math.max(1, Math.floor(Number(page) || 1));
     const chunks = [];
     let current = [];
@@ -840,8 +1202,11 @@
     if (safePage > 1) {
       pageContent = `[tree page ${safePage}; ${omittedBefore} earlier nodes omitted]\n${pageContent}`;
     }
+    const continuationArgs = hasMore
+      ? { ...continuationBase, page: safePage + 1 }
+      : null;
     if (hasMore) {
-      pageContent += `\n[tree truncated: ${omittedAfter} more nodes omitted to stay under ${chunkSize} chars. Before scrolling to find a visible control, call get_accessibility_tree({filter:"visible", page:${safePage + 1}}) for the next chunk.]`;
+      pageContent += `\n[tree truncated: ${omittedAfter} more nodes omitted to stay under ${chunkSize} chars. Before scrolling or answering a whole-document question, call get_accessibility_tree(${JSON.stringify(continuationArgs)}) exactly for the next chunk.]`;
     }
 
     return {
@@ -850,30 +1215,296 @@
       hasMore,
       page: safePage,
       nextPage: hasMore ? safePage + 1 : undefined,
+      continuationArgs,
       totalChars: output.length,
       chunkStart: chunk.charStart,
       chunkEnd: chunk.charEnd,
     };
   }
 
-  function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page) {
+  function fingerprintTreeContent(output) {
+    let hash = 0xcbf29ce484222325n;
+    for (let index = 0; index < output.length; index += 1) {
+      hash ^= BigInt(output.charCodeAt(index));
+      hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+    }
+    return `fnv1a64:${hash.toString(16).padStart(16, '0')}`;
+  }
+
+  const MAX_TREE_SNAPSHOTS = 3;
+
+  function treeSnapshotKey(scope, treeRevision) {
+    return JSON.stringify([
+      String(scope?.filter || 'all'),
+      Number(scope?.maxDepth),
+      Number(scope?.maxChars),
+      String(scope?.ref_id || ''),
+      String(treeRevision || ''),
+    ]);
+  }
+
+  function findTreeSnapshot(scope, treeRevision) {
+    if (!(window.__wbAxTreeSnapshots instanceof Map) || !treeRevision) return null;
+    const key = treeSnapshotKey(scope, treeRevision);
+    const snapshot = window.__wbAxTreeSnapshots.get(key) || null;
+    if (snapshot && !snapshotActionsAreCurrent(snapshot)) {
+      window.__wbAxTreeSnapshots.delete(key);
+      return null;
+    }
+    return snapshot;
+  }
+
+  function actionableTreeSnapshotSignatures(lines) {
+    const signatures = [];
+    const seen = new Set();
+    for (const line of lines) {
+      const match = String(line || '').match(/\[(ref_\d+)\]/);
+      const refId = match?.[1];
+      if (!refId || seen.has(refId)) continue;
+      seen.add(refId);
+      const el = window.__wbElementMap[refId]?.deref?.();
+      if (!el || !el.isConnected || !isInteractive(el)) continue;
+      signatures.push([refId, formatLine(el, 0)]);
+    }
+    return signatures;
+  }
+
+  function snapshotActionsAreCurrent(snapshot) {
+    if (!Array.isArray(snapshot?.actionSignatures)) return false;
+    for (const [refId, signature] of snapshot.actionSignatures) {
+      const el = window.__wbElementMap[refId]?.deref?.();
+      if (!el || !el.isConnected || !isInteractive(el) || formatLine(el, 0) !== signature) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function rememberTreeSnapshot(scope, treeRevision, output, lines) {
+    if (!treeRevision || !scope?.ref_id) return;
+    if (!(window.__wbAxTreeSnapshots instanceof Map)) window.__wbAxTreeSnapshots = new Map();
+    const key = treeSnapshotKey(scope, treeRevision);
+    window.__wbAxTreeSnapshots.delete(key);
+    window.__wbAxTreeSnapshots.set(key, {
+      output,
+      lines: lines.slice(),
+      treeRevision,
+      actionSignatures: actionableTreeSnapshotSignatures(lines),
+    });
+    while (window.__wbAxTreeSnapshots.size > MAX_TREE_SNAPSHOTS) {
+      window.__wbAxTreeSnapshots.delete(window.__wbAxTreeSnapshots.keys().next().value);
+    }
+  }
+
+  function isGmailThreadIdentifier(value) {
+    const segment = String(value || '').split('?')[0];
+    return /^FMfc[A-Za-z0-9_-]+$/.test(segment) || /^[a-f0-9]{12,}$/i.test(segment);
+  }
+
+  function isGmailConversationHash(hash) {
+    const segments = String(hash || '').replace(/^#/, '').split('/').filter(Boolean);
+    const route = String(segments[0] || '').toLowerCase();
+    const threadId = segments.at(-1);
+    if (!isGmailThreadIdentifier(threadId)) return false;
+    if (route === 'label') {
+      // Label names may contain slashes and may themselves look like legacy
+      // hexadecimal thread IDs. Only Gmail's unambiguous modern ID prefix can
+      // terminate a variable-depth label conversation route.
+      return segments.length >= 3 && /^FMfc[A-Za-z0-9_-]+$/.test(threadId);
+    }
+    if (route === 'search' || route === 'category') return segments.length === 3;
+    return segments.length === 2;
+  }
+
+  function isGmailConversationRoute() {
+    if (window.location.hostname !== 'mail.google.com') return false;
+    return isGmailConversationHash(window.location.hash);
+  }
+
+  function detectGmailConversationRoot() {
+    if (!isGmailConversationRoute()) return null;
+    const candidates = [];
+    try {
+      for (const candidate of document.querySelectorAll('main,[role="main"]')) {
+        // Message HTML is untrusted and may contain arbitrary landmarks. A
+        // nested fake main must never become trusted whole-thread coverage.
+        if (candidate.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
+        if (!isVisible(candidate)) continue;
+        const gmailMessageCount = candidate.querySelectorAll('.adn,.ads').length;
+        // Inbox, search, label, and category result lists also expose semantic
+        // listitems. Fail closed unless Gmail message containers prove that
+        // this landmark is the active conversation.
+        if (!gmailMessageCount) continue;
+        const semanticMessageCount = candidate.querySelectorAll('[role="article"],[role="listitem"]').length;
+        const hasEditor = !!candidate.querySelector('textarea,[contenteditable]:not([contenteditable="false"]),[role="textbox"]');
+        const hasHeading = !!candidate.querySelector('h1,h2,h3,[role="heading"]');
+        const rect = candidate.getBoundingClientRect();
+        const visibleArea = Math.max(0, rect.width) * Math.max(0, rect.height);
+        const score = (gmailMessageCount * 1000000)
+          + (hasEditor ? 100000 : 0)
+          + (semanticMessageCount * 1000)
+          + (hasHeading ? 100 : 0)
+          + Math.min(99, Math.round(visibleArea / 10000));
+        candidates.push({ candidate, score });
+      }
+    } catch (e) {}
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0]?.candidate || null;
+  }
+
+  function gmailConversationExpansionControlState(control) {
+    // Gmail's accessible label is localized, but these semantic jsname values
+    // remain stable across UI languages. Keep the English names as a fallback
+    // for older/alternate Gmail markup that does not expose jsname.
+    const jsname = String(control?.getAttribute?.('jsname') || '').trim();
+    if (jsname === 'xvWlrc') return 'expanded';
+    if (jsname === 'tRarif') return 'collapsed';
+    const name = String(getAccessibleName(control) || '').replace(/\s+/g, ' ').trim();
+    if (name === 'Collapse all') return 'expanded';
+    if (name === 'Expand all') return 'collapsed';
+    return null;
+  }
+
+  function isSingleMessageGmailThread(conversationRoot) {
+    if (!conversationRoot || typeof conversationRoot.querySelectorAll !== 'function') return false;
+    try {
+      const gmailMessages = Array.from(conversationRoot.querySelectorAll('.adn,.ads,[data-message-id]'));
+      if (gmailMessages.length) {
+        const topLevelGmailMessages = gmailMessages.filter(msg => (
+          !msg.closest?.('.a3s,.ii') && (!msg.parentElement || !msg.parentElement.closest?.('.adn,.ads,[data-message-id]'))
+        ));
+        return topLevelGmailMessages.length === 1;
+      }
+      const semanticMessages = Array.from(conversationRoot.querySelectorAll('[role="article"]'));
+      if (semanticMessages.length) {
+        const topLevelSemantic = semanticMessages.filter(msg => (
+          !msg.closest?.('.a3s,.ii') && (!msg.parentElement || !msg.parentElement.closest?.('[role="article"]'))
+        ));
+        return topLevelSemantic.length === 1;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  function detectGmailConversationExpansionState(conversationRoot) {
+    if (!isGmailConversationRoute() || !conversationRoot) return null;
+    let collapsed = false;
+    let scanned = false;
+    try {
+      for (const control of conversationRoot.querySelectorAll('button,[role="button"]')) {
+        if (!isVisible(control)) continue;
+        // Message bodies are untrusted page data and may contain arbitrary
+        // buttons. Only Gmail chrome outside message/article containers can
+        // provide the structured expansion evidence used by the agent guard.
+        if (control.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
+        const state = gmailConversationExpansionControlState(control);
+        if (state === 'expanded') return state;
+        if (state === 'collapsed') collapsed = true;
+      }
+      scanned = true;
+    } catch (e) {}
+    if (collapsed) return 'collapsed';
+    // A thread with a single message exposes neither Expand all nor Collapse
+    // all. Report that as its own state so the read-completeness guard can tell
+    // "nothing to expand" apart from "not checked yet"; conflating the two left
+    // `done` permanently blocked on threads that were already fully readable.
+    // Only a scan that ran to completion on a verified single-message thread
+    // may report it; a multi-message thread missing controls must stay unconfirmed.
+    return (scanned && isSingleMessageGmailThread(conversationRoot)) ? 'not_applicable' : null;
+  }
+
+  function findGmailConversationExpandAll(conversationRoot) {
+    if (!isGmailConversationRoute() || !conversationRoot) return null;
+    try {
+      for (const control of conversationRoot.querySelectorAll('button,[role="button"]')) {
+        if (!isVisible(control)) continue;
+        // Only Gmail chrome outside untrusted message bodies may be invoked.
+        // This deliberately cannot turn an Ask-mode read into a general click.
+        if (control.closest('[role="listitem"],[role="article"],.adn,.ads')) continue;
+        if (gmailConversationExpansionControlState(control) === 'collapsed') return control;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  async function expandGmailConversationForRead(refId, timeoutMs) {
+    try {
+      ensureRefScope();
+      const conversationRoot = detectGmailConversationRoot();
+      if (!conversationRoot || getOrMintRef(conversationRoot) !== refId) {
+        return { attempted: false, expanded: false };
+      }
+      if (detectGmailConversationExpansionState(conversationRoot) === 'expanded') {
+        return { attempted: false, expanded: true };
+      }
+      const control = findGmailConversationExpandAll(conversationRoot);
+      if (!control) return { attempted: false, expanded: false };
+
+      control.click();
+      const timeout = Math.min(4000, Math.max(250, Number(timeoutMs) || 2500));
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeout) {
+        if (detectGmailConversationExpansionState(conversationRoot) === 'expanded') {
+          return { attempted: true, expanded: true };
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      return {
+        attempted: true,
+        expanded: detectGmailConversationExpansionState(conversationRoot) === 'expanded',
+      };
+    } catch (e) {
+      return { attempted: false, expanded: false };
+    }
+  }
+
+  function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page, expectedTreeRevision) {
+    jevCollector = filter === 'interactive' && !refId && (!page || page === 1) ? new Map() : null;
+    lastJevSnapshot = null;
+    jevSensitiveControlSeen = false;
     try {
       ensureRefScope();
       const effFilter = filter || 'all';
-      // Tighter defaults for the 'visible' / 'interactive' modes so small
-      // models don't drown in 18K-token Stripe trees. Callers can still
-      // override by passing explicit values.
+      const conversationRoot = detectGmailConversationRoot();
+      const conversationRootRefId = conversationRoot ? getOrMintRef(conversationRoot) : '';
+      const conversationExpansionState = conversationRoot
+        ? detectGmailConversationExpansionState(conversationRoot)
+        : null;
+      const conversationMetadata = {
+        ...(conversationRootRefId ? { conversationRootRefId } : {}),
+        ...(conversationExpansionState ? { conversationExpansionState } : {}),
+      };
+      // Bound every default tree, including `all`. The model-facing tool
+      // result is capped separately at 8k chars by default; leaving `all`
+      // unlimited made that later generic limiter chop serialized JSON and
+      // discard the structured hasMore/nextPage contract. A 6k line-aware
+      // default fits below that outer cap. Capable callers may explicitly use
+      // a 12k page only when paired with the 16k serialized-result window.
       const defaultDepth = effFilter === 'all' ? 15 : 10;
       const defaultChars = effFilter === 'visible' ? 3000
                           : effFilter === 'interactive' ? 3500
-                          : null; // 'all' has no default cap (explicit only)
+                          : 6000;
       const opts = {
         filter: effFilter,
+        _onIncluded: collectJevControl,
         maxDepth: maxDepth != null ? maxDepth : defaultDepth,
         refId: refId || null,
       };
       const effMaxChars = maxChars != null ? maxChars : defaultChars;
+      const baseTreeScope = {
+        filter: effFilter,
+        maxDepth: opts.maxDepth,
+        maxChars: effMaxChars,
+        ...(refId ? { ref_id: refId } : {}),
+      };
+      const gmailSnapshotEligible = !!refId
+        && !!conversationRootRefId
+        && refId === conversationRootRefId
+        && effFilter === 'all'
+        && Number(opts.maxDepth) >= 15;
       const viewport = { width: window.innerWidth, height: window.innerHeight };
+      const requestedPage = Math.max(1, Math.floor(Number(page) || 1));
+      const requestedTreeRevision = String(expectedTreeRevision || '').trim();
       const lines = [];
 
       if (refId) {
@@ -886,13 +1517,34 @@
           };
         }
         const el = weak.deref();
-        if (!el) {
+        if (!el || !el.isConnected) {
           delete window.__wbElementMap[refId];
           return {
-            error: `Element with ref_id '${refId}' no longer exists. It may have been removed from the page. Call get_accessibility_tree without ref_id to get the current page state.`,
+            error: `Element with ref_id '${refId}' is no longer connected to the page. Call get_accessibility_tree without ref_id to get the current page state.`,
             pageContent: '',
             viewport,
           };
+        }
+        if (gmailSnapshotEligible && requestedPage > 1 && requestedTreeRevision) {
+          const snapshot = findTreeSnapshot(baseTreeScope, requestedTreeRevision);
+          if (snapshot) {
+            const continuationBase = {
+              ...baseTreeScope,
+              tree_revision: snapshot.treeRevision,
+            };
+            return {
+              ...sliceTreePage(
+                snapshot.output,
+                snapshot.lines,
+                effMaxChars,
+                requestedPage,
+                continuationBase,
+              ),
+              viewport,
+              treeRevision: snapshot.treeRevision,
+              ...conversationMetadata,
+            };
+          }
         }
         walk(el, 0, opts, lines);
       } else if (document.body) {
@@ -977,6 +1629,7 @@
           if (priority.elements.length) {
             lines.push('[priority action surfaces - editable/focused/submit controls rendered first]');
             for (const n of priority.elements) {
+              collectJevControl(n);
               lines.push(formatLine(n, 0));
             }
             lines.push('[/priority action surfaces]');
@@ -989,8 +1642,43 @@
       sweepDeadRefs();
 
       const output = lines.join('\n');
+      const treeRevision = fingerprintTreeContent(output);
+      const depthTruncated = opts.depthTruncated === true;
+      const revisionBound = !!refId;
+      const continuationBase = {
+        ...baseTreeScope,
+        ...(revisionBound ? { tree_revision: treeRevision } : {}),
+      };
+      if (gmailSnapshotEligible && (
+        requestedPage === 1
+        || !requestedTreeRevision
+        || requestedTreeRevision === treeRevision
+      )) {
+        rememberTreeSnapshot(baseTreeScope, treeRevision, output, lines);
+      }
+      if (revisionBound && requestedPage > 1
+          && requestedTreeRevision && requestedTreeRevision !== treeRevision) {
+        const restartArgs = {
+          ...baseTreeScope,
+          page: 1,
+        };
+        return {
+          error: 'The anchored accessibility snapshot changed or expired. Restart from page 1 with the exact returned continuationArgs.',
+          pageContent: '',
+          viewport,
+          treeRevision,
+          treeRevisionMismatch: true,
+          truncated: true,
+          hasMore: true,
+          page: requestedPage,
+          nextPage: 1,
+          continuationArgs: restartArgs,
+          restartArgs,
+          ...conversationMetadata,
+        };
+      }
       if (effMaxChars != null && page != null && Math.floor(Number(page) || 1) > 1) {
-        return { ...sliceTreePage(output, lines, effMaxChars, page), viewport };
+        return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, treeRevision, depthTruncated, ...conversationMetadata };
       }
       // For 'visible' / 'interactive', truncate gracefully on overflow —
       // small models prefer a partial tree to a hard error. For 'all'
@@ -1005,19 +1693,22 @@
       //      empty (chunkSize too small).
       if (effMaxChars != null && output.length > effMaxChars) {
         if (filter && filter !== 'all' && maxChars == null) {
-          return { ...sliceTreePage(output, lines, effMaxChars, page), viewport };
+          return { ...sliceTreePage(output, lines, effMaxChars, page, continuationBase), viewport, treeRevision, depthTruncated, ...conversationMetadata };
         }
-        const sliced = sliceTreePage(output, lines, effMaxChars, page);
+        const sliced = sliceTreePage(output, lines, effMaxChars, page, continuationBase);
         if (sliced.pageContent && !sliced.pageContent.startsWith('[tree page')) {
           let hint = `Tree was ${output.length} chars; auto-sliced to fit ${effMaxChars}. `;
           if (sliced.hasMore) {
-            hint += `Call again with page:${sliced.nextPage} for the next slice, OR pass a smaller maxDepth (e.g. ${Math.max(3, (opts.maxDepth || 15) - 5)}) or a refId to anchor on a specific subtree.`;
+            hint += `Call again with the exact continuationArgs ${JSON.stringify(sliced.continuationArgs)} for the next slice, OR pass a smaller maxDepth (e.g. ${Math.max(3, (opts.maxDepth || 15) - 5)}) or a refId to anchor on a specific subtree.`;
           }
           return {
             ...sliced,
             viewport,
+            treeRevision,
+            depthTruncated,
             autoDegraded: true,
             notice: hint,
+            ...conversationMetadata,
           };
         }
         let hint = `Output exceeds ${effMaxChars} character limit (${output.length} characters). `;
@@ -1031,13 +1722,20 @@
         return { error: hint, pageContent: '', viewport };
       }
 
-      return { pageContent: output, viewport };
+      return { pageContent: output, viewport, treeRevision, depthTruncated, ...conversationMetadata };
     } catch (e) {
       return {
         error: 'Error generating accessibility tree: ' + (e && e.message || 'Unknown error'),
         pageContent: '',
         viewport: { width: window.innerWidth, height: window.innerHeight },
       };
+    } finally {
+      if (jevCollector) {
+        const controls = [...jevCollector.values()];
+        const structure = fingerprintTreeContent(JSON.stringify(controls.map(({ value, checked, signature, ...control }) => control)));
+        lastJevSnapshot = { controls, structure, progress: fingerprintTreeContent(JSON.stringify(controls)) + ':' + Math.round(scrollY), hasSensitiveControls: jevSensitiveControlSeen };
+      }
+      jevCollector = null;
     }
   }
 
@@ -1128,10 +1826,15 @@
     return generateAccessibilityTree(filter, maxDepth, maxChars, getOrMintRef(rootElement), page);
   }
 
+  window.__wb_jev_snapshot = jevSnapshot;
+  window.__wb_jev_validate = jevValidate;
   window.__generateAccessibilityTree = generateAccessibilityTree;
   window.__generateAccessibilitySubtree = generateAccessibilitySubtree;
+  window.__wb_expand_gmail_conversation_for_read = expandGmailConversationForRead;
   window.__wb_ax_lookup = lookup;
   window.__wb_ax_ref = getOrMintRef;
   window.__wb_ax_name = getAccessibleName;
+  window.__wb_ax_role = getRole;
+  window.__wb_ax_resolve_visual_target = resolveVisualTargetAtPoint;
   window.__wb_ax_suggest = suggestNearRefs;
 })();

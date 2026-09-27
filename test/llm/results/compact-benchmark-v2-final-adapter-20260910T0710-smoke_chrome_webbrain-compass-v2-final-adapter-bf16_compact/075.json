@@ -1,0 +1,22 @@
+{
+  "id": "075",
+  "user": "finish what we were doing",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2123,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": " name=\"get_accessibility_tree\"> name=\"filter\">visible name=\"maxDepth\">10",
+  "usage": {
+    "prompt_tokens": 9709,
+    "completion_tokens": 25,
+    "total_tokens": 9734
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

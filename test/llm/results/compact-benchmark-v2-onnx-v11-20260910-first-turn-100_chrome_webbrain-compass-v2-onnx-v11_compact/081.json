@@ -1,0 +1,22 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 1886,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": "I can’t safely send a thank-you email to all contacts from this Gmail page. The current page is the inbox, and the requested action requires composing a message to multiple recipients, which is not supported by the available Compact tools. Please provide the recipient list or a specific email address, or let me know if you want to draft the message instead.",
+  "usage": {
+    "prompt_tokens": 10479,
+    "completion_tokens": 73,
+    "total_tokens": 10552
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

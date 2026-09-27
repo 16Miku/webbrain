@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "086",
+  "image": "images/086.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "data export",
+        "settings",
+        "upload",
+        "export"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Data export",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Cancel export",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "toast",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Export queued",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "detail",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Position 14 of 32",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    }
+  ],
+  "successRubric": "Quote Export queued and Position 14 of 32, and classify the visible state."
+}

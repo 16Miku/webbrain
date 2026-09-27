@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "098",
+  "difficulty": {
+    "level": 5,
+    "slug": "challenging",
+    "label": "Challenging"
+  },
+  "category": "occlusion-and-contrast",
+  "title": "Trading panel",
+  "image": "images/098.png",
+  "question": "What action is partially covered, and what visible overlay or widget causes the obstruction? Focus on the “Trading panel” screen.",
+  "defaultPromptMode": "production"
+}

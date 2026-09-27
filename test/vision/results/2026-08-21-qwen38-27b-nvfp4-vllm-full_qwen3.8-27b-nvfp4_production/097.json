@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-21T09:37:27.731Z",
+  "id": "097",
+  "model": "qwen3.8-27b-nvfp4",
+  "endpoint": "http://192.168.1.48:8000/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "097",
+    "difficulty": {
+      "level": 5,
+      "slug": "challenging",
+      "label": "Challenging"
+    },
+    "category": "multilingual-ocr",
+    "title": "إعدادات الأمان",
+    "image": "images/097.png",
+    "question": "Read the non-English heading, field label/value, action, and visible status exactly as rendered. Focus on the “إعدادات الأمان” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/097.png",
+    "bytes": 128188,
+    "sha256": "cb1b54a466170223b341711a368bb8fbbbeeb2ee6a1a1e8422e8eaad60cbb177"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: WebScene security settings page (Arabic) with a verification code input.\n\n2) Visible text:\n- Top nav: \"WebScene\", \"Home\", \"Workspace\", \"Activity\"\n- Card heading: \"إعدادات الأمان\" with a pill/badge \"العربية\"\n- Field label: \"رمز التحقق\"\n- Input placeholder: \"_4 _19\"\n- Error banner (red text on light red background): \"تنتهي صلاحية الرمز خلال ٣٨ ثانية\"\n- Button: \"تأكيد\"\n\n3) Inputs:\n- Text input, label \"رمز التحقق\", placeholder \"_4 _19\", current value empty, not focused, not disabled.\n\n4) State signals:\n- Red error/warning banner indicating the code expires in 38 seconds.\n- No loading spinner, no modal, no CAPTCHA, no cookie banner.\n\n5) Blockers:\n- Verification code field is empty; the \"تأكيد\" (Confirm) button likely cannot succeed until a valid code is entered. Code is expiring (38s countdown).\n\n6) Unknowns:\n- Exact expected code format/length is unclear (placeholder shows \"_4 _19\", possibly two segments).\n- Whether the \"تأكيد\" button is currently disabled is not visually determinable.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1198,
+      "total_tokens": 1484,
+      "completion_tokens": 286
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 104,
+    "total": 9515
+  },
+  "score": {
+    "success": false,
+    "ratio": 0.6363636363636364,
+    "earned": 7,
+    "possible": 11,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [
+      "input",
+      "status"
+    ],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      },
+      "inputs": {
+        "earned": 0,
+        "possible": 2,
+        "ratio": 0
+      },
+      "state_signals": {
+        "earned": 0,
+        "possible": 2,
+        "ratio": 0
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "sign",
+          "payment",
+          "order",
+          "security",
+          "login",
+          "checkout",
+          "settings"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "security",
+          "settings"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "إعدادات الأمان",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "إعدادات الأمان"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "button",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "تأكيد",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "تأكيد"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "input",
+        "dimension": "inputs",
+        "section": 3,
+        "kind": "all",
+        "values": [
+          "رمز التحقق",
+          "19_ 4_"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": false,
+        "matched": [
+          "رمز التحقق"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "status",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "تنتهي صلاحية الرمز خلال ٣٨ ثانية",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

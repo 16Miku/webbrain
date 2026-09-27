@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "id": "083",
+  "image": "images/083.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "checkout",
+        "cart",
+        "order",
+        "purchase"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Order summary",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "item",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Studio monitor pair",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "total",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "$1,204.08",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Submit payment",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "banner",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Price changed from $1,199.00",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "blocked",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "price",
+        "changed"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Quote $1,204.08 and Submit payment; correctly report whether the action is disabled and why."
+}

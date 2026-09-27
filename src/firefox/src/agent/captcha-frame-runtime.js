@@ -602,7 +602,7 @@ function selectedReason(candidate, constraints) {
 
 // This function is serialized and executed in the web page. It must not
 // reference module-scope values.
-export function detectCaptchaCandidatesInPage(scope = null) {
+export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = null) {
   const candidates = [];
   const pageWindow = scope?.window
     || (typeof window !== 'undefined' ? window : null);
@@ -695,10 +695,15 @@ export function detectCaptchaCandidatesInPage(scope = null) {
       return false;
     }
   };
-  const challengeDialogRe = /\b(?:(?:re|h|fun)?captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b/i;
+  let challengeDialogRe = null;
+  try {
+    const source = String(matcherOptions?.challengeLabelPatternSource || '');
+    if (source) challengeDialogRe = new RegExp(source, 'i');
+  } catch (_) {}
   const challengeDialogs = Array.from(
     pageDocument.querySelectorAll('dialog, [role="dialog"], [role="alertdialog"]')
   ).filter((element) => {
+    if (!challengeDialogRe) return false;
     if (!visibleElement(element)) return false;
     let labelledBy = '';
     try {

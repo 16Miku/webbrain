@@ -1,3 +1,6 @@
+import { installSafeSocialBackground } from './safesocial/background.js';
+import { createSafeSocialHost } from './safesocial/host.js';
+import { firefoxBidi } from './bidi/client.js';
 import { ProviderManager } from './providers/manager.js';
 import { Agent } from './agent/agent.js';
 import {
@@ -13,12 +16,21 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
+import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController, sweepOpfsSwapFiles } from './agent/apocalypse-mode.js';
+import { createEmergencyDownloadController } from './agent/emergency-download-controller.js';
+import { createHostedOfflineRagIndexClient } from './agent/offline-rag-index-host.js';
+import { getSharedOfflineSemanticReranker } from './agent/offline-semantic-runtime.js';
+import { EMERGENCY_DOWNLOAD_ACTION } from './ui/emergency-download-client.js';
+import { readPdfResponseBytes } from './agent/pdf-stream.js';
 import {
+  compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
   createSavedWorkflowStore,
   exportPortableWorkflowDefinition,
+  finalizeSavedWorkflowDraft,
   importPortableWorkflowDefinition,
 } from './agent/workflows.js';
+import { createTeacherRunInterlock, createTeacherSessionStore } from './agent/teacher-mode.js';
 import * as workflowTrace from './trace/recorder.js';
 import {
   startClaudeOAuth,
@@ -28,15 +40,31 @@ import {
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
+import { createSystemOneJudge } from './agent/systemone-judge.js';
 import {
+  SELECTION_CONTEXT_SOURCE_GROUNDING,
   SELECTION_ONLY_SOURCE_GROUNDING,
   SELECTION_TRANSLATION_LANGUAGES,
   buildContextMenuPrompt,
+  buildFullContextSelectionPrompt,
   buildSelectionPrompt,
   normalizeSelectionAction,
+  normalizeSelectionSourceGrounding,
   createContextMenuStorage,
 } from './context-menu-storage.js';
+import {
+  getSelectionShortcutLocalization,
+  normalizeSelectionShortcutLocale,
+  selectionTranslationLanguageLabel,
+} from './selection-shortcut-i18n.js';
 import { createTabChatHandoffCoordinator } from './ui/tab-chat-persistence.js';
+import { clearStagedScreenshots } from './ui/staged-screenshot-store.js';
+import {
+  loadUiScale,
+  nextUiScale,
+  saveUiScale,
+  uiScaleCommandAction,
+} from './ui/ui-scale.js';
 import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
 import { RunUiJournal, RunUiPersistenceScheduler, compactRunUiSnapshotForPersist, runUiSnapshotForRequest } from './run-ui-journal.js';
 import {
@@ -57,6 +85,11 @@ import {
   parseUserMemoryExtractionResult,
 } from './agent/user-memory.js';
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
+import { shouldAutoGroupTabs } from './tab-group-preference.js';
+import {
+  SHORTCUT_COMMAND_STORAGE_KEY,
+  shortcutCommandEnvelope,
+} from './shortcut-command.js';
 import {
   CONFIG_STORAGE_KEYS,
   createConfigExport,
@@ -77,15 +110,52 @@ import {
  * Routes messages between sidebar, content scripts, and the agent.
  */
 
+const safeSocialHost = createSafeSocialHost();
+installSafeSocialBackground(browser, (command, payload) => safeSocialHost.handle(command, payload));
+
 const providerManager = new ProviderManager();
+const apocalypseController = createApocalypseController(browser);
+let emergencyDownloads = null;
+// The stale-run repair scan waits a beat after wake so a run resuming from
+// eviction registers its in-memory state first; the Traces page can also
+// request an immediate scan via WB_TRACE_REPAIR_STALE_RUNS.
+const TRACE_REPAIR_STARTUP_DELAY_MS = 15_000;
+setTimeout(() => { void workflowTrace.repairStaleRuns().catch(() => {}); }, TRACE_REPAIR_STARTUP_DELAY_MS);
+
+function emergencyDownloadController() {
+  if (!emergencyDownloads) {
+    emergencyDownloads = createEmergencyDownloadController({
+      indexClient: createHostedOfflineRagIndexClient(),
+      semanticReranker: getSharedOfflineSemanticReranker(),
+    });
+  }
+  return emergencyDownloads;
+}
+Promise.all([
+  apocalypseController.syncUpdateSchedule(),
+  apocalypseController.syncDownloadSchedule(),
+  // Reclaim `.crswap` files left behind by writable streams that never closed
+  // (background page torn down mid-write, cancelled download, crashed tab).
+  // OPFS does not garbage collect these, and with keepExistingData: true each
+  // one is a full copy of the archive it was writing.
+  sweepOpfsSwapFiles().then(({ removed, bytes }) => {
+    if (removed > 0) {
+      console.info(`[WebBrain] Reclaimed ${removed} orphaned OPFS swap file(s), ${(bytes / 1024 ** 3).toFixed(2)} GB.`);
+    }
+  }),
+]).catch((error) => {
+  console.warn('[WebBrain] Apocalypse Mode schedules could not be restored:', error);
+});
 const agent = new Agent(providerManager);
+agent.strictSecretMode = false;
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = browser.storage.local
-  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: false })
+  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
   .then((stored) => {
     agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
   })
   .catch(() => {
+    // An unreadable setting must not bypass a stored opt-out.
     agent.setAlwaysAllowApiMutations(false);
   });
 agent.setConversationScopeChangeListener((tabId, state) => {
@@ -99,6 +169,13 @@ agent.setConversationScopeChangeListener((tabId, state) => {
 });
 const userMemoryStore = createUserMemoryStore(browser.storage.local);
 const savedWorkflowStore = createSavedWorkflowStore(browser.storage.local);
+const teacherSessionStore = createTeacherSessionStore(browser.storage.session);
+const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
+  automationOwnsTab: (tabId) => agent.isRunning(tabId)
+    || detachedRunStarts.has(tabId)
+    || scheduler.isRunning(tabId),
+});
+agent.setRunStartGuard((tabId) => teacherRunInterlock.guardRunStart(tabId));
 const profileSync = new ProfileSyncManager(browser.storage.local);
 const runCaptureController = createRunCaptureController({
   api: browser,
@@ -107,9 +184,11 @@ const runCaptureController = createRunCaptureController({
 const scheduler = new ScheduledJobManager({
   api: browser,
   agent,
+  systemOneJudge: createSystemOneJudge(),
   loadProviders: async () => {
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
   sendUpdate: (tabId, type, data) => {
@@ -120,6 +199,7 @@ const scheduler = new ScheduledJobManager({
       type,
       data,
     }).catch(() => {});
+    maybeFlashScheduledTerminalEvent(tabId, type, data);
   },
   showIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS'),
   hideIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS'),
@@ -132,10 +212,25 @@ const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
 const CONTEXT_MENU_ASK_SELECTION_ID = 'webbrain-ask-selection';
 const CONTEXT_MENU_OPEN_CHAT_ID = 'webbrain-selection-open-chat';
+const CONTEXT_MENU_OPEN_PDF_VIEWER_ID = 'webbrain-open-pdf-viewer';
 const CONTEXT_MENU_ACTION_PREFIX = 'webbrain-selection-action-';
 const CONTEXT_MENU_TRANSLATE_ID = 'webbrain-selection-translate';
 const CONTEXT_MENU_TRANSLATE_PREFIX = 'webbrain-selection-translate-';
 const CONTEXT_MENU_GENERIC_ASK_ID = 'webbrain-selection-generic-ask';
+const pdfResponseTabs = new Set();
+const pdfOcrRequests = new Map();
+function resolveStoredSelectionShortcutLocale(value) {
+  return normalizeSelectionShortcutLocale(
+    value || (typeof navigator !== 'undefined' ? navigator.language : 'en'),
+  );
+}
+
+let selectionShortcutLocale = resolveStoredSelectionShortcutLocale('');
+const selectionShortcutLocaleReady = browser.storage.local.get({ wbLocale: '' })
+  .then((stored) => {
+    selectionShortcutLocale = resolveStoredSelectionShortcutLocale(stored?.wbLocale);
+  })
+  .catch(() => {});
 
 function getContextMenuApi() {
   return browser.contextMenus || browser.menus || null;
@@ -143,6 +238,75 @@ function getContextMenuApi() {
 
 function getContextMenuPromptStore() {
   return browser.storage?.session || browser.storage?.local || null;
+}
+
+function safeOnlinePdfUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function isPdfUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) && /\.pdf$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function trackPdfResponse(details) {
+  if (!Number.isInteger(details?.tabId) || details.tabId < 0) return;
+  const contentType = (details.responseHeaders || [])
+    .find(header => String(header?.name || '').toLowerCase() === 'content-type')?.value;
+  if (/^application\/pdf(?:\s*;|$)/i.test(String(contentType))) pdfResponseTabs.add(details.tabId);
+  else pdfResponseTabs.delete(details.tabId);
+}
+
+function getPdfHandlerBaseUrl() {
+  try {
+    return browser.runtime.getURL('src/ui/pdf-handler.html');
+  } catch {
+    return '';
+  }
+}
+
+// The PDF viewer is an extension page, so sender.tab is empty. Scope the
+// request to the handler that sent it: the sender must be our viewer and,
+// when the sender URL carries an explicit tabId, it must match msg.tabId.
+function isPdfHandlerSender(sender, tabId) {
+  if (!sender || sender.id !== browser.runtime.id) return false;
+  const senderUrl = String(sender?.url || '');
+  const base = getPdfHandlerBaseUrl();
+  if (!base || !senderUrl.startsWith(base)) return false;
+  try {
+    const senderTabId = new URL(senderUrl).searchParams.get('tabId');
+    if (senderTabId != null && Number(senderTabId) !== tabId) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+async function fetchPdfDocumentForViewer(url) {
+  const maxPdfBytes = 64 * 1024 * 1024;
+  const response = await fetch(url, { credentials: 'include', redirect: 'follow' });
+  if (!response.ok) throw new Error(`Firefox PDF fetch returned HTTP ${response.status}.`);
+  // Require the proxied URL to actually be a PDF so the credentialed
+  // fetch cannot be pointed at arbitrary HTML the viewer did not open.
+  const contentType = String(response.headers.get('content-type') || '');
+  if (!/^application\/pdf(?:\s*;|$)/i.test(contentType)) {
+    throw new Error('The requested URL did not return a PDF document.');
+  }
+  const bytes = await readPdfResponseBytes(response, {
+    maxBytes: maxPdfBytes,
+    emptyMessage: 'Firefox returned an empty PDF stream.',
+    unreadableMessage: 'Firefox PDF stream could not be read safely.',
+  });
+  return { ok: true, bytes: bytes.buffer };
 }
 
 const contextMenuStorage = createContextMenuStorage(getContextMenuPromptStore);
@@ -162,9 +326,12 @@ const tabChatHandoff = createTabChatHandoffCoordinator(browser.storage.session, 
   },
 });
 
-function createContextMenus() {
+async function createContextMenus() {
+  await selectionShortcutLocaleReady;
   const api = getContextMenuApi();
   if (!api?.create) return;
+  const localization = getSelectionShortcutLocalization(selectionShortcutLocale);
+  const strings = localization.strings;
 
   const createItem = (item) => {
     try {
@@ -184,32 +351,42 @@ function createContextMenus() {
   const create = () => {
     createItem({
       id: CONTEXT_MENU_ASK_SELECTION_ID,
-      title: 'Ask WebBrain about this',
+      title: strings.askSelection,
       contexts: ['selection'],
     });
-    createItem({ id: CONTEXT_MENU_OPEN_CHAT_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Open sidebar to chat', contexts: ['selection'] });
+    createItem({ id: CONTEXT_MENU_OPEN_CHAT_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.openChat, contexts: ['selection'] });
     createItem({ id: 'webbrain-selection-separator-1', parentId: CONTEXT_MENU_ASK_SELECTION_ID, type: 'separator', contexts: ['selection'] });
-    for (const [action, title] of [
-      ['summarize', 'Summarize'],
-      ['explain', 'Explain'],
-      ['quiz', 'Quiz me'],
-      ['proofread', 'Proofread'],
-      ['humanize', 'Humanize'],
+    for (const [action, key] of [
+      ['summarize', 'summarize'],
+      ['explain', 'explain'],
+      ['quiz', 'quiz'],
+      ['proofread', 'proofread'],
+      ['humanize', 'humanize'],
     ]) {
-      createItem({ id: `${CONTEXT_MENU_ACTION_PREFIX}${action}`, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title, contexts: ['selection'] });
+      createItem({ id: `${CONTEXT_MENU_ACTION_PREFIX}${action}`, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings[key], contexts: ['selection'] });
     }
-    createItem({ id: CONTEXT_MENU_TRANSLATE_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Translate to', contexts: ['selection'] });
+    createItem({ id: CONTEXT_MENU_TRANSLATE_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.translateTo, contexts: ['selection'] });
     for (const [code, title] of Object.entries(SELECTION_TRANSLATION_LANGUAGES)) {
-      createItem({ id: `${CONTEXT_MENU_TRANSLATE_PREFIX}${code}`, parentId: CONTEXT_MENU_TRANSLATE_ID, title, contexts: ['selection'] });
+      createItem({
+        id: `${CONTEXT_MENU_TRANSLATE_PREFIX}${code}`,
+        parentId: CONTEXT_MENU_TRANSLATE_ID,
+        title: selectionTranslationLanguageLabel(code, localization.locale) || title,
+        contexts: ['selection'],
+      });
     }
     createItem({ id: 'webbrain-selection-separator-2', parentId: CONTEXT_MENU_ASK_SELECTION_ID, type: 'separator', contexts: ['selection'] });
-    createItem({ id: CONTEXT_MENU_GENERIC_ASK_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: 'Ask about this', contexts: ['selection'] });
+    createItem({ id: CONTEXT_MENU_GENERIC_ASK_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.askAbout, contexts: ['selection'] });
+    createItem({
+      id: CONTEXT_MENU_OPEN_PDF_VIEWER_ID,
+      title: 'Open PDF with WebBrain',
+      contexts: ['page'],
+      visible: false,
+    });
   };
 
   try {
-    Promise.resolve(api.removeAll())
-      .catch(() => {})
-      .then(create);
+    await Promise.resolve(api.removeAll()).catch(() => {});
+    create();
   } catch {
     create();
   }
@@ -273,11 +450,18 @@ async function loadSiteAdapters() {
 }
 loadSiteAdapters();
 
-async function loadStrictSecretMode() {
-  const stored = await browser.storage.local.get('strictSecretMode');
-  if (stored.strictSecretMode != null) agent.strictSecretMode = !!stored.strictSecretMode;
+async function loadResearchEscalation() {
+  const stored = await browser.storage.local.get(['researchEscalationEnabled', 'researchEscalationEngine']);
+  agent.researchEscalationEnabled = stored.researchEscalationEnabled === true;
+  agent.researchEscalationEngine = String(stored.researchEscalationEngine || 'chatgpt');
 }
-loadStrictSecretMode();
+const researchEscalationReady = loadResearchEscalation().catch(() => {});
+
+async function loadStrictSecretMode() {
+  const stored = await browser.storage.local.get('strictSecretMode').catch(() => ({}));
+  agent.strictSecretMode = stored?.strictSecretMode === true;
+}
+const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
 async function loadProfile() {
   const stored = await browser.storage.local.get(['profileEnabled', 'profileText']);
@@ -425,16 +609,16 @@ async function saveUserMemoryExtractionQueue(queue) {
 }
 
 async function isUserMemoryExtractionEnabled() {
-  const stored = await browser.storage.local.get([
-    USER_MEMORY_ENABLED_KEY,
-    USER_MEMORY_AUTO_CAPTURE_KEY,
-  ]);
+  const stored = await browser.storage.local.get({
+    [USER_MEMORY_ENABLED_KEY]: true,
+    [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+  });
   return stored[USER_MEMORY_ENABLED_KEY] !== false
     && stored[USER_MEMORY_AUTO_CAPTURE_KEY] === true;
 }
 
 async function isUserMemoryFormCaptureEnabled() {
-  const stored = await browser.storage.local.get(USER_MEMORY_FORM_CAPTURE_KEY);
+  const stored = await browser.storage.local.get({ [USER_MEMORY_FORM_CAPTURE_KEY]: true });
   return stored[USER_MEMORY_FORM_CAPTURE_KEY] === true;
 }
 
@@ -516,6 +700,33 @@ async function withSavedWorkflowStoreLock(task) {
   return run;
 }
 
+async function withTeacherSessionStoreLock(task) {
+  return teacherRunInterlock.withLock(task);
+}
+
+function publicTeacherSession(session) {
+  return session ? {
+    active: true,
+    name: session.name,
+    actionCount: session.actions?.length || 0,
+    startedAt: session.startedAt,
+  } : { active: false };
+}
+
+async function notifyTeacherState(tabId, session) {
+  if (tabId == null) return false;
+  try {
+    const response = await browser.tabs.sendMessage(tabId, {
+      target: 'content',
+      action: 'teacher_state',
+      state: publicTeacherSession(session),
+    });
+    return response?.teacherCaptureReady === true;
+  } catch {
+    return false;
+  }
+}
+
 async function applyUserMemoryExtractionOperationsToCurrentStore(jobId, operations) {
   return withUserMemoryStoreLock(async () => {
     if (!await isUserMemoryExtractionEnabled()) {
@@ -528,6 +739,13 @@ async function applyUserMemoryExtractionOperationsToCurrentStore(jobId, operatio
     if (applied.changed) applied.store = await userMemoryStore.save(applied.store);
     return { ...applied, claimed: true };
   });
+}
+
+function notifyUserMemoryCreated() {
+  browser.runtime.sendMessage({
+    target: 'sidepanel',
+    action: 'user_memory_created',
+  }).catch(() => {});
 }
 
 function scheduleUserMemoryExtractionDrain(delayMs = USER_MEMORY_EXTRACTION_DELAY_MS) {
@@ -622,7 +840,10 @@ async function drainUserMemoryExtractionQueue() {
         });
         const operations = parseUserMemoryExtractionResult(result?.content || '');
         const applied = await applyUserMemoryExtractionOperationsToCurrentStore(job.id, operations);
-        if (applied.changed) await syncAgentUserMemoryFromStorage();
+        if (applied.changed) {
+          await syncAgentUserMemoryFromStorage();
+          if (applied.created) notifyUserMemoryCreated();
+        }
       } catch (error) {
         if (agent._isCostAllowanceError?.(error)) {
           await removeUserMemoryExtractionJob(job.id);
@@ -821,7 +1042,7 @@ function showFirstInstallGuide(details) {
 // Initialize on install
 browser.runtime.onInstalled.addListener(async (details) => {
   showFirstInstallGuide(details);
-  createContextMenus();
+  await createContextMenus();
   await providerManager.load();
   await loadMaxSteps();
   await loadClarifyTimeout();
@@ -831,14 +1052,18 @@ browser.runtime.onInstalled.addListener(async (details) => {
   console.log('[WebBrain] Extension installed, providers loaded.');
 });
 
-browser.runtime.onStartup?.addListener?.(() => {
-  createContextMenus();
+browser.runtime.onStartup?.addListener?.(async () => {
+  await createContextMenus();
   syncAgentUserMemoryFromStorage().catch(() => {});
   scheduleUserMemoryExtractionDrain(5000);
 });
 
 // Listen for setting changes
 browser.storage.onChanged.addListener((changes) => {
+  if (changes.wbLocale) {
+    selectionShortcutLocale = normalizeSelectionShortcutLocale(changes.wbLocale.newValue);
+    createContextMenus().catch(() => {});
+  }
   if (PROFILE_SYNC_DATA_KEYS.some((key) => changes[key])) profileSync.noteChanges(changes).catch(() => {});
   if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => {});
   if (changes.maxAgentSteps) {
@@ -852,18 +1077,29 @@ browser.storage.onChanged.addListener((changes) => {
   }
   let refreshPrompts = false;
   if (changes[ALWAYS_ALLOW_API_MUTATIONS_KEY]) {
-    agent.setAlwaysAllowApiMutations(changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue === true);
+    const value = changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue;
+    agent.setAlwaysAllowApiMutations(value === undefined || value === true);
     refreshPrompts = true;
   }
   if (changes.useSiteAdapters) {
     agent.useSiteAdapters = changes.useSiteAdapters.newValue;
     refreshPrompts = true;
   }
+  if (changes.researchEscalationEnabled || changes.researchEscalationEngine) {
+    if (changes.researchEscalationEnabled) {
+      agent.researchEscalationEnabled = changes.researchEscalationEnabled.newValue === true;
+    }
+    if (changes.researchEscalationEngine) {
+      agent.researchEscalationEngine = String(changes.researchEscalationEngine.newValue || 'chatgpt');
+    }
+    refreshPrompts = true;
+  }
   if (changes[API_MUTATION_OBSERVER_KEY]) {
-    setApiMutationObserverEnabled(changes[API_MUTATION_OBSERVER_KEY].newValue === true);
+    const value = changes[API_MUTATION_OBSERVER_KEY].newValue;
+    setApiMutationObserverEnabled(value === undefined || value === true);
   }
   if (changes.strictSecretMode) {
-    agent.strictSecretMode = !!changes.strictSecretMode.newValue;
+    agent.strictSecretMode = changes.strictSecretMode.newValue === true;
     // Strict mode also appends a global system note after enabled skills, so
     // refresh live conversations immediately as well as rebuilding at turn start.
     refreshPrompts = true;
@@ -937,15 +1173,26 @@ browser.storage.onChanged.addListener((changes) => {
   if (refreshPrompts) agent._refreshSystemPrompts();
 });
 
+browser.alarms.onAlarm.addListener((alarm) => {
+  if (alarm?.name === APOCALYPSE_DOWNLOAD_ALARM) {
+    apocalypseController.manager.processNext().catch((error) => {
+      console.warn('[WebBrain] Apocalypse Mode archive download failed:', error);
+    });
+  } else if (alarm?.name === APOCALYPSE_UPDATE_ALARM) {
+    apocalypseController.checkForUpdates().catch((error) => {
+      console.warn('[WebBrain] Apocalypse Mode update check failed:', error);
+    });
+  }
+});
+
 // ────────────────────────────────────────────────────────────────────────
 // Tab grouping (visual scope for a WebBrain session)
 //
 // Same UX shape as the Chrome build (see src/chrome/src/background.js):
-// when the user clicks the browser action, the source tab joins (or
-// seeds) a colored "WebBrain" tab group for that window. Agent-spawned
-// tabs (new_tab tool, target=_blank redirects) auto-join the same group
-// via agent.js's `_addToWebBrainGroup`. The group label is what tells
-// the user at a glance "this is part of a WebBrain session".
+// when automatic grouping is enabled and the user clicks the browser
+// action, the source tab joins (or seeds) a colored "WebBrain" tab group
+// for that window. Internal helper tabs and target=_blank redirects auto-join
+// the same group via agent.js's `_addToWebBrainGroup`.
 //
 // What we DON'T do on Firefox: scope the sidebar's visibility to group
 // membership. browser.sidebarAction is window-level, not per-tab —
@@ -982,12 +1229,13 @@ function saveWebBrainGroups() {
 loadWebBrainGroups();
 
 /**
- * Make sure `tab.windowId` has a "WebBrain" group AND that `tab` is in
- * it. Always creates a fresh group rather than rebranding the user's
- * existing group (Option 2 from the Chrome PR — strictly less invasive).
+ * When automatic grouping is enabled, make sure `tab.windowId` has a
+ * "WebBrain" group AND that `tab` is in it. Always creates a fresh group
+ * rather than rebranding the user's existing group.
  */
 async function ensureWebBrainGroup(tab) {
   if (!browser.tabGroups || !tab?.id || tab.windowId == null) return -1;
+  if (!await shouldAutoGroupTabs(browser.storage.local)) return -1;
   try {
     let groupId = webBrainGroupByWindow.get(tab.windowId);
 
@@ -1084,6 +1332,15 @@ function openSidebarForContextMenu(tab) {
 async function handleContextMenuAsk(info, tab) {
   if (!tab?.id) return;
   const menuItemId = String(info?.menuItemId || '');
+  if (menuItemId === CONTEXT_MENU_OPEN_PDF_VIEWER_ID) {
+    const pdfUrl = safeOnlinePdfUrl(tab.url);
+    if (!pdfUrl || (!pdfResponseTabs.has(tab.id) && !isPdfUrl(pdfUrl))) return;
+    const viewerUrl = browser.runtime.getURL(
+      `src/ui/pdf-handler.html?url=${encodeURIComponent(pdfUrl)}&tabId=${encodeURIComponent(tab.id)}`,
+    );
+    await browser.tabs.update(tab.id, { url: viewerUrl });
+    return;
+  }
   if (menuItemId === CONTEXT_MENU_OPEN_CHAT_ID) {
     openSidebarForContextMenu(tab);
     return;
@@ -1092,10 +1349,10 @@ async function handleContextMenuAsk(info, tab) {
   let text = '';
   let selectionAction = '';
   if (menuItemId === CONTEXT_MENU_GENERIC_ASK_ID) {
-    text = buildContextMenuPrompt(info.selectionText);
+    text = buildContextMenuPrompt(info.selectionText, selectionShortcutLocale);
   } else if (menuItemId.startsWith(CONTEXT_MENU_ACTION_PREFIX)) {
     selectionAction = normalizeSelectionAction(menuItemId.slice(CONTEXT_MENU_ACTION_PREFIX.length));
-    text = buildSelectionPrompt(info.selectionText, selectionAction);
+    text = buildSelectionPrompt(info.selectionText, selectionAction, '', selectionShortcutLocale);
   } else if (menuItemId.startsWith(CONTEXT_MENU_TRANSLATE_PREFIX)) {
     selectionAction = 'translate';
     text = buildSelectionPrompt(info.selectionText, 'translate', '', menuItemId.slice(CONTEXT_MENU_TRANSLATE_PREFIX.length));
@@ -1123,27 +1380,69 @@ async function handleContextMenuAsk(info, tab) {
 getContextMenuApi()?.onClicked?.addListener?.((info, tab) => {
   handleContextMenuAsk(info, tab).catch(() => {});
 });
+getContextMenuApi()?.onShown?.addListener?.((info, tab) => {
+  const menuApi = getContextMenuApi();
+  const tabId = Number(tab?.id);
+  const visible = Number.isInteger(tabId) && tabId >= 0
+    && (pdfResponseTabs.has(tabId) || isPdfUrl(info?.pageUrl || tab?.url));
+  (async () => {
+    try {
+      await menuApi?.update?.(CONTEXT_MENU_OPEN_PDF_VIEWER_ID, { visible });
+      await menuApi?.refresh?.();
+    } catch {}
+  })();
+});
+browser.tabs.onRemoved?.addListener?.((tabId) => pdfResponseTabs.delete(tabId));
+
+// Only this instance knows which runs are live in memory, so it owns the
+// stale-run repair whenever it is reachable.
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_TRACE_REPAIR_STALE_RUNS') return;
+  workflowTrace.repairStaleRuns()
+    .then(repaired => sendResponse({ ok: true, repaired }))
+    .catch(error => sendResponse({ ok: false, error: error?.message || String(error) }));
+  return true;
+});
+
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_LOCALIZATION') return;
+  sendResponse({ ok: true, ...getSelectionShortcutLocalization(msg.locale) });
+});
 
 // Firefox does not treat a click in an injected page UI as an authorized
 // sidebarAction.open() gesture. Persist and notify the existing sidebar when
 // it is open; otherwise startup recovery will consume the prompt after the
 // user opens WebBrain manually.
-browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
-  const tab = sender?.tab;
+function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
   const selectionAction = normalizeSelectionAction(msg.action);
-  const text = buildSelectionPrompt(msg.selectionText, msg.action, msg.question, msg.language);
+  const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
+  const sourceGrounding = includePageContext
+    ? ''
+    : selectionAction === 'custom'
+      ? SELECTION_CONTEXT_SOURCE_GROUNDING
+      : SELECTION_ONLY_SOURCE_GROUNDING;
+  const text = includePageContext
+    ? buildFullContextSelectionPrompt(msg.selectionText, msg.question)
+    : buildSelectionPrompt(
+      msg.selectionText,
+      msg.action,
+      msg.question,
+      msg.language,
+      sourceGrounding,
+    );
   if (!tab?.id || !text) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid selection shortcut request.' });
-    return;
+    return false;
   }
-
   const payload = {
     id: `selection-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     tabId: tab.id,
     text,
-    sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
-    ...(selectionAction ? { selectionAction } : {}),
+    ...(sourceGrounding ? {
+      sourceGrounding,
+      ...(selectionAction ? { selectionAction } : {}),
+    } : {}),
+    ...(includePageContext ? { restoreSelectionScope: true } : {}),
     createdAt: Date.now(),
   };
 
@@ -1156,6 +1455,36 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })().then(sendResponse).catch((error) => {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: error?.message || String(error) });
   });
+  return true;
+}
+
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
+  return queueFirefoxSelectionShortcutPrompt(msg, sender?.tab, sendResponse);
+});
+
+// The explicit Firefox viewer is an extension page, so sender.tab is not a
+// reliable source of scope. Resolve the live tab from the handler-provided id
+// before handing the selected OCR/PDF text to the normal prompt storage path.
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'WB_PDF_SELECTION_SHORTCUT_SUBMIT') return;
+  const tabId = Number(msg.tabId);
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid PDF selection tab.' });
+    return;
+  }
+  if (!isPdfHandlerSender(sender, tabId)) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid PDF selection sender.' });
+    return;
+  }
+  browser.tabs.get(tabId)
+    .then(tab => queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse))
+    .catch(error => sendResponse({
+      ok: false,
+      queued: false,
+      requiresManualOpen: true,
+      error: error?.message || 'The PDF tab is no longer available.',
+    }));
   return true;
 });
 
@@ -1185,7 +1514,9 @@ browser.tabs.onRemoved.addListener((tabId) => {
   pendingContextMenuNotifications.delete(tabId);
   contextMenuStorage.cleanup(tabId);
   tabChatHandoff.clear(tabId).catch(() => {});
+  clearStagedScreenshots(browser.storage.local, tabId).catch(() => {});
   scheduler.cancelForTab(tabId).catch(() => {});
+  withTeacherSessionStoreLock(() => teacherSessionStore.clear(tabId)).catch(() => {});
   try { agent._cleanupTab(tabId); } catch { /* ignore */ }
 });
 
@@ -1203,15 +1534,57 @@ function invalidateContextMenuForTab(tabId) {
   }).catch(() => {});
 }
 
+function recordTeacherNavigation(tabId, url, options) {
+  teacherRunInterlock.navigation(tabId, url, options).catch(() => {});
+}
+
+const TEACHER_EXPLICIT_NAVIGATION_TYPES = new Set([
+  'typed', 'auto_bookmark', 'generated', 'keyword', 'keyword_generated',
+]);
+
 browser.webNavigation?.onCommitted?.addListener?.((details) => {
-  if (details.frameId === 0) invalidateContextMenuForTab(details.tabId);
+  if (details.frameId !== 0) return;
+  agent.clearLastTypeFieldIdent(details.tabId);
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
+  recordTeacherNavigation(details.tabId, details.url, {
+    force: TEACHER_EXPLICIT_NAVIGATION_TYPES.has(details.transitionType),
+  });
+  invalidateContextMenuForTab(details.tabId);
 });
 browser.webNavigation?.onHistoryStateUpdated?.addListener?.((details) => {
-  if (details.frameId === 0) invalidateContextMenuForTab(details.tabId);
+  if (details.frameId !== 0) return;
+  agent.clearLastTypeFieldIdent(details.tabId);
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
+  recordTeacherNavigation(details.tabId, details.url);
+  invalidateContextMenuForTab(details.tabId);
 });
 browser.webNavigation?.onReferenceFragmentUpdated?.addListener?.((details) => {
-  if (details.frameId === 0) invalidateContextMenuForTab(details.tabId);
+  if (details.frameId !== 0) return;
+  agent.clearLastTypeFieldIdent(details.tabId);
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
+  invalidateContextMenuForTab(details.tabId);
 });
+
+// Cloudflare Challenge Pages replace the requested top-level document and
+// expose a response-only signal. Observe only main-frame response headers;
+// challenge-platform requests alone are not sufficient because ordinary bot
+// detection and embedded widgets may use the same managed endpoint.
+const observeCloudflareManagedChallengeResponse = details => {
+  trackPdfResponse(details);
+  agent.observeCloudflareManagedChallengeResponse(details).catch(() => {});
+};
+const observeCloudflareChallengePlatformRequest = details => {
+  agent.observeCloudflareChallengePlatformRequest(details).catch(() => {});
+};
+browser.webRequest?.onHeadersReceived?.addListener?.(
+  observeCloudflareManagedChallengeResponse,
+  { urls: ['<all_urls>'], types: ['main_frame'] },
+  ['responseHeaders'],
+);
+browser.webRequest?.onBeforeRequest?.addListener?.(
+  observeCloudflareChallengePlatformRequest,
+  { urls: ['*://*/cdn-cgi/challenge-platform/*'] },
+);
 
 // Background API call observer (issue #189). Watches XHR/fetch requests the
 // page itself fires — e.g. clicking "Next Page" — so the agent can later spot
@@ -1221,7 +1594,7 @@ browser.webNavigation?.onReferenceFragmentUpdated?.addListener?.((details) => {
 // tokens and form bodies do not get printed into model context.
 const API_REQUESTS_PER_TAB_LIMIT = 40;
 const API_MUTATION_OBSERVER_KEY = 'apiMutationObserverEnabled';
-const API_MUTATION_OBSERVER_DEFAULT = false;
+const API_MUTATION_OBSERVER_DEFAULT = true;
 const API_REPLAY_BODY_LIMIT = 16000;
 const apiRequestsByTab = new Map(); // tabId -> [{ url, method, ts, replayRequestId, ... }]
 const apiRequestReplayById = new Map(); // replayRequestId -> captured same-origin replay options
@@ -1367,7 +1740,8 @@ async function loadApiMutationObserverSetting() {
     const stored = await browser.storage.local.get({ [API_MUTATION_OBSERVER_KEY]: API_MUTATION_OBSERVER_DEFAULT });
     setApiMutationObserverEnabled(stored[API_MUTATION_OBSERVER_KEY] === true);
   } catch (e) {
-    setApiMutationObserverEnabled(API_MUTATION_OBSERVER_DEFAULT);
+    // Do not capture requests when a stored opt-out cannot be read.
+    setApiMutationObserverEnabled(false);
   }
 }
 
@@ -1406,13 +1780,46 @@ browser.browserAction.onClicked.addListener((tab) => {
  * content script and on tabs that haven't loaded yet.
  */
 const activeIndicatorTabs = new Set();
+const indicatorHeartbeatTimers = new Map();
+const INDICATOR_HEARTBEAT_INTERVAL_MS = 20_000;
+
+function stopIndicatorHeartbeat(tabId) {
+  const timer = indicatorHeartbeatTimers.get(tabId);
+  if (timer != null) clearInterval(timer);
+  indicatorHeartbeatTimers.delete(tabId);
+}
+
+function startIndicatorHeartbeat(tabId) {
+  if (indicatorHeartbeatTimers.has(tabId)) return;
+  const timer = setInterval(() => {
+    if (!activeIndicatorTabs.has(tabId)) {
+      stopIndicatorHeartbeat(tabId);
+      return;
+    }
+    try {
+      browser.tabs.sendMessage(tabId, { type: 'WB_AGENT_INDICATOR_HEARTBEAT' })
+        .then((response) => {
+          // The page lease may have expired while the tab/browser was frozen.
+          // Restore the indicator only if this run is still active; a late
+          // heartbeat response after HIDE must never resurrect stale UI.
+          if (response?.active === false && activeIndicatorTabs.has(tabId)) {
+            sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS');
+          }
+        })
+        .catch(() => {});
+    } catch {}
+  }, INDICATOR_HEARTBEAT_INTERVAL_MS);
+  indicatorHeartbeatTimers.set(tabId, timer);
+}
 
 function sendIndicatorMessage(tabId, type) {
   if (tabId == null || !type) return;
   if (type === 'WB_SHOW_AGENT_INDICATORS') {
     activeIndicatorTabs.add(tabId);
+    startIndicatorHeartbeat(tabId);
   } else if (type === 'WB_HIDE_AGENT_INDICATORS') {
     activeIndicatorTabs.delete(tabId);
+    stopIndicatorHeartbeat(tabId);
   }
   try {
     browser.tabs.sendMessage(tabId, { type }).catch(() => { /* expected */ });
@@ -1437,9 +1844,182 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 browser.tabs.onRemoved.addListener((tabId) => {
   activeIndicatorTabs.delete(tabId);
+  stopIndicatorHeartbeat(tabId);
   clearRunUiSnapshot(tabId);
   clearDetachedRunFailure(tabId);
+  flashedBadgeTabs.delete(tabId);
 });
+
+// ─── Completion attention flash ─────────────────────────────────────
+// When a run settles on a background tab, the side panel asks us to make
+// that tab noticeable. The preferred path blinks the page title/favicon
+// via the content script; when no receiver answers (restricted pages,
+// discarded tabs, …) we fall back to a per-tab toolbar badge that clears
+// as soon as the user activates the tab.
+const flashedBadgeTabs = new Set();
+
+// Per-tab toolbar badges are only visible while their tab is selected, so
+// restricted/discarded targets additionally get a system notification (the
+// only fallback visible while another tab is selected). Clicking it focuses
+// the finished tab. The chime has already played, so notifications stay
+// silent and auto-clear.
+const COMPLETION_NOTIFICATION_VISIBLE_MS = 12000;
+const completionNotificationFocusHandlers = new Map();
+
+browser.notifications.onClicked.addListener((notificationId) => {
+  const focus = completionNotificationFocusHandlers.get(notificationId);
+  if (!focus) return;
+  completionNotificationFocusHandlers.delete(notificationId);
+  void focus();
+});
+browser.notifications.onClosed.addListener((notificationId) => {
+  completionNotificationFocusHandlers.delete(notificationId);
+});
+
+async function showCompletionNotification(tabId, success) {
+  let tab = null;
+  try {
+    tab = await browser.tabs.get(tabId);
+  } catch { return; }
+  const message = tab?.title || tab?.url || 'A background task finished.';
+  let notificationId = null;
+  try {
+    notificationId = await browser.notifications.create({
+      type: 'basic',
+      iconUrl: browser.runtime.getURL('icons/icon48.png'),
+      title: `WebBrain — ${success ? 'Task finished' : 'Task needs attention'}`,
+      message,
+      silent: true,
+    });
+  } catch { return; }
+  if (!notificationId) return;
+  setTimeout(() => {
+    completionNotificationFocusHandlers.delete(notificationId);
+    browser.notifications.clear(notificationId).catch(() => {});
+  }, COMPLETION_NOTIFICATION_VISIBLE_MS);
+  if (Number.isInteger(tabId)) {
+    completionNotificationFocusHandlers.set(notificationId, async () => {
+      try {
+        const target = await browser.tabs.get(tabId);
+        if (target?.windowId != null) await browser.windows.update(target.windowId, { focused: true });
+        await browser.tabs.update(tabId, { active: true });
+      } catch { /* tab may be gone */ }
+    });
+  }
+}
+
+browser.tabs.onActivated.addListener(({ tabId } = {}) => {
+  flashedBadgeTabs.delete(tabId);
+  // Clear unconditionally so badge cleanup never depends on volatile state.
+  // Resetting the per-tab override is idempotent and restores any global badge.
+  browser.browserAction.setBadgeText({ tabId, text: '' }).catch(() => {});
+});
+
+// Focusing a window does not fire tabs.onActivated for its already-active
+// tab, so badges set on restricted tabs in unfocused windows would linger
+// after the user returns to that window. Clear the focused window's active
+// tab badge as well — unconditionally, like the activation handler above,
+// so cleanup never depends on volatile state.
+browser.windows.onFocusChanged.addListener(async (windowId) => {
+  if (windowId == null || windowId === browser.windows.WINDOW_ID_NONE) return;
+  try {
+    const [activeTab] = await browser.tabs.query({ active: true, windowId });
+    const activeTabId = Number(activeTab?.id);
+    if (!Number.isInteger(activeTabId)) return;
+    flashedBadgeTabs.delete(activeTabId);
+    await browser.browserAction.setBadgeText({ tabId: activeTabId, text: '' });
+  } catch { /* best-effort cleanup */ }
+});
+
+// Scheduled jobs keep running even when no side panel is mounted, so the
+// background owns their attention flash: terminal events trigger it here
+// and the panel never duplicates it. flashTabAttention itself honors the
+// stored setting and suppresses the signal while the finished tab is being
+// actively watched.
+async function maybeFlashScheduledTerminalEvent(_tabId, type, data) {
+  if (type !== 'scheduled_job') return;
+  const event = data?.event;
+  const job = data?.job;
+  // clarification_required is terminal for unattended runs and waits on the
+  // user — they must be told, or the task stalls unnoticed forever.
+  if ((event !== 'completed' && event !== 'failed' && event !== 'clarification_required')
+    || job?.source === 'watch') return;
+  try {
+    const jobTabId = Number(job.tabId ?? job.target?.tabId ?? _tabId);
+    // lastOutcome is an explicit verdict: the scheduler classifies Ask runs
+    // at the source, so no null-outcome guessing happens here.
+    await flashTabAttention({
+      tabId: jobTabId,
+      success: event === 'completed' && job?.lastOutcome === 'success',
+    });
+  } catch { /* best-effort */ }
+}
+
+async function flashTabAttention(msg) {
+  try {
+    const stored = await browser.storage.local.get('completionFlashTab');
+    if (stored?.completionFlashTab === false) return { ok: true, mode: 'disabled' };
+  } catch { /* setting defaults to on */ }
+  const tabId = Number(msg?.tabId);
+  const success = msg?.success !== false;
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    return { ok: false, error: 'flash_tab_attention requires a valid tabId.' };
+  }
+  try {
+    await browser.tabs.get(tabId);
+  } catch {
+    return { ok: false, error: `Tab ${tabId} no longer exists.` };
+  }
+  // Discarded/unloaded tabs and pages whose content script declines to
+  // blink (document already visible) both fall through to the badge
+  // fallback — which works without touching the page and survives until
+  // the user actually looks at the tab.
+  let flashAccepted = false;
+  try {
+    const response = await browser.tabs.sendMessage(tabId, {
+      target: 'content',
+      action: 'attention_flash_start',
+      params: { success },
+    });
+    flashAccepted = response?.started === true;
+  } catch {
+    flashAccepted = false;
+  }
+  if (flashAccepted) return { ok: true, mode: 'title-flash' };
+  // No content-script receiver (or it declined) — fall back to a per-tab
+  // toolbar badge. But re-check first whether the user is actually looking
+  // at the tab: "active" only means selected within its own window, so an
+  // active tab in an unfocused window (user works elsewhere) still deserves
+  // the badge. The activation/focus listeners have already cleared any
+  // stale badge, and no further event would fire for an already-active tab.
+  let tabIsWatched = false;
+  try {
+    const fresh = await browser.tabs.get(tabId);
+    if (fresh?.active) {
+      const tabWindow = fresh.windowId != null
+        ? await browser.windows.get(fresh.windowId)
+        : null;
+      tabIsWatched = tabWindow?.focused === true;
+    }
+  } catch {
+    return { ok: false, error: `Tab ${tabId} no longer exists.` };
+  }
+  if (tabIsWatched) return { ok: true, mode: 'skipped-tab-watched' };
+  try {
+    await browser.browserAction.setBadgeText({ tabId, text: success ? '✓' : '!' });
+    await browser.browserAction.setBadgeBackgroundColor({
+      tabId,
+      color: success ? '#22c55e' : '#ef4444',
+    });
+    flashedBadgeTabs.add(tabId);
+    // The badge itself is invisible while another tab is selected — pair it
+    // with a system notification so the completion is discoverable anyway.
+    await showCompletionNotification(tabId, success);
+    return { ok: true, mode: 'badge+notification' };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
 
 const RUN_UI_PREFIX = 'runUi:';
 const runUiPersistenceQueues = new Map();
@@ -1461,11 +2041,11 @@ function persistRunUiSnapshot(tabId, snapshot) {
   const write = previous.catch(() => false).then(async () => {
     if (runUiPersistenceFailures.get(tabId) === requestId) return false;
     try {
-      await browser.storage.session?.set({ [RUN_UI_PREFIX + tabId]: stableSnapshot });
+      await browser.storage.session.set({ [RUN_UI_PREFIX + tabId]: stableSnapshot });
       return true;
     } catch {
       try {
-        await browser.storage.session?.set({
+        await browser.storage.session.set({
           [RUN_UI_PREFIX + tabId]: compactRunUiSnapshotForPersist(stableSnapshot, { tight: true }),
         });
         return true;
@@ -1530,10 +2110,16 @@ function isPlannerRequestFailureUpdate(update) {
     && update?.data?.code === 'planner_request_failed';
 }
 
+function isPersistenceDegradedRunUpdate(update) {
+  return update?.type === 'run_status'
+    && update?.data?.status === 'persistence_degraded';
+}
+
 function runUpdatesSucceeded(updates = []) {
   return !updates.some(update => (
     update?.type === 'error'
     || isClarificationRequiredRunUpdate(update)
+    || isPersistenceDegradedRunUpdate(update)
     || isPlannerRequestFailureUpdate(update)
   ));
 }
@@ -1543,13 +2129,42 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   const text = String(content || '');
   if (/stopped by user|aborted by user/i.test(text)) return 'stopped';
   if (/before executing requested tool calls/i.test(text)) return 'cancelled';
-  if (updates.some(update => update?.type === 'error' || isPlannerRequestFailureUpdate(update))) return 'failed';
+  if (updates.some(update => update?.type === 'error'
+    || isPlannerRequestFailureUpdate(update) || isPersistenceDegradedRunUpdate(update))) return 'failed';
   if (updates.some(isClarificationRequiredRunUpdate)) return 'clarification_required';
   return 'completed';
 }
 
-function finishRunUiSnapshot(tabId, requestId, status, finalContent = '') {
-  return runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId));
+function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', askSucceeded = false) {
+  const snapshot = runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId));
+  if (snapshot) {
+    // The journal carries an exact successful-'done' predicate for Act runs;
+    // Ask replies are classified by the caller and OR-ed in for badge styling.
+    snapshot.runSucceeded = snapshot.successfulDone === true || askSucceeded === true;
+  }
+  return snapshot;
+}
+
+// Mirror the sidepanel's successful-Ask classification for badge styling
+// only: non-empty content with no error/attachment/max-steps update and no
+// billing terminal (subscribe / cost-allowance messages are actionable
+// failures, not successes).
+const BADGE_SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain Plus):\s*(https?:\/\/\S+)/i;
+const BADGE_COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
+function askCompletionSucceededForBadge(result, updates = [], error = null) {
+  if (error) return false;
+  if (updates.some(update => (
+    update?.type === 'error'
+    || update?.type === 'attachment_rejected'
+    || update?.type === 'max_steps_reached'
+    || update?.error
+    || update?.data?.error
+  ))) return false;
+  const content = String(result ?? '').trim();
+  if (!content) return false;
+  if (BADGE_SUBSCRIBE_ERROR_RE.test(content)) return false;
+  if (BADGE_COST_ALLOWANCE_ERROR_RE.test(content)) return false;
+  return true;
 }
 
 async function getRunUiSnapshot(tabId) {
@@ -1606,6 +2221,7 @@ const detachedRunStarts = new Map();
 const detachedRunFailures = new Map();
 const RUN_KEEPALIVE_INTERVAL_MS = 20_000;
 const DETACHED_RUN_FAILURE_TTL_MS = 60_000;
+const CONVERSATION_CLEAR_STOP_TIMEOUT_MS = 10_000;
 
 function clearDetachedRunFailure(tabId) {
   const failure = detachedRunFailures.get(tabId);
@@ -1669,17 +2285,32 @@ async function stopActiveRunBeforeConversationClear(tabId) {
   cancelDetachedRunStart(tabId);
   try { agent.abort(tabId); } catch { /* best effort */ }
 
-  // Keep the old conversation alive until its run has unwound. Clearing it
-  // first leaves the per-tab run guard active while the UI already looks like
-  // a fresh chat, so the next send fails with "run already in progress".
-  if (activeStart?.promise) {
-    await activeStart.promise.catch(() => {});
-  }
-  // Direct chat/chat_stream callers do not have a detached-start promise.
-  // Do not clear their conversation until processMessage's finally block has
-  // released the agent's per-tab run guard.
-  while (agent.activeRunState(tabId)?.running) {
-    await new Promise(resolve => setTimeout(resolve, 50));
+  let timedOut = false;
+  let timeoutId = null;
+  const unwind = (async () => {
+    // Keep the old conversation alive until its run has unwound. Clearing it
+    // first leaves the per-tab run guard active while the UI already looks like
+    // a fresh chat, so the next send fails with "run already in progress".
+    if (activeStart?.promise) {
+      await activeStart.promise.catch(() => {});
+    }
+    // Direct chat/chat_stream callers do not have a detached-start promise.
+    // Do not clear their conversation until processMessage's finally block has
+    // released the agent's per-tab run guard.
+    while (!timedOut && agent.activeRunState(tabId)?.running) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  })();
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      reject(new Error('The active run did not stop within 10 seconds. The conversation was left intact to avoid mixing it with a still-running task. Reload the extension to recover a permanently stuck run.'));
+    }, CONVERSATION_CLEAR_STOP_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([unwind, timeout]);
+  } finally {
+    if (timeoutId != null) clearTimeout(timeoutId);
   }
   return true;
 }
@@ -1730,11 +2361,40 @@ function launchDetachedRun(action, msg, sender) {
 
 async function sendAgentRunComplete(tabId, snapshot = null) {
   if (tabId == null || !snapshot) return;
+  // Live runs continue in the background even if their side panel is closed
+  // or reloaded mid-run (and continuations settle here too), so terminal
+  // attention flashes are owned here rather than by the panel. User stops
+  // and cancellations never flash; the setting is honored inside
+  // flashTabAttention.
+  const liveStatus = String(snapshot.status || '');
+  if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
+    // Badge styling uses the run's recorded outcome (successful done update
+    // or successful Ask reply), not just the terminal status — a completed
+    // status alone can still mean max-steps were reached without success.
+    flashTabAttention({
+      tabId,
+      success: liveStatus === 'completed' && snapshot.runSucceeded === true,
+    }).catch(() => {});
+  }
   const submittedTurnDurable = snapshot.kind === 'continue'
     || await agent.hasDurableSubmittedTurn(
       tabId,
       snapshot.requestId,
     ).catch(() => false);
+  const attachmentCount = Math.max(0, Number(snapshot.attachmentCount || 0));
+  const attachmentDeliveryState = attachmentCount
+    ? (snapshot.attachmentDeliveryState === 'not-sent'
+      ? 'not-sent'
+      : submittedTurnDurable ? 'included' : 'unknown')
+    : '';
+  if (attachmentDeliveryState) {
+    snapshot = runUiJournal.setAttachmentDeliveryState(
+      tabId,
+      snapshot.requestId,
+      attachmentDeliveryState,
+    ) || snapshot;
+    await flushRunUiSnapshot(tabId, snapshot.requestId);
+  }
   browser.runtime.sendMessage({
     target: 'sidepanel',
     action: 'agent_update',
@@ -1748,6 +2408,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       finalContent: snapshot.finalContent || '',
       endedAt: snapshot.endedAt || Date.now(),
       submittedTurnDurable,
+      attachmentDeliveryState,
     },
   }).catch(() => {});
 }
@@ -1782,6 +2443,11 @@ async function handleMessage(msg, sender) {
     'load_tab_chat',
     'clear_tab_chat',
     'release_context_menu_prompt_claim',
+    'capture_screenshot_redaction_snapshot',
+    'fetch_pdf_document',
+    'cancel_pdf_ocr',
+    EMERGENCY_DOWNLOAD_ACTION,
+    'flash_tab_attention',
   ].includes(msg.action);
   if (!lightweightAction) {
     if (providerManager.providers.size === 0) {
@@ -1791,11 +2457,17 @@ async function handleMessage(msg, sender) {
     // onChanged keeps them in sync afterward.
     await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     await screenshotRedactionReady;
     await imageBudgetReady;
+    await researchEscalationReady;
   }
 
   switch (msg.action) {
+    case 'apocalypse_mode':
+      return await apocalypseController.handle(msg.command, msg);
+    case EMERGENCY_DOWNLOAD_ACTION:
+      return await emergencyDownloadController().handle(msg.command, msg);
     case 'profile_sync_state': return { ok: true, ...(await profileSync.state()) };
     case 'profile_sync_auth_start': return { ok: true, ...(await profileSync.authStart(String(msg.email || '').trim())) };
     case 'profile_sync_auth_status': return { ok: true, ...(await profileSync.authStatus(msg.challengeId, msg.verifier)) };
@@ -1807,12 +2479,12 @@ async function handleMessage(msg, sender) {
     case 'profile_sync_reset': return { ok: true, ...(await profileSync.reset(String(msg.password || ''))) };
     case 'get_user_memory': {
       const store = await userMemoryStore.load();
-      const settings = await browser.storage.local.get([
-        USER_MEMORY_ENABLED_KEY,
-        USER_MEMORY_AUTO_CAPTURE_KEY,
-        USER_MEMORY_FORM_CAPTURE_KEY,
-        USER_MEMORY_MAX_PROMPT_CHARS_KEY,
-      ]);
+      const settings = await browser.storage.local.get({
+        [USER_MEMORY_ENABLED_KEY]: true,
+        [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+        [USER_MEMORY_FORM_CAPTURE_KEY]: true,
+        [USER_MEMORY_MAX_PROMPT_CHARS_KEY]: normalizeUserMemoryMaxPromptChars(),
+      });
       return {
         ok: true,
         store,
@@ -1887,6 +2559,84 @@ async function handleMessage(msg, sender) {
       return { ok: true, ...result };
     }
 
+    case 'get_teacher_mode': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, reason: 'tab_required', session: { active: false } };
+      const session = await teacherSessionStore.get(tabId);
+      return { ok: true, session: publicTeacherSession(session) };
+    }
+
+    case 'start_teacher_mode': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, reason: 'tab_required' };
+      if (agent.isRunning(tabId) || detachedRunStarts.has(tabId)) {
+        return { ok: false, reason: 'agent_running' };
+      }
+      const tab = await browser.tabs.get(tabId).catch(() => null);
+      const result = await teacherRunInterlock.start(tabId, {
+        name: msg.name,
+        url: tab?.url,
+        webbrainVersion: browser.runtime.getManifest().version,
+      });
+      if (result.changed && !await notifyTeacherState(tabId, result.session)) {
+        await withTeacherSessionStoreLock(() => teacherSessionStore.clear(tabId));
+        return { ok: false, reason: 'capture_unavailable', session: { active: false } };
+      }
+      return { ok: result.changed, reason: result.reason, session: publicTeacherSession(result.session) };
+    }
+
+    case 'record_teacher_action': {
+      const tabId = sender.tab?.id;
+      if (!tabId || (sender.frameId != null && sender.frameId !== 0)) {
+        return { ok: false, reason: 'tab_required' };
+      }
+      const result = await teacherRunInterlock.record(tabId, msg.teacherAction);
+      return {
+        ok: result.changed || ['duplicate', 'unsafe_target'].includes(result.reason),
+        reason: result.reason,
+        session: publicTeacherSession(result.session),
+      };
+    }
+
+    case 'end_teacher_mode': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, reason: 'tab_required' };
+      const response = await withTeacherSessionStoreLock(async () => {
+        let session = await teacherSessionStore.get(tabId);
+        if (!session) return { ok: false, reason: 'no_active_session', stopped: false };
+        const flushed = await browser.tabs.sendMessage(tabId, {
+          target: 'content',
+          action: 'flush_teacher_capture',
+        }).catch(() => null);
+        if (flushed?.teacherAction) {
+          await teacherSessionStore.record(tabId, flushed.teacherAction);
+          session = await teacherSessionStore.get(tabId);
+        }
+        let result;
+        try {
+          const compiled = compileWorkflowFromDemonstration(session);
+          if (!compiled.workflow) {
+            result = { ok: false, ...compiled };
+          } else {
+            const saved = await withSavedWorkflowStoreLock(() => savedWorkflowStore.put(compiled.workflow));
+            result = {
+              ok: saved.changed,
+              workflow: saved.workflow,
+              warnings: compiled.warnings,
+              reason: saved.reason || '',
+            };
+          }
+        } catch (error) {
+          result = { ok: false, reason: 'save_failed', error: error?.message || String(error) };
+        } finally {
+          await teacherSessionStore.clear(tabId);
+        }
+        return { ...result, stopped: true };
+      });
+      if (response.stopped) await notifyTeacherState(tabId, null);
+      return response;
+    }
+
     case 'list_saved_workflows':
       return { ok: true, workflows: await savedWorkflowStore.list() };
 
@@ -1915,13 +2665,24 @@ async function handleMessage(msg, sender) {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) return { ok: false, reason: 'tab_required' };
       const conversationId = await agent.getConversationId(tabId);
-      const compiled = await compileLatestSuccessfulWorkflow(workflowTrace, {
-        conversationId,
-        name: msg.name,
-      });
+      const draft = await agent.getLatestWorkflowDraft(tabId);
+      const compiled = draft?.conversationId === conversationId
+        ? finalizeSavedWorkflowDraft(draft, { name: msg.name })
+        : await compileLatestSuccessfulWorkflow(workflowTrace, {
+            conversationId,
+            name: msg.name,
+          });
       if (!compiled.workflow) return { ok: false, ...compiled };
       const saved = await withSavedWorkflowStoreLock(() => savedWorkflowStore.put(compiled.workflow));
       return { ok: saved.changed, workflow: saved.workflow, warnings: compiled.warnings, reason: saved.reason || '' };
+    }
+
+    case 'rename_saved_workflow': {
+      const result = await withSavedWorkflowStoreLock(() => savedWorkflowStore.rename(
+        String(msg.id || ''),
+        msg.name,
+      ));
+      return { ok: result.changed, ...result };
     }
 
     case 'delete_saved_workflow': {
@@ -1980,6 +2741,9 @@ async function handleMessage(msg, sender) {
     case 'chat': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) throw new Error('No tab ID');
+      if (msg.standaloneChat === true && msg.workflowId) {
+        throw new Error('Saved workflows are unavailable in standalone Ask mode.');
+      }
       assertRunCanStart(tabId, msg);
       const isWorkflowRun = !!msg.workflowId;
       const mode = isWorkflowRun ? 'act' : (msg.mode || 'ask');
@@ -1987,6 +2751,9 @@ async function handleMessage(msg, sender) {
         mode,
         kind: 'chat',
         foreground: msg.foreground === true,
+        attachmentCount: isWorkflowRun
+          ? 0
+          : Array.isArray(msg.attachments) ? msg.attachments.length : 0,
       });
       const releaseRunKeepalive = acquireRunKeepalive();
 
@@ -2011,15 +2778,19 @@ async function handleMessage(msg, sender) {
         if (msg.contextMenuClear?.tabId != null) {
           await contextMenuStorage.clear(msg.contextMenuClear.tabId, msg.contextMenuClear.promptId);
         }
+        if (msg.restoreSelectionScope === true && !normalizeSelectionSourceGrounding(msg.sourceGrounding)) {
+          await agent.restoreSelectionGroundingScope(tabId);
+        }
 
         const askStreamingSettings = await browser.storage.local.get('openaiAskStreamingEnabled').catch(() => ({}));
         const runOptions = {
           ...(isWorkflowRun ? { independentRun: true } : {}),
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.foreground ? { foreground: true } : {}),
-          ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+          ...(msg.standaloneChat === true ? { standaloneChat: true } : {}),
+          ...(normalizeSelectionSourceGrounding(msg.sourceGrounding)
             ? {
-              sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+              sourceGrounding: normalizeSelectionSourceGrounding(msg.sourceGrounding),
               ...(normalizeSelectionAction(msg.selectionAction)
                 ? { selectionAction: normalizeSelectionAction(msg.selectionAction) }
                 : {}),
@@ -2052,6 +2823,18 @@ async function handleMessage(msg, sender) {
             runOptions,
           );
           result = replay.summary || '';
+          if (Array.isArray(replay.healings) && replay.healings.length) {
+            const healed = await withSavedWorkflowStoreLock(() => savedWorkflowStore.healTargets(
+              workflow.id,
+              { expectedUpdatedAt: workflow.updatedAt, healings: replay.healings },
+            ));
+            publishUpdate(healed.changed ? 'workflow_healed' : 'workflow_healing_not_saved', {
+              workflowId: workflow.id,
+              workflowName: workflow.name,
+              count: healed.healedStepCount || 0,
+              reason: healed.reason || '',
+            });
+          }
           if (replay.status === 'fallback') {
             publishUpdate('workflow_fallback', {
               workflowId: workflow.id,
@@ -2107,7 +2890,7 @@ async function handleMessage(msg, sender) {
         if (runError && String(runError.message || '').startsWith(RUN_CAPTURE_START_ERROR_PREFIX)) {
           clearRunUiSnapshot(tabId);
         } else {
-          const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''));
+          const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''), mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false);
           await sendAgentRunComplete(tabId, snapshot);
         }
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
@@ -2140,9 +2923,10 @@ async function handleMessage(msg, sender) {
         const runOptions = {
           ...(msg.recommendedAction ? { recommendedAction: msg.recommendedAction } : {}),
           ...(msg.foreground ? { foreground: true } : {}),
-          ...(msg.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
+          ...(msg.standaloneChat === true ? { standaloneChat: true } : {}),
+          ...(normalizeSelectionSourceGrounding(msg.sourceGrounding)
             ? {
-              sourceGrounding: SELECTION_ONLY_SOURCE_GROUNDING,
+              sourceGrounding: normalizeSelectionSourceGrounding(msg.sourceGrounding),
               ...(normalizeSelectionAction(msg.selectionAction)
                 ? { selectionAction: normalizeSelectionAction(msg.selectionAction) }
                 : {}),
@@ -2175,7 +2959,7 @@ async function handleMessage(msg, sender) {
         throw error;
       } finally {
         if (!userMemoryTurnContextTaken) clearUserMemoryTurnContext(tabId);
-        const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''));
+        const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''), mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false);
         await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
         releaseRunKeepalive();
@@ -2235,7 +3019,7 @@ async function handleMessage(msg, sender) {
         throw error;
       } finally {
         if (!userMemoryTurnContextTaken) clearUserMemoryTurnContext(tabId);
-        const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''));
+        const snapshot = finishRunUiSnapshot(tabId, runUi.requestId, terminalRunUiStatus(result, updates, runError), result || (runError ? `Error: ${runError.message}` : ''), mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false);
         await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
         releaseRunKeepalive();
@@ -2244,14 +3028,48 @@ async function handleMessage(msg, sender) {
 
     case 'clear_conversation': {
       const tabId = msg.tabId || sender.tab?.id;
+      let clearedContextMenuPromptId = null;
       if (tabId) {
         const conversationId = await agent.getConversationId(tabId);
         await stopActiveRunBeforeConversationClear(tabId);
-        await scheduler.cancelForConversation(tabId, conversationId);
+        const commitSchedulerClear = async () => {
+          await scheduler.cancelForConversation(tabId, conversationId);
+        };
+        const tabChatClearResult = msg.clearContextMenuPrompt === true
+          ? await contextMenuStorage.clearAlongside(
+            tabId,
+            additionalKeys => tabChatHandoff.clear(tabId, {
+              additionalKeys,
+              commitAfterRemove: commitSchedulerClear,
+            }),
+          )
+          : await tabChatHandoff.clear(tabId, { commitAfterRemove: commitSchedulerClear });
+        if (!tabChatClearResult?.ok || tabChatClearResult.skipped) {
+          throw new Error('Could not durably clear the tab transcript.');
+        }
+        clearedContextMenuPromptId = tabChatClearResult.clearedContextMenuPromptId || null;
         agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
+        browser.runtime.sendMessage({
+          target: 'sidepanel',
+          action: 'tab_chat_cleared',
+          tabId,
+          handoffOwnerId: tabChatClearResult.handoffOwnerId,
+          handoffGeneration: tabChatClearResult.handoffGeneration,
+          clearedContextMenuPromptId,
+        }).catch(() => {});
       }
-      return { ok: true };
+      return { ok: true, clearedContextMenuPromptId };
+    }
+
+    case 'restore_selection_scope': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, error: 'No tab ID' };
+      if (detachedRunStarts.has(tabId) || agent.activeRunState(tabId)?.running) {
+        return { ok: false, error: 'Wait for the current response to finish before restoring the full conversation.' };
+      }
+      const restored = await agent.restoreSelectionGroundingScope(tabId);
+      return { ok: true, restored, ...(await agent.getConversationState(tabId)) };
     }
 
     case 'compact_conversation': {
@@ -2263,8 +3081,10 @@ async function handleMessage(msg, sender) {
     case 'abort': {
       const tabId = msg.tabId || sender.tab?.id;
       if (tabId) {
+        const sourceTabId = agent.researchEscalationSourceTab(tabId);
         cancelDetachedRunStart(tabId);
-        agent.abort(tabId);
+        if (sourceTabId) cancelDetachedRunStart(sourceTabId);
+        agent.abort(sourceTabId || tabId);
       }
       return { ok: true };
     }
@@ -2353,6 +3173,7 @@ async function handleMessage(msg, sender) {
         loadClarifyTimeout(),
         loadAutoScreenshot(),
         loadSiteAdapters(),
+        loadResearchEscalation(),
         loadScreenshotRedaction(),
         loadStrictSecretMode(),
         loadProfile(),
@@ -2433,6 +3254,9 @@ async function handleMessage(msg, sender) {
         handoffGeneration: msg.handoffGeneration,
       });
 
+    case 'flash_tab_attention':
+      return await flashTabAttention(msg);
+
     case 'load_tab_chat':
       return await tabChatHandoff.load(msg.tabId || sender.tab?.id, {
         waitForHandoff: msg.waitForHandoff === true,
@@ -2506,6 +3330,17 @@ async function handleMessage(msg, sender) {
     case 'run_scheduled_job_now':
       return await scheduler.runNow(msg.jobId);
 
+    case 'clarify_input_activity': {
+      // Keep a waited clarify open while the user is composing the custom
+      // "Something else" answer. The agent owns the authoritative timer.
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId) return { ok: false, error: 'No tab ID' };
+      const clarifyId = String(msg.clarifyId || '');
+      if (!clarifyId) return { ok: false, error: 'clarifyId required' };
+      const update = agent.noteClarifyInputActivity(tabId, clarifyId);
+      return { ok: !!update, matched: !!update, ...update };
+    }
+
     case 'clarify_response': {
       // Side panel posts the user's answer to a pending clarify() tool
       // call. The agent's executeTool() handler is awaiting this exact
@@ -2562,6 +3397,22 @@ async function handleMessage(msg, sender) {
       return { ok: true };
     }
 
+    case 'set_help_improve_preference': {
+      if (typeof msg.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+      const stored = await browser.storage.local.get('helpImproveWebBrain');
+      const previousEnabled = stored.helpImproveWebBrain !== false;
+      await browser.storage.local.set({ helpImproveWebBrain: msg.enabled });
+      try {
+        await providerManager.load();
+      } catch (error) {
+        if (previousEnabled !== msg.enabled) {
+          await browser.storage.local.set({ helpImproveWebBrain: previousEnabled }).catch(() => {});
+        }
+        throw error;
+      }
+      return { ok: true, enabled: msg.enabled };
+    }
+
     case 'get_providers': {
       return { providers: providerManager.getAll(), active: providerManager.activeProviderId };
     }
@@ -2588,6 +3439,12 @@ async function handleMessage(msg, sender) {
       return { ok: true };
     }
 
+    case 'duplicate_provider':
+      return await providerManager.duplicateProvider(msg.providerId);
+
+    case 'remove_duplicate_provider':
+      return await providerManager.removeDuplicateProvider(msg.providerId);
+
     case 'ollama_launch_handoff': {
       const handoff = normalizeOllamaLaunchHandoff(msg.handoff || {});
       await providerManager.updateProvider(handoff.providerId, handoff.config);
@@ -2611,6 +3468,17 @@ async function handleMessage(msg, sender) {
 
     case 'test_transcription_provider': {
       return await providerManager.testTranscriptionProvider();
+    }
+
+    case 'test_system_one': {
+      await strictSecretModeReady;
+      try {
+        const result = await agent.evaluateSystemOne(null, createSystemOneJudge({ maxRetries: 0 }), {
+          apiKey: msg.apiKey, state: { color: 'blue' },
+          questions: { test: { type: 'noul', instructions: 'Is the color blue?' } },
+        });
+        return { success: true, model: result.model };
+      } catch (error) { return { success: false, error: error.message }; }
     }
 
     case 'test_capsolver_balance': {
@@ -2641,7 +3509,9 @@ async function handleMessage(msg, sender) {
     }
 
     case 'list_provider_models': {
-      return await providerManager.listProviderModels(msg.providerId);
+      return await providerManager.listProviderModels(msg.providerId, {
+        detectServerIdentity: msg.detectServerIdentity === true,
+      });
     }
 
     case 'list_ollama_models': {
@@ -2689,6 +3559,62 @@ async function handleMessage(msg, sender) {
     case 'get_recording_state':
       return { ok: true, state: { recording: false, supported: false } };
 
+    case 'capture_viewport_screenshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureViewportScreenshotForUser(tabId);
+    }
+    case 'ocr_pdf_page': {
+      const tabId = Number(msg.tabId);
+      if (!Number.isInteger(tabId) || tabId < 0) {
+        return { success: false, error: 'Invalid PDF OCR tab.' };
+      }
+      if (!isPdfHandlerSender(sender, tabId)) {
+        return { success: false, error: 'Invalid PDF OCR sender.' };
+      }
+      const tab = await browser.tabs.get(tabId).catch(() => null);
+      if (!tab) return { success: false, error: 'The PDF tab is no longer available.' };
+      const requestId = String(msg.requestId || '').trim();
+      const controller = new AbortController();
+      if (requestId) pdfOcrRequests.set(requestId, controller);
+      try {
+        return await agent.ocrPdfPageWithVision(tabId, msg.imageDataUrl, msg.pageNumber, controller.signal);
+      } finally {
+        if (requestId && pdfOcrRequests.get(requestId) === controller) pdfOcrRequests.delete(requestId);
+      }
+    }
+    case 'cancel_pdf_ocr': {
+      const requestId = String(msg.requestId || '').trim();
+      const controller = pdfOcrRequests.get(requestId);
+      if (!controller) return { ok: false, error: 'The PDF OCR request is no longer active.' };
+      const reason = new Error('PDF OCR cancelled by the user.');
+      reason.code = 'pdf_ocr_cancelled';
+      controller.abort(reason);
+      return { ok: true };
+    }
+    case 'fetch_pdf_document': {
+      const tabId = Number(msg.tabId);
+      const url = safeOnlinePdfUrl(msg.url);
+      if (!Number.isInteger(tabId) || tabId < 0 || !url) {
+        return { ok: false, error: 'Invalid Firefox PDF viewer request.' };
+      }
+      if (!isPdfHandlerSender(sender, tabId)) {
+        return { ok: false, error: 'Invalid Firefox PDF viewer sender.' };
+      }
+      const tab = await browser.tabs.get(tabId).catch(() => null);
+      if (!tab) return { ok: false, error: 'The PDF tab is no longer available.' };
+      try {
+        return await fetchPdfDocumentForViewer(url);
+      } catch (error) {
+        return { ok: false, error: error?.message || String(error) };
+      }
+    }
+    case 'capture_screenshot_redaction_snapshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureScreenshotRedactionSnapshotForUser(tabId, {
+        coordinateSpace: msg.coordinateSpace,
+      });
+    }
+
     case 'get_page_info': {
       const tabId = msg.tabId || sender.tab?.id;
       try {
@@ -2709,3 +3635,43 @@ async function handleMessage(msg, sender) {
       throw new Error(`Unknown action: ${msg.action}`);
   }
 }
+
+// --- Keyboard shortcuts (browser.commands) ---
+// Firefox requires a "commands" manifest entry for browser-level keyboard shortcuts
+// to work. Custom commands fire here in the background script; we dispatch them via
+// storage.onChanged so the side panel (and any other extension page) can react
+// reliably — runtime.sendMessage can miss a sidepanel that isn't fully loaded.
+let uiScaleCommandQueue = Promise.resolve();
+browser.commands.onCommand.addListener(async (command, tab) => {
+  // _execute_sidebar_action is handled natively by Firefox — no need to forward
+  if (command === '_execute_sidebar_action') return;
+  const scaleAction = uiScaleCommandAction(command);
+  if (scaleAction) {
+    uiScaleCommandQueue = uiScaleCommandQueue.then(async () => {
+      const current = await loadUiScale(browser.storage.local);
+      await saveUiScale(browser.storage.local, nextUiScale(current, scaleAction));
+    }).catch((error) => {
+      console.error('[WebBrain] failed to update UI scale:', command, error);
+    });
+    await uiScaleCommandQueue;
+    return;
+  }
+  const envelope = shortcutCommandEnvelope(command, tab);
+  if (!envelope) return;
+  try {
+    await browser.storage.local.set({ [SHORTCUT_COMMAND_STORAGE_KEY]: envelope });
+  } catch (err) {
+    console.error('[WebBrain] failed to dispatch command:', command, err);
+  }
+});
+
+// Connection controls belong only to the packaged Settings page, never a tab.
+browser.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type !== 'WB_BIDI_CONNECT' && message?.type !== 'WB_BIDI_DISCONNECT') return;
+  if (sender.id !== browser.runtime.id || sender.url !== browser.runtime.getURL('src/ui/settings.html')) return;
+  if (message.type === 'WB_BIDI_DISCONNECT') { firefoxBidi.disconnect(); return Promise.resolve({ success: true }); }
+  return firefoxBidi.connect().then(() => ({ success: true }), error => ({ success: false, error: error.message }));
+});
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && ['firefoxBidiEnabled', 'firefoxBidiPort'].some(key => changes[key] && changes[key].oldValue !== changes[key].newValue)) firefoxBidi.disconnect();
+});

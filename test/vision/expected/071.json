@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "071",
+  "image": "images/071.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "table",
+        "orders",
+        "members",
+        "deployment",
+        "invoice",
+        "audit"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Fatura listesi",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "target-row",
+      "dimension": "visual_reasoning",
+      "section": null,
+      "kind": "all",
+      "values": [
+        "TR-8832",
+        "Gecikmiş"
+      ],
+      "weight": 3,
+      "critical": true
+    }
+  ],
+  "successRubric": "Keep row association intact: TR-8832 — Gecikmiş."
+}

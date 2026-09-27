@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "031",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "data-table",
+  "title": "Team members",
+  "image": "images/031.png",
+  "question": "Locate the target row and report its exact status without mixing it with neighboring rows. Focus on the “Team members” screen.",
+  "defaultPromptMode": "production"
+}

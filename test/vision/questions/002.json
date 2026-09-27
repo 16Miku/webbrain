@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "002",
+  "difficulty": {
+    "level": 1,
+    "slug": "easy",
+    "label": "Easy"
+  },
+  "category": "search-results",
+  "title": "Search",
+  "image": "images/002.png",
+  "question": "What query is active, which result tab is selected, and how many results are shown? Focus on the “Search” screen.",
+  "defaultPromptMode": "production"
+}

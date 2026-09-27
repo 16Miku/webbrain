@@ -103,6 +103,8 @@ async function tokenError(label, res) {
  */
 function makeOAuthClient(def) {
   const STORAGE_KEY = def.storageKey;
+  // Refresh tokens may rotate, so concurrent callers must share one request.
+  let _inflightRefresh = null;
 
   function redirectUri() {
     return def.redirect || `https://${chrome.runtime.id}.chromiumapp.org/`;
@@ -213,7 +215,16 @@ function makeOAuthClient(def) {
     return tokens;
   }
 
-  async function refresh() {
+  function refresh() {
+    if (!_inflightRefresh) {
+      _inflightRefresh = _doRefresh().finally(() => {
+        _inflightRefresh = null;
+      });
+    }
+    return _inflightRefresh;
+  }
+
+  async function _doRefresh() {
     const stored = await chrome.storage.local.get([STORAGE_KEY]);
     const tokens = stored[STORAGE_KEY];
     if (!tokens?.refreshToken) throw new Error(`${def.label}: no refresh token on file — sign in first.`);

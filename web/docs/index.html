@@ -10,10 +10,10 @@
   <link rel="alternate" hreflang="x-default" href="https://webbrain.one/docs/">
   <link rel="icon" href="/favicon.png">
   <script>try{document.documentElement.dataset.theme=localStorage.getItem('webbrain-theme')||'dark'}catch(_){}</script>
-  <link rel="stylesheet" href="/docs/assets/docs.css">
+  <link rel="stylesheet" href="/docs/assets/docs.css?v=20260809">
   <!-- Plausible analytics: start -->
   <!-- Privacy-friendly analytics by Plausible -->
-  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script async src="https://157.230.3.9.sslip.io/js/pa-omp0F7DsOXM4sGKR50l7S.js"></script>
   <script>
     window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
     plausible.init()
@@ -38,11 +38,11 @@
     <aside class="docs-sidebar" aria-label="Documentation">
       <div class="sidebar-group">
         <div class="sidebar-label">Start here</div>
-        <nav><a href="/docs/" aria-current="page">Overview</a><a href="#settings-walkthrough">Settings walkthrough</a><a href="#first-run">Your first 10 minutes</a></nav>
+        <nav><a href="/docs/" aria-current="page">Overview</a><a href="/docs/faq/">FAQ</a><a href="#settings-walkthrough">Settings walkthrough</a><a href="#first-run">Your first 10 minutes</a></nav>
       </div>
       <div class="sidebar-group">
         <div class="sidebar-label">Use WebBrain</div>
-        <nav><a href="/docs/settings/">Settings, explained</a><a href="/docs/providers/">Providers & models</a><a href="/docs/safety/">Modes, safety & privacy</a><a href="/docs/formats/">Exports & workflows</a></nav>
+        <nav><a href="/docs/settings/">Settings, explained</a><a href="/docs/providers/">Providers & models</a><a href="/docs/easy-cli-proxy/">Subscription proxy</a><a href="/docs/safety/">Modes, safety & privacy</a><a href="/docs/apocalypse-mode/">Apocalypse Mode</a><a href="/docs/formats/">Exports & workflows</a><a href="/docs/mcp/">MCP server</a><a href="/docs/lm-studio/">LM Studio plugin</a><a href="/docs/ollama/">Ollama</a></nav>
       </div>
       <div class="sidebar-group">
         <div class="sidebar-label">For builders</div>
@@ -64,7 +64,7 @@
           <div class="walkthrough-copy">
             <div class="eyebrow">Watch first · 12 min 40 sec</div>
             <h2 id="settings-walkthrough-title">Settings, from the useful defaults to the advanced controls.</h2>
-            <p>Start with the few choices most people need, then follow every Settings tab through providers, multimodal models, memory, skills, permissions, and the advanced drawer.</p>
+            <p>Start with the few choices most people need, then follow the Settings tabs through providers, supporting models, memory, skills, permissions, and the advanced drawer. The older video calls Assistive Models “Multimodal”; the current tab also contains Jev (TypeSafe).</p>
           </div>
           <div class="walkthrough-player">
             <video controls preload="metadata" playsinline poster="/assets/webbrain-settings-walkthrough-poster.jpg">
@@ -80,9 +80,13 @@
         <div class="path-grid">
           <a class="path-card" href="#first-run"><span class="tab-key">New here</span><h2>Get a useful result</h2><p>Open the panel, pick the right mode, and complete a first task without changing settings.</p><span class="arrow">First 10 minutes →</span></a>
           <a class="path-card" href="/docs/settings/"><span class="tab-key">Control the agent</span><h2>Understand Settings</h2><p>What each tab changes, which defaults are sensible, and what new users can safely ignore.</p><span class="arrow">Open the settings guide →</span></a>
-          <a class="path-card" href="/docs/providers/"><span class="tab-key">Bring a model</span><h2>Choose a provider</h2><p>Use WebBrain Cloud, a cloud API, a router, or a local model—and know what the fields mean.</p><span class="arrow">Choose a model →</span></a>
+          <a class="path-card" href="/docs/providers/"><span class="tab-key">Bring a model</span><h2>Choose a provider</h2><p>Use WebBrain Compass, a cloud API, a router, or a local model—and know what the fields mean.</p><span class="arrow">Choose a model →</span></a>
           <a class="path-card" href="/docs/safety/"><span class="tab-key">Stay in control</span><h2>Use Act mode safely</h2><p>Learn Ask, Act, Dev, site permissions, memory boundaries, and the two dangerous overrides.</p><span class="arrow">Review safety →</span></a>
+          <a class="path-card" href="/docs/apocalypse-mode/"><span class="tab-key">Prepare for offline</span><h2>Set up Apocalypse Mode</h2><p>Keep local text and vision models, offline Wikipedia, textbooks, health references, and field manuals in your browser.</p><span class="arrow">Build your offline kit →</span></a>
           <a class="path-card" href="/docs/formats/"><span class="tab-key">Move your work</span><h2>Export without surprises</h2><p>Choose between conversation, trace, Settings, and saved-workflow files—and know what is sensitive.</p><span class="arrow">Understand exports →</span></a>
+          <a class="path-card" href="/docs/mcp/"><span class="tab-key">Connect an agent</span><h2>Use WebBrain through MCP</h2><p>Give Codex, Claude Code, Cursor, OpenClaw, or OpenCode task-level access to your real signed-in Chromium session.</p><span class="arrow">Set up the MCP server →</span></a>
+          <a class="path-card" href="/docs/lm-studio/"><span class="tab-key">Local model, live web</span><h2>Add web tools to LM Studio</h2><p>Read public URLs immediately, then optionally connect the browser session where you are already signed in.</p><span class="arrow">Set up the LM Studio plugin →</span></a>
+          <a class="path-card" href="/docs/ollama/"><span class="tab-key">Local model, one handoff</span><h2>Run WebBrain with Ollama</h2><p>Configure Ollama manually today, or try the preview launch command that hands the selected model to WebBrain.</p><span class="arrow">Set up Ollama →</span></a>
         </div>
       </section>
 
@@ -94,7 +98,7 @@
           <li><strong>Stay in Ask mode first.</strong> Try “Summarize this page,” “What are the important dates?” or “Compare the plans in this table.” Ask can read, but it does not click or type.</li>
           <li><strong>Switch to Act for a visible task.</strong> Try “Fill the search box with wireless headphones and run the search.” WebBrain will ask before consequential actions on a new site.</li>
           <li><strong>Watch the run.</strong> You can stop at any time with the Stop button or <kbd>Escape</kbd>. Treat unexpected navigation, typing, or repeated actions as a reason to stop.</li>
-          <li><strong>Only visit Settings when you have a reason.</strong> The built-in WebBrain Cloud provider and recommended safety defaults are enough for a first run.</li>
+          <li><strong>Only visit Settings when you have a reason.</strong> The built-in WebBrain Compass provider and recommended safety defaults are enough for a first run.</li>
         </ol>
         <div class="callout tip"><strong class="callout-title">A useful prompt has an outcome</strong><p>“Find the refund policy and tell me whether sale items qualify” is easier to verify than “look around this site.” Name the result you want and any boundary WebBrain must respect.</p></div>
       </section>
@@ -116,7 +120,7 @@
         <div class="settings-map" aria-label="Settings depth map">
           <div class="setting-node everyday"><strong>General</strong><span>behavior & comfort</span></div>
           <div class="setting-node everyday"><strong>Providers</strong><span>the active model</span></div>
-          <div class="setting-node sometimes"><strong>Multimodal</strong><span>vision & speech</span></div>
+          <div class="setting-node sometimes"><strong>Assistive Models</strong><span>vision, speech & Jev</span></div>
           <div class="setting-node sometimes"><strong>Memory</strong><span>what persists</span></div>
           <div class="setting-node expert"><strong>Skills</strong><span>trusted add-ons</span></div>
           <div class="setting-node everyday"><strong>Permissions</strong><span>where it may act</span></div>
@@ -141,6 +145,6 @@
   </div>
 
   <footer class="site-footer"><div class="footer-inner"><span>WebBrain user guide · English primary, 中文 secondary</span><div class="footer-links"><a href="/privacy">Privacy</a><a href="https://github.com/webbrain-one/webbrain/issues">Report an issue</a></div></div></footer>
-  <script src="/docs/assets/docs.js"></script>
+  <script src="/docs/assets/docs.js?v=20260809"></script>
 </body>
 </html>

@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-21T08:31:38.343Z",
+  "id": "090",
+  "model": "lfm2.5-vl-450m-mlx",
+  "endpoint": "http://127.0.0.1:1234/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "090",
+    "difficulty": {
+      "level": 5,
+      "slug": "challenging",
+      "label": "Challenging"
+    },
+    "category": "chart-reading",
+    "title": "Forecast vs actual",
+    "image": "images/090.png",
+    "question": "Which category has the tallest bar, and what exact value or annotation is attached to it? Focus on the “Forecast vs actual” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/090.png",
+    "bytes": 86938,
+    "sha256": "e2bf7cc8d99e7d617a882cdeee0e054637bf76e81e5f5d4627c1adb33945b486"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "The screenshot shows a web-automation agent's browser viewport with the following elements:\n\n1. **Header**:\n   - Title: \"Welcome\"\n   - Subtitle: \"Home, Responsive, & All\"\n\n2. **Navigation Bar**:\n   - Menu items: \"Home\", \"Responsive\", \"Activity\"\n\n3. **Main Content Area**:\n   - Title: \"Forecast vs actual\"\n   - Subtitle: \"Graphics & Data\"\n\n4. **Bar Graph**:\n   - X-axis labels: \"Jan\", \"Feb\", \"Mar\", \"Apr\", \"May\"\n   - Y-axis labels: 77, 69, 81, 79, 87\n   - Bars:\n     - Jan: 77\n     - Feb: 69\n     - Mar: 81\n     - Apr: 79\n     - May: 87\n\n5. **Additional Information**:\n   - \"Forecast vs actual\" is highlighted in a box\n   - A small text block on the right side of the graph reads \"Forecast vs actual\"\n\n6. **Footer**:\n   - No additional information or elements are visible",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 340,
+      "completion_tokens": 250,
+      "total_tokens": 590,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 4,
+    "total": 609
+  },
+  "score": {
+    "success": false,
+    "ratio": 0.5,
+    "earned": 4,
+    "possible": 8,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [
+      "highest-value"
+    ],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 0,
+        "possible": 1,
+        "ratio": 0
+      },
+      "visible_text": {
+        "earned": 0,
+        "possible": 1,
+        "ratio": 0
+      },
+      "visual_reasoning": {
+        "earned": 2,
+        "possible": 4,
+        "ratio": 0.5
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "chart",
+          "dashboard",
+          "forecast vs actual"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Forecast vs actual",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "highest-label",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "May"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "May"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "highest-value",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "93",
+          "Actual 93; forecast 88"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

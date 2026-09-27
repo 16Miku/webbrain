@@ -24,18 +24,22 @@ for its available flags.
 | `/memory` | Show saved user memory |
 | `/memory --add <text>` | Save a user preference to memory |
 | `/memory --forget <id>` | Forget a saved memory by ID |
-| `/workflow` | List saved workflows and their IDs |
+| `/workflow` | Open the saved-workflow manager with Run, Rename, Export, and guarded Delete actions |
 | `/workflow --save <name>` | Compile the latest successful traced run into a reusable, value-free workflow |
 | `/workflow --run <id>` | Run a saved workflow in Act mode, collecting any runtime parameters locally |
 | `/workflow --delete <id>` | Delete a saved workflow |
 | `/workflow --export <id>` | Download a sanitized portable `webbrain-workflow/1` JSON file |
 | `/workflow --import --file` | Import a portable workflow file as a new local saved workflow |
+| `/teach` | Show the current tab's Teacher mode status and captured action count |
+| `/teach --start <name>` | Start learning a saved workflow from your demonstrated clicks and field edits |
+| `/teach --end` | Stop teaching and compile the captured actions into a value-free saved workflow |
 | `/allow-api` | **Per-conversation API mutation override.** See [below](#allow-api). |
 | `/foreground [prompt]` | Run one local task in the foreground for visual compatibility |
 | `/dangerously-skip-permissions` | **Global permission-prompt bypass.** Turns off `Ask before consequential actions` without opening Settings. WebBrain will act without per-site prompts until you re-enable the setting. |
 | `/compact` | Force context compaction for the current conversation |
 | `/verbose` | Toggle verbose/compact tool display |
 | `/reset` | Clear the conversation and all per-conversation flags |
+| `/print` | Open the current page's native print dialog |
 | `/screenshot [--full-page]` | Capture the visible tab, or the full scrollable page with `--full-page` (Chrome only) |
 | `/record [--full-screen] [--hide-recording-indicator] [--transcribe]` | Record the current tab, or a selected screen/window with `--full-screen` (Chrome only); add `--hide-recording-indicator` to hide the banner or `--transcribe` to save a transcript after stop |
 | `/export [--traces \| --config]` | Download version-stamped conversation Markdown, export the version-stamped tool chain with `--traces`, or export a Settings snapshot with `--config` |
@@ -86,7 +90,7 @@ is failing. A badge appears while it is active, and it clears on `/reset`.
 
 To keep the same policy active across conversations and browser restarts, turn
 on **Always allow API mutations** under **Settings → General → Advanced**. The
-setting is off by default and remains active until you turn it off. `/reset`
+setting is on by default and remains active until you turn it off. `/reset`
 still clears the conversation-only `/allow-api` override, but does not change
 the persistent setting.
 

@@ -81,10 +81,20 @@ fallback.
 
 #### OTP / verification-code helper
 
-Loads only for relevant requests and declares no network tool. On the active run
-tab it prefers selected text or a bounded accessibility-tree subtree, matches
-the newest relevant service code, excludes SMS/native-app access, and honors
-Strict secret handling.
+Loads only for relevant requests and declares no external network tool. On Mid
+and Full it adds one narrow internal reader for an already open, signed-in
+supported webmail tab. A provider-verified already-open message is read directly.
+Candidate discovery otherwise leaves the mailbox untouched; candidate disclosure
+requires the full normalized service identity or all sufficiently discriminative
+service tokens. `inspect` remains read-only in Ask. Because opening can mark an
+email read, `open_message` requires Act/Dev and normal click permission for the
+mailbox host; the selected inbox item opens only in a temporary inactive duplicate
+that is closed after every bounded message-scoped continuation is consumed.
+Incomplete, changed, or unscoped continuations fail closed. The model receives opaque message
+references, not a tab catalog, mailbox URLs, or accessibility references. Compact
+keeps no skill or cross-tab tool surface. On the active run tab the skill still
+prefers selected text or a bounded accessibility-tree subtree, excludes
+SMS/native-app access, and honors Strict secret handling.
 
 When used, the scoped page content and the code are included in the normal
 request to your configured LLM provider. If **Record traces** is enabled, raw
@@ -128,14 +138,50 @@ enable. They are not seeded on by default.
 | Temporary file share (Litterbox) | Act, Dev | Uses browser upload tools; short-lived public link |
 | Open-Meteo weather | Ask, Act, Dev | Geocoding + forecast HTTPS |
 | Open Library | Ask, Act, Dev | Open Library search HTTPS |
-| Wikipedia | Ask, Act, Dev | Wikipedia REST search + Action API summary HTTPS |
+| Wikipedia | Ask, Act, Dev | Live Wikipedia APIs + explicitly installed Kiwix/ZIM archives |
 | Turkish deasciifier | Ask, Act, Dev | Instruction-only; uses ordinary verbatim form-entry tools |
+| Phone calls (Phonr) | Ask (instructed GET only), Act, Dev | Bearer-authenticated `fetch_url` to `https://phonr.xyz/v1`; POST requires the existing API-mutation permission |
 
 Enable a skill only when you want its tools and instructions available for
 `load_skill` on eligible runs.
 
+The optional [Apocalypse Mode](apocalypse-mode.md) management page lets users
+choose a Wikipedia language and Kiwix archive tier, review exact size and
+license metadata, install resumably, import an existing `.zim`, and manage its
+lifecycle. It is independent from the interface language, disabled by default,
+and never downloads an archive merely because the Wikipedia skill is enabled.
+Installed archive passages retain canonical attribution and remain untrusted.
+
+### Phone calls (Phonr)
+
+Enable **Phone calls (Phonr)** under Settings → Skills, then ask WebBrain to call
+a person or business with a specific purpose and language. Supply your Phonr
+bearer key for that service; the packaged skill contains no credential and cannot
+read the server's `.env`. Act/Dev calls use `fetch_url` with the existing
+`/allow-api` or persistent API-mutation authorization. Ask mode can read call
+status and results through the skill's instructions; `fetch_url` does not enforce
+that restriction. Previewing uses POST but never places a call. The service
+address is `https://phonr.xyz/v1`; installing the skill does not deploy it.
+
+The skill preserves an idempotency key across interrupted starts, follows the
+same call through completion, handles uncertain provider status without
+redialing, and distinguishes a call ending from its purpose being fulfilled.
+Caller number, recording mode, and duration limit come from the Phonr server.
+It uses the default natural-conversation system message unless the user requests
+a change. Example: “Call this restaurant in Spanish and ask whether a table for
+four is available tonight at 7. Get the options; don't book yet.”
+
+This is an instruction-only API integration: its bearer header is part of
+model-generated `fetch_url` arguments, so the key may appear in the configured
+LLM conversation and enabled traces. Do not embed it in skill text, memory,
+scheduled instructions, or links. The skill can inspect transcript, result, and
+clip metadata; WebBrain's generic download tool cannot attach a bearer header,
+so actual audio retrieval uses the local Phonr dashboard or the authenticated
+curl example in the skill. It does not claim to play audio from metadata alone.
+
 ## See also
 
+- [Opt-in external memory proposal](memcode-memory-proposal.md) — why hosted MemCode needs an extension-owned OAuth flow before it can be packaged as a skill
 - [Agent tools](agent-tools.md) — tiers, modes, and the full tool matrix
 - [Privacy and data flow](privacy-and-data-flow.md#bundled-skills)
 - [Architecture](architecture.md) — skills and dynamic tool exposure in the turn

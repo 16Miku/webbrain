@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "id": "061",
+  "image": "images/061.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "sign in",
+        "login",
+        "identity verification",
+        "session expired"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Verify your identity",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "button",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Verify",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "email-input",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "all",
+      "values": [
+        "Email",
+        "sara@example.com"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "blocker",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "incomplete",
+        "verification",
+        "code"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "status",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Code expires in 01:42",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "disabled",
+      "dimension": "inputs",
+      "section": 3,
+      "kind": "any",
+      "values": [
+        "disabled",
+        "unavailable"
+      ],
+      "weight": 1,
+      "critical": false
+    }
+  ],
+  "successRubric": "Identify the Verify your identity authentication surface, quote Verify, and report incomplete verification code."
+}

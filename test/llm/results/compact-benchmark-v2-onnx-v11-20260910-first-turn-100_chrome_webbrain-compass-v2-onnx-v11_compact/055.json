@@ -1,0 +1,28 @@
+{
+  "id": "055",
+  "user": "download this instagram post",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.instagram.com/p/CxAbcExample/",
+    "title": "Photo — Instagram"
+  },
+  "latencyMs": 858,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 10
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"get_accessibility_tree\"><param name=\"filter\">visible</param><param name=\"maxDepth\">10</param></function>",
+  "usage": {
+    "prompt_tokens": 10022,
+    "completion_tokens": 25,
+    "total_tokens": 10047
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

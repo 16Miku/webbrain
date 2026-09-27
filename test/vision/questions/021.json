@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "021",
+  "difficulty": {
+    "level": 2,
+    "slug": "basic",
+    "label": "Basic"
+  },
+  "category": "authentication",
+  "title": "Sign in to Atlas",
+  "image": "images/021.png",
+  "question": "What is preventing the user from completing Continue? Focus on the “Sign in to Atlas” screen.",
+  "defaultPromptMode": "production"
+}

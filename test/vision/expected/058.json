@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "058",
+  "image": "images/058.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "account",
+        "pricing",
+        "report",
+        "editor",
+        "trading"
+      ],
+      "weight": 1,
+      "critical": false
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Report builder",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "target",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Export CSV",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "cover",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Beta",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "occlusion",
+      "dimension": "blockers",
+      "section": 5,
+      "kind": "any",
+      "values": [
+        "cover",
+        "overlap",
+        "overlay",
+        "obstruct",
+        "block"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Detect the visual obstruction: Beta interferes with Export CSV."
+}

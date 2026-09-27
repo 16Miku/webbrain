@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-21T08:31:10.871Z",
+  "id": "033",
+  "model": "lfm2.5-vl-450m-mlx",
+  "endpoint": "http://127.0.0.1:1234/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "033",
+    "difficulty": {
+      "level": 2,
+      "slug": "basic",
+      "label": "Basic"
+    },
+    "category": "kanban-board",
+    "title": "Sprint 18",
+    "image": "images/033.png",
+    "question": "Which column contains “Fix checkout”? Focus on the “Sprint 18” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/033.png",
+    "bytes": 74596,
+    "sha256": "bb2f77e0d46ba6b2773476ff451fa95b765fbe2caa3b32343bc614e722360ca1"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "The screenshot shows a web-automation agent's browser viewport with the following elements:\n\n1. The top navigation bar includes options like \"Home,\" \"Workspace,\" and \"Activity.\"\n2. Below the navigation bar, there are three main sections:\n   - A section labeled \"Sprint 18\" with a blank input field.\n   - Another section titled \"In progress,\" which also has an empty input field.\n   - A final section labeled \"Go\" with a blank input field.\n\n3. The background of the viewport is light gray, and there are no visible elements like tabs or menus.\n\n4. The overall layout is clean, with a focus on the three main sections and their respective input fields.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 340,
+      "completion_tokens": 151,
+      "total_tokens": 491,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 2,
+    "total": 253
+  },
+  "score": {
+    "success": false,
+    "ratio": 0.3333333333333333,
+    "earned": 2.333333333333333,
+    "possible": 7,
+    "threshold": 0.72,
+    "sectionCount": 4,
+    "criticalFailures": [
+      "card-column"
+    ],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 0,
+        "possible": 1,
+        "ratio": 0
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 0,
+        "possible": 3,
+        "ratio": 0
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "board",
+          "kanban",
+          "project",
+          "sprint",
+          "incident"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Sprint 18",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Sprint 18"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "card-column",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "all",
+        "values": [
+          "Fix checkout",
+          "In progress"
+        ],
+        "weight": 3,
+        "critical": true,
+        "passed": false,
+        "matched": [
+          "In progress"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "061",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "authentication",
+  "title": "Verify your identity",
+  "image": "images/061.png",
+  "question": "What is preventing the user from completing Verify? Focus on the “Verify your identity” screen.",
+  "defaultPromptMode": "production"
+}

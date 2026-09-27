@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "044",
+  "difficulty": {
+    "level": 3,
+    "slug": "intermediate",
+    "label": "Intermediate"
+  },
+  "category": "form-validation",
+  "title": "Invite teammate",
+  "image": "images/044.png",
+  "question": "Which field is invalid, what value does it contain, and what exact error is shown? Focus on the “Invite teammate” screen.",
+  "defaultPromptMode": "production"
+}

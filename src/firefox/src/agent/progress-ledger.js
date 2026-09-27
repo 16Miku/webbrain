@@ -5,8 +5,10 @@ const sanitizeText = (value, max = 240) => sanitizeSharedText(value, max, { coll
 const VALID_STATUSES = new Set(['pending', 'acted', 'processed', 'skipped', 'failed']);
 const TERMINAL_STATUSES = new Set(['processed', 'skipped', 'failed']);
 const CLICK_ACTION_TOOLS = new Set(['click', 'click_ax', 'iframe_click']);
-const APP_OWNED_FIELD_KEYS = new Set(['completionRequirement', 'classifierTarget']);
+const APP_OWNED_BOOLEAN_FIELD_KEYS = new Set(['completionRequirement', 'classifierTarget']);
+const APP_OWNED_INTEGER_FIELD_KEYS = new Set(['expectedOrdinal']);
 const ACTION_RE = /^\s*(follow|unfollow|star|unstar|watch|unwatch|connect|subscribe|unsubscribe|save|unsave|like|unlike|block|unblock|report|send|submit|add|remove)\b(?:\s+(.+?))?\s*$/i;
+const IDENTITY_ACTION_PREFIX_RE = /^\s*(?:follow|unfollow|star|unstar|watch|unwatch|connect|subscribe|unsubscribe|save|unsave|like|unlike|block|unblock|report|send|submit|add|remove|collect_email|collect_profile|process_item|visit|open)(?:\s*:\s*|\s+)(?!$)/i;
 const GENERIC_TARGET_RE = /^(button|link|item|result|profile|user|member|person|this|that|it|here|there|more|submit|save|send|add|remove|follow|unfollow|changes?|message|comment|reply|post|form|details|settings|preferences)$/i;
 
 export function normalizeLedgerStatus(value, fallback = 'pending') {
@@ -68,14 +70,128 @@ function stableIdFor(action, target, url) {
   return sanitizeText(compact, 160);
 }
 
+function normalizeIdentityText(value) {
+  let text = cleanTarget(value);
+  if (!text) return '';
+  try { text = text.normalize('NFKC'); } catch {}
+  text = text
+    .replace(IDENTITY_ACTION_PREFIX_RE, '')
+    .replace(/^\s*@/, '')
+    .replace(/\/+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  return text && !GENERIC_TARGET_RE.test(text) ? text : '';
+}
+
+function identityEntries(item) {
+  const entries = new Map();
+  const add = (key, strength) => {
+    if (!key) return;
+    entries.set(key, Math.max(strength, entries.get(key) || 0));
+  };
+  const addUrl = (value) => {
+    const raw = sanitizeText(value, 500);
+    if (!raw) return;
+    try {
+      const url = new URL(raw);
+      if (!/^https?:$/i.test(url.protocol)) return;
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.replace(/\/{2,}/g, '/').replace(/\/+$/, '') || '/';
+      add(`url:${host}${pathname.toLowerCase()}`, 4);
+      const parts = pathname.split('/').filter(Boolean);
+      if (!parts.length) return;
+      let tail = '';
+      try { tail = decodeURIComponent(parts[parts.length - 1] || ''); } catch { tail = parts[parts.length - 1] || ''; }
+      tail = normalizeIdentityText(tail);
+      if (!tail) return;
+      add(`profile:${host}/${tail}`, 3);
+      if (/^[^@\s]+@[^@\s]+$/.test(tail)) {
+        add(`acct:${tail}`, 3);
+      } else if ((parts[parts.length - 1] || '').startsWith('@')) {
+        add(`acct:${tail}@${host}`, 3);
+      }
+      add(`text:${tail}`, 1);
+    } catch {}
+  };
+  const addText = (value, strength = 1) => {
+    const raw = sanitizeText(value, 500);
+    if (!raw) return;
+    if (/^https?:\/\//i.test(raw)) {
+      addUrl(raw);
+      return;
+    }
+    const text = normalizeIdentityText(raw);
+    if (!text) return;
+    add(`text:${text}`, strength);
+    if (/^[^@\s]+@[^@\s]+$/.test(text)) add(`acct:${text}`, Math.max(3, strength));
+  };
+
+  const id = sanitizeText(item?.id, 180);
+  if (id && !/^(?:expected|requirement):/i.test(id)) addText(id, 2);
+  addText(item?.target, 2);
+  addText(item?.label, 1);
+  addUrl(item?.url || item?.href);
+  return entries;
+}
+
+export function progressIdentityKeys(item) {
+  return [...identityEntries(item).keys()];
+}
+
+export function progressIdentitiesAreUnique(items = []) {
+  const strongestKeys = (Array.isArray(items) ? items : []).map(item => {
+    const entries = identityEntries(item);
+    const strongest = Math.max(0, ...entries.values());
+    return new Set([...entries]
+      .filter(([, strength]) => strength === strongest)
+      .map(([key]) => key));
+  });
+  return strongestKeys.every(keys => keys.size > 0)
+    && strongestKeys.every((keys, index) => strongestKeys.every((other, otherIndex) => (
+      index === otherIndex || ![...keys].some(key => other.has(key))
+    )));
+}
+
+function identityMatchScore(left, right) {
+  const leftEntries = identityEntries(left);
+  const rightEntries = identityEntries(right);
+  let score = 0;
+  for (const [key, leftStrength] of leftEntries) {
+    const rightStrength = rightEntries.get(key);
+    if (rightStrength) score = Math.max(score, Math.min(leftStrength, rightStrength));
+  }
+  return score;
+}
+
+function isCanonicalProgressRow(row) {
+  const ordinal = Number(row?.fields?.expectedOrdinal);
+  return row?.fields?.completionRequirement === true
+    || row?.fields?.classifierTarget === true
+    || (Number.isInteger(ordinal) && ordinal > 0);
+}
+
+function actionsCompatible(left, right) {
+  const leftAction = sanitizeText(left?.action, 80).toLowerCase();
+  const rightAction = sanitizeText(right?.action, 80).toLowerCase();
+  return !leftAction || !rightAction || leftAction === rightAction;
+}
+
 function sanitizeFields(fields, opts = {}) {
   if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return undefined;
   const out = {};
   for (const [key, value] of Object.entries(fields).slice(0, 20)) {
     const k = sanitizeText(key, 80);
     if (!k) continue;
-    if (APP_OWNED_FIELD_KEYS.has(k)) {
+    if (APP_OWNED_BOOLEAN_FIELD_KEYS.has(k)) {
       if (opts.allowAppOwnedFields === true && value === true) out[k] = true;
+      continue;
+    }
+    if (APP_OWNED_INTEGER_FIELD_KEYS.has(k)) {
+      const ordinal = Number(value);
+      if (opts.allowAppOwnedFields === true && Number.isInteger(ordinal) && ordinal > 0 && ordinal <= 1000) {
+        out[k] = ordinal;
+      }
       continue;
     }
     const cleaned = sanitizeFieldValue(value);
@@ -130,6 +246,7 @@ export function normalizeLedgerItem(item, opts = {}) {
   return {
     id,
     label,
+    ...(target ? { target } : {}),
     ...(url ? { url } : {}),
     status,
     ...(action ? { action } : {}),
@@ -143,6 +260,252 @@ export function normalizeLedgerItem(item, opts = {}) {
     firstSeenAt: Number.isFinite(Number(item.firstSeenAt)) ? Number(item.firstSeenAt) : now,
     updatedAt: now,
   };
+}
+
+export function reconcileLedgerItems(rows = [], items = [], opts = {}) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const source = sanitizeText(opts.source || 'model', 40) || 'model';
+  const sessionId = sanitizeText(opts.sessionId || '', 120);
+  const reconciled = [];
+  const rawItems = Array.isArray(items) ? items : [];
+  const normalizedItems = rawItems.map(rawItem => normalizeLedgerItem(rawItem, {
+    source,
+    sessionId,
+    pageScope: opts.pageScope,
+    taskKey: opts.taskKey,
+    now: opts.now,
+  }));
+  const semanticBindingFor = incoming => {
+    if (!incoming) return null;
+    const exactRow = safeRows.find(row => ledgerRowKey(row) === ledgerRowKey(incoming));
+    if (exactRow && actionsCompatible(exactRow, incoming)) return null;
+    let bestScore = 0;
+    let matches = [];
+    for (const row of safeRows) {
+      const autoMayReuseRow = source === 'auto' && !isTerminalLedgerStatus(row?.status);
+      if ((!isCanonicalProgressRow(row) && !autoMayReuseRow) || !actionsCompatible(row, incoming)) continue;
+      const rowSessionId = sanitizeText(row?.sessionId || row?.session_id || '', 120);
+      if (rowSessionId !== incoming.sessionId) continue;
+      const score = identityMatchScore(row, incoming);
+      if (score > bestScore) {
+        bestScore = score;
+        matches = [row];
+      } else if (score > 0 && score === bestScore) {
+        matches.push(row);
+      }
+    }
+    return bestScore && matches.length === 1 && matches[0]?.id ? matches[0] : null;
+  };
+  const semanticBindings = new Map();
+  normalizedItems.forEach((item, index) => {
+    const canonical = semanticBindingFor(item);
+    if (canonical) semanticBindings.set(index, canonical);
+  });
+  const batchBindings = new Map();
+  if (source !== 'classifier' && sessionId) {
+    const exactIncomingKeys = new Set(normalizedItems.filter(Boolean).map(ledgerRowKey));
+    const availableExpected = safeRows
+      .filter(row => {
+        const ordinal = Number(row?.fields?.expectedOrdinal);
+        const rowSessionId = sanitizeText(row?.sessionId || row?.session_id || '', 120);
+        return Number.isInteger(ordinal) && ordinal > 0
+          && row?.fields?.classifierTarget !== true
+          && !row?.target
+          && !row?.url
+          && rowSessionId === sessionId
+          && !exactIncomingKeys.has(ledgerRowKey(row));
+      })
+      .sort((a, b) => Number(a.fields.expectedOrdinal) - Number(b.fields.expectedOrdinal));
+    const newIncoming = normalizedItems
+      .map((item, index) => ({ item, index }))
+      .filter(({ item, index }) => item
+        && !semanticBindings.has(index)
+        && !safeRows.some(row => ledgerRowKey(row) === ledgerRowKey(item) && actionsCompatible(row, item)));
+    const canBindPartialBatch = source === 'model' || source === 'observe';
+    const batchFitsAvailable = newIncoming.length === availableExpected.length
+      || (canBindPartialBatch && newIncoming.length > 0 && newIncoming.length < availableExpected.length);
+    if (availableExpected.length && batchFitsAvailable) {
+      const identitiesAreUnique = progressIdentitiesAreUnique(newIncoming.map(({ item }) => item));
+      const compatible = newIncoming.every(({ item }, index) => actionsCompatible(availableExpected[index], item));
+      const identityVerified = source !== 'auto' || newIncoming.every(({ item }, index) => (
+        identityMatchScore(availableExpected[index], item) > 0
+      ));
+      if (identitiesAreUnique && compatible && identityVerified) {
+        newIncoming.forEach(({ index }, expectedIndex) => batchBindings.set(index, availableExpected[expectedIndex]));
+      }
+    }
+  }
+
+  const nextItems = rawItems.map((rawItem, itemIndex) => {
+    const incoming = normalizedItems[itemIndex];
+    const semanticCanonical = semanticBindings.get(itemIndex);
+    if (incoming && semanticCanonical?.id) {
+      reconciled.push({ incomingId: incoming.id, canonicalId: semanticCanonical.id });
+      return {
+        ...rawItem,
+        id: semanticCanonical.id,
+        sessionId: semanticCanonical.sessionId || incoming.sessionId || sessionId,
+      };
+    }
+    const batchCanonical = batchBindings.get(itemIndex);
+    if (incoming && batchCanonical?.id) {
+      reconciled.push({ incomingId: incoming.id, canonicalId: batchCanonical.id });
+      return {
+        ...rawItem,
+        id: batchCanonical.id,
+        target: rawItem?.target
+          || incoming.target
+          || sanitizeText(String(incoming.label || '').replace(IDENTITY_ACTION_PREFIX_RE, ''), 180)
+          || incoming.label,
+        sessionId: batchCanonical.sessionId || incoming.sessionId || sessionId,
+      };
+    }
+    if (!incoming) return rawItem;
+    const exactRow = safeRows.find(row => ledgerRowKey(row) === ledgerRowKey(incoming));
+    if (exactRow && actionsCompatible(exactRow, incoming)) return rawItem;
+    return rawItem;
+  });
+  return { items: nextItems, reconciled };
+}
+
+function mergedProgressStatus(canonicalStatus, duplicateStatus) {
+  const canonical = normalizeStatus(canonicalStatus, 'pending');
+  const duplicate = normalizeStatus(duplicateStatus, 'pending');
+  if (isTerminalLedgerStatus(canonical) && isTerminalLedgerStatus(duplicate)) {
+    return canonical === duplicate ? canonical : '';
+  }
+  if (isTerminalLedgerStatus(canonical)) return canonical;
+  if (isTerminalLedgerStatus(duplicate)) return duplicate;
+  if (canonical === 'acted' || duplicate === 'acted') return 'acted';
+  return 'pending';
+}
+
+function mergeCanonicalProgressFields(canonicalFields, duplicateFields) {
+  const canonical = canonicalFields && typeof canonicalFields === 'object' ? canonicalFields : {};
+  const duplicate = duplicateFields && typeof duplicateFields === 'object' ? duplicateFields : {};
+  const out = { ...duplicate };
+  for (const [key, value] of Object.entries(canonical)) {
+    const collected = value !== undefined && value !== null && value !== '';
+    if (collected || !Object.prototype.hasOwnProperty.call(out, key)) out[key] = value;
+  }
+  return out;
+}
+
+function mergeCanonicalProgressRows(canonical, duplicate) {
+  const status = mergedProgressStatus(canonical?.status, duplicate?.status);
+  if (!status) return null;
+  const ordinal = Number(canonical?.fields?.expectedOrdinal);
+  const firstSeenAt = [canonical?.firstSeenAt, duplicate?.firstSeenAt]
+    .map(Number).filter(Number.isFinite);
+  const updatedAt = [canonical?.updatedAt, duplicate?.updatedAt]
+    .map(Number).filter(Number.isFinite);
+  return {
+    ...canonical,
+    label: duplicate?.label || canonical?.label,
+    ...(duplicate?.target ? { target: duplicate.target } : {}),
+    ...(duplicate?.url ? { url: duplicate.url } : {}),
+    status,
+    ...(duplicate?.action ? { action: duplicate.action } : {}),
+    source: duplicate?.source || canonical?.source || 'model',
+    fields: {
+      ...mergeCanonicalProgressFields(canonical?.fields, duplicate?.fields),
+      ...(canonical?.fields?.completionRequirement === true || duplicate?.fields?.completionRequirement === true
+        ? { completionRequirement: true } : {}),
+      ...(canonical?.fields?.classifierTarget === true || duplicate?.fields?.classifierTarget === true
+        ? { classifierTarget: true } : {}),
+      ...(Number.isInteger(ordinal) && ordinal > 0 ? { expectedOrdinal: ordinal } : {}),
+    },
+    attempts: Math.max(Number(canonical?.attempts || 0), Number(duplicate?.attempts || 0)),
+    ...(firstSeenAt.length ? { firstSeenAt: Math.min(...firstSeenAt) } : {}),
+    ...(updatedAt.length ? { updatedAt: Math.max(...updatedAt) } : {}),
+  };
+}
+
+export function reconcilePersistedLedgerRows(rows = []) {
+  let next = Array.isArray(rows)
+    ? rows.map(row => ({ ...row, fields: row?.fields ? { ...row.fields } : undefined }))
+    : [];
+  const reconciled = [];
+  const sessionIds = new Set(next
+    .map(row => sanitizeText(row?.sessionId || row?.session_id || '', 120))
+    .filter(Boolean));
+
+  for (const sessionId of sessionIds) {
+    const inSession = row => sanitizeText(row?.sessionId || row?.session_id || '', 120) === sessionId;
+    const expected = next.filter(row => inSession(row) && Number.isInteger(Number(row?.fields?.expectedOrdinal)))
+      .sort((a, b) => Number(a.fields.expectedOrdinal) - Number(b.fields.expectedOrdinal));
+    const requirements = next.filter(row => inSession(row)
+      && row?.fields?.classifierTarget === true
+      && /^requirement:/i.test(String(row?.id || '')))
+      .sort((a, b) => Number(String(a.id).match(/^requirement:(\d+)/i)?.[1] || 0)
+        - Number(String(b.id).match(/^requirement:(\d+)/i)?.[1] || 0));
+    if (expected.length && expected.length === requirements.length) {
+      const targetsAreUnique = progressIdentitiesAreUnique(requirements);
+      const ordinalsAreComplete = expected.every((row, index) => Number(row.fields.expectedOrdinal) === index + 1);
+      const compatible = expected.every((row, index) => actionsCompatible(row, requirements[index]));
+      const merged = expected.map((row, index) => mergeCanonicalProgressRows(row, requirements[index]));
+      if (targetsAreUnique && ordinalsAreComplete && compatible && merged.every(Boolean)) {
+        const replacementByKey = new Map(expected.map((row, index) => [ledgerRowKey(row), merged[index]]));
+        const removedKeys = new Set(requirements.map(ledgerRowKey));
+        next = next
+          .filter(row => !removedKeys.has(ledgerRowKey(row)))
+          .map(row => replacementByKey.get(ledgerRowKey(row)) || row);
+        requirements.forEach((row, index) => reconciled.push({ incomingId: row.id, canonicalId: expected[index].id }));
+      }
+    }
+
+    const unboundExpected = next.filter(row => inSession(row)
+      && Number.isInteger(Number(row?.fields?.expectedOrdinal))
+      && row?.fields?.classifierTarget !== true)
+      .sort((a, b) => Number(a.fields.expectedOrdinal) - Number(b.fields.expectedOrdinal));
+    const concreteRows = next.filter(row => inSession(row) && !isCanonicalProgressRow(row));
+    if (unboundExpected.length && unboundExpected.length === concreteRows.length) {
+      const identitiesAreUnique = progressIdentitiesAreUnique(concreteRows);
+      const ordinalsAreComplete = unboundExpected.every((row, index) => Number(row.fields.expectedOrdinal) === index + 1);
+      const compatible = unboundExpected.every((row, index) => actionsCompatible(row, concreteRows[index]));
+      const identityAgreement = unboundExpected.every((row, index) => identityMatchScore(row, concreteRows[index]) > 0);
+      const merged = unboundExpected.map((row, index) => mergeCanonicalProgressRows(row, concreteRows[index]));
+      if (identitiesAreUnique && ordinalsAreComplete && compatible && identityAgreement && merged.every(Boolean)) {
+        const replacementByKey = new Map(unboundExpected.map((row, index) => [ledgerRowKey(row), merged[index]]));
+        const removedKeys = new Set(concreteRows.map(ledgerRowKey));
+        next = next
+          .filter(row => !removedKeys.has(ledgerRowKey(row)))
+          .map(row => replacementByKey.get(ledgerRowKey(row)) || row);
+        concreteRows.forEach((row, index) => reconciled.push({ incomingId: row.id, canonicalId: unboundExpected[index].id }));
+      }
+    }
+
+    const canonicalRows = next.filter(row => inSession(row)
+      && Number.isInteger(Number(row?.fields?.expectedOrdinal))
+      && row?.fields?.classifierTarget === true);
+    for (const duplicate of [...next]) {
+      if (!inSession(duplicate) || isCanonicalProgressRow(duplicate)) continue;
+      let bestScore = 0;
+      let matches = [];
+      for (const canonical of canonicalRows) {
+        if (!actionsCompatible(canonical, duplicate)) continue;
+        const score = identityMatchScore(canonical, duplicate);
+        if (score > bestScore) {
+          bestScore = score;
+          matches = [canonical];
+        } else if (score > 0 && score === bestScore) {
+          matches.push(canonical);
+        }
+      }
+      if (!bestScore || matches.length !== 1) continue;
+      const canonical = matches[0];
+      const merged = mergeCanonicalProgressRows(canonical, duplicate);
+      if (!merged) continue;
+      const canonicalKey = ledgerRowKey(canonical);
+      const duplicateKey = ledgerRowKey(duplicate);
+      next = next.filter(row => ledgerRowKey(row) !== duplicateKey)
+        .map(row => ledgerRowKey(row) === canonicalKey ? merged : row);
+      const canonicalIndex = canonicalRows.indexOf(canonical);
+      if (canonicalIndex >= 0) canonicalRows[canonicalIndex] = merged;
+      reconciled.push({ incomingId: duplicate.id, canonicalId: canonical.id });
+    }
+  }
+  return { rows: next, changed: reconciled.length > 0, reconciled };
 }
 
 export function progressCounts(rows = []) {
@@ -182,6 +545,7 @@ export function upsertLedgerItems(rows = [], items = [], opts = {}) {
   const now = Number.isFinite(opts.now) ? opts.now : Date.now();
   const source = sanitizeText(opts.source || 'model', 40) || 'model';
   const next = Array.isArray(rows) ? rows.map(row => ({ ...row, fields: row?.fields ? { ...row.fields } : undefined })) : [];
+  const reconciliation = reconcileLedgerItems(next, items, { ...opts, source, now });
   const indexByKey = new Map();
   next.forEach((row, idx) => {
     const key = ledgerRowKey(row);
@@ -190,7 +554,7 @@ export function upsertLedgerItems(rows = [], items = [], opts = {}) {
 
   const updated = [];
   const blockedDowngrades = [];
-  for (const rawItem of Array.isArray(items) ? items : []) {
+  for (const rawItem of reconciliation.items) {
     const incoming = normalizeLedgerItem(rawItem, { source, now, sessionId: opts.sessionId, pageScope: opts.pageScope, taskKey: opts.taskKey });
     if (!incoming) continue;
     const key = ledgerRowKey(incoming);
@@ -211,6 +575,7 @@ export function upsertLedgerItems(rows = [], items = [], opts = {}) {
     const merged = {
       ...existing,
       label: incoming.label || existing.label,
+      ...(incoming.target ? { target: incoming.target } : {}),
       ...(incoming.url ? { url: incoming.url } : {}),
       status: keepTerminal ? existing.status : incoming.status,
       ...(incoming.action ? { action: incoming.action } : {}),
@@ -234,7 +599,14 @@ export function upsertLedgerItems(rows = [], items = [], opts = {}) {
     updated.push(merged);
   }
 
-  return { rows: next, updated, counts: progressCounts(next), changed: updated.length > 0, blockedDowngrades };
+  return {
+    rows: next,
+    updated,
+    counts: progressCounts(next),
+    changed: updated.length > 0,
+    blockedDowngrades,
+    reconciled: reconciliation.reconciled,
+  };
 }
 
 export function formatLedgerRow(row) {

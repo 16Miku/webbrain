@@ -48,7 +48,7 @@ This doc covers the shared architecture and calls out where the builds diverge.
 │                                                      │
 │  Chrome only:                                        │
 │    ├─ cdp/             — Chrome DevTools Protocol    │
-│    └─ offscreen/       — fetch proxy + tab recorder  │
+│    └─ offscreen/       — fetch proxy + recorder + local vision worker │
 └──────┬──────────────────────────────────────────────┘
        │ chrome.scripting.executeScript / CDP
        ▼
@@ -163,7 +163,7 @@ background.js handleMessage('chat_start')
 _enrichUserMessageWithCurrentPage(tabId, messages, userMessage)
 
   1. Collect URL + title via chrome.tabs.get(tabId)
-  2. If /allow-api set for this tab → inject [USER OVERRIDE] preamble
+  2. If persistent API permission or this tab's /allow-api is active → inject [API ALLOWED] preamble
   3. If site adapters enabled → getActiveAdapter(url) → inject adapter notes
   4. If provider supports vision (or dedicated vision model configured):
      a. Capture viewport screenshot via CDP
@@ -172,9 +172,37 @@ _enrichUserMessageWithCurrentPage(tabId, messages, userMessage)
   5. Return enriched user message
 ```
 
+#### Page context reduction
+
+WebBrain does not send raw HTML or a raw DOM dump to the model by default. The
+initial page context is the sanitized URL and title, matching site-adapter
+guidance, and an optional viewport screenshot when vision is available. When a
+task needs page content, the agent requests it on demand as a reduced semantic
+accessibility tree or as extracted text.
+
+These reads use visibility filters where appropriate, enforce character
+budgets, and paginate larger results instead of placing the entire rendered
+document into one model request. See [accessibility read budgets](agent-tools.md#accessibility-read-budgets)
+and [adaptive read windows](accessibility-tree-and-refs.md#adaptive-read-windows).
+Raw page-source access through `read_page_source` is available only in Dev mode.
+
 ### Step 4: Plan-before-Act Gate
 
 Manual action-mode runs (Act or Dev) call the active provider once before the tool loop with `planner.js`'s structured JSON prompt. Off uses the compact intent schema; Try and Strict use the full plan schema. Unset storage defaults to Try, while explicit Off remains Off. The planner sees the user task, sanitized URL/title, and a short recent-history digest; page context is wrapped as untrusted data and image blocks are dropped.
+
+When the active site adapter has a validated `webbrain-adapter-workflow/2`
+profile, both planner variants also receive its bounded app-owned job IDs and
+descriptions. The planner returns a nullable `site_job`; the runtime resolves
+that ID again against the exact active adapter instead of trusting page text or
+matching user-language keywords. A selected job can tighten state-change and
+require job-bound terminal evidence after submission (for example paid/ticket-
+issued transaction state or recipient-bound sent-message state). Jobs that
+require a ledger must exactly reconcile terminal ledger IDs against a complete
+app-owned accessibility-tree or seeded inventory; model-created rows cannot prove
+coverage. Every matched adapter records adapter/revision/notes-injected as
+content-free trace metadata, while a selected workflow additionally records its
+adapter/revision/job/template. Any user edit to reviewed plan text discards the
+hidden job binding.
 
 If the planner returns valid JSON, the side panel receives `agent_update: plan_review` and renders an editable review card. Approval pins the approved plan into the scratchpad so it survives context compaction. Rejection, timeout, or user abort stops the run before any browser tools execute. In Try mode, invalid JSON after one repair degrades only that turn to the Ask prompt and read-only tool catalog; Strict mode still stops before tools. Scheduled runs can set `autoApprovePlanReview` and pin the plan without showing the card.
 
@@ -213,6 +241,15 @@ while (steps < maxSteps) {
 }
 ```
 
+When an interactive, tool-capable run exhausts its configured agent steps
+without a terminal answer, the browser loop stays closed and WebBrain performs
+one context-only handoff with only `done` available. That terminal schema permits
+`partial` or `failed`, never `success`; invalid output falls back to the
+deterministic step-limit summary. This also applies to the selected WebBrain
+Compass provider without changing its advisory in-loop observation checkpoints.
+Structured Cloud API runs keep their separate `done_json` output contract and do
+not enter this handoff.
+
 ### Ask-only provider streaming
 
 `chatMainTurn()` normally delegates to the established cost-aware
@@ -231,8 +268,8 @@ Official OpenAI GPT-5.6 and streaming-capable Responses-only GPT-5 Pro variants
 use Responses streaming. Other supported official OpenAI models use Chat
 Completions streaming. Anthropic uses its native Messages event parser, Azure
 OpenAI uses its deployment-based parser, and Gemini, DeepSeek, xAI, Mistral,
-Nvidia NIM, Groq, Together AI, Fireworks, z.ai, OpenRouter, WebBrain Cloud,
-Ollama, LM Studio, Jan, vLLM, SGLang, and LocalAI use the OpenAI-compatible
+Nvidia NIM, Groq, Together AI, Fireworks, z.ai, OpenRouter, WebBrain Compass,
+Ollama, LM Studio, Jan, vLLM, SGLang, LocalAI, and Unsloth Studio use the OpenAI-compatible
 Chat Completions parser. z.ai streaming tool calls add its documented
 `tool_stream` request flag. llama.cpp uses its dedicated OpenAI-compatible
 parser. Alibaba Cloud remains non-streaming because DashScope rejects
@@ -264,6 +301,37 @@ to the older full `processMessageStream()` loop. Attachments, detached-run
 ownership, reconnect replay, persistence, traces, tool guards, and completion
 invariants therefore keep one production lifecycle.
 
+### Selected-text source scopes
+
+Selected-text runs always carry an explicit, durable `source_grounding` policy.
+Fixed actions keep `selection_only`, which uses the selected text as the only
+page source while still allowing intrinsic model knowledge to explain terms
+named in that selection. A free-form question may use `selection_context`, which
+permits intrinsic model knowledge and a bounded projection of earlier
+user/assistant dialogue so
+references such as “the above” can be resolved. That projection is explicitly
+non-authoritative: wrapped page text, tool results, screenshots, attachments,
+and app-owned state are excluded. The current selection remains untrusted page
+data inside its own boundary.
+
+The visible transcript and provider payload are intentionally different views.
+The transcript keeps every bubble for reading and recovery; the provider view
+adds the scope system note, the current selection, and (for `selection_context`)
+only the safe dialogue projection. Each selection adds an inline scope divider
+and the side-panel banner explains the included/excluded material. The user can
+confirm **Use broader conversation** to remove the scope before the next
+turn; only that explicit action allows the normal conversation payload again.
+
+`source_grounding` and the selection anchor are persisted with the per-tab
+conversation, survive panel/service-worker restart, retries, tab switches, and
+compaction, and are cleared by New conversation. The selection-scope fields in
+trace runtime metadata record only the policy, anchor presence, and
+`selection_scope_excluded_messages` count — never projected text or anchor/message
+fingerprints. This allowlist does not change the broader Trace retention contract:
+other run, event, screenshot, deep-debug, or lossless fields follow the current
+privacy mode documented in [Privacy & Data Flow](privacy-and-data-flow.md). Treat
+trace and diagnostic exports as privacy-sensitive data.
+
 ### Step 6: Tool Execution
 
 `executeTool(tabId, name, args, onUpdate)` dispatches by name:
@@ -272,12 +340,13 @@ invariants therefore keep one production lifecycle.
 |---|---|---|
 | `get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`, `hover` | content script message | Injected page context |
 | `click`, `type_text`, `press_keys`, `scroll`, `read_page`, etc. | content script message | Injected page context |
-| `navigate`, `new_tab`, `go_back`, `go_forward` | `chrome.tabs` / `browser.tabs` API | Background script |
+| `navigate`, `go_back`, `go_forward` | `chrome.tabs` / `browser.tabs` API | Background script |
 | `fetch_url`, `research_url`, `list_downloads`, etc. | `network-tools.js` | Service worker |
 | Enabled skill tools | `skills.js` registry + `executeHttpSkillTool()` | Service worker |
 | `list_webmcp_tools`, `execute_webmcp_tool` | experimental CDP `WebMCP` domain | Chrome service worker + page-registered callback |
 | `done` | agent.js — captures verification screenshot + page state probe | Service worker + CDP |
 | `clarify` | agent.js — pauses for user input | Service worker |
+| `delegate_research` | agent.js — opens and probes a visible, fixed-origin ChatGPT helper tab | Service worker + `chrome.tabs`/`browser.tabs` + isolated page script |
 | `solve_captcha` | captcha-solver.js | Service worker + CapSolver API |
 | `read_pdf` | pdf-tools.js | Service worker |
 | `scratchpad_write` | agent.js — in-memory pinned note | Service worker |
@@ -287,16 +356,19 @@ invariants therefore keep one production lifecycle.
 | `execute_js` | bounded CDP `Runtime.evaluate` (Chrome) / content script (Firefox) | Dev-only page JavaScript |
 | `read_console`, `inspect_network_requests` | mode-scoped bounded CDP Runtime/Log/Network buffers | Chrome Dev-only diagnostics |
 | `inspect_event_listeners` | permission-gated content target marker + CDP `DOMDebugger.getEventListeners` | Chrome Dev-only listener diagnosis |
+| `read_email_verification_message` | service worker + bounded accessibility reads | Mid/Full only after the OTP skill is active; directly scopes verified already-open message routes, requires Act/Dev plus mailbox-host click permission to open an inbox item, and completes or rejects bounded message continuations |
 | `get_shadow_dom`, `shadow_dom_query`, `get_frames` | content/CDP helpers | Full Act advanced fallbacks; also added to Mid in Dev mode |
 
-Chrome CSS patch records include the top-level `documentId` and a patch-specific CSS marker. Full navigation clears persisted records, and `remove_injected_css` checks the live document before calling `removeCSS`, preventing an old patch ID from removing equivalent CSS on a replacement page. If navigation races either identity check during injection, WebBrain removes that patch's exact uniquely marked CSS from the replacement document before discarding its record. Chrome `execute_js` passes a 15-second timeout to CDP. Dev diagnostic event handlers are registered before either agent-loop variant starts; leaving the panel-wide Dev mode drains every tab in the CDP client's active-diagnostics registry, removes the handlers and buffers, and sends `Runtime.disable`, `Log.disable`, and `Network.disable` so Chrome also stops domain-level diagnostic work.
+Browser-tab creation, enumeration, activation, and run retargeting are not general model-callable capabilities. To inspect another URL, the agent uses an available URL reader; to interact with it, it navigates the current run tab. Explicit separate-tab requests are surfaced as a limitation rather than silently converted into current-tab navigation. The only private-tab exception is the single OTP-skill-gated reader above: the runtime chooses an already-open supported mailbox without exposing the tab catalog, and any message-opening helper is inactive and disposable. Internal research/helper tabs and normal page-authored `target=_blank` behavior remain separate infrastructure.
+
+Chrome CSS patch records include the top-level `documentId` and a patch-specific CSS marker. Full navigation clears persisted records, and `remove_injected_css` checks the live document before calling `removeCSS`, preventing an old patch ID from removing equivalent CSS on a replacement page. If navigation races either identity check during injection, WebBrain removes that patch's exact uniquely marked CSS from the replacement document before discarding its record. Chrome `execute_js` passes a 15-second timeout to CDP. Dev diagnostic event handlers are registered before either agent-loop variant starts and own their debugger session across turns, so ordinary run cleanup preserves their bounded buffers. Leaving the panel-wide Dev mode drains every tab in the CDP client's active-diagnostics registry, removes the handlers and buffers, and sends `Runtime.disable`, `Log.disable`, and `Network.disable` so Chrome also stops domain-level diagnostic work; conversation and tab cleanup additionally detach the debugger.
 
 ### Step 6a: Skills and Dynamic Tool Exposure
 
 Settings -> Skills stores enabled skills in `customSkills` (`chrome.storage.local`
 or `browser.storage.local`). On startup, `background.js` loads packaged default
 skills from `skills/*`, adds any missing default (currently FreeSkillz.xyz, the
-prompt-only email verification-code helper, and Humanizer), and refreshes an
+email verification-code helper, and Humanizer), and refreshes an
 existing
 built-in skill record when the packaged copy changes. If the user removes a
 default skill, its removal tombstone prevents it from being silently re-added;
@@ -334,6 +406,10 @@ new default IDs can still be migrated into existing installations.
   compatible schemas to `getToolsForMode(...)` at LLM-call time, respecting
   mode, tier, and site adapter. Download-job tools remain
   hidden in Ask and require their normal permission gate in action modes.
+  The bundled OTP helper is a narrower built-in exception rather than a declared
+  network tool: once that exact skill is active on Mid/Full, the runtime appends
+  one fixed browser-neutral schema. Compact never receives it, and imported
+  skills cannot claim its reserved name.
 
 Loading is idempotent and multiple relevant skills can be active in one run.
 The loader's trusted instruction permits activation only for the user's request
@@ -392,13 +468,13 @@ tracks as a successful video or hand ffmpeg work to the user.
 
 | User intent | Expected skill | Catalog modes | Notes |
 | --- | --- | --- | --- |
-| Find, read, copy, or enter a code visible in browser email/message content | OTP / verification-code helper | Ask, Act, Dev | Prompt-only; after loading it guides existing page tools. |
+| Find, read, copy, or enter a code visible in browser email/message content | OTP / verification-code helper | Ask, Act, Dev | Guides narrow current-page reads; on Mid/Full, loading it also exposes one fixed reader for an already-open signed-in supported webmail tab. |
 | Create and use a temporary mailbox for an unimportant signup | Disposable email (Mail.tm) | Act, Dev | Not shown to Ask. It may overlap with OTP during a verification flow, so both can be loaded. |
 | Read a YouTube transcript, fetch a blocked NYTimes article, or resolve/download supported public media | FreeSkillz.xyz | Ask, Act, Dev | Ask can load the skill but still cannot see its Act-only `download_public_media` tool. |
 | Draft or rewrite an email reply, message, or post the user will send | Humanizer | Ask, Act, Dev | Prompt-only; preactivated on webmail adapters and on the explicit Humanize selected-text shortcut, otherwise routed by catalog. Returns final text only. |
 | Look up weather or a short forecast | Open-Meteo weather | Ask, Act, Dev | Read-only tools remain subject to their manifest filters. |
 | Find books, ISBNs, authors, or publication data | Open Library | Ask, Act, Dev | Read-only tools remain subject to their manifest filters. |
-| Search or summarize an encyclopedia topic | Wikipedia | Ask, Act, Dev | Read-only Wikipedia REST/Action API tools; results are untrusted. |
+| Search or summarize an encyclopedia topic | Wikipedia | Ask, Act, Dev | Live Wikipedia APIs plus explicitly installed local Kiwix/ZIM archives; all results are untrusted. |
 | Restore Turkish characters in ASCII Turkish text after an explicit user request | Turkish deasciifier | Ask, Act, Dev | Prompt-only and opt-in; ordinary form-entry tools continue to type their text argument verbatim. |
 | Upload one non-sensitive file to a short-lived public link | Temporary file share (Litterbox) | Act, Dev | Not shown to Ask; the skill uses existing browser upload tools. |
 
@@ -410,6 +486,16 @@ reinforced by WebBrain's untrusted-content wrappers and the loader description,
 not a deterministic intent classifier. Routing quality also depends on concise,
 distinct summaries; a broad skill such as FreeSkillz deliberately loads one
 instruction bundle for several related capabilities.
+
+The packaged Wikipedia skill keeps its existing `search_wikipedia` and
+`get_wikipedia_summary` interface. When a live request fails, the exact
+built-in tool may query archives that the user explicitly installed through
+the ☢ Apocalypse Mode link in the Settings header. `apocalypse-mode.js` owns catalog
+metadata, resumable piece verification, durable lifecycle state, OPFS or
+user-selected archive bytes, and the local openZIM reader. IndexedDB contains only configuration,
+archive metadata, and restart cursors—not multi-gigabyte archive bodies.
+Kiwix content remains on the dynamic skill's `resultPolicy: "untrusted"` path.
+See [Apocalypse Mode](apocalypse-mode.md) for storage and browser limits.
 
 The optional metadata format is a separate prompt-stripped fence:
 
@@ -461,6 +547,35 @@ Results that carry third-party content should set `resultPolicy: "untrusted"` so
 `_wrapUntrusted()` and `_digestToolResult()` treat them as data rather than
 instructions.
 
+### Step 6b: Opt-in Research Escalation
+
+Research escalation defaults to disabled in the agent, background storage
+hydration, Settings UI, and configuration transfer defaults. The runtime adds
+its system-prompt policy and tool surface only when
+`researchEscalationEnabled === true`. Enabled Ask requests receive
+`delegate_research` plus a research-only `clarify` schema; they never receive
+the generic ambiguity/timeout schema used by Act and Dev. Disabling the feature
+removes both Ask entries, while Act and Dev retain their ordinary `clarify`
+tool.
+
+The narrowed consent call must include the displayed question, exactly two
+choices, `purpose: "research_escalation"`, the exact `research_request`, and the
+exact approval option. The safe/local choice is first. Runtime consent ignores
+global clarify auto-selection and timeout behavior, binds a random one-use
+authorization to the source tab and conversation, and expires it after five
+minutes. `delegate_research` consumes that authorization before opening
+`https://chatgpt.com/`; its Navigate, Type, and Click capability host is fixed
+to `chatgpt.com`.
+
+The helper implementation probes for a logged-in ChatGPT composer, validates
+the origin before filling and again before sending, then reads a newly produced
+answer and source links. Stop, helper-tab removal, and source-tab removal cancel
+the in-flight run. Source identity is revalidated after helper binding so a
+close during setup cannot leak the approved prompt. Returned content is marked
+as untrusted delegated-research evidence before it re-enters the normal model
+loop. See [Privacy & Data Flow](privacy-and-data-flow.md#optional-research-escalation-to-chatgpt)
+for the user-visible third-party disclosure.
+
 ### Step 7: Results Back to UI
 
 The agent calls `onUpdate(type, data)` for each event:
@@ -480,9 +595,35 @@ Background relays these via `chrome.runtime.sendMessage` to the side panel, whic
 
 ### Plan before Act (`planner.js`)
 
-The action-mode intent gate runs before the first browser tool call. Off uses the compact schema; Try and Strict use the full planning schema, with unset storage defaulting to Try. The full planner prompt requires a single JSON object with summary, concrete steps, validated `skill_ids`, memory strategy, scheduling hint, risks, and an action mode. Mid/Full planners receive only the eligible routing catalog, and approved skill IDs are activated before the normal execution model call. `normalizePlan()` bounds and sanitizes each field; `formatPlanMarkdown()` renders the side-panel review card; `formatPlanScratchpad()` pins the approved or edited plan as an `[Approved plan]` scratchpad entry.
+The action-mode intent gate runs before the first browser tool call. Off uses the compact schema; Try and Strict use the full planning schema, with unset storage defaulting to Try. The full planner prompt requires a single JSON object with summary, concrete steps, validated `skill_ids`, memory strategy, scheduling hint, risks, and an action mode. Both schemas also carry a language-neutral `messaging` target when the trusted user request authorizes an external message: either the exact named recipient or an explicitly referenced active conversation. Mid/Full planners receive only the eligible routing catalog, and approved skill IDs are activated before the normal execution model call. `normalizePlan()` bounds and sanitizes each field; `formatPlanMarkdown()` renders the side-panel review card; `formatPlanScratchpad()` pins the approved or edited plan as an `[Approved plan]` scratchpad entry.
+
+The browser-owned per-turn runtime context includes the effective
+`runtime_mode` and whether mutation tools are enabled. This envelope is added
+once to the current user turn and is shared by the planner and executor, so
+page content or stale conversation history cannot redefine the live mode. For
+Act/Dev runs it also directs missing required values to `clarify` after useful
+inspection; planner guidance treats `done` as terminal, never as a way to ask
+for information needed to continue.
 
 Planner calls are traced with `phase: "planner"` when trace recording is enabled. They also use the cost allowance guard, abort checks, a JSON-repair retry, and Qwen/DeepSeek no-think handling. A failed repair cannot authorize actions: Try falls back to an Ask/read-only turn, while Strict stops.
+
+LLM-request trace events include privacy-safe prompt provenance: the controlled
+prompt variant, system-prompt and aggregate message character counts, message
+role counts, declared prompt/tool policy revisions, and structured checks
+comparing the system prompt and runtime envelope with the effective run mode.
+Raw system-prompt text, message text, tool schemas, and tool names are neither
+copied nor fingerprinted in request events. Policy revisions are bumped when
+controlled prompt templates or tool-exposure rules change; private request
+content does not affect them.
+
+WebBrain Compass runs also have a separate consent-gated terminal-runtime path.
+After an executed tool result is made durable in `chrome.storage.local`, a
+bounded `terminal_runtime` envelope is sent to the Compass improvement endpoint.
+Transient failures remain in the outbox for the next Compass run; acknowledged or
+non-retryable records are removed. This path does not depend on optional local
+IndexedDB tracing, is disabled for local/bring-your-own providers, and never
+blocks the visible answer on the network request. Chrome and Firefox use the
+same event and outbox schema.
 
 Each new trace run records the manifest version that created it. `/export`
 Markdown records the exporting version, `/export --traces` records both the
@@ -513,7 +654,7 @@ same local store from the side panel. Settings -> Profile provides enable,
 auto-learn, edit, delete, clear, export, and import controls for Chrome and
 Firefox.
 
-Optional auto-learning is off by default. After successful `chat`,
+Auto-learning is enabled by default. After successful `chat`,
 `chat_stream`, or `continue` completion, the background script queues a small
 extractor job with only the latest user text, final assistant text, current
 memory list, mode, and success state. The response path does not await this
@@ -531,9 +672,19 @@ action CSS selectors, coordinates, query strings, fragments, and typed values. E
 value becomes a declared runtime parameter; unsupported or failed actions are
 skipped and reported to the user as save warnings.
 
+Teacher mode is a second, value-free compiler input for the same schema.
+`content/teacher-capture.js` observes only trusted top-document clicks, field
+completion, checkbox/radio changes, Enter submissions, and navigation while a
+tab-scoped session is active. Field values are never read or sent; a field
+action becomes a runtime parameter marker as soon as it crosses the capture
+boundary. The sanitized session survives navigation in `storage.session` and
+is removed when `/teach --end` compiles and stores the workflow.
+
 Each compiled step contains semantic target metadata (role, accessible name,
 label, field identity, link, or placeholder), an expected postcondition, and
-the origin/path family observed before that action. `/workflow --run <id>`
+the origin/path family observed before that action. `/workflow` renders a
+local manager for running, renaming, exporting, and deleting these artifacts;
+renaming changes only the stored display name. `/workflow --run <id>`
 collects parameters in an ephemeral side-panel form. The replay executor then:
 
 1. checks the current origin/path family before every step;
@@ -543,6 +694,15 @@ collects parameters in an ephemeral side-panel form. The replay executor then:
 4. validates the saved postcondition; and
 5. either continues deterministically, delegates a known-safe mismatch to the
    normal Agent, or stops when a state-changing action has an unknown outcome.
+
+When strict target matching fails, replay may present up to five independently
+replayable semantic targets for explicit user selection. A selected target is
+used for that step only, then persisted as a locator repair only when the
+existing postcondition succeeds without inconclusive, stale, ambiguous, or
+wrong-target evidence. Repairs are applied atomically against the workflow's
+previous `updatedAt` value, so a concurrent edit wins instead of being
+overwritten. Duplicate semantic candidates and unattended clarification
+answers never authorize healing.
 
 Replay does not set `currentRunId`, because ordinary tool tracing would retain
 runtime values. It creates a separate run containing sanitized notes and
@@ -636,7 +796,9 @@ Jobs are stored in `chrome.storage.local` under the key `wb_scheduled_jobs` as a
 
 ### Site Adapters (`adapters.js`)
 
-58+ adapters inject site-specific guidance into the first user message (and re-inject on navigation to a different matched site). Only ONE adapter fires at a time (`getActiveAdapter(url)` returns the first match). See `docs/site-adapters.md` for how to write one.
+110+ adapters inject site-specific guidance into the first user message (and re-inject on navigation to a different matched site). Only ONE adapter fires at a time (`getActiveAdapter(url)` returns the first match). See `docs/site-adapters.md` for how to write one. Each matched adapter emits a content-free `adapter_match` trace note with its identity, revision, and whether notes were injected. High-evidence repeated tasks may additionally expose validated V2 workflow jobs; the planner selects an app-owned ID semantically, the binding is revalidated on the live pre-execution URL, and the executor receives its trusted stages/evidence contract. Required submissions need dispatch plus post-submit observation, while jobs with a trusted complete inventory may require an explicit job-bound complete-coverage marker whose count matches terminal current-task ledger rows.
+
+Adapters may also expose narrowly scoped runtime policy. Douyin `/chat` is the first `messaging.verifyActiveRecipient` route. The structured planner resolves an anaphoric recipient to `named` only when authentic prior-user context identifies exactly one target; unresolved pronouns clarify, while `active_conversation` is reserved for an explicit reference to the currently open thread itself. An `active_conversation` planner target must first be pinned to exactly one strong visible header identity before any page tool runs; ambiguous or missing evidence stops for clarification. Immediately before a send-like click, submitted field, or Enter press, the content script resolves the exact target and a lower-page layout composer, then collects only unique header evidence from the narrow, non-scrollable region above it. Enter or submitted field input in a different editable is conclusively non-message only when structural semantics positively identify a search or navigation field; an alternate reply/forward/split-pane composer remains inconclusive and therefore cannot bypass recipient verification. A distant general control likewise remains inconclusive rather than being declared safe. A semantic conversation row in a separate left rail is conclusively navigation-only, allowing recovery to the requested thread whether or not the short rail currently overflows; nested row buttons, links, and their leaf descendants plus controls outside that structure remain inconclusive. The agent requires exact normalized identity equality and returns a no-dispatch blocker on missing, inconclusive, ambiguous, or mismatched evidence, and protected Enter dispatch permits exactly one keypress per verification. Every authorized `click`, `click_ax`, `set_field({submit:true})`, and composer Enter receives a one-use binding to the exact action target, composer, URL, and identity set. Direct content dispatches and Chrome's trusted CDP mouse/key paths consume and revalidate it immediately before `el.click()`, `mousePressed`, or Enter, after any field reconciliation and combobox delays; protected `click_ax` never issues a second no-progress fallback click. Search-result text, message content, input values, generic page text, failed probes, and edited plans with stale hidden metadata cannot authorize a send. Dispatch-capable tools whose effects cannot be bound to the probed recipient (`iframe_click`, `execute_js`, WebMCP execution, and `upload_file`, whose change event may auto-send) are unavailable on this protected route. Deterministic saved-workflow replay has no planner-owned recipient target, so a workflow with any potentially dispatching step scoped to a protected messaging route stops before page actions and directs the user to run a normal Act task with a named recipient; a per-step check also covers legacy workflows whose scope metadata is incomplete.
 
 ### Accessibility Tree (`accessibility-tree.js`)
 
@@ -652,9 +814,33 @@ Wraps `chrome.debugger` API for:
   `WebMCP.invokeTool` executes a page-registered structured capability. WebBrain
   exposes opaque `wmcp_*` IDs rather than page-controlled names as call handles.
 
-WebMCP is an experimental Chrome-only fast path that is off by default. The
-user must enable **Experimental WebMCP** under Settings → General → Advanced;
-until then, neither WebMCP tool schemas nor WebMCP prompt guidance enter model
+During active Chrome Act/Dev runs (including saved workflow replay), native
+JavaScript dialogs are continued through `Page.javascriptDialogOpening` and
+`Page.handleJavaScriptDialog`. Alerts are acknowledged; confirmations and text
+prompts are dismissed. A dialog event cannot prove which click triggered it,
+so a running task or an input command in flight never grants permission to
+accept a confirmation. Cached dialogs from idle time are also dismissed.
+
+A `beforeunload` warning chooses Leave only for a one-use navigation permission
+created immediately before a navigation or history navigation tool dispatches,
+after its existing permission and unsaved-change checks. The warning must come
+from the same top-level source URL. The permission expires on the first accepted
+warning, navigation completion/failure, cancellation, or after ten seconds.
+Other navigation warnings choose Stay. Dialog text is never treated as instructions.
+
+The handler runs independently of blocked page commands and is removed on
+Stop, completion, or detach, even when Dev diagnostics retain the debugger.
+Ask mode and idle tabs do not auto-answer dialogs. Already-observed dialogs are
+resolved before startup commands. Dialogs opened before debugger attachment
+may need manual dismissal. Startup responds to Stop and times out after five
+seconds instead of holding the run indefinitely.
+This does not handle browser permission requests, authentication windows, or
+OS file pickers. Firefox WebExtensions provide no equivalent native-dialog API;
+those dialogs still require manual handling in Firefox.
+
+WebMCP is an experimental Chrome-only fast path that is on by default. The
+user can disable **Experimental WebMCP** under Settings → General → Advanced;
+when disabled, neither WebMCP tool schemas nor WebMCP prompt guidance enter model
 requests. When enabled, `list_webmcp_tools` is
 available in Ask, Act, and Dev; `execute_webmcp_tool` is restricted to Act/Dev
 and every invocation requires fresh confirmation plus permission against the
@@ -686,6 +872,14 @@ testConnection()              → { ok, error, model }
 
 `promptTier` drives both the action prompt and the normal tool subset. Local providers default to Mid, cloud providers are forced Full, and the legacy `useCompactPrompt` flag maps to Compact for existing configs. Dev mode is a separate conversation mode: Mid/Full Dev uses the selected Act tier plus `SYSTEM_PROMPT_DEV_APPENDIX`; Compact Dev is blocked before an LLM request is sent.
 
+Ollama, llama.cpp, LM Studio, and LocalAI resolve `supportsVision` from native
+server metadata before page enrichment. Explicit model/base-URL identities are
+cached and protected by stale-result guards; an empty Model field is treated as
+the server's mutable loaded-model slot, so concurrent checks are coalesced only
+within that turn and the next user turn rechecks it. Detection is bounded to
+three seconds and fails closed without failing the text request. User overrides
+bypass detection. Chrome and Firefox share the same parsers and behavior.
+
 See `docs/providers-and-models.md`.
 
 ### Loop Detection (`agent.js`)
@@ -696,17 +890,21 @@ Three independent detectors run after every tool call:
 2. **Coordinate click** — 5px-bucketed. Nudge at 5 same-bucket clicks. Stop at 8.
 3. **Navigation** — snapshot URL before click/navigate/iframe_click, compare after.
 
-When the opt-in API mutation observer is enabled and a repeated `click` /
+When the API mutation observer is enabled and a repeated `click` /
 `click_ax` loop is detected, `_detectApiShortcut()` checks the per-tab
-webRequest buffer populated by `background.js`. The observer is off by default.
+webRequest buffer populated by `background.js`. The observer is on by default,
+can be disabled in Settings, and stays disabled if its preference cannot be read
+or contains a non-boolean value.
 If each repeated click produced the same exact URL + HTTP method within a
 3-second window, the loop warning includes a `fetch_url({url, method})`
 suggestion. For replayable XHR/fetch mutations, the observer also keeps bounded
 request bodies and a small allowlist of replay-safe headers behind an opaque
 `replayRequestId`; hidden form tokens are reused internally by `fetch_url` only
-for the same tab and origin, not printed into model context. Write methods still
-require the conversation's `/allow-api` state; GET requests and non-network
-capabilities still use the normal permission gate.
+for the same tab and origin, not printed into model context. Write methods are
+authorized by the persistent **Always allow API mutations** setting (on by
+default) or the conversation's `/allow-api` override. An unreadable persistent
+setting grants no authorization. GET requests and non-network capabilities still
+use the normal permission gate.
 
 ### Context Management (`agent.js`)
 
@@ -747,7 +945,7 @@ Firefox uses `browser.storage.session`.
 | Events | CDP-trusted (`isTrusted=true`) | Synthetic (`isTrusted=false`) |
 | Screenshots | CDP `Page.captureScreenshot` with run-scoped focus emulation for background tabs | `browser.tabs.captureTab()` for direct inactive-tab capture |
 | Conversation/UI persistence | `chrome.storage.session` | `browser.storage.session` |
-| Offscreen document | Yes (fetch proxy + recorder) | Not available |
+| Offscreen document | Yes (fetch proxy + recorder + local WebGPU models) | Not available |
 | Trace recorder | IndexedDB (opt-in) | IndexedDB (opt-in) — same `trace/recorder.js` |
 | Duplicate-submit guard | Yes | Not available |
 | `execute_js` | Dev mode through CDP `Runtime.evaluate` | Dev mode through the MV2 content-script evaluator |
@@ -760,7 +958,9 @@ Firefox uses `browser.storage.session`.
 | Side panel | `sidePanel` API (MV3) | `sidebar_action` (MV2) |
 | File upload | CDP path or `downloadId` | `downloadId` re-fetch or WebBrain file picker; no arbitrary local path |
 
-Everything else (agent loop, tools, adapters, providers, loop detection, context management, system prompts) is architecturally identical between the two builds.
+Apart from the Chromium-only endpoint-free WebGPU provider and vision sidecar,
+the agent loop, tools, adapters, providers, loop detection, context management,
+and system prompts are architecturally identical between the two builds.
 
 ---
 
@@ -777,7 +977,7 @@ src/
 │       ├── cdp/      # CDP client (Chrome only)
 │       ├── content/  # accessibility-tree.js, content.js, ...
 │       ├── network/  # network-tools.js
-│       ├── offscreen/# Fetch proxy + slash-driven recorder (Chrome only)
+│       ├── offscreen/# Fetch proxy + recorder + local WebGPU models (Chrome only)
 │       ├── providers/# BaseLLMProvider + implementations
 │       ├── recorder/ # Recording orchestration
 │       ├── trace/    # IndexedDB recorder
@@ -802,9 +1002,85 @@ Key points:
 - No additional auth: the agent IS the user's browser session
 - Ask is read-only; Act and Dev are action modes. Dev adds source/style/page-debugging tools and is blocked for Compact-tier providers.
 - Plan before Act can require human approval before any action-mode tool call
-- `/allow-api` flag gates destructive HTTP methods via `fetch_url`
+- The persistent **Always allow API mutations** setting (on by default) or the conversation's `/allow-api` override waives permission prompts for write-method `fetch_url` / `research_url` calls
 - Tool results capped at 8 KB to limit prompt-injection surface
-- `strictSecretMode` prevents the model from quoting credentials in summaries
+- `strictSecretMode` instructs the model not to quote credentials in summaries, redacts known credential values (including short numeric PIN/CVV values) out of everything a cloud run publishes, and fails closed to scalar redaction if its bounded secret registry fills
 - Trace data is local-only (IndexedDB), never transmitted
 - Offscreen proxy only forwards provider SDK traffic
 - Finance adapters inject extra confirmation guidance
+
+### Jev scheduled-task verification
+
+The static Jev card lives in Settings → Assistive Models, after Vision and
+Speech to text, outside the dynamic provider list. It never participates in
+chat model selection. The tab retains its internal `multimodal` identifier for
+existing links and remembered selections. `systemone-judge.js` owns the pinned HTTP contract,
+strict typed responses and a shared deadline for retries. `systemone-evidence.js`
+collects bounded allowlisted observations and invalidates them on page changes.
+Scheduler evaluation returns keep/downgrade/skip plus metadata, revalidates the
+execution after awaiting the response and never requeues a downgraded action.
+The agent supplies the original run cost state and trace ID to the sidecar.
+No evidence is written to additional diagnostic logs. Watch baselines alone
+persist a bounded observation to support change comparisons after an actual
+judgment. Skips leave the stored verdict and Jev baseline unchanged and do not
+create verdict trace notes; billable responses still record usage. If the tab's
+run changes during verification, the still-owned scheduler execution enters
+reconciliation instead of remaining running. Post-response cost enforcement
+rejects a judgment that crosses the allowance; an already sent request can
+still incur charges.
+
+### Experimental Jev decisions
+
+`systemone-fast.js` produces existing tool calls, a fallback, or a completion
+candidate. Separate default-off settings control read-scope/Ask-handoff
+classification and Act/Dev browser decisions. The normal planner and intent
+checks still precede the loop. Both streaming and non-streaming loops dispatch
+Jev-selected calls through `_executeToolBatch`, including final submit/save/send
+clicks. Ask cannot use this browser path.
+
+The existing AX walk supplies at most 24 structured controls with its own refs;
+page-authored ref strings are never parsed. Internal snapshots are stripped from
+public tool results and diagnostics. Identity, document, form structure, options,
+value and occlusion are checked again before dispatch. Frames, shadow roots,
+unsupported actions and pages containing credential, payment, OTP or file controls
+fall back as a whole. The request includes only operations that have observed
+candidates and omits target questions that would contain only the `none` choice.
+Field values come from
+the active provider only after a confident fill action/target is selected. The
+first uncached fill uses a second Jev request to map those prepared values;
+clicks, completion candidates and fallbacks do not prepare text. Cached values
+and queued independent writes avoid repeated preparation. Each write is
+executed separately with a new observation. Labels must match the prepared
+field purpose, and ambiguous labels fall back. Changed form/document context
+invalidates queued writes and cached values.
+
+Choice probability and confidence must both reach 85% for classifiers and 90%
+for browser decisions. Each Jev request has one second and no retry. Errors or
+low confidence fall back in the current step. Two fallbacks on the same observed
+snapshot suspend further paid decisions until a new snapshot changes the
+context. A malformed usage/model/answer response permanently stops Jev for that
+run after the first response, even if the page changes, and the trace stores a
+bounded reason code rather than the response. This suspension is separate from
+the permanent run stop for unknown outcomes or no progress. Completion guidance is added only to the model's system
+message copy, never to persisted user messages. Two unchanged observations after
+Jev decisions disable the path for the rest of the run. Unknown outcomes and
+denied/cancelled calls also disable it. Strict Secret Mode, offline connectivity,
+run cancellation and model cost limits apply. `done` remains an active-model
+operation using existing evidence checks. RAG, skill routing and direct watch
+poll optimization are not part of this integration. See `test/jev/README.md` for
+benchmark protocol and its unverified live-performance status.
+
+An action such as a submitted search field can lose its original-document
+verification while successfully navigating. When that result is successful,
+verified, marked `outcomeUnknown`, and reports a real URL change, a later
+successful read of the resulting URL can reconcile the generic plan-execution
+counter. A read from before the action, a failed read, or a different document
+cannot do so. This does not satisfy submit/send/publish/payment or site-workflow
+terminal contracts; those still require their existing bound evidence.
+
+Initial-page and automatic browser screenshots do not make the AX-only path
+ineligible, and their pixels are never included in a Jev request. A current user
+attachment, explicit screenshot-tool result or unknown non-text input routes that
+decision to the active provider. The fast path may resume after that provider has
+consumed the input. Trace exports render Jev routing, fallback and usage metadata,
+including skip reasons, without exporting evidence.

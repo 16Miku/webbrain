@@ -21,6 +21,14 @@ WebBrain 将**模型层级**与**对话模式**分开。
 层级默认值与解析规则记录在
 [提供商与模型](providers-and-models.md#提示工具层级和模式)。
 
+## 完整读取 Gmail 会话
+
+Gmail 会话的第一个无障碍结果会提供活动会话可信的
+`conversationRootRefId`。完整读取必须仅对该锚定子树使用
+`filter:"all"`、`maxDepth:15`，并逐次原样复用 `continuationArgs`，直到
+`hasMore:false`。文档根节点的第 2 页及后续页面会进入无关的收件箱行，
+不能算作会话覆盖。还必须由 **Collapse all** 单独确认 Gmail 已展开整个会话。
+
 ## 工具矩阵
 
 图例：**是** = 可用 · **-** = 不可用 · **C** = 仅 Chrome ·
@@ -55,7 +63,6 @@ WebBrain 将**模型层级**与**对话模式**分开。
 | `press_keys` | 否 | 是 | 是 | 是 | - |
 | `navigate` | 否 | 是 | 是 | 是 | - |
 | `wait_for_element` | 否 | 是 | 是 | 是 | - |
-| `new_tab` | 否 | 是 | 是 | 是 | - |
 | `promote_iframe` | 否 | 否 | 是 | 是 | - |
 | `scratchpad_write` | 否 | 是 | 是 | 是 | - |
 | `progress_update` | 否 | 是 | 是 | 是 | - |
@@ -104,9 +111,9 @@ FreeSkillz.xyz 技能可暴露 `read_youtube_transcript` 以及 `resolve_public_
 `download_public_media`。这些工具未硬编码：技能加载前（或被移除后）它们并不存在。
 即使所属技能已加载，Ask 模式仍会过滤变更类和下载类工具。参见[技能](skills.md)。
 
-**WebMCP（实验性，需选择启用）。** 上表中的 `list_webmcp_tools` /
+**WebMCP（实验性，默认启用）。** 上表中的 `list_webmcp_tools` /
 `execute_webmcp_tool` 行仅在设置 → 常规 → 高级中启用**实验性 WebMCP** 时适用。
-该设置默认关闭；关闭时，这些工具及其提示引导不会包含在模型请求中。诸如
+该设置默认开启；关闭时，这些工具及其提示引导不会包含在模型请求中。诸如
 `readOnly` 之类的 WebMCP 注解是页面自行声明的提示，而非安全边界。每次调用都需要
 Act 或 Dev 模式、逐次的新确认，以及常规的「能力 × 注册帧来源」权限。WebMCP 目前
 需要支持它的 Chrome 构建/页面配置；Firefox 不暴露这些工具。

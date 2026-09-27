@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-26T23:26:14.043Z",
+  "id": "070",
+  "model": "qwen/qwen3.8-flash",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "070",
+    "difficulty": {
+      "level": 4,
+      "slug": "advanced",
+      "label": "Advanced"
+    },
+    "category": "chart-reading",
+    "title": "Dönüşüm hunisi",
+    "image": "images/070.png",
+    "question": "Which category has the tallest bar, and what exact value or annotation is attached to it? Focus on the “Dönüşüm hunisi” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/070.png",
+    "bytes": 72807,
+    "sha256": "6a34f2a8df01fd37da75b40fee002e46043ccdc4720b572957d5c44c1a42b183"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Analytics dashboard showing a conversion funnel chart (\"Dönüşüm hunisi\").\n\n2) Visible text:\n- Logo: \"WebScene\"\n- Nav links: \"Home\", \"Workspace\", \"Activity\"\n- Section label: \"ANALYTICS\"\n- Heading: \"Dönüşüm hunisi\"\n- Badge (top right of card): \"Updated now\"\n- Bar values: \"100\", \"62\", \"41\", \"29\"\n- Tooltip above last bar: \"29%\"\n- X-axis labels: \"Ziyaret\", \"Sepet\", \"Ödeme\", \"Satın alma\"\n\n3) Inputs: None visible (no form fields, search boxes, or dropdowns).\n\n4) State signals: \"Updated now\" badge indicating fresh data; tooltip \"29%\" displayed over the \"Satın alma\" bar (likely hover state). No spinners, modals, banners, or overlays.\n\n5) Blockers: None apparent. Page is fully loaded and interactive.\n\n6) Unknowns: Whether bars are clickable/hoverable (tooltip suggests interactivity but no cursor visible). No date-range selector or filter controls visible. Exact percentage values for bars 1–3 not shown (only raw counts).",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1234,
+      "completion_tokens": 334,
+      "total_tokens": 1568,
+      "cost": 0.00035442,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00035442,
+        "upstream_inference_prompt_cost": 0.00019744,
+        "upstream_inference_completions_cost": 0.00015698
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 59,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 1293,
+    "total": 6069
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 8,
+    "possible": 8,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "chart",
+          "dashboard",
+          "dönüşüm hunisi"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "chart",
+          "dashboard",
+          "dönüşüm hunisi"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Dönüşüm hunisi",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Dönüşüm hunisi"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "highest-label",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "Satın alma"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "Satın alma"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "highest-value",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "100",
+          "29%"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "100",
+          "29%"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

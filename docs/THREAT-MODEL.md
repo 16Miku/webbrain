@@ -13,7 +13,7 @@ So the question this document answers is: **what is the agent equivalent of the 
 ## 2. System overview & trust boundaries
 
 - **Extension (Manifest V3).** The agent loop, prompt assembly, and tool dispatch run in the extension's standard MV3 sandbox.
-- **Local model process.** llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang, or LocalAI runs as a *separate* process and is reached over `localhost` HTTP. No custom binaries, no elevated privileges; the model itself has only the extension's permissions, indirectly.
+- **Local model process.** llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang, LocalAI, or Unsloth Studio runs as a *separate* process and is reached over `localhost` HTTP. No custom binaries, no elevated privileges; the model itself has only the extension's permissions, indirectly.
 - **Automation surface.** Page reads and actions are performed through the extension APIs and, for richer control, CDP/debugger automation.
 - **Cloud option.** The same agent can target a cloud model instead of the local one.
 
@@ -63,7 +63,7 @@ The defensible claim is *not* "we're more secure than everyone." It's that the s
 
 1. Is page-derived content structurally isolated from the instruction path? (We do this and test it.)
 2. Is the action/automation surface bounded, or does the agent inherit full ambient authority? (Our gap G1/G2/G4 — being closed.)
-3. Where does inference run, and what leaves the device? (The selected provider determines this: WebBrain Cloud and bring-your-own cloud providers receive the request context, while local providers keep inference requests on the machine.)
+3. Where does inference run, and what leaves the device? (The selected provider determines this: WebBrain Compass and bring-your-own cloud providers receive the request context; local model runtimes keep inference on the machine, while a local gateway may forward it upstream.)
 4. Is there evidence, or just assertions? (Adversarial corpus + ablation, in-repo.)
 
 Before making any *comparative* claim about a specific competitor (Edge's AI, OpenAI's browser, the Claude browser, etc.), verify their actual behaviour — don't assert it. The strong, honest line is "here are the dimensions; here's exactly where we stand on each, with tests" and let the comparison speak for itself.

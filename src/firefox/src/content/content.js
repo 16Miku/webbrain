@@ -4,8 +4,11 @@
  */
 
 (() => {
-  // Prevent double-injection
-  if (window.__webbrain_injected) return;
+  // Take over from an orphaned installation. A reload or update leaves the
+  // old content script in the page with a dead runtime context; the newest
+  // copy must be the only listener that answers subsequent tool calls.
+  window.__webbrain_generation = (Number(window.__webbrain_generation) || 0) + 1;
+  const WEBBRAIN_GENERATION = window.__webbrain_generation;
   window.__webbrain_injected = true;
 
   const PAGE_GATE_SELECTORS = [
@@ -470,7 +473,8 @@
       const descriptor = window.__wbSiteInteractions?.describe?.(el);
       if (descriptor?.name) return descriptor.name;
     } catch {}
-    return (el?.innerText || el?.value || el?.placeholder || el?.title || el?.ariaLabel || '').trim();
+    const aria = el?.getAttribute?.('aria-label') || el?.ariaLabel || '';
+    return (el?.innerText || el?.value || el?.placeholder || el?.title || aria || '').trim();
   }
 
   function _isSiteInteractive(el) {
@@ -479,6 +483,26 @@
     } catch {
       return false;
     }
+  }
+
+  function _isSiteSelectorCandidate(el) {
+    try {
+      return _siteInteractiveSelectors().some(selector => el.matches(selector));
+    } catch {
+      return false;
+    }
+  }
+
+  function _isStandardInteractive(el) {
+    try {
+      return INTERACTIVE_SELECTORS.some(selector => el.matches(selector));
+    } catch {
+      return false;
+    }
+  }
+
+  function _isUsableSiteInteractive(el) {
+    return _isStandardInteractive(el) || !_isSiteSelectorCandidate(el) || _isSiteInteractive(el);
   }
 
   function _composedParent(node) {
@@ -547,6 +571,31 @@
       cur = _composedParent(cur);
     }
     return null;
+  }
+
+  function _someComposedDescendant(root, selector, predicate, limit = 2000) {
+    const pending = [root];
+    const seen = new Set();
+    let visited = 0;
+    while (pending.length && visited < limit) {
+      const scope = pending.shift();
+      const descendants = scope?.querySelectorAll?.('*') || [];
+      const elements = scope?.nodeType === Node.ELEMENT_NODE
+        ? [scope, ...descendants]
+        : descendants;
+      for (const element of elements) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        visited += 1;
+        if (element.matches?.(selector) && predicate(element)) return true;
+        if (element.shadowRoot) pending.push(element.shadowRoot);
+        if (element.tagName === 'SLOT') {
+          pending.push(...(element.assignedElements?.({ flatten: true }) || []));
+        }
+        if (visited >= limit) break;
+      }
+    }
+    return false;
   }
 
   function isVisiblyInteractive(el) {
@@ -622,6 +671,9 @@
   function _hasVisibleBox(el, minWidth = 1, minHeight = 1) {
     if (!el || typeof el.getBoundingClientRect !== 'function') return false;
     try {
+      for (let ancestor = el; ancestor; ancestor = _composedParent(ancestor)) {
+        if (ancestor.getAttribute?.('aria-hidden') === 'true') return false;
+      }
       const r = el.getBoundingClientRect();
       if (r.width < minWidth || r.height < minHeight) return false;
       const s = getComputedStyle(el);
@@ -718,6 +770,7 @@
     const out = [];
     for (const el of all) {
       if (!isVisiblyInteractive(el)) continue;
+      if (!_isUsableSiteInteractive(el)) continue;
       if (modal && !_isComposedAncestor(modal, el)) continue;
       out.push(el);
     }
@@ -843,6 +896,7 @@
         try {
           root.querySelectorAll(sel).forEach(el => {
             if (seen.has(el)) return;
+            if (!_isUsableSiteInteractive(el)) return;
             const rect = el.getBoundingClientRect();
             if (!isUsable(el, rect)) return;
             seen.add(el);
@@ -1255,6 +1309,109 @@
     return { element: matches[requested] || null, matchCount: matches.length, matchIndex: requested };
   }
 
+  // Shared by click dispatch and its recipient-safety preflight. Keep the
+  // Firefox option visibility and input-label rules identical in both paths.
+  // Text candidate discovery walks every open shadow root, so each discovered
+  // root must invalidate the cache when its own subtree changes.
+  const _domRevision = { value: 0, observer: null, observedRoots: new WeakSet() };
+  function _observeDomRevisionRoot(root) {
+    if (!root || _domRevision.observedRoots.has(root) || typeof MutationObserver === 'undefined') return;
+    try {
+      if (!_domRevision.observer) {
+        _domRevision.observer = new MutationObserver(() => { _domRevision.value += 1; });
+      }
+      _domRevision.observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: [
+          'aria-label', 'aria-labelledby', 'title', 'placeholder', 'value', 'disabled',
+          'aria-expanded', 'aria-selected', 'aria-checked', 'aria-hidden', 'hidden',
+          'class', 'style', 'role', 'tabindex',
+        ],
+      });
+      _domRevision.observedRoots.add(root);
+    } catch { /* leave other observable roots cacheable */ }
+  }
+
+  const _textCandidateCache = new WeakMap();
+  function _clickTextCandidates(scope) {
+    _observeDomRevisionRoot(document);
+    const revision = _domRevision.value;
+    const cacheScope = scope && typeof scope === 'object' ? scope : document;
+    const cached = _textCandidateCache.get(cacheScope);
+    if (cached && cached.revision === revision) return cached.list.slice();
+    const sels = [
+      'a', 'button', '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
+      '[role="option"]', '[role="menuitemradio"]', '[role="menuitemcheckbox"]', '[role="treeitem"]',
+      '[role="combobox"]', '[role="searchbox"]', '[role="textbox"]',
+      'input:not([type="hidden"])', 'textarea', 'select', 'input[type="button"]',
+      'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
+      '[aria-label]', '[tabindex]', '[data-tooltip]',
+      ..._siteInteractiveSelectors(),
+    ].join(', ');
+    // Candidate filter: listbox/menu option roles are often kept mounted but
+    // hidden while a custom select is collapsed or virtualized (Radix/MUI/
+    // React-Select). Drop hidden ones so click({text}) can't match — and
+    // falsely "succeed" on — an invisible option; the open-listbox fallback
+    // still surfaces them when the control is actually open. Shared by the
+    // primary pass AND the auto-scroll retry below so they can't diverge.
+    const _keepCandidate = (el) => {
+      const role = (el.getAttribute && el.getAttribute('role')) || '';
+      if (role !== 'option' && role !== 'menuitemradio' && role !== 'menuitemcheckbox' && role !== 'treeitem') return true;
+      try {
+        const r = el.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) return false;
+        const s = window.getComputedStyle(el);
+        if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return false;
+        if (el.closest('[aria-hidden="true"],[hidden]')) return false;
+        return true;
+      } catch (e) { return false; }
+    };
+    // A text field's `value` is content the user typed, NOT a click label.
+    // Matching on it makes click({text}) resolve to the field you just filled
+    // (e.g. a combobox/filter box whose value now equals the needle) instead
+    // of the menu option bearing the same text — the "click succeeds but
+    // nothing happens, model loops forever" bug. Only treat `value` as a label
+    // for button-like inputs; non-input elements with .value (<select>) keep it.
+    const _valIsLabel = (el) => {
+      if (el.tagName === 'TEXTAREA') return false;
+      if (el.tagName !== 'INPUT') return true;
+      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      return t === 'button' || t === 'submit' || t === 'reset';
+    };
+    const _normTxt = (el) => {
+      const siteText = _isSiteInteractive(el) ? _siteInteractionText(el) : '';
+      return (siteText || el.innerText || (_valIsLabel(el) ? el.value : '') || el.placeholder
+        || el.getAttribute?.('aria-label') || el.ariaLabel || el.title || '').trim().toLowerCase();
+    };
+    // LinkedIn can render the feed itself inside an open shadow root. Keep
+    // preflight and dispatch on the same candidate set, including duplicate
+    // labels across roots, without searching outside the selected modal.
+    const candidates = [];
+    const visit = (root) => {
+      _observeDomRevisionRoot(root);
+      candidates.push(...root.querySelectorAll(sels));
+      if (root.shadowRoot) visit(root.shadowRoot);
+      for (const host of root.querySelectorAll('*')) {
+        if (host.shadowRoot) visit(host.shadowRoot);
+      }
+    };
+    visit(cacheScope);
+    const all = candidates.filter(e => _hasVisibleBox(e) && _keepCandidate(e));
+    const list = [];
+    for (const e of all) {
+      const text = _normTxt(e);
+      if (text) list.push({ e, txt: text });
+      for (const attr of ['aria-label', 'title', 'placeholder', 'data-tooltip']) {
+        const value = String(e.getAttribute?.(attr) || '').trim().toLowerCase();
+        if (value && value !== text) list.push({ e, txt: value });
+      }
+    }
+    _textCandidateCache.set(cacheScope, { revision, list });
+    return list.slice();
+  }
+
   let _lastClickIdent = null;
   let _lastEditableTarget = null;
 
@@ -1505,11 +1662,18 @@
     if (!state.settled) return { success: true, settled: false, filePickerBlocked: false };
     if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
     document.removeEventListener('click', state.guard, true);
-    // If nothing was observed, stop content-side observation but leave the
-    // page-world programmatic click/showPicker guard active until its own
-    // short TTL. This suppresses longer debounces without blocking the tool
-    // response or intercepting a user's direct native input click.
-    state.cleanupPageShowPickerGuard?.(!!state.blocked);
+    // Stop content-side observation, but leave the page-world programmatic
+    // click/showPicker guard active until its own short TTL. This suppresses
+    // longer debounces without blocking the tool response or intercepting a
+    // user's direct native input click.
+    //
+    // This has to hold most of all when something WAS blocked. An app that
+    // routes an upload affordance through a file input often retries on a
+    // timer, and disarming here on the strength of the first interception left
+    // that retry unguarded — it opened a real OS chooser that nothing can
+    // close, and it stayed on screen through the rest of the run while
+    // upload_file attached the file directly.
+    state.cleanupPageShowPickerGuard?.(false);
     _filePickerGuardStates.delete(guardId);
     if (state.blocked) {
       return { ...filePickerBlockedResponse(state.blocked), settled: true };
@@ -1536,7 +1700,20 @@
   /**
    * Click an element by selector or coordinates.
    */
-  function clickElement(params) {
+  function clickElement(params, actionDeadlineExpired = () => false) {
+    let dispatched = false;
+    const deadlineFailure = () => ({
+      success: false,
+      dispatched,
+      ...(dispatched
+        ? { outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+      deadlineExpired: true,
+      error: dispatched
+        ? 'The page action deadline expired during click dispatch.'
+        : 'The page action deadline expired before click dispatch.',
+    });
+    if (actionDeadlineExpired()) return deadlineFailure();
     let el;
     // Tracks whether text matching below resolved el via an EXACT-tier
     // match. The auto-select rescue yields only to exact clickables — a
@@ -1557,14 +1734,6 @@
     if (params.text) {
       const needle = params.text.toLowerCase();
       const explicit = params.textMatch || '';
-      // Include inputs/select/textarea so we can match by placeholder, value, or aria-label
-      const sels = [
-        'a', 'button', '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
-        '[role="option"]', '[role="menuitemradio"]', '[role="menuitemcheckbox"]', '[role="treeitem"]',
-        'input:not([type="hidden"])', 'textarea', 'select', 'input[type="button"]',
-        'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
-        ..._siteInteractiveSelectors(),
-      ].join(', ');
       // Modal scoping: if a topmost modal/dialog is open, restrict the search
       // to elements inside it. Prevents the classic failure where the model
       // types "Publish release" and the resolver clicks the dimmed Publish
@@ -1573,42 +1742,7 @@
       // reachable via coordinate clicks.
       const _modalRoot = _findTopmostModal();
       const _scope = _modalRoot || document;
-      // Candidate filter: listbox/menu option roles are often kept mounted but
-      // hidden while a custom select is collapsed or virtualized (Radix/MUI/
-      // React-Select). Drop hidden ones so click({text}) can't match — and
-      // falsely "succeed" on — an invisible option; the open-listbox fallback
-      // still surfaces them when the control is actually open. Shared by the
-      // primary pass AND the auto-scroll retry below so they can't diverge.
-      const _keepCandidate = (el) => {
-        const role = (el.getAttribute && el.getAttribute('role')) || '';
-        if (role !== 'option' && role !== 'menuitemradio' && role !== 'menuitemcheckbox' && role !== 'treeitem') return true;
-        try {
-          const r = el.getBoundingClientRect();
-          if (r.width < 1 || r.height < 1) return false;
-          const s = window.getComputedStyle(el);
-          if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return false;
-          if (el.closest('[aria-hidden="true"],[hidden]')) return false;
-          return true;
-        } catch (e) { return false; }
-      };
-      // A text field's `value` is content the user typed, NOT a click label.
-      // Matching on it makes click({text}) resolve to the field you just filled
-      // (e.g. a combobox/filter box whose value now equals the needle) instead
-      // of the menu option bearing the same text — the "click succeeds but
-      // nothing happens, model loops forever" bug. Only treat `value` as a label
-      // for button-like inputs; non-input elements with .value (<select>) keep it.
-      const _valIsLabel = (el) => {
-        if (el.tagName === 'TEXTAREA') return false;
-        if (el.tagName !== 'INPUT') return true;
-        const t = (el.getAttribute('type') || 'text').toLowerCase();
-        return t === 'button' || t === 'submit' || t === 'reset';
-      };
-      const _normTxt = (el) => {
-        const siteText = _isSiteInteractive(el) ? _siteInteractionText(el) : '';
-        return (siteText || el.innerText || (_valIsLabel(el) ? el.value : '') || el.placeholder || el.ariaLabel || '').trim().toLowerCase();
-      };
-      const all = Array.from(_scope.querySelectorAll(sels)).filter(_keepCandidate);
-      const normalized = all.map(e => ({ e, txt: _normTxt(e) })).filter(x => !!x.txt);
+      const normalized = _clickTextCandidates(_scope);
 
       // Build label→input map so we can match label text and resolve to associated input
       const labelMap = new Map();
@@ -1624,7 +1758,14 @@
       function tryMode(mode) {
         if (mode === 'exact') return normalized.filter(x => x.txt === needle);
         if (mode === 'prefix') return normalized.filter(x => x.txt.startsWith(needle));
-        if (mode === 'contains') return normalized.filter(x => x.txt.includes(needle));
+        if (mode === 'contains') {
+          if (needle.length >= 3) return normalized.filter(x => x.txt.includes(needle));
+          const padded = ` ${needle} `;
+          return normalized.filter(x => x.txt === needle
+            || x.txt.startsWith(`${needle} `)
+            || x.txt.endsWith(` ${needle}`)
+            || x.txt.includes(padded));
+        }
         return [];
       }
 
@@ -1647,7 +1788,9 @@
         for (const [ltxt, inp] of labelMap) {
           const ok = (needle === ltxt) || ltxt.startsWith(needle) || ltxt.includes(needle);
           if (ok) {
+            if (actionDeadlineExpired()) return deadlineFailure();
             inp.scrollIntoView({ block: 'center', inline: 'center' });
+            if (actionDeadlineExpired()) return deadlineFailure();
             inp.focus();
             el = inp;
             textResolvedExact = (needle === ltxt);
@@ -1661,12 +1804,12 @@
         // Still respect modal scoping — we scroll the page but search inside
         // the modal (scrollable modals re-reveal off-screen dialog content).
         for (let scrollAttempt = 0; scrollAttempt < 3 && matches.length === 0; scrollAttempt++) {
+          if (actionDeadlineExpired()) return deadlineFailure();
           window.scrollBy(0, Math.round(window.innerHeight * 0.7));
           // Re-query after scroll. Re-resolve the modal root in case the
           // dialog opened/closed during scroll.
           const _retryScope = _findTopmostModal() || document;
-          const allRetry = Array.from(_retryScope.querySelectorAll(sels)).filter(_keepCandidate);
-          const normRetry = allRetry.map(e => ({ e, txt: _normTxt(e) })).filter(x => !!x.txt);
+          const normRetry = _clickTextCandidates(_retryScope);
           for (const m of modes) {
             if (m === 'exact') matches = normRetry.filter(x => x.txt === needle);
             else if (m === 'prefix') matches = normRetry.filter(x => x.txt.startsWith(needle));
@@ -1688,7 +1831,9 @@
             for (const [ltxt, inp] of labelMap2) {
               const ok = (needle === ltxt) || ltxt.startsWith(needle) || ltxt.includes(needle);
               if (ok) {
+                if (actionDeadlineExpired()) return deadlineFailure();
                 inp.scrollIntoView({ block: 'center', inline: 'center' });
+                if (actionDeadlineExpired()) return deadlineFailure();
                 inp.focus();
                 el = inp;
                 textResolvedExact = (needle === ltxt);
@@ -1753,12 +1898,49 @@
           }
         }
       }
+      // Labels nested inside their actionable control are not independent
+      // targets. Collapse them before reporting an ambiguity so a single
+      // visible Send/Post control remains directly clickable.
+      if (!el && matches.length > 1) {
+        const collapsedByAncestor = new Map();
+        for (const match of matches) {
+          const actionable = _resolveInteractiveAncestor(match.e) || match.e;
+          if (!collapsedByAncestor.has(actionable)) collapsedByAncestor.set(actionable, match);
+        }
+        if (collapsedByAncestor.size < matches.length) matches = [...collapsedByAncestor.values()];
+        if (matches.length === 1) {
+          el = _resolveInteractiveAncestor(matches[0].e) || matches[0].e;
+          textResolvedExact = (usedMode === 'exact');
+        }
+      }
       if (!el && matches.length > 1) {
         // Prefer interactive elements over passive children (label, span, etc.)
         const interactiveMatches = matches.filter(m => _isInteractive(m.e));
         if (interactiveMatches.length === 1) {
           matches = interactiveMatches;
         } else {
+          const hitTargetPool = (interactiveMatches.length > 1 ? interactiveMatches : matches).filter(m => {
+            try {
+              const r = m.e.getBoundingClientRect();
+              if (r.width < 1 || r.height < 1) return false;
+              if (m.e.disabled === true || m.e.getAttribute?.('aria-disabled') === 'true') return false;
+              const hit = _shadowAwareElementFromPoint(
+                Math.round(r.left + r.width / 2),
+                Math.round(r.top + r.height / 2),
+              );
+              return !!hit && (hit === m.e || m.e.contains?.(hit) || hit.contains?.(m.e));
+            } catch {
+              return false;
+            }
+          });
+          if (hitTargetPool.length === 1) {
+            el = _resolveInteractiveAncestor(hitTargetPool[0].e) || hitTargetPool[0].e;
+            textResolvedExact = (usedMode === 'exact');
+            matches = hitTargetPool;
+          } else if (hitTargetPool.length > 1 && hitTargetPool.length < matches.length) {
+            matches = hitTargetPool;
+          }
+          if (matches.length > 1) {
           // Build rich candidates: position (rect), tag, role, surrounding
           // context (closest landmark/dialog/button text), and precomputed
           // click centers. When the same text appears twice, the model needs
@@ -1805,9 +1987,10 @@
             success: false,
             dispatched: false,
             failureScope: `ambiguous-click:${String(params.text || '').trim().toLowerCase()}`,
-            error: `Ambiguous text match for "${params.text}" (mode=${usedMode}, matches=${matches.length})${_scopeNote}. ${candidates.length} candidates returned with cx/cy (precomputed click center, in CSS pixels) and ancestor context. Pick one and call click({x: candidate.cx, y: candidate.cy}) — no arithmetic needed. Use the ancestor field to disambiguate (e.g. an alertdialog's Cancel vs a form's Cancel sit in different containers). Do NOT retry click({text: "${params.text}"}) — it will fail the same way.`,
+            error: `Ambiguous text match for "${params.text}" (mode=${usedMode}, matches=${matches.length})${_scopeNote}. ${candidates.length} candidates returned with cx/cy (precomputed click center, in CSS pixels) and ancestor context. Pick one and call click({x: candidate.cx, y: candidate.cy, coordinate_space: "css"}) — no arithmetic needed. Use the ancestor field to disambiguate (e.g. an alertdialog's Cancel vs a form's Cancel sit in different containers). Do NOT retry click({text: "${params.text}"}) — it will fail the same way.`,
             candidates,
           };
+          }
         }
       }
       if (!el) {
@@ -1823,7 +2006,11 @@
             if (/^(INPUT|TEXTAREA|SELECT)$/i.test(ns.tagName)) target = ns;
             else target = ns.querySelector('input,textarea,select');
           }
-          if (target) { target.focus(); resolved = target; }
+          if (target) {
+            if (actionDeadlineExpired()) return deadlineFailure();
+            target.focus();
+            resolved = target;
+          }
         }
         el = _resolveInteractiveAncestor(resolved);
       }
@@ -1834,9 +2021,17 @@
       el = interactive[params.index];
       if (!el) return { ..._staleIndexError(params.index, interactive), dispatched: false };
     } else if (params.x != null && params.y != null) {
-      el = document.elementFromPoint(params.x, params.y);
+      el = _shadowAwareElementFromPoint(params.x, params.y);
     }
 
+    // A selector miss is a discovery failure, not a changed bound target. Do
+    // not consume the one-shot toolbar binding when no element was resolved;
+    // the caller's advised re-read/retry must still be able to bind a target.
+    if (params.selector && !el) {
+      return { success: false, dispatched: false, error: 'Element not found' };
+    }
+
+    if (actionDeadlineExpired()) return deadlineFailure();
     if (!_consumeDispatchBinding(params.dispatchBinding?.token, el)) {
       return {
         success: false,
@@ -1846,6 +2041,7 @@
         error: 'The click target changed after the rich-text toolbar safety preflight. Re-read the page and retry.',
       };
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
 
     // ── Auto-select: if click text matches a <select> option, select it ──
     // Runs when text matching resolved NO element, resolved the <select>
@@ -1885,12 +2081,18 @@
         if (sel.selectedIndex === match.index) {
           return { success: true, method: 'select-already-set', selectedText: match.text.trim(), selectedValue: match.value };
         }
+        if (actionDeadlineExpired()) return deadlineFailure();
         sel.focus();
+        if (actionDeadlineExpired()) return deadlineFailure();
         const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+        dispatched = true;
         if (nativeSetter) nativeSetter.call(sel, match.value);
         else sel.value = match.value;
+        if (actionDeadlineExpired()) return deadlineFailure();
         sel.dispatchEvent(new Event('input', { bubbles: true }));
+        if (actionDeadlineExpired()) return deadlineFailure();
         sel.dispatchEvent(new Event('change', { bubbles: true }));
+        if (actionDeadlineExpired()) return deadlineFailure();
         return { success: true, method: 'auto-select', selectedText: match.text.trim(), selectedValue: match.value };
       }
     }
@@ -1902,7 +2104,9 @@
     // controlled programmatically. Return error so the model uses type_text.
     // Do NOT scrollIntoView (hidden selects inside modals scroll to wrong position).
     if (el instanceof HTMLSelectElement) {
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.focus();
+      if (actionDeadlineExpired()) return deadlineFailure();
       const options = Array.from(el.options).map(o => o.text.trim());
       return {
         success: false,
@@ -1923,7 +2127,9 @@
         if (anc) nearbySel = anc.querySelector('select');
       }
       if (nearbySel) {
+        if (actionDeadlineExpired()) return deadlineFailure();
         nearbySel.focus();
+        if (actionDeadlineExpired()) return deadlineFailure();
         const options = Array.from(nearbySel.options).map(o => o.text.trim());
         return {
           success: false,
@@ -1937,7 +2143,10 @@
 
     // Do NOT scrollIntoView on SELECT elements (hidden selects in modals cause scroll jumps)
     if (el.tagName !== 'SELECT') {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (actionDeadlineExpired()) return deadlineFailure();
+      // BiDi validates the target in the same turn. A smooth scroll leaves a
+      // transient offscreen geometry window where that validation must fail.
+      el.scrollIntoView({ behavior: params._bidiPrepare ? 'instant' : 'smooth', block: 'center' });
     }
 
     // Occlusion hit-test: for text/selector/index clicks, verify that the
@@ -1971,7 +2180,7 @@
             return {
               success: false,
               dispatched: false,
-              error: `Click blocked: an overlay is covering the target. Topmost element at (${cx}, ${cy}) is <${blockerInfo}>${blockerContainer}, not your target <${el.tagName.toLowerCase()}>. Dismiss the overlay (press Escape, click its close button, or complete the modal flow) before retrying. If you're sure you want to force the click, use click({x: ${cx}, y: ${cy}}) — that will hit whatever's on top.`,
+              error: `Click blocked: an overlay is covering the target. Topmost element at (${cx}, ${cy}) is <${blockerInfo}>${blockerContainer}, not your target <${el.tagName.toLowerCase()}>. Dismiss the overlay (press Escape, click its close button, or complete the modal flow) before retrying. If you're sure you want to force the click, use click({x: ${cx}, y: ${cy}, coordinate_space: "css"}) — that will hit whatever's on top.`,
               occluded: true,
               occludedBy: { tag: topmost.tagName.toLowerCase(), text: txt, cx, cy },
             };
@@ -1988,7 +2197,22 @@
       if (_isFocusableElement(el)) _focusElement(el);
     }
 
+    if (actionDeadlineExpired()) return deadlineFailure();
+    if (params?.messageRecipientGuardRequired === true) {
+      const recipientValidation = _consumeMessageRecipientDispatchBinding(params, el);
+      if (recipientValidation.success !== true) return recipientValidation;
+      if (actionDeadlineExpired()) return deadlineFailure();
+    }
+    if (actionDeadlineExpired()) return deadlineFailure();
     const clickedRect = rememberInteractionPoint(el, 'click');
+    if (actionDeadlineExpired()) return deadlineFailure();
+    if (params._bidiPrepare) {
+      const coordinateClick = !params.text && !params.selector && params.index == null && Number.isFinite(params.x) && Number.isFinite(params.y);
+      return { ...prepareBidiTarget(el, params._bidiPrepare),
+        ...(coordinateClick ? { point: { x: Math.round(params.x), y: Math.round(params.y) } } : {}),
+        _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId };
+    }
+    dispatched = true;
     const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
     if (filePickerGuard.blocked) {
       return {
@@ -1996,6 +2220,7 @@
         ...(clickedRect ? { rect: clickedRect } : {}),
       };
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
     const filePickerGuardMeta = filePickerGuard.guardId
       ? { _filePickerGuardId: filePickerGuard.guardId }
       : {};
@@ -2008,6 +2233,7 @@
     } else if (_isTypeableElement(el) && _isShadowHostForTarget(postActive, el)) {
       _rememberEditableTarget(el);
     } else if (!_isMeaningfulFocus(postActive) && _isTypeableElement(el)) {
+      if (actionDeadlineExpired()) return deadlineFailure();
       _focusElement(el);
       _rememberEditableTarget(el);
     } else if (_isMeaningfulFocus(postActive)) {
@@ -2015,7 +2241,9 @@
     }
 
     if (!targetIsSubmitControl && postActive && postActive !== el && postActive instanceof HTMLSelectElement) {
+      if (actionDeadlineExpired()) return deadlineFailure();
       postActive.blur();
+      if (actionDeadlineExpired()) return deadlineFailure();
       postActive.focus(); // close native popup, keep focus
       const postOpts = Array.from(postActive.options).map(o => o.text.trim());
       return {
@@ -2036,7 +2264,7 @@
     const ident = `${el.tagName}|${(el.innerText || '').slice(0, 50)}|${location.href}`;
     let warning;
     if (_lastClickIdent === ident && !isEditableTarget) {
-      warning = 'Same element clicked again with no page change. Try click({x, y}) with coordinates from a screenshot, or click({index: N}) from get_interactive_elements.';
+      warning = 'Same element clicked again with no page change. Prefer click({index: N}) from get_interactive_elements. For a screenshot point, inspect the current viewport and call click({x, y, coordinate_space: "screenshot", capture_id: "..."}).';
     }
     _lastClickIdent = ident;
     return {
@@ -2053,11 +2281,152 @@
 
   let _lastTypeFieldIdent = null;
 
-  function typeText(params) {
-    return _typeTextInner(params);
+  function typeText(params, actionDeadlineExpired = () => false) {
+    return _typeTextInner(params, actionDeadlineExpired);
   }
 
-  async function _typeTextInner(params) {
+  async function _insertContentEditableText(el, text, clear, actionDeadlineExpired = () => false) {
+    const doc = el.ownerDocument;
+    let dispatched = false;
+    const failure = (error, extra = {}) => ({
+      success: false,
+      verified: false,
+      dispatched,
+      ...(dispatched
+        ? { mutationMayHaveOccurred: true, outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+      error,
+      ...extra,
+    });
+    const expired = () => failure('The page action deadline expired during rich-text entry.', { deadlineExpired: true });
+    if (actionDeadlineExpired()) return expired();
+    if (typeof doc.execCommand !== 'function') {
+      return failure('This editor has no supported native text insertion path. No content was changed.');
+    }
+    const selection = el.getRootNode?.().getSelection?.() || doc.defaultView?.getSelection();
+    if (!selection || !el.isConnected) return failure('The editable target is no longer available.');
+    // Native editing represents line feeds with <br> and block nodes. Read
+    // logical line boundaries rather than CSS-dependent innerText paragraph
+    // spacing; a lone <br> is the native caret placeholder of an empty block.
+    const blockTags = new Set(['DIV', 'P', 'LI', 'PRE', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+    const readText = (node) => {
+      if (node.nodeType === 3) return node.nodeValue || '';
+      if (node.nodeType !== 1) return '';
+      if (node.tagName === 'BR') return '\n';
+      const children = Array.from(node.childNodes);
+      if (children.length === 1 && children[0].nodeName === 'BR'
+          && (node === el || blockTags.has(node.tagName))) return '';
+      // Firefox leaves one trailing caret <br> after native line insertion.
+      // Additional <br> nodes before it remain real (including blank lines).
+      if (children.at(-1)?.nodeName === 'BR' && (node === el || blockTags.has(node.tagName))) children.pop();
+      return children.map((child, index) => {
+        const previousChild = children[index - 1];
+        const boundary = index > 0 && previousChild.nodeName !== 'BR'
+          && (blockTags.has(child.nodeName) || blockTags.has(previousChild.nodeName));
+        return (boundary ? '\n' : '') + readText(child);
+      }).join('');
+    };
+    const previous = readText(el);
+    const selectContents = (collapse) => {
+      const range = doc.createRange();
+      let container = el;
+      if (collapse) {
+        // End the append inside the last editable block. Collapsing at the
+        // root end inserts a new sibling after the paragraph on Firefox.
+        while (container.lastChild?.nodeType === 1
+            && container.lastChild.isContentEditable
+            && container.lastChild.nodeName !== 'BR') container = container.lastChild;
+      }
+      range.selectNodeContents(container);
+      if (collapse) range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    };
+    const edit = (command, inputType, data = null) => {
+      const htmlBefore = el.innerHTML;
+      const rangeBefore = selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+      if (!rangeBefore || !el.contains(rangeBefore.startContainer) || !el.contains(rangeBefore.endContainer)) {
+        return failure('The text selection moved outside the intended editor before insertion.');
+      }
+      // execCommand is the native editing fallback: it preserves markup and
+      // the editor's undo stack. Its beforeinput behavior differs by browser,
+      // so offer the page a cancellable gate BEFORE invoking the command.
+      const accepted = el.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true, composed: true, cancelable: true, inputType, data,
+      }));
+      if (el.innerHTML !== htmlBefore || !el.isConnected) {
+        dispatched = true;
+        return failure('The editor changed while handling beforeinput. No additional text was dispatched.');
+      }
+      if (!accepted) return failure('The editor cancelled text entry before mutation.', { cancelled: true });
+      if (actionDeadlineExpired()) return expired();
+      const range = selection.rangeCount ? selection.getRangeAt(0) : null;
+      let active = doc.activeElement;
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+      if (!range || !rangeBefore || (active !== el && !el.contains(active))
+          || range.startContainer !== rangeBefore.startContainer || range.startOffset !== rangeBefore.startOffset
+          || range.endContainer !== rangeBefore.endContainer || range.endOffset !== rangeBefore.endOffset) {
+        return failure('The editor focus or selection changed before text insertion.');
+      }
+      dispatched = true;
+      try {
+        if (!doc.execCommand(command, false, data)) {
+          return failure('The editor rejected native text entry. No DOM replacement was attempted.');
+        }
+      } catch (error) {
+        return failure(`Native text entry failed: ${error?.message || String(error)}`);
+      }
+      return null;
+    };
+
+    const hasNonTextContent = () => !!el.querySelector('img, svg, canvas, video, audio, iframe, object, embed, [contenteditable="false"]');
+    const mustClear = clear && (previous !== '' || hasNonTextContent());
+    if (mustClear) {
+      selectContents(false);
+      const deletionFailure = edit('delete', 'deleteContentBackward');
+      if (deletionFailure) return deletionFailure;
+      await new Promise(resolve => setTimeout(resolve, 30));
+      if (actionDeadlineExpired()) return expired();
+      if (!el.isConnected || readText(el) !== '' || hasNonTextContent()) {
+        return failure('The editor could not be proven empty. No replacement text was inserted.');
+      }
+    }
+    if (text) {
+      // Keep the legacy append contract, but retain every existing rich-text
+      // node instead of assigning textContent for the entire editor.
+      if (!mustClear) selectContents(true);
+      const insertionFailure = edit('insertText', 'insertText', text);
+      if (insertionFailure) return insertionFailure;
+    }
+    await new Promise(resolve => setTimeout(resolve, 30));
+    if (actionDeadlineExpired()) return expired();
+    const value = readText(el);
+    const expected = clear ? text : previous + text;
+    // Native editing encodes boundary/repeated spaces as nonbreaking spaces.
+    const normalize = value => value.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ');
+    if (!el.isConnected || normalize(value) !== normalize(expected)) {
+      return failure('The complete settled rich-text value could not be verified exactly.');
+    }
+    return {
+      success: true, verified: true, dispatched,
+      ...(!dispatched ? { noDispatch: true, noop: true } : {}),
+      method: 'contenteditable-native', value: value.slice(0, 100), fieldMeta: _fieldMeta(el),
+    };
+  }
+
+  async function _typeTextInner(params, actionDeadlineExpired = () => false) {
+    let dispatched = false;
+    const deadlineFailure = () => ({
+      success: false,
+      dispatched,
+      ...(dispatched
+        ? { outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+      deadlineExpired: true,
+      error: dispatched
+        ? 'The page action deadline expired during text dispatch.'
+        : 'The page action deadline expired before text dispatch.',
+    });
     const noDispatchFailure = (error, extra = {}) => ({
       success: false,
       error,
@@ -2065,6 +2434,7 @@
       dispatched: false,
       noDispatch: true,
     });
+    if (actionDeadlineExpired()) return deadlineFailure();
     const exactInsertion = (before, after, inserted) => _richTextToolbarExactInsertion(before, after, inserted);
     const verifyValue = async (target, expected, clear, beforeValue) => {
       await new Promise(resolve => setTimeout(resolve, 30));
@@ -2122,22 +2492,26 @@
       return noDispatchFailure(`Cannot type into <${tag}> — it is not an editable field. If you wanted to activate it, use click instead. If the real target is a nearby input, click the input first, then call type_text({text: "..."}) with no selector.`);
     }
 
+    // Empty appends mutate nothing: skip focus/dispatch entirely and report
+    // a proven no-op so no uncertainty debt is recorded downstream.
+    // (clear:true still empties below and takes the verified path. Native
+    // selects are excluded: choosing an empty-valued option IS a mutation.)
+    if (!typedText && !params.clear && !(el instanceof HTMLSelectElement)) {
+      return { success: true, dispatched: false, noDispatch: true, noop: true, method: 'noop-empty-append' };
+    }
+
+    if (actionDeadlineExpired()) return deadlineFailure();
     el.focus();
+    if (actionDeadlineExpired()) return deadlineFailure();
     showAgentWorkingTarget(el, 'type_text');
     const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+    const routeHrefBeforeType = location.href;
 
-    // contenteditable path (Notion, Google Docs comments, Lexical,
-    // ProseMirror, Slate, Draft — all need the beforeinput → input →
-    // change sequence with a real inputType, or their internal state
-    // won't update).
+    if (params._bidiPrepare && !(el instanceof HTMLSelectElement)) return prepareBidiTarget(el, params._bidiPrepare);
+
+    // Rich editors must retain their native node structure and editing events.
     if (el.isContentEditable) {
-      if (params.clear) el.textContent = '';
-      el.textContent += params.text;
-      el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: params.text }));
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: params.text }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
-      return { success: true, ...(verified === true ? { verified: true } : {}), method: 'contenteditable', value: el.textContent.slice(0, 100) };
+      return _insertContentEditableText(el, typedText, params.clear === true, actionDeadlineExpired);
     }
 
     // <select>: match by value or option text.
@@ -2152,15 +2526,22 @@
         return noDispatchFailure(`No <option> matching "${params.text}" in select.`);
       }
       const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       if (nativeSetter) nativeSetter.call(el, match.value);
       else el.value = match.value;
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.dispatchEvent(new Event('input', { bubbles: true }));
+      if (actionDeadlineExpired()) return deadlineFailure();
       el.dispatchEvent(new Event('change', { bubbles: true }));
       await new Promise(resolve => setTimeout(resolve, 30));
+      if (actionDeadlineExpired()) return deadlineFailure();
       return { success: true, ...(el.isConnected && el.value === match.value ? { verified: true } : {}), method: 'select', value: el.value };
     }
 
     if (params.clear) {
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       el.value = '';
     }
 
@@ -2170,25 +2551,33 @@
       : HTMLInputElement.prototype;
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
 
+    if (actionDeadlineExpired()) return deadlineFailure();
+    dispatched = true;
     if (nativeInputValueSetter) {
       nativeInputValueSetter.call(el, (params.clear ? '' : (el.value || '')) + params.text);
     } else {
       el.value = (params.clear ? '' : (el.value || '')) + params.text;
     }
 
+    if (actionDeadlineExpired()) return deadlineFailure();
     el.dispatchEvent(new Event('input', { bubbles: true }));
+    if (actionDeadlineExpired()) return deadlineFailure();
     el.dispatchEvent(new Event('change', { bubbles: true }));
     const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
+    if (actionDeadlineExpired()) return deadlineFailure();
 
-    // Duplicate-field detection
-    const fieldIdent = `${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
+    // Duplicate-field detection. Input handlers can synchronously start a
+    // same-document navigation, so never attribute the old field to the route
+    // that happens to be current after verification yields.
+    const routeStayedCurrent = location.href === routeHrefBeforeType;
+    const fieldIdent = `${routeHrefBeforeType}|${el.tagName}|${el.name || el.id || ''}|${params.selector || 'focused'}`;
     let typeWarning;
-    if (_lastTypeFieldIdent === fieldIdent) {
+    if (routeStayedCurrent && _lastTypeFieldIdent === fieldIdent) {
       typeWarning = 'You typed into the same field twice in a row. If you intended to fill a DIFFERENT field, click it first before calling type_text.';
     }
-    _lastTypeFieldIdent = fieldIdent;
+    _lastTypeFieldIdent = routeStayedCurrent ? fieldIdent : null;
 
-    return { success: true, ...(verified === true ? { verified: true } : {}), value: (el.value || '').slice(0, 100), ...(typeWarning ? { warning: typeWarning } : {}) };
+    return { success: true, ...(verified === true ? { verified: true } : {}), value: (el.value || '').slice(0, 100), fieldMeta: _fieldMeta(el), ...(typeWarning ? { warning: typeWarning } : {}) };
   }
 
   /**
@@ -2329,7 +2718,18 @@
   /**
    * Press supported keyboard keys.
    */
-  function pressKeys(params) {
+  function pressKeys(params, actionDeadlineExpired = () => false) {
+    let dispatched = false;
+    const deadlineFailure = () => ({
+      success: false,
+      deadlineExpired: true,
+      ...(dispatched
+        ? { dispatched: true, outcomeUnknown: true, retryable: false }
+        : { dispatched: false, noDispatch: true, outcomeUnknown: false, retryable: true }),
+      error: dispatched
+        ? 'The page action deadline expired during key dispatch.'
+        : 'The page action deadline expired before key dispatch.',
+    });
     const key = params?.key;
     const repeatRaw = Number(params?.repeat ?? 1);
     const repeat = Math.max(1, Math.min(3, Number.isFinite(repeatRaw) ? Math.floor(repeatRaw) : 1));
@@ -2368,9 +2768,17 @@
       const validation = _consumeFocusedDispatchBinding(params);
       if (validation.success !== true) return validation;
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
+    if (params?.messageRecipientGuardRequired === true) {
+      const recipientValidation = _consumeMessageRecipientDispatchBinding(params, focusedTarget);
+      if (recipientValidation.success !== true) return recipientValidation;
+    }
+    if (actionDeadlineExpired()) return deadlineFailure();
     const target = (focusedTarget && focusedTarget !== document.body && focusedTarget !== document.documentElement)
       ? focusedTarget
       : document;
+
+    if (params._bidiPrepare) return prepareBidiTarget(focusedTarget || document.body, params._bidiPrepare);
 
     const moveTabFocus = () => {
       const focusables = Array.from(document.querySelectorAll(
@@ -2379,11 +2787,13 @@
         const style = window.getComputedStyle(el);
         return style.display !== 'none' && style.visibility !== 'hidden';
       });
-      if (focusables.length === 0) return;
+      if (focusables.length === 0) return !actionDeadlineExpired();
       const active = document.activeElement;
       const currentIndex = focusables.indexOf(active);
       const nextIndex = (currentIndex + 1 + focusables.length) % focusables.length;
+      if (actionDeadlineExpired()) return false;
       try { focusables[nextIndex].focus(); } catch (e) {}
+      return !actionDeadlineExpired();
     };
 
     for (let i = 0; i < repeat; i++) {
@@ -2409,9 +2819,16 @@
       // attached at document/window level already receive them — dispatching
       // the same event object on document again would fire those listeners
       // twice per key (double-advancing ARIA listboxes, menus, etc.).
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       target.dispatchEvent(down);
+      // A keydown listener may run across the deadline. Always release the
+      // synthetic key before returning the partial-dispatch timeout so pages
+      // that track held keys are not left in a stuck state.
+      const expiredAfterKeydown = actionDeadlineExpired();
       target.dispatchEvent(up);
-      if (key === 'Tab') moveTabFocus();
+      if (expiredAfterKeydown) return deadlineFailure();
+      if (key === 'Tab' && !moveTabFocus()) return deadlineFailure();
     }
 
     return { success: true, dispatched: true, key, repeat, method: 'keyboardevent', focusedTag: document.activeElement?.tagName || null };
@@ -2420,7 +2837,20 @@
   /**
    * Scroll the page.
    */
-  function legacyScrollPage(params) {
+  function legacyScrollPage(params, actionDeadlineExpired = () => false) {
+    let dispatched = false;
+    const deadlineFailure = () => ({
+      success: false,
+      dispatched,
+      ...(dispatched
+        ? { outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+      deadlineExpired: true,
+      error: dispatched
+        ? 'The page action deadline expired during scroll dispatch.'
+        : 'The page action deadline expired before scroll dispatch.',
+    });
+    if (actionDeadlineExpired()) return deadlineFailure();
     const amount = params.amount || 500;
     const direction = params.direction || 'down';
 
@@ -2486,13 +2916,18 @@
     }
 
     if (target) {
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       if (direction === 'down') target.scrollBy(0, amount);
       else if (direction === 'up') target.scrollBy(0, -amount);
       else if (direction === 'top') target.scrollTo(0, 0);
       else if (direction === 'bottom') target.scrollTo(0, target.scrollHeight);
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
 
     // Always also scroll the window in case both are needed.
+    if (actionDeadlineExpired()) return deadlineFailure();
+    dispatched = true;
     if (direction === 'down') window.scrollBy(0, amount);
     else if (direction === 'up') window.scrollBy(0, -amount);
     else if (direction === 'top') window.scrollTo(0, 0);
@@ -2507,7 +2942,20 @@
     };
   }
 
-  function smartScrollPage(params) {
+  function smartScrollPage(params, actionDeadlineExpired = () => false) {
+    let dispatched = false;
+    const deadlineFailure = () => ({
+      success: false,
+      dispatched,
+      ...(dispatched
+        ? { outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+      deadlineExpired: true,
+      error: dispatched
+        ? 'The page action deadline expired during scroll dispatch.'
+        : 'The page action deadline expired before scroll dispatch.',
+    });
+    if (actionDeadlineExpired()) return deadlineFailure();
     params = params || {};
     const rawAmount = Number(params.amount);
     const amount = Number.isFinite(rawAmount) && rawAmount > 0 ? rawAmount : 500;
@@ -2666,13 +3114,18 @@
     let containerAfter = null;
     if (target) {
       containerBefore = target.scrollTop;
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       scrollElementInstant(target, direction, amount);
       containerAfter = target.scrollTop;
     }
+    if (actionDeadlineExpired()) return deadlineFailure();
 
     const movedContainer = target && Math.abs((containerAfter || 0) - (containerBefore || 0)) > 0.5;
     const shouldScrollWindow = params.alsoWindow === true || !movedContainer;
     if (shouldScrollWindow && windowCanMove) {
+      if (actionDeadlineExpired()) return deadlineFailure();
+      dispatched = true;
       if (direction === 'down') window.scrollBy(0, amount);
       else if (direction === 'up') window.scrollBy(0, -amount);
       else if (direction === 'top') window.scrollTo(0, 0);
@@ -2720,11 +3173,11 @@
     };
   }
 
-  function scrollPage(params) {
+  function scrollPage(params, actionDeadlineExpired = () => false) {
     try {
-      return smartScrollPage(params);
+      return smartScrollPage(params, actionDeadlineExpired);
     } catch (e) {
-      const fallback = legacyScrollPage(params || {});
+      const fallback = legacyScrollPage(params || {}, actionDeadlineExpired);
       return {
         ...fallback,
         warning: `Smart scroll targeting failed (${e && e.message || e}); fell back to legacy window/container scroll.`,
@@ -3054,15 +3507,41 @@
 
   const SET_FIELD_VERIFY_DELAY_MS = 80;
 
-  function _setFieldValueMatches(actual, previous, text, clear, normalizeNewlines = false) {
+  function _setFieldValueMatches(actual, previous, text, clear, normalizeNewlines = false, semanticNewlines = false) {
     const expected = clear ? text : previous + text;
     if (!normalizeNewlines) return actual === expected;
     const normalize = value => String(value).replace(/\r\n?/g, '\n');
     return normalize(actual) === normalize(expected);
   }
 
+  function readProseMirrorText(el) {
+    if (!el?.isContentEditable || !el.classList?.contains('ProseMirror')) return null;
+    // Paragraphs are document line breaks, not innerText's visual spacing.
+    // ProseMirror's final BR is a caret placeholder, not another hard break.
+    const read = node => {
+      if (node.nodeType === 3) return node.nodeValue || '';
+      if (node.nodeType !== 1) return '';
+      if (node.tagName === 'BR') return node.classList?.contains('ProseMirror-trailingBreak') ? '' : '\n';
+      return Array.from(node.childNodes).map(read).join('');
+    };
+    const children = Array.from(el.childNodes);
+    if (!children.every(node => node.nodeType === 1 && node.tagName === 'P')) return null;
+    return children.map(read).join('\n');
+  }
+
   function _editableTextValue(el) {
-    return typeof el.innerText === 'string' ? el.innerText : (el.textContent || '');
+    const semantic = readProseMirrorText(el);
+    return semantic !== null ? semantic : (typeof el.innerText === 'string' ? el.innerText : (el.textContent || ''));
+  }
+
+  // Synthetic (isTrusted:false) Enter events never trigger native submission —
+  // they only reach the page's own keydown listeners. A non-combobox field
+  // inside a form that has requestSubmit therefore needs a native submit as
+  // its only reliable commit path; comboboxes are committed by page JS
+  // listeners instead, because submitting the enclosing form while a picker
+  // popup is open is usually wrong.
+  function _setFieldUsesNativeSubmit(isCombobox, isContentEditable, form) {
+    return !isCombobox && !isContentEditable && !!form && typeof form.requestSubmit === 'function';
   }
 
   // Above this length the per-candidate rescan below stops being worth its
@@ -3169,6 +3648,14 @@
         tag,
         type: fieldType,
         contentEditable: !!el.isContentEditable,
+        // Locale-independent file-editor structure: CodeMirror (GitHub's
+        // file editor) marks its editable lineage with stable classes that
+        // survive UI translation, unlike accessible labels.
+        codeMirror: (() => {
+          try {
+            return !!el.isContentEditable && !!el.closest?.('.cm-content, .cm-editor, .CodeMirror');
+          } catch { return false; }
+        })(),
         name: el.getAttribute ? el.getAttribute('name') : null,
         id: elId,
         role: el.getAttribute ? el.getAttribute('role') : null,
@@ -3185,37 +3672,49 @@
     } catch { return null; }
   }
 
-  async function _retryFieldWithExecCommand(el, expected) {
+  // Derive a document-unique selector for a verified field so the agent can
+  // re-digest the SAME element later (e.g. pre-submit proof refresh after
+  // focus moved). Each candidate is accepted only when it resolves back
+  // to exactly this element — never a hard-coded guess that could match a
+  // different field. Returns null when nothing identifies it uniquely.
+  function _stableFieldSelector(el) {
     try {
-      el.focus({ preventScroll: true });
+      if (!el || el.nodeType !== 1 || !el.isConnected) return null;
+      const resolvesUniquelyToEl = (selector) => {
+        try {
+          if (!selector) return false;
+          const matches = document.querySelectorAll(selector);
+          return matches.length === 1 && matches[0] === el;
+        } catch { return false; }
+      };
+      const quoted = (value) => String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const elId = el.id || null;
+      if (elId) {
+        let selector = null;
+        try {
+          selector = (window.CSS && typeof window.CSS.escape === 'function')
+            ? `#${window.CSS.escape(elId)}`
+            : `#${quoted(elId)}`;
+        } catch { selector = null; }
+        if (selector && resolvesUniquelyToEl(selector)) return selector;
+      }
+      const tag = String(el.tagName || '').toLowerCase();
+      const name = typeof el.getAttribute === 'function' ? el.getAttribute('name') : null;
+      if (tag && name) {
+        const selector = `${tag}[name="${quoted(name)}"]`;
+        if (resolvesUniquelyToEl(selector)) return selector;
+      }
+      const ariaLabel = typeof el.getAttribute === 'function' ? el.getAttribute('aria-label') : null;
+      if (tag && ariaLabel) {
+        const selector = `${tag}[aria-label="${quoted(ariaLabel)}"]`;
+        if (resolvesUniquelyToEl(selector)) return selector;
+      }
       if (el.isContentEditable) {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      } else if (typeof el.select === 'function') {
-        el.select();
-      } else if (typeof el.setSelectionRange === 'function') {
-        el.setSelectionRange(0, String(el.value || '').length);
+        const selector = '[contenteditable="true"]';
+        if (resolvesUniquelyToEl(selector)) return selector;
       }
-      const inserted = document.execCommand('insertText', false, expected);
-      if (!inserted) {
-        if (el.isContentEditable) {
-          el.textContent = expected;
-        } else {
-          const proto = el.tagName === 'TEXTAREA'
-            ? window.HTMLTextAreaElement.prototype
-            : window.HTMLInputElement.prototype;
-          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-          if (setter) setter.call(el, expected); else el.value = expected;
-        }
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
-      return true;
-    } catch { return false; }
+      return null;
+    } catch { return null; }
   }
 
   function _richTextToolbarContextForElement(el) {
@@ -3315,6 +3814,192 @@
         noDispatch: true,
         retryable: true,
         error: 'The focused target changed after the rich-text toolbar safety preflight. Focus the intended field again and retry.',
+      };
+    }
+    return { success: true, matched: true };
+  }
+
+  const _messageRecipientDispatchBindings = new Map();
+  const _twitterHistoryObservations = new WeakMap();
+
+  function _settledTwitterHistory(log, messageIds = []) {
+    if (!log?.isConnected) return false;
+    let loading = false;
+    let completionSignal = false;
+    try {
+      const ariaBusy = log.getAttribute('aria-busy');
+      loading = ariaBusy === 'true'
+        || !!log.querySelector('[aria-busy="true"],[role="progressbar"]');
+      // X's explicit idle state is a direct history-completion signal. Empty
+      // logs may alternatively use X's own empty-state marker.
+      completionSignal = ariaBusy === 'false'
+        || (!(Array.isArray(messageIds) && messageIds.length > 0)
+          && !!log.querySelector('[data-testid="dm-empty-state"],[data-testid="empty_state"],[data-testid="empty-state"]'));
+    } catch {}
+    if (loading) {
+      _twitterHistoryObservations.delete(log);
+      return false;
+    }
+    if (completionSignal) {
+      _twitterHistoryObservations.delete(log);
+      return true;
+    }
+    // Without an explicit X completion marker, an empty history remains
+    // ambiguous. A nonempty history must retain the same row identities long
+    // enough to rule out an in-progress history append.
+    if (!Array.isArray(messageIds) || messageIds.length === 0) {
+      _twitterHistoryObservations.delete(log);
+      return false;
+    }
+    const now = Date.now();
+    const signature = Array.isArray(messageIds) ? messageIds.join('\u001f') : '';
+    const prior = _twitterHistoryObservations.get(log);
+    const observation = prior?.signature === signature
+      ? { firstSeenAt: prior.firstSeenAt, count: prior.count + 1 }
+      : { firstSeenAt: now, count: 1, signature };
+    _twitterHistoryObservations.set(log, { ...observation, signature });
+    // A nonempty history without an explicit idle marker can append old
+    // messages. Require the same snapshot to survive two reads before using
+    // it as a dispatch baseline.
+    return observation.count >= 2 && now - observation.firstSeenAt >= 300;
+  }
+
+  function _messageRecipientIdentityKey(values = []) {
+    return JSON.stringify(Array.from(new Set((Array.isArray(values) ? values : [])
+      .map(value => {
+        const legacy = typeof value === 'string' || typeof value === 'number';
+        const identity = String(legacy ? value : (value?.identity ?? value?.recipient) ?? '')
+        .replace(/[\u200b-\u200d\ufeff]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+        const role = String(legacy ? 'to' : value?.role || '').trim().toLowerCase();
+        return identity && /^(?:to|cc|bcc)$/.test(role) ? `${role}:${identity}` : '';
+      })
+      .filter(Boolean))).sort());
+  }
+
+  function _messageRecipientDispatchControl(element) {
+    return element?.closest?.(
+      'button,[role="button"],input[type="submit"],input[type="button"],[data-action]'
+    ) || element || null;
+  }
+
+  function _messageRecipientDispatchTargetsMatch(expected, actual) {
+    if (!expected || !actual) return false;
+    if (expected === actual) return true;
+    return _messageRecipientDispatchControl(expected) === _messageRecipientDispatchControl(actual);
+  }
+
+  function _rememberMessageRecipientDispatchBinding(composer, identities, dispatch = {}) {
+    const tool = String(dispatch.tool || '');
+    const actionTarget = dispatch.actionTarget || null;
+    if (!composer?.isConnected || !tool || !actionTarget?.isConnected) return '';
+    const identityKey = _messageRecipientIdentityKey(identities);
+    if (!identityKey || identityKey === '[]') return '';
+    const entropy = new Uint32Array(3);
+    globalThis.crypto.getRandomValues(entropy);
+    const token = `wbmr_${Date.now().toString(36)}_${Array.from(entropy, value => value.toString(36)).join('_')}`;
+    const record = {
+      composer,
+      actionTarget,
+      tool,
+      args: dispatch.args && typeof dispatch.args === 'object' ? { ...dispatch.args } : {},
+      adapterName: String(dispatch.adapterName || ''),
+      expectedRecipients: Array.isArray(dispatch.expectedRecipients)
+        ? dispatch.expectedRecipients.map(value => (
+            value && typeof value === 'object'
+              ? { identity: String(value.identity || ''), role: String(value.role || '') }
+              : { identity: String(value || ''), role: 'to' }
+          )).filter(value => value.identity && /^(?:to|cc|bcc)$/.test(value.role)).slice(0, 16)
+        : [],
+      supportsRecipientSets: dispatch.supportsRecipientSets === true,
+      identityKey,
+      messageBody: String(dispatch.messageBody || ''),
+      messageBodyBaselineCount: Number(dispatch.messageBodyBaselineCount || 0),
+      ...(Array.isArray(dispatch.existingMessageIds) ? { existingMessageIds: [...dispatch.existingMessageIds] } : {}),
+      twitterEmptyConversationBaseline: dispatch.twitterEmptyConversationBaseline === true,
+      gmailComposeFlow: dispatch.gmailComposeFlow === true,
+      composerSubject: String(dispatch.composerSubject || ''),
+      composerSubjectAvailable: dispatch.composerSubjectAvailable === true,
+      pageUrl: location.href,
+      timer: null,
+    };
+    _messageRecipientDispatchBindings.set(token, record);
+    record.timer = setTimeout(() => {
+      if (_messageRecipientDispatchBindings.get(token) === record) {
+        _messageRecipientDispatchBindings.delete(token);
+      }
+    }, 60000);
+    return token;
+  }
+
+  function _consumeMessageRecipientDispatchBinding(params = {}, actualTarget = null) {
+    const token = String(params.messageRecipientDispatchBinding?.token || '');
+    const expected = token ? _messageRecipientDispatchBindings.get(token) : null;
+    if (token) _messageRecipientDispatchBindings.delete(token);
+    if (expected?.timer) clearTimeout(expected.timer);
+    let pointTarget = null;
+    const pointX = Number(params.dispatchPoint?.x);
+    const pointY = Number(params.dispatchPoint?.y);
+    if (Number.isFinite(pointX) && Number.isFinite(pointY)) {
+      try { pointTarget = document.elementFromPoint(pointX, pointY); } catch {}
+    }
+    const dispatchedTarget = actualTarget || pointTarget;
+    if (!expected || !expected.composer?.isConnected || !expected.actionTarget?.isConnected
+      || expected.pageUrl !== location.href
+      || (dispatchedTarget && !_messageRecipientDispatchTargetsMatch(expected.actionTarget, dispatchedTarget))) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_binding_stale',
+        error: 'Message send blocked because the verified composer changed before Enter dispatch. Re-read the active conversation and retry the send once.',
+      };
+    }
+    const live = _probeMessageRecipientGuard({
+      tool: expected.tool,
+      args: expected.args,
+      bindDispatch: false,
+      expectedDispatchTarget: expected.actionTarget,
+      expectedComposer: expected.composer,
+      adapterName: expected.adapterName,
+      expectedRecipients: expected.expectedRecipients,
+      supportsRecipientSets: expected.supportsRecipientSets,
+    });
+    if (live?.dispatchTargetChanged === true) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'recipient_dispatch_binding_stale',
+        error: 'Message send blocked because the verified action target or composer changed before dispatch. Re-read the active conversation and retry the send once.',
+      };
+    }
+    const liveIdentityKey = _messageRecipientIdentityKey(
+      Array.isArray(live?.strongRecipientCandidates)
+        ? live.strongRecipientCandidates
+        : live?.strongIdentityCandidates,
+    );
+    if (live?.success !== true || live?.conclusive !== true || live?.messageSend !== true
+      || liveIdentityKey !== expected.identityKey
+      || !expected.messageBody
+      || live?.messageBody !== expected.messageBody
+      || (expected.existingMessageIds
+        && JSON.stringify(live?.existingMessageIds) !== JSON.stringify(expected.existingMessageIds))
+      || (expected.twitterEmptyConversationBaseline === true
+        && live?.twitterEmptyConversationBaseline !== true)
+      || (expected.gmailComposeFlow === true && live?.gmailComposeFlow !== true)
+      || (expected.composerSubjectAvailable === true
+        && (live?.composerSubjectAvailable !== true || live?.composerSubject !== expected.composerSubject))) {
+      return {
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        messageRecipientGuard: true,
+        reasonCode: 'active_recipient_changed_before_dispatch',
+        error: 'Message send blocked because the active conversation changed after recipient verification. The text may remain in the composer; re-read the visible header before sending.',
       };
     }
     return { success: true, matched: true };
@@ -3538,32 +4223,1293 @@
     }
   }
 
+  // Read-only pre-dispatch probe for adapters that require a verified active
+  // conversation before a message can be sent. It deliberately ignores input
+  // values and ordinary page text: a searched recipient name is not proof that
+  // the corresponding conversation is active.
+  function prepareBidiTarget(el, token) {
+    if (!/^[a-f0-9-]{36}$/.test(token || '') || !el?.isConnected) {
+      return { success: false, dispatched: false, noDispatch: true, error: 'Invalid trusted-input target' };
+    }
+    el.setAttribute('data-webbrain-bidi', token);
+    setTimeout(() => { if (el.getAttribute('data-webbrain-bidi') === token) el.removeAttribute('data-webbrain-bidi'); }, 10000);
+    const rect = el.getBoundingClientRect();
+    return { bidiPrepared: true, success: false, dispatched: false, noDispatch: true, url: location.href,
+      fieldMeta: _fieldMeta(el), rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height } };
+  }
+
+  const _COMPOSER_UTILITY_LABEL_RE = new RegExp(
+    '^(?:save\\s*(?:&|and)?\\s*(?:close|draft|draft\\s*&\\s*close)|save\\s*&\\s*close'
+    + '|minimi[sz]e|exit\\s+full\\s+screen|full\\s+screen|pop-?out|expand|collapse'
+    + '|discard(?:\\s+draft)?|delete\\s+draft|print|check\\s+spelling|plain\\s+text(?:\\s+mode)?'
+    + '|attach(?:\\s+(?:files?|photos?|images?|documents?))?|insert\\s+(?:link|photo|image|file|drive|emoji|signature|contact|table|drawing|note)'
+    + '|emoji|emoticon|bold|italic|underline|strikethrough|align|numbered\\s+list|bulleted\\s+list'
+    + '|indent|outdent|undo|redo|more\\s+options|formatting(?:\\s+options)?|text\\s+formatting'
+    + '|remove\\s+formatting|font|text\\s+color|highlight|edit\\s+subject|confidential\\s+mode)',
+    'i',
+  );
+
+  function _isComposerUtilityControl(el) {
+    if (!el) return false;
+    try {
+      const label = String(
+        el.getAttribute?.('aria-label')
+        || el.getAttribute?.('title')
+        || el.getAttribute?.('data-tooltip')
+        || el.value
+        || el.innerText
+        || el.textContent
+        || '',
+      ).replace(/\s+/g, ' ').trim();
+      if (label && _COMPOSER_UTILITY_LABEL_RE.test(label)) return true;
+      const formattingScope = el.closest?.('[role="toolbar"],[aria-label*="formatting" i],[aria-label*="format" i]');
+      if (formattingScope && formattingScope !== el) return true;
+      return !!el.hasAttribute?.('aria-pressed');
+    } catch {
+      return false;
+    }
+  }
+
+  function _probeMessageRecipientGuard(params = {}) {
+    try {
+      const tool = String(params.tool || '');
+      const observationOnly = tool === 'observe_active_conversation';
+      const args = params.args && typeof params.args === 'object' ? params.args : {};
+      const compact = (value, max = 240) => String(value ?? '')
+        .replace(/[\u200b-\u200d\ufeff]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, max);
+      const normalizedIdentity = (value) => {
+        const identity = compact(value, 240);
+        if (!identity) return '';
+        try { return identity.normalize('NFKC').toLocaleLowerCase(); } catch { return identity.toLowerCase(); }
+      };
+      const visible = (el) => {
+        if (!el || el.nodeType !== 1 || !el.isConnected) return false;
+        try {
+          for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
+            if (ancestor.getAttribute?.('aria-hidden') === 'true') return false;
+          }
+          const style = getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && rect.width > 0
+            && rect.height > 0;
+        } catch {
+          return false;
+        }
+      };
+      const editable = (el) => {
+        if (!el || el.nodeType !== 1) return false;
+        const tag = String(el.tagName || '').toLowerCase();
+        const type = String(el.getAttribute?.('type') || 'text').toLowerCase();
+        const role = String(el.getAttribute?.('role') || '').toLowerCase();
+        const textInput = tag === 'input'
+          && !/^(button|submit|reset|checkbox|radio|file|image|range|color|hidden)$/.test(type);
+        return !!el.isContentEditable
+          || tag === 'textarea'
+          || textInput
+          || role === 'textbox'
+          || role === 'searchbox';
+      };
+      // Must stay identical to the agent's _workflowMessageBody: the probe
+      // compares page text against a body the agent already normalized, and a
+      // body whose paragraphs were collapsed must not match the requested one.
+      const normalizedMessageBody = (value) => {
+        let text = String(value ?? '')
+          .replace(/[\u200b-\u200d\ufeff]/g, '')
+          .replace(/\r\n?/g, '\n')
+          .split('\n')
+          .map(line => line.replace(/\s+/g, ' ').trim())
+          .filter(Boolean)
+          .join('\n');
+        try { text = text.normalize('NFKC'); } catch {}
+        return text.length <= 20000 ? text : '';
+      };
+      const composerMessageBody = (el) => {
+        try {
+          return normalizedMessageBody('value' in el ? el.value : (el.innerText || el.textContent || ''));
+        } catch {
+          return '';
+        }
+      };
+      const expectedRecipientIdentities = (Array.isArray(params.expectedRecipients)
+        ? params.expectedRecipients
+        : [])
+        .map(value => normalizedIdentity(value && typeof value === 'object' ? value.identity : value))
+        .filter(Boolean);
+      const outgoingMessageContainer = (el) => {
+        let current = el;
+        for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
+          const direction = normalizedIdentity([
+            current.getAttribute?.('data-message-direction'),
+            current.getAttribute?.('data-direction'),
+            current.getAttribute?.('data-message-author-role'),
+            current.getAttribute?.('data-author-role'),
+          ].filter(Boolean).join(' '));
+          const booleanOutgoing = String(
+            current.getAttribute?.('data-outgoing')
+            || current.getAttribute?.('data-is-outgoing')
+            || '',
+          ).toLowerCase();
+          const className = normalizedIdentity(
+            typeof current.className === 'string' ? current.className : '',
+          );
+          const ariaLabel = normalizedIdentity(current.getAttribute?.('aria-label'));
+          if (/\b(?:outgoing|sent|self|own|user|from-me)\b/.test(direction)
+              || booleanOutgoing === 'true'
+              || /(?:^|[-_\s])(?:outgoing|message-out|sent-message|is-sent|from-me|own-message|self-message)(?:$|[-_\s])/.test(className)
+              || /^(?:you(?:\s+sent\b|[:,])|outgoing message\b|sent by you\b)/.test(ariaLabel)) {
+            return current;
+          }
+          if (params.adapterName === 'gmail'
+              && expectedRecipientIdentities.length > 0
+              && (current.hasAttribute?.('data-message-id')
+                || current.hasAttribute?.('data-legacy-message-id'))) {
+            let recipientNodes = [];
+            try {
+              recipientNodes = Array.from(current.querySelectorAll?.(
+                '[email],[data-email],[data-hovercard-id]'
+              ) || []);
+            } catch {}
+            const observedRecipients = new Set(recipientNodes.flatMap(node => [
+              node.getAttribute?.('email'),
+              node.getAttribute?.('data-email'),
+              node.getAttribute?.('data-hovercard-id'),
+            ]).map(normalizedIdentity).filter(Boolean));
+            if (expectedRecipientIdentities.every(identity => observedRecipients.has(identity))) return current;
+          }
+        }
+        return null;
+      };
+      const twitterConversation = params.adapterName === 'twitter'
+        && /^\/i\/chat\/[^/]+\/?$/.test(location.pathname);
+      const twitterLogs = twitterConversation
+        ? Array.from(document.querySelectorAll('[role="log"][data-testid="dm-message-scroller"]')).filter(visible) : [];
+      // Keep all mounted identities, including hidden and pending rows. A
+      // virtualized row becoming visible or an old retry becoming sent must
+      // never look like the message dispatched by this run.
+      const twitterRows = twitterLogs.length === 1
+        ? Array.from(twitterLogs[0].querySelectorAll('[data-testid^="message-"]'))
+            .filter(row => /^message-(?!text-)[a-zA-Z0-9_-]{1,128}$/.test(row.getAttribute('data-testid') || ''))
+        : [];
+      const twitterMessageIds = twitterRows.map(row => row.getAttribute('data-testid'));
+      const twitterHistorySettled = twitterLogs.length === 1
+        && _settledTwitterHistory(twitterLogs[0], twitterMessageIds);
+      const twitterEmptyConversationBaseline = twitterRows.length === 0 && twitterHistorySettled;
+      // A mounted X log can still append older history. Empty conversations
+      // need a positive X completion signal; other histories need that signal
+      // or a stable row snapshot before they become dispatch baselines.
+      const twitterBaselineComplete = twitterLogs.length === 1 && twitterRows.length <= 2000
+        && new Set(twitterMessageIds).size === twitterMessageIds.length
+        && (twitterRows.length > 0 ? twitterHistorySettled : twitterEmptyConversationBaseline);
+      const matchingTwitterMessageIds = expectedBody => {
+        const expected = normalizedMessageBody(expectedBody);
+        if (!expected || !twitterBaselineComplete) return [];
+        return twitterRows.filter(row => visible(row) && row.classList.contains('justify-end')
+          && row.getAttribute('data-send-status') === 'sent')
+          .filter(row => {
+            const body = row.querySelector('[data-testid^="message-text-"] span[dir="auto"]');
+            return visible(body) && normalizedMessageBody(body.innerText || body.textContent) === expected;
+          }).map(row => row.getAttribute('data-testid'));
+      };
+      const matchingMessageBodyCount = (expectedBody, activeComposer = null) => {
+        const expected = normalizedMessageBody(expectedBody);
+        if (!expected) return 0;
+        if (twitterConversation) return matchingTwitterMessageIds(expected).length;
+        let candidates = [];
+        try {
+          candidates = Array.from(document.querySelectorAll(
+            'div,span,p,li,article,[role="listitem"],[data-message-id],[data-legacy-message-id]'
+          )).slice(0, 12000);
+        } catch {
+          return 0;
+        }
+        const matches = candidates.filter((el) => {
+          if (!visible(el) || editable(el)) return false;
+          if (activeComposer && (el === activeComposer || activeComposer.contains?.(el))) return false;
+          if (!outgoingMessageContainer(el)) return false;
+          try {
+            if (el.closest?.('button,[role="button"],[role="alert"],[role="status"],[aria-live],nav,[role="navigation"]')) {
+              return false;
+            }
+          } catch {}
+          return normalizedMessageBody(el.innerText || el.textContent || '') === expected;
+        });
+        // Nested wrappers often repeat the same innerText. Count only the
+        // innermost exact nodes so the before/after cardinality is stable.
+        return matches.filter(el => !matches.some(other => other !== el && el.contains?.(other))).length;
+      };
+      const verifiedNavigationEditable = (el) => {
+        if (!editable(el)) return false;
+        const tag = String(el.tagName || '').toLowerCase();
+        const type = String(el.getAttribute?.('type') || '').toLowerCase();
+        const role = String(el.getAttribute?.('role') || '').toLowerCase();
+        if (role === 'searchbox' || (tag === 'input' && type === 'search')) return true;
+        try {
+          return !!el.closest?.('search,[role="search"],form[role="search"],nav,[role="navigation"]');
+        } catch {
+          return false;
+        }
+      };
+      const active = typeof _deepActiveElement === 'function' ? _deepActiveElement() : document.activeElement;
+
+      let target = null;
+      let dispatchTarget = null;
+      let targetResolved = observationOnly || tool === 'press_keys';
+      if (tool === 'click_ax' || tool === 'set_field') {
+        const refId = String(args.ref_id || '');
+        if (refId && typeof window.__wb_ax_lookup === 'function') target = window.__wb_ax_lookup(refId);
+        targetResolved = !!target;
+      } else if (tool === 'click') {
+        // Match dispatch precedence, modal scope, candidate text and match
+        // mode. A supplied selector must not approve a different text click.
+        if (typeof args.ref_id === 'string' && args.ref_id
+            && typeof window.__wb_ax_lookup === 'function') {
+          target = window.__wb_ax_lookup(args.ref_id);
+        }
+        if (!target && typeof args.text === 'string' && args.text) {
+          const needle = args.text.toLowerCase();
+          const scope = _findTopmostModal() || document;
+          const candidates = _clickTextCandidates(scope);
+          const modes = args.textMatch ? [args.textMatch] : ['exact', 'prefix', 'contains'];
+          for (const mode of modes) {
+            let matches = candidates.filter(({ txt }) => mode === 'exact' ? txt === needle
+              : mode === 'prefix' ? txt.startsWith(needle)
+                : mode === 'contains' ? txt.includes(needle) : false);
+            // Dispatch prefers the sole interactive match over passive labels.
+            // Multiple interactive matches must still stop at this match tier.
+            if (matches.length > 1) {
+              const interactiveMatches = matches.filter(({ e }) => _isInteractive(e));
+              if (interactiveMatches.length === 1) matches = interactiveMatches;
+            }
+            if (matches.length === 1) target = _resolveInteractiveAncestor(matches[0].e);
+            if (matches.length) break;
+          }
+        } else if (!target && typeof args.selector === 'string' && args.selector) {
+          target = safeIndexedQuerySelector(args.selector, args.matchIndex).element;
+        } else if (!target && Number.isInteger(args.index) && args.index >= 0) {
+          target = queryInteractiveForToolIndex()[args.index] || null;
+        } else if (!target && Number.isFinite(args.x) && Number.isFinite(args.y)) {
+          target = _shadowAwareElementFromPoint(args.x, args.y);
+        }
+        targetResolved = !!target;
+      }
+
+      const composerCandidates = [];
+      const addComposer = (el) => {
+        if (editable(el) && visible(el) && !composerCandidates.includes(el)) composerCandidates.push(el);
+      };
+      addComposer(active);
+      addComposer(target);
+      try {
+        for (const el of document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')) {
+          addComposer(el);
+        }
+      } catch {}
+      composerCandidates.sort((a, b) => {
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        return (br.bottom - ar.bottom)
+          || (br.left - ar.left)
+          || ((br.width * br.height) - (ar.width * ar.height));
+      });
+      const viewportHeight = Math.max(0, Number(window.innerHeight) || 0);
+      const twitterComposers = twitterConversation
+        ? composerCandidates.filter(el => el.matches('textarea[data-testid="dm-composer-textarea"]')) : [];
+      const layoutCandidate = twitterConversation
+        ? (twitterComposers.length === 1 ? twitterComposers[0] : null)
+        : composerCandidates[0] || null;
+      const layoutCandidateRect = layoutCandidate?.getBoundingClientRect?.();
+      // A recipient/search field can be the only focused editable while the
+      // real composer is temporarily hidden. Never promote an upper-page
+      // editable into the message composer merely because it is focused.
+      const layoutComposer = layoutCandidate
+        && (!viewportHeight || layoutCandidateRect?.bottom >= viewportHeight * 0.5)
+        ? layoutCandidate
+        : null;
+
+      const independentScrollableRegion = (el, excluded) => {
+        let node = el || null;
+        while (node && node !== document.body) {
+          try {
+            const style = getComputedStyle(node);
+            const overflowY = String(style.overflowY || style.overflow || '').toLowerCase();
+            const scrollable = /^(auto|scroll|overlay)$/.test(overflowY)
+              && Number(node.scrollHeight) > Number(node.clientHeight) + 1;
+            if (scrollable && !(typeof node.contains === 'function' && node.contains(excluded))) return node;
+          } catch {}
+          node = node.parentElement;
+        }
+        return null;
+      };
+      const verifiedConversationSelection = (clicked, composer) => {
+        if (!clicked || !composer || editable(clicked)) return false;
+        const semanticRowSelector = [
+          '[role="option"]',
+          '[role="listitem"]',
+          '[role="treeitem"]',
+          '[role="tab"]',
+          '[aria-selected]',
+          '[aria-current]',
+          '[data-conversation-id]',
+          '[data-thread-id]',
+          '[data-chat-id]',
+        ].join(',');
+        // Prefer the semantic conversation row over a nested action link. A
+        // plain navigation link can itself be the row only when no stronger
+        // row container exists.
+        const row = clicked.closest?.(semanticRowSelector)
+          || clicked.closest?.('a[href]')
+          || null;
+        if (!row || !visible(row) || editable(row)) return false;
+
+        // Reject the entire descendant chain of a nested menu/delete/forward
+        // control. Selector and AX resolution often return a span or SVG
+        // inside the actual button, so checking only the leaf tag/role lets
+        // the click bubble into a consequential row action.
+        if (row !== clicked) {
+          const nestedActionSelector = [
+            'a[href]', 'button', 'input', 'select', 'textarea', 'summary',
+            '[contenteditable="true"]', '[contenteditable=""]',
+            '[role="button"]', '[role="link"]', '[role="menuitem"]',
+            '[role="checkbox"]', '[role="radio"]', '[role="switch"]',
+            '[role="combobox"]', '[role="textbox"]', '[aria-haspopup]',
+            '[onclick]', '[data-action]',
+          ].join(',');
+          const nestedAction = clicked.closest?.(nestedActionSelector) || null;
+          if (nestedAction && nestedAction !== row && row.contains?.(nestedAction)) return false;
+        }
+
+        const role = String(row.getAttribute?.('role') || '').toLowerCase();
+        const tag = String(row.tagName || '').toLowerCase();
+        const hasRowSemantics = /^(option|listitem|treeitem|tab)$/.test(role)
+          || row.hasAttribute?.('aria-selected')
+          || row.hasAttribute?.('aria-current')
+          || ['data-conversation-id', 'data-thread-id', 'data-chat-id']
+            .some(name => compact(row.getAttribute?.(name), 120));
+        const hasNavigationHref = tag === 'a' && compact(row.getAttribute?.('href'), 500);
+        if (!hasRowSemantics && !hasNavigationHref) return false;
+
+        // Overflow is strong evidence when the rail has enough rows to scroll;
+        // semantic row identity plus full separation from the composer also
+        // covers short conversation lists that do not currently overflow.
+        const rail = independentScrollableRegion(row, composer) || row;
+        const composerRect = composer.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        const railRect = rail.getBoundingClientRect();
+        // Protected chat adapters currently expose the conversation list as a
+        // separate left rail. Message-history controls overlap the composer
+        // column and deliberately remain inconclusive.
+        return rowRect.right <= composerRect.left + 24
+          && railRect.right <= composerRect.left + 64;
+      };
+
+      const classifyLinkedInNavigation = (clicked, blockingModal = null) => {
+        if (params.adapterName !== 'linkedin' || !clicked) return 'none';
+        const link = _composedClosestElement(clicked, 'a[href]');
+        if (!link || !visible(link)) return 'none';
+        // A navigation-looking descendant of a composer/action is not a
+        // navigation escape hatch. Keep actual sends and modal controls on
+        // the existing recipient-verification path.
+        if (_composedClosestElement(clicked, 'button,[role="button"],input,select,textarea,[contenteditable]:not([contenteditable="false"]),[onclick],[data-action]')
+            || _composedClosestElement(link, 'form')
+            || link.hasAttribute?.('download')
+            || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return 'blocked';
+        const heuristicModalSelector = '[data-overlay],.modal.show,.modal-overlay,.overlay,'
+          + '[class*="modal"][class*="open"],[class*="overlay"][class*="active"],'
+          + '[class*="DialogOverlay"],[class*="ModalOverlay"]';
+        const dialogContentSelector = '[class*="DialogContent"],[class*="ModalContent"]';
+        const composedModal = _composedClosestElement(
+          link,
+          `dialog,[role="dialog"],[role="alertdialog"],${heuristicModalSelector},${dialogContentSelector}`,
+        );
+        const modal = composedModal
+          || (blockingModal && _isComposedAncestor(blockingModal, link) ? blockingModal : null);
+        const contentHasVisibleOverlaySibling = (() => {
+          if (!modal?.matches?.(dialogContentSelector)) return false;
+          const parent = modal.parentElement || modal.parentNode;
+          if (!parent) return false;
+          return Array.from(parent.children).some((sibling) => sibling !== modal
+            && sibling.matches?.('[class*="DialogOverlay"],[class*="ModalOverlay"]')
+            && _hasVisibleBox(sibling, 100, 100));
+        })();
+        const modalIsBlocking = !!modal && (
+          modal === blockingModal
+          || (modal.tagName === 'DIALOG' && modal.hasAttribute('open') && _isNativeBlockingDialog(modal))
+          || (/^(?:dialog|alertdialog)$/.test(modal.getAttribute?.('role') || '')
+            && modal.getAttribute?.('aria-modal') === 'true')
+          || contentHasVisibleOverlaySibling
+          || (() => {
+            if (!modal.matches?.(heuristicModalSelector)) return false;
+            const rect = modal.getBoundingClientRect();
+            return rect.width > 100 && rect.height > 100;
+          })()
+        );
+        const unresolved = () => modal ? 'blocked' : 'none';
+        try {
+          const href = String(link.getAttribute('href') || '').trim();
+          if (!href || href.startsWith('#')) return unresolved();
+          const destination = new URL(href, document.baseURI);
+          if (!/^https?:$/.test(destination.protocol)) return unresolved();
+          const isLinkedInHost = (hostname) => {
+            const normalized = String(hostname || '').toLowerCase().replace(/\.$/, '');
+            return normalized === 'linkedin.com' || normalized.endsWith('.linkedin.com');
+          };
+          const linkedInDestination = isLinkedInHost(destination.hostname);
+          const redirectPath = /^\/(?:safety\/go|redir\/redirect)\/?$/.test(destination.pathname);
+          let verifiedExternalRedirect = false;
+          if (linkedInDestination && redirectPath) {
+            const redirectValue = destination.searchParams.get('url') || '';
+            try {
+              const redirectDestination = new URL(redirectValue);
+              verifiedExternalRedirect = /^https?:$/.test(redirectDestination.protocol)
+                && !isLinkedInHost(redirectDestination.hostname);
+            } catch {}
+          }
+          if (modal) {
+            const contactInfoOverlay = /^\/in\/([^/]+)\/overlay\/contact-info\/?$/.exec(location.pathname);
+            const profilePath = contactInfoOverlay ? `/in/${contactInfoOverlay[1]}` : '';
+            const ownsContactInfoRoute = modalIsBlocking && !!profilePath
+              && _someComposedDescendant(modal, 'a[href]', (candidate) => {
+                try {
+                  const candidateUrl = new URL(candidate.getAttribute('href'), document.baseURI);
+                  return isLinkedInHost(candidateUrl.hostname)
+                    && candidateUrl.pathname.replace(/\/+$/, '') === profilePath;
+                } catch {
+                  return false;
+                }
+              });
+            if (!ownsContactInfoRoute || !verifiedExternalRedirect) return 'blocked';
+            return 'navigation';
+          }
+          if (!linkedInDestination) return 'navigation';
+          if (redirectPath) return 'blocked';
+          if (/^\/messaging\/(?:send|compose)\/?$/.test(destination.pathname)) return 'blocked';
+          return (/^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname)
+            || /^\/in\/[^/]+\/overlay\/contact-info\/?$/.test(destination.pathname))
+            ? 'navigation'
+            : 'none';
+        } catch {
+          return unresolved();
+        }
+      };
+
+      const verifiedLinkedInPostEntry = (clicked) => {
+        if (params.adapterName !== 'linkedin' || !/^\/feed\/?$/.test(location.pathname)) return false;
+        const button = _composedClosestElement(clicked, 'button,[role="button"]');
+        if (!button || !visible(button) || button.disabled
+            || button.getAttribute?.('aria-disabled') === 'true'
+            || String(button.getAttribute?.('type') || 'button').toLowerCase() !== 'button'
+            || button.form || button.hasAttribute?.('form')) return false;
+        // The feed entry only opens a public-post composer. Do not infer this
+        // from the requested text, a nearby editor, or a control inside a post,
+        // conversation, or dialog: those can send or publish existing drafts.
+        if (!_composedClosestElement(button, 'main,[role="main"]')
+            || _composedClosestElement(button,
+              'form,article,dialog,[role="dialog"],[role="alertdialog"],[role="log"],'
+              + '[data-message-id],[data-thread-id],[data-conversation-id],'
+              + '[contenteditable]:not([contenteditable="false"])')) return false;
+        const labels = [button.innerText || button.textContent, button.getAttribute?.('aria-label')]
+          .map(value => compact(value).toLowerCase()).filter(Boolean);
+        if (!labels.length || !labels.every(label => label === 'start a post')) return false;
+        // A shadow-root dialog may not appear in the document's modal query.
+        // Require the actual painted control, descending through open roots.
+        const rect = button.getBoundingClientRect();
+        const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+        const hit = _shadowAwareElementFromPoint(x, y);
+        return !!hit && _isComposedAncestor(button, hit);
+      };
+
+      const verifiedTwitterNavigation = clicked => {
+        if (!twitterConversation) return false;
+        const control = _composedClosestElement(clicked, 'a[href],button,[role="button"]');
+        if (!control || !visible(control) || control.disabled
+            || control.getAttribute('aria-disabled') === 'true'
+            || _composedClosestElement(control, 'form,dialog,[role="dialog"],[role="log"],[contenteditable="true"]')
+            || control.hasAttribute('form') || control.hasAttribute('download')) return false;
+        if (control.matches('button[data-testid="dm-conversation-back-button"]')) {
+          return String(control.getAttribute('type') || 'button').toLowerCase() === 'button';
+        }
+        if (!control.matches('a[href]') || control.hasAttribute('onclick') || control.hasAttribute('data-action')) return false;
+        try {
+          const destination = new URL(control.getAttribute('href'), location.href);
+          if (!/^https?:$/.test(destination.protocol) || destination.username || destination.password
+              || !/^(?:www\.)?(?:x|twitter)\.com$/.test(destination.hostname)) return false;
+          const isProfile = /^\/[a-zA-Z0-9_]{1,15}\/?$/.test(destination.pathname);
+          const header = control.querySelector('[data-testid="dm-conversation-username"]');
+          if (header && visible(header)) return isProfile;
+          return !!_composedClosestElement(control, 'nav,[role="navigation"]')
+            && (isProfile || /^\/(?:home|explore|notifications|messages|i\/chat)\/?$/.test(destination.pathname));
+        } catch { return false; }
+      };
+
+      const verifiedLinkedInPublicPostControl = (clicked) => {
+        if (params.adapterName !== 'linkedin') return false;
+        const button = _composedClosestElement(clicked, 'button,[role="button"]');
+        if (!button || !visible(button) || button.disabled
+            || button.getAttribute?.('aria-disabled') === 'true'
+            || String(button.getAttribute?.('type') || 'button').toLowerCase() !== 'button'
+            || button.form || button.hasAttribute?.('form')) return false;
+        const messageScope = 'form,[role="log"],[data-message-id],[data-thread-id],[data-conversation-id],'
+          + '.msg-form,.msg-overlay-conversation-bubble,.msg-convo-wrapper';
+        if (_composedClosestElement(button, messageScope)) return false;
+        if (compact(button.getAttribute?.('data-control-name')).toLowerCase() !== 'share.post') return false;
+        // Identify the public composer itself, not merely a nearby textbox.
+        // LinkedIn's dedicated compose route may render as a whole page.
+        const root = _composedClosestElement(button, 'dialog,[role="dialog"],.share-box')
+          || (/^\/sharing\/compose\/?$/.test(location.pathname)
+            ? (_composedClosestElement(button, 'main,[role="main"]') || document.body) : null);
+        if (!root) return false;
+        const owned = el => visible(el) && !_composedClosestElement(el, messageScope)
+          && (_composedClosestElement(el, 'dialog,[role="dialog"],.share-box') || root) === root;
+        const editors = Array.from(root.querySelectorAll('[contenteditable="true"],textarea'))
+          .filter(owned);
+        return editors.length === 1;
+      };
+
+      let composer = null;
+      let messageSend = null;
+      if (observationOnly) {
+        composer = layoutComposer;
+      } else if (tool === 'press_keys') {
+        if (!editable(active) || !visible(active) || !layoutComposer) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (active !== layoutComposer) {
+          if (verifiedNavigationEditable(active)) {
+            return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+          }
+          try {
+            const composeScopeOf = (el) => el?.closest?.(
+              'form, [role="dialog"], [role="form"], [aria-label*="compose" i], [class*="compose" i]',
+            );
+            const activeScope = composeScopeOf(active);
+            if (activeScope && activeScope === composeScopeOf(layoutComposer)) {
+              return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+            }
+          } catch { /* fall through to the conservative result */ }
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        composer = layoutComposer;
+        dispatchTarget = active;
+        messageSend = String(args.key || '') === 'Enter';
+      } else if (tool === 'set_field') {
+        if (!targetResolved || !editable(target) || !visible(target)) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (!layoutComposer) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (target !== layoutComposer) {
+          return verifiedNavigationEditable(target)
+            ? { success: true, messageSend: false, conclusive: true, identityCandidates: [] }
+            : { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        composer = layoutComposer;
+        dispatchTarget = target;
+        messageSend = args.submit === true;
+      } else if (tool === 'click' || tool === 'click_ax') {
+        if (!targetResolved || !target) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        const control = target.closest?.('button,[role="button"],input[type="submit"],input[type="button"],[data-action]') || target;
+        const modal = _findTopmostBlockingModal();
+        if (!visible(control) || (modal && !_isComposedAncestor(modal, target))) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (verifiedTwitterNavigation(target)) {
+          return { success: true, messageSend: false, conclusive: true, navigation: true, identityCandidates: [] };
+        }
+        if (verifiedLinkedInPostEntry(target)) {
+          return { success: true, messageSend: false, conclusive: true, composerSetup: true, identityCandidates: [] };
+        }
+        if (verifiedLinkedInPublicPostControl(target)) {
+          // Public publication still goes through the normal submission gates;
+          // a private-message recipient is irrelevant to this composer.
+          return { success: true, messageSend: false, conclusive: true, publicPost: true, identityCandidates: [] };
+        }
+        const linkedInNavigation = classifyLinkedInNavigation(target, modal);
+        if (linkedInNavigation === 'navigation') {
+          return { success: true, messageSend: false, conclusive: true, navigation: true, identityCandidates: [] };
+        }
+        if (linkedInNavigation === 'blocked') {
+          return {
+            success: true,
+            messageSend: null,
+            conclusive: false,
+            navigationBlocked: true,
+            identityCandidates: [],
+          };
+        }
+        if (_isComposerUtilityControl(control)) {
+          return {
+            success: true,
+            messageSend: false,
+            conclusive: true,
+            composerUtility: true,
+            reasonCode: 'non_messaging_target',
+            identityCandidates: [],
+          };
+        }
+        composer = layoutComposer;
+        if (!composer) {
+          const actionLabel = compact(
+            control.getAttribute?.('aria-label')
+            || control.getAttribute?.('title')
+            || control.getAttribute?.('data-tooltip')
+            || control.value
+            || control.innerText
+            || control.textContent,
+            120,
+          );
+          const composerSetup = params.adapterName === 'gmail'
+            && /^(?:reply|reply all|forward)$/i.test(actionLabel);
+          const messageCommit = /(?:^|[^\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\p{L}]|$)/iu
+            .test(actionLabel);
+          const messagingSurface = (() => {
+            try {
+              return !!control.closest?.('[class*="msg-"],[class*="messaging"],[id*="messaging"],[data-messaging],[data-test-messaging],[role="log"]');
+            } catch { return false; }
+          })();
+          if (!composerSetup && !messageCommit && !messagingSurface) {
+            return {
+              success: true,
+              messageSend: false,
+              conclusive: true,
+              composerAvailable: false,
+              nonMessagingTarget: true,
+              reasonCode: 'non_messaging_target',
+              identityCandidates: [],
+            };
+          }
+          return {
+            success: true,
+            messageSend: null,
+            conclusive: false,
+            composerAvailable: false,
+            reasonCode: messageCommit ? 'message_commit_without_composer' : 'no_composer_surface',
+            ...(composerSetup ? { composerSetup: true } : {}),
+            identityCandidates: [],
+          };
+        }
+        if (editable(target) && (target !== composer || twitterConversation)) {
+          return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+        }
+        if (verifiedConversationSelection(target, composer)) {
+          return {
+            success: true,
+            messageSend: false,
+            conclusive: true,
+            conversationSelection: true,
+            identityCandidates: [],
+          };
+        }
+        dispatchTarget = target;
+        const composerRect = composer.getBoundingClientRect();
+        const controlRect = control.getBoundingClientRect();
+        const horizontalGap = Math.max(0, composerRect.left - controlRect.right, controlRect.left - composerRect.right);
+        const verticalGap = Math.max(0, composerRect.top - controlRect.bottom, controlRect.top - composerRect.bottom);
+        const sameForm = !!composer.closest?.('form') && composer.closest('form') === control.closest?.('form');
+        // Framework chat controls are often clickable divs rather than native
+        // buttons, and a nearby control can send an attachment even when the
+        // text composer is empty. Geometry must therefore win over tag shape.
+        messageSend = sameForm || (horizontalGap <= 240 && verticalGap <= 120);
+        if (!messageSend) {
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+      }
+
+      if (!composer) {
+        return {
+          success: false,
+          messageSend: null,
+          conclusive: false,
+          composerAvailable: false,
+          matchingOutgoingMessageCount: matchingMessageBodyCount(params.expectedMessageBody, null),
+          identityCandidates: [],
+          error: 'Active conversation composer could not be resolved.',
+        };
+      }
+      if (params.expectedDispatchTarget
+        && (dispatchTarget !== params.expectedDispatchTarget || composer !== params.expectedComposer)) {
+        return {
+          success: false,
+          messageSend: null,
+          conclusive: false,
+          dispatchTargetChanged: true,
+          identityCandidates: [],
+          strongIdentityCandidates: [],
+          error: 'The verified message action target or composer changed before dispatch.',
+        };
+      }
+
+      const composerRect = composer.getBoundingClientRect();
+      const headerBandBottom = Math.min(
+        composerRect.top - 12,
+        Math.min(220, Math.max(140, viewportHeight * 0.2)),
+      );
+      const strongIdentities = [];
+      const strongRecipients = [];
+      const strongSeen = new Set();
+      const observedRecipientCandidates = [];
+      const gmailRecipientMode = params.adapterName === 'gmail';
+      const inConversationHeaderBand = (el) => {
+        if (headerBandBottom <= 0) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.top >= 0
+          && rect.bottom <= headerBandBottom
+          && rect.right >= composerRect.left
+          && rect.left <= composerRect.right;
+      };
+      const addStrongIdentity = (el) => {
+        if (!visible(el) || editable(el) || el.closest?.('input,textarea,[contenteditable="true"]')) return;
+        if (!inConversationHeaderBand(el) || independentScrollableRegion(el, composer)) return;
+        const text = compact(
+          el.getAttribute?.('aria-label')
+          || el.getAttribute?.('title')
+          || el.innerText
+          || el.textContent
+        );
+        if (!text || text.length > 120 || strongSeen.has(text)) return;
+        strongSeen.add(text);
+        strongIdentities.push(text);
+      };
+
+      let gmailComposeRoot = null;
+      if (gmailRecipientMode) {
+        const recipientRole = (el, root = null) => {
+          const roleFromAttribute = (attribute, value) => {
+            const text = compact(value, 120).toLowerCase();
+            if (!text) return '';
+            if (attribute === 'aria-label') {
+              if (/^(?:bcc|blind\s+carbon\s+copy)(?:$|\s*[:,-]\s*)/.test(text)) return 'bcc';
+              if (/^(?:cc|carbon\s+copy)(?:$|\s*[:,-]\s*)/.test(text)) return 'cc';
+              if (/^to(?:$|\s*[:,-]\s*)/.test(text)) return 'to';
+              return '';
+            }
+            if (attribute === 'name') {
+              return /^(?:to|cc|bcc)$/.test(text) ? text : '';
+            }
+            const tokens = text.split(/[^a-z]+/).filter(Boolean);
+            if (tokens.includes('bcc')) return 'bcc';
+            if (tokens.includes('cc')) return 'cc';
+            if (tokens.length === 1 && tokens[0] === 'to') return 'to';
+            return '';
+          };
+          let current = el;
+          for (let depth = 0; current && depth < 7; depth++, current = current.parentElement) {
+            for (const attribute of ['data-recipient-type', 'data-type', 'name', 'aria-label']) {
+              const role = roleFromAttribute(attribute, current.getAttribute?.(attribute));
+              if (role) return role;
+            }
+            if (root && current === root) break;
+            try {
+              const descendantRoles = new Set();
+              for (const marker of current.querySelectorAll?.(
+                'input[name="to"],input[name="cc"],input[name="bcc"],[aria-label]'
+              ) || []) {
+                const role = roleFromAttribute('name', marker.getAttribute?.('name'))
+                  || roleFromAttribute('aria-label', marker.getAttribute?.('aria-label'));
+                if (role) descendantRoles.add(role);
+              }
+              // A nearest row containing one role marker can classify its
+              // chips. A shared ancestor containing multiple rows cannot.
+              if (descendantRoles.size === 1) return [...descendantRoles][0];
+            } catch {}
+          }
+          return '';
+        };
+        const collectGmailRecipients = (root) => {
+          const collected = new Map();
+          if (!root?.querySelectorAll) return collected;
+          for (const el of root.querySelectorAll('[email],[data-hovercard-id],[data-email]')) {
+            if (!visible(el) || editable(el)) continue;
+            if (el === composer || composer.contains?.(el)) continue;
+            const email = [
+              el.getAttribute?.('email'),
+              el.getAttribute?.('data-email'),
+              el.getAttribute?.('data-hovercard-id'),
+            ].map(value => compact(value, 240)).find(value => /@/.test(value)) || '';
+            if (!email) continue;
+            const aliases = new Map();
+            const addAlias = (val) => {
+              const alias = compact(val, 240);
+              const normalized = normalizedIdentity(alias);
+              if (alias && normalized && !aliases.has(normalized)) aliases.set(normalized, alias);
+              const angleMatch = alias.match(/^([^<@]+)<[^>]+>$/);
+              if (angleMatch) {
+                const nameOnly = compact(angleMatch[1], 240);
+                const normName = normalizedIdentity(nameOnly);
+                if (nameOnly && normName && !aliases.has(normName)) aliases.set(normName, nameOnly);
+              }
+            };
+            for (const value of [
+              email,
+              el.getAttribute?.('name'),
+              el.getAttribute?.('aria-label'),
+              el.getAttribute?.('title'),
+              el.innerText,
+              el.textContent,
+            ]) {
+              addAlias(value);
+            }
+            const key = normalizedIdentity(email);
+            if (!key) continue;
+            const role = recipientRole(el, root);
+            if (!role) continue;
+            const recipientKey = `${role}:${key}`;
+            const prior = collected.get(recipientKey) || { identity: email, role, aliases: new Map() };
+            for (const [normalized, alias] of aliases) prior.aliases.set(normalized, alias);
+            collected.set(recipientKey, prior);
+          }
+          return collected;
+        };
+        // Dialog/popup compose keeps its form root. Inline thread replies are
+        // not inside [role=dialog] or form; use the nearest ancestor that
+        // already contains role-qualified To/Cc/Bcc chips so thread hovercards
+        // without a recipient role cannot pin a send.
+        const composeRoot = (() => {
+          const explicit = composer.closest?.('[role="dialog"],form') || null;
+          if (explicit) return explicit;
+          let current = composer.parentElement;
+          for (let depth = 0; current && depth < 16; depth += 1, current = current.parentElement) {
+            if (current === document.body || current === document.documentElement) break;
+            if (collectGmailRecipients(current).size > 0) return current;
+          }
+          return null;
+        })();
+        gmailComposeRoot = composeRoot;
+        const recipients = collectGmailRecipients(composeRoot);
+        // A typed, uncommitted Gmail address only exists in the visible
+        // recipient input. Include it so confirmation remains bound to what
+        // is actually on screen before the UI turns it into a chip.
+        const collectRecipientInputValues = (root) => {
+          if (!root?.querySelectorAll) return;
+          let inputs = [];
+          try {
+            inputs = Array.from(root.querySelectorAll(
+              'input, textarea, [contenteditable="true"], [contenteditable=""]',
+            )).slice(0, 40);
+          } catch {
+            return;
+          }
+          for (const input of inputs) {
+            if (!visible(input) || input === composer || composer?.contains?.(input)) continue;
+            const role = recipientRole(input, root);
+            if (!role) continue;
+            const raw = String('value' in input ? (input.value || '') : (input.innerText || input.textContent || ''));
+            if (!raw || raw.length > 2000) continue;
+            for (const piece of raw.split(/[,;\n]+/)) {
+              const candidate = compact(piece, 240);
+              const match = candidate.match(/[^\s<>@,;]+@[^\s<>@,;.]+\.[^\s<>@,;]+/);
+              if (!match) continue;
+              const email = match[0];
+              const key = normalizedIdentity(email);
+              if (!key) continue;
+              const recipientKey = `${role}:${key}`;
+              const prior = recipients.get(recipientKey) || { identity: email, role, aliases: new Map() };
+              prior.aliases.set(key, email);
+              const display = compact(candidate.replace(/<[^>]*>/g, ''), 240);
+              if (display && display !== email) {
+                const normalizedDisplay = normalizedIdentity(display);
+                if (normalizedDisplay && !prior.aliases.has(normalizedDisplay)) {
+                  prior.aliases.set(normalizedDisplay, display);
+                }
+              }
+              recipients.set(recipientKey, prior);
+            }
+          }
+        };
+        collectRecipientInputValues(composeRoot);
+        for (const [recipientKey, recipient] of recipients) {
+          const emailKey = recipientKey.slice(recipientKey.indexOf(':') + 1);
+          const identity = recipient.aliases.get(emailKey) || [...recipient.aliases.values()][0] || recipient.identity || '';
+          if (identity) {
+            const aliasList = Array.from(new Set([identity, ...recipient.aliases.values()])).filter(Boolean);
+            observedRecipientCandidates.push({ identity, role: recipient.role, aliases: aliasList });
+          }
+        }
+        // Match the complete authorized To/CC/BCC set. Each expected identity
+        // must resolve to exactly one distinct chip and no additional chip may
+        // remain; duplicate display names therefore fail closed.
+        const expectedRecipients = Array.isArray(params.expectedRecipients)
+          ? params.expectedRecipients.map(value => {
+              const legacy = typeof value === 'string' || typeof value === 'number';
+              return {
+                identity: compact(legacy ? value : (value?.identity ?? value?.recipient), 240),
+                role: compact(legacy ? 'to' : value?.role, 12).toLowerCase(),
+              };
+            }).filter(value => value.identity && /^(?:to|cc|bcc)$/.test(value.role)).slice(0, 16)
+          : [];
+        if (expectedRecipients.length > 0 && recipients.size === expectedRecipients.length) {
+          const claimed = new Set();
+          const matched = [];
+          for (const expected of expectedRecipients) {
+            const normalizedExpected = normalizedIdentity(expected.identity);
+            const candidates = [...recipients.entries()]
+              .filter(([key, recipient]) => !claimed.has(key)
+                && recipient.role === expected.role
+                && recipient.aliases.has(normalizedExpected));
+            if (!normalizedExpected || candidates.length !== 1) {
+              matched.length = 0;
+              break;
+            }
+            claimed.add(candidates[0][0]);
+            matched.push(expected);
+          }
+          if (matched.length === recipients.size) {
+            for (const recipient of matched) {
+              strongSeen.add(`${recipient.role}:${recipient.identity}`);
+              strongIdentities.push(recipient.identity);
+              strongRecipients.push(recipient);
+            }
+          }
+        } else if (expectedRecipients.length === 0) {
+          for (const [recipientKey, recipient] of recipients) {
+            const emailKey = recipientKey.slice(recipientKey.indexOf(':') + 1);
+            const identity = recipient.aliases.get(emailKey) || [...recipient.aliases.values()][0] || '';
+            if (identity && !strongSeen.has(recipientKey)) {
+              strongSeen.add(recipientKey);
+              strongIdentities.push(identity);
+              strongRecipients.push({ identity, role: recipient.role });
+            }
+          }
+        }
+      } else if (twitterConversation) {
+        const headers = Array.from(document.querySelectorAll('[data-testid="dm-conversation-username"]'))
+          .filter(el => visible(el) && inConversationHeaderBand(el) && !independentScrollableRegion(el, composer));
+        if (headers.length === 1) {
+          const header = headers[0];
+          const link = header.closest('a[href]');
+          let handle = '';
+          try {
+            const url = new URL(link?.getAttribute('href'), location.href);
+            if (/^(?:www\.)?(?:x|twitter)\.com$/.test(url.hostname)) {
+              handle = url.pathname.match(/^\/([a-zA-Z0-9_]{1,15})\/?$/)?.[1] || '';
+            }
+          } catch {}
+          if (handle) {
+            const identity = '@' + handle.toLowerCase();
+            strongIdentities.push(identity);
+            strongRecipients.push({ identity, role: 'to' });
+            observedRecipientCandidates.push({ identity, role: 'to', aliases: [identity, handle, compact(header.innerText)] });
+          } else {
+            // X group DM headers name the conversation instead of linking to a
+            // single account. Bind the visible header to the canonical chat
+            // route so a later conversation cannot inherit this authorization.
+            let groupIdentity = '';
+            try {
+              const groupId = new URL(location.href).pathname
+                .match(/^\/i\/chat\/([a-zA-Z0-9_-]{1,128})\/?$/)?.[1] || '';
+              if (groupId && compact(header.innerText)) groupIdentity = `x-dm-group:${groupId}`;
+            } catch {}
+            if (groupIdentity) {
+              strongIdentities.push(groupIdentity);
+              strongRecipients.push({ identity: groupIdentity, role: 'to' });
+              observedRecipientCandidates.push({
+                identity: groupIdentity,
+                role: 'to',
+                aliases: [groupIdentity, compact(header.innerText)],
+              });
+            }
+          }
+        }
+      } else {
+        for (const el of document.querySelectorAll(
+          '[aria-selected="true"],[aria-current]:not([aria-current="false"])'
+        )) {
+          // Search results and navigation rows can also be selected/current, so
+          // they count only inside the narrow, non-scrollable conversation
+          // header above the composer.
+          addStrongIdentity(el);
+          if (strongIdentities.length >= 8) break;
+        }
+
+        for (const el of document.querySelectorAll(
+          'h1,h2,h3,h4,[role="heading"]'
+        )) {
+          addStrongIdentity(el);
+          if (strongIdentities.length >= 8) break;
+        }
+        for (const identity of strongIdentities) {
+          const item = { identity, role: 'to', aliases: [identity] };
+          strongRecipients.push({ identity, role: 'to' });
+          observedRecipientCandidates.push(item);
+        }
+      }
+
+      // Generic mail surfaces expose recipient fields and chips without a
+      // provider-specific adapter. Read only explicit recipient semantics;
+      // an ordinary contact form's email field must not become a message
+      // recipient, and a generic chat still requires one header identity.
+      if (observedRecipientCandidates.length === 0) {
+        const genericMailRecipientMode = params.adapterName === 'generic-messaging'
+          && params.supportsRecipientSets === true;
+        const RECIPIENT_FIELD_RE = new RegExp(
+          '(?:^|[^\\p{L}])(?:to|to\\s+recipients?|recipients?|send\\s+to|email|e-?mail(?:\\s+address)?'
+          + '|destinatario|destinataria|destinataire|para|aan|kime|do|til|komu|\\u0644\\u0625\\u0649'
+          + '|\\u6536\\u4ef6\\u4eba|\\u5b9b\\u5148|\\ubc1b\\ub294\\s*\\uc0ac\\ub78c)(?:[^\\p{L}]|$)',
+          'iu',
+        );
+        const fieldLooksLikeRecipient = (el) => {
+          try {
+            if (/^email$/i.test(String(el.getAttribute?.('type') || ''))) return genericMailRecipientMode;
+            if (/^email$/i.test(String(el.getAttribute?.('autocomplete') || ''))) return genericMailRecipientMode;
+            const haystack = [
+              el.getAttribute?.('name'),
+              el.getAttribute?.('aria-label'),
+              el.getAttribute?.('placeholder'),
+              el.getAttribute?.('id'),
+              el.getAttribute?.('data-testid'),
+              el.getAttribute?.('autocomplete'),
+              el.labels ? Array.from(el.labels).map(label => label.innerText).join(' ') : '',
+            ].filter(Boolean).join(' ');
+            return !!haystack && RECIPIENT_FIELD_RE.test(haystack);
+          } catch { return false; }
+        };
+        const pushRecipient = (identity, extraAliases = []) => {
+          const raw = compact(identity, 240);
+          const normalized = raw ? normalizedIdentity(raw) : '';
+          if (!normalized) return;
+          const existing = observedRecipientCandidates.find(
+            item => normalizedIdentity(item.identity) === normalized,
+          );
+          const aliases = Array.from(new Set([
+            raw, ...extraAliases, ...(existing?.aliases || []),
+          ].filter(Boolean)));
+          const entry = { identity: raw, role: 'to', aliases };
+          if (existing) Object.assign(existing, entry);
+          else observedRecipientCandidates.push(entry);
+          if (!strongRecipients.some(item => normalizedIdentity(item.identity) === normalized)) {
+            strongRecipients.push({ identity: raw, role: 'to' });
+          }
+        };
+        const extractAddresses = (rawValue) => {
+          const raw = String(rawValue || '');
+          if (!raw || raw.length > 2000) return;
+          for (const piece of raw.split(/[,;\n]+/)) {
+            const candidate = compact(piece, 240);
+            const match = candidate.match(/[^\s<>@,;]+@[^\s<>@,;.]+\.[^\s<>@,;]+/);
+            if (!match) continue;
+            const display = compact(candidate.replace(/<[^>]*>/g, ''), 240);
+            pushRecipient(match[0], display && display !== match[0] ? [display] : []);
+          }
+        };
+        try {
+          for (const el of Array.from(document.querySelectorAll(
+            'input, textarea, [contenteditable="true"], [contenteditable=""]',
+          )).slice(0, 60)) {
+            if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
+            if (!fieldLooksLikeRecipient(el)) continue;
+            extractAddresses('value' in el ? el.value : (el.innerText || el.textContent || ''));
+          }
+        } catch { /* structural read is best-effort */ }
+        try {
+          const chipScope = composer.closest?.('[role="dialog"],form,[role="main"]') || document;
+          for (const el of Array.from(chipScope.querySelectorAll(
+            '[email],[data-email],[data-hovercard-id],a[href^="mailto:" i],input[type="email"]',
+          )).slice(0, 40)) {
+            if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
+            if (!genericMailRecipientMode
+                && /^email$/i.test(String(el.getAttribute?.('type') || ''))) continue;
+            const mailto = String(el.getAttribute?.('href') || '')
+              .replace(/^mailto:/i, '').split('?')[0];
+            const address = [
+              el.getAttribute?.('email'), el.getAttribute?.('data-email'),
+              el.getAttribute?.('data-hovercard-id'), mailto,
+              'value' in el ? el.value : '',
+            ].map(value => compact(value, 240)).find(value => String(value || '').includes('@')) || '';
+            if (!address) continue;
+            const display = compact(el.innerText || el.textContent, 240);
+            pushRecipient(address, display && display !== address ? [display] : []);
+          }
+        } catch { /* structural read is best-effort */ }
+      }
+
+      const composerText = (() => {
+        try {
+          if ('value' in composer) return String(composer.value || '');
+          return String(composer.innerText || composer.textContent || '');
+        } catch { return ''; }
+      })();
+      const submittedFieldBody = tool === 'set_field' && args.submit === true
+        ? normalizedMessageBody(args.text)
+        : '';
+      const messageBody = submittedFieldBody || composerMessageBody(composer);
+      const messageBodyBaselineCount = matchingMessageBodyCount(messageBody, composer);
+      // Gmail's subject control keeps a locale-independent name, so the
+      // reviewed subject binds without reading a localized label. Only a
+      // visible field counts; a collapsed compose proves nothing.
+      const composeContainer = gmailComposeRoot || composer.closest?.('[role="dialog"],form') || null;
+      const subjectField = composeContainer?.querySelector?.('input[name="subjectbox"]') || null;
+      const composerSubjectAvailable = !!subjectField && visible(subjectField);
+      const composerSubject = composerSubjectAvailable ? compact(subjectField.value, 998) : '';
+      // The provider writes "Draft saved" into the compose window's own status
+      // region. Page-wide text would also match a message that quotes it.
+      const composerStatusMessages = composeContainer
+        ? Array.from(composeContainer.querySelectorAll?.('[aria-live],[role="status"],[role="alert"]') || [])
+            .filter(visible)
+            .map(el => compact(el.innerText || el.textContent, 200))
+            .filter(Boolean)
+            .slice(0, 6)
+        : [];
+      const gmailComposeFlow = gmailRecipientMode
+        && !!composer.closest?.('[role="dialog"]');
+      const matchingOutgoingMessageCount = matchingMessageBodyCount(
+        params.expectedMessageBody,
+        composer,
+      );
+      const messageRecipientDispatchToken = params.bindDispatch === true
+        && messageSend === true
+        && !!messageBody
+        && (!twitterConversation || twitterBaselineComplete)
+        && (params.supportsRecipientSets === true
+          ? strongRecipients.length > 0
+          : strongRecipients.length === 1)
+        ? _rememberMessageRecipientDispatchBinding(composer, strongRecipients, {
+            tool,
+            args,
+            actionTarget: dispatchTarget,
+            adapterName: params.adapterName,
+            expectedRecipients: params.expectedRecipients,
+            supportsRecipientSets: params.supportsRecipientSets,
+            messageBody,
+            messageBodyBaselineCount,
+            ...(twitterConversation ? {
+              existingMessageIds: twitterMessageIds,
+              ...(twitterEmptyConversationBaseline ? { twitterEmptyConversationBaseline: true } : {}),
+            } : {}),
+            gmailComposeFlow,
+            composerSubject,
+            composerSubjectAvailable,
+        })
+        : '';
+      let composerRef = '';
+      try {
+        if (typeof window.__wb_ax_ref === 'function') composerRef = window.__wb_ax_ref(composer) || '';
+      } catch {}
+      return {
+        success: true,
+        messageSend: observationOnly ? false : messageSend === true,
+        conclusive: true,
+        composerAvailable: true,
+        ...(composerRef ? { composerRef } : {}),
+        composerEmpty: composerText.replace(/[\u200b-\u200d\ufeff]/g, '').trim() === '',
+        messageBody,
+        messageBodyBaselineCount,
+        gmailComposeFlow,
+        composerSubject,
+        composerSubjectAvailable,
+        composerStatusMessages,
+        matchingOutgoingMessageCount,
+        ...(twitterConversation && twitterBaselineComplete ? {
+          existingMessageIds: twitterMessageIds,
+          matchingOutgoingMessageIds: matchingTwitterMessageIds(params.expectedMessageBody),
+          ...(twitterEmptyConversationBaseline ? { twitterEmptyConversationBaseline: true } : {}),
+        } : {}),
+        // Only recipient-specific header evidence is authoritative. Ordinary
+        // message text, test-id containers, and other leaf content are never
+        // returned as dispatch identities.
+        identityCandidates: strongIdentities.slice(0, 16),
+        strongIdentityCandidates: strongIdentities.slice(0, 16),
+        strongRecipientCandidates: strongRecipients.slice(0, 16),
+        observedRecipientCandidates: observedRecipientCandidates.slice(0, 16),
+        ...(messageRecipientDispatchToken
+          ? { messageRecipientDispatchBinding: { token: messageRecipientDispatchToken } }
+          : {}),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        messageSend: null,
+        conclusive: false,
+        identityCandidates: [],
+        strongIdentityCandidates: [],
+        strongRecipientCandidates: [],
+        observedRecipientCandidates: [],
+        error: error?.message || String(error),
+      };
+    }
+  }
+
   // --- Message handler ---
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.target !== 'content') return;
+    if (WEBBRAIN_GENERATION !== (Number(window.__webbrain_generation) || 0)) return;
+    const actionDeadlineAt = Number(msg.actionDeadlineAt) || 0;
+    const actionDeadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
+    if (actionDeadlineExpired()) {
+      sendResponse({
+        success: false,
+        dispatched: false,
+        noDispatch: true,
+        retryable: true,
+        deadlineExpired: true,
+        error: 'The page action deadline expired before dispatch.',
+      });
+      return;
+    }
+
+    const jevBinding = msg.params?._jevBinding;
+    if (jevBinding && (jevBinding.documentToken !== _axDocumentToken()
+        || window.__wb_jev_validate?.(jevBinding) !== true)) {
+      sendResponse({ success: false, noDispatch: true, dispatched: false, staleJevTarget: true,
+        error: 'The observed target or form context changed. Read the page again before acting.' });
+      return;
+    }
 
     const handlers = {
+      'jev_validate_target': () => ({ success: !!jevBinding }),
       'get_page_info': () => getPageInfo(msg.params || {}),
       'get_page_info_cdp': () => getPageInfoFull(msg.params || {}),
       'get_interactive_elements': () => getInteractiveElements(),
       'get_interactive_elements_cdp': () => getInteractiveElementsFull(),
       'get_file_input_targets': () => getFileInputTargets(),
-      'click': () => clickElement(msg.params || {}),
+      'click': () => clickElement(msg.params || {}, actionDeadlineExpired),
       'consume_file_picker_guard': () => consumeFilePickerGuard(msg.params?.guardId),
-      'type': () => typeText(msg.params || {}),
+      'type': () => typeText(msg.params || {}, actionDeadlineExpired),
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
       'release_dispatch_binding': () => _releaseDispatchBinding(msg.params || {}),
       'consume_focused_dispatch_binding': () => _consumeFocusedDispatchBinding(msg.params || {}),
+      'consume_message_recipient_dispatch_binding': () => _consumeMessageRecipientDispatchBinding(msg.params || {}),
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
-      'press_keys': () => pressKeys(msg.params || {}),
-      'scroll': () => scrollPage(msg.params || {}),
+      'probe_message_recipient_guard': () => _probeMessageRecipientGuard(msg.params || {}),
+      'observe_chat': () => {
+        if (typeof window.__wb_observe_chat_dom !== 'function') {
+          return { success: false, error: 'chat-observation.js not injected' };
+        }
+        const params = msg.params && typeof msg.params === 'object' ? msg.params : {};
+        const probe = _probeMessageRecipientGuard({ ...params, tool: 'observe_active_conversation', args: {} });
+        return window.__wb_observe_chat_dom({ ...params, probe });
+      },
+      'press_keys': () => pressKeys(msg.params || {}, actionDeadlineExpired),
+      'scroll': () => scrollPage(msg.params || {}, actionDeadlineExpired),
       'extract_data': () => extractData(msg.params || {}),
       'inspect_element_styles': () => inspectElementStyles(msg.params || {}),
       'wait_for_element': () => waitForElement(msg.params || {}),
       'get_selection': () => ({ text: window.getSelection()?.toString() || '' }),
       'find_text': () => findText(msg.params || {}),
+      // ── Completion attention flash (tab title/favicon blink) ─────────
+      'attention_flash_start': () => {
+        try {
+          return { success: true, started: startAttentionFlash() };
+        } catch (error) {
+          return { success: false, error: error?.message || String(error) };
+        }
+      },
+      'attention_flash_stop': () => {
+        try {
+          stopAttentionFlash();
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: error?.message || String(error) };
+        }
+      },
       // execute_js — model-supplied JS body, evaluated in the content
       // script's isolated world via `new Function()`.
       //
@@ -3612,14 +5558,14 @@
       // content_scripts puts it before content.js so window.__wb_ax_lookup
       // and window.__generateAccessibilityTree are defined by the time the
       // first message arrives.
-      'get_accessibility_tree': () => {
+      'get_accessibility_tree': async () => {
         try {
           if (typeof window.__generateAccessibilityTree !== 'function') {
             return { error: 'accessibility-tree.js not injected' };
           }
           const documentToken = _axDocumentToken();
           const refScopeUrl = location.href;
-          const { filter, maxDepth, maxChars, ref_id, page } = msg.params || {};
+          const { filter, maxDepth, maxChars, ref_id, page, tree_revision } = msg.params || {};
           const gate = detectPageGate();
           if (gate) {
             const pageGate = pageGatePublic(gate);
@@ -3644,13 +5590,53 @@
               refScopeUrl,
             };
           }
+          // A complete, anchored Gmail thread read may reveal only Gmail's
+          // trusted top-level collapsed messages before building page 1. This
+          // keeps whole-thread reads complete in Ask as well as Act mode while
+          // exposing no general-purpose click capability to Ask mode.
+          const requestedPage = Math.max(1, Math.floor(Number(page) || 1));
+          const requestedDepth = maxDepth == null ? 15 : Number(maxDepth);
+          let conversationAutoExpanded = false;
+          if (ref_id && requestedPage === 1 && (filter || 'all') === 'all'
+              && Number.isFinite(requestedDepth) && requestedDepth >= 15
+              && typeof window.__wb_expand_gmail_conversation_for_read === 'function') {
+            const prepared = await window.__wb_expand_gmail_conversation_for_read(ref_id);
+            conversationAutoExpanded = prepared?.attempted === true && prepared?.expanded === true;
+          }
+          const tree = window.__generateAccessibilityTree(filter, maxDepth, maxChars, ref_id, page, tree_revision);
+          const jev = window.__wb_jev_snapshot?.();
           return {
-            ...window.__generateAccessibilityTree(filter, maxDepth, maxChars, ref_id, page),
+            ...tree,
+            ...(jev ? { _jevSnapshot: { ...jev, documentToken, pageUrl: refScopeUrl } } : {}),
+            ...(conversationAutoExpanded ? { conversationAutoExpanded: true } : {}),
             documentToken,
             refScopeUrl,
           };
         } catch (e) {
           return { error: 'Failed to build accessibility tree: ' + (e && e.message || String(e)) };
+        }
+      },
+      'resolve_visual_target': () => {
+        try {
+          const x = Number(msg.params?.x);
+          const y = Number(msg.params?.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return { success: false, error: 'x and y must be finite numbers' };
+          }
+          if (typeof window.__wb_ax_resolve_visual_target !== 'function') {
+            return { success: false, error: 'accessibility-tree.js not injected' };
+          }
+          const semanticTarget = window.__wb_ax_resolve_visual_target(x, y);
+          return semanticTarget
+            ? {
+                success: true,
+                semanticTarget,
+                documentToken: _axDocumentToken(),
+                refScopeUrl: location.href,
+              }
+            : { success: true };
+        } catch (e) {
+          return { success: false, error: e?.message || String(e) };
         }
       },
       'resolve_form_field_refs': () => {
@@ -3743,7 +5729,13 @@
           const canonicalTargetName = _axCanonicalName(el);
           const targetName = canonicalTargetName || _axAccessibleName(el);
           if (!_isFullyVisibleForInteraction(el)) {
-            try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+            try {
+              el.scrollIntoView({
+                block: 'center',
+                inline: 'center',
+                ...(msg.params?._bidiPrepare ? { behavior: 'instant' } : {}),
+              });
+            } catch {}
           }
           try { el.focus({ preventScroll: true }); } catch {}
           const rect = el.getBoundingClientRect();
@@ -3846,9 +5838,54 @@
               }
             } catch {}
           }
+          if (actionDeadlineExpired()) {
+            return failure(
+              'The page action deadline expired before click dispatch.',
+              { deadlineExpired: true, retryable: true },
+            );
+          }
+          if (msg.params?.messageRecipientGuardRequired === true) {
+            const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
+            if (recipientValidation.success !== true) {
+              return failure(recipientValidation.error, {
+                messageDispatched: false,
+                messageRecipientGuard: true,
+                reasonCode: recipientValidation.reasonCode,
+              });
+            }
+          }
+          if (actionDeadlineExpired()) {
+            return failure(
+              'The page action deadline expired during recipient validation.',
+              { deadlineExpired: true, retryable: true },
+            );
+          }
           rememberInteractionPoint(el, 'click_ax');
+          if (actionDeadlineExpired()) {
+            return failure(
+              'The page action deadline expired before click dispatch.',
+              { deadlineExpired: true, retryable: true },
+            );
+          }
+          if (msg.params?._bidiPrepare) {
+            return {
+              ...prepareBidiTarget(el, msg.params._bidiPrepare),
+              ...(nativeCheckable ? {
+                checkable: {
+                  inputType,
+                  checkedBefore,
+                  desiredChecked: inputType === 'radio' ? true : !checkedBefore,
+                  checkboxIdentity: _axCheckboxIdentity(el, ref_id),
+                },
+              } : {}),
+              _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId,
+            };
+          }
           dispatched = true;
+          const syntheticClickStartedAt = Date.now();
+          const syntheticClickDispatchStartedAt = performance.now();
           const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
+          const syntheticClickDispatchMs = Math.max(0, performance.now() - syntheticClickDispatchStartedAt);
           if (filePickerGuard.blocked) {
             return failure(
               filePickerBlockedResponse(filePickerGuard.blocked, targetName || '').error,
@@ -3873,6 +5910,8 @@
               method: 'click_ax',
               ref_id,
               tag,
+              _syntheticClickStartedAt: syntheticClickStartedAt,
+              _syntheticClickDispatchMs: syntheticClickDispatchMs,
               rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
               ...(targetContext ? { targetContext } : {}),
               ...(filePickerGuard.guardId ? { _filePickerGuardId: filePickerGuard.guardId } : {}),
@@ -3986,7 +6025,18 @@
             ? { dispatched: true }
             : { dispatched: false, noDispatch: true }),
         });
+        const deadlineFailure = () => failure(
+          dispatched
+            ? 'The page action deadline expired during checkbox dispatch.'
+            : 'The page action deadline expired before checkbox dispatch.',
+          {
+            deadlineExpired: true,
+            outcomeUnknown: dispatched,
+            retryable: !dispatched,
+          },
+        );
         try {
+          if (actionDeadlineExpired()) return deadlineFailure();
           const { ref_id, checked, expectedDocumentToken, expectedPageUrl } = msg.params || {};
           if (typeof ref_id !== 'string') return failure('ref_id (string, e.g. "ref_42") is required');
           if (typeof checked !== 'boolean') return failure('checked (boolean) is required');
@@ -4007,8 +6057,11 @@
           if (inputType !== 'checkbox') {
             return failure(`set_checked only supports native input[type="checkbox"] controls; ${ref_id} resolved to ${tag || 'unknown'}${inputType ? `[type="${inputType}"]` : ''}.`);
           }
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           const rect = el.getBoundingClientRect();
           if (!el.isConnected || rect.width < 1 || rect.height < 1) {
             return failure(`ref_id ${ref_id} is stale or not visibly rendered. Re-read the accessibility tree and retry.`);
@@ -4046,9 +6099,12 @@
               ...base,
             };
           }
+          if (actionDeadlineExpired()) return deadlineFailure();
           dispatched = true;
           el.click();
+          if (actionDeadlineExpired()) return deadlineFailure();
           await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
+          if (actionDeadlineExpired()) return deadlineFailure();
           const checkedAfter = !!el.checked;
           const success = checkedAfter === checked;
           const confirmation = success
@@ -4082,6 +6138,15 @@
           return failure(e && e.message || String(e));
         }
       },
+      'bidi_prepare_upload': () => {
+        const params = msg.params || {};
+        let matches;
+        try { matches = document.querySelectorAll(params.selector); } catch { return { success: false, dispatched: false, noDispatch: true, error: 'Invalid file selector' }; }
+        if (matches.length !== 1 || matches[0].tagName !== 'INPUT' || matches[0].type !== 'file' || matches[0].disabled) {
+          return { success: false, dispatched: false, noDispatch: true, error: 'Choose one enabled file input', ambiguous: matches.length > 1, matchCount: matches.length };
+        }
+        return prepareBidiTarget(matches[0], params._bidiPrepare);
+      },
       'type_ax': async () => {
         let dispatched = false;
         const failure = (error, extra = {}) => ({
@@ -4092,7 +6157,14 @@
             ? { dispatched: true }
             : { dispatched: false, noDispatch: true }),
         });
+        const deadlineFailure = () => failure(
+          dispatched
+            ? 'The page action deadline expired during accessibility-tree text dispatch.'
+            : 'The page action deadline expired before accessibility-tree text dispatch.',
+          { deadlineExpired: true, outcomeUnknown: dispatched, retryable: !dispatched },
+        );
         try {
+          if (actionDeadlineExpired()) return deadlineFailure();
           const { ref_id, text, clear } = msg.params || {};
           if (typeof ref_id !== 'string') return failure('ref_id (string, e.g. "ref_42") is required');
           if (typeof text !== 'string') return failure('text (string) is required');
@@ -4103,8 +6175,11 @@
             try { if (typeof window.__wb_ax_suggest === 'function') suggestions = window.__wb_ax_suggest(ref_id, 6); } catch {}
             return failure(`ref_id ${ref_id} not found. Re-read the accessibility tree to get fresh ids.`, { suggestions });
           }
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           showAgentWorkingTarget(el, 'type_ax');
           const typeRect = (() => {
             try {
@@ -4112,11 +6187,16 @@
               return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
             } catch { return null; }
           })();
+          if (msg.params?._bidiPrepare && el.tagName !== 'SELECT') {
+            if (!_isTypeableElement(el)) return failure('Target is not editable');
+            return prepareBidiTarget(el, msg.params._bidiPrepare);
+          }
           const fieldMeta = _fieldMeta(el);
           let previous = '';
           let method = '';
           let selectExpected = null;
           if (el.isContentEditable) {
+            if (actionDeadlineExpired()) return deadlineFailure();
             dispatched = true;
             previous = _editableTextValue(el);
             if (clear) {
@@ -4126,11 +6206,15 @@
                 r.selectNodeContents(el);
                 sel.removeAllRanges();
                 sel.addRange(r);
+                if (actionDeadlineExpired()) return deadlineFailure();
                 document.execCommand('delete');
               } catch {}
             }
+            if (actionDeadlineExpired()) return deadlineFailure();
             try { document.execCommand('insertText', false, text); } catch {
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.textContent = (clear ? '' : previous) + text;
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.dispatchEvent(new Event('input', { bubbles: true }));
             }
             method = 'type_ax_contenteditable';
@@ -4156,17 +6240,22 @@
               if (!match) {
                 return failure(`No <option> matching "${text}" in select ref_id ${ref_id}.`);
               }
+              if (actionDeadlineExpired()) return deadlineFailure();
               dispatched = true;
               const selSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
               if (selSetter) selSetter.call(el, match.value); else el.value = match.value;
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.dispatchEvent(new Event('input', { bubbles: true }));
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.dispatchEvent(new Event('change', { bubbles: true }));
               selectExpected = match.value;
               method = 'type_ax_select';
             } else {
+              if (actionDeadlineExpired()) return deadlineFailure();
               dispatched = true;
               previous = el.value || '';
               if (clear) el.value = '';
+              if (actionDeadlineExpired()) return deadlineFailure();
               const proto = el.tagName === 'TEXTAREA'
                 ? window.HTMLTextAreaElement.prototype
                 : window.HTMLInputElement.prototype;
@@ -4174,7 +6263,9 @@
               const setter = descriptor && descriptor.set;
               const newVal = (clear ? '' : previous) + text;
               if (setter) setter.call(el, newVal); else el.value = newVal;
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.dispatchEvent(new Event('input', { bubbles: true }));
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.dispatchEvent(new Event('change', { bubbles: true }));
               method = 'type_ax_input';
             }
@@ -4183,25 +6274,21 @@
           }
 
           await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
+          if (actionDeadlineExpired()) return deadlineFailure();
           if (!el.isConnected) {
             return failure(
               `ref_id ${ref_id} was replaced while the value was being typed. Re-read the accessibility tree and retry with the current field ref_id.`,
-              { ref_id, verified: false, recoveryRequired: 'fresh_tree', failureScope: `field-value:${ref_id}`, retryable: false, fieldMeta },
+              { ref_id, verified: false, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false, fieldMeta },
             );
           }
-          let actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-          let verified = selectExpected !== null
+          const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
+          const verified = selectExpected !== null
             ? actual === selectExpected
-            : _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable);
-          let fallbackAttempted = false;
-          if (!verified && selectExpected === null) {
-            fallbackAttempted = await _retryFieldWithExecCommand(el, clear ? text : previous + text);
-            actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-            verified = _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable);
-          }
+            : _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable, readProseMirrorText(el) !== null);
+          const fallbackAttempted = false;
           if (!verified) {
             return failure(
-              'The field value did not exactly match the requested text after the page settled. Re-read the field and retry with a fresh ref_id.',
+              'The field value did not exactly match the requested text after the page settled. Repeat the original replacement text and target for readback-only recovery, or restore the editor before another write.',
               {
                 method,
                 ref_id,
@@ -4210,7 +6297,7 @@
                 actual: actual.slice(0, 200),
                 fieldMeta,
                 fallbackAttempted,
-                recoveryRequired: 'fresh_tree',
+                recoveryRequired: 'verify_or_restore_field',
                 failureScope: `field-value:${ref_id}`,
                 retryable: false,
               },
@@ -4232,6 +6319,7 @@
       },
       'set_field': async () => {
         let dispatched = false;
+        let submissionDispatched = false;
         const failure = (error, extra = {}) => ({
           success: false,
           error,
@@ -4240,15 +6328,32 @@
             ? { dispatched: true }
             : { dispatched: false, noDispatch: true }),
         });
+        const deadlineFailure = () => failure(
+          dispatched
+            ? (submissionDispatched
+                ? 'The page action deadline expired during submission dispatch. The field or submission outcome may be incomplete.'
+                : 'The page action deadline expired during field dispatch. The value may be incomplete, but no submit action was sent.')
+            : 'The page action deadline expired before field dispatch.',
+          {
+            deadlineExpired: true,
+            ...(submissionDispatched ? {} : { submitted: false }),
+            outcomeUnknown: dispatched,
+            retryable: !dispatched,
+          },
+        );
         try {
           const { ref_id, text, clear = true, submit = false } = msg.params || {};
+          if (actionDeadlineExpired()) return deadlineFailure();
           if (typeof ref_id !== 'string') return failure('ref_id (string, e.g. "ref_42") is required');
           if (typeof text !== 'string') return failure('text (string) is required');
           if (typeof window.__wb_ax_lookup !== 'function') return failure('accessibility-tree.js not injected');
           const el = window.__wb_ax_lookup(ref_id);
           if (!el) return failure(`ref_id ${ref_id} not found. Re-read the accessibility tree.`);
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           showAgentWorkingTarget(el, 'set_field');
           const rect = (() => {
             try {
@@ -4274,23 +6379,41 @@
           } else if (!el.isContentEditable && el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT') {
             return failure(`ref_id ${ref_id} is not a text field (tag=${el.tagName}). set_field works on input/textarea/contenteditable only.`);
           }
+          if (msg.params?._bidiPrepare) {
+            if (submit && msg.params.messageRecipientGuardRequired) {
+              const validation = _consumeMessageRecipientDispatchBinding(msg.params, el);
+              if (validation.success !== true) return validation;
+            }
+            return prepareBidiTarget(el, msg.params._bidiPrepare);
+          }
           let prevValue = '';
+          if (actionDeadlineExpired()) return deadlineFailure();
           dispatched = true;
           if (el.isContentEditable) {
             prevValue = _editableTextValue(el);
             if (clear) {
               try {
+                if (actionDeadlineExpired()) return deadlineFailure();
                 const sel = window.getSelection();
                 const r = document.createRange();
                 r.selectNodeContents(el);
                 sel.removeAllRanges();
                 sel.addRange(r);
+                if (actionDeadlineExpired()) return deadlineFailure();
                 document.execCommand('delete');
+                if (actionDeadlineExpired()) return deadlineFailure();
               } catch {}
             }
-            try { document.execCommand('insertText', false, text); } catch {
+            try {
+              if (actionDeadlineExpired()) return deadlineFailure();
+              document.execCommand('insertText', false, text);
+              if (actionDeadlineExpired()) return deadlineFailure();
+            } catch {
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.textContent = (clear ? '' : prevValue) + text;
+              if (actionDeadlineExpired()) return deadlineFailure();
               el.dispatchEvent(new Event('input', { bubbles: true }));
+              if (actionDeadlineExpired()) return deadlineFailure();
             }
           } else {
             prevValue = el.value || '';
@@ -4301,37 +6424,39 @@
             const setter = descriptor && descriptor.set;
             const newVal = (clear ? '' : prevValue) + text;
             if (setter) setter.call(el, newVal); else el.value = newVal;
+            if (actionDeadlineExpired()) return deadlineFailure();
             el.dispatchEvent(new Event('input', { bubbles: true }));
+            if (actionDeadlineExpired()) return deadlineFailure();
             el.dispatchEvent(new Event('change', { bubbles: true }));
+            if (actionDeadlineExpired()) return deadlineFailure();
           }
           // Controlled inputs may reconcile after their event handlers return.
           // Verify only after that turn, and require the complete expected
           // value rather than accepting a matching substring.
           await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
+          if (actionDeadlineExpired()) return deadlineFailure();
           if (!el.isConnected) {
             return failure(
               `ref_id ${ref_id} was replaced while the value was being set. Re-read the accessibility tree and retry with the current field ref_id.`,
               {
                 ref_id,
                 verified: false,
-                recoveryRequired: 'fresh_tree',
+                recoveryRequired: 'verify_or_restore_field',
                 failureScope: `field-value:${ref_id}`,
                 retryable: false,
               },
             );
           }
           const fieldMeta = _fieldMeta(el);
-          let actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-          let verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable);
-          let fallbackAttempted = false;
-          if (!verified) {
-            fallbackAttempted = true;
-            await _retryFieldWithExecCommand(el, (clear ? '' : prevValue) + text);
-            actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-            verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable);
-          }
+          const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
+          const verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable, readProseMirrorText(el) !== null);
+          const fallbackAttempted = false;
+          let nativeSubmitAttempted = false;
+          let submissionOutcomeUnknown = false;
 
           if (submit && verified) {
+            if (actionDeadlineExpired()) return deadlineFailure();
+            submissionOutcomeUnknown = true;
             try {
               const roleAttr = (el.getAttribute && el.getAttribute('role') || '').toLowerCase();
               const controls = el.getAttribute && el.getAttribute('aria-controls');
@@ -4350,27 +6475,107 @@
                   }
                 } catch {}
               }
-              const dispatchKey = (type, key, keyCode) => {
-                el.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode, bubbles: true, cancelable: true }));
+              const dispatchKeySequence = (key, keyCode, includeKeypress = false) => {
+                const result = { dispatched: false, completedWithinDeadline: false };
+                if (actionDeadlineExpired()) return result;
+                const eventInit = { key, code: key, keyCode, bubbles: true, cancelable: true };
+                result.dispatched = true;
+                el.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+                const expiredAfterKeydown = actionDeadlineExpired();
+                if (!expiredAfterKeydown && includeKeypress) {
+                  el.dispatchEvent(new KeyboardEvent('keypress', eventInit));
+                }
+                const expiredBeforeKeyup = expiredAfterKeydown || actionDeadlineExpired();
+                // keyup is cleanup: always release a key whose keydown was
+                // dispatched, even when a synchronous listener crossed the
+                // action deadline.
+                el.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+                result.completedWithinDeadline = !expiredBeforeKeyup && !actionDeadlineExpired();
+                return result;
               };
-              if (isCombobox) {
-                await new Promise(r => setTimeout(r, 80));
-                dispatchKey('keydown', 'ArrowDown', 40);
-                dispatchKey('keyup', 'ArrowDown', 40);
-                await new Promise(r => setTimeout(r, 30));
+              const form = el.form || (el.closest && el.closest('form'));
+              const usesNativeSubmit = _setFieldUsesNativeSubmit(isCombobox, el.isContentEditable, form);
+              let submissionObserved = false;
+              let submissionCancelled = false;
+              if (msg.params?.messageRecipientGuardRequired === true) {
+                const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
+                if (recipientValidation.success !== true) {
+                  return failure(recipientValidation.error, {
+                    verified: true,
+                    submitted: false,
+                    messageDispatched: false,
+                    messageRecipientGuard: true,
+                    reasonCode: recipientValidation.reasonCode,
+                  });
+                }
               }
-              dispatchKey('keydown', 'Enter', 13);
-              dispatchKey('keypress', 'Enter', 13);
-              dispatchKey('keyup', 'Enter', 13);
-              if (!isCombobox) {
-                const form = el.form || (el.closest && el.closest('form'));
-                if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
+              let removeSubmitObserver = () => {};
+              let submitEvent = null;
+              if (form && typeof form.addEventListener === 'function') {
+                const onSubmit = event => {
+                  submissionObserved = true;
+                  submitEvent = event;
+                };
+                form.addEventListener('submit', onSubmit, true);
+                removeSubmitObserver = () => form.removeEventListener?.('submit', onSubmit, true);
               }
-            } catch {}
+              try {
+                if (usesNativeSubmit) {
+                  // Ordinary form controls use one native path. Dispatching a
+                  // synthetic Enter first could make page code act and then
+                  // make this fallback repeat the consequential action.
+                  // requestSubmit performs interactive constraint validation and
+                  // silently aborts on an invalid form; surface that instead of
+                  // reporting a successful submission.
+                  if (form.noValidate !== true && typeof form.checkValidity === 'function') {
+                    if (actionDeadlineExpired()) return deadlineFailure();
+                    const formIsValid = form.checkValidity();
+                    if (actionDeadlineExpired()) return deadlineFailure();
+                    if (!formIsValid) {
+                      return failure(
+                        'The form did not submit: a required field is empty or a value is invalid. Fix the field and retry with a fresh ref_id.',
+                        { verified: true, submitted: false, invalid: true, ref_id, rect },
+                      );
+                    }
+                  }
+                  if (actionDeadlineExpired()) return deadlineFailure();
+                  submissionDispatched = true;
+                  try {
+                    form.requestSubmit();
+                  } catch {}
+                  if (actionDeadlineExpired()) return deadlineFailure();
+                } else {
+                  // Comboboxes, contenteditables, and form-less widgets are
+                  // committed by page-owned keyboard handlers. Never follow
+                  // this path with requestSubmit: cancellation is not proof of
+                  // submission, and an unobserved handler may already have acted.
+                  if (isCombobox) {
+                    await new Promise(r => setTimeout(r, 80));
+                    if (actionDeadlineExpired()) return deadlineFailure();
+                    const arrowResult = dispatchKeySequence('ArrowDown', 40);
+                    if (!arrowResult.completedWithinDeadline) return deadlineFailure();
+                    await new Promise(r => setTimeout(r, 30));
+                    if (actionDeadlineExpired()) return deadlineFailure();
+                  }
+                  if (actionDeadlineExpired()) return deadlineFailure();
+                  const enterResult = dispatchKeySequence('Enter', 13, true);
+                  submissionDispatched = enterResult.dispatched;
+                  if (!enterResult.completedWithinDeadline) return deadlineFailure();
+                  if (actionDeadlineExpired()) return deadlineFailure();
+                }
+                submissionCancelled = submitEvent?.defaultPrevented === true;
+                nativeSubmitAttempted = submissionObserved && !submissionCancelled;
+                submissionOutcomeUnknown = !nativeSubmitAttempted;
+              } finally {
+                removeSubmitObserver();
+              }
+            } catch {
+              submissionOutcomeUnknown = true;
+            }
           }
           if (!verified) {
             return failure(
-              'The field value did not exactly match the requested text after the page settled. Re-read the field and retry with a fresh ref_id.',
+              'The field value did not exactly match the requested text after the page settled. Repeat the original replacement text and target for readback-only recovery, or restore the editor before another write.',
               {
                 method: 'set_field',
                 ref_id,
@@ -4379,7 +6584,7 @@
                 actual: actual.slice(0, 200),
                 fieldMeta,
                 fallbackAttempted,
-                recoveryRequired: 'fresh_tree',
+                recoveryRequired: 'verify_or_restore_field',
                 failureScope: `field-value:${ref_id}`,
                 retryable: false,
               },
@@ -4393,9 +6598,108 @@
             verified: true,
             fieldMeta,
             fallbackAttempted,
+            submitted: nativeSubmitAttempted || undefined,
+            outcomeUnknown: submissionOutcomeUnknown || undefined,
           };
         } catch (e) {
           return failure(e && e.message || String(e));
+        }
+      },
+      'ax_verify_field_value': () => {
+        try {
+          const { ref_id, expected, appendText } = msg.params || {};
+          if (typeof ref_id !== 'string' || typeof expected !== 'string') {
+            return { success: false, verified: false, error: 'ref_id and expected are required' };
+          }
+          if (typeof window.__wb_ax_lookup !== 'function') return { success: false, verified: false, error: 'accessibility-tree.js not injected' };
+          const el = window.__wb_ax_lookup(ref_id);
+          if (!el || !el.isConnected) return { success: false, verified: false, error: `ref_id ${ref_id} is stale` };
+          const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
+          const verifiesAppend = el.isContentEditable && typeof appendText === 'string';
+          const expectedPrefix = verifiesAppend
+            ? expected.slice(0, expected.length - appendText.length)
+            : '';
+          return {
+            success: true,
+            verified: verifiesAppend && !expected.endsWith(appendText)
+              ? false
+              : _setFieldValueMatches(
+                  actual,
+                  expectedPrefix,
+                  verifiesAppend ? appendText : expected,
+                  !verifiesAppend,
+                  el.isContentEditable, readProseMirrorText(el) !== null,
+                ),
+            actual: actual.slice(0, 200),
+            fieldMeta: _fieldMeta(el),
+          };
+        } catch (error) {
+          return { success: false, verified: false, error: error && error.message || String(error) };
+        }
+      },
+      'field_value_digest': async () => {
+        try {
+          const { ref_id, selector, expected, focused } = msg.params || {};
+          let el = null;
+          if (typeof ref_id === 'string' && ref_id) {
+            if (typeof window.__wb_ax_lookup !== 'function') {
+              return { success: false, error: 'accessibility-tree.js not injected' };
+            }
+            el = window.__wb_ax_lookup(ref_id);
+          } else if (typeof selector === 'string' && selector.trim()) {
+            const queryDeep = (root) => {
+              const match = root.querySelector(selector.trim());
+              if (match) return match;
+              const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+              let node = walker.currentNode;
+              while (node) {
+                if (node.shadowRoot) {
+                  const nested = queryDeep(node.shadowRoot);
+                  if (nested) return nested;
+                }
+                node = walker.nextNode();
+              }
+              return null;
+            };
+            el = queryDeep(document);
+          } else if (focused === true) {
+            // Focused-field proof path for selectorless type_text({text}).
+            // Digests the deep active element so a verified focused write can
+            // bind to live field metadata. Failures still carry the live
+            // documentToken/refScopeUrl via the dispatcher scope wrap, so the
+            // agent's live-scope check can use this as a document oracle.
+            try {
+              let active = document.activeElement;
+              while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+              el = active && active !== document.body && active !== document.documentElement ? active : null;
+            } catch { el = null; }
+            if (!el || !el.isConnected) return { success: false, error: 'no focused editable element' };
+          } else {
+            return { success: false, error: 'ref_id or selector is required' };
+          }
+          if (!el || !el.isConnected) return { success: false, error: 'field is stale or unavailable' };
+          const tag = String(el.tagName || '').toUpperCase();
+          if (!(el.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA')) {
+            return { success: false, error: 'target is not a text field' };
+          }
+          const value = String(el.isContentEditable ? _editableTextValue(el) : (el.value || ''));
+          if (!globalThis.crypto?.subtle) return { success: false, error: 'SHA-256 is unavailable' };
+          const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+          const valueSha256 = [...new Uint8Array(digest)]
+            .map(byte => byte.toString(16).padStart(2, '0'))
+            .join('');
+          return {
+            success: true,
+            ...(typeof expected === 'string' ? {
+              verified: _setFieldValueMatches(value, '', expected, true, el.isContentEditable, readProseMirrorText(el) !== null),
+            } : {}),
+            valueLength: value.length,
+            valueSha256,
+            fieldMeta: _fieldMeta(el),
+            stableSelector: _stableFieldSelector(el),
+          };
+        } catch (error) {
+          return { success: false, error: error && error.message || String(error) };
         }
       },
       // ── hover ──────────────────────────────────────────────────────────────
@@ -4408,7 +6712,20 @@
       // we can't synthesize the OS cursor, but mouseenter/mouseover handlers
       // fire and trigger React/Vue state changes) this is enough.
       'hover': () => {
+        let dispatched = false;
+        const deadlineFailure = () => ({
+          success: false,
+          dispatched,
+          ...(dispatched
+            ? { outcomeUnknown: true, retryable: false }
+            : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+          deadlineExpired: true,
+          error: dispatched
+            ? 'The page action deadline expired during hover dispatch.'
+            : 'The page action deadline expired before hover dispatch.',
+        });
         try {
+          if (actionDeadlineExpired()) return deadlineFailure();
           const { ref_id } = msg.params || {};
           if (typeof ref_id !== 'string') return { success: false, error: 'ref_id (string, e.g. "ref_42") is required' };
           if (typeof window.__wb_ax_lookup !== 'function') return { success: false, error: 'accessibility-tree.js not injected' };
@@ -4418,25 +6735,34 @@
             try { if (typeof window.__wb_ax_suggest === 'function') suggestions = window.__wb_ax_suggest(ref_id, 6); } catch {}
             return { success: false, error: `ref_id ${ref_id} not found.`, suggestions };
           }
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           const r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
           const cy = r.top + r.height / 2;
+          if (msg.params?._bidiPrepare) return prepareBidiTarget(el, msg.params._bidiPrepare);
           const eventInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+          const dispatchHover = (EventType, type) => {
+            if (actionDeadlineExpired()) return false;
+            dispatched = true;
+            el.dispatchEvent(new EventType(type, eventInit));
+            return !actionDeadlineExpired();
+          };
           try {
             // Order matches the browser's real sequence so listeners that
             // chain (pointer → mouse) see what they expect.
-            el.dispatchEvent(new PointerEvent('pointerover', eventInit));
-            el.dispatchEvent(new PointerEvent('pointerenter', eventInit));
-            el.dispatchEvent(new MouseEvent('mouseover', eventInit));
-            el.dispatchEvent(new MouseEvent('mouseenter', eventInit));
-            el.dispatchEvent(new MouseEvent('mousemove', eventInit));
+            if (!dispatchHover(PointerEvent, 'pointerover')) return deadlineFailure();
+            if (!dispatchHover(PointerEvent, 'pointerenter')) return deadlineFailure();
+            if (!dispatchHover(MouseEvent, 'mouseover')) return deadlineFailure();
+            if (!dispatchHover(MouseEvent, 'mouseenter')) return deadlineFailure();
+            if (!dispatchHover(MouseEvent, 'mousemove')) return deadlineFailure();
           } catch {
             // PointerEvent unavailable on very old Firefox — MouseEvent alone.
             try {
-              el.dispatchEvent(new MouseEvent('mouseover', eventInit));
-              el.dispatchEvent(new MouseEvent('mouseenter', eventInit));
-              el.dispatchEvent(new MouseEvent('mousemove', eventInit));
+              if (!dispatchHover(MouseEvent, 'mouseover')) return deadlineFailure();
+              if (!dispatchHover(MouseEvent, 'mouseenter')) return deadlineFailure();
+              if (!dispatchHover(MouseEvent, 'mousemove')) return deadlineFailure();
             } catch {}
           }
           return {
@@ -4460,7 +6786,23 @@
       // For sites that work, this is enough. For sites that don't, the user
       // should switch to Chrome (where CDP delivers trusted events).
       'drag_drop': () => {
+        let dispatched = false;
+        let pointerDown = false;
+        let mouseDown = false;
+        let dragStarted = false;
+        const deadlineFailure = () => ({
+          success: false,
+          dispatched,
+          ...(dispatched
+            ? { outcomeUnknown: true, retryable: false }
+            : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+          deadlineExpired: true,
+          error: dispatched
+            ? 'The page action deadline expired during drag dispatch.'
+            : 'The page action deadline expired before drag dispatch.',
+        });
         try {
+          if (actionDeadlineExpired()) return deadlineFailure();
           const { fromRefId, toRefId, steps: stepsRaw } = msg.params || {};
           if (typeof fromRefId !== 'string' || typeof toRefId !== 'string') {
             return { success: false, error: 'drag_drop: fromRefId and toRefId (both strings, e.g. "ref_42") are required' };
@@ -4470,11 +6812,14 @@
           const to = window.__wb_ax_lookup(toRefId);
           if (!from) return { success: false, error: `drag_drop: fromRefId ${fromRefId} not found.` };
           if (!to) return { success: false, error: `drag_drop: toRefId ${toRefId} not found.` };
+          if (actionDeadlineExpired()) return deadlineFailure();
           try { from.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           const fr = from.getBoundingClientRect();
           const x1 = fr.left + fr.width / 2;
           const y1 = fr.top + fr.height / 2;
           try { to.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          if (actionDeadlineExpired()) return deadlineFailure();
           // Re-measure source AFTER destination scroll — viewport may have
           // shifted. Same precaution Chrome takes.
           const fr2 = from.getBoundingClientRect();
@@ -4498,13 +6843,45 @@
             } catch { return null; }
           };
           const dispatch = (type, x, y, target) => {
+            if (actionDeadlineExpired()) return false;
             const ev = mk(type, x, y, target);
-            if (ev) try { target.dispatchEvent(ev); } catch {}
+            if (ev) {
+              dispatched = true;
+              try { target.dispatchEvent(ev); } catch {}
+            }
+            return true;
+          };
+          const dispatchCleanup = (type, x, y, target) => {
+            const ev = mk(type, x, y, target);
+            if (!ev) return;
+            dispatched = true;
+            try { target.dispatchEvent(ev); } catch {}
+          };
+          const deadlineWithCleanup = () => {
+            // Release any synthetic gesture that already started. Cleanup
+            // events intentionally bypass the expired deadline so the page is
+            // not left with a held pointer, mouse button, or active drag.
+            if (dragStarted) {
+              dragStarted = false;
+              dispatchCleanup('dragend', x2, y2, from);
+            }
+            if (pointerDown) {
+              pointerDown = false;
+              dispatchCleanup('pointerup', x2, y2, to);
+            }
+            if (mouseDown) {
+              mouseDown = false;
+              dispatchCleanup('mouseup', x2, y2, to);
+            }
+            return deadlineFailure();
           };
           // Pointer + mouse + drag sequence on source.
-          dispatch('pointerdown', sx1, sy1, from);
-          dispatch('mousedown', sx1, sy1, from);
-          dispatch('dragstart', sx1, sy1, from);
+          if (!dispatch('pointerdown', sx1, sy1, from)) return deadlineWithCleanup();
+          pointerDown = true;
+          if (!dispatch('mousedown', sx1, sy1, from)) return deadlineWithCleanup();
+          mouseDown = true;
+          if (!dispatch('dragstart', sx1, sy1, from)) return deadlineWithCleanup();
+          dragStarted = true;
           // Intermediate waypoints — fire pointermove/mousemove/dragover at
           // both source and destination so library code that listens at
           // either end sees movement.
@@ -4513,17 +6890,21 @@
             const ix = Math.round(sx1 + (x2 - sx1) * t);
             const iy = Math.round(sy1 + (y2 - sy1) * t);
             const overTarget = document.elementFromPoint(ix, iy) || to;
-            dispatch('drag', ix, iy, from);
-            dispatch('pointermove', ix, iy, overTarget);
-            dispatch('mousemove', ix, iy, overTarget);
-            dispatch('dragenter', ix, iy, overTarget);
-            dispatch('dragover', ix, iy, overTarget);
+            if (!dispatch('drag', ix, iy, from)) return deadlineWithCleanup();
+            if (!dispatch('pointermove', ix, iy, overTarget)) return deadlineWithCleanup();
+            if (!dispatch('mousemove', ix, iy, overTarget)) return deadlineWithCleanup();
+            if (!dispatch('dragenter', ix, iy, overTarget)) return deadlineWithCleanup();
+            if (!dispatch('dragover', ix, iy, overTarget)) return deadlineWithCleanup();
           }
           // Drop sequence on destination.
-          dispatch('drop', x2, y2, to);
-          dispatch('dragend', x2, y2, from);
-          dispatch('pointerup', x2, y2, to);
-          dispatch('mouseup', x2, y2, to);
+          if (!dispatch('drop', x2, y2, to)) return deadlineWithCleanup();
+          if (!dispatch('dragend', x2, y2, from)) return deadlineWithCleanup();
+          dragStarted = false;
+          if (!dispatch('pointerup', x2, y2, to)) return deadlineWithCleanup();
+          pointerDown = false;
+          if (!dispatch('mouseup', x2, y2, to)) return deadlineWithCleanup();
+          mouseDown = false;
+          if (actionDeadlineExpired()) return deadlineFailure();
           return {
             success: true,
             method: 'synthetic-drag',
@@ -4661,15 +7042,250 @@
       return;
     }
 
-    const result = handler();
+    // Readback probes double as live document-identity oracles: the agent
+    // uses their token to tell a same-document route change (keep text
+    // guards) from a full navigation no AX scope ever observed (drop stale
+    // debt). Attach on every return path, including failures.
+    const withLiveDocumentScope = (value) => {
+      if ((msg.action === 'field_value_digest' || msg.action === 'ax_verify_field_value')
+          && value && typeof value === 'object') {
+        try {
+          if (!value.documentToken) value.documentToken = _axDocumentToken();
+          if (!value.refScopeUrl) value.refScopeUrl = location.href;
+        } catch { /* identity is best-effort; never break the response */ }
+      }
+      return value;
+    };
+
+    let result;
+    try {
+      result = handler();
+    } catch (err) {
+      sendResponse(withLiveDocumentScope({
+        success: false,
+        error: `${msg.action} failed: ${err?.message || String(err)}`,
+      }));
+      return;
+    }
     if (result instanceof Promise) {
       // Always settle sendResponse — a rejecting handler (e.g. a throwing
       // DOM API) must not leave the caller's await hanging forever.
-      result.then(sendResponse, (err) => {
-        sendResponse({ success: false, error: `${msg.action} failed: ${err?.message || String(err)}` });
-      });
+      result.then(
+        (value) => sendResponse(withLiveDocumentScope(value)),
+        (err) => sendResponse(withLiveDocumentScope({
+          success: false,
+          error: `${msg.action} failed: ${err?.message || String(err)}`,
+        })),
+      );
       return true; // async
     }
-    sendResponse(result);
+    if (result === undefined || result === null) {
+      sendResponse(withLiveDocumentScope({
+        success: false,
+        noResult: true,
+        error: `${msg.action} returned no result (handler produced no payload).`,
+      }));
+      return;
+    }
+    sendResponse(withLiveDocumentScope(result));
   });
+
+  // ─── Tab attention flash ────────────────────────────────────────────
+  // When a run finishes on a tab the user has navigated away from, the side
+  // panel asks this page to blink its title and favicon so the finished tab
+  // can be found at a glance. With many tabs open the strip only shows the
+  // favicon, so the favicon itself alternates between the site's own icons
+  // and a bell alert icon — swapping the site's <link> hrefs outright,
+  // because an appended icon link loses to favicons the page injects later.
+  // Blinking stops when the tab becomes visible, after
+  // ATTENTION_FLASH_TIMEOUT_MS, or on an explicit stop message.
+  //
+  // Declared at the end of this closure (function declarations hoist, so the
+  // message handlers above can call them) — code above this point is sliced
+  // and evaluated standalone by tests.
+  // Blink persists for minutes rather than seconds: the user is by
+  // definition looking elsewhere while it runs, and it stops the moment the
+  // tab becomes visible anyway. A short window is how completions get
+  // missed entirely.
+  const ATTENTION_FLASH_INTERVAL_MS = 700;
+  const ATTENTION_FLASH_TIMEOUT_MS = 300000;
+  const ATTENTION_FLASH_MARKER = '\u{1F514} ';
+  let attentionFlashTimer = null;
+  let attentionFlashTimeout = null;
+  let attentionFlashOnVisible = null;
+  // Exact title string this flash last wrote — ownership marker. Stripping
+  // by prefix alone would eat a page's own title that legitimately starts
+  // with the same bell character.
+  let attentionFlashOwnTitle = null;
+  // Favicon blink state. Every icon <link> present when the flash started is
+  // remembered with its original href; the alert data URL replaces it each
+  // marked tick and originals are handed back during quiet ticks — unless
+  // the page swapped in its own new icon meanwhile, which then becomes the
+  // baseline we hand back at stop instead.
+  let attentionFlashAlertUrl = null;
+  let attentionFlashIconLinks = null;
+  let attentionFlashFallbackEl = null;
+
+  function attentionFlashBuildAlertIcon() {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.font = '52px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ATTENTION_FLASH_MARKER.trim(), 32, 36);
+      }
+      return canvas.toDataURL('image/png');
+    } catch {
+      return null;
+    }
+  }
+
+  function attentionFlashStripMarker(title) {
+    const text = String(title ?? '');
+    return text.startsWith(ATTENTION_FLASH_MARKER)
+      ? text.slice(ATTENTION_FLASH_MARKER.length)
+      : text;
+  }
+
+  function attentionFlashCaptureIcons() {
+    try {
+      attentionFlashIconLinks = [];
+      // Substring match on purpose: GitHub declares "alternate icon",
+      // others use "shortcut icon"/"apple-touch-icon" — exact-value
+      // selectors miss real-world rel spellings.
+      for (const el of document.querySelectorAll('link[rel*="icon" i]')) {
+        attentionFlashIconLinks.push({ el, href: el.getAttribute('href') });
+      }
+      // Pages declaring no icon link get a temporary one instead — browsers
+      // prefer the last-declared favicon, so dropping it at stop restores
+      // the original without touching site elements.
+      if (!attentionFlashIconLinks.length && !attentionFlashFallbackEl) {
+        attentionFlashFallbackEl = document.createElement('link');
+        attentionFlashFallbackEl.setAttribute('rel', 'icon');
+        attentionFlashFallbackEl.setAttribute('data-webbrain-attention', '1');
+        (document.head || document.documentElement).appendChild(attentionFlashFallbackEl);
+      }
+    } catch {
+      attentionFlashIconLinks = [];
+      attentionFlashFallbackEl = null;
+    }
+  }
+
+  function attentionFlashToggleFavicon(show) {
+    if (!attentionFlashAlertUrl) return;
+    try {
+      // Dynamic sites (e.g. GitHub's pjax) replace their favicon <link>
+      // nodes outright; re-anchor before writing so we never blink at
+      // detached elements.
+      if (attentionFlashIconLinks?.some(entry => !entry.el.isConnected)) {
+        attentionFlashCaptureIcons();
+      }
+      for (const entry of attentionFlashIconLinks || []) {
+        if (show) {
+          // Overwrite unconditionally during the marked phase: sites like
+          // GitHub rewrite these hrefs themselves, so a strict ownership
+          // guard would silently stop blinking forever.
+          entry.el.setAttribute('href', attentionFlashAlertUrl);
+        } else {
+          const current = entry.el.getAttribute('href');
+          if (current === attentionFlashAlertUrl) {
+            if (entry.href == null) entry.el.removeAttribute('href');
+            else entry.el.setAttribute('href', entry.href);
+          } else {
+            // The page swapped in its own new icon mid-flash — adopt it as
+            // the baseline we will eventually hand back.
+            entry.href = current;
+          }
+        }
+      }
+      if (attentionFlashFallbackEl) {
+        if (show) attentionFlashFallbackEl.setAttribute('href', attentionFlashAlertUrl);
+        else attentionFlashFallbackEl.removeAttribute('href');
+      }
+    } catch { /* favicon swap is best-effort */ }
+  }
+
+  function stopAttentionFlash() {
+    if (attentionFlashTimer) {
+      clearInterval(attentionFlashTimer);
+      attentionFlashTimer = null;
+    }
+    if (attentionFlashTimeout) {
+      clearTimeout(attentionFlashTimeout);
+      attentionFlashTimeout = null;
+    }
+    if (attentionFlashOnVisible) {
+      document.removeEventListener('visibilitychange', attentionFlashOnVisible);
+      attentionFlashOnVisible = null;
+    }
+    // Only undo our own write. If the page replaced the title since we last
+    // touched it, leave its value completely untouched.
+    if (attentionFlashOwnTitle != null && document.title === attentionFlashOwnTitle) {
+      document.title = attentionFlashStripMarker(document.title);
+    }
+    attentionFlashOwnTitle = null;
+    // Restore favicon links still holding exactly what we wrote; anything
+    // the page rewrote itself is left untouched.
+    if (attentionFlashIconLinks && attentionFlashAlertUrl) {
+      for (const entry of attentionFlashIconLinks) {
+        try {
+          if (entry.el.getAttribute('href') === attentionFlashAlertUrl) {
+            if (entry.href == null) entry.el.removeAttribute('href');
+            else entry.el.setAttribute('href', entry.href);
+          }
+        } catch { /* best-effort */ }
+      }
+    }
+    attentionFlashIconLinks = null;
+    if (attentionFlashFallbackEl) {
+      attentionFlashFallbackEl.remove();
+      attentionFlashFallbackEl = null;
+    }
+    attentionFlashAlertUrl = null;
+  }
+
+  function startAttentionFlash() {
+    if (typeof document === 'undefined') return false;
+    stopAttentionFlash();
+    // Already looking at the page — nothing to draw attention to.
+    if (document.visibilityState === 'visible') return false;
+    attentionFlashOnVisible = () => {
+      if (document.visibilityState === 'visible') stopAttentionFlash();
+    };
+    document.addEventListener('visibilitychange', attentionFlashOnVisible);
+    attentionFlashAlertUrl = attentionFlashBuildAlertIcon();
+    if (attentionFlashAlertUrl) attentionFlashCaptureIcons();
+    // Chrome throttles hidden-tab timers hard (once per minute after ~5
+    // minutes) and Memory Saver may freeze the tab outright, so the phase
+    // is derived from wall-clock time instead of a boolean flip: however
+    // sparse or late the wake-ups land, each one shows the correct side of
+    // the blink and the bell is on immediately at start.
+    const attentionFlashEpoch = Date.now();
+    const applyAttentionTick = () => {
+      const flashing = Math.floor((Date.now() - attentionFlashEpoch) / ATTENTION_FLASH_INTERVAL_MS) % 2 === 0;
+      // Derive each toggle from the live title so changes the site makes
+      // while backgrounded survive the flash. A previous marker is only
+      // stripped when the current title is still exactly what we wrote.
+      const base = document.title === attentionFlashOwnTitle
+        ? attentionFlashStripMarker(document.title)
+        : String(document.title ?? '');
+      // Only the marked phase is extension-owned — during the quiet phase
+      // the title belongs to the page even though we just wrote it, so it
+      // must never be stripped on stop.
+      attentionFlashOwnTitle = flashing ? `${ATTENTION_FLASH_MARKER}${base}` : null;
+      document.title = flashing ? attentionFlashOwnTitle : base;
+      // The favicon blinks with the title: the bell alert icon replaces the
+      // site's own icons during the marked phase and they return during the
+      // quiet one — with many tabs open the favicon is all that shows.
+      attentionFlashToggleFavicon(flashing);
+    };
+    applyAttentionTick();
+    attentionFlashTimer = setInterval(applyAttentionTick, ATTENTION_FLASH_INTERVAL_MS);
+    attentionFlashTimeout = setTimeout(stopAttentionFlash, ATTENTION_FLASH_TIMEOUT_MS);
+    return true;
+  }
 })();

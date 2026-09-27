@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "064",
+  "difficulty": {
+    "level": 4,
+    "slug": "advanced",
+    "label": "Advanced"
+  },
+  "category": "form-validation",
+  "title": "Vergi bilgileri",
+  "image": "images/064.png",
+  "question": "Which field is invalid, what value does it contain, and what exact error is shown? Focus on the “Vergi bilgileri” screen.",
+  "defaultPromptMode": "production"
+}

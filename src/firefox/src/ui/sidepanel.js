@@ -1,17 +1,31 @@
 /**
  * WebBrain Side Panel — Chat UI logic.
- * Default: human-friendly compact output. Verbose mode: full tool debug.
+ * Default: compact history in chat plus the live label; click for status-only mode.
+ * Verbose mode: always-open tool calls with arguments and results.
  */
 
-import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations } from './i18n.js';
+import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
+import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
-import { codeFenceLanguage, highlightCode, renderMarkdownHeadings } from './markdown-render.js';
+import { codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
 import { applyMode, loadMode, watch } from './theme.js';
+import {
+  UI_SCALE_LEVELS,
+  UI_SCALE_STORAGE_KEY,
+  applyUiScale,
+  loadUiScale,
+  nextUiScale,
+  normalizeUiScale,
+  saveUiScale,
+  uiScaleShortcutAction,
+} from './ui-scale.js';
 import { buildRecommendedActions, shouldShowRecommendedActions } from './recommended-actions.js';
 import { createContextMenuPromptHandler } from './context-menu-prompts.js';
 import {
   formatSelectionPromptForDisplay,
   normalizeSelectionAction,
+  normalizeSelectionSourceGrounding,
+  SELECTION_CONTEXT_SOURCE_GROUNDING,
   SELECTION_ONLY_SOURCE_GROUNDING,
 } from '../context-menu-storage.js';
 import {
@@ -24,7 +38,17 @@ import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
 import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
 import { formatErrorMessage } from '../error-format.js';
+import { buildMessageInfoPills } from '../message-info.js';
 import { escapeHtml } from './utils.js';
+import { createOfflineRagReadinessController } from './offline-rag-readiness.js';
+import {
+  buildSelectionTextAttachment,
+  selectionIsQuoteable,
+  selectionRangeIsVisible,
+  selectionRangeRect,
+  selectionTextFromRange,
+} from './selection-quote.js';
+import { getSelectionShortcutLocalization } from '../selection-shortcut-i18n.js';
 import {
   isBackgroundConnectionError,
   runDetachedWithReconnect,
@@ -47,6 +71,23 @@ import {
 import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
+import { visionProviderKind } from '../providers/vision-capabilities.js';
+import {
+  SHORTCUT_COMMAND_STORAGE_KEY,
+  shortcutCommandForWindow,
+} from '../shortcut-command.js';
+import {
+  clearStagedScreenshots,
+  loadStagedScreenshots,
+  markStagedScreenshots,
+  removeStagedScreenshot,
+  removeStagedScreenshots,
+  saveStagedScreenshot,
+} from './staged-screenshot-store.js';
+import { installFileDropHandlers } from './attachment-drop.js';
+import { isTextAttachment } from './attachment-file.js';
+
+const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
 
 // Hydrate the theme from browser.storage.local (the inline <head> bootstrap
 // only sees localStorage; if the user changes the theme on another device
@@ -68,7 +109,7 @@ if (globalThis.browser?.storage?.onChanged) {
 
 // ─── Onboarding (first-launch wizard) ───────────────────────────────
 (async function initOnboarding() {
-  const stored = await browser.storage.local.get('onboardingComplete');
+  const stored = await browser.storage.local.get(['onboardingComplete', 'helpImproveWebBrain']);
   if (stored.onboardingComplete) return;
 
   const overlay = document.getElementById('onboarding');
@@ -86,15 +127,26 @@ if (globalThis.browser?.storage?.onChanged) {
   const providerBody = document.getElementById('ob-provider-body');
   const providerStatus = document.getElementById('ob-provider-status');
   const providerList = document.getElementById('ob-provider-list');
+  const helpImproveChoice = document.getElementById('ob-help-improve');
+  const helpImproveCheckbox = document.getElementById('ob-help-improve-checkbox');
   const localModels = document.getElementById('ob-local-models');
   const localModelList = document.getElementById('ob-local-model-list');
   const totalSteps = steps.length;
-  const LOCAL_PROVIDER_ORDER = ['jan', 'lmstudio', 'ollama', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
+  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
   let current = 0;
   let localScanStarted = false;
   let localModelChoices = [];
   let selectedLocalModelIndex = 0;
   let cloudReady = false;
+  let persistedHelpImprove = stored.helpImproveWebBrain !== false;
+  let helpImproveSavePromise = Promise.resolve(true);
+
+  if (helpImproveCheckbox) {
+    helpImproveCheckbox.checked = persistedHelpImprove;
+    helpImproveCheckbox.addEventListener('change', () => {
+      helpImproveSavePromise = persistHelpImprovePreference();
+    });
+  }
 
   async function dismissOnboarding() {
     await browser.storage.local.set({ onboardingComplete: true }).catch(() => {});
@@ -103,6 +155,28 @@ if (globalThis.browser?.storage?.onChanged) {
 
   function setProviderStatus(key, params) {
     if (providerStatus) providerStatus.textContent = t(key, params);
+  }
+
+  function setHelpImproveVisible(visible) {
+    helpImproveChoice?.classList.toggle('hidden', !visible);
+  }
+
+  async function persistHelpImprovePreference() {
+    if (!helpImproveCheckbox) return true;
+    const requestedValue = helpImproveCheckbox.checked;
+    helpImproveCheckbox.disabled = true;
+    try {
+      await sendToBackground('set_help_improve_preference', { enabled: requestedValue });
+      persistedHelpImprove = requestedValue;
+      if (cloudReady) showCloudReady();
+      return true;
+    } catch (error) {
+      helpImproveCheckbox.checked = persistedHelpImprove;
+      setProviderStatus('sp.status.error', { msg: error?.message || String(error || 'storage unavailable') });
+      return false;
+    } finally {
+      helpImproveCheckbox.disabled = false;
+    }
   }
 
   function openProviderSettings() {
@@ -137,17 +211,21 @@ if (globalThis.browser?.storage?.onChanged) {
   function showProviderFallback(statusKey = 'ob.tokens.none_status') {
     cloudReady = false;
     localModelChoices = [];
+    const providerUnknown = statusKey === 'ob.tokens.detect_failed';
+    setHelpImproveVisible(providerUnknown);
     if (providerBody) providerBody.textContent = t('ob.tokens.body');
     providerList?.classList.remove('hidden');
     localModels?.classList.add('hidden');
     setProviderStatus(statusKey);
     settingsBtn.textContent = t('ob.btn.settings');
     settingsBtn.disabled = false;
+    skipBtn.disabled = !providerUnknown;
   }
 
   function showLocalChoices(choices) {
     cloudReady = false;
     localModelChoices = choices;
+    setHelpImproveVisible(false);
     selectedLocalModelIndex = 0;
     if (providerBody) providerBody.textContent = t('ob.tokens.local_body');
     if (localModelList) {
@@ -200,13 +278,15 @@ if (globalThis.browser?.storage?.onChanged) {
     setProviderStatus('ob.tokens.local_status', { count: choices.length });
     settingsBtn.textContent = t('ob.btn.use_local');
     settingsBtn.disabled = false;
+    skipBtn.disabled = false;
   }
 
   function showCloudReady() {
     cloudReady = true;
     localModelChoices = [];
+    setHelpImproveVisible(true);
     if (providerBody) {
-      providerBody.textContent = t('ob.cloud.body');
+      providerBody.textContent = t('ob.cloud.using').trim();
     }
     if (providerStatus) {
       providerStatus.textContent = '';
@@ -217,11 +297,12 @@ if (globalThis.browser?.storage?.onChanged) {
       changeLink.textContent = t('ob.cloud.change');
       changeLink.addEventListener('click', async (event) => {
         event.preventDefault();
+        if (!await helpImproveSavePromise.catch(() => false)) return;
         openProviderSettings();
         await dismissOnboarding();
       });
       providerStatus.append(
-        document.createTextNode(`${t('ob.cloud.using').trimEnd()} `),
+        document.createTextNode(`${t('st.tab.providers')}: `),
         changeLink,
         document.createTextNode('.')
       );
@@ -230,11 +311,13 @@ if (globalThis.browser?.storage?.onChanged) {
     localModels?.classList.add('hidden');
     settingsBtn.textContent = t('ob.btn.start');
     settingsBtn.disabled = false;
+    skipBtn.disabled = false;
   }
 
   async function scanLocalModels() {
     localModelChoices = [];
     settingsBtn.disabled = true;
+    skipBtn.disabled = true;
     settingsBtn.textContent = t('ob.btn.detecting');
     providerList?.classList.add('hidden');
     localModels?.classList.add('hidden');
@@ -258,7 +341,7 @@ if (globalThis.browser?.storage?.onChanged) {
           // closed port fails fast. 5s just caps a slow/stalled server. (Kept
           // equal to the Chrome build for parity.)
           const res = await withTimeout(
-            sendToBackground('list_provider_models', { providerId }),
+            sendToBackground('list_provider_models', { providerId, detectServerIdentity: true }),
             5000
           );
           if (res?.ok && Array.isArray(res.models)) {
@@ -335,6 +418,7 @@ if (globalThis.browser?.storage?.onChanged) {
 
   settingsBtn.addEventListener('click', async () => {
     if (cloudReady) {
+      if (!await helpImproveSavePromise.catch(() => false)) return;
       await dismissOnboarding();
       inputEl?.focus();
       return;
@@ -372,6 +456,7 @@ if (globalThis.browser?.storage?.onChanged) {
   });
 
   skipBtn.addEventListener('click', async () => {
+    if (!await helpImproveSavePromise.catch(() => false)) return;
     await dismissOnboarding();
   });
 })();
@@ -392,9 +477,18 @@ const newConversationConfirmEl = document.getElementById('new-conversation-confi
 const newConversationConfirmCancelBtn = document.getElementById('new-conversation-confirm-cancel');
 const newConversationConfirmAcceptBtn = document.getElementById('new-conversation-confirm-accept');
 const selectionScopeBannerEl = document.getElementById('selection-scope-banner');
+const selectionScopeTitleEl = document.getElementById('selection-scope-title');
+const selectionScopeDescriptionEl = document.getElementById('selection-scope-description');
+const selectionScopeRestoreBtn = document.getElementById('selection-scope-restore');
 const selectionScopeNewConversationBtn = document.getElementById('selection-scope-new-conversation');
+let selectionAskActionEl = document.getElementById('selection-ask-action');
 const historyBtn = document.getElementById('btn-history');
+const expandBtn = document.getElementById('btn-expand');
 const settingsBtn = document.getElementById('btn-settings');
+const uiScaleMenu = document.getElementById('ui-scale-menu');
+const uiScaleBtn = document.getElementById('btn-ui-scale');
+const uiScalePopover = document.getElementById('ui-scale-popover');
+const uiScaleValue = document.getElementById('ui-scale-value');
 const verboseBtn = document.getElementById('btn-verbose');
 const providerSelect = document.getElementById('provider-select');
 const providerPickerBtn = document.getElementById('provider-picker-btn');
@@ -403,16 +497,93 @@ const providerPickerLabel = document.getElementById('provider-picker-label');
 const languageSelect = document.getElementById('language-select');
 const languagePickerBtn = document.getElementById('language-picker-btn');
 const languagePickerMenu = document.getElementById('language-picker-menu');
-const languagePickerFlag = document.getElementById('language-picker-flag');
-const languagePickerCode = document.getElementById('language-picker-code');
 const MORE_PROVIDERS_OPTION_VALUE = '__more_providers__';
 const statusDot = document.getElementById('status-dot');
 // Short labels for the closed picker button (menu rows keep the longer status text).
 const providerPickerLabelById = new Map();
 let languagePickerTypeahead = '';
 let languagePickerTypeaheadTimer = null;
+
+let currentUiScale = normalizeUiScale(document.documentElement.dataset.uiScale);
+
+// `getBoundingClientRect()` reports zoomed viewport pixels, while `scrollTop`,
+// `clientHeight` and `offsetTop` stay in the body's own unzoomed CSS pixels.
+// A rect measurement has to be divided by this factor before it can be mixed
+// with either of those, or compared against a constant written in CSS pixels.
+function uiScaleZoom() {
+  return currentUiScale / 100 || 1;
+}
+
+function renderSidepanelUiScale(value) {
+  currentUiScale = applyUiScale(document.documentElement, value);
+  if (uiScaleValue) uiScaleValue.textContent = `${currentUiScale}%`;
+  const min = UI_SCALE_LEVELS[0];
+  const max = UI_SCALE_LEVELS[UI_SCALE_LEVELS.length - 1];
+  uiScalePopover?.querySelector('[data-ui-scale-action="decrease"]')?.toggleAttribute('disabled', currentUiScale === min);
+  uiScalePopover?.querySelector('[data-ui-scale-action="increase"]')?.toggleAttribute('disabled', currentUiScale === max);
+}
+
+// Steps are serialized because each one reads the scale rendered by the step
+// before it. Key auto-repeat can fire dozens of times before a storage write
+// resolves, and without the queue every repeat would read the same stale
+// scale — a held Ctrl+= would advance exactly one level.
+let uiScaleWriteQueue = Promise.resolve();
+
+function setSidepanelUiScale(action) {
+  const write = uiScaleWriteQueue.then(async () => {
+    const next = nextUiScale(currentUiScale, action);
+    await saveUiScale(browser.storage.local, next);
+    renderSidepanelUiScale(next);
+  });
+  // Keep the chain alive after a rejected write while still handing the
+  // failure to this caller.
+  uiScaleWriteQueue = write.catch(() => {});
+  return write;
+}
+
+function closeUiScalePopover() {
+  if (!uiScalePopover || uiScalePopover.classList.contains('hidden')) return false;
+  uiScalePopover.classList.add('hidden');
+  uiScaleBtn?.setAttribute('aria-expanded', 'false');
+  return true;
+}
+
+// Seeded into the write queue so an early Ctrl+= cannot step off the
+// pre-paint value. That value comes from the localStorage mirror, which an
+// MV3 service worker cannot refresh when a global shortcut changes the
+// scale — stepping off a stale mirror would silently overwrite the real
+// scale in storage.
+uiScaleWriteQueue = loadUiScale(browser.storage.local)
+  .then(renderSidepanelUiScale)
+  .catch(() => {});
+uiScaleBtn?.addEventListener('click', () => {
+  const willOpen = uiScalePopover?.classList.contains('hidden');
+  uiScalePopover?.classList.toggle('hidden', !willOpen);
+  uiScaleBtn.setAttribute('aria-expanded', String(willOpen));
+});
+uiScalePopover?.addEventListener('click', (event) => {
+  const action = event.target.closest('[data-ui-scale-action]')?.dataset.uiScaleAction;
+  if (action) setSidepanelUiScale(action).catch(() => {});
+});
+uiScalePopover?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  closeUiScalePopover();
+  uiScaleBtn?.focus();
+});
+document.addEventListener('click', (event) => {
+  if (uiScaleMenu?.contains(event.target)) return;
+  closeUiScalePopover();
+});
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[UI_SCALE_STORAGE_KEY]) {
+    renderSidepanelUiScale(changes[UI_SCALE_STORAGE_KEY].newValue);
+  }
+});
 const agentActivity = document.getElementById('agent-activity');
+const activityProgressToggle = document.getElementById('activity-progress-toggle');
 const activityText = document.getElementById('activity-text');
+const activityLiveStatus = document.getElementById('activity-live-status');
 const modeAskBtn = document.getElementById('btn-mode-ask');
 const modeActBtn = document.getElementById('btn-mode-act');
 const modeDevBtn = document.getElementById('btn-mode-dev');
@@ -425,6 +596,7 @@ const modeToggleHighlight = (() => {
   return el;
 })();
 const actWarning = document.getElementById('act-warning');
+const actWarningDismiss = document.getElementById('act-warning-dismiss');
 const inputArea = document.getElementById('input-area');
 const slashCommandMenuEl = document.getElementById('slash-command-menu');
 const queuedMessagesEl = document.getElementById('queued-messages');
@@ -443,6 +615,11 @@ const ASK_PLACEHOLDER_KEYS = [
   'sp.input.placeholder_tip.help',
 ];
 const PERMISSION_REMINDER_PLACEHOLDER_KEY = 'sp.input.placeholder_tip.skip_permissions';
+let pendingAnswerSelection = null;
+let selectionAskActionRefreshFrame = null;
+let selectionAskActionRefreshTimer = null;
+let selectionAskActionLocale = '';
+let selectionAskActionLabel = '';
 const SLASH_COMMANDS = [
   { value: '/help', usage: '/help', descriptionKey: 'sp.slash.help', action: 'show', outOfBand: true },
   {
@@ -507,12 +684,24 @@ const SLASH_COMMANDS = [
       { value: '--file', descriptionKey: 'sp.slash.import_config_file', disallowPayload: true, requires: '--import' },
     ],
   },
+  {
+    value: '/teach',
+    usage: '/teach [--start <name> | --end]',
+    descriptionKey: 'sp.slash.teach',
+    action: 'status',
+    outOfBand: true,
+    options: [
+      { value: '--start', valueLabel: '<name>', descriptionKey: 'sp.slash.teach', action: 'start', takesRemainder: true, outOfBand: true, exclusiveGroup: 'teach-action' },
+      { value: '--end', descriptionKey: 'sp.slash.teach', action: 'end', disallowPayload: true, outOfBand: true, exclusiveGroup: 'teach-action' },
+    ],
+  },
   { value: '/allow-api', usage: '/allow-api [prompt]', descriptionKey: 'sp.slash.allow_api', action: 'enable', acceptsPayload: true },
   { value: '/foreground', usage: '/foreground [prompt]', descriptionKey: 'sp.slash.foreground', action: 'enable', acceptsPayload: true },
   { value: '/dangerously-skip-permissions', usage: '/dangerously-skip-permissions [prompt]', descriptionKey: 'sp.slash.dangerously_skip_permissions', action: 'disable', acceptsPayload: true, outOfBand: true },
   { value: '/compact', usage: '/compact [prompt]', descriptionKey: 'sp.slash.compact', action: 'compact', acceptsPayload: true },
   { value: '/verbose', usage: '/verbose', descriptionKey: 'sp.slash.verbose', action: 'toggle', outOfBand: true },
   { value: '/reset', usage: '/reset', descriptionKey: 'sp.slash.reset', action: 'reset' },
+  { value: '/print', usage: '/print', descriptionKey: 'sp.slash.print', action: 'print' },
   {
     value: '/screenshot',
     usage: '/screenshot',
@@ -587,6 +776,7 @@ function slashOptionIsAvailable(option, selectedValues, selectedGroups) {
     && !selectedValues.has(option.value)
     && !selectedValues.has(SLASH_HELP_OPTION.value)
     && (option.value !== SLASH_HELP_OPTION.value || selectedValues.size === 0)
+    && !(option.conflicts || []).some((value) => selectedValues.has(value))
     && (!option.exclusiveGroup || !selectedGroups.has(option.exclusiveGroup));
 }
 
@@ -668,6 +858,9 @@ function parseSlashInvocation(value) {
     return { error: 'invalid-usage', command, commandToken };
   }
   if (selectedOptions.some((option) => option.requires && !selectedValues.has(option.requires))) {
+    return { error: 'invalid-usage', command, commandToken };
+  }
+  if (selectedOptions.some((option) => (option.conflicts || []).some((value) => selectedValues.has(value)))) {
     return { error: 'invalid-usage', command, commandToken };
   }
 
@@ -841,23 +1034,35 @@ let queuedTabSwitchMessages = [];
 let isProcessing = false;
 let currentAssistantEl = null;
 let verboseMode = false;
+let compactProgressVisible = true;
 let agentMode = 'ask'; // 'ask' | 'act' | 'dev'
 let abortRequested = false;
 const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
 const abortRequestedTabs = new Set();
 const clearingConversationTabs = new Set();
-const selectionGroundedTabs = new Set();
+const selectionGroundingByTab = new Map();
 let newConversationConfirmationState = null;
 const localRunRequestIds = new Map();
 const localRunFollowers = new Map();
 const cancelledRunRecoveryRequestIds = new Set();
+const conversationClearFollowerCancellationRequestIds = new Set();
 const adoptedRunRecoveryRequestIds = new Set();
 const clearedConversationRunRequestIds = new Set();
+const failedConversationClearRecoveryTabs = new Set();
 let recommendationsRequestId = 0;
 let providerSelectionRequestId = 0;
 let providerTestRequestId = 0;
 let selectedProviderId = 'webbrain_cloud';
+const standaloneRagReadinessRoot = document.getElementById('standalone-rag-readiness');
+const standaloneRagReadiness = isStandaloneWindow && standaloneRagReadinessRoot
+  ? createOfflineRagReadinessController({
+    root: standaloneRagReadinessRoot,
+    manageHref: 'emergency-box.html',
+    getGenerationStatus: () => 'unavailable',
+  })
+  : null;
+standaloneRagReadinessRoot?.classList.add('hidden');
 let recommendedActionsCollapsed = false;
 let webbrainPromotionHasAnimated = false;
 let slashCommandMatches = [];
@@ -865,16 +1070,40 @@ let slashCommandSelectedIndex = 0;
 let busySlashNoticeLastShownAt = 0;
 let composerToastTimer = null;
 let retryPayloadSeq = 0;
+const RETRY_PAYLOAD_RETENTION_MS = 30_000;
 const activeChatPayloadsByTab = new Map();
 const retryAttachmentPayloads = new Map();
 const retryAttachmentIdsByTab = new Map();
+const retryPayloadByAssistant = new WeakMap();
+const retryPayloadExpiryTimers = new WeakMap();
+
+function rememberRetryPayloadForAssistant(assistantEl, retryPayload) {
+  if (!assistantEl || !retryPayload) return;
+  const previousTimer = retryPayloadExpiryTimers.get(assistantEl);
+  if (previousTimer != null) clearTimeout(previousTimer);
+  retryPayloadByAssistant.set(assistantEl, {
+    ...retryPayload,
+    attachments: Array.isArray(retryPayload.attachments)
+      ? retryPayload.attachments.slice()
+      : [],
+  });
+  const expiryTimer = setTimeout(() => {
+    retryPayloadByAssistant.delete(assistantEl);
+    retryPayloadExpiryTimers.delete(assistantEl);
+  }, RETRY_PAYLOAD_RETENTION_MS);
+  retryPayloadExpiryTimers.set(assistantEl, expiryTimer);
+}
 
 function setTabProcessing(tabId, processing) {
   const numericTabId = Number(tabId);
   if (!Number.isFinite(numericTabId)) return;
-  if (processing) processingTabs.add(numericTabId);
+  const effectiveProcessing = !!processing || failedConversationClearRecoveryTabs.has(numericTabId);
+  if (effectiveProcessing) processingTabs.add(numericTabId);
   else processingTabs.delete(numericTabId);
-  if (sameTabId(currentTabId, numericTabId)) isProcessing = !!processing;
+  if (sameTabId(currentTabId, numericTabId)) {
+    isProcessing = effectiveProcessing;
+    syncSelectionScopeRestoreAvailability();
+  }
 }
 
 function isTabProcessing(tabId) {
@@ -897,20 +1126,45 @@ function isConversationClearInProgress(tabId = currentTabId) {
 
 function isSelectionGroundedForTab(tabId = currentTabId) {
   const numericTabId = Number(tabId);
-  return Number.isFinite(numericTabId) && selectionGroundedTabs.has(numericTabId);
+  return Number.isFinite(numericTabId) && selectionGroundingByTab.has(numericTabId);
+}
+
+function selectionGroundingForTab(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  return Number.isFinite(numericTabId)
+    ? normalizeSelectionSourceGrounding(selectionGroundingByTab.get(numericTabId))
+    : '';
 }
 
 function rejectSelectionScopedMode(mode, tabId = currentTabId, sourceGrounding = null) {
   if (mode !== 'act' && mode !== 'dev') return false;
-  if (sourceGrounding !== SELECTION_ONLY_SOURCE_GROUNDING
+  if (!normalizeSelectionSourceGrounding(sourceGrounding)
       && !isSelectionGroundedForTab(tabId)) return false;
   showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
   return true;
 }
 
+function syncSelectionScopeRestoreAvailability() {
+  if (!selectionScopeRestoreBtn) return;
+  selectionScopeRestoreBtn.disabled = !isSelectionGroundedForTab(currentTabId)
+    || isTabProcessing(currentTabId);
+}
+
 function syncSelectionScopeUi() {
   const scoped = isSelectionGroundedForTab(currentTabId);
+  const sourceGrounding = selectionGroundingForTab(currentTabId);
   selectionScopeBannerEl?.classList.toggle('hidden', !scoped);
+  syncSelectionScopeRestoreAvailability();
+  if (selectionScopeTitleEl) {
+    selectionScopeTitleEl.textContent = t(sourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING
+      ? 'sp.selection_scope.context_title'
+      : 'sp.selection_scope.title');
+  }
+  if (selectionScopeDescriptionEl) {
+    selectionScopeDescriptionEl.textContent = t(sourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING
+      ? 'sp.selection_scope.context_description'
+      : 'sp.selection_scope.description');
+  }
   for (const button of [modeActBtn, modeDevBtn]) {
     if (!button) continue;
     button.classList.toggle('selection-scope-unavailable', scoped);
@@ -921,24 +1175,57 @@ function syncSelectionScopeUi() {
   }
   if (scoped && agentMode !== 'ask') setMode('ask');
   else resetInputPlaceholderRotation();
+  syncSelectionScopeDividers();
 }
 
-function setSelectionGroundedForTab(tabId, grounded) {
+function syncSelectionScopeDividers() {
+  messagesEl?.querySelectorAll('.selection-scope-divider').forEach((divider) => {
+    const sourceGrounding = normalizeSelectionSourceGrounding(divider.dataset.sourceGrounding);
+    const key = sourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING
+      ? 'sp.selection_scope.context_title'
+      : 'sp.selection_scope.title';
+    divider.querySelector('.selection-scope-divider-label').textContent = t(key);
+    divider.setAttribute('aria-label', t(key));
+  });
+}
+
+function addSelectionScopeDivider(messageEl, sourceGrounding) {
+  const normalized = normalizeSelectionSourceGrounding(sourceGrounding);
+  if (!messageEl || !normalized || !messagesEl) return;
+  const divider = document.createElement('div');
+  divider.className = 'selection-scope-divider';
+  divider.dataset.sourceGrounding = normalized;
+  divider.setAttribute('role', 'separator');
+  const label = document.createElement('span');
+  label.className = 'selection-scope-divider-label';
+  divider.appendChild(label);
+  messageEl.before(divider);
+  syncSelectionScopeDividers();
+}
+
+function setSelectionGroundedForTab(
+  tabId,
+  grounded,
+  sourceGrounding = SELECTION_ONLY_SOURCE_GROUNDING,
+) {
   const numericTabId = Number(tabId);
   if (!Number.isFinite(numericTabId)) return;
-  const changed = grounded
-    ? !selectionGroundedTabs.has(numericTabId)
-    : selectionGroundedTabs.has(numericTabId);
-  if (grounded) selectionGroundedTabs.add(numericTabId);
-  else selectionGroundedTabs.delete(numericTabId);
+  const normalizedSourceGrounding = grounded
+    ? normalizeSelectionSourceGrounding(sourceGrounding) || SELECTION_ONLY_SOURCE_GROUNDING
+    : '';
+  const changed = selectionGroundingForTab(numericTabId) !== normalizedSourceGrounding;
+  if (normalizedSourceGrounding) selectionGroundingByTab.set(numericTabId, normalizedSourceGrounding);
+  else selectionGroundingByTab.delete(numericTabId);
   if (changed && sameTabId(currentTabId, numericTabId)) syncSelectionScopeUi();
 }
 
 function applyConversationScopeState(tabId, state) {
   if (!state || !Object.prototype.hasOwnProperty.call(state, 'sourceGrounding')) return;
+  const sourceGrounding = normalizeSelectionSourceGrounding(state.sourceGrounding);
   setSelectionGroundedForTab(
     tabId,
-    state.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING,
+    !!sourceGrounding,
+    sourceGrounding,
   );
 }
 
@@ -1056,6 +1343,7 @@ function createRunRequestId(tabId) {
 const {
   acceptContextMenuPrompt,
   drainQueuedContextMenuPrompts,
+  hasQueuedForTab: hasQueuedContextMenuPromptForTab,
   consumePendingContextMenuPrompt,
   clearQueuedForTab,
 } = createContextMenuPromptHandler({
@@ -1114,6 +1402,12 @@ function playCompletionSound() {
   } catch { /* ignore */ }
 }
 
+// A clarification or permission card needs the same attention cue as a
+// completed run. It shares the user's existing notification-sound preference.
+function playClarifySound() {
+  playCompletionSound();
+}
+
 function triggerCompletionConfetti() {
   if (!completionConfettiEnabled) return;
   if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return;
@@ -1154,6 +1448,10 @@ function notifyCompletion({ success = false, storeReviewSuccess = success } = {}
   playCompletionSound();
   if (success) triggerCompletionConfetti();
   if (storeReviewSuccess) void maybePromptStoreReviewAfterSuccess();
+  // The tab attention flash itself is owned by the background: live runs,
+  // continuations, and scheduled jobs all settle there — even when this
+  // panel is closed or reloaded mid-run — so it can cover every path
+  // without duplicating signals while a panel is mounted.
 }
 
 function getExtensionStoreKey() {
@@ -1328,9 +1626,12 @@ function isSuccessfulAskCompletion(mode, response) {
 // prompted per consequential action, so the standing banner is redundant —
 // only surface it in Act mode when the gate is disabled.
 const PERMISSION_GATE_KEY = 'askBeforeConsequentialActions';
+const ACT_WARNING_DISMISSED_KEY = 'actWarningDismissed';
 const PERMISSION_EDUCATION_KEY = 'permissionPromptEducation';
 const PERMISSION_EDUCATION_THRESHOLD = 2;
 let askBeforeConsequential = true; // gate ON by default
+let actWarningDismissed = false;
+let actWarningPreferenceLoaded = false;
 let permissionEducationState = { promptCount: 0, hintShown: false };
 
 function normalizePermissionEducationState(value) {
@@ -1440,8 +1741,10 @@ async function maybeShowPermissionEducationHint(card) {
   scrollToBottom();
 }
 
-browser.storage.local.get(PERMISSION_GATE_KEY).then((stored) => {
+browser.storage.local.get([PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY]).then((stored) => {
   if (stored && stored[PERMISSION_GATE_KEY] === false) askBeforeConsequential = false;
+  actWarningDismissed = stored?.[ACT_WARNING_DISMISSED_KEY] === true;
+  actWarningPreferenceLoaded = true;
   updateActWarning();
   updateInputPlaceholder();
 }).catch(() => {});
@@ -1457,13 +1760,27 @@ browser.storage.onChanged.addListener((changes) => {
     updateActWarning();
     updateInputPlaceholder();
   }
+  if (changes[ACT_WARNING_DISMISSED_KEY]) {
+    actWarningDismissed = changes[ACT_WARNING_DISMISSED_KEY].newValue === true;
+    actWarningPreferenceLoaded = true;
+    updateActWarning();
+  }
 });
 
 function updateActWarning() {
   if (!actWarning) return;
-  const show = agentMode !== 'ask' && !askBeforeConsequential;
+  const show = actWarningPreferenceLoaded
+    && !actWarningDismissed
+    && agentMode !== 'ask'
+    && !askBeforeConsequential;
   actWarning.classList.toggle('hidden', !show);
 }
+
+actWarningDismiss?.addEventListener('click', () => {
+  actWarningDismissed = true;
+  updateActWarning();
+  void browser.storage.local.set({ [ACT_WARNING_DISMISSED_KEY]: true }).catch(() => {});
+});
 
 // Per-tab chat history (stores innerHTML of messages container).
 // Also mirrored to browser.storage.session keyed `tabChat:<tabId>` so the
@@ -1660,9 +1977,76 @@ function schedulePersist() {
   if (tabId != null) scheduleHistoryPersist(tabId);
 }
 
+const ASSISTANT_RENDERABLE_ELEMENT_SELECTOR =
+  'img, svg, canvas, video, audio, iframe, input, textarea, select, button, hr, progress';
+const PROGRESS_CONTENT_SELECTOR = '.steps-container, .tool-call';
+
+function progressContentNodeIsVisible(node) {
+  if (!node.matches?.(PROGRESS_CONTENT_SELECTOR)) return true;
+  if (node.matches('.tool-call')) return verboseMode;
+  return verboseMode || compactProgressVisible;
+}
+
+function nodeHasAssistantRenderableContent(node) {
+  if (!node) return false;
+  if (node.nodeType === 3) return !!node.textContent?.trim();
+  if (node.nodeType !== 1) return false;
+  if (!progressContentNodeIsVisible(node)) return false;
+  if (node.matches?.(ASSISTANT_RENDERABLE_ELEMENT_SELECTOR)) return true;
+  for (const child of node.childNodes || []) {
+    if (nodeHasAssistantRenderableContent(child)) return true;
+  }
+  return false;
+}
+
+function assistantMessageHasRenderableContent(msgEl) {
+  const contentEl = msgEl?.querySelector?.('.message-content');
+  if (!contentEl) return false;
+  for (const child of contentEl.childNodes || []) {
+    if (nodeHasAssistantRenderableContent(child)) return true;
+  }
+  return false;
+}
+
+function syncAssistantMessageElementVisibility(msgEl) {
+  msgEl?.classList?.toggle(
+    'assistant-awaiting-content',
+    !assistantMessageHasRenderableContent(msgEl),
+  );
+}
+
+function syncAssistantMessageVisibility() {
+  for (const msgEl of messagesEl.querySelectorAll('.message.assistant')) {
+    syncAssistantMessageElementVisibility(msgEl);
+  }
+}
+
+function assistantMessageForMutationNode(node) {
+  const element = node?.nodeType === 1 ? node : node?.parentElement;
+  return element?.closest?.('.message.assistant') || null;
+}
+
+function syncAssistantMessageVisibilityForMutations(mutations) {
+  const affectedMessages = new Set();
+  for (const mutation of mutations || []) {
+    const targetMessage = assistantMessageForMutationNode(mutation.target);
+    if (targetMessage) affectedMessages.add(targetMessage);
+    for (const addedNode of mutation.addedNodes || []) {
+      const addedMessage = assistantMessageForMutationNode(addedNode);
+      if (addedMessage) affectedMessages.add(addedMessage);
+    }
+  }
+  affectedMessages.forEach(syncAssistantMessageElementVisibility);
+}
+
 // Observe the messages container so any DOM mutation (new message, streamed
-// delta, tool step update) eventually gets persisted.
-const persistObserver = new MutationObserver(schedulePersist);
+// delta, tool step update) both reveals populated assistant output and
+// eventually gets persisted. Attribute changes are not observed, so toggling
+// the visibility class here cannot recurse.
+const persistObserver = new MutationObserver((mutations) => {
+  syncAssistantMessageVisibilityForMutations(mutations);
+  schedulePersist();
+});
 
 // Durable offline chat history. The live per-tab restore above stays in
 // storage.session; this writes a compact, queryable record to IndexedDB so
@@ -1685,6 +2069,34 @@ function normalizeHistoryText(value) {
     .trim();
 }
 
+const LEGACY_EMPTY_STATE_MESSAGES = new Set(
+  translationsForKey('sp.help_message').map(normalizeHistoryText),
+);
+
+function migrateLegacyEmptyStateFromRestoredChat(tabId, root = messagesEl) {
+  const firstMessage = root?.firstElementChild;
+  if (!firstMessage?.classList?.contains('message')
+      || !firstMessage.classList.contains('system')) return false;
+
+  const staticGreeting = firstMessage.querySelector('[data-i18n-html="sp.greeting.html"]');
+  const textEl = firstMessage.querySelector(':scope > .message-content > .message-text');
+  const dynamicHelpMessage = textEl
+    && firstMessage.querySelectorAll(':scope > .message-content > *').length === 1
+    && LEGACY_EMPTY_STATE_MESSAGES.has(normalizeHistoryText(textEl.textContent));
+  if (!staticGreeting && !dynamicHelpMessage) return false;
+
+  firstMessage.remove();
+  const migratedHtml = root.innerHTML;
+  const numericTabId = Number(tabId);
+  if (Number.isFinite(numericTabId)) {
+    tabChats.set(numericTabId, migratedHtml);
+    void persistTabChat(numericTabId, migratedHtml, { allowHidden: true }).catch((error) => {
+      console.warn('[WebBrain] failed to persist restored empty-state migration:', error);
+    });
+  }
+  return true;
+}
+
 function roleFromMessageElement(el) {
   if (el.classList.contains('user')) return 'user';
   if (el.classList.contains('assistant')) return 'assistant';
@@ -1702,14 +2114,16 @@ function extractChatHistoryMessages(root = messagesEl) {
     const textEl = clone.querySelector('.message-text') || clone.querySelector('.message-content') || clone;
     const role = roleFromMessageElement(msgEl);
     const format = role === 'assistant' || role === 'error' ? 'markdown' : 'text';
+    const attachments = role === 'user' ? messageAttachmentMetadata(msgEl) : [];
     return {
       role,
       text: normalizeHistoryText(historyTextFromElement(textEl, { markdown: format === 'markdown' })),
       format,
       index,
-      createdAt: Date.now(),
+      createdAt: messageCreatedAt(msgEl),
+      ...(attachments.length ? { attachments } : {}),
     };
-  }).filter((message) => message.text);
+  }).filter((message) => message.text || message.attachments?.length);
 }
 
 function chatHistoryHtmlHasUserMessage(html) {
@@ -1921,6 +2335,13 @@ function sameTabId(a, b) {
   return a != null && b != null && String(a) === String(b);
 }
 
+function researchEscalationSourceTabIdFromState(state) {
+  const raw = state?.researchEscalationSourceTabId;
+  if (raw == null || raw === '') return null;
+  const sourceTabId = Number(raw);
+  return Number.isFinite(sourceTabId) ? sourceTabId : null;
+}
+
 function normalizePlanReviewTabId(tabId = currentTabId) {
   const numericTabId = Number(tabId);
   return Number.isFinite(numericTabId) ? numericTabId : null;
@@ -1975,10 +2396,10 @@ function releaseRetryAttachmentPayload(retryId) {
 
 function releaseRetryAttachmentsInTree(root) {
   if (!root) return;
-  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id]')) {
+  if (root.matches?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id], .ask-act-handoff-btn[data-retry-id]')) {
     releaseRetryAttachmentPayload(root.dataset.retryId);
   }
-  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id]').forEach((btn) => {
+  root.querySelectorAll?.('.error-retry-btn[data-retry-id], .cost-allowance-retry-btn[data-retry-id], .planner-request-failure-retry-btn[data-retry-id], .plan-review-retry[data-retry-id], .ask-act-handoff-btn[data-retry-id]').forEach((btn) => {
     releaseRetryAttachmentPayload(btn.dataset.retryId);
   });
 }
@@ -2311,11 +2732,23 @@ function drainQueuedComposerMessageForCurrentTab() {
   return true;
 }
 
-async function renderClearedConversationForTab(tabId) {
+async function renderClearedConversationForTab(tabId, { allowCacheClearFailure = false } = {}) {
+  dismissSelectionAskAction();
   setSelectionGroundedForTab(tabId, false);
-  const clearResult = await clearCachedTabChat(tabId);
-  if (!clearResult?.ok || clearResult?.skipped) {
-    throw new Error(clearResult?.error || 'Unable to clear tab chat.');
+  // The background conversation is already cleared before this helper runs.
+  // Release the old run even if clearing the local transcript fails, because
+  // its follower no longer owns the tab and cannot settle these flags itself.
+  setTabProcessing(tabId, false);
+  setTabAbortRequested(tabId, false);
+  let clearResult = null;
+  let cacheClearError = null;
+  try {
+    clearResult = await clearCachedTabChat(tabId);
+  } catch (error) {
+    cacheClearError = error;
+  }
+  if ((!clearResult?.ok || clearResult?.skipped) && !allowCacheClearFailure) {
+    throw cacheClearError || new Error(clearResult?.error || 'Unable to clear tab chat.');
   }
   resetComposerHistoryNavigation(tabId);
   saveInputDraftForTab(tabId, '');
@@ -2329,10 +2762,12 @@ async function renderClearedConversationForTab(tabId) {
   resetChatNavigation();
   renderedTabId = tabId;
   messagesEl.innerHTML = '';
+  syncProgressDisplayMode();
+  currentAssistantEl = null;
+  hideActivity();
   inputEl.value = '';
   autoResizeInput();
   syncSendButtonState();
-  addMessage('system', t('sp.cleared_message'));
   const clearedHtml = messagesEl.innerHTML;
   lastVisibleTabChatSnapshot = { tabId: Number(tabId), html: clearedHtml };
   tabChats.set(Number(tabId), clearedHtml);
@@ -2344,10 +2779,15 @@ async function renderClearedConversationForTab(tabId) {
 // Tool names → i18n key for the human-friendly label. Resolved at render
 // time so language changes take effect without a reload.
 const TOOL_KEYS = {
+  get_accessibility_tree: 'tool.get_accessibility_tree',
   read_page: 'tool.read_page',
   get_interactive_elements: 'tool.get_interactive_elements',
   click: 'tool.click',
+  click_ax: 'tool.click',
   type_text: 'tool.type_text',
+  type_ax: 'tool.type_text',
+  set_field: 'tool.type_text',
+  set_checked: 'tool.set_checked',
   scroll: 'tool.scroll',
   navigate: 'tool.navigate',
   go_back: 'tool.go_back',
@@ -2355,29 +2795,151 @@ const TOOL_KEYS = {
   extract_data: 'tool.extract_data',
   inspect_element_styles: 'tool.inspect_element_styles',
   read_page_source: 'tool.read_page_source',
-  wait_for_element: 'tool.wait_for_element',
-  get_selection: 'tool.get_selection',
+  inject_css: 'tool.inject_css',
+  remove_injected_css: 'tool.remove_injected_css',
+  patch_element: 'tool.patch_element',
+  revert_patch: 'tool.revert_patch',
   execute_js: 'tool.execute_js',
-  new_tab: 'tool.new_tab',
+  read_console: 'tool.read_console',
+  inspect_network_requests: 'tool.inspect_network_requests',
+  inspect_event_listeners: 'tool.inspect_event_listeners',
+  highlight_element: 'tool.highlight_element',
+  wait_for_element: 'tool.wait_for_element',
+  wait_for_stable: 'tool.wait_for_stable',
+  get_selection: 'tool.get_selection',
+  find_text: 'tool.find_text',
+  hover: 'tool.hover',
+  drag_drop: 'tool.drag_drop',
+  press_keys: 'tool.press_keys',
+  fetch_url: 'tool.fetch_url',
+  research_url: 'tool.research_url',
+  read_pdf: 'tool.read_pdf',
+  read_youtube_transcript: 'tool.read_youtube_transcript',
+  screenshot: 'tool.screenshot',
+  full_page_screenshot: 'tool.screenshot',
+  auto_screenshot: 'tool.staged_screenshot',
+  staged_screenshot: 'tool.staged_screenshot',
+  upload_file: 'tool.upload_file',
+  download_resource_from_page: 'tool.download_resource',
+  download_files: 'tool.download_files',
+  download_social_media: 'tool.download_media',
+  download_public_media: 'tool.download_media',
+  list_downloads: 'tool.check_downloads',
+  read_downloaded_file: 'tool.read_downloaded_file',
+  scratchpad_write: 'tool.scratchpad_write',
+  progress_update: 'tool.progress_update',
+  progress_read: 'tool.progress_read',
+  verify_form: 'tool.verify_form',
+  solve_captcha: 'tool.solve_captcha',
+  clarify: 'tool.clarify',
+  get_window_info: 'tool.get_window_info',
+  resize_window: 'tool.resize_window',
+  inspect_viewport: 'tool.inspect_viewport',
+  get_shadow_dom: 'tool.get_shadow_dom',
+  shadow_dom_query: 'tool.shadow_dom_query',
+  get_frames: 'tool.get_frames',
+  iframe_read: 'tool.read_frame',
+  iframe_click: 'tool.click',
+  iframe_type: 'tool.type_text',
+  chat_observe: 'tool.chat_observe',
+  chat_send: 'tool.chat_send',
+  delegate_research: 'tool.delegate_research',
   promote_iframe: 'tool.navigate',
   schedule_resume: 'tool.schedule_resume',
   schedule_task: 'tool.schedule_task',
   done: 'tool.done',
+  done_json: 'tool.done',
+  load_skill: 'tool.load_skill',
+  execute_webmcp_tool: 'tool.execute_webmcp_tool',
+  list_webmcp_tools: 'tool.list_webmcp_tools',
+  beep: 'tool.beep',
+  gmail_count_results: 'tool.gmail_count_results',
+  carousel_navigate: 'tool.navigate',
 };
+
+function isTerminalDoneTool(name) {
+  return name === 'done' || name === 'done_json';
+}
 
 function friendlyToolLabel(name, args) {
   // Add context from args where it makes sense
-  if (name === 'click' && args?.selector) return t('tool.click.selector', { selector: truncate(args.selector, 30) });
-  if (name === 'click' && args?.index != null) return t('tool.click.index', { index: args.index });
-  if (name === 'type_text' && args?.text) return t('tool.type_text.text', { text: truncate(args.text, 25) });
-  if (name === 'navigate' && args?.url) return t('tool.navigate.url', { url: truncate(args.url, 35) });
-  if (name === 'new_tab' && args?.url) return t('tool.new_tab.url', { url: truncate(args.url, 35) });
-  if (name === 'promote_iframe' && args?.urlFilter) return t('tool.navigate.url', { url: truncate(args.urlFilter, 35) });
+  if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.selector) {
+    return t('tool.click.selector', { selector: truncate(args.selector, 30) });
+  }
+  if ((name === 'click' || name === 'click_ax' || name === 'iframe_click') && args?.index != null) {
+    return t('tool.click.index', { index: args.index });
+  }
+  // NOTE: only type_text previews its text. type_ax / set_field / iframe_type
+  // are the preferred form-filling tools and routinely carry passwords, OTP
+  // codes, and API keys — never render their values in the always-visible label.
+  if (name === 'type_text' && args?.text) {
+    return t('tool.type_text.text', { text: truncate(args.text, 25) });
+  }
+  if (name === 'press_keys' && (args?.key || args?.keys)) return t('tool.press_keys.keys', { keys: truncate(args.key || args.keys, 25) });
   if (name === 'scroll') return t('tool.scroll.direction', { direction: args?.direction || 'down' });
   if (name === 'extract_data') return t('tool.extract_data.type', { type: args?.type || 'data' });
   if (name === 'wait_for_element' && args?.selector) return t('tool.wait_for_element.selector', { selector: truncate(args.selector, 30) });
-  const key = TOOL_KEYS[name];
-  return key ? t(key) : name;
+  const key = TOOL_KEYS[name] || `tool.${name}`;
+  const translated = t(key);
+  if (translated && translated !== key) return translated;
+  if (typeof name === 'string' && name.trim()) {
+    const cleaned = name.replace(/_ax$/, '').replace(/[_-]+/g, ' ').trim();
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+  return name || '';
+}
+
+const LABEL_ARG_KEYS = ['selector', 'index', 'key', 'keys', 'direction', 'type'];
+
+// Persisted step labels are plain textContent, so a later locale change would
+// otherwise leave old steps in the previous language (applyDOMTranslations only
+// touches data-i18n elements). Steps store their tool + label-relevant args in
+// dataset so the locale-change handler can recompute them via refreshRenderedStepLabels().
+// Large tool payloads (e.g. 100k CSS in inject_css) are omitted to preserve the
+// tab-chat persistence budget.
+function safeLabelArgs(args) {
+  if (!args || typeof args !== 'object') return '';
+  const filtered = {};
+  for (const k of LABEL_ARG_KEYS) {
+    if (args[k] != null) {
+      filtered[k] = typeof args[k] === 'string' ? args[k].slice(0, 80) : args[k];
+    }
+  }
+  try {
+    const json = JSON.stringify(filtered);
+    return json === '{}' ? '' : json;
+  } catch {
+    return '';
+  }
+}
+
+function refreshRenderedStepLabels(root) {
+  const scope = root || document;
+  scope.querySelectorAll('.step-item[data-tool] .step-label').forEach((labelEl) => {
+    const step = labelEl.closest('.step-item');
+    if (!step || !step.dataset.labelSource) return;
+    if (step.dataset.labelSource === 'done-terminal' && step.dataset.doneLabelKey) {
+      labelEl.textContent = String(t(step.dataset.doneLabelKey)).trim();
+      return;
+    }
+    if (step.dataset.labelSource !== 'friendly') return;
+    let args = null;
+    try {
+      args = step.dataset.args ? JSON.parse(step.dataset.args) : null;
+    } catch {
+      args = null;
+    }
+    labelEl.textContent = friendlyToolLabel(step.dataset.tool || '', args);
+  });
+  scope.querySelectorAll('.step-details > .detail-label').forEach((el) => {
+    el.textContent = t('sp.step.input_label');
+  });
+  scope.querySelectorAll('.detail-result > .detail-label').forEach((el) => {
+    el.textContent = t('sp.step.result_label');
+  });
+  scope.querySelectorAll('.step-details-toggle').forEach((el) => {
+    el.textContent = t('sp.step.details');
+  });
 }
 
 function formatScheduledTime(value) {
@@ -2428,6 +2990,7 @@ function scheduledJobMeta(job) {
   if (job.status === 'completed' && job.lastResult) {
     parts.push(truncate(String(job.lastResult), 80));
   }
+  if (job.systemOneVerdict?.decision === 'downgrade') parts.push(t('st.system_one.uncertain'));
   if (job.lastError) {
     parts.push(truncate(String(job.lastError), 80));
   }
@@ -2451,6 +3014,8 @@ function scheduledJobActions(job) {
 const SCHEDULED_VISIBLE_STATUSES = new Set(['pending', 'queued', 'paused', 'running', 'needs_user_input', 'failed', 'completed']);
 const COMPLETED_SCHEDULED_JOB_AUTO_HIDE_MS = 15 * 1000;
 const pinnedCompletedScheduledJobIds = new Set();
+const pendingScheduledPlannerFallbackMessages = new Map();
+const scheduledAssistantPreparationJobIds = new Set();
 let scheduledJobAutoHideTimer = null;
 
 function visibleScheduledJobs(jobs = []) {
@@ -2518,8 +3083,11 @@ function findScheduledClarifyCardForJob(jobId) {
 function findScheduledAssistantMessageForJob(jobId) {
   const id = String(jobId || '');
   if (!id) return null;
-  for (const msgEl of messagesEl?.querySelectorAll?.('.message.assistant[data-scheduled-job-id]') || []) {
-    if (msgEl.dataset.scheduledJobId === id) return msgEl;
+  const messages = Array.from(
+    messagesEl?.querySelectorAll?.('.message.assistant[data-scheduled-job-id]') || [],
+  );
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].dataset.scheduledJobId === id) return messages[i];
   }
   const card = findScheduledClarifyCardForJob(id);
   const msgEl = card?.closest?.('.message.assistant');
@@ -2528,14 +3096,42 @@ function findScheduledAssistantMessageForJob(jobId) {
   return null;
 }
 
+function queueScheduledPlannerFallbackMessage(jobId, message) {
+  const id = String(jobId || '');
+  if (!id || !message) return;
+  pendingScheduledPlannerFallbackMessages.delete(id);
+  pendingScheduledPlannerFallbackMessages.set(id, message);
+  while (pendingScheduledPlannerFallbackMessages.size > 50) {
+    pendingScheduledPlannerFallbackMessages.delete(
+      pendingScheduledPlannerFallbackMessages.keys().next().value,
+    );
+  }
+}
+
+function flushScheduledPlannerFallbackMessage(jobId, assistantEl = null) {
+  const id = String(jobId || '');
+  if (!id || !pendingScheduledPlannerFallbackMessages.has(id)) return false;
+  if (!assistantEl) assistantEl = findScheduledAssistantMessageForJob(id);
+  if (!assistantEl) return false;
+  const message = pendingScheduledPlannerFallbackMessages.get(id);
+  pendingScheduledPlannerFallbackMessages.delete(id);
+  addPlannerFallbackNote(message, assistantEl);
+  return true;
+}
+
 function ensureScheduledTerminalMessage(job) {
   const jobId = job?.id ? String(job.id) : '';
   if (!jobId || !isUrlTargetScheduledJob(job)) return null;
   const existing = findScheduledAssistantMessageForJob(jobId);
-  if (existing) return existing;
+  if (existing && scheduledAssistantPreparationJobIds.has(jobId)) return existing;
+  if (existing) {
+    flushScheduledPlannerFallbackMessage(jobId, existing);
+    return existing;
+  }
   resetChatNavigation();
   const msgEl = addMessage('assistant', '');
   msgEl.dataset.scheduledJobId = jobId;
+  flushScheduledPlannerFallbackMessage(jobId, msgEl);
   return msgEl;
 }
 
@@ -2636,7 +3232,56 @@ async function scheduledJobAction(action, jobId) {
   }
 }
 
-async function drainQueuedPromptsAfterRunSettles() {
+const QUEUED_PROMPT_DRAIN_RETRY_MS = 1_000;
+const queuedPromptDrainRetryTimers = new Map();
+
+function cancelQueuedPromptDrainRetry(tabId) {
+  const numericTabId = Number(tabId);
+  const timerId = queuedPromptDrainRetryTimers.get(numericTabId);
+  if (timerId != null) clearTimeout(timerId);
+  queuedPromptDrainRetryTimers.delete(numericTabId);
+}
+
+function scheduleQueuedPromptDrainRetry(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId) || queuedPromptDrainRetryTimers.has(numericTabId)) return;
+  const timerId = setTimeout(() => {
+    queuedPromptDrainRetryTimers.delete(numericTabId);
+    void drainQueuedPromptsAfterRunSettles(numericTabId);
+  }, QUEUED_PROMPT_DRAIN_RETRY_MS);
+  queuedPromptDrainRetryTimers.set(numericTabId, timerId);
+}
+
+function hasQueuedPromptForTab(tabId) {
+  return getQueuedComposerMessages(tabId).length > 0
+    || hasQueuedContextMenuPromptForTab(tabId);
+}
+
+async function drainQueuedPromptsAfterRunSettles(tabId = currentTabId) {
+  const numericTabId = Number(tabId);
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
+    cancelQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  if (isConversationClearInProgress(tabId)) return;
+  if (!hasQueuedPromptForTab(numericTabId)) {
+    cancelQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  let runState = null;
+  try {
+    runState = await sendToBackground('agent_run_state', { tabId: numericTabId });
+  } catch { /* retry while a queued prompt still needs the background reservation */ }
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
+    cancelQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  if (isConversationClearInProgress(numericTabId)) return;
+  if (!runState?.ok || runState.running || runState.starting) {
+    scheduleQueuedPromptDrainRetry(numericTabId);
+    return;
+  }
+  cancelQueuedPromptDrainRetry(numericTabId);
   if (drainQueuedComposerMessageForCurrentTab()) return;
   drainQueuedContextMenuPrompts();
 }
@@ -2674,7 +3319,7 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
       ['completed', 'clarification_required'].includes(event)
       || watchPollEvent
     ) && job?.lastResult) {
-      textEl.innerHTML = formatMarkdown(job.lastResult);
+      textEl.innerHTML = formatMarkdown(job.lastResult, { recoverNestedMarkdown: true });
       addMessageCopyButton(assistantEl);
     }
   }
@@ -2688,11 +3333,46 @@ async function settleScheduledRun(event, job, tabId = currentTabId) {
     hideActivity();
     if (currentAssistantEl === assistantEl) currentAssistantEl = null;
     if (renderedTabId != null) await flushRenderedTabChat();
-    await drainQueuedPromptsAfterRunSettles();
+    await drainQueuedPromptsAfterRunSettles(runTabId);
   }
-  if (event === 'completed' && job?.source !== 'watch') {
-    notifyCompletion({ success: job?.lastOutcome === 'success' });
+  // Terminal scheduled runs chime like live runs do. The attention flash
+  // itself is owned by the background scheduler path — scheduled jobs keep
+  // running even when this panel is closed, and the background already
+  // suppresses the signal while the finished tab is being watched.
+  if ((event === 'completed' || event === 'failed') && job?.source !== 'watch') {
+    notifyCompletion({
+      success: event === 'completed' && job?.lastOutcome === 'success',
+    });
   }
+}
+
+function renderScheduledJobCreatedMessage(job, preferredMessage = null, root = messagesEl) {
+  const jobId = job?.id ? String(job.id) : '';
+  if (jobId) {
+    const alreadyRendered = Array.from(
+      root?.querySelectorAll?.('.message.system[data-scheduled-created-job-id]') || [],
+    ).find((message) => message.dataset.scheduledCreatedJobId === jobId);
+    if (alreadyRendered) {
+      if (preferredMessage && preferredMessage !== alreadyRendered) preferredMessage.remove();
+      return alreadyRendered;
+    }
+  }
+
+  const title = scheduledJobTitle(job);
+  const createdParams = {
+    title,
+    time: formatScheduledTime(job.nextRunAt || job.scheduledAt),
+  };
+  const createdHtml = preferredMessage
+    ? tSystemHtml('sp.schedule_form.created', createdParams)
+    : tSystemHtml('sp.scheduled.created', createdParams);
+  const message = preferredMessage || addMessage('system', systemHtml(createdHtml));
+  const textEl = preferredMessage?.querySelector('.message-text');
+  if (textEl) textEl.innerHTML = createdHtml;
+  // Runtime delivery and restored chat can converge on the same presentation
+  // event. Persist the job identity in the DOM so remounts remain idempotent.
+  if (jobId) message.dataset.scheduledCreatedJobId = jobId;
+  return message;
 }
 
 async function handleScheduledJobEvent(data, tabId) {
@@ -2716,29 +3396,41 @@ async function handleScheduledJobEvent(data, tabId) {
     || terminalScheduledEvent
     || watchPollEvent
     || event === 'needs_user_input';
+  const preparingScheduledAssistant = event === 'running' && !!jobId;
+  if (preparingScheduledAssistant) scheduledAssistantPreparationJobIds.add(jobId);
   if (scopeChangingScheduledEvent && runTabId != null) {
-    await refreshConversationScopeState(runTabId);
+    try {
+      await refreshConversationScopeState(runTabId);
+    } catch (error) {
+      if (preparingScheduledAssistant) scheduledAssistantPreparationJobIds.delete(jobId);
+      throw error;
+    }
   }
 
   const title = scheduledJobTitle(job);
   if (event === 'created') {
-    addMessage('system', systemHtml(tSystemHtml('sp.scheduled.created', { title, time: formatScheduledTime(job.nextRunAt || job.scheduledAt) })));
+    renderScheduledJobCreatedMessage(job);
   } else if (event === 'running') {
-    clearActiveChatPayloadForTab(runTabId);
-    setTabProcessing(runTabId, true);
-    setTabAbortRequested(runTabId, false);
-    syncSendButtonState();
-    if (job?.source === 'watch') {
-      hideRecommendedActions();
-      resetChatNavigation();
-      currentAssistantEl = ensureScheduledTerminalMessage(job);
-    } else {
-      hideRecommendedActions();
-      resetChatNavigation();
-      currentAssistantEl = addMessage('assistant', '');
+    try {
+      clearActiveChatPayloadForTab(runTabId);
+      setTabProcessing(runTabId, true);
+      setTabAbortRequested(runTabId, false);
+      syncSendButtonState();
+      if (job?.source === 'watch') {
+        hideRecommendedActions();
+        resetChatNavigation();
+        currentAssistantEl = ensureScheduledTerminalMessage(job);
+      } else {
+        hideRecommendedActions();
+        resetChatNavigation();
+        currentAssistantEl = addMessage('assistant', '');
+      }
+      if (jobId) currentAssistantEl.dataset.scheduledJobId = jobId;
+      flushScheduledPlannerFallbackMessage(jobId, currentAssistantEl);
+      showActivity(t('sp.scheduled.running', { title }));
+    } finally {
+      if (preparingScheduledAssistant) scheduledAssistantPreparationJobIds.delete(jobId);
     }
-    if (jobId) currentAssistantEl.dataset.scheduledJobId = jobId;
-    showActivity(t('sp.scheduled.running', { title }));
   } else if (event === 'completed') {
     ensureScheduledTerminalMessage(job);
     settleScheduledRun(event, job, runTabId);
@@ -2764,7 +3456,7 @@ async function handleScheduledJobEvent(data, tabId) {
       setTabProcessing(runTabId, false);
       syncSendButtonState();
       addMessage('system', systemHtml(tSystemHtml('sp.scheduled.needs_user_input', { title })));
-      drainQueuedPromptsAfterRunSettles();
+      drainQueuedPromptsAfterRunSettles(runTabId);
     }
   }
 }
@@ -2925,20 +3617,21 @@ async function submitScheduleComposer(e, form) {
     if (res?.success === false || res?.ok === false || !res?.scheduledAt) {
       throw new Error(res?.error || 'Could not create scheduled job.');
     }
-    const createdHtml = tSystemHtml('sp.schedule_form.created', {
-      title,
-      time: formatScheduledTime(res.scheduledAt),
-    });
     if (currentTabId !== tabId) {
-      replaceCachedScheduleComposer(tabId, form.dataset.composerId, createdHtml);
+      replaceCachedScheduleComposer(tabId, form.dataset.composerId, {
+        id: res.jobId,
+        title,
+        scheduledAt: res.scheduledAt,
+      });
       return;
     }
     const msgEl = form.closest('.message');
     form.remove();
-    const textEl = msgEl?.querySelector('.message-text');
-    if (textEl) {
-      textEl.innerHTML = createdHtml;
-    }
+    renderScheduledJobCreatedMessage({
+      id: res.jobId,
+      title,
+      scheduledAt: res.scheduledAt,
+    }, msgEl);
     await refreshScheduledJobs({ tabId });
   } catch (err) {
     if (currentTabId !== tabId) {
@@ -2962,16 +3655,17 @@ function bindScheduleComposer(form) {
   form.addEventListener('submit', (e) => submitScheduleComposer(e, form));
 }
 
-function replaceCachedScheduleComposer(tabId, composerId, html) {
+function replaceCachedScheduleComposer(tabId, composerId, job) {
   const cached = tabChats.get(tabId);
   if (typeof cached !== 'string' || !composerId) return;
   const wrapper = document.createElement('div');
   wrapper.innerHTML = cached;
   const form = wrapper.querySelector(`form.schedule-composer[data-composer-id="${composerId}"]`);
-  const textEl = form?.closest('.message')?.querySelector('.message-text');
-  if (!form || !textEl) return;
+  const msgEl = form?.closest('.message');
+  const textEl = msgEl?.querySelector('.message-text');
+  if (!form || !msgEl || !textEl) return;
   form.remove();
-  textEl.innerHTML = html;
+  renderScheduledJobCreatedMessage(job, msgEl, wrapper);
   persistTabChat(tabId, wrapper.innerHTML);
 }
 
@@ -3222,6 +3916,227 @@ function savedWorkflowFailureMessage(res) {
     : t('sp.workflows.error', { msg: res?.reason || res?.error || 'unknown error' });
 }
 
+const boundSavedWorkflowManagers = new WeakSet();
+
+function setSavedWorkflowButtonLabel(button, label, workflowName = '') {
+  button.textContent = label;
+  button.title = label;
+  if (workflowName) button.setAttribute('aria-label', `${label}: ${workflowName}`);
+}
+
+function savedWorkflowManagerActionButton(action, label, workflowName = '') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.setAttribute('data-workflow-action', action);
+  setSavedWorkflowButtonLabel(button, label, workflowName);
+  return button;
+}
+
+function renderSavedWorkflowManager(manager, workflows, tabId) {
+  manager.replaceChildren();
+  manager.className = 'workflow-manager';
+  manager.dataset.tabId = String(tabId);
+
+  for (const workflow of workflows) {
+    const card = document.createElement('section');
+    card.className = 'workflow-card';
+    card.dataset.workflowId = workflow.id;
+
+    const title = document.createElement('div');
+    title.className = 'workflow-card-title';
+    title.textContent = workflow.name;
+
+    const meta = document.createElement('div');
+    meta.className = 'workflow-card-meta';
+    meta.textContent = t('sp.workflows.meta', {
+      id: workflow.id,
+      steps: workflow.steps?.length || 0,
+      parameters: workflow.parameters?.length || 0,
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'workflow-card-actions';
+    if (!isStandaloneWindow) {
+      actions.append(savedWorkflowManagerActionButton('run', t('sp.scheduled.run_now'), workflow.name));
+    }
+    actions.append(
+      savedWorkflowManagerActionButton('rename', t('sp.workflows.rename'), workflow.name),
+      savedWorkflowManagerActionButton('export', t('st.memory.export'), workflow.name),
+      savedWorkflowManagerActionButton('delete', t('sp.scheduled.delete'), workflow.name),
+    );
+
+    const renameForm = document.createElement('form');
+    renameForm.className = 'workflow-rename-form hidden';
+    const renameInput = document.createElement('input');
+    renameInput.type = 'text';
+    renameInput.required = true;
+    renameInput.maxLength = 80;
+    renameInput.value = workflow.name;
+    renameInput.setAttribute('aria-label', t('sp.workflows.rename'));
+    const renameSubmit = document.createElement('button');
+    renameSubmit.type = 'submit';
+    renameSubmit.textContent = t('st.providers.save');
+    const renameCancel = savedWorkflowManagerActionButton('cancel-rename', t('sp.schedule_form.cancel'), workflow.name);
+    renameForm.append(renameInput, renameSubmit, renameCancel);
+
+    card.append(title, meta, actions, renameForm);
+    manager.appendChild(card);
+  }
+  bindSavedWorkflowManager(manager);
+}
+
+async function refreshSavedWorkflowManager(manager, tabId) {
+  const res = await sendToBackground('list_saved_workflows');
+  if (currentTabId !== tabId || !manager.isConnected) return;
+  if (!res?.ok) throw new Error(res?.error || 'unknown error');
+  const workflows = Array.isArray(res.workflows) ? res.workflows : [];
+  if (!workflows.length) {
+    manager.replaceChildren();
+    const empty = document.createElement('div');
+    empty.className = 'workflow-manager-empty';
+    empty.textContent = t('sp.workflows.empty');
+    manager.appendChild(empty);
+    return;
+  }
+  renderSavedWorkflowManager(manager, workflows, tabId);
+}
+
+function bindSavedWorkflowManager(manager) {
+  if (!manager || boundSavedWorkflowManagers.has(manager)) return;
+  boundSavedWorkflowManagers.add(manager);
+  manager.addEventListener('click', async (event) => {
+    const button = event.target?.closest?.('button[data-workflow-action]');
+    if (!button || !manager.contains(button)) return;
+    const card = button.closest('.workflow-card');
+    const workflowId = String(card?.dataset?.workflowId || '');
+    const tabId = Number(manager.dataset.tabId);
+    if (!card || !workflowId || !Number.isFinite(tabId)) return;
+    const action = button.dataset.workflowAction;
+    const form = card.querySelector('.workflow-rename-form');
+    const workflowName = card.querySelector('.workflow-card-title')?.textContent || workflowId;
+    if (action === 'rename' || action === 'cancel-rename') {
+      form?.classList.toggle('hidden', action !== 'rename');
+      if (action === 'rename') {
+        const input = form?.querySelector('input');
+        input?.focus();
+        input?.select();
+      }
+      return;
+    }
+    if (action === 'delete' && button.dataset.deleteArmed !== 'true') {
+      button.dataset.deleteArmed = 'true';
+      button.classList.add('confirm-delete');
+      setSavedWorkflowButtonLabel(button, t('sp.workflows.delete_confirm'), workflowName);
+      setTimeout(() => {
+        if (!button.isConnected || button.disabled) return;
+        button.dataset.deleteArmed = 'false';
+        button.classList.remove('confirm-delete');
+        setSavedWorkflowButtonLabel(button, t('sp.scheduled.delete'), workflowName);
+      }, 4000);
+      return;
+    }
+    button.disabled = true;
+    try {
+      if (action === 'run') await prepareSavedWorkflowRun(workflowId, tabId);
+      else if (action === 'export') await exportSavedWorkflow(workflowId, tabId);
+      else if (action === 'delete' && await deleteSavedWorkflow(workflowId, tabId)) {
+        await refreshSavedWorkflowManager(manager, tabId);
+      }
+    } catch (error) {
+      if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+    } finally {
+      if (button.isConnected) {
+        button.disabled = false;
+        if (action === 'delete') {
+          button.dataset.deleteArmed = 'false';
+          button.classList.remove('confirm-delete');
+          setSavedWorkflowButtonLabel(button, t('sp.scheduled.delete'), workflowName);
+        }
+      }
+    }
+  });
+  manager.addEventListener('submit', async (event) => {
+    const form = event.target?.closest?.('form.workflow-rename-form');
+    if (!form || !manager.contains(form)) return;
+    event.preventDefault();
+    const card = form.closest('.workflow-card');
+    const workflowId = String(card?.dataset?.workflowId || '');
+    const tabId = Number(manager.dataset.tabId);
+    const input = form.querySelector('input');
+    const submit = form.querySelector('button[type="submit"]');
+    if (!workflowId || !Number.isFinite(tabId) || !input || !submit) return;
+    input.value = input.value.trim();
+    if (!input.value) {
+      input.reportValidity();
+      return;
+    }
+    submit.disabled = true;
+    try {
+      if (await renameSavedWorkflow(workflowId, input.value, tabId)) {
+        await refreshSavedWorkflowManager(manager, tabId);
+      }
+    } catch (error) {
+      if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+    } finally {
+      if (submit.isConnected) submit.disabled = false;
+    }
+  });
+}
+
+function teacherModeFailureMessage(res) {
+  if (res?.reason === 'already_active') return t('sp.teach.already_active');
+  if (res?.reason === 'no_active_session') return t('sp.teach.inactive');
+  if (res?.reason === 'agent_running') return t('sp.teach.agent_running');
+  if (res?.reason === 'capture_unavailable') return t('sp.teach.capture_unavailable');
+  return savedWorkflowFailureMessage(res);
+}
+
+async function showTeacherModeStatus(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('get_teacher_mode', { tabId });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) throw new Error(res?.error || res?.reason || 'unknown error');
+    addPersistentSlashMessage(res.session?.active
+      ? t('sp.teach.status', { name: res.session.name, count: res.session.actionCount || 0 })
+      : t('sp.teach.inactive'));
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function startTeacherMode(name, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('start_teacher_mode', { tabId, name });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(teacherModeFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    addPersistentSlashMessage(t('sp.teach.started', { name: res.session?.name || name }));
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
+async function endTeacherMode(tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('end_teacher_mode', { tabId });
+    if (currentTabId !== tabId) return;
+    if (!res?.ok) {
+      showComposerToast(teacherModeFailureMessage(res), { duration: 7000 });
+      return;
+    }
+    const message = t('sp.teach.saved', {
+      name: res.workflow?.name || '',
+      count: res.workflow?.steps?.length || 0,
+    });
+    const warnings = Array.isArray(res.warnings) ? res.warnings.filter(Boolean) : [];
+    addPersistentSlashMessage(warnings.length ? `${message} ${warnings.join(' ')}` : message);
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 7000 });
+  }
+}
+
 async function showSavedWorkflows(tabId = currentTabId) {
   try {
     const res = await sendToBackground('list_saved_workflows');
@@ -3232,14 +4147,11 @@ async function showSavedWorkflows(tabId = currentTabId) {
       addPersistentSlashMessage(t('sp.workflows.empty'));
       return;
     }
-    const body = workflows.map((workflow) => t('sp.workflows.item', {
-      id: workflow.id,
-      name: workflow.name,
-      steps: workflow.steps?.length || 0,
-      parameters: workflow.parameters?.length || 0,
-    })).join('\n');
-    const msgEl = addPersistentSlashMessage(systemHtml(`${t('sp.workflows.title_html')}<pre class="scratchpad-dump">${escapeHtml(body)}</pre>`));
-    addScratchpadCopyButton(msgEl);
+    const msgEl = addPersistentSlashMessage(systemHtml(t('sp.workflows.title_html')));
+    const manager = document.createElement('div');
+    manager.className = 'workflow-manager';
+    msgEl.querySelector('.message-text')?.appendChild(manager);
+    renderSavedWorkflowManager(manager, workflows, tabId);
   } catch (error) {
     if (currentTabId === tabId) addPersistentSlashMessage(t('sp.workflows.error', { msg: error.message }));
   }
@@ -3266,14 +4178,35 @@ async function saveLatestWorkflow(name, tabId = currentTabId) {
 async function deleteSavedWorkflow(id, tabId = currentTabId) {
   try {
     const res = await sendToBackground('delete_saved_workflow', { id: String(id || '').trim() });
-    if (currentTabId !== tabId) return;
+    if (currentTabId !== tabId) return false;
     if (!res?.ok) {
       showComposerToast(savedWorkflowFailureMessage(res), { duration: 5000 });
-      return;
+      return false;
     }
     showComposerToast(t('sp.workflows.deleted', { name: res.workflow?.name || id }));
+    return true;
   } catch (error) {
     if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 5000 });
+    return false;
+  }
+}
+
+async function renameSavedWorkflow(id, name, tabId = currentTabId) {
+  try {
+    const res = await sendToBackground('rename_saved_workflow', {
+      id: String(id || '').trim(),
+      name: String(name || '').trim(),
+    });
+    if (currentTabId !== tabId) return false;
+    if (!res?.ok) {
+      showComposerToast(savedWorkflowFailureMessage(res), { duration: 5000 });
+      return false;
+    }
+    showComposerToast(t('sp.workflows.saved', { name: res.workflow?.name || name }));
+    return true;
+  } catch (error) {
+    if (currentTabId === tabId) showComposerToast(t('sp.workflows.error', { msg: error.message }), { duration: 5000 });
+    return false;
   }
 }
 
@@ -3358,8 +4291,15 @@ function requestSavedWorkflowFile(tabId) {
 
 const boundWorkflowParameterForms = new WeakSet();
 
+function rejectStandaloneWorkflowRun() {
+  if (!isStandaloneWindow) return false;
+  showComposerToast(t('sp.workflows.standalone_unavailable'), { duration: 6000 });
+  return true;
+}
+
 async function startSavedWorkflowRun(workflow, parameters, tabId = currentTabId) {
   if (!workflow?.id || currentTabId !== tabId) return false;
+  if (rejectStandaloneWorkflowRun()) return false;
   if (!(await ensureActMode())) return false;
   inputEl.value = t('sp.workflows.run_prompt', { name: workflow.name });
   autoResizeInput();
@@ -3452,6 +4392,7 @@ function renderSavedWorkflowParameterForm(workflow, tabId = currentTabId) {
 }
 
 async function prepareSavedWorkflowRun(id, tabId = currentTabId) {
+  if (rejectStandaloneWorkflowRun()) return false;
   try {
     const res = await sendToBackground('get_saved_workflow', { id: String(id || '').trim() });
     if (currentTabId !== tabId) return;
@@ -3550,7 +4491,13 @@ async function init() {
   const [tab] = await browser.tabs.query(initialWindowId != null
     ? { active: true, windowId: initialWindowId }
     : { active: true, currentWindow: true });
-  currentTabId = tab?.id;
+  let initialTabId = tab?.id;
+  try {
+    const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
+    const sourceTabId = researchEscalationSourceTabIdFromState(state);
+    if (sourceTabId != null) initialTabId = sourceTabId;
+  } catch {}
+  currentTabId = initialTabId;
   renderedTabId = currentTabId;
 
   // Tab-activation events are extension-wide — every browser window fires
@@ -3587,7 +4534,8 @@ async function init() {
   // Load settings that affect the composer state.
   const stored = await browser.storage.local.get(['verboseMode', 'alwaysAllowApiMutations']);
   verboseMode = stored.verboseMode || false;
-  alwaysAllowApiMutations = stored.alwaysAllowApiMutations === true;
+  syncProgressDisplayMode();
+  alwaysAllowApiMutations = stored.alwaysAllowApiMutations === undefined || stored.alwaysAllowApiMutations === true;
   syncApiMutationsAllowedForCurrentTab();
 
   // Restore prior conversation for this tab (if any) — survives close/reopen.
@@ -3607,8 +4555,10 @@ async function init() {
         await hydrateRestoredChatHistory(restoreTabId, html);
         if (currentTabId === restoreTabId) {
           messagesEl.innerHTML = html;
+          migrateLegacyEmptyStateFromRestoredChat(restoreTabId);
           messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
           rebindRestoredMessageControls();
+          refreshRenderedStepLabels();
         }
       }
     } finally {
@@ -3617,7 +4567,9 @@ async function init() {
     }
   }
 
-  // Start observing the messages container for changes to persist.
+  // Normalize restored markup before the first paint, then observe later
+  // streamed text, tool steps, and interactive cards.
+  syncAssistantMessageVisibility();
   persistObserver.observe(messagesEl, { childList: true, subtree: true, characterData: true });
   await restoreActiveRunState(restoreTabId);
   if (restoreTabId != null && currentTabId === restoreTabId) {
@@ -3642,9 +4594,12 @@ async function init() {
     if (changes.verboseMode) {
       verboseMode = changes.verboseMode.newValue;
       if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
+      refreshOpenMessageInfoRows();
+      syncProgressDisplayMode();
     }
     if (changes.alwaysAllowApiMutations) {
-      alwaysAllowApiMutations = changes.alwaysAllowApiMutations.newValue === true;
+      const value = changes.alwaysAllowApiMutations.newValue;
+      alwaysAllowApiMutations = value === undefined || value === true;
       syncApiMutationsAllowedForCurrentTab();
     }
     if (changes.providers || changes.activeProvider) {
@@ -3694,27 +4649,62 @@ if (verboseBtn) {
     // Normal click → toggle verbose mode
     verboseMode = !verboseMode;
     verboseBtn.classList.toggle('active', verboseMode);
+    refreshOpenMessageInfoRows();
+    syncProgressDisplayMode();
     await browser.storage.local.set({ verboseMode }).catch(() => {});
   });
 }
 
-async function switchToTab(newTabId) {
-  if (newTabId === currentTabId && renderedTabId === newTabId) { return; }
-  if (newConversationConfirmationState
-      && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {
-    settleNewConversationConfirmation(false, { restoreFocus: false });
-  }
-  const switchGeneration = ++tabSwitchGeneration;
-  tabSwitchTransitionId = newTabId;
-  queuedTabSwitchMessages = [];
-  syncSendButtonState();
-  // The activity strip is a single panel-wide DOM node, unlike the tab-scoped
-  // chat and run journals. Clear the outgoing tab's transient status before
-  // any async restore work can yield; restoreActiveRunState (or a queued target
-  // update) will show it again if the destination tab is actually running.
-  hideActivity();
+activityProgressToggle?.addEventListener('click', toggleCompactProgressVisibility);
 
+async function switchToTab(newTabId) {
+  // Reserve the user's latest tab intent before any lookup can yield. Returning
+  // to the already-rendered tab must also invalidate an older pending switch.
+  const switchGeneration = ++tabSwitchGeneration;
+  const interruptedTransition = tabSwitchTransitionId != null;
+  tabSwitchTransitionId = newTabId;
+  queuedTabSwitchMessages = queuedTabSwitchMessages.filter(msg => msg?.tabId === newTabId);
+  syncSendButtonState();
   try {
+    if (newTabId === currentTabId && renderedTabId === newTabId) {
+      if (interruptedTransition) await restoreActiveRunState(newTabId);
+      return;
+    }
+    let state = null;
+    try {
+      state = await sendToBackground('agent_run_state', { tabId: newTabId });
+    } catch {}
+    if (switchGeneration !== tabSwitchGeneration) return;
+    const sourceTabId = researchEscalationSourceTabIdFromState(state);
+    if (sourceTabId != null
+        && (sameTabId(currentTabId, sourceTabId)
+          || sameTabId(renderedTabId, sourceTabId)
+          || isTabProcessing(sourceTabId)
+          || isTabProcessing(currentTabId))) {
+      // The research helper keeps the visible source conversation. Queue its
+      // new events while restoring the snapshot, including events that arrive
+      // after that snapshot was captured but before reconciliation finishes.
+      const retainedTabId = renderedTabId ?? currentTabId;
+      currentTabId = retainedTabId;
+      tabSwitchTransitionId = retainedTabId;
+      queuedTabSwitchMessages = queuedTabSwitchMessages.filter(msg => msg?.tabId === retainedTabId);
+      syncCurrentTabRunFlags();
+      syncApiMutationsAllowedForCurrentTab();
+      syncSelectionScopeUi();
+      await restoreActiveRunState(retainedTabId);
+      return;
+    }
+    dismissSelectionAskAction();
+    if (newConversationConfirmationState
+        && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {
+      settleNewConversationConfirmation(false, { restoreFocus: false });
+    }
+    // The activity strip is a single panel-wide DOM node, unlike the tab-scoped
+    // chat and run journals. Clear the outgoing tab's transient status before
+    // any async restore work can yield; restoreActiveRunState (or a queued target
+    // update) will show it again if the destination tab is actually running.
+    hideActivity();
+
     // Save the tab currently represented by the DOM. During an async restore,
     // currentTabId may already point at the target while the DOM is still older.
     if (renderedTabId != null) {
@@ -3751,11 +4741,13 @@ async function switchToTab(newTabId) {
     renderedTabId = newTabId;
     if (html) {
       messagesEl.innerHTML = html;
+      migrateLegacyEmptyStateFromRestoredChat(newTabId);
       messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
       rebindRestoredMessageControls();
+      refreshRenderedStepLabels();
     } else {
       messagesEl.innerHTML = '';
-      addMessage('system', t('sp.help_message'));
+      syncProgressDisplayMode();
     }
     restoreInputDraftForTab(newTabId);
     renderAttachmentPreviews();
@@ -3766,11 +4758,17 @@ async function switchToTab(newTabId) {
     refreshScheduledJobs({ tabId: newTabId });
     refreshRecommendedActions();
   } finally {
-    if (switchGeneration === tabSwitchGeneration && tabSwitchTransitionId === newTabId) tabSwitchTransitionId = null;
+    if (switchGeneration === tabSwitchGeneration) {
+      tabSwitchTransitionId = null;
+      if (currentTabId === renderedTabId) drainQueuedAgentUpdatesForTab(currentTabId);
+      if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
+    }
     syncSendButtonState();
   }
   drainQueuedAgentUpdatesForTab(newTabId);
-  consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+  consumePendingContextMenuPrompt()
+    .then(() => drainQueuedPromptsAfterRunSettles(newTabId))
+    .catch(() => {});
   if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
 }
 
@@ -3793,10 +4791,12 @@ async function refreshVisibleSidePanelState() {
     messagesEl.innerHTML = html;
     messagesEl.querySelectorAll('[data-bound]').forEach(el => delete el.dataset.bound);
     rebindRestoredMessageControls();
+    refreshRenderedStepLabels();
   } else if (!html) {
     messagesEl.innerHTML = '';
-    addMessage('system', t('sp.help_message'));
+    syncProgressDisplayMode();
   }
+  if (html) migrateLegacyEmptyStateFromRestoredChat(tabId);
   await restoreActiveRunState(tabId);
   return document.visibilityState !== 'hidden' && sameTabId(currentTabId, tabId);
 }
@@ -3835,7 +4835,7 @@ function requestVisibleSidePanelStateRefresh() {
   }).catch(() => {});
 }
 
-async function refreshConversationScopeState(tabId = currentTabId) {
+async function refreshConversationScopeState(tabId = currentTabId, { apply = true } = {}) {
   const numericTabId = normalizePlanReviewTabId(tabId);
   if (numericTabId == null) return null;
   let state = null;
@@ -3844,16 +4844,147 @@ async function refreshConversationScopeState(tabId = currentTabId) {
   } catch {
     return null;
   }
-  applyConversationScopeState(numericTabId, state);
+  if (apply) applyConversationScopeState(numericTabId, state);
   return state;
+}
+
+const FAILED_CONVERSATION_CLEAR_RECOVERY_RETRY_MS = 1_000;
+const failedConversationClearRecoveryRetryTimers = new Map();
+const failedConversationClearRecoveryTokens = new Map();
+
+function cancelFailedConversationClearRecoveryRetry(tabId) {
+  const numericTabId = Number(tabId);
+  const timerId = failedConversationClearRecoveryRetryTimers.get(numericTabId);
+  if (timerId != null) clearTimeout(timerId);
+  failedConversationClearRecoveryRetryTimers.delete(numericTabId);
+}
+
+function scheduleFailedConversationClearRecoveryRetry(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)
+      || failedConversationClearRecoveryRetryTimers.has(numericTabId)) return;
+  const timerId = setTimeout(() => {
+    failedConversationClearRecoveryRetryTimers.delete(numericTabId);
+    void recoverActiveRunAfterFailedConversationClear(numericTabId);
+  }, FAILED_CONVERSATION_CLEAR_RECOVERY_RETRY_MS);
+  failedConversationClearRecoveryRetryTimers.set(numericTabId, timerId);
+}
+
+function holdFailedConversationClearRecovery(tabId) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return null;
+  const recoveryToken = Symbol('failed-conversation-clear-recovery');
+  failedConversationClearRecoveryTokens.set(numericTabId, recoveryToken);
+  // A timed-out local abort can finish after clear_conversation has failed.
+  // Keep its finalizer from making the composer look idle until the background
+  // reservation has either been re-adopted or authoritatively ended.
+  failedConversationClearRecoveryTabs.add(numericTabId);
+  setTabProcessing(numericTabId, true);
+  setTabAbortRequested(numericTabId, false);
+  if (sameTabId(currentTabId, numericTabId)) {
+    showActivity('Reconnecting\u2026');
+    syncSendButtonState();
+  }
+  return recoveryToken;
+}
+
+function isFailedConversationClearRecoveryCurrent(tabId, recoveryToken) {
+  const numericTabId = Number(tabId);
+  return failedConversationClearRecoveryTabs.has(numericTabId)
+    && failedConversationClearRecoveryTokens.get(numericTabId) === recoveryToken
+    && !isConversationClearInProgress(numericTabId);
+}
+
+function finishFailedConversationClearRecovery(tabId, { processing }) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return;
+  failedConversationClearRecoveryTabs.delete(numericTabId);
+  failedConversationClearRecoveryTokens.delete(numericTabId);
+  cancelFailedConversationClearRecoveryRetry(numericTabId);
+  setTabProcessing(numericTabId, processing);
+  setTabAbortRequested(numericTabId, false);
+  if (sameTabId(currentTabId, numericTabId)) {
+    if (!processing) hideActivity();
+    syncSendButtonState();
+  }
+}
+
+async function recoverActiveRunAfterFailedConversationClear(tabId) {
+  const numericTabId = normalizePlanReviewTabId(tabId);
+  if (numericTabId == null) return false;
+  const recoveryToken = holdFailedConversationClearRecovery(numericTabId);
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
+    cancelFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+
+  const state = await refreshConversationScopeState(numericTabId, { apply: false });
+  if (!isFailedConversationClearRecoveryCurrent(numericTabId, recoveryToken)) return false;
+  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) {
+    cancelFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+  if (!state?.ok) {
+    scheduleFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+  applyConversationScopeState(numericTabId, state);
+
+  const recoveryStillCurrent = () => (
+    isFailedConversationClearRecoveryCurrent(numericTabId, recoveryToken)
+  );
+  const snapshotStillActive = await applyActiveRunState(numericTabId, state, {
+    shouldContinue: recoveryStillCurrent,
+  });
+  if (!recoveryStillCurrent()) return false;
+  if (!snapshotStillActive) {
+    scheduleFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+  if (!state.running && !state.starting) {
+    finishFailedConversationClearRecovery(numericTabId, { processing: false });
+    await drainQueuedPromptsAfterRunSettles(numericTabId);
+    return true;
+  }
+
+  const runUi = state.runUi && typeof state.runUi === 'object' ? state.runUi : null;
+  const requestId = String(runUi?.requestId || '');
+  const oldFollowerStillSettling = !requestId
+    || conversationClearFollowerCancellationRequestIds.has(requestId)
+    || localRunFollowers.has(numericTabId)
+    || localRunRequestIds.has(numericTabId);
+  if (oldFollowerStillSettling) {
+    scheduleFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+  if (runUi?.status === 'awaiting_plan') {
+    finishFailedConversationClearRecovery(numericTabId, { processing: true });
+    return true;
+  }
+
+  void adoptRestoredRunState(numericTabId, state);
+  if (!recoveryStillCurrent()) return false;
+  const runWasAdopted = localRunRequestIds.get(numericTabId) === requestId
+    && localRunFollowers.get(numericTabId)?.requestId === requestId;
+  if (!runWasAdopted) {
+    scheduleFailedConversationClearRecoveryRetry(numericTabId);
+    return false;
+  }
+  finishFailedConversationClearRecovery(numericTabId, { processing: true });
+  return true;
 }
 
 async function restoreActiveRunState(tabId = currentTabId) {
   const numericTabId = normalizePlanReviewTabId(tabId);
   if (numericTabId == null) return;
+  if (failedConversationClearRecoveryTabs.has(numericTabId)) {
+    await recoverActiveRunAfterFailedConversationClear(numericTabId);
+    return;
+  }
   const state = await refreshConversationScopeState(numericTabId);
   if (!state) return;
-  await applyActiveRunState(numericTabId, state);
+  const snapshotStillActive = await applyActiveRunState(numericTabId, state);
+  if (!snapshotStillActive) return;
   void adoptRestoredRunState(numericTabId, state);
 }
 
@@ -3867,6 +4998,12 @@ async function adoptRestoredRunState(tabId, state) {
   if (!requestId
       || isTerminalRunUiStatus(runUi.status)
       || runUi.status === 'awaiting_plan'
+      || isConversationClearInProgress(tabId)
+      || clearedConversationRunRequestIds.has(requestId)
+      || cancelledRunRecoveryRequestIds.has(requestId)
+      || isTabAbortRequested(tabId)
+      || !sameTabId(currentTabId, tabId)
+      || !sameTabId(renderedTabId, tabId)
       || localRunRequestIds.has(Number(tabId))
       || adoptedRunRecoveryRequestIds.has(requestId)) return;
 
@@ -3893,7 +5030,11 @@ async function adoptRestoredRunState(tabId, state) {
       requireDurableSubmittedTurn: runUi.kind !== 'continue',
     });
     const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
-    if (returnedPlannerFailure && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+    if (returnedPlannerFailure
+        && sameTabId(currentTabId, tabId)
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       renderPlannerRequestFailure(
         assistantEl,
         returnedPlannerFailure.data,
@@ -3903,23 +5044,32 @@ async function adoptRestoredRunState(tabId, state) {
     const returnedErrorUpdate = Array.isArray(res?.updates)
       ? res.updates.find(update => update?.type === 'error')
       : null;
-    if (returnedErrorUpdate && sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+    if (returnedErrorUpdate
+        && sameTabId(currentTabId, tabId)
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       renderAgentErrorUpdate(returnedErrorUpdate.data, tabId, requestId, {
         submittedTurnDurable: res.submittedTurnDurable,
       });
     }
   } catch (error) {
-    if (sameTabId(currentTabId, tabId) && !isTabAbortRequested(tabId)) {
+    if (sameTabId(currentTabId, tabId)
+        && !isTabAbortRequested(tabId)
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       renderAgentErrorUpdate({ message: error.message }, tabId, requestId);
     }
   } finally {
     adoptedRunRecoveryRequestIds.delete(requestId);
-    if (localRunRequestIds.get(Number(tabId)) === requestId) {
+    conversationClearFollowerCancellationRequestIds.delete(requestId);
+    const ownsRunState = localRunRequestIds.get(Number(tabId)) === requestId;
+    if (ownsRunState) {
       localRunRequestIds.delete(Number(tabId));
       setTabProcessing(tabId, false);
       setTabAbortRequested(tabId, false);
     }
-    if (sameTabId(currentTabId, tabId)) {
+    if (ownsRunState && sameTabId(currentTabId, tabId)) {
       if (assistantEl) finalizeSteps(assistantEl);
       syncSendButtonState();
       hideActivity();
@@ -3929,12 +5079,19 @@ async function adoptRestoredRunState(tabId, state) {
         await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
       }
     }
+    if (ownsRunState) await drainQueuedPromptsAfterRunSettles(tabId);
   }
 }
 
-async function applyActiveRunState(numericTabId, state) {
-  if (!sameTabId(currentTabId, numericTabId) || !sameTabId(renderedTabId, numericTabId)) return;
+async function applyActiveRunState(numericTabId, state, { shouldContinue = () => true } = {}) {
   const runUi = state?.runUi && typeof state.runUi === 'object' ? state.runUi : null;
+  const requestId = String(runUi?.requestId || '');
+  const shouldApplyState = () => shouldContinue()
+    && !isConversationClearInProgress(numericTabId)
+    && (!requestId || !clearedConversationRunRequestIds.has(requestId))
+    && sameTabId(currentTabId, numericTabId)
+    && sameTabId(renderedTabId, numericTabId);
+  if (!shouldApplyState()) return false;
   if (runUi?.requestId) {
     const runAssistantEl = messagesEl.querySelector(`.message.assistant[data-run-request-id="${CSS.escape(String(runUi.requestId))}"]`)
       || messagesEl.querySelector('.message.assistant:last-of-type')
@@ -3974,14 +5131,15 @@ async function applyActiveRunState(numericTabId, state) {
     };
     if (!hasReplayableStreamStart) restoreSnapshotStream();
     const unavailableBeforeSeq = runUiUnavailableBeforeSeq(runUi);
-    const replayGapBeforeSeq = Number(runAssistantEl.dataset.replayGapBeforeSeq || 0);
+    const replayGapNoted = runAssistantEl.dataset.replayGapNoted === 'true'
+      || Number(runAssistantEl.dataset.replayGapBeforeSeq || 0) > 0;
     if (unavailableBeforeSeq > lastRenderedSeq
-        && unavailableBeforeSeq > replayGapBeforeSeq) {
+        && !replayGapNoted) {
       addRunProgressReplayGapNote();
       // Keep replay-loss notice deduplication separate from the rendered-event
       // cursor. A terminal snapshot can be fully acknowledged (and therefore
       // absent from events) while finalContent still needs to be restored.
-      runAssistantEl.dataset.replayGapBeforeSeq = String(unavailableBeforeSeq);
+      runAssistantEl.dataset.replayGapNoted = 'true';
     }
     for (const event of replayEvents) {
       if (Number(event?.seq || 0) <= lastRenderedSeq) continue;
@@ -4008,6 +5166,19 @@ async function applyActiveRunState(numericTabId, state) {
       });
       runAssistantEl.dataset.lastRenderedSeq = String(event.seq);
     }
+    reconcileRunMessageAttachmentState(
+      numericTabId,
+      runAssistantEl,
+      runUi.attachmentDeliveryState,
+      { persist: true },
+    );
+    await reconcilePersistedStagedScreenshots(
+      numericTabId,
+      runUi.requestId,
+      runUi.attachmentDeliveryState,
+      { shouldContinue: shouldApplyState },
+    );
+    if (!shouldApplyState()) return false;
     const renderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
     if (renderedSeq > Number(runUi.ackedSeq || 0)) {
       await sendToBackground('agent_run_ack', {
@@ -4015,6 +5186,7 @@ async function applyActiveRunState(numericTabId, state) {
         requestId: runUi.requestId,
         seq: renderedSeq,
       }).catch(() => {});
+      if (!shouldApplyState()) return false;
     }
   }
   const pendingPlan = state?.pendingPlan;
@@ -4028,14 +5200,34 @@ async function applyActiveRunState(numericTabId, state) {
         && String(lastPlanLifecycleEvent.data?.planId || '') === String(pendingPlan.planId)));
   if (pendingPlanMatchesRun) {
     renderPlanReviewCard({ ...pendingPlan, tabId: numericTabId, requestId: runUi?.requestId || null, runId: runUi?.runId || null });
-    return;
+    return true;
   }
+  const restoredPlanResolution = lastPlanLifecycleEvent?.type === 'plan_resolved'
+    ? lastPlanLifecycleEvent.data
+    : runUi?.lastPlanResolution;
+  if (restoredPlanResolution?.decision === 'timeout') {
+    expirePlanReviewCards({
+      tabId: numericTabId,
+      planId: restoredPlanResolution.planId,
+      requestId: runUi?.requestId,
+      runId: runUi?.runId,
+      retryPayload: retryPayloadForRunAssistant(currentAssistantEl),
+    });
+  }
+  // Always sweep the tab: a run that died without a plan_resolved leaves a card
+  // with a different planId that expirePlanReviewCards' filter never matches,
+  // and its Approve/Cancel would post a decision the background has no plan for.
+  // The card just expired above is skipped by invalidatePlanReviewCards' guard.
   invalidatePlanReviewCards({ tabId: numericTabId });
   if (state?.running || state?.starting) {
     setTabProcessing(numericTabId, true);
-    setTabAbortRequested(numericTabId, false);
     hideRecommendedActions();
-    showActivity(t('sp.activity.thinking'));
+    const stopping = requestId
+      ? cancelledRunRecoveryRequestIds.has(requestId)
+      : isTabAbortRequested(numericTabId);
+    setTabAbortRequested(numericTabId, stopping);
+    if (stopping) showActivity(t('sp.activity.stopping'));
+    else startThinkingActivity();
     syncSendButtonState();
   } else {
     setPlanReviewAwaiting(numericTabId, false);
@@ -4053,6 +5245,8 @@ async function applyActiveRunState(numericTabId, state) {
           status: runUi.status,
           finalContent: runUi.finalContent,
           submittedTurnDurable: state?.submittedTurnDurable === true,
+          attachmentDeliveryState: runUi.attachmentDeliveryState || '',
+          endedAt: runUi.endedAt,
         },
       });
     }
@@ -4062,6 +5256,7 @@ async function applyActiveRunState(numericTabId, state) {
     hideActivity();
     syncSendButtonState();
   }
+  return true;
 }
 
 function conversationHasUserMessages() {
@@ -4199,27 +5394,36 @@ async function recommendedActionSourceStillCurrent(action, tabId) {
 
 async function runRecommendedAction(action) {
   const prompt = typeof action === 'string' ? action : action?.prompt;
+  const displayText = typeof action === 'string'
+    ? prompt
+    : String(action?.label || prompt || '').trim();
   const tabId = currentTabId;
   if (!prompt || tabId == null || isProcessing) return;
+  if (!displayText) return;
   if (!(await recommendedActionSourceStillCurrent(action, tabId)) || currentTabId !== tabId || isProcessing) {
     hideRecommendedActions();
     return;
   }
-  if (action?.mode === 'act') {
-    const ok = await ensureActMode();
+  if (action?.mode === 'act' || action?.mode === 'dev') {
+    const ok = action.mode === 'dev' ? await ensureDevMode() : await ensureActMode();
     if (!ok) return;
     if (!(await recommendedActionSourceStillCurrent(action, tabId)) || currentTabId !== tabId || isProcessing) {
       hideRecommendedActions();
       return;
     }
   }
-  inputEl.value = prompt;
+  inputEl.value = displayText;
   autoResizeInput();
-  sendMessage(recommendedActionSendParams(action));
+  sendMessage(recommendedActionSendParams(action, { tabId, displayText }));
 }
 
-function recommendedActionSendParams(action) {
+function recommendedActionSendParams(action, { tabId = null, displayText = '' } = {}) {
   const params = action?.runOptions ? { recommendedAction: action.runOptions } : {};
+  if (typeof action?.prompt === 'string' && action.prompt.trim()) {
+    params.__agentPrompt = action.prompt.trim();
+    params.__agentDisplayText = String(displayText || '').trim();
+    params.__agentTabId = tabId;
+  }
   if (['ask', 'act', 'dev'].includes(action?.mode)) {
     params.__mode = action.mode;
   }
@@ -4248,6 +5452,56 @@ function rebindCopyButtons() {
       }
     });
   });
+}
+
+function progressLogIsVisible() {
+  return verboseMode || compactProgressVisible;
+}
+
+function syncProgressDisplayMode() {
+  if (verboseMode) compactProgressVisible = true;
+  messagesEl?.classList.toggle('progress-verbose', verboseMode);
+  messagesEl?.classList.toggle('progress-status-only', !verboseMode && !compactProgressVisible);
+  messagesEl?.classList.remove('progress-preview');
+  messagesEl?.classList.remove('progress-expanded');
+  activityProgressToggle?.setAttribute('aria-expanded', String(verboseMode || compactProgressVisible));
+  activityProgressToggle?.setAttribute('aria-disabled', String(verboseMode));
+  agentActivity?.classList.toggle('progress-toggle-enabled', !verboseMode);
+  syncAssistantMessageVisibility();
+}
+
+function setCompactProgressVisible(visible) {
+  compactProgressVisible = verboseMode || visible !== false;
+  syncProgressDisplayMode();
+}
+
+function toggleCompactProgressVisibility() {
+  if (verboseMode) return;
+  setCompactProgressVisible(!compactProgressVisible);
+}
+
+function bindCompactStepDetailsToggle(toggle) {
+  if (!toggle || toggle.dataset.bound) return;
+  toggle.dataset.bound = 'true';
+  toggle.type = 'button';
+  const currentDetails = toggle.closest('.step-item')?.nextElementSibling;
+  toggle.setAttribute('aria-expanded', String(
+    !!currentDetails?.classList.contains('step-details')
+      && currentDetails.classList.contains('open'),
+  ));
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const details = toggle.closest('.step-item')?.nextElementSibling;
+    if (!details?.classList.contains('step-details')) return;
+    const open = details.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+}
+
+function rebindCompactStepDetailsToggles() {
+  messagesEl.querySelectorAll('.step-details-toggle').forEach(bindCompactStepDetailsToggle);
+  messagesEl.querySelectorAll('.step-expand-all').forEach(button => button.remove());
+  messagesEl.querySelectorAll('.progress-expanded-marker').forEach(marker => marker.remove());
 }
 
 function rebindContinueButtons() {
@@ -4282,6 +5536,9 @@ function rebindClarifyCards() {
     card.querySelectorAll('.clarify-input').forEach(input => {
       if (input.dataset.bound) return;
       input.dataset.bound = 'true';
+      input.addEventListener('input', () => {
+        keepClarifyAliveWhileTyping(card, tabId, clarifyId, input);
+      });
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && input.value.trim()) {
           e.preventDefault();
@@ -4495,6 +5752,8 @@ function setPlanReviewStructuredControlsDisabled(card, disabled) {
 
 const planReviewScrollRestoreFrames = new WeakMap();
 const planReviewScrollSnapshots = new WeakMap();
+const planReviewAutosizeFrames = new WeakMap();
+const planReviewContainerWidths = new WeakMap();
 
 function restorePlanReviewScrollTop(container, scrollTop) {
   const previousScrollBehavior = container.style.scrollBehavior;
@@ -4542,6 +5801,33 @@ function autosizePlanReviewField(el) {
     }
   });
   planReviewScrollRestoreFrames.set(el, frame);
+}
+
+function autosizePlanReviewFields(root) {
+  root?.querySelectorAll?.('.plan-review-summary-input, .plan-review-step-input')
+    .forEach(autosizePlanReviewField);
+}
+
+function schedulePlanReviewFieldsAutosize(root) {
+  if (!root?.querySelectorAll || planReviewAutosizeFrames.has(root)) return;
+  const frame = requestAnimationFrame(() => {
+    planReviewAutosizeFrames.delete(root);
+    autosizePlanReviewFields(root);
+  });
+  planReviewAutosizeFrames.set(root, frame);
+}
+
+function handlePlanReviewContainerResize(entries) {
+  for (const entry of entries || []) {
+    const root = entry?.target;
+    if (!root?.querySelectorAll) continue;
+    const width = Number(entry?.contentRect?.width);
+    if (Number.isFinite(width)) {
+      if (planReviewContainerWidths.get(root) === width) continue;
+      planReviewContainerWidths.set(root, width);
+    }
+    schedulePlanReviewFieldsAutosize(root);
+  }
 }
 
 function getPlanReviewDraftFromDom(card) {
@@ -4967,6 +6253,10 @@ function bindPlanReviewEditorControls(card, view) {
       try { input?.focus(); } catch {}
     });
   }
+
+  // Cards are initially mounted while detached, and restored cards can be
+  // rebound before layout settles. Measure on the next frame in both cases.
+  schedulePlanReviewFieldsAutosize(card);
 }
 
 function setPlanReviewRawEditing(card, enabled, { focus = false } = {}) {
@@ -5193,7 +6483,7 @@ function reattachPlanReviewActiveRun(card) {
   setTabAbortRequested(tabId, false);
   sendBtn.disabled = true;
   hideRecommendedActions();
-  showActivity(t('sp.activity.thinking'));
+  startThinkingActivity();
   return assistantEl;
 }
 
@@ -5205,7 +6495,7 @@ function clearPlanReviewActiveRun(assistantEl, tabId = currentTabId) {
     sendBtn.disabled = false;
     hideActivity();
   }
-  drainQueuedPromptsAfterRunSettles();
+  drainQueuedPromptsAfterRunSettles(tabId);
   refreshRecommendedActions();
 }
 
@@ -5269,20 +6559,20 @@ function rebindCostAllowanceButtons() {
 function retryPayloadFromButton(btn) {
   const text = String(btn?.dataset?.retryText || '').trim();
   if (!text) return null;
+  const displayText = String(btn?.dataset?.retryDisplayText || text).trim() || text;
   const mode = ['ask', 'act', 'dev'].includes(btn.dataset.retryMode)
     ? btn.dataset.retryMode
     : agentMode;
   const retryId = btn.dataset.retryId || '';
   const attachments = retryAttachmentPayloads.get(retryId) || [];
   const attachmentCount = Number(btn.dataset.retryAttachmentCount || 0) || 0;
-  const sourceGrounding = btn.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-    ? SELECTION_ONLY_SOURCE_GROUNDING
-    : null;
+  const sourceGrounding = normalizeSelectionSourceGrounding(btn.dataset.retrySourceGrounding) || null;
   const selectionAction = sourceGrounding
     ? normalizeSelectionAction(btn.dataset.retrySelectionAction)
     : '';
   return {
     text,
+    displayText,
     mode,
     apiMutationsAllowed: btn.dataset.retryApiMutationsAllowed === 'true',
     foreground: btn.dataset.retryForeground === 'true',
@@ -5311,12 +6601,17 @@ function bindErrorRetryButton(btn) {
     }
     setMode(payload.mode);
     if (payload.apiMutationsAllowed) {
-      setApiMutationsAllowedForTab(currentTabId, true);
+      grantApiMutationsForTab(currentTabId);
     }
-    inputEl.value = payload.text;
+    inputEl.value = payload.displayText;
     autoResizeInput();
     hideSlashCommandAutocomplete();
-    await sendMessage({
+    const accepted = await sendMessage({
+      ...(payload.displayText !== payload.text ? {
+        __agentPrompt: payload.text,
+        __agentDisplayText: payload.displayText,
+        __agentTabId: currentTabId,
+      } : {}),
       __retry: {
         mode: payload.mode,
         apiMutationsAllowed: payload.apiMutationsAllowed,
@@ -5326,11 +6621,28 @@ function bindErrorRetryButton(btn) {
         attachments: payload.attachments,
       },
     });
+    if (accepted) {
+      releaseRetryAttachmentPayload(btn.dataset.retryId);
+      btn.disabled = true;
+    }
   });
 }
 
 function rebindRetryButtons() {
-  document.querySelectorAll('.error-retry-btn, .planner-request-failure-retry-btn').forEach(bindErrorRetryButton);
+  document.querySelectorAll('.error-retry-btn').forEach((btn) => {
+    // Migrate pre-text-style icon-only buttons restored from chat history.
+    if (!btn.textContent?.trim()) {
+      btn.replaceChildren();
+      btn.textContent = t('sp.retry');
+      if (!btn.getAttribute('aria-label')) btn.setAttribute('aria-label', t('sp.retry'));
+      if (!btn.title) btn.title = t('sp.retry');
+    }
+  });
+  document.querySelectorAll('.error-retry-btn, .planner-request-failure-retry-btn, .ask-act-handoff-btn').forEach(bindErrorRetryButton);
+}
+
+function rebindPlanReviewRetryButtons() {
+  document.querySelectorAll('.plan-review-retry').forEach(bindErrorRetryButton);
 }
 
 function createActiveChatPayloadState(retryPayload, requestId = '') {
@@ -5350,18 +6662,22 @@ function activeRetryPayloadForRequest(tabId, requestId = '') {
 }
 
 function retryPayloadForRunAssistant(assistantEl) {
-  let userEl = assistantEl?.previousElementSibling || null;
-  while (userEl && !userEl.matches('.message.user')) userEl = userEl.previousElementSibling;
-  const text = userEl ? getComposerHistoryTextFromMessage(userEl) : '';
-  if (!String(text || '').trim()) return null;
-  const sourceGrounding = assistantEl?.dataset.retrySourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-    ? SELECTION_ONLY_SOURCE_GROUNDING
-    : null;
+  const userEl = userMessageForRunAssistant(assistantEl);
+  const displayText = String(userEl ? getComposerHistoryTextFromMessage(userEl) : '').trim();
+  if (!displayText) return null;
+  const storedRetryPayload = retryPayloadByAssistant.get(assistantEl);
+  const internalPrompt = String(assistantEl?.dataset.retryAgentPrompt || '').trim();
+  const text = internalPrompt || displayText;
+  const sourceGrounding = normalizeSelectionSourceGrounding(assistantEl?.dataset.retrySourceGrounding) || null;
   const selectionAction = sourceGrounding
     ? normalizeSelectionAction(assistantEl?.dataset.retrySelectionAction)
     : '';
+  const attachments = Array.isArray(storedRetryPayload?.attachments)
+    ? storedRetryPayload.attachments.slice()
+    : [];
   return {
     text,
+    displayText,
     mode: ['ask', 'act', 'dev'].includes(assistantEl?.dataset.runMode)
       ? assistantEl.dataset.runMode
       : agentMode,
@@ -5369,9 +6685,18 @@ function retryPayloadForRunAssistant(assistantEl) {
     foreground: assistantEl?.dataset.retryForeground === 'true',
     ...(sourceGrounding ? { sourceGrounding } : {}),
     ...(selectionAction ? { selectionAction } : {}),
-    attachments: [],
-    attachmentCount: Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
+    attachments,
+    attachmentCount: Math.max(
+      Number(assistantEl?.dataset.retryAttachmentCount || 0) || 0,
+      attachments.length,
+    ),
   };
+}
+
+function userMessageForRunAssistant(assistantEl) {
+  let userEl = assistantEl?.previousElementSibling || null;
+  while (userEl && !userEl.matches('.message.user')) userEl = userEl.previousElementSibling;
+  return userEl;
 }
 
 function plannerRequestFailureUpdate(updates = []) {
@@ -5517,17 +6842,23 @@ function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', opti
 }
 
 function rebindRestoredMessageControls() {
+  restoreStagedScreenshotAttachments();
   rebindCopyButtons();
+  rebindMessageInfoToggles();
+  rebindCompactStepDetailsToggles();
   rebindScreenshotSaveButtons();
   rebindRetryButtons();
+  rebindPlanReviewRetryButtons();
   rebindPlannerRequestFailureControls();
   rebindContinueButtons();
   rebindClarifyCards();
   rebindPlanReviewCards();
   rebindScheduleComposers();
+  document.querySelectorAll('.workflow-manager').forEach(bindSavedWorkflowManager);
   document.querySelectorAll('form.workflow-parameter-form').forEach(bindSavedWorkflowParameterForm);
   rebindSubscribeButtons();
   rebindCostAllowanceButtons();
+  syncProgressDisplayMode();
 }
 
 function getProviderPickerOptions() {
@@ -5656,7 +6987,7 @@ function appendProviderPickerGroup(label) {
   providerPickerMenu.appendChild(el);
 }
 
-function appendProviderPickerOption(id, name, meta) {
+function appendProviderPickerOption(id, name, meta, iconProviderId = id) {
   if (!providerPickerMenu) return;
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -5667,7 +6998,7 @@ function appendProviderPickerOption(id, name, meta) {
 
   // Icons only in the open menu — closed header stays text-only so the
   // WebBrain mark (and other brand chips) don't compete with the chrome.
-  const iconSrc = providerIconUrl(id);
+  const iconSrc = providerIconUrl(iconProviderId);
   if (iconSrc) {
     const img = document.createElement('img');
     img.className = 'provider-icon provider-icon-sm';
@@ -5780,8 +7111,6 @@ function syncLanguagePicker() {
   if (!languageSelect) return;
   const code = languageSelect.value || getLocale();
   const language = LANGUAGES.find((item) => item.code === code);
-  if (languagePickerFlag && language?.flagCode) languagePickerFlag.src = languageFlagSrc(language.flagCode);
-  if (languagePickerCode) languagePickerCode.textContent = code.toUpperCase();
   if (languagePickerBtn) {
     const controlLabel = `${t('sp.btn.language')}: ${language?.label || code}`;
     languagePickerBtn.title = controlLabel;
@@ -5882,8 +7211,8 @@ async function loadProviders() {
     providerPickerMenu?.replaceChildren();
     providerPickerLabelById.clear();
 
-    const cloudConfig = res.providers.webbrain_cloud || { label: 'WebBrain Cloud' };
-    const cloudLabel = cloudConfig.label || 'WebBrain Cloud';
+    const cloudConfig = res.providers.webbrain_cloud || { label: 'WebBrain Compass' };
+    const cloudLabel = cloudConfig.label || 'WebBrain Compass';
     const cloudGroup = document.createElement('optgroup');
     cloudGroup.label = t('sp.providers.no_setup_group');
     const cloudOption = document.createElement('option');
@@ -5908,7 +7237,7 @@ async function loadProviders() {
         opt.textContent = `${name} — ${t('sp.providers.active')}`;
         activeGroup.appendChild(opt);
         providerPickerLabelById.set(id, name);
-        appendProviderPickerOption(id, name, t('sp.providers.active'));
+        appendProviderPickerOption(id, name, t('sp.providers.active'), config.sourceProviderId || id);
       }
       providerSelect.appendChild(activeGroup);
     }
@@ -6113,10 +7442,11 @@ function scrollSlashCommandOptionIntoView(option) {
 
   const menuRect = slashCommandMenuEl.getBoundingClientRect();
   const optionRect = option.getBoundingClientRect();
+  const zoom = uiScaleZoom();
   if (optionRect.top < menuRect.top) {
-    slashCommandMenuEl.scrollTop -= menuRect.top - optionRect.top;
+    slashCommandMenuEl.scrollTop -= (menuRect.top - optionRect.top) / zoom;
   } else if (optionRect.bottom > menuRect.bottom) {
-    slashCommandMenuEl.scrollTop += optionRect.bottom - menuRect.bottom;
+    slashCommandMenuEl.scrollTop += (optionRect.bottom - menuRect.bottom) / zoom;
   }
 }
 
@@ -6298,13 +7628,28 @@ function handleInput() {
 
 // --- Message Sending ---
 
-// Per-conversation API mutation override (set via /allow-api).
+// Per-conversation API mutation override (set via /allow-api). A grant is
+// reported only by the system message in the transcript, so every grant goes
+// through grantApiMutationsForTab().
 let alwaysAllowApiMutations = false;
 let apiMutationsAllowed = false;
 const apiMutationsAllowedByTab = new Map();
 
 function isApiMutationsAllowedForTab(tabId) {
   return tabId != null && apiMutationsAllowedByTab.get(tabId) === true;
+}
+
+// Grants API mutations for a tab and announces the grant. Setting the per-tab
+// flag directly re-enables POST/PUT/PATCH/DELETE for the whole conversation
+// with nothing on screen. Note the bubble goes to the transcript currently
+// rendered, which is not tabId when a slash command runs for a background tab.
+function grantApiMutationsForTab(tabId) {
+  const wasAlreadyAllowed = isApiMutationsAllowedForTab(tabId);
+  setApiMutationsAllowedForTab(tabId, true);
+  if (!wasAlreadyAllowed) {
+    addPersistentSlashMessage(systemHtml(t('sp.api.enabled_html')));
+  }
+  return !wasAlreadyAllowed;
 }
 
 function setApiMutationsAllowedForTab(tabId, allowed) {
@@ -6319,7 +7664,6 @@ function setApiMutationsAllowedForTab(tabId, allowed) {
 
 function syncApiMutationsAllowedForCurrentTab() {
   apiMutationsAllowed = alwaysAllowApiMutations || isApiMutationsAllowedForTab(currentTabId);
-  updateApiBadge();
 }
 
 function isOutOfBandSlashDraft(value) {
@@ -6359,7 +7703,7 @@ function showBusySlashCommandNotice() {
   showComposerToast(t('sp.slash.busy_only_oob'), { duration: 5000 });
 }
 
-function showComposerToast(message, { duration = 2600 } = {}) {
+function showComposerToast(message, { duration = 2600, effect = '' } = {}) {
   if (!message) return;
   let toast = document.getElementById('composer-toast');
   if (!toast) {
@@ -6372,10 +7716,19 @@ function showComposerToast(message, { duration = 2600 } = {}) {
   }
   if (isSystemHtml(message)) toast.innerHTML = message.__systemHtml;
   else toast.textContent = message;
+  toast.classList.remove('memory-update-cue', 'memory-update-cue-enter');
+  if (effect === 'memory') {
+    toast.classList.add('memory-update-cue');
+    if (!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+      void toast.offsetWidth;
+      toast.classList.add('memory-update-cue-enter');
+    }
+  }
   toast.classList.remove('hidden');
   clearTimeout(composerToastTimer);
   composerToastTimer = setTimeout(() => {
     toast.classList.add('hidden');
+    toast.classList.remove('memory-update-cue', 'memory-update-cue-enter');
   }, duration);
 }
 
@@ -6409,7 +7762,12 @@ function screenshotDownloadFilename(pageUrl = '', fullPage = false) {
   return `${prefix}-${fullPage ? 'full-page-' : ''}screenshot.png`;
 }
 
-function renderScreenshotResult(dataUrl, { fullPage = false, warning = '', pageUrl = '' } = {}) {
+function renderScreenshotResult(dataUrl, {
+  fullPage = false,
+  warning = '',
+  pageUrl = '',
+  stagedAttachment = null,
+} = {}) {
   const warningHtml = warning
     ? `<div class="screenshot-warning"><strong>⚠️ ${escapeHtml(warning)}</strong></div>`
     : '';
@@ -6418,10 +7776,20 @@ function renderScreenshotResult(dataUrl, { fullPage = false, warning = '', pageU
     : 'screenshot-result-image';
   const filename = screenshotDownloadFilename(pageUrl, fullPage);
   const saveLabel = t('sp.screenshot.save_as');
+  const stagedLabel = t('sp.screenshot.staged_next_message');
+  const imageAlt = t(fullPage ? 'sp.screenshot.full_page_alt' : 'sp.screenshot.alt');
+  const stagedMetadata = stagedAttachment ? encodeStagedScreenshotMetadata(stagedAttachment) : '';
+  const stagedAttributes = stagedAttachment && stagedMetadata
+    ? ` data-screenshot-attachment-id="${escapeHtml(stagedAttachment.stagedAttachmentId)}" data-staged-screenshot="${escapeHtml(stagedMetadata)}"`
+    : '';
+  const stagedHtml = stagedAttachment
+    ? `<div class="screenshot-attachment-note" role="status" aria-label="${escapeHtml(stagedLabel)}">📎 ${escapeHtml(stagedLabel)} · ${escapeHtml(stagedAttachment.name)}</div>`
+    : '';
   return `
-    <div class="screenshot-result">
+    <div class="screenshot-result"${stagedAttributes}>
       ${warningHtml}
-      <img src="${escapeHtml(dataUrl)}" class="${imageClass}" alt="${escapeHtml(fullPage ? 'Full-page screenshot' : 'Screenshot')}"/>
+      <img src="${escapeHtml(dataUrl)}" class="${imageClass}" alt="${escapeHtml(imageAlt)}"/>
+      ${stagedHtml}
       <div class="screenshot-result-actions">
         <button type="button" class="screenshot-save-btn" data-filename="${escapeHtml(filename)}" aria-label="${escapeHtml(saveLabel)}">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -6544,6 +7912,39 @@ function requestConfigurationFile(tabId) {
   input.click();
 }
 
+function toggledVisionProviderConfig(providerId, config) {
+  if (providerId === 'ollama') {
+    const visionEnabled = config.visionMode === 'on'
+      || (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
+    const enabled = !visionEnabled;
+    const { supportsVision: _legacy, ...withoutLegacy } = config;
+    return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
+  }
+  if (visionProviderKind(providerId, config)) {
+    const visionEnabled = config.visionMode === 'on'
+      || (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
+    const enabled = !visionEnabled;
+    const { supportsVision: _legacy, ...withoutLegacy } = config;
+    return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
+  }
+  const enabled = !config.supportsVision;
+  return { enabled, config: { ...config, supportsVision: enabled } };
+}
+
+async function executePrintSlashCommand(tabId, currentTabId, tabs, showToast, translate) {
+  try {
+    const tab = tabId == null ? null : await tabs.get(tabId);
+    if (currentTabId !== tabId || !tab?.active) return { skipped: true };
+    await tabs.executeScript(tabId, { code: 'window.print();' });
+    return { ok: true };
+  } catch (error) {
+    if (currentTabId === tabId) {
+      showToast(translate('sp.print.error', { msg: error?.message || 'unknown error' }), { duration: 5000 });
+    }
+    return { error: error?.message || 'unknown error' };
+  }
+}
+
 async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (/^\s*\/watch(?:\s|$)/i.test(text) && !/^\s*\/watch\s+--help\s*$/i.test(text)) {
     const watchArgs = parseWatchSlashCommand(text);
@@ -6596,7 +7997,9 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return '';
   }
 
-  if ((command.value === '/screenshot' || command.value === '/record')
+  if ((command.value === '/screenshot'
+      || (command.value === '/record' && action !== 'stop')
+      || command.value === '/print')
       && isSelectionGroundedForTab(tabId)) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return '';
@@ -6633,6 +8036,21 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
 
   if (command.value === '/memory' && action === 'forget') {
     await forgetUserMemory(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/teach' && action === 'status') {
+    await showTeacherModeStatus(tabId);
+    return '';
+  }
+
+  if (command.value === '/teach' && action === 'start') {
+    await startTeacherMode(payload, tabId);
+    return '';
+  }
+
+  if (command.value === '/teach' && action === 'end') {
+    await endTeacherMode(tabId);
     return '';
   }
 
@@ -6682,11 +8100,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   }
 
   if (command.value === '/allow-api') {
-    const wasAlreadyAllowed = isApiMutationsAllowedForTab(tabId);
-    setApiMutationsAllowedForTab(tabId, true);
-    if (!wasAlreadyAllowed) {
-      addPersistentSlashMessage(systemHtml(t('sp.api.enabled_html')));
-    }
+    grantApiMutationsForTab(tabId);
     return payload;
   }
 
@@ -6727,6 +8141,8 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (command.value === '/verbose') {
     verboseMode = !verboseMode;
     if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
+    refreshOpenMessageInfoRows();
+    syncProgressDisplayMode();
     await browser.storage.local.set({ verboseMode }).catch(() => {});
     if (currentTabId !== tabId) return '';
     showComposerToast(systemHtml(verboseMode
@@ -6736,15 +8152,43 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   }
 
   if (command.value === '/reset') {
+    const clearingRequestId = localRunRequestIdForTab(tabId);
+    let backgroundClearSucceeded = false;
+    let shouldRecoverActiveRun = false;
     setConversationClearInProgress(tabId, true);
     try {
-      suppressRunUpdatesForClearedConversation(tabId);
-      if (isTabProcessing(tabId)) await abortRun(tabId);
+      if (isTabProcessing(tabId)) await abortRunForConversationClear(tabId, clearingRequestId);
       await sendToBackground('clear_conversation', { tabId });
+      backgroundClearSucceeded = true;
+      if (failedConversationClearRecoveryTabs.has(Number(tabId))) {
+        finishFailedConversationClearRecovery(tabId, { processing: false });
+      }
+      suppressRunUpdatesForClearedConversation(tabId, clearingRequestId);
       await renderClearedConversationForTab(tabId);
+    } catch (error) {
+      if (backgroundClearSucceeded) {
+        try {
+          // The authoritative conversation is already empty. Retry the cache
+          // handoff, then finish the local reset even if that retry still fails.
+          await renderClearedConversationForTab(tabId, { allowCacheClearFailure: true });
+        } catch (localError) {
+          showComposerToast(localError?.message || 'Unable to finish clearing the conversation.', { duration: 7000 });
+        }
+      } else {
+        shouldRecoverActiveRun = true;
+        holdFailedConversationClearRecovery(tabId);
+        showComposerToast(error?.message || 'Unable to clear the conversation.', { duration: 7000 });
+      }
     } finally {
       setConversationClearInProgress(tabId, false);
+      if (shouldRecoverActiveRun) await recoverActiveRunAfterFailedConversationClear(tabId);
+      else if (backgroundClearSucceeded) await drainQueuedPromptsAfterRunSettles(tabId);
     }
+    return '';
+  }
+
+  if (command.value === '/print') {
+    await executePrintSlashCommand(tabId, currentTabId, browser.tabs, showComposerToast, t);
     return '';
   }
 
@@ -6752,9 +8196,21 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     try {
       const tab = tabId == null ? null : await browser.tabs.get(tabId);
       if (currentTabId !== tabId || !tab?.active) return '';
-      const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      const res = await sendToBackground('capture_viewport_screenshot', { tabId });
       if (currentTabId !== tabId) return '';
-      addScreenshotResultMessage(dataUrl, { pageUrl: tab.url });
+      if (!res?.ok || !res.dataUrl) {
+        addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: res?.error || 'unknown error' })));
+        return '';
+      }
+      const stagedAttachment = await stageScreenshotAttachment(tabId, res.dataUrl, {
+        pageUrl: tab.url,
+        redactionSnapshotReady: res.redactionSnapshotReady === true,
+        redactionSnapshot: res.redactionSnapshot,
+        modelRedactionReady: res.modelRedactionReady === true,
+        modelDataUrl: res.modelDataUrl,
+      });
+      if (currentTabId !== tabId) return '';
+      addScreenshotResultMessage(res.dataUrl, { pageUrl: tab.url, stagedAttachment });
     } catch (e) {
       if (currentTabId !== tabId) return '';
       addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: e.message })));
@@ -6906,13 +8362,13 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       const { providers, active } = await sendToBackground('get_providers');
       const config = providers[active];
       if (config) {
-        const newVision = !config.supportsVision;
+        const toggled = toggledVisionProviderConfig(config.sourceProviderId || active, config);
         await sendToBackground('update_provider', {
           providerId: active,
-          config: { ...config, supportsVision: newVision },
+          config: toggled.config,
         });
         if (currentTabId !== tabId) return '';
-        showComposerToast(systemHtml(newVision
+        showComposerToast(systemHtml(toggled.enabled
           ? t('sp.vision.on')
           : t('sp.vision.off')));
       }
@@ -6928,6 +8384,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
 }
 
 function modeForMessageText(text) {
+  if (isStandaloneWindow) return 'ask';
   const invocation = parseSlashInvocation(text);
   if (invocation?.command?.value === '/ask' || invocation?.command?.value === '/plan') return 'ask';
   if (invocation?.command?.value === '/act') return 'act';
@@ -6944,32 +8401,41 @@ function reportTrailingRunCaptureError(directive, error, tabId) {
   addPersistentSlashMessage(systemHtml(html));
 }
 
-function updateApiBadge() {
-  let badge = document.getElementById('api-badge');
-  if (apiMutationsAllowed) {
-    if (!badge) {
-      badge = document.createElement('div');
-      badge.id = 'api-badge';
-      badge.className = 'api-badge';
-      badge.innerHTML = t('sp.api.badge_html');
-      const inputArea = document.getElementById('input-area');
-      inputArea?.parentNode?.insertBefore(badge, inputArea);
-    }
-  } else if (badge) {
-    badge.remove();
-  }
-}
-
 async function sendMessage(extraChatParams = {}) {
+  if (isStandaloneWindow) {
+    if (extraChatParams?.workflowId) {
+      rejectStandaloneWorkflowRun();
+      return false;
+    }
+    const retryOptions = extraChatParams?.__retry;
+    extraChatParams = {
+      ...(extraChatParams || {}),
+      __mode: 'ask',
+      ...(retryOptions ? { __retry: { ...retryOptions, mode: 'ask' } } : {}),
+    };
+  }
+  dismissSelectionAskAction();
   const retryOptions = extraChatParams?.__retry || null;
   const modeOverride = ['ask', 'act', 'dev'].includes(extraChatParams?.__mode) ? extraChatParams.__mode : null;
   const onContextMenuClaimRejected = typeof extraChatParams?.__onContextMenuClaimRejected === 'function'
     ? extraChatParams.__onContextMenuClaimRejected
     : null;
   const chatExtraParams = { ...(extraChatParams || {}) };
+  const agentPrompt = typeof chatExtraParams.__agentPrompt === 'string'
+    ? chatExtraParams.__agentPrompt.trim()
+    : '';
+  const agentDisplayText = typeof chatExtraParams.__agentDisplayText === 'string'
+    ? chatExtraParams.__agentDisplayText.trim()
+    : '';
+  const rawAgentTabId = Number(chatExtraParams.__agentTabId);
+  const agentTabId = Number.isFinite(rawAgentTabId) ? rawAgentTabId : null;
   delete chatExtraParams.__retry;
   delete chatExtraParams.__mode;
   delete chatExtraParams.__onContextMenuClaimRejected;
+  delete chatExtraParams.__agentPrompt;
+  delete chatExtraParams.__agentDisplayText;
+  delete chatExtraParams.__agentTabId;
+  const isWorkflowRun = !!chatExtraParams.workflowId;
   const contextMenuClaim = chatExtraParams.contextMenuClaim;
   let contextMenuClaimOwned = Boolean(contextMenuClaim?.promptId && contextMenuClaim?.claimantId);
   const claimedContextMenuTabId = contextMenuClaimOwned
@@ -6990,9 +8456,7 @@ async function sendMessage(extraChatParams = {}) {
     onContextMenuClaimRejected?.(rejection);
   };
   const requestedSourceGrounding = retryOptions?.sourceGrounding ?? chatExtraParams.sourceGrounding;
-  const sourceGrounding = requestedSourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-    ? SELECTION_ONLY_SOURCE_GROUNDING
-    : null;
+  const sourceGrounding = normalizeSelectionSourceGrounding(requestedSourceGrounding) || null;
   delete chatExtraParams.sourceGrounding;
   if (sourceGrounding) chatExtraParams.sourceGrounding = sourceGrounding;
   // The shortcut action rides along only on the turn that started the scope,
@@ -7003,6 +8467,14 @@ async function sendMessage(extraChatParams = {}) {
   delete chatExtraParams.selectionAction;
   if (selectionAction) chatExtraParams.selectionAction = selectionAction;
   await waitForVisibleSidePanelStateRefresh();
+  if (agentPrompt && (
+    !agentDisplayText
+    || agentTabId == null
+    || !sameTabId(currentTabId, agentTabId)
+    || !sameTabId(renderedTabId, agentTabId)
+    || inputEl.value.trim() !== agentDisplayText
+  )) return false;
+  if (agentPrompt && isProcessing) return false;
   if (contextMenuClaimOwned
       && (document.visibilityState === 'hidden'
         || !sameTabId(currentTabId, claimedContextMenuTabId)
@@ -7012,14 +8484,20 @@ async function sendMessage(extraChatParams = {}) {
   }
   stopListening();
   let text = inputEl.value.trim();
+  const submittedText = text;
   if (!text) {
     if (contextMenuClaimOwned) {
       await releaseOwnedContextMenuClaim({ reason: 'preflight-empty', retryAfterMs: 1_000 });
       return false;
     }
+    // Attachments alone cannot start a run and Send stays enabled while idle, so
+    // a staged chip with an empty composer would otherwise fail silently.
+    if (getPendingAttachmentsForTab(undefined, { create: false }).length) {
+      showComposerToast(t('sp.attach.needs_prompt'));
+    }
     return;
   }
-  const submittedText = text;
+  if (agentPrompt) text = agentPrompt;
   const tabId = currentTabId;
   if (isConversationClearInProgress(tabId)) {
     await releaseOwnedContextMenuClaim({ reason: 'conversation-clear', retryAfterMs: 1_000 });
@@ -7034,7 +8512,8 @@ async function sendMessage(extraChatParams = {}) {
     syncSendButtonState();
     return false;
   }
-  if (!retryOptions && !sourceGrounding && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
+  if (!retryOptions && !sourceGrounding && !isWorkflowRun && !contextMenuClaimOwned
+      && !isProcessing && isAttachmentReadPendingForTab(tabId)) {
     await releaseOwnedContextMenuClaim({ reason: 'attachment-read-pending', retryAfterMs: 1_000 });
     syncSendButtonState();
     return false;
@@ -7070,7 +8549,9 @@ async function sendMessage(extraChatParams = {}) {
   }
   let runCaptureDirective = null;
   if (!retryOptions) {
-    if (sourceGrounding && /^\s*\/(?:screenshot|record)(?:\s|$)/i.test(text)) {
+    if (sourceGrounding
+        && !/^\s*\/record\s+--stop(?:\s|$)/i.test(text)
+        && /^\s*\/(?:screenshot|record|print)(?:\s|$)/i.test(text)) {
       showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
       return false;
     }
@@ -7112,7 +8593,7 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
     await releaseOwnedContextMenuClaim();
-    if (text) saveInputDraftForTab(tabId, text);
+    if (text) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
     return false;
   }
   if (!text) {
@@ -7142,7 +8623,7 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
     await releaseOwnedContextMenuClaim();
-    if (text) saveInputDraftForTab(tabId, text);
+    if (text) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
@@ -7188,7 +8669,7 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
     await releaseOwnedContextMenuClaim();
-    if (text) saveInputDraftForTab(tabId, text);
+    if (text) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
@@ -7197,15 +8678,36 @@ async function sendMessage(extraChatParams = {}) {
 
   let userEl = null;
   let assistantEl = null;
-  // A selection-only shortcut must not inherit unrelated attachment chips
-  // that the user was preparing for a later ordinary chat turn.
-  const attachmentsForSend = sourceGrounding
+  // Selection/context-menu prompts and saved workflow replay must not inherit
+  // attachment chips prepared for a later ordinary chat turn.
+  const attachmentsForSend = sourceGrounding || isWorkflowRun || contextMenuClaimOwned
     ? []
     : retryOptions
       ? (Array.isArray(retryOptions.attachments) ? retryOptions.attachments.slice() : [])
       : getPendingAttachmentsForTab(tabId, { create: false }).slice();
+  const stagedScreenshotsReady = await markStagedScreenshots(
+    browser.storage.local,
+    tabId,
+    attachmentsForSend,
+    { deliveryState: 'sending', requestId },
+  ).catch(() => false);
+  if (!stagedScreenshotsReady) {
+    await releaseOwnedContextMenuClaim({ reason: 'attachment-persistence', retryAfterMs: 1_000 });
+    setTabProcessing(tabId, false);
+    setTabAbortRequested(tabId, false);
+    if (sameTabId(currentTabId, tabId) && !inputEl.value.trim()) {
+      inputEl.value = submittedText;
+      saveInputDraftForTab(tabId, submittedText);
+      autoResizeInput();
+      updateSlashCommandAutocomplete();
+    }
+    showComposerToast(t('sp.persistence.unavailable'));
+    syncSendButtonState();
+    return false;
+  }
   const retryPayload = {
     text,
+    displayText: agentPrompt ? submittedText : text,
     mode: modeForSend,
     apiMutationsAllowed: apiMutationsAllowedForSend,
     foreground: foregroundForSend,
@@ -7218,13 +8720,18 @@ async function sendMessage(extraChatParams = {}) {
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
     hideRecommendedActions();
-    if (!retryOptions && !sourceGrounding) {
-      clearPendingAttachmentsForTab(tabId);
+    if (!sourceGrounding && !isWorkflowRun && !contextMenuClaimOwned) {
+      if (retryOptions) consumePendingAttachmentsForTab(tabId, attachmentsForSend);
+      else clearPendingAttachmentsForTab(tabId, { preserveStoredScreenshots: true });
       renderAttachmentPreviews();
     }
     resetChatNavigation();
-    userEl = addMessage('user', text);
-    showActivity(t('sp.activity.thinking'));
+    userEl = addMessage('user', agentPrompt ? submittedText : text, {
+      attachments: attachmentsForSend,
+      attachmentState: attachmentsForSend.length ? 'sending' : '',
+      ...(sourceGrounding ? { sourceGrounding } : {}),
+    });
+    startThinkingActivity();
     assistantEl = addMessage('assistant', '');
     assistantEl.dataset.runRequestId = requestId;
     assistantEl.dataset.runMode = modeForSend;
@@ -7233,6 +8740,9 @@ async function sendMessage(extraChatParams = {}) {
     assistantEl.dataset.retrySourceGrounding = sourceGrounding || '';
     assistantEl.dataset.retrySelectionAction = selectionAction;
     assistantEl.dataset.retryAttachmentCount = String(attachmentsForSend.length);
+    if (agentPrompt) assistantEl.dataset.retryAgentPrompt = agentPrompt;
+    rememberRetryPayloadForAssistant(assistantEl, retryPayload);
+    userEl.dataset.runRequestId = requestId;
     assistantEl.dataset.lastRenderedSeq = '0';
     currentAssistantEl = assistantEl;
     if (beginReadingFirstTurn(userEl, assistantEl)) {
@@ -7249,7 +8759,7 @@ async function sendMessage(extraChatParams = {}) {
   let completedSuccessfully = false;
   let promptEligibleCompletion = false;
   const selectionGroundedBeforeSend = isSelectionGroundedForTab(tabId);
-  if (sourceGrounding) setSelectionGroundedForTab(tabId, true);
+  if (sourceGrounding) setSelectionGroundedForTab(tabId, true, sourceGrounding);
   try {
     const res = await sendRunWithReconnect('chat_start', {
       tabId,
@@ -7260,6 +8770,7 @@ async function sendMessage(extraChatParams = {}) {
       intentFailureMessage: t('sp.plan.intent_unavailable'),
       apiMutationsAllowed: apiMutationsAllowedForSend,
       foreground: foregroundForSend,
+      ...(isStandaloneWindow ? { standaloneChat: true } : {}),
       ...(runCaptureDirective ? {
         runCapture: {
           kind: runCaptureDirective.kind,
@@ -7304,17 +8815,34 @@ async function sendMessage(extraChatParams = {}) {
     // assistant answer). We optimistically cleared the chips on send, so
     // re-add them here — otherwise "switch providers and try again" is
     // impossible without re-picking every file.
-    if (attachmentsForSend.length
-        && res?.updates?.some(u => u?.type === 'attachment_rejected')) {
-      restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+    const attachmentsRejected = attachmentsForSend.length
+      && res?.updates?.some(u => u?.type === 'attachment_rejected');
+    if (attachmentsRejected) {
+      setMessageAttachmentState(userEl, 'not-sent');
+      await persistMessageAttachmentState(tabId, userEl);
+      await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
       // Restore the prompt only if the user hasn't started typing a new one
       // while the rejected turn was in flight.
       if (currentTabId === tabId && !inputEl.value.trim()) {
-        inputEl.value = text;
-        saveInputDraftForTab(tabId, text);
+        inputEl.value = agentPrompt ? submittedText : text;
+        saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
         autoResizeInput();
         updateSlashCommandAutocomplete();
       }
+    } else if (attachmentsForSend.length) {
+      const deliveryState = res?.submittedTurnDurable === true ? 'included' : 'unknown';
+      // Only a confirmed inclusion may delete the durable pixels. An
+      // unconfirmed turn most likely never reached history, and this record is
+      // the only copy left, so hand it back to the composer exactly as
+      // reconcilePersistedStagedScreenshots does on the reconnect path. The
+      // message card keeps its "delivery not confirmed" marker either way.
+      if (deliveryState === 'included') {
+        await removePersistedStagedAttachments(tabId, attachmentsForSend);
+      } else {
+        await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      }
+      setMessageAttachmentState(userEl, deliveryState);
+      await persistMessageAttachmentState(tabId, userEl);
     }
 
     if (renderToCurrentTab && currentTabId === tabId && isTabAbortRequested(tabId)) {
@@ -7324,7 +8852,9 @@ async function sendMessage(extraChatParams = {}) {
         textEl.innerHTML = t('sp.stopped_by_user_html');
         addMessageCopyButton(assistantEl);
       }
-    } else if (renderToCurrentTab && currentTabId === tabId && res?.content && assistantEl) {
+    } else if (renderToCurrentTab && currentTabId === tabId && res?.content && assistantEl
+        && !(assistantEl.querySelector('.plan-review-expired')
+          && isPlanReviewTimeoutTerminal(res.content))) {
       const textEl = assistantEl.querySelector('.message-text');
       if (textEl && parseCostAllowanceError(res.content)) {
         if (!textEl.classList.contains('cost-allowance-error')) {
@@ -7342,12 +8872,14 @@ async function sendMessage(extraChatParams = {}) {
               retryPayload,
             })
             && !renderSubscribeError(textEl, res.content, modeForSend)) {
-          textEl.innerHTML = formatMarkdown(res.content);
+          textEl.innerHTML = formatMarkdown(res.content, { recoverNestedMarkdown: true });
         }
         addMessageCopyButton(assistantEl);
       }
     }
   } catch (e) {
+    if (clearedConversationRunRequestIds.has(requestId)
+        || conversationClearFollowerCancellationRequestIds.has(requestId)) return accepted;
     reconcileFailedSelectionGroundedStart(tabId, {
       sourceGrounding,
       selectionGroundedBeforeSend,
@@ -7367,10 +8899,11 @@ async function sendMessage(extraChatParams = {}) {
       userEl?.remove();
       assistantEl?.remove();
       if (currentAssistantEl === assistantEl) currentAssistantEl = null;
+      await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
     } else if (captureStartFailed) {
       const message = String(e?.message || '').slice(RUN_CAPTURE_START_ERROR_PREFIX.length);
       reportTrailingRunCaptureError(runCaptureDirective, new Error(message), tabId);
-      restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
       if (renderToCurrentTab && currentTabId === tabId) {
         userEl?.remove();
         assistantEl?.remove();
@@ -7383,20 +8916,34 @@ async function sendMessage(extraChatParams = {}) {
         }
         syncSendButtonState();
       }
-    } else if (renderToCurrentTab
-        && currentTabId === tabId
-        && !isTabAbortRequested(tabId)
-        && !clearedConversationRunRequestIds.has(requestId)) {
-      renderAgentErrorUpdate({ message: e.message }, tabId, requestId);
+    } else {
+      if (attachmentsForSend.length) {
+        const deliveryUnknown = isBackgroundConnectionError(e);
+        setMessageAttachmentState(userEl, deliveryUnknown ? 'unknown' : 'not-sent');
+        await persistMessageAttachmentState(tabId, userEl);
+        // Neither outcome is a confirmed inclusion, so the durable pixels stay
+        // recoverable. A torn-down service worker is precisely when this record
+        // is the only copy the user has left.
+        await restorePendingAttachmentsForTab(tabId, attachmentsForSend);
+      }
+      if (renderToCurrentTab
+          && currentTabId === tabId
+          && !isTabAbortRequested(tabId)
+          && !clearedConversationRunRequestIds.has(requestId)) {
+        renderAgentErrorUpdate({ message: e.message }, tabId, requestId);
+      }
     }
   } finally {
-    if (localRunRequestIds.get(tabId) === requestId) localRunRequestIds.delete(tabId);
+    const ownsRunState = localRunRequestIds.get(tabId) === requestId;
+    if (ownsRunState) localRunRequestIds.delete(tabId);
     cancelledRunRecoveryRequestIds.delete(requestId);
+    conversationClearFollowerCancellationRequestIds.delete(requestId);
     if (activeChatPayloadsByTab.get(tabId) === activePayloadState) {
       scheduleActiveChatPayloadCleanup(tabId, activePayloadState);
     }
-    if (renderToCurrentTab && currentTabId === tabId) finalizeSteps(assistantEl);
     clearAssistantTextStreamState(assistantEl);
+    if (!ownsRunState) return accepted;
+    if (renderToCurrentTab && currentTabId === tabId) finalizeSteps(assistantEl);
     const wasAborted = isTabAbortRequested(tabId);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
@@ -7417,7 +8964,7 @@ async function sendMessage(extraChatParams = {}) {
         storeReviewSuccess: currentTabId === tabId && promptEligibleCompletion,
       });
     }
-    await drainQueuedPromptsAfterRunSettles();
+    await drainQueuedPromptsAfterRunSettles(tabId);
   }
   return accepted;
 }
@@ -7425,8 +8972,51 @@ async function sendMessage(extraChatParams = {}) {
 // --- Listen for Agent Updates ---
 
 browser.runtime.onMessage.addListener((msg) => {
+  if (msg?.target !== 'sidepanel'
+      || msg.action !== 'user_memory_created'
+      || document.visibilityState === 'hidden') return;
+  showComposerToast(t('sp.memory.remembered'), { duration: 3200, effect: 'memory' });
+});
+
+browser.runtime.onMessage.addListener((msg) => {
   if (msg?.target !== 'sidepanel' || msg.action !== 'context_menu_prompt') return;
   acceptContextMenuPrompt(msg.prompt || msg);
+});
+
+// --- Keyboard shortcut commands from background script ---
+// Firefox browser.commands custom shortcuts fire in the background script
+// (browser.commands.onCommand). The background dispatches them via
+// storage.local so the side panel can receive them reliably even when
+// runtime.sendMessage would miss the panel.
+const shortcutWindowIdPromise = browser.windows.getCurrent()
+  .then(windowInfo => Number.isInteger(windowInfo?.id) ? windowInfo.id : null)
+  .catch(() => null);
+browser.storage.onChanged.addListener(async (changes, areaName) => {
+  if (areaName !== 'local' || !changes[SHORTCUT_COMMAND_STORAGE_KEY]?.newValue) return;
+  const windowId = await shortcutWindowIdPromise;
+  const command = shortcutCommandForWindow(
+    changes[SHORTCUT_COMMAND_STORAGE_KEY].newValue,
+    windowId,
+  );
+  switch (command) {
+    case 'switch-to-ask':
+      if (!isProcessing) setMode('ask');
+      break;
+    case 'switch-to-act':
+      if (!isProcessing) ensureActMode();
+      break;
+    case 'switch-to-dev':
+      if (!isProcessing) ensureDevMode();
+      break;
+    case 'focus-input':
+      // Firefox won't allow inputEl.focus() if the sidebar panel doesn't
+      // have focus — window.focus() acquires it first so the input focus
+      // actually takes effect.
+      window.focus();
+      inputEl.focus();
+      inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+      break;
+  }
 });
 
 browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -7446,9 +9036,13 @@ browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 browser.runtime.onMessage.addListener((msg) => {
   if (msg?.target !== 'sidepanel'
-      || msg.action !== 'tab_chat_cleared'
-      || msg.handoffOwnerId === tabChatHandoffOwnerId
+      || msg.action !== 'tab_chat_cleared') return;
+  if (msg.clearedContextMenuPromptId) {
+    clearQueuedForTab(msg.tabId, { promptId: msg.clearedContextMenuPromptId });
+  }
+  if (msg.handoffOwnerId === tabChatHandoffOwnerId
       || document.visibilityState === 'hidden'
+      || isConversationClearInProgress(msg.tabId)
       || !sameTabId(currentTabId, msg.tabId)) return;
   tabChats.delete(Number(msg.tabId));
   if (lastVisibleTabChatSnapshot
@@ -7501,20 +9095,118 @@ function ensureCurrentRunAssistant(msg) {
   return assistantEl;
 }
 
-function suppressRunUpdatesForClearedConversation(tabId) {
-  const requestId = String(
+function localRunRequestIdForTab(tabId) {
+  return String(
     localRunRequestIds.get(Number(tabId))
       || (sameTabId(currentTabId, tabId) ? currentAssistantEl?.dataset?.runRequestId : '')
       || '',
   );
+}
+
+function suppressRunUpdatesForClearedConversation(tabId, requestId = localRunRequestIdForTab(tabId)) {
+  requestId = String(requestId || '');
   if (!requestId) return;
   // Runtime messages are delivered asynchronously. Keep recently cleared
   // request IDs so a terminal update already queued by the background cannot
   // recreate an assistant bubble after the empty conversation is rendered.
   clearedConversationRunRequestIds.delete(requestId);
   clearedConversationRunRequestIds.add(requestId);
+  if (localRunFollowers.get(Number(tabId))?.requestId === requestId) {
+    cancelledRunRecoveryRequestIds.add(requestId);
+    conversationClearFollowerCancellationRequestIds.add(requestId);
+  }
+  if (localRunRequestIds.get(Number(tabId)) === requestId) {
+    localRunRequestIds.delete(Number(tabId));
+  }
   while (clearedConversationRunRequestIds.size > 100) {
     clearedConversationRunRequestIds.delete(clearedConversationRunRequestIds.values().next().value);
+  }
+}
+
+function isPlanReviewTimeoutTerminal(content) {
+  return String(content || '').trim() === 'Task cancelled — plan was not approved.';
+}
+
+function expirePlanReviewCards({
+  tabId = currentTabId,
+  planId = '',
+  requestId = '',
+  runId = '',
+  retryPayload = null,
+} = {}) {
+  for (const card of messagesEl.querySelectorAll('.plan-review-card')) {
+    if (tabId != null && String(card.dataset.tabId || '') !== String(tabId)) continue;
+    if (planId && String(card.dataset.planId || '') !== String(planId)) continue;
+    if (requestId && card.dataset.runRequestId && card.dataset.runRequestId !== String(requestId)) continue;
+    if (runId && card.dataset.runId && card.dataset.runId !== String(runId)) continue;
+
+    setPlanReviewAwaiting(tabId, false);
+    card.classList.add('plan-reviewed', 'plan-review-expired');
+    card.dataset.planResolution = 'timeout';
+    // Skip the timeout footer: a repeat expire pass (journal replay, panel
+    // reopen) must not disable the Retry button an earlier pass appended.
+    card.querySelectorAll('button, textarea').forEach(el => {
+      if (el.closest('.plan-review-timeout-footer')) return;
+      el.disabled = true;
+    });
+    card.querySelectorAll('[draggable="true"]').forEach(el => { el.draggable = false; });
+    card.querySelector('.plan-review-view')?.setAttribute('inert', '');
+
+    const assistantEl = card.closest('.message.assistant');
+    const textEl = assistantEl?.querySelector('.message-text');
+    if (textEl && !textEl.querySelector('.plan-review-timeout-history-note')) {
+      // extractChatHistoryMessages drops assistant messages whose .message-text
+      // is empty, and every path that would render the terminal cancellation
+      // suppresses it once the card is expired. Without a marker the turn
+      // disappears from saved and exported history. The marker cannot wait for
+      // that text either: _waitForPlanReview emits plan_resolved before its
+      // caller returns the string, so on a live timeout the text is still empty
+      // here and only the restore path ever sees it.
+      const historyNote = document.createElement('span');
+      historyNote.className = 'plan-review-timeout-history-note';
+      historyNote.textContent = t('sp.plan.timed_out');
+      if (isPlanReviewTimeoutTerminal(textEl.textContent)) {
+        textEl.replaceChildren(historyNote);
+        assistantEl.querySelector('.msg-copy-btn')?.remove();
+      } else {
+        // Anything already streamed before the plan card is real output; keep it.
+        textEl.appendChild(historyNote);
+      }
+    }
+
+    let footer = card.querySelector('.plan-review-timeout-footer');
+    if (!footer) {
+      footer = document.createElement('div');
+      footer.className = 'plan-review-timeout-footer';
+      footer.setAttribute('role', 'status');
+
+      const title = document.createElement('div');
+      title.className = 'plan-review-timeout-title';
+      title.textContent = t('sp.plan.timed_out');
+
+      const hint = document.createElement('div');
+      hint.className = 'plan-review-timeout-hint';
+      hint.textContent = t('sp.plan.timed_out_hint');
+
+      footer.append(title, hint);
+      card.appendChild(footer);
+    }
+
+    let retryBtn = footer.querySelector('.plan-review-retry');
+    if (!retryBtn && retryPayload?.text) {
+      retryBtn = document.createElement('button');
+      retryBtn.type = 'button';
+      retryBtn.className = 'plan-review-retry';
+      retryBtn.textContent = t('sp.retry');
+      retryBtn.title = t('sp.retry');
+      retryBtn.setAttribute('aria-label', t('sp.retry'));
+      if (configureRetryButton(retryBtn, retryPayload)) footer.appendChild(retryBtn);
+    } else if (retryBtn) {
+      // Restored from persisted HTML, where an earlier disabled state may have
+      // been serialized along with the button.
+      retryBtn.disabled = false;
+      bindErrorRetryButton(retryBtn);
+    }
   }
 }
 
@@ -7525,6 +9217,7 @@ function invalidatePlanReviewCards({ tabId = currentTabId, planId = '', requestI
     if (requestId && card.dataset.runRequestId && card.dataset.runRequestId !== String(requestId)) continue;
     if (runId && card.dataset.runId && card.dataset.runId !== String(runId)) continue;
     setPlanReviewAwaiting(tabId, false);
+    if (remove && card.classList.contains('plan-review-expired')) continue;
     if (remove) card.remove();
     else {
       card.classList.add('plan-reviewed');
@@ -7575,17 +9268,11 @@ function handleAgentUpdateMessage(msg) {
   switch (type) {
     case 'thinking':
       if (data?.note) {
-        // Keep the step indicator alongside the note when there's real
-        // progress (step > 0) so a slow call still shows movement; the planner
-        // emits step 0, so it shows just "Planning…". (#4)
-        const note = String(data.note);
-        showActivity(
-          data.step
-            ? `${note} · ${t('sp.activity.thinking_step', { step: data.step })}`
-            : note,
-        );
+        // Planner notes carry more information than a generic wait state, so
+        // keep them intact instead of immediately replacing them with a step.
+        showActivity(String(data.note));
       } else {
-        showActivity(t('sp.activity.thinking_step', { step: data.step }));
+        startThinkingActivity();
       }
       break;
 
@@ -7593,12 +9280,14 @@ function handleAgentUpdateMessage(msg) {
       // Empty content usually means "nothing new" — keep prior prose. Exception:
       // replace:true with empty content clears a rejected streamed terminal
       // (e.g. plan-only recovery) so the bubble is free for the real summary.
+      if (data?.content) showActivity(t('tool.done'));
       if (currentAssistantEl && (data.content || data.replace === true)) {
         renderAssistantTextUpdate(currentAssistantEl, data.content || '', { replace: data.replace === true });
       }
       break;
 
     case 'text_delta':
+      if (data?.content) showActivity(t('tool.done'));
       if (currentAssistantEl) {
         const textEl = currentAssistantEl.querySelector('.message-text');
         if (textEl && textEl.dataset.suppressToolCallStream !== 'true') {
@@ -7631,22 +9320,24 @@ function handleAgentUpdateMessage(msg) {
       showInspectionBanner(data.name);
       if (currentAssistantEl) {
         clearTransientAssistantTextForToolCall();
-        if (verboseMode) {
-          appendVerboseToolCall(data.name, data.args);
-        } else {
-          appendCompactStep(data.name, data.args);
-        }
+        if (verboseMode) appendVerboseToolCall(data.name, data.args);
+        else appendCompactStep(data.name, data.args);
+      }
+      scrollToBottom();
+      break;
+
+    case 'tool_progress':
+      if (data?.message) showActivity(data.message);
+      if (currentAssistantEl && data?.message) {
+        updateActiveToolProgress(data.name, data.message);
       }
       scrollToBottom();
       break;
 
     case 'tool_result':
       if (currentAssistantEl) {
-        if (verboseMode) {
-          appendVerboseToolResult(data.name, data.result);
-        } else {
-          markLastStepDone(data.name, data.result);
-        }
+        if (verboseMode) appendVerboseToolResult(data.name, data.result);
+        else markLastStepDone(data.name, data.result);
       }
       scrollToBottom();
       break;
@@ -7669,6 +9360,16 @@ function handleAgentUpdateMessage(msg) {
 
     case 'run_capture_error':
       reportTrailingRunCaptureError({ kind: data?.kind }, new Error(data?.message || 'unknown error'), eventTabId);
+      break;
+
+    case 'message_info':
+      applyMessageCompletion(eventAssistantEl || currentAssistantEl, data);
+      break;
+
+    case 'ask_mode_handoff':
+      if (data?.value === 'act') {
+        renderAskActHandoffButton(eventAssistantEl || currentAssistantEl, msg.tabId ?? currentTabId, msg.requestId);
+      }
       break;
 
     case 'error':
@@ -7695,6 +9396,18 @@ function handleAgentUpdateMessage(msg) {
         const retryPayload = activeRetryPayloadForRequest(eventTabId, msg.requestId)
           || retryPayloadForRunAssistant(targetAssistantEl);
         renderPlannerRequestFailure(targetAssistantEl, data, retryPayload);
+      } else if (data?.code === 'planner_failed_continue_act') {
+        const message = data?.message || t('sp.plan.intent_unavailable');
+        const scheduledJobId = String(data?.scheduledJobId || '');
+        const scheduledAssistantPending = scheduledAssistantPreparationJobIds.has(scheduledJobId);
+        const scheduledAssistantEl = scheduledJobId && !scheduledAssistantPending
+          ? findScheduledAssistantMessageForJob(scheduledJobId)
+          : null;
+        if (scheduledJobId && (scheduledAssistantPending || !scheduledAssistantEl)) {
+          queueScheduledPlannerFallbackMessage(scheduledJobId, message);
+        } else {
+          addPlannerFallbackNote(message, scheduledAssistantEl || eventAssistantEl || currentAssistantEl);
+        }
       } else if (data?.code === 'ask_stream_fallback') {
         showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
       } else if (data?.code === 'persistence_degraded') {
@@ -7702,10 +9415,39 @@ function handleAgentUpdateMessage(msg) {
       }
       break;
 
+    case 'workflow_healed':
+      showComposerToast(t('sp.workflows.healing.saved', {
+        name: data?.workflowName || '',
+        count: data?.count || 0,
+      }), { duration: 7000 });
+      break;
+
+    case 'workflow_healing_not_saved':
+      showComposerToast(t('sp.workflows.healing.not_saved', {
+        name: data?.workflowName || '',
+      }), { duration: 9000 });
+      break;
+
     case 'run_complete':
+      showActivity(t('tool.done'));
+      setMessageCreatedAt(eventAssistantEl || currentAssistantEl, data?.endedAt, { replace: true });
       if (currentAssistantEl) finalizeSteps(currentAssistantEl);
+      reconcileRunMessageAttachmentState(
+        eventTabId,
+        eventAssistantEl || currentAssistantEl,
+        data?.attachmentDeliveryState,
+        { persist: true },
+      );
+      void reconcilePersistedStagedScreenshots(
+        eventTabId,
+        msg.requestId,
+        data?.attachmentDeliveryState,
+      );
       invalidatePlanReviewCards({ tabId: msg.tabId ?? currentTabId, requestId: msg.requestId, runId: msg.runId });
-      if (currentAssistantEl && data?.finalContent) {
+      const suppressTimedOutPlanTerminal = !!(eventAssistantEl || currentAssistantEl)
+        ?.querySelector('.plan-review-expired')
+        && isPlanReviewTimeoutTerminal(data?.finalContent);
+      if (currentAssistantEl && data?.finalContent && !suppressTimedOutPlanTerminal) {
         const textEl = currentAssistantEl.querySelector('.message-text');
         const streamedText = getStreamedAssistantText(textEl);
         const hasStreamedText = hasStreamedAssistantText(textEl);
@@ -7741,7 +9483,7 @@ function handleAgentUpdateMessage(msg) {
                 submittedTurnDurable: data.submittedTurnDurable,
                 retryPayload: activeRetryPayloadForRequest(eventTabId, msg.requestId),
               })
-              && !renderSubscribeError(textEl, data.finalContent)) textEl.innerHTML = formatMarkdown(data.finalContent);
+              && !renderSubscribeError(textEl, data.finalContent)) textEl.innerHTML = formatMarkdown(data.finalContent, { recoverNestedMarkdown: true });
           addMessageCopyButton(currentAssistantEl);
         }
       }
@@ -7774,6 +9516,12 @@ function handleAgentUpdateMessage(msg) {
       lockClarifyCardFromAuto(data);
       break;
 
+    case 'clarify_timeout_extended':
+      // Custom-answer typing renewed the authoritative agent deadline. Keep
+      // this card (and restored copies) on the same countdown.
+      applyClarifyTimeoutExtension(data);
+      break;
+
     case 'upload_picker':
       renderUploadPickerCard(data, msg.tabId ?? currentTabId);
       break;
@@ -7787,7 +9535,23 @@ function handleAgentUpdateMessage(msg) {
       break;
 
     case 'plan_resolved':
-      invalidatePlanReviewCards({ tabId: msg.tabId ?? currentTabId, planId: data?.planId, requestId: msg.requestId, runId: msg.runId });
+      if (data?.decision === 'timeout') {
+        expirePlanReviewCards({
+          tabId: msg.tabId ?? currentTabId,
+          planId: data?.planId,
+          requestId: msg.requestId,
+          runId: msg.runId,
+          retryPayload: activeRetryPayloadForRequest(eventTabId, msg.requestId)
+            || retryPayloadForRunAssistant(eventAssistantEl || currentAssistantEl),
+        });
+      } else {
+        invalidatePlanReviewCards({
+          tabId: msg.tabId ?? currentTabId,
+          planId: data?.planId,
+          requestId: msg.requestId,
+          runId: msg.runId,
+        });
+      }
       schedulePersist();
       break;
 
@@ -7813,8 +9577,26 @@ browser.runtime.onMessage.addListener((msg) => {
  * the card and routes the answer to the background. UI stays visible
  * after answering so the user can see what they chose.
  */
+function workflowHealingTargetLabel(target) {
+  const role = String(target?.role || 'element').slice(0, 40);
+  const primary = String(
+    target?.name || target?.label || target?.ariaLabel || target?.placeholder
+      || target?.fieldName || target?.id || target?.href || '',
+  ).trim().slice(0, 180);
+  const identity = [
+    target?.label && target.label !== primary ? `label=${String(target.label).slice(0, 80)}` : '',
+    target?.ariaLabel && target.ariaLabel !== primary ? `aria-label=${String(target.ariaLabel).slice(0, 80)}` : '',
+    target?.id ? `id=${String(target.id).slice(0, 80)}` : '',
+    target?.fieldName ? `name=${String(target.fieldName).slice(0, 80)}` : '',
+    target?.type ? `type=${String(target.type).slice(0, 40)}` : '',
+    target?.href && target.href !== primary ? `href=${String(target.href).slice(0, 120)}` : '',
+  ].filter(Boolean).join(', ');
+  return `${role}${primary ? ` “${primary}”` : ''}${identity ? ` (${identity})` : ''}`;
+}
+
 function renderClarifyCard(data) {
   hideActivity();
+  playClarifySound();
   const tabId = data?.scheduledTabId ?? data?.tabId ?? currentTabId;
   if (tabId == null) return;
   const scheduledJobId = data?.scheduledJobId ? String(data.scheduledJobId) : '';
@@ -7845,11 +9627,13 @@ function renderClarifyCard(data) {
   card.dataset.tabId = String(tabId);
   card.dataset.memorySource = scheduledJobId
     ? 'scheduled_clarification'
-    : data.submitConfirmation
-      ? 'form_confirmation'
-      : data.permission
-        ? 'permission'
-        : 'clarification_response';
+    : data.workflowHealing
+      ? ''
+      : data.submitConfirmation
+        ? 'form_confirmation'
+        : data.permission
+          ? 'permission'
+          : 'clarification_response';
   if (card.dataset.memorySource === 'clarification_response') {
     card.dataset.memoryQuestion = String(data.question || '').slice(0, 600);
   }
@@ -7872,6 +9656,49 @@ function renderClarifyCard(data) {
   qEl.className = 'clarify-question';
   qEl.textContent = String(data.question || '').slice(0, 600);
   card.appendChild(qEl);
+
+  if (data.workflowHealing) {
+    card.dataset.workflowHealing = '1';
+    const healing = data.workflowHealing;
+    qEl.textContent = t('sp.workflows.healing.question', {
+      name: String(healing.workflowName || '').slice(0, 80),
+      step: Number(healing.stepNumber) || 1,
+    });
+    const previousEl = document.createElement('div');
+    previousEl.className = 'clarify-reason';
+    previousEl.textContent = t('sp.workflows.healing.previous', {
+      target: workflowHealingTargetLabel(healing.previousTarget),
+    });
+    card.appendChild(previousEl);
+
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    for (const candidate of Array.isArray(healing.candidates) ? healing.candidates.slice(0, 5) : []) {
+      if (!/^candidate_[0-4]$/.test(String(candidate?.id || ''))) continue;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'clarify-option';
+      button.textContent = t('sp.workflows.healing.use', {
+        target: workflowHealingTargetLabel(candidate.target),
+      });
+      button.dataset.value = candidate.id;
+      button.addEventListener('click', () => submitClarify(
+        card, tabId, clarifyId, candidate.id, 'option',
+      ));
+      optionsEl.appendChild(button);
+    }
+    const deny = document.createElement('button');
+    deny.type = 'button';
+    deny.className = 'clarify-option';
+    deny.textContent = t('sp.workflows.healing.keep');
+    deny.dataset.value = 'deny';
+    deny.addEventListener('click', () => submitClarify(card, tabId, clarifyId, 'deny', 'option'));
+    optionsEl.appendChild(deny);
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
 
   if (data.submitConfirmation) {
     card.dataset.submitConfirmation = '1';
@@ -7916,28 +9743,43 @@ function renderClarifyCard(data) {
     return;
   }
 
-  // Permission-prompt mode: localized question + three fixed choices that
+  // Permission-prompt mode: localized question + fixed choices that
   // return a stable VALUE ('once'/'always'/'deny'), and NO free-text input —
   // so there's nothing to parse and no English/locale dependency.
   if (data.permission && data.permission.capability) {
     card.dataset.permission = '1';
     const host = String(data.permission.host || '');
     const cap = String(data.permission.capability || '');
-    const verb = t('sp.perm.verb.' + cap);
-    qEl.textContent = t('sp.perm.question', { verb, host });
+    const verbKey = 'sp.perm.verb.' + cap;
+    const verb = t(verbKey);
+    // English falls back to the single CAPABILITY_LABEL source of truth so the
+    // consent wording cannot drift between two English copies; other locales
+    // carry their own translation under the key.
+    const resolvedVerb = verb === verbKey ? (CAPABILITY_LABEL[cap] || cap) : verb;
+    const grouped = data.permission.grouped === true;
+    qEl.textContent = grouped
+      ? String(data.question || `WebBrain wants to run a task-scoped low-risk search on ${host}.`).slice(0, 600)
+      : t('sp.perm.question', { verb: resolvedVerb, host });
 
     const reasonEl = document.createElement('div');
     reasonEl.className = 'clarify-reason';
-    reasonEl.textContent = t('sp.perm.reason');
+    reasonEl.textContent = grouped
+      ? 'This one-time approval covers only this unchanged search on this tab. It does not allow passwords, payments, mutations, JavaScript, or future tasks.'
+      : t('sp.perm.reason');
     card.appendChild(reasonEl);
 
     const optionsEl = document.createElement('div');
     optionsEl.className = 'clarify-options';
-    const choices = [
-      ['once', t('sp.perm.allow_once')],
-      ['always', t('sp.perm.always_allow', { host })],
-      ['deny', t('sp.perm.dont_allow')],
-    ];
+    const choices = grouped
+      ? [
+        ['once', t('sp.perm.allow_once')],
+        ['deny', t('sp.perm.dont_allow')],
+      ]
+      : [
+        ['once', t('sp.perm.allow_once')],
+        ['always', t('sp.perm.always_allow', { host })],
+        ['deny', t('sp.perm.dont_allow')],
+      ];
     for (const [value, label] of choices) {
       const b = document.createElement('button');
       b.type = 'button';
@@ -7959,6 +9801,15 @@ function renderClarifyCard(data) {
     reasonEl.className = 'clarify-reason';
     reasonEl.textContent = String(data.reason).slice(0, 400);
     card.appendChild(reasonEl);
+  }
+
+  if (data.researchEscalation?.request) {
+    card.dataset.researchEscalation = '1';
+    const requestEl = document.createElement('div');
+    requestEl.className = 'clarify-reason clarify-research-request';
+    const engine = String(data.researchEscalation.engine || 'ChatGPT');
+    requestEl.textContent = `${engine === 'chatgpt' ? 'ChatGPT' : engine} ← ${String(data.researchEscalation.request).slice(0, 6000)}`;
+    card.appendChild(requestEl);
   }
 
   const options = Array.isArray(data.options) ? data.options.slice(0, 4) : [];
@@ -7984,6 +9835,9 @@ function renderClarifyCard(data) {
   input.placeholder = options.length
     ? (typeof t === 'function' ? t('sp.clarify.input_placeholder_with_options') : 'Or type a different answer…')
     : (typeof t === 'function' ? t('sp.clarify.input_placeholder') : 'Type your answer…');
+  input.addEventListener('input', () => {
+    keepClarifyAliveWhileTyping(card, tabId, clarifyId, input);
+  });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && input.value.trim()) {
       e.preventDefault();
@@ -8021,6 +9875,10 @@ function renderClarifyCard(data) {
 
 function clearClarifyCountdown(card) {
   if (!card) return;
+  if (card._clarifyActivityTimer) {
+    try { clearTimeout(card._clarifyActivityTimer); } catch {}
+    card._clarifyActivityTimer = null;
+  }
   if (card._clarifyCountdownTimer) {
     try { clearInterval(card._clarifyCountdownTimer); } catch {}
     card._clarifyCountdownTimer = null;
@@ -8047,7 +9905,8 @@ function startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption
       clearClarifyCountdown(card);
       return;
     }
-    const remainingMs = Math.max(0, deadlineTs - Date.now());
+    const activeDeadlineTs = Number(card.dataset.deadlineTs) || deadlineTs;
+    const remainingMs = Math.max(0, activeDeadlineTs - Date.now());
     const remainingSec = Math.ceil(remainingMs / 1000);
     timerEl.textContent = typeof t === 'function'
       ? t('sp.clarify.auto_timeout', { seconds: remainingSec })
@@ -8061,6 +9920,72 @@ function startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption
   };
   tick();
   card._clarifyCountdownTimer = setInterval(tick, 250);
+}
+
+function applyClarifyTimeoutExtension(data) {
+  const clarifyId = String(data?.clarifyId || '');
+  const deadlineTs = Number(data?.deadlineTs);
+  const timeoutSec = Number(data?.timeoutSec);
+  if (!clarifyId || !Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
+  for (const card of document.querySelectorAll('.clarify-card')) {
+    if (String(card.dataset.clarifyId || '') !== clarifyId) continue;
+    if (card.classList.contains('clarify-answered')) continue;
+    const currentDeadlineTs = Number(card.dataset.deadlineTs) || 0;
+    if (deadlineTs < currentDeadlineTs) continue;
+    card.dataset.deadlineTs = String(Math.floor(deadlineTs));
+    if (Number.isFinite(timeoutSec) && timeoutSec > 0) {
+      card.dataset.timeoutSec = String(Math.floor(timeoutSec));
+    }
+    if (!card._clarifyCountdownTimer) {
+      const rawTabId = card.dataset.scheduledTabId ?? card.dataset.tabId;
+      const tabId = rawTabId != null && rawTabId !== '' ? Number(rawTabId) : currentTabId;
+      const firstOption = card.dataset.firstOption
+        || card.querySelector('.clarify-option')?.dataset?.value
+        || card.querySelector('.clarify-option')?.textContent
+        || '(no response — timed out)';
+      if (tabId != null && !Number.isNaN(tabId)) {
+        startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption });
+      }
+    }
+  }
+  schedulePersist();
+}
+
+/**
+ * Treat custom-answer input as activity, not silence. Renew immediately on
+ * the first keystroke and periodically while typing so the agent cannot
+ * auto-select an option out from under an in-progress answer.
+ */
+function keepClarifyAliveWhileTyping(card, tabId, clarifyId, input) {
+  if (!card || card.classList.contains('clarify-answered') || !input?.value?.length) return;
+  const timeoutSec = Number(card.dataset.timeoutSec);
+  if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) return;
+
+  const sendActivity = () => {
+    card._clarifyActivityTimer = null;
+    if (card.classList.contains('clarify-answered') || !input.value.length) return;
+    const activityTs = Date.now();
+    card._lastClarifyActivitySentAt = activityTs;
+    card.dataset.deadlineTs = String(Math.floor(activityTs + timeoutSec * 1000));
+    schedulePersist();
+    sendToBackground('clarify_input_activity', { tabId, clarifyId })
+      .then((response) => {
+        if (response?.matched) applyClarifyTimeoutExtension(response);
+      })
+      .catch(() => { /* the live run may have settled between keystrokes */ });
+  };
+
+  const now = Date.now();
+  const minIntervalMs = Math.max(250, Math.min(5000, timeoutSec * 500));
+  const lastSentAt = Number(card._lastClarifyActivitySentAt) || 0;
+  const elapsedMs = now - lastSentAt;
+  if (!lastSentAt || elapsedMs >= minIntervalMs) {
+    if (card._clarifyActivityTimer) clearTimeout(card._clarifyActivityTimer);
+    sendActivity();
+    return;
+  }
+  if (card._clarifyActivityTimer) clearTimeout(card._clarifyActivityTimer);
+  card._clarifyActivityTimer = setTimeout(sendActivity, minIntervalMs - elapsedMs);
 }
 
 /**
@@ -8470,7 +10395,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
     setTabAbortRequested(tabId, false);
     syncSendButtonState();
     hideRecommendedActions();
-    showActivity(t('sp.activity.thinking'));
+    startThinkingActivity();
   }
   const clarifyPayload = { tabId, clarifyId, answer, source };
   // Timeout / Instant auto-selects are not user-authored answers — skip user-memory.
@@ -8490,7 +10415,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
           syncSendButtonState();
           hideActivity();
         }
-        drainQueuedPromptsAfterRunSettles();
+        drainQueuedPromptsAfterRunSettles(tabId);
       }
       /* background may be torn down — clarify state already lives there */
     });
@@ -8498,7 +10423,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
 
 
 // ==========================================================================
-// COMPACT MODE (default) — shows tool steps as a tidy activity log
+// ACTIVITY HISTORY — retained in every mode, revealed by verbose mode
 // ==========================================================================
 
 function placeAnsweredClarifyCardInTimeline(card) {
@@ -8516,9 +10441,9 @@ function placeAnsweredClarifyCardInTimeline(card) {
   content.insertBefore(card, textEl);
 }
 
-function getOrCreateStepsContainer() {
-  if (!currentAssistantEl) return null;
-  const content = currentAssistantEl.querySelector('.message-content');
+function getOrCreateStepsContainer(assistantEl = currentAssistantEl) {
+  if (!assistantEl) return null;
+  const content = assistantEl.querySelector('.message-content');
   const textEl = [...content.children]
     .find(child => child.classList.contains('message-text')) || null;
   if (!textEl) return null;
@@ -8562,6 +10487,35 @@ function findLastActiveCompactStep(toolName = '') {
   return activeSteps.at(-1) || null;
 }
 
+// When a step completes or fails, restore its friendly localized label so any
+// transient tool_progress message (which may be English-only) does not linger,
+// and clear the progress marker so future locale changes refresh the label.
+function restoreStepFriendlyLabel(step) {
+  if (!step || !step.dataset?.tool) return;
+  const label = step.querySelector('.step-label');
+  if (isTerminalDoneTool(step.dataset.tool)) {
+    const failed = step.querySelector('.step-icon')?.classList.contains('fail')
+      || step.dataset.rejectedCompletion === 'true';
+    const key = step.dataset.rejectedCompletion === 'true'
+      ? 'sp.tool.done.rejected'
+      : (failed ? 'sp.tool.done.failed' : 'sp.tool.done.completed');
+    if (label) label.textContent = String(t(key)).trim();
+    step.dataset.doneLabelKey = key;
+    step.dataset.labelSource = 'done-terminal';
+    return;
+  }
+  if (label) {
+    let stepArgs = null;
+    try {
+      stepArgs = step.dataset.args ? JSON.parse(step.dataset.args) : null;
+    } catch {
+      stepArgs = null;
+    }
+    label.textContent = friendlyToolLabel(step.dataset.tool, stepArgs);
+  }
+  step.dataset.labelSource = 'friendly';
+}
+
 function appendCompactStep(toolName, args) {
   const container = getOrCreateStepsContainer();
   if (!container) return;
@@ -8575,11 +10529,42 @@ function appendCompactStep(toolName, args) {
     prev.classList.add('done');
     const icon = prev.querySelector('.step-icon');
     if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
+    restoreStepFriendlyLabel(prev);
+  }
+
+  if (isTerminalDoneTool(toolName)) {
+    const rejectedSteps = currentAssistantEl?.querySelectorAll?.(
+      '.step-item[data-tool="done"][data-rejected-completion="true"], .step-item[data-tool="done_json"][data-rejected-completion="true"]',
+    ) || [];
+    const priorRejected = rejectedSteps[rejectedSteps.length - 1];
+    if (priorRejected) {
+      priorRejected.classList.remove('done');
+      priorRejected.classList.add('active');
+      priorRejected.dataset.rejectedCompletion = 'pending';
+      const priorIcon = priorRejected.querySelector('.step-icon');
+      if (priorIcon) {
+        priorIcon.className = 'step-icon spinning';
+        priorIcon.textContent = '';
+      }
+      const priorLabel = priorRejected.querySelector('.step-label');
+      if (priorLabel) priorLabel.textContent = friendlyToolLabel(toolName, args);
+      priorRejected.dataset.args = safeLabelArgs(args);
+      priorRejected.dataset.labelSource = 'friendly';
+      const priorDetails = priorRejected.nextElementSibling;
+      if (priorDetails?.classList?.contains('step-details')) {
+        const priorArgs = priorDetails.querySelector('.detail-args');
+        if (priorArgs) priorArgs.textContent = JSON.stringify(args, null, 2);
+        priorDetails.querySelectorAll('.detail-result').forEach((resultEl) => resultEl.remove());
+      }
+      return;
+    }
   }
 
   const step = document.createElement('div');
   step.className = 'step-item active';
   step.dataset.tool = toolName;
+  step.dataset.args = safeLabelArgs(args);
+  step.dataset.labelSource = 'friendly';
 
   const icon = document.createElement('span');
   icon.className = 'step-icon spinning';
@@ -8593,13 +10578,6 @@ function appendCompactStep(toolName, args) {
   const toggle = document.createElement('button');
   toggle.className = 'step-details-toggle';
   toggle.textContent = t('sp.step.details');
-  toggle.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const details = step.nextElementSibling;
-    if (details && details.classList.contains('step-details')) {
-      details.classList.toggle('open');
-    }
-  });
 
   step.appendChild(icon);
   step.appendChild(label);
@@ -8611,6 +10589,24 @@ function appendCompactStep(toolName, args) {
   details.className = 'step-details';
   details.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.input_label'))}</div><div class="detail-args">${escapeHtml(JSON.stringify(args, null, 2))}</div>`;
   container.appendChild(details);
+  bindCompactStepDetailsToggle(toggle);
+}
+
+function updateActiveToolProgress(toolName, message) {
+  if (!currentAssistantEl || !message) return;
+  if (verboseMode) {
+    const content = currentAssistantEl.querySelector('.message-content');
+    const active = Array.from(content?.querySelectorAll('.tool-call[data-awaiting-result="true"]') || [])
+      .reverse()
+      .find(el => !toolName || el.dataset.toolName === toolName);
+    const label = active?.querySelector('.tool-call-name');
+    if (label) label.textContent = ` ${message}`;
+    return;
+  }
+  const active = findLastActiveCompactStep(toolName);
+  const label = active?.querySelector('.step-label');
+  if (label) label.textContent = message;
+  if (active) active.dataset.labelSource = 'progress';
 }
 
 function markLastStepDone(toolName, result) {
@@ -8621,11 +10617,34 @@ function markLastStepDone(toolName, result) {
   if (active) {
     active.classList.remove('active');
     active.classList.add('done');
+    const rejectedCompletion = isTerminalDoneTool(toolName) && result?.blockedDone === true;
+    if (isTerminalDoneTool(toolName)) {
+      active.dataset.rejectedCompletion = rejectedCompletion ? 'true' : 'false';
+    }
+    const failed = rejectedCompletion
+      || !!result?.error
+      || result?.success === false
+      || result?.outcome === 'failed';
     const icon = active.querySelector('.step-icon');
     if (icon) {
-      const success = !result?.error;
-      icon.className = success ? 'step-icon check' : 'step-icon fail';
-      icon.textContent = success ? '\u2713' : '\u2717';
+      icon.className = failed ? 'step-icon fail' : 'step-icon check';
+      icon.textContent = failed ? '\u2717' : '\u2713';
+    }
+    if (isTerminalDoneTool(toolName)) {
+      const label = active.querySelector('.step-label');
+      if (label) {
+        const key = rejectedCompletion
+          ? 'sp.tool.done.rejected'
+          : (failed ? 'sp.tool.done.failed' : 'sp.tool.done.completed');
+        label.textContent = String(t(key)).trim();
+        active.dataset.doneLabelKey = key;
+        active.dataset.labelSource = 'done-terminal';
+      }
+    } else {
+      // A transient tool_progress message may have overwritten the friendly
+      // label; restore the localized label now that the result arrived so a
+      // later locale change or transcript restore shows the right text.
+      restoreStepFriendlyLabel(active);
     }
 
     // Append result to the details panel
@@ -8633,8 +10652,10 @@ function markLastStepDone(toolName, result) {
     if (details && details.classList.contains('step-details')) {
       const resultDiv = document.createElement('div');
       resultDiv.className = 'detail-result';
-      resultDiv.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.result_label'))}</div>${escapeHtml(truncate(JSON.stringify(result), 300))}`;
-      details.appendChild(resultDiv);
+      resultDiv.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.result_label'))}</div>${escapeHtml(truncate(JSON.stringify(result), 1200))}`;
+      const expandAll = details.querySelector?.('.step-expand-all') || null;
+      if (expandAll && typeof details.insertBefore === 'function') details.insertBefore(resultDiv, expandAll);
+      else details.appendChild(resultDiv);
     }
   }
 }
@@ -8646,18 +10667,103 @@ function markLastStepFailed() {
     active.classList.add('done');
     const icon = active.querySelector('.step-icon');
     if (icon) { icon.className = 'step-icon fail'; icon.textContent = '\u2717'; }
+    restoreStepFriendlyLabel(active);
   }
 }
 
 function finalizeSteps(assistantEl = currentAssistantEl) {
   if (!assistantEl) return;
+  const isAborted = isTabAbortRequested(currentTabId);
   const actives = assistantEl.querySelectorAll('.step-item.active');
   actives.forEach(step => {
     step.classList.remove('active');
     step.classList.add('done');
+    const isTerminal = isTerminalDoneTool(step.dataset?.tool);
+    const failed = isAborted || isTerminal;
     const icon = step.querySelector('.step-icon');
-    if (icon) { icon.className = 'step-icon check'; icon.textContent = '\u2713'; }
+    if (icon) {
+      icon.className = failed ? 'step-icon fail' : 'step-icon check';
+      icon.textContent = failed ? '\u2717' : '\u2713';
+    }
+    restoreStepFriendlyLabel(step);
   });
+}
+
+function appendVerboseToolCall(name, args) {
+  if (!currentAssistantEl) return;
+  const content = currentAssistantEl.querySelector('.message-content');
+  if (!content) return;
+  content.querySelectorAll('.tool-call[data-awaiting-result="true"]').forEach(tool => {
+    tool.dataset.awaitingResult = 'false';
+  });
+
+  if (name === 'done') {
+    const rejectedTools = content.querySelectorAll(
+      '.tool-call[data-tool-name="done"][data-rejected-completion="true"]',
+    );
+    const priorRejected = rejectedTools[rejectedTools.length - 1];
+    if (priorRejected) {
+      priorRejected.querySelector('.tool-call-body').textContent = JSON.stringify(args, null, 2);
+      priorRejected.querySelector('.tool-result')?.remove();
+      const priorLabel = priorRejected.querySelector('.tool-call-name');
+      if (priorLabel) priorLabel.textContent = ` ${name}`;
+      priorRejected.dataset.rejectedCompletion = 'pending';
+      priorRejected.dataset.awaitingResult = 'true';
+      return;
+    }
+  }
+
+  const el = document.createElement('div');
+  el.className = 'tool-call';
+  el.dataset.toolName = name || '';
+  el.dataset.awaitingResult = 'true';
+
+  const header = document.createElement('div');
+  header.className = 'tool-call-header';
+  const icon = document.createElement('span');
+  icon.className = 'icon';
+  icon.textContent = '\u26A1';
+  const nameLabel = document.createElement('span');
+  nameLabel.className = 'tool-call-name';
+  nameLabel.textContent = ` ${name || ''}`;
+  header.append(icon, nameLabel);
+
+  const body = document.createElement('div');
+  body.className = 'tool-call-body';
+  body.textContent = JSON.stringify(args, null, 2);
+
+  el.append(header, body);
+  const textEl = content.querySelector('.message-text');
+  content.insertBefore(el, textEl);
+}
+
+function appendVerboseToolResult(name, result) {
+  if (!currentAssistantEl) return;
+  const content = currentAssistantEl.querySelector('.message-content');
+  const awaitingTools = content?.querySelectorAll('.tool-call[data-awaiting-result="true"]') || [];
+  const lastTool = Array.from(awaitingTools)
+    .reverse()
+    .find(tool => !name || tool.dataset.toolName === name);
+  if (!lastTool) return;
+
+  const resultEl = document.createElement('div');
+  resultEl.className = 'tool-result';
+  resultEl.textContent = truncate(JSON.stringify(result), 200);
+  lastTool.appendChild(resultEl);
+
+  if (name === 'done') {
+    const rejected = result?.blockedDone === true;
+    const failed = rejected
+      || !!result?.error
+      || result?.success === false
+      || result?.outcome === 'failed';
+    lastTool.dataset.rejectedCompletion = rejected ? 'true' : 'false';
+    const nameLabel = lastTool.querySelector('.tool-call-name');
+    if (nameLabel) nameLabel.textContent = rejected
+      ? t('sp.tool.done.rejected')
+      : (failed ? t('sp.tool.done.failed') : t('sp.tool.done.completed'));
+  }
+  lastTool.dataset.awaitingResult = 'false';
 }
 
 function looksLikeRawToolCallText(text) {
@@ -8693,7 +10799,7 @@ function renderStreamedAssistantMarkdownNow(textEl) {
   if (!textEl || textEl.dataset.suppressToolCallStream === 'true') return;
   const streamedText = getStreamedAssistantText(textEl);
   if (!streamedText) return;
-  textEl.innerHTML = formatMarkdown(streamedText, { enhance: false });
+  textEl.innerHTML = formatMarkdown(streamedText, { enhance: false, recoverNestedMarkdown: true });
   scrollToBottom();
 }
 
@@ -8756,13 +10862,15 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
   const streamedText = getStreamedAssistantText(textEl);
   const hasStreamedText = hasStreamedAssistantText(textEl);
   const restoredStreamNeedsReplacement = hasStreamedText && !streamedText;
+  // Final text must keep the same Markdown fence structure shown during streaming.
+  const renderedContent = formatMarkdown(content, { recoverNestedMarkdown: true });
 
   if (options.replace === true || restoredStreamNeedsReplacement) {
     // A rejected streamed terminal must replace its already-rendered deltas
     // even in Verbose mode; appending would leave the invalid plan visible.
     // Empty content clears the bubble (plan-only retry before recovery tools).
     if (content) {
-      textEl.innerHTML = formatMarkdown(content);
+      textEl.innerHTML = renderedContent;
       streamedAssistantTextByEl.set(textEl, String(content));
     } else {
       textEl.textContent = '';
@@ -8775,12 +10883,12 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
     // content in place even when cleanup changed it from the raw stream.
     const para = document.createElement('div');
     para.className = 'reasoning-step';
-    para.innerHTML = formatMarkdown(content);
+    para.innerHTML = renderedContent;
     textEl.appendChild(para);
   } else {
     // Compact mode keeps only the latest blurb. A streamed final lands here
     // too for one authoritative render with terminal-only enhancements.
-    textEl.innerHTML = formatMarkdown(content);
+    textEl.innerHTML = renderedContent;
   }
 
   clearStreamedAssistantText(textEl);
@@ -8816,75 +10924,12 @@ function clearTransientAssistantTextForToolCall() {
 
 
 // ==========================================================================
-// VERBOSE MODE (opt-in) — full tool call + result blocks
-// ==========================================================================
-
-function appendVerboseToolCall(name, args) {
-  if (!currentAssistantEl) return;
-  const content = currentAssistantEl.querySelector('.message-content');
-  content.querySelectorAll('.tool-call[data-awaiting-result="true"]').forEach(tool => {
-    tool.dataset.awaitingResult = 'false';
-  });
-
-  if (name === 'done') {
-    const priorRejected = content.querySelector('.tool-call[data-tool-name="done"][data-rejected-completion="true"]');
-    if (priorRejected) {
-      priorRejected.querySelector('.tool-call-body').textContent = JSON.stringify(args, null, 2);
-      priorRejected.querySelector('.tool-result')?.remove();
-      priorRejected.dataset.rejectedCompletion = 'pending';
-      priorRejected.dataset.awaitingResult = 'true';
-      return;
-    }
-  }
-
-  const el = document.createElement('div');
-  el.className = 'tool-call';
-  el.dataset.toolName = name || '';
-  el.dataset.awaitingResult = 'true';
-
-  const header = document.createElement('div');
-  header.className = 'tool-call-header';
-  const icon = document.createElement('span');
-  icon.className = 'icon';
-  icon.textContent = '\u26A1';
-  header.append(icon, document.createTextNode(` ${name || ''}`));
-
-  const body = document.createElement('div');
-  body.className = 'tool-call-body';
-  body.textContent = JSON.stringify(args, null, 2);
-
-  el.appendChild(header);
-  el.appendChild(body);
-
-  const textEl = content.querySelector('.message-text');
-  content.insertBefore(el, textEl);
-}
-
-function appendVerboseToolResult(name, result) {
-  if (!currentAssistantEl) return;
-  const content = currentAssistantEl.querySelector('.message-content');
-  const lastTool = content.querySelector('.tool-call[data-awaiting-result="true"]');
-  if (lastTool) {
-    const resultEl = document.createElement('div');
-    resultEl.className = 'tool-result';
-    resultEl.textContent = truncate(JSON.stringify(result), 200);
-    lastTool.appendChild(resultEl);
-    if (name === 'done') {
-      lastTool.dataset.rejectedCompletion = result?.blockedDone === true ? 'true' : 'false';
-    }
-    lastTool.dataset.awaitingResult = 'false';
-  }
-}
-
-
-// ==========================================================================
 // UI Helpers
 // ==========================================================================
 
-// WebBrain Cloud returns a 402 with a trailing "Subscribe for more usage: <url>"
-// line once the free daily allowance runs out. Detect that shape so we can turn
-// the bare URL into a real Subscribe button instead of making the user copy it.
-const SUBSCRIBE_ERROR_RE = /Subscribe for more usage:\s*(https?:\/\/\S+)/i;
+// WebBrain Compass returns a 402 with one trailing billing action. Keep the
+// matcher narrow so ordinary subscription text is not converted into billing UI.
+const SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain Plus):\s*(https?:\/\/\S+)/i;
 const COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
 const COST_ALLOWANCE_BUMP_USD = 10;
 
@@ -8961,9 +11006,9 @@ function parseSubscribeError(content) {
   const m = content.match(SUBSCRIBE_ERROR_RE);
   if (!m) return null;
   // Strip trailing punctuation that markdown/markup might have appended.
-  const url = m[1].replace(/[)\].,"'>]+$/, '');
+  const url = m[2].replace(/[)\].,"'>]+$/, '');
   const message = content.slice(0, m.index).replace(/\s+$/, '').trim();
-  return { url, message };
+  return { url, message, action: /^Upgrade/i.test(m[1]) ? 'upgrade' : 'subscribe' };
 }
 
 function openSubscribeUrl(url) {
@@ -8995,7 +11040,8 @@ function renderSubscribeError(textEl, content, resumeMode = '') {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'subscribe-btn';
-  btn.textContent = t('sp.subscribe.btn');
+  btn.textContent = t(parsed.action === 'upgrade' ? 'sp.subscribe.upgrade' : 'sp.subscribe.btn');
+  if (parsed.action === 'upgrade') btn.classList.add('subscribe-upgrade-btn');
   btn.dataset.subscribeUrl = parsed.url;
   btn.dataset.bound = 'true';
   btn.addEventListener('click', () => openSubscribeUrl(btn.dataset.subscribeUrl));
@@ -9004,7 +11050,7 @@ function renderSubscribeError(textEl, content, resumeMode = '') {
   const resumeBtn = document.createElement('button');
   resumeBtn.type = 'button';
   resumeBtn.className = 'subscribe-resume-btn';
-  resumeBtn.textContent = t('sp.subscribe.resume');
+  resumeBtn.textContent = t(parsed.action === 'upgrade' ? 'sp.subscribe.resume_upgrade' : 'sp.subscribe.resume');
   resumeBtn.dataset.resumeMode = ['ask', 'act', 'dev'].includes(resumeMode)
     ? resumeMode
     : (textEl.closest('.message.assistant')?.dataset.runMode || agentMode);
@@ -9096,12 +11142,11 @@ function configureRetryButton(btn, retryPayload) {
   }
   btn.dataset.retryId = retryId;
   btn.dataset.retryText = String(retryPayload.text || '');
+  btn.dataset.retryDisplayText = String(retryPayload.displayText || retryPayload.text || '');
   btn.dataset.retryMode = retryPayload.mode || 'ask';
   btn.dataset.retryApiMutationsAllowed = retryPayload.apiMutationsAllowed ? 'true' : 'false';
   btn.dataset.retryForeground = retryPayload.foreground ? 'true' : 'false';
-  btn.dataset.retrySourceGrounding = retryPayload.sourceGrounding === SELECTION_ONLY_SOURCE_GROUNDING
-    ? SELECTION_ONLY_SOURCE_GROUNDING
-    : '';
+  btn.dataset.retrySourceGrounding = normalizeSelectionSourceGrounding(retryPayload.sourceGrounding);
   btn.dataset.retrySelectionAction = btn.dataset.retrySourceGrounding
     ? normalizeSelectionAction(retryPayload.selectionAction)
     : '';
@@ -9120,16 +11165,517 @@ function addErrorRetryButton(msgEl, retryPayload) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'error-retry-btn';
+  btn.textContent = t('sp.retry');
   btn.title = t('sp.retry');
   btn.setAttribute('aria-label', t('sp.retry'));
-  btn.innerHTML = `
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <polyline points="23 4 23 10 17 10"></polyline>
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-    </svg>`;
   if (configureRetryButton(btn, retryPayload)) {
     msgEl.querySelector('.message-content')?.appendChild(btn);
   }
+}
+
+function renderAskActHandoffButton(assistantEl, tabId, requestId) {
+  if (!assistantEl) return;
+  if (assistantEl.dataset.runMode && assistantEl.dataset.runMode !== 'ask') return;
+  const content = assistantEl.querySelector('.message-content');
+  if (!content || content.querySelector('.ask-act-handoff-btn')) return;
+
+  const baseRetryPayload = activeRetryPayloadForRequest(tabId, requestId)
+    || retryPayloadForRunAssistant(assistantEl);
+  if (!baseRetryPayload) return;
+  const retryPayload = {
+    ...baseRetryPayload,
+    mode: 'act',
+    attachments: Array.isArray(baseRetryPayload.attachments)
+      ? baseRetryPayload.attachments.slice()
+      : [],
+  };
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ask-act-handoff-btn';
+  btn.innerHTML = `<span>${escapeHtml(t('sp.mode.act_handoff_button'))}</span>`;
+  btn.title = t('sp.mode.act_handoff_hint');
+  btn.setAttribute('aria-label', btn.title);
+  configureRetryButton(btn, retryPayload);
+  content.appendChild(btn);
+  scrollToBottom();
+}
+
+const MESSAGE_ATTACHMENT_STATES = new Set(['sending', 'included', 'not-sent', 'unknown']);
+
+function attachmentDataUrlBytes(dataUrl) {
+  const encoded = String(dataUrl || '').split(',', 2)[1] || '';
+  if (!encoded) return 0;
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((encoded.length * 3) / 4) - padding);
+}
+
+function attachmentMetadata(att, deliveryState = 'included') {
+  const state = MESSAGE_ATTACHMENT_STATES.has(deliveryState) ? deliveryState : 'included';
+  return {
+    kind: ['image', 'document', 'text'].includes(att?.kind) ? att.kind : 'document',
+    name: String(att?.name || 'attachment').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 240) || 'attachment',
+    mimeType: String(att?.mimeType || '').slice(0, 120),
+    size: Number.isFinite(Number(att?.size)) ? Math.max(0, Number(att.size)) : 0,
+    source: att?.source === 'slash_screenshot' ? 'slash_screenshot' : 'user_upload',
+    deliveryState: state,
+  };
+}
+
+function attachmentStateLabel(state) {
+  if (state === 'included') return { symbol: '✓', label: t('sp.attach.state.included') };
+  if (state === 'not-sent') return { symbol: '!', label: t('sp.attach.state.not_sent') };
+  if (state === 'unknown') return { symbol: '?', label: t('sp.attach.state.unknown') };
+  return { symbol: '…', label: t('sp.attach.state.sending') };
+}
+
+function renderMessageAttachments(msgEl, attachments, state = 'included') {
+  if (!msgEl || !Array.isArray(attachments) || !attachments.length) return;
+  const list = document.createElement('div');
+  list.className = 'message-attachments';
+  for (const attachment of attachments) {
+    const meta = attachmentMetadata(attachment, state);
+    const item = document.createElement('div');
+    item.className = `message-attachment message-attachment-${meta.deliveryState}`;
+    item.dataset.kind = meta.kind;
+    item.dataset.name = meta.name;
+    item.dataset.mimeType = meta.mimeType;
+    item.dataset.size = String(meta.size);
+    item.dataset.source = meta.source;
+    item.dataset.deliveryState = meta.deliveryState;
+
+    const icon = document.createElement('span');
+    icon.className = 'message-attachment-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = meta.kind === 'image' ? '▧' : meta.kind === 'text' ? '≡' : '▤';
+
+    const name = document.createElement('span');
+    name.className = 'message-attachment-name';
+    name.textContent = meta.name;
+
+    const stateEl = document.createElement('span');
+    stateEl.className = 'message-attachment-state';
+    stateEl.setAttribute('aria-hidden', 'true');
+    const stateInfo = attachmentStateLabel(meta.deliveryState);
+    stateEl.textContent = stateInfo.symbol;
+    item.title = `${meta.name} — ${stateInfo.label}`;
+    item.setAttribute('aria-label', `${meta.name}: ${stateInfo.label}`);
+    item.append(icon, name, stateEl);
+    list.appendChild(item);
+  }
+  msgEl.querySelector('.message-content')?.appendChild(list);
+}
+
+function setMessageAttachmentState(msgEl, state) {
+  if (!msgEl || !MESSAGE_ATTACHMENT_STATES.has(state)) return false;
+  let changed = false;
+  msgEl.querySelectorAll('.message-attachment').forEach((item) => {
+    if (item.dataset.deliveryState !== state) changed = true;
+    for (const known of MESSAGE_ATTACHMENT_STATES) item.classList.remove(`message-attachment-${known}`);
+    item.classList.add(`message-attachment-${state}`);
+    item.dataset.deliveryState = state;
+    const info = attachmentStateLabel(state);
+    const name = item.dataset.name || 'attachment';
+    item.querySelector('.message-attachment-state')?.replaceChildren(info.symbol);
+    item.title = `${name} — ${info.label}`;
+    item.setAttribute('aria-label', `${name}: ${info.label}`);
+  });
+  return changed;
+}
+
+async function persistMessageAttachmentState(tabId, msgEl) {
+  if (!msgEl?.isConnected || !sameTabId(renderedTabId, tabId)) return;
+  const html = messagesEl.innerHTML;
+  tabChats.set(Number(tabId), html);
+  if (document.visibilityState !== 'hidden') {
+    lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
+  }
+  await persistTabChat(tabId, html, { allowHidden: true }).catch(() => {});
+  if (document.visibilityState !== 'hidden') scheduleHistoryPersist(tabId);
+}
+
+function reconcileRunMessageAttachmentState(tabId, assistantEl, state, { persist = false } = {}) {
+  if (!MESSAGE_ATTACHMENT_STATES.has(state)) return false;
+  const userEl = userMessageForRunAssistant(assistantEl);
+  const changed = setMessageAttachmentState(userEl, state);
+  if (changed && persist) void persistMessageAttachmentState(tabId, userEl);
+  return changed;
+}
+
+function messageAttachmentMetadata(msgEl) {
+  return Array.from(msgEl?.querySelectorAll?.('.message-attachment') || []).map((item) => attachmentMetadata({
+    kind: item.dataset.kind,
+    name: item.dataset.name,
+    mimeType: item.dataset.mimeType,
+    size: Number(item.dataset.size),
+    source: item.dataset.source,
+  }, item.dataset.deliveryState));
+}
+
+function messageCreatedAt(msgEl) {
+  const value = Number(msgEl?.dataset?.messageCreatedAt);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function setMessageCreatedAt(msgEl, value, { replace = false } = {}) {
+  if (!msgEl) return null;
+  const existing = Number(msgEl.dataset.messageCreatedAt);
+  if (!replace && Number.isFinite(existing) && existing > 0) return existing;
+  const candidate = Number(value);
+  const next = Number.isFinite(candidate) && candidate > 0 ? candidate : existing;
+  if (!Number.isFinite(next) || next <= 0) return null;
+  msgEl.dataset.messageCreatedAt = String(Math.round(next));
+  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  return next;
+}
+
+function messageCompletionFromElement(msgEl) {
+  return {
+    inputTokens: Number(msgEl?.dataset?.messageInputTokens) || 0,
+    outputTokens: Number(msgEl?.dataset?.messageOutputTokens) || 0,
+    totalTokens: Number(msgEl?.dataset?.messageTotalTokens) || 0,
+    durationMs: Number(msgEl?.dataset?.messageDurationMs) || 0,
+    finishReason: String(msgEl?.dataset?.messageFinishReason || ''),
+  };
+}
+
+function messageInfoOpenedAt(msgEl) {
+  const value = Number(msgEl?.dataset?.messageInfoOpenedAt);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+let messageInfoRowId = 0;
+
+function ensureMessageInfoElements(msgEl) {
+  let bar = msgEl.querySelector(':scope > .message-info-bar');
+  let row = bar?.querySelector(':scope > .message-info')
+    || msgEl.querySelector(':scope > .message-info');
+  let toggle = msgEl.querySelector(':scope > .message-info-toggle')
+    || bar?.querySelector(':scope > .message-info-toggle');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'message-info-bar';
+    const legacyControl = toggle || row;
+    if (legacyControl) msgEl.insertBefore(bar, legacyControl);
+    else msgEl.appendChild(bar);
+  }
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'message-info';
+    row.setAttribute('role', 'status');
+  }
+  if (row.parentNode !== bar) {
+    bar.appendChild(row);
+  }
+  if (!row.id) {
+    let id;
+    do {
+      id = `message-info-${++messageInfoRowId}`;
+    } while (document.getElementById(id));
+    row.id = id;
+  }
+  if (!toggle) {
+    toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'message-info-toggle';
+  }
+  toggle.textContent = '';
+  if (toggle.parentNode !== msgEl) {
+    msgEl.insertBefore(toggle, msgEl.children[0] || null);
+  }
+  toggle.setAttribute('aria-controls', row.id);
+  toggle.setAttribute('aria-expanded', String(msgEl.classList.contains('message-info-open')));
+  toggle.setAttribute('aria-label', t('sp.message_info.hint'));
+  toggle.title = t('sp.message_info.hint');
+  return { row, toggle };
+}
+
+function renderMessageInfo(msgEl) {
+  if (!msgEl) return;
+  const { row } = ensureMessageInfoElements(msgEl);
+  const pills = buildMessageInfoPills({
+    createdAt: messageCreatedAt(msgEl),
+    completion: messageCompletionFromElement(msgEl),
+    verbose: verboseMode,
+    locale: getLocale(),
+    now: messageInfoOpenedAt(msgEl) ?? Date.now(),
+  });
+  row.replaceChildren(...pills.map((pill) => {
+    const item = document.createElement('span');
+    item.className = `message-info-item message-info-pill message-info-${pill.kind}`;
+    item.textContent = t(pill.key, pill.params);
+    if (pill.title) item.title = pill.title;
+    return item;
+  }));
+  row.hidden = !msgEl.classList.contains('message-info-open') || pills.length === 0;
+}
+
+function messageInfoClickIsInteractive(target) {
+  return !!target?.closest?.(
+    'a, button, input, textarea, select, summary, [role="button"], [contenteditable="true"]',
+  );
+}
+
+function messageInfoClickHasTextSelection() {
+  const selection = globalThis.getSelection?.();
+  return Boolean(selection && !selection.isCollapsed);
+}
+
+function toggleMessageInfo(msgEl) {
+  const open = msgEl.classList.toggle('message-info-open');
+  if (open) msgEl.dataset.messageInfoOpenedAt = String(Date.now());
+  else delete msgEl.dataset.messageInfoOpenedAt;
+  ensureMessageInfoElements(msgEl).toggle.setAttribute('aria-expanded', String(open));
+  renderMessageInfo(msgEl);
+  schedulePersist();
+}
+
+function bindMessageInfoToggle(msgEl) {
+  if (!msgEl?.matches?.('.message.user, .message.assistant')) return;
+  if (!messageCreatedAt(msgEl)) return;
+  msgEl.removeAttribute('tabindex');
+  msgEl.removeAttribute('aria-expanded');
+  msgEl.removeAttribute('title');
+  const { toggle } = ensureMessageInfoElements(msgEl);
+  if (msgEl.classList.contains('message-info-open')) {
+    if (!messageInfoOpenedAt(msgEl)) msgEl.dataset.messageInfoOpenedAt = String(Date.now());
+    renderMessageInfo(msgEl);
+  }
+  if (msgEl.__wbMessageInfoBound) return;
+  msgEl.__wbMessageInfoBound = true;
+  toggle.addEventListener('click', () => toggleMessageInfo(msgEl));
+  msgEl.addEventListener('click', (event) => {
+    if (messageInfoClickIsInteractive(event.target)) return;
+    if (messageInfoClickHasTextSelection()) return;
+    toggleMessageInfo(msgEl);
+  });
+}
+
+function rebindMessageInfoToggles() {
+  messagesEl.querySelectorAll(':scope > .message.user, :scope > .message.assistant')
+    .forEach(bindMessageInfoToggle);
+}
+
+function applyMessageCompletion(msgEl, completion = {}) {
+  if (!msgEl) return;
+  const values = {
+    messageInputTokens: completion.inputTokens,
+    messageOutputTokens: completion.outputTokens,
+    messageTotalTokens: completion.totalTokens,
+    messageDurationMs: completion.durationMs,
+  };
+  for (const [key, value] of Object.entries(values)) {
+    const number = Number(value);
+    msgEl.dataset[key] = String(Number.isFinite(number) && number >= 0 ? Math.round(number) : 0);
+  }
+  msgEl.dataset.messageFinishReason = String(completion.finishReason || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, 80);
+  if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  schedulePersist();
+}
+
+function refreshOpenMessageInfoRows() {
+  messagesEl.querySelectorAll(':scope > .message.user, :scope > .message.assistant').forEach((msgEl) => {
+    if (!messageCreatedAt(msgEl)) return;
+    ensureMessageInfoElements(msgEl);
+    if (msgEl.classList.contains('message-info-open')) renderMessageInfo(msgEl);
+  });
+}
+
+function assistantAnswerElementForSelectionNode(node) {
+  let element = node?.nodeType === 1 ? node : node?.parentElement;
+  const viaClosest = element?.closest?.('.message.assistant') || null;
+  if (viaClosest) return viaClosest;
+  while (element) {
+    if (element.matches?.('.message.assistant')) return element;
+    element = element.parentElement || element.getRootNode?.()?.host || null;
+  }
+  return null;
+}
+
+function selectedAssistantAnswer() {
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount < 1 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  if (!range.startContainer.isConnected || !range.endContainer.isConnected) return null;
+  const startTextElement = assistantAnswerElementForSelectionNode(range.startContainer);
+  const endTextElement = assistantAnswerElementForSelectionNode(range.endContainer);
+  const text = selectionTextFromRange(range) || String(range.toString?.() || '').trim();
+  if (!selectionIsQuoteable({ startTextElement, endTextElement, text })) return null;
+  return { range, text };
+}
+
+function ensureSelectionAskActionEl() {
+  if (!selectionAskActionEl?.isConnected) {
+    selectionAskActionEl = document.getElementById('selection-ask-action');
+  }
+  if (!selectionAskActionEl) {
+    selectionAskActionEl = document.createElement('button');
+    selectionAskActionEl.id = 'selection-ask-action';
+    selectionAskActionEl.className = 'selection-ask-action hidden';
+    selectionAskActionEl.type = 'button';
+  }
+  if (selectionAskActionEl.parentElement !== document.body) {
+    document.body.appendChild(selectionAskActionEl);
+  }
+  return selectionAskActionEl;
+}
+
+function dismissSelectionAskAction() {
+  if (selectionAskActionRefreshTimer != null) {
+    clearTimeout(selectionAskActionRefreshTimer);
+    selectionAskActionRefreshTimer = null;
+  }
+  if (selectionAskActionRefreshFrame != null) {
+    cancelAnimationFrame(selectionAskActionRefreshFrame);
+    selectionAskActionRefreshFrame = null;
+  }
+  pendingAnswerSelection = null;
+  selectionAskActionEl?.classList.add('hidden');
+}
+
+function positionSelectionAskAction(range) {
+  if (!selectionAskActionEl) return;
+  const zoom = uiScaleZoom();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const actionRect = selectionAskActionEl.getBoundingClientRect();
+  const actionWidth = actionRect.width || 180;
+  const actionHeight = actionRect.height || 32;
+  const inputTop = inputArea?.getBoundingClientRect().top;
+  const floor = Math.min(vh, Number.isFinite(inputTop) ? inputTop : vh) - 8;
+  const gap = 6;
+  const rect = range ? selectionRangeRect(range) : null;
+  const usable = rect && selectionRangeIsVisible(rect, { width: vw, height: vh });
+  const left = Math.min(
+    Math.max(8, usable ? rect.left : (vw - actionWidth) / 2),
+    Math.max(8, vw - actionWidth - 8),
+  );
+  const maxTop = Math.max(8, floor - actionHeight);
+  const aboveTop = usable ? rect.top - actionHeight - gap : maxTop;
+  const belowTop = usable ? rect.bottom + gap : maxTop;
+  const preferredTop = usable && aboveTop >= 8 ? aboveTop : belowTop;
+  const top = Math.min(maxTop, Math.max(8, preferredTop));
+  // The button is inside the zoomed body, while these measurements are in
+  // viewport pixels. Convert them back to the body's CSS coordinate space.
+  selectionAskActionEl.style.left = `${left / zoom}px`;
+  selectionAskActionEl.style.top = `${top / zoom}px`;
+}
+
+function applySelectionAskActionLabel() {
+  if (!selectionAskActionEl) return;
+  const locale = getLocale();
+  if (selectionAskActionLocale === locale && selectionAskActionLabel
+      && selectionAskActionEl.textContent === selectionAskActionLabel) {
+    return;
+  }
+  selectionAskActionLocale = locale;
+  selectionAskActionLabel = getSelectionShortcutLocalization(locale).strings.addSelectionToChat;
+  selectionAskActionEl.textContent = selectionAskActionLabel;
+  selectionAskActionEl.title = selectionAskActionLabel;
+  selectionAskActionEl.setAttribute('aria-label', selectionAskActionLabel);
+}
+
+function refreshSelectionAskAction() {
+  const selected = selectedAssistantAnswer();
+  if (selected) {
+    showSelectionAskAction(selected);
+    return;
+  }
+  dismissSelectionAskAction();
+}
+
+function showSelectionAskAction(selected) {
+  if (!selected?.text || !ensureSelectionAskActionEl()) return;
+  pendingAnswerSelection = {
+    text: selected.text,
+    range: typeof selected.range?.cloneRange === 'function'
+      ? selected.range.cloneRange()
+      : selected.range,
+  };
+  applySelectionAskActionLabel();
+  selectionAskActionEl.classList.remove('hidden');
+  positionSelectionAskAction(pendingAnswerSelection.range);
+}
+
+function scheduleSelectionAskActionRefresh() {
+  if (selectionAskActionRefreshTimer != null) clearTimeout(selectionAskActionRefreshTimer);
+  if (selectionAskActionRefreshFrame != null) {
+    cancelAnimationFrame(selectionAskActionRefreshFrame);
+    selectionAskActionRefreshFrame = null;
+  }
+  selectionAskActionRefreshTimer = setTimeout(() => {
+    selectionAskActionRefreshTimer = null;
+    refreshSelectionAskAction();
+  }, 60);
+}
+
+function handleSelectionAskPointerDown(event) {
+  if (selectionAskActionEl?.contains(event.target)) return;
+  dismissSelectionAskAction();
+}
+
+function handleSelectionAskPointerUp() {
+  const selected = selectedAssistantAnswer();
+  if (selected) {
+    showSelectionAskAction(selected);
+    return;
+  }
+  requestAnimationFrame(() => {
+    const next = selectedAssistantAnswer();
+    if (next) showSelectionAskAction(next);
+    else scheduleSelectionAskActionRefresh();
+  });
+}
+
+function handleSelectionAskScroll() {
+  scheduleSelectionAskActionRefresh();
+}
+
+function askAboutSelectedAnswer() {
+  const liveSelection = selectedAssistantAnswer();
+  const selection = liveSelection || pendingAnswerSelection;
+  if (!selection?.text) {
+    dismissSelectionAskAction();
+    return;
+  }
+  const attachment = buildSelectionTextAttachment(selection.text);
+  if (!attachment || attachment.size > MAX_TEXT_ATTACHMENT_BYTES) {
+    dismissSelectionAskAction();
+    if (attachment) {
+      addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', {
+        name: attachment.name,
+        max: '5MB',
+      })));
+    }
+    return;
+  }
+  const tabId = normalizeAttachmentTabId(renderedTabId ?? currentTabId);
+  if (tabId == null) {
+    dismissSelectionAskAction();
+    showComposerToast(t('sp.attach.no_tab'));
+    return;
+  }
+  const pending = getPendingAttachmentsForTab(tabId);
+  // Re-adding the same snippet is a no-op, so repeated clicks cannot pile up
+  // identical chips. A *different* snippet gets its own chip instead of
+  // overwriting the previous one: replacing by filename would silently drop an
+  // earlier selection the user still expects to send, and would clobber an
+  // uploaded file that happens to share the name.
+  const alreadyStaged = pending.some(att => att?.kind === 'text' && att?.textContent === attachment.textContent);
+  if (!alreadyStaged) {
+    const takenNames = new Set(pending.map(att => att?.name));
+    let name = attachment.name;
+    for (let suffix = 2; takenNames.has(name); suffix += 1) name = `selected-text-${suffix}.txt`;
+    pending.push({ ...attachment, name });
+  }
+  renderAttachmentPreviews();
+  dismissSelectionAskAction();
+  window.getSelection?.()?.removeAllRanges();
+  handleInput();
+  inputEl.focus();
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
 }
 
 function addMessage(role, content, options = {}) {
@@ -9164,15 +11710,30 @@ function addMessage(role, content, options = {}) {
     options.costAllowanceResume,
   )
       && !renderSubscribeError(textEl, content, options.subscribeResumeMode)) {
-    textEl.innerHTML = content ? formatMarkdown(content) : '';
+    textEl.innerHTML = content ? formatMarkdown(content, { recoverNestedMarkdown: role === 'assistant' }) : '';
   }
 
   contentEl.appendChild(textEl);
   msgEl.appendChild(contentEl);
+  if (role === 'assistant' && !assistantMessageHasRenderableContent(msgEl)) {
+    // Keep the node as the run's event target, but do not paint its bordered
+    // shell until text, a tool step, or an interactive card arrives.
+    msgEl.classList.add('assistant-awaiting-content');
+  }
+  if (role === 'user' && Array.isArray(options.attachments) && options.attachments.length) {
+    renderMessageAttachments(msgEl, options.attachments, options.attachmentState || 'included');
+  }
   if (options.beforeCurrentAssistant && currentAssistantEl?.parentNode === messagesEl) {
     messagesEl.insertBefore(msgEl, currentAssistantEl);
   } else {
     messagesEl.appendChild(msgEl);
+  }
+  if (role === 'user' && options.sourceGrounding) {
+    addSelectionScopeDivider(msgEl, options.sourceGrounding);
+  }
+  if (role === 'user' || role === 'assistant') {
+    setMessageCreatedAt(msgEl, options.createdAt ?? Date.now());
+    bindMessageInfoToggle(msgEl);
   }
 
   if (role === 'error' && options.retryPayload
@@ -9204,6 +11765,34 @@ function addPlanAutoApprovedNote(data) {
   } else {
     messagesEl.appendChild(note);
   }
+  scrollToBottom();
+}
+
+function addPlannerFallbackNote(message, assistantEl = currentAssistantEl) {
+  if (!assistantEl || !message) return;
+
+  let note = assistantEl.querySelector('.planner-fallback-note');
+  if (!note) {
+    const stepsContainer = getOrCreateStepsContainer(assistantEl);
+    if (!stepsContainer) return;
+
+    note = document.createElement('div');
+    note.className = 'planner-fallback-note';
+    note.setAttribute('role', 'status');
+    note.setAttribute('aria-live', 'polite');
+
+    const icon = document.createElement('span');
+    icon.className = 'planner-fallback-note-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '!';
+
+    const text = document.createElement('span');
+    text.className = 'planner-fallback-note-text';
+    note.append(icon, text);
+    stepsContainer.appendChild(note);
+  }
+
+  note.querySelector('.planner-fallback-note-text').textContent = message;
   scrollToBottom();
 }
 
@@ -9282,6 +11871,7 @@ function showContinueButton(options = {}) {
 }
 
 async function continueAgent(options = {}) {
+  if (isStandaloneWindow) options = { ...options, mode: 'ask' };
   const tabId = currentTabId;
   const modeForSend = ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
   if (rejectSelectionScopedMode(modeForSend, tabId)) return false;
@@ -9344,7 +11934,7 @@ async function continueAgent(options = {}) {
               submittedTurnDurable: res.submittedTurnDurable,
             })
             && !renderSubscribeError(textEl, res.content)) {
-          textEl.innerHTML = formatMarkdown(res.content);
+          textEl.innerHTML = formatMarkdown(res.content, { recoverNestedMarkdown: true });
         }
         addMessageCopyButton(assistantEl);
       }
@@ -9353,14 +11943,18 @@ async function continueAgent(options = {}) {
     if (currentTabId === tabId
         && assistantEl
         && !isTabAbortRequested(tabId)
-        && !clearedConversationRunRequestIds.has(requestId)) {
+        && !clearedConversationRunRequestIds.has(requestId)
+        && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
       addMessage('error', t('sp.error_prefix', { msg: e.message }));
     }
   } finally {
-    if (localRunRequestIds.get(tabId) === requestId) localRunRequestIds.delete(tabId);
+    const ownsRunState = localRunRequestIds.get(tabId) === requestId;
+    if (ownsRunState) localRunRequestIds.delete(tabId);
     cancelledRunRecoveryRequestIds.delete(requestId);
-    if (currentTabId === tabId && assistantEl) finalizeSteps(assistantEl);
+    conversationClearFollowerCancellationRequestIds.delete(requestId);
     clearAssistantTextStreamState(assistantEl);
+    if (!ownsRunState) return;
+    if (currentTabId === tabId && assistantEl) finalizeSteps(assistantEl);
     setTabProcessing(tabId, false);
     setTabAbortRequested(tabId, false);
     if (currentTabId === tabId) {
@@ -9371,7 +11965,7 @@ async function continueAgent(options = {}) {
     if (currentTabId === tabId) scrollToBottom();
     if (currentTabId === tabId && renderedTabId === tabId) await flushRenderedTabChat();
     if (currentTabId === tabId && renderedTabId === tabId) await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
-    await drainQueuedPromptsAfterRunSettles();
+    await drainQueuedPromptsAfterRunSettles(tabId);
   }
 }
 
@@ -9405,12 +11999,69 @@ function hideInspectionBanner() {
   browser.browserAction?.setBadgeText?.({ text: '' }).catch(() => {});
 }
 
-function showActivity(text) {
+const THINKING_ACTIVITY_KEYS = [
+  'sp.activity.communicating',
+  'sp.activity.thinking_more',
+  'sp.activity.working_next',
+  'sp.activity.coordinating_next',
+  'sp.activity.checking_next',
+  'sp.activity.preparing_next',
+  'sp.activity.connecting_pieces',
+  'sp.activity.reviewing_progress',
+];
+const THINKING_ACTIVITY_ROTATION_MS = 3600;
+let thinkingActivityTimer = null;
+let thinkingActivityIndex = 0;
+let activityDisplayMode = 'idle';
+
+function clearThinkingActivityTimers() {
+  if (thinkingActivityTimer) clearTimeout(thinkingActivityTimer);
+  thinkingActivityTimer = null;
+}
+
+function setActivityText(text, { announce = false } = {}) {
+  const nextText = String(text || '');
+  if (activityText.textContent !== nextText) activityText.textContent = nextText;
+  if (announce && activityLiveStatus?.textContent !== nextText) {
+    activityLiveStatus.textContent = nextText;
+  }
+}
+
+function rotateThinkingActivity() {
+  if (activityDisplayMode !== 'thinking') return;
+  setActivityText(t(THINKING_ACTIVITY_KEYS[thinkingActivityIndex % THINKING_ACTIVITY_KEYS.length]), {
+    announce: thinkingActivityIndex === 0,
+  });
+  thinkingActivityIndex += 1;
+  thinkingActivityTimer = setTimeout(rotateThinkingActivity, THINKING_ACTIVITY_ROTATION_MS);
+}
+
+function beginThinkingActivity() {
+  activityDisplayMode = 'thinking';
+  thinkingActivityIndex = 0;
   agentActivity.classList.remove('hidden');
-  activityText.textContent = text;
+  rotateThinkingActivity();
+}
+
+function startThinkingActivity() {
+  // Generic thinking copy is only an initial placeholder. Once a concrete
+  // status arrives, later generic updates must not replace it.
+  if (activityDisplayMode !== 'idle') return;
+  beginThinkingActivity();
+}
+
+function showActivity(text) {
+  clearThinkingActivityTimers();
+  activityDisplayMode = 'concrete';
+  agentActivity.classList.remove('hidden');
+  setActivityText(text, { announce: true });
 }
 
 function hideActivity() {
+  clearThinkingActivityTimers();
+  activityDisplayMode = 'idle';
+  if (activityLiveStatus) activityLiveStatus.textContent = '';
+  if (!compactProgressVisible) setCompactProgressVisible(true);
   agentActivity.classList.add('hidden');
   hideInspectionBanner();
 }
@@ -9519,7 +12170,8 @@ function chatTurnNeedsReadingNavigation(turn = chatNavigationTurn) {
   if (!chatContainerEl || !chatTurnIsConnected(turn)) return false;
   const userRect = turn.userEl.getBoundingClientRect();
   const assistantRect = turn.assistantEl.getBoundingClientRect();
-  return assistantRect.bottom - userRect.top > chatContainerEl.clientHeight - CHAT_SCROLL_EDGE_PX;
+  const turnHeight = (assistantRect.bottom - userRect.top) / uiScaleZoom();
+  return turnHeight > chatContainerEl.clientHeight - CHAT_SCROLL_EDGE_PX;
 }
 
 function prefersReducedChatMotion() {
@@ -9532,9 +12184,10 @@ function scrollChatToQuestion({ smooth = true } = {}) {
   if (smooth) chatUserChoseReadingPosition = true;
   const containerRect = chatContainerEl.getBoundingClientRect();
   const questionRect = chatNavigationTurn.userEl.getBoundingClientRect();
+  const offsetFromTop = (questionRect.top - containerRect.top) / uiScaleZoom();
   const targetTop = Math.max(
     0,
-    chatContainerEl.scrollTop + questionRect.top - containerRect.top - CHAT_TURN_VISIBILITY_PX,
+    chatContainerEl.scrollTop + offsetFromTop - CHAT_TURN_VISIBILITY_PX,
   );
   chatContainerEl.scrollTo({
     top: targetTop,
@@ -9712,9 +12365,17 @@ chatNavigationDismissEl?.addEventListener('click', () => {
   setChatNavigationVisible(false);
 });
 
-globalThis.addEventListener?.('resize', scheduleChatNavigationUpdate);
+function scheduleSidepanelResponsiveUpdates() {
+  scheduleChatNavigationUpdate();
+  schedulePlanReviewFieldsAutosize(messagesEl);
+}
+
+globalThis.addEventListener?.('resize', scheduleSidepanelResponsiveUpdates);
 if (globalThis.ResizeObserver && messagesEl) {
-  const chatNavigationResizeObserver = new ResizeObserver(scheduleChatNavigationUpdate);
+  const chatNavigationResizeObserver = new ResizeObserver((entries) => {
+    scheduleChatNavigationUpdate();
+    handlePlanReviewContainerResize(entries);
+  });
   chatNavigationResizeObserver.observe(messagesEl);
 }
 
@@ -9754,15 +12415,16 @@ function scheduleMathRender() {
 function formatMarkdown(text, options = {}) {
   if (!text) return '';
   const enhance = options.enhance !== false;
+  const streaming = options.recoverNestedMarkdown === true;
 
   // 1. Extract fenced code blocks BEFORE escaping HTML
   const codeBlocks = [];
-  text = text.replace(/```[ \t]*([^`\r\n]*)\r?\n([\s\S]*?)```/g, (_match, info, code) => {
+  text = replaceMarkdownCodeFences(text, (info, code) => {
     const lang = codeFenceLanguage(info);
     const id = `__CODEBLOCK_${codeBlocks.length}__`;
     codeBlocks.push({ lang: lang || '', code });
     return id;
-  });
+  }, { streaming });
 
   // 2. Extract inline code before escaping
   const inlineCodes = [];
@@ -9778,9 +12440,12 @@ function formatMarkdown(text, options = {}) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  // 4. Block headings, inline formatting, markdown link sanitization, then
-  // newline → <br>. Code and inline-code placeholders were extracted above,
-  // so Markdown-looking source inside them is not interpreted here.
+  // 4. Tables, then headings, inline formatting, markdown link sanitization,
+  // then newline → <br>. Headings swallow their trailing newline, so tables
+  // must run first or a table on the next line is glued onto the heading.
+  // Code and inline-code placeholders were extracted above, so
+  // Markdown-looking source inside them is not interpreted here.
+  text = renderMarkdownTables(text);
   text = renderMarkdownHeadings(text);
   text = text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
@@ -10003,6 +12668,8 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
   const tabId = Number(payload?.tabId);
   const requestId = String(payload?.requestId || '');
   cancelledRunRecoveryRequestIds.delete(requestId);
+  conversationClearFollowerCancellationRequestIds.delete(requestId);
+  const shouldContinueRunRecovery = () => !conversationClearFollowerCancellationRequestIds.has(requestId);
   const promise = runDetachedWithReconnect({
     initialAction,
     payload,
@@ -10013,11 +12680,13 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
     }),
     isConnectionError: isBackgroundConnectionError,
     onState: state => {
+      if (!shouldContinueRunRecovery()) return;
       applyConversationScopeState(tabId, state);
-      return applyActiveRunState(tabId, state);
+      return applyActiveRunState(tabId, state, { shouldContinue: shouldContinueRunRecovery });
     },
     shouldResume: () => !isTabAbortRequested(tabId)
       && !cancelledRunRecoveryRequestIds.has(requestId),
+    shouldContinue: shouldContinueRunRecovery,
     onStatus: ({ phase }) => {
       if (!sameTabId(currentTabId, tabId)) return;
       if (phase === 'reconnecting' || phase === 'retrying_start') {
@@ -10040,6 +12709,9 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
 }
 
 function formatBackgroundSendError(action, message) {
+  if (String(message || '').trim() === `Unknown action: ${action}`) {
+    return `WebBrain's sidebar and background are out of sync. Reload WebBrain from your browser's extension manager, reopen the sidebar, and try again.`;
+  }
   if (isBackgroundConnectionError(message)) {
     return `WebBrain extension connection was lost while sending "${action}". Reload the sidebar/extension and try again.`;
   }
@@ -10059,13 +12731,21 @@ async function sendToBackground(action, data = {}) {
     throw new Error(`No response from WebBrain background for "${action}". The background script may have restarted or crashed; reload the sidebar/extension and check the Firefox extension console for the original error.`);
   }
   if (response?.error) {
-    throw new Error(response.error);
+    throw new Error(formatBackgroundSendError(action, response.error));
   }
   return response;
 }
 
 async function handleGlobalKeydown(e) {
   if (e.defaultPrevented) return;
+
+  const scaleAction = uiScaleShortcutAction(e);
+  if (scaleAction) {
+    e.preventDefault();
+    e.stopPropagation();
+    await setSidepanelUiScale(scaleAction).catch(() => {});
+    return;
+  }
 
   // Don't steal shortcuts from other input elements (e.g. schedule form fields)
   const tag = e.target?.tagName;
@@ -10074,8 +12754,22 @@ async function handleGlobalKeydown(e) {
   if (e.key === 'Escape') {
     // IME Escape cancels a composition candidate — never abort the run for that.
     if (e.isComposing) return;
+    // The popover's own Escape handler only fires while focus is inside it —
+    // clicking the trigger leaves focus on a sibling. This listener is on the
+    // capture phase either way, so without closing the popover here Escape
+    // would fall through to abortRun() and cancel a running agent.
+    if (closeUiScalePopover()) {
+      e.preventDefault();
+      uiScaleBtn?.focus();
+      return;
+    }
     const slashMenuOpen = !!slashCommandMenuEl && !slashCommandMenuEl.classList.contains('hidden');
     if (slashMenuOpen) return;
+    if (selectionAskActionEl && !selectionAskActionEl.classList.contains('hidden')) {
+      e.preventDefault();
+      dismissSelectionAskAction();
+      return;
+    }
     // Provider/language pickers close on Escape in bubble/target handlers; do not
     // abort the active run while those listboxes are open.
     const providerPickerOpen = !!providerPickerMenu && !providerPickerMenu.classList.contains('hidden');
@@ -10135,7 +12829,7 @@ function positionModeHighlight(btn, { instant = false } = {}) {
 }
 
 function setMode(mode) {
-  if (mode !== 'ask' && mode !== 'act' && mode !== 'dev') mode = 'ask';
+  mode = normalizeAgentMode(mode);
   agentMode = mode;
 
   modeAskBtn.classList.toggle('active', mode === 'ask');
@@ -10153,6 +12847,11 @@ function setMode(mode) {
 
   updateActWarning();
   resetInputPlaceholderRotation();
+}
+
+function normalizeAgentMode(mode) {
+  if (isStandaloneWindow) return 'ask';
+  return mode === 'act' || mode === 'dev' ? mode : 'ask';
 }
 
 async function ensureActMode() {
@@ -10286,7 +12985,7 @@ async function abortRun(tabId = currentTabId) {
       currentAssistantEl = null;
       setTabAbortRequested(tabId, false);
       await flushRenderedTabChat();
-      await drainQueuedPromptsAfterRunSettles();
+      await drainQueuedPromptsAfterRunSettles(tabId);
       resolve();
     };
     fallbackTimer = setTimeout(settleWhenInactive, 3000);
@@ -10309,6 +13008,25 @@ async function abortRun(tabId = currentTabId) {
     await follower.promise.catch(() => {});
     fallbackCancelled = true;
     clearTimeout(fallbackTimer);
+  }
+}
+
+const CONVERSATION_CLEAR_LOCAL_ABORT_TIMEOUT_MS = 2_000;
+
+async function abortRunForConversationClear(tabId, requestId = localRunRequestIdForTab(tabId)) {
+  requestId = String(requestId || '');
+  const follower = localRunFollowers.get(Number(tabId));
+  if (requestId && follower?.requestId === requestId) {
+    conversationClearFollowerCancellationRequestIds.add(requestId);
+  }
+  let timeoutId = null;
+  const timeout = new Promise(resolve => {
+    timeoutId = setTimeout(resolve, CONVERSATION_CLEAR_LOCAL_ABORT_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([abortRun(tabId).catch(() => {}), timeout]);
+  } finally {
+    if (timeoutId != null) clearTimeout(timeoutId);
   }
 }
 
@@ -10471,6 +13189,181 @@ function normalizeAttachmentTabId(tabId = currentTabId) {
   return Number.isFinite(numericTabId) ? numericTabId : null;
 }
 
+function newStagedScreenshotAttachmentId() {
+  try {
+    const id = globalThis.crypto?.randomUUID?.();
+    if (id) return `screenshot-${id}`;
+  } catch {}
+  return `screenshot-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function encodeStagedScreenshotMetadata(attachment) {
+  try {
+    return encodeURIComponent(JSON.stringify({
+      version: 1,
+      stagedAttachmentId: String(attachment?.stagedAttachmentId || ''),
+      name: String(attachment?.name || '').slice(0, 240),
+      mimeType: String(attachment?.mimeType || '').slice(0, 120),
+      size: Number(attachment?.size) || 0,
+      capturedAt: Number(attachment?.capturedAt) || 0,
+      fullPage: attachment?.fullPage === true,
+      redactionSnapshotReady: attachment?.redactionSnapshotReady === true,
+      ...(attachment?.redactionSnapshot ? { redactionSnapshot: attachment.redactionSnapshot } : {}),
+      ...(attachment?.captureBounds ? { captureBounds: attachment.captureBounds } : {}),
+    }));
+  } catch {
+    return '';
+  }
+}
+
+function decodeStagedScreenshotMetadata(value, dataUrl, storedRecord = null) {
+  try {
+    const metadata = JSON.parse(decodeURIComponent(String(value || '')));
+    const stagedAttachmentId = String(metadata?.stagedAttachmentId || '');
+    const size = Number(metadata?.size);
+    const actualSize = attachmentDataUrlBytes(dataUrl);
+    const modelDataUrl = String(storedRecord?.modelDataUrl || '');
+    if (metadata?.version !== 1
+        || !/^screenshot-[A-Za-z0-9-]{8,160}$/.test(stagedAttachmentId)
+        || !(Number.isFinite(size) && size > 0 && size <= MAX_ATTACHMENT_BYTES)
+        || actualSize !== size
+        || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) {
+      return null;
+    }
+    return {
+      kind: 'image',
+      name: String(metadata.name || 'webbrain-screenshot.png').slice(0, 240),
+      dataUrl,
+      mimeType: String(metadata.mimeType || '').startsWith('image/jpeg') ? 'image/jpeg' : 'image/png',
+      size,
+      source: 'slash_screenshot',
+      stagedAttachmentId,
+      capturedAt: Number(metadata.capturedAt) || Date.now(),
+      fullPage: metadata.fullPage === true,
+      redactionSnapshotReady: metadata.redactionSnapshotReady === true,
+      ...(storedRecord ? { modelRedactionReady: storedRecord.modelRedactionReady === true } : {}),
+      ...(storedRecord?.modelRedactionReady === true && /^data:image\/(?:png|jpeg);base64,/i.test(modelDataUrl)
+        ? { modelDataUrl }
+        : {}),
+      ...(metadata.redactionSnapshot ? { redactionSnapshot: metadata.redactionSnapshot } : {}),
+      ...(metadata.fullPage === true && metadata.captureBounds ? { captureBounds: metadata.captureBounds } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function findStagedScreenshotResult(stagedAttachmentId, root = document) {
+  const id = String(stagedAttachmentId || '');
+  if (!id) return null;
+  return Array.from(root.querySelectorAll?.('.screenshot-result[data-screenshot-attachment-id]') || [])
+    .find(result => result.dataset.screenshotAttachmentId === id) || null;
+}
+
+function setScreenshotAttachmentStaged(tabId, attachment, staged) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !sameTabId(currentTabId, numericTabId)) return;
+  const result = findStagedScreenshotResult(attachment?.stagedAttachmentId, messagesEl);
+  if (!result) return;
+  const note = result.querySelector('.screenshot-attachment-note');
+  if (!staged) {
+    delete result.dataset.stagedScreenshot;
+    note?.remove();
+    return;
+  }
+  const metadata = encodeStagedScreenshotMetadata(attachment);
+  if (!metadata) return;
+  result.dataset.stagedScreenshot = metadata;
+  if (!note) {
+    const restoredNote = document.createElement('div');
+    const label = t('sp.screenshot.staged_next_message');
+    restoredNote.className = 'screenshot-attachment-note';
+    restoredNote.setAttribute('role', 'status');
+    restoredNote.setAttribute('aria-label', label);
+    restoredNote.textContent = `📎 ${label} · ${attachment.name}`;
+    result.querySelector('.screenshot-result-actions')?.before(restoredNote);
+  }
+}
+
+async function restoreStagedScreenshotAttachments(root = messagesEl, tabId = renderedTabId ?? currentTabId) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  updateAttachmentReadCount(numericTabId, 1);
+  try {
+    const results = Array.from(root.querySelectorAll?.('.screenshot-result') || []);
+    const pendingScreenshotIdsBeforeLoad = new Set(getPendingAttachmentsForTab(
+      numericTabId,
+      { create: false },
+    ).filter(attachment => attachment?.source === 'slash_screenshot')
+      .map(attachment => attachment.stagedAttachmentId));
+    const storedAttachments = await loadStagedScreenshots(browser.storage.local, numericTabId);
+    if (!sameTabId(renderedTabId ?? currentTabId, numericTabId)) return;
+    const pendingStoredAttachments = storedAttachments.filter(attachment => attachment.deliveryState === 'pending');
+    const storedById = new Map(pendingStoredAttachments.map(attachment => [attachment.stagedAttachmentId, attachment]));
+    const restored = [];
+    let changed = false;
+    for (const result of results) {
+      const persistedMetadata = result.dataset.stagedScreenshot;
+      const note = result.querySelector('.screenshot-attachment-note');
+      if (!persistedMetadata) {
+        if (note) {
+          note.remove();
+          changed = true;
+        }
+        continue;
+      }
+      const stagedAttachmentId = String(result.dataset.screenshotAttachmentId || '');
+      const stored = storedById.get(stagedAttachmentId);
+      const attachment = decodeStagedScreenshotMetadata(persistedMetadata, stored?.dataUrl || '', stored);
+      if (!attachment || attachment.stagedAttachmentId !== stagedAttachmentId) {
+        delete result.dataset.stagedScreenshot;
+        note?.remove();
+        changed = true;
+        continue;
+      }
+      restored.push({ result, attachment });
+    }
+
+    // Records without a pending result card may belong to a send whose card
+    // was persisted after its staged marker was cleared. Terminal run state,
+    // explicit removal, conversation clear, or tab close owns their cleanup.
+    const restoredIds = new Set(restored.map(item => item.attachment.stagedAttachmentId));
+    const pending = getPendingAttachmentsForTab(numericTabId).filter(attachment => (
+      attachment?.source !== 'slash_screenshot'
+      || restoredIds.has(attachment.stagedAttachmentId)
+      // A capture may finish while storage is being read. It is not part of
+      // this restore snapshot and must remain staged for the next message.
+      || !pendingScreenshotIdsBeforeLoad.has(attachment.stagedAttachmentId)
+    ));
+    for (const { result, attachment } of restored) {
+      const image = result.querySelector('.screenshot-result-image');
+      if (image?.getAttribute('src') !== attachment.dataUrl) image?.setAttribute('src', attachment.dataUrl);
+      if (!pending.some(candidate => candidate?.stagedAttachmentId === attachment.stagedAttachmentId)) {
+        pending.push(attachment);
+      }
+    }
+    if (pending.length) pendingAttachmentsByTab.set(numericTabId, pending);
+    else pendingAttachmentsByTab.delete(numericTabId);
+    if (normalizeAttachmentTabId() === numericTabId) renderAttachmentPreviews();
+    if (changed) schedulePersist();
+  } catch {
+    if (sameTabId(renderedTabId ?? currentTabId, numericTabId)) {
+      for (const result of root.querySelectorAll?.('.screenshot-result[data-staged-screenshot]') || []) {
+        delete result.dataset.stagedScreenshot;
+        result.querySelector('.screenshot-attachment-note')?.remove();
+      }
+      const pending = getPendingAttachmentsForTab(numericTabId, { create: false })
+        .filter(attachment => attachment?.source !== 'slash_screenshot');
+      if (pending.length) pendingAttachmentsByTab.set(numericTabId, pending);
+      else pendingAttachmentsByTab.delete(numericTabId);
+      renderAttachmentPreviews();
+      schedulePersist();
+    }
+  } finally {
+    updateAttachmentReadCount(numericTabId, -1);
+  }
+}
+
 function getPendingAttachmentsForTab(tabId = currentTabId, { create = true } = {}) {
   const numericTabId = normalizeAttachmentTabId(tabId);
   if (numericTabId == null) return [];
@@ -10508,9 +13401,14 @@ function updateAttachmentReadCount(tabId, delta) {
   if (normalizeAttachmentTabId() === numericTabId) syncSendButtonState();
 }
 
-function clearPendingAttachmentsForTab(tabId) {
+function clearPendingAttachmentsForTab(tabId, { preserveStoredScreenshots = false } = {}) {
   const numericTabId = normalizeAttachmentTabId(tabId);
   if (numericTabId == null) return;
+  const pending = getPendingAttachmentsForTab(numericTabId, { create: false });
+  pending.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, false));
+  if (!preserveStoredScreenshots) {
+    clearStagedScreenshots(browser.storage.local, numericTabId).catch(() => {});
+  }
   pendingAttachmentsByTab.delete(numericTabId);
   bumpAttachmentGeneration(numericTabId);
   if (normalizeAttachmentTabId() === numericTabId) {
@@ -10519,16 +13417,160 @@ function clearPendingAttachmentsForTab(tabId) {
   }
 }
 
-function restorePendingAttachmentsForTab(tabId, attachments) {
+async function restorePendingAttachmentsForTab(tabId, attachments, {
+  shouldContinue = () => true,
+  attachmentGeneration = null,
+} = {}) {
   if (!Array.isArray(attachments) || !attachments.length) return;
   const numericTabId = normalizeAttachmentTabId(tabId);
-  if (numericTabId == null) return;
+  if (numericTabId == null || !shouldContinue()) return;
+  const expectedGeneration = attachmentGeneration ?? getAttachmentGeneration(numericTabId);
+  const screenshotsPersisted = await markStagedScreenshots(
+    browser.storage.local,
+    numericTabId,
+    attachments,
+    { deliveryState: 'pending' },
+  ).catch(() => false);
+  if (getAttachmentGeneration(numericTabId) !== expectedGeneration) {
+    await removeStagedScreenshots(browser.storage.local, numericTabId, attachments).catch(() => {});
+    return;
+  }
+  const restorable = screenshotsPersisted
+    ? attachments
+    : attachments.filter(attachment => attachment?.source !== 'slash_screenshot');
   const pending = getPendingAttachmentsForTab(numericTabId);
-  pending.unshift(...attachments.filter(att => !pending.includes(att)));
+  const pendingScreenshotIds = new Set(pending
+    .filter(attachment => attachment?.source === 'slash_screenshot')
+    .map(attachment => attachment.stagedAttachmentId));
+  pending.unshift(...restorable.filter(attachment => (
+    !pending.includes(attachment)
+    && (attachment?.source !== 'slash_screenshot'
+      || !pendingScreenshotIds.has(attachment.stagedAttachmentId))
+  )));
+  restorable.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, true));
   if (normalizeAttachmentTabId() === numericTabId) {
     renderAttachmentPreviews();
     syncSendButtonState();
   }
+}
+
+async function removePersistedStagedAttachments(tabId, attachments) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !Array.isArray(attachments)) return;
+  await removeStagedScreenshots(browser.storage.local, numericTabId, attachments).catch(() => {});
+}
+
+async function reconcilePersistedStagedScreenshots(tabId, requestId, deliveryState, {
+  shouldContinue = () => true,
+} = {}) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null
+      || !['included', 'not-sent', 'unknown'].includes(deliveryState)
+      || !shouldContinue()) return;
+  const attachmentGeneration = getAttachmentGeneration(numericTabId);
+  const stored = await loadStagedScreenshots(browser.storage.local, numericTabId).catch(() => []);
+  if (!shouldContinue()) return;
+  const matching = stored.filter(attachment => (
+    attachment.deliveryState === 'sending'
+    && String(attachment.requestId || '') === String(requestId || '')
+  ));
+  if (!matching.length) return;
+  // 'unknown' means the background could not confirm the turn was persisted, so
+  // the turn most likely never landed and these pixels are the only copy left.
+  // Return it to the composer like an outright rejection rather than deleting
+  // the capture: leaving the record 'sending' would preserve the bytes but the
+  // remount restore only re-adopts 'pending' records, so they would be
+  // unreachable. The message card still carries its "delivery not confirmed"
+  // marker, so the user sees both signals and decides whether to re-send.
+  if (deliveryState === 'included') {
+    await removePersistedStagedAttachments(numericTabId, matching);
+  } else {
+    await restorePendingAttachmentsForTab(numericTabId, matching, {
+      shouldContinue,
+      attachmentGeneration,
+    });
+  }
+}
+
+function consumePendingAttachmentsForTab(tabId, attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return;
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null) return;
+  const pending = getPendingAttachmentsForTab(numericTabId, { create: false });
+  if (!pending.length) return;
+  const consumed = new Set(attachments);
+  // A staged screenshot can be re-entered as a fresh object loaded back from
+  // storage, so object identity alone leaves the old chip in the composer and
+  // wedges every later send on the markStagedScreenshots guard. Match the same
+  // durable id the restore paths key on.
+  const consumedScreenshotIds = new Set(attachments
+    .filter(attachment => attachment?.source === 'slash_screenshot' && attachment.stagedAttachmentId)
+    .map(attachment => attachment.stagedAttachmentId));
+  const remaining = pending.filter(attachment => !consumed.has(attachment)
+    && !(attachment?.source === 'slash_screenshot'
+      && consumedScreenshotIds.has(attachment.stagedAttachmentId)));
+  attachments.forEach(attachment => setScreenshotAttachmentStaged(numericTabId, attachment, false));
+  if (remaining.length) pendingAttachmentsByTab.set(numericTabId, remaining);
+  else pendingAttachmentsByTab.delete(numericTabId);
+  if (normalizeAttachmentTabId() === numericTabId) {
+    renderAttachmentPreviews();
+    syncSendButtonState();
+  }
+}
+
+async function stageScreenshotAttachment(tabId, dataUrl, {
+  fullPage = false,
+  pageUrl = '',
+  captureBounds = null,
+  redactionSnapshotReady = false,
+  redactionSnapshot = null,
+  modelRedactionReady = false,
+  modelDataUrl = null,
+} = {}) {
+  const numericTabId = normalizeAttachmentTabId(tabId);
+  if (numericTabId == null || !/^data:image\/(?:png|jpeg);base64,/i.test(String(dataUrl || ''))) return null;
+  const size = attachmentDataUrlBytes(dataUrl);
+  const name = screenshotDownloadFilename(pageUrl, fullPage);
+  if (size > MAX_ATTACHMENT_BYTES) {
+    if (normalizeAttachmentTabId() === numericTabId) {
+      addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', { name, max: '16MB' })));
+    }
+    return null;
+  }
+  const attachment = {
+    kind: 'image',
+    name,
+    dataUrl,
+    mimeType: String(dataUrl).startsWith('data:image/jpeg') ? 'image/jpeg' : 'image/png',
+    size,
+    source: 'slash_screenshot',
+    stagedAttachmentId: newStagedScreenshotAttachmentId(),
+    capturedAt: Date.now(),
+    fullPage: !!fullPage,
+    redactionSnapshotReady: redactionSnapshotReady === true,
+    ...(redactionSnapshot ? { redactionSnapshot } : {}),
+    modelRedactionReady: modelRedactionReady === true,
+    ...(modelRedactionReady === true && modelDataUrl ? { modelDataUrl } : {}),
+    ...(fullPage && captureBounds ? { captureBounds } : {}),
+  };
+  let persisted = false;
+  try {
+    persisted = await saveStagedScreenshot(browser.storage.local, numericTabId, attachment);
+  } catch {}
+  if (!persisted) {
+    if (normalizeAttachmentTabId() === numericTabId) showComposerToast(t('sp.persistence.unavailable'));
+    return null;
+  }
+  if (normalizeAttachmentTabId() !== numericTabId) {
+    await removeStagedScreenshot(browser.storage.local, numericTabId, attachment.stagedAttachmentId).catch(() => {});
+    return null;
+  }
+  getPendingAttachmentsForTab(numericTabId).push(attachment);
+  if (normalizeAttachmentTabId() === numericTabId) {
+    renderAttachmentPreviews();
+    syncSendButtonState();
+  }
+  return attachment;
 }
 
 function renderAttachmentPreviews() {
@@ -10550,6 +13592,12 @@ function renderAttachmentPreviews() {
     removeBtn.textContent = '×';
     removeBtn.addEventListener('click', () => {
       const attachments = getPendingAttachmentsForTab(previewTabId, { create: false });
+      removeStagedScreenshot(
+        browser.storage.local,
+        previewTabId,
+        attachments[i]?.stagedAttachmentId,
+      ).catch(() => {});
+      setScreenshotAttachmentStaged(previewTabId, attachments[i], false);
       attachments.splice(i, 1);
       if (attachments.length === 0 && previewTabId != null) pendingAttachmentsByTab.delete(previewTabId);
       renderAttachmentPreviews();
@@ -10591,10 +13639,7 @@ async function handleAttachedFiles(fileList, tabId = currentTabId) {
       const isPdf = file.type === 'application/pdf';
       // The reported MIME type for text files is OS-registry dependent and
       // often empty — fall back to the extension.
-      const isTextFile = file.type === 'application/json'
-        || file.type === 'text/plain'
-        || file.type === 'text/csv'
-        || (!isImage && !isPdf && /\.(json|txt|csv)$/i.test(file.name || ''));
+      const isTextFile = isTextAttachment(file);
       if (!isImage && !isPdf && !isTextFile) {
         if (normalizeAttachmentTabId() === numericTabId) {
           addMessage('system', systemHtml(tSystemHtml('sp.attach.unsupported_type', { name: file.name })));
@@ -10623,11 +13668,20 @@ async function handleAttachedFiles(fileList, tabId = currentTabId) {
             textContent,
             dataUrl,
             mimeType: file.type || '',
+            size: file.size,
+            source: 'user_upload',
           });
         } else {
           const dataUrl = await readFileAsDataUrl(file);
           if (generation !== getAttachmentGeneration(numericTabId)) continue;
-          getPendingAttachmentsForTab(numericTabId).push({ kind: isImage ? 'image' : 'document', name: file.name, dataUrl });
+          getPendingAttachmentsForTab(numericTabId).push({
+            kind: isImage ? 'image' : 'document',
+            name: file.name,
+            dataUrl,
+            mimeType: file.type || (isPdf ? 'application/pdf' : ''),
+            size: file.size,
+            source: 'user_upload',
+          });
         }
       } catch {
         if (generation === getAttachmentGeneration(numericTabId) && normalizeAttachmentTabId() === numericTabId) {
@@ -10651,7 +13705,38 @@ if (attachBtn && fileAttachInput) {
   });
 }
 
+installFileDropHandlers(inputArea, (files) => {
+  handleAttachedFiles(files, currentTabId);
+});
+
 // --- Event Listeners ---
+
+ensureSelectionAskActionEl();
+if (selectionAskActionEl) {
+  if (selectionAskActionEl.parentElement !== document.body) {
+    document.body.appendChild(selectionAskActionEl);
+  }
+  selectionAskActionEl.addEventListener('mousedown', (event) => event.preventDefault());
+  selectionAskActionEl.addEventListener('click', (event) => {
+    event.stopPropagation();
+    askAboutSelectedAnswer();
+  });
+  document.addEventListener('selectionchange', scheduleSelectionAskActionRefresh);
+  document.addEventListener('pointerdown', handleSelectionAskPointerDown, true);
+  document.addEventListener('pointerup', handleSelectionAskPointerUp, true);
+  document.addEventListener('pointercancel', handleSelectionAskPointerUp, true);
+  document.addEventListener('mouseup', handleSelectionAskPointerUp, true);
+  window.addEventListener('pointerup', handleSelectionAskPointerUp, true);
+  window.addEventListener('pointercancel', handleSelectionAskPointerUp, true);
+  document.addEventListener('keyup', scheduleSelectionAskActionRefresh);
+  chatContainerEl?.addEventListener('scroll', handleSelectionAskScroll, { passive: true });
+  window.addEventListener('resize', dismissSelectionAskAction);
+  document.addEventListener('wb-locale-changed', () => {
+    selectionAskActionLocale = '';
+    applySelectionAskActionLabel();
+    scheduleSelectionAskActionRefresh();
+  });
+}
 
 sendBtn.addEventListener('click', sendMessage);
 
@@ -10670,8 +13755,11 @@ queuedMessagesEl?.addEventListener('click', (e) => {
 });
 
 inputEl.addEventListener('keydown', (e) => {
+  // During an active IME composition, every keydown belongs to the input method,
+  // including the Enter that commits the composition rather than sending.
+  if (e.isComposing || e.keyCode === 229) return;
   if (handleSlashCommandKeydown(e)) return;
-  const isPlainArrow = !e.isComposing && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+  const isPlainArrow = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
   if (isPlainArrow) {
     if (e.key === 'ArrowUp' && editLastQueuedComposerMessageForCurrentTab()) {
       e.preventDefault();
@@ -10700,6 +13788,8 @@ document.addEventListener('wb-locale-changed', () => {
   if (slashCommandMatches.length) renderSlashCommandAutocomplete();
   renderQueuedComposerMessages();
   syncSelectionScopeUi();
+  refreshOpenMessageInfoRows();
+  refreshRenderedStepLabels();
   void loadProviders();
 });
 
@@ -10707,18 +13797,42 @@ async function startNewConversationForTab(tabId) {
   if (isConversationClearInProgress(tabId) || newConversationConfirmationState) return false;
   if (!await requestNewConversationConfirmation(tabId)) return false;
   if (!sameTabId(currentTabId, tabId)) return false;
+  const clearingRequestId = localRunRequestIdForTab(tabId);
+  let backgroundClearSucceeded = false;
+  let shouldRecoverActiveRun = false;
   setConversationClearInProgress(tabId, true);
   try {
-    suppressRunUpdatesForClearedConversation(tabId);
+    if (isTabProcessing(tabId)) await abortRunForConversationClear(tabId, clearingRequestId);
+    const clearResult = await sendToBackground('clear_conversation', { tabId, clearContextMenuPrompt: true });
+    backgroundClearSucceeded = true;
+    if (failedConversationClearRecoveryTabs.has(Number(tabId))) {
+      finishFailedConversationClearRecovery(tabId, { processing: false });
+    }
+    suppressRunUpdatesForClearedConversation(tabId, clearingRequestId);
     clearQueuedComposerMessagesForTab(tabId);
-    clearQueuedForTab(tabId);
-    await sendToBackground('clear_context_menu_prompt', { tabId }).catch(() => {});
-    if (isTabProcessing(tabId)) await abortRun(tabId);
-    await sendToBackground('clear_conversation', { tabId });
+    if (clearResult?.clearedContextMenuPromptId) {
+      clearQueuedForTab(tabId, { promptId: clearResult.clearedContextMenuPromptId });
+    }
     await renderClearedConversationForTab(tabId);
     return true;
+  } catch (error) {
+    if (backgroundClearSucceeded) {
+      try {
+        await renderClearedConversationForTab(tabId, { allowCacheClearFailure: true });
+        return true;
+      } catch (localError) {
+        showComposerToast(localError?.message || 'Unable to finish clearing the conversation.', { duration: 7000 });
+        return false;
+      }
+    }
+    shouldRecoverActiveRun = true;
+    holdFailedConversationClearRecovery(tabId);
+    showComposerToast(error?.message || 'Unable to clear the conversation.', { duration: 7000 });
+    return false;
   } finally {
     setConversationClearInProgress(tabId, false);
+    if (shouldRecoverActiveRun) await recoverActiveRunAfterFailedConversationClear(tabId);
+    else if (backgroundClearSucceeded) await drainQueuedPromptsAfterRunSettles(tabId);
   }
 }
 
@@ -10728,6 +13842,23 @@ clearBtn.addEventListener('click', async () => {
 
 selectionScopeNewConversationBtn?.addEventListener('click', async () => {
   await startNewConversationForTab(currentTabId);
+});
+
+selectionScopeRestoreBtn?.addEventListener('click', async () => {
+  const tabId = currentTabId;
+  if (!isSelectionGroundedForTab(tabId) || isTabProcessing(tabId)) return;
+  const confirmed = typeof globalThis.confirm === 'function'
+    ? globalThis.confirm(`${t('sp.selection_scope.restore')}\n\n${t('sp.selection_scope.restore_description')}`)
+    : true;
+  if (!confirmed) return;
+  try {
+    const state = await sendToBackground('restore_selection_scope', { tabId });
+    if (state?.ok !== true) throw new Error(state?.error || 'Unable to restore the broader conversation.');
+    applyConversationScopeState(tabId, state);
+    showComposerToast(t('sp.selection_scope.restore'), { duration: 4000 });
+  } catch (error) {
+    showComposerToast(error?.message || t('sp.selection_scope.description'), { duration: 6000 });
+  }
 });
 
 providerSelect.addEventListener('change', async () => {
@@ -10865,6 +13996,36 @@ settingsBtn.addEventListener('click', () => {
   browser.runtime.openOptionsPage();
 });
 
+function standaloneWindowBounds(display = window.screen) {
+  const availableWidth = Math.max(1, Number(display?.availWidth) || 1280);
+  const availableHeight = Math.max(1, Number(display?.availHeight) || 800);
+  const availableLeft = Number(display?.availLeft) || 0;
+  const availableTop = Number(display?.availTop) || 0;
+  const width = Math.min(availableWidth, Math.max(360, Math.round(availableWidth * 0.9)));
+  const height = Math.min(availableHeight, Math.max(560, Math.round(availableHeight * 0.9)));
+  return {
+    width,
+    height,
+    left: availableLeft + Math.round((availableWidth - width) / 2),
+    top: availableTop + Math.round((availableHeight - height) / 2),
+  };
+}
+
+if (expandBtn) {
+  if (isStandaloneWindow) {
+    expandBtn.style.display = 'none';
+  } else {
+    expandBtn.addEventListener('click', () => {
+      const standaloneUrl = browser.runtime.getURL('src/ui/sidepanel.html?mode=ask&standalone=true');
+      browser.windows.create({
+        url: standaloneUrl,
+        type: 'popup',
+        ...standaloneWindowBounds(),
+      });
+    });
+  }
+}
+
 // --- Language picker (compact trigger + accessible custom listbox) ---
 if (languageSelect) {
   initializeLanguagePicker();
@@ -10873,12 +14034,14 @@ if (languageSelect) {
     applyDOMTranslations(document);
     syncLanguagePicker();
     updateInputPlaceholder();
+    syncSelectionScopeUi();
     scheduleChatNavigationUpdate();
   });
   document.addEventListener('wb-locale-changed', () => {
     languageSelect.value = getLocale();
     syncLanguagePicker();
     updateInputPlaceholder();
+    syncSelectionScopeUi();
     scheduleChatNavigationUpdate();
   });
 }
@@ -10959,5 +14122,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 // --- Start ---
+document.addEventListener('wb-locale-changed', () => standaloneRagReadiness?.render());
+globalThis.addEventListener('pagehide', () => standaloneRagReadiness?.close(), { once: true });
 startInputPlaceholderRotation();
 init();

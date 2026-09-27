@@ -1,0 +1,59 @@
+name: WebBrain Cloud Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webbrain-cloud-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    # The cloud-smoke pack budgets ~133 min serially at --concurrency 1
+    # (5 × 10 min provisioning + per-scenario preload/run/scheduled timeouts),
+    # so a 120-minute job was killed before the last scenario could finish or
+    # clean up. Keep this above the catalog's worst case plus npm ci/test:ci.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run test:ci
+
+      - name: Run WebBrain Cloud smoke tests
+        env:
+          WEBBRAIN_API_KEY: ${{ secrets.WEBBRAIN_API_KEY }}
+          WEBBRAIN_BASE_URL: ${{ vars.WEBBRAIN_BASE_URL }}
+          GNIPPETS_BASE_URL: ${{ vars.GNIPPETS_BASE_URL }}
+          GNIPPETS_E2E_CONTROL_TOKEN: ${{ secrets.GNIPPETS_E2E_CONTROL_TOKEN }}
+          CAPSOLVER_API_KEY: ${{ secrets.CAPSOLVER_API_KEY }}
+        run: node ci/run.mjs --pack cloud-smoke --concurrency 1 --no-video
+
+      - name: Publish smoke summary
+        if: always()
+        shell: bash
+        run: |
+          summary=$(find ci/artifacts -name summary.md -type f -print -quit 2>/dev/null || true)
+          if [[ -n "$summary" ]]; then
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No WebBrain Cloud smoke summary was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload sanitized smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webbrain-cloud-smoke-${{ github.run_id }}
+          path: ci/artifacts/
+          if-no-files-found: warn
+          retention-days: 7

@@ -1,0 +1,40 @@
+{
+  "id": "064",
+  "category": "mode-boundary",
+  "description": "Act + simple question. Act allows read; no need to be ceremonious.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 3556,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 8
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "read_page",
+      "args": {}
+    },
+    "antiPatterns": [
+      {
+        "match": "clarify({question:\"...\"})",
+        "reason": "Clear request, no ambiguity."
+      }
+    ],
+    "successRubric": "Read the page and call done with a summary. Don't over-think."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "<function name=\"get_accessibility_tree\"><param name=\"filter\">visible</param><param name=\"maxDepth\">8</param></function>",
+  "usage": {
+    "prompt_tokens": 9723,
+    "completion_tokens": 25,
+    "total_tokens": 9748
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "id": "089",
+  "image": "images/089.png",
+  "threshold": 0.72,
+  "checks": [
+    {
+      "id": "purpose",
+      "dimension": "page_purpose",
+      "section": 1,
+      "kind": "any",
+      "values": [
+        "dashboard",
+        "overview",
+        "system health",
+        "incident"
+      ],
+      "weight": 1,
+      "critical": true
+    },
+    {
+      "id": "heading",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "literal",
+      "value": "Incident command",
+      "weight": 1,
+      "critical": false,
+      "caseSensitive": true
+    },
+    {
+      "id": "target-metric",
+      "dimension": "visible_text",
+      "section": 2,
+      "kind": "all",
+      "values": [
+        "ETA",
+        "Unknown"
+      ],
+      "weight": 2,
+      "critical": true
+    },
+    {
+      "id": "alert",
+      "dimension": "state_signals",
+      "section": 4,
+      "kind": "literal",
+      "value": "Payments degraded in EU-West",
+      "weight": 2,
+      "critical": true,
+      "caseSensitive": true
+    },
+    {
+      "id": "unknown",
+      "dimension": "unknowns",
+      "section": 6,
+      "kind": "any",
+      "values": [
+        "ETA",
+        "unknown"
+      ],
+      "weight": 2,
+      "critical": true
+    }
+  ],
+  "successRubric": "Read ETA = Unknown and report the alert without guessing unknown values."
+}

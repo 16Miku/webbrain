@@ -1,0 +1,50 @@
+{
+  "id": "002",
+  "category": "loop-bad-url",
+  "description": "Auto-completed AMO URL hit a 404. Should pivot rather than retry.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 16006,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "The requested addon page returned a 404 error. I cannot safely navigate to a non-existent addon page. Please provide the correct addon name or URL, or confirm if you want me to search for it.",
+      "options": [
+        "Provide the correct addon name or URL",
+        "Search for the addon"
+      ],
+      "reason": "The requested URL is invalid and the page returned a 404 error, so I cannot safely navigate to it."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "navigate",
+      "args": {
+        "url": "https://addons.mozilla.org/en-US/firefox/search/?q=tabby+cat"
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "navigate({url:\"https://addons.mozilla.org/en-US/firefox/addon/tabby-cat-extension/\"})",
+        "reason": "Same URL that just 404ed."
+      },
+      {
+        "match": "navigate({url:\"https://addons.mozilla.org/en-US/firefox/addon/tabby-cat/\"})",
+        "reason": "Acceptable single retry with corrected slug, but only once; flagged as anti-pattern only if combined with no fallback plan."
+      }
+    ],
+    "successRubric": "Acceptable: search AMO for \"tabby cat\" to find the real slug, OR clarify with user. Trying ONE slug variant is fine; looping on the same slug is the failure."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "The requested addon page returned a 404 error. I cannot safely navigate to a non-existent addon page. Please provide the correct addon name or URL, or confirm if you want me to search for it.\n<function name=\"clarify\"><param name=\"question\">The requested addon page returned a 404 error. I cannot safely navigate to a non-existent addon page. Please provide the correct addon name or URL, or confirm if you want me to search for it.</param><param name=\"options\">['Provide the correct addon name or URL', 'Search for the addon']</param><param name=\"reason\">The requested URL is invalid and the page returned a 404 error, so I cannot safely navigate to it.</param></function>",
+  "usage": {
+    "prompt_tokens": 9870,
+    "completion_tokens": 153,
+    "total_tokens": 10023
+  }
+}

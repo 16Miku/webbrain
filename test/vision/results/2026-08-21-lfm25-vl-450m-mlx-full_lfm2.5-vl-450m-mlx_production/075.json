@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-21T08:31:29.454Z",
+  "id": "075",
+  "model": "lfm2.5-vl-450m-mlx",
+  "endpoint": "http://127.0.0.1:1234/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "075",
+    "difficulty": {
+      "level": 4,
+      "slug": "advanced",
+      "label": "Advanced"
+    },
+    "category": "map-and-travel",
+    "title": "Tren rotası",
+    "image": "images/075.png",
+    "question": "Which map item is selected, what detail is shown, and how many pins are visible? Focus on the “Tren rotası” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/075.png",
+    "bytes": 107848,
+    "sha256": "587cb4b4ea563b39f477ee3274e761b2105deb74079f80f1cf98f895a910c3e3"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "The screenshot shows a web-automation agent's browser viewport with the following elements:\n\n1. **Top Bar**:\n   - The web-automation agent's name \"Web-Autom\" is displayed at the top.\n   - There are navigation tabs labeled: Home, Dashboard, Activity, and a drop-down menu for \"Web-Autom\" with no options selected.\n\n2. **Left Sidebar**:\n   - A vertical sidebar on the left contains a list of options with corresponding labels and placeholders:\n     - \"Admin Dash\"\n     - \"Old Conversion\"\n     - \"Start Point\"\n     - \"Control Steps\"\n\n3. **Main Content Area**:\n   - The main content area has a white background with the following elements:\n\n     1. **Header**:\n        - \"Trem-Notas\" is the header of the current page.\n     2. **Left Column**:\n        - \"Admin Dash\" (with a purple button)\n        - \"Old Conversion\"\n        - \"Start Point\"\n        - \"Control Steps\" (with a purple button)\n     3. **Right Column**:\n        - A map with red pins indicating locations.\n        - A purple line connecting the pins, representing a trend or path.\n\n4. **Map**:\n   - The map is displayed on the right side of the screen, with a light green background and white pin markers.\n   - The map has a grid pattern overlay, suggesting it might be used for visualizing data or trends.\n\n5. **Footer**:\n   - The bottom of the screen contains a footer with additional options and settings, but these are not visible in this screenshot.\n\nThis web-automation agent's viewport appears to be configured for a specific page, likely related to tracking or analyzing \"Trem-Notas\" (possibly a term in a specific context).",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 340,
+      "completion_tokens": 397,
+      "total_tokens": 737,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      }
+    },
+    "timings": null
+  },
+  "latencyMs": {
+    "headers": 4,
+    "total": 837
+  },
+  "score": {
+    "success": false,
+    "ratio": 0.33333333333333337,
+    "earned": 2.666666666666667,
+    "possible": 8,
+    "threshold": 0.72,
+    "sectionCount": 5,
+    "criticalFailures": [
+      "selection"
+    ],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 0,
+        "possible": 1,
+        "ratio": 0
+      },
+      "visible_text": {
+        "earned": 0,
+        "possible": 1,
+        "ratio": 0
+      },
+      "visual_reasoning": {
+        "earned": 1,
+        "possible": 4,
+        "ratio": 0.25
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "map",
+          "tracking",
+          "route",
+          "hotel",
+          "café"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Tren rotası",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "selection",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "all",
+        "values": [
+          "Ankara Garı",
+          "18:42 varış"
+        ],
+        "weight": 3,
+        "critical": true,
+        "passed": false,
+        "matched": [],
+        "scopeFound": true
+      },
+      {
+        "id": "pin-count",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "any",
+        "values": [
+          "5",
+          "five"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "5"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}
