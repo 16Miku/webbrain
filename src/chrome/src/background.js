@@ -4119,7 +4119,9 @@ async function handleMessage(msg, sender) {
     }
 
     case 'list_provider_models': {
-      return await providerManager.listProviderModels(msg.providerId);
+      return await providerManager.listProviderModels(msg.providerId, {
+        detectServerIdentity: msg.detectServerIdentity === true,
+      });
     }
 
     case 'list_ollama_models': {
