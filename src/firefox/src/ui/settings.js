@@ -2621,6 +2621,16 @@ function renderProviders() {
         PROMPT_TIER_FIELD,
       ],
     },
+    osaurus: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:1337/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'llama-3.2-3b-instruct' },
+        CONTEXT_WINDOW_FIELD,
+        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        PROMPT_TIER_FIELD,
+      ],
+    },
     jan: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:1337/v1' },
@@ -3047,7 +3057,7 @@ function renderProviders() {
           </div>
         `;
       } else {
-        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
         const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';
