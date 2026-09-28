@@ -45720,20 +45720,24 @@ test('saving a valid CapSolver key opts in without overriding legacy opt-outs', 
       `${label}: saving a valid CapSolver key should record explicit consent`,
     );
 
-    assert.match(
-      background,
-      new RegExp(`const stored = await ${api}\\.storage\\.local\\.get\\(\\['capsolverApiKey', 'captchaSolverEnabled'\\]\\);[\\s\\S]*?agent\\.captchaSolverEnabled = isCapsolverEnabled\\([\\s\\S]*?stored\\.capsolverApiKey,[\\s\\S]*?stored\\.captchaSolverEnabled,[\\s\\S]*?\\);`),
-      `${label}: background startup should require both a valid key and prior consent`,
+    assert.ok(
+      background.includes(`const stored = await ${api}.storage.local.get([`)
+        && background.includes('isCapsolverEnabled(stored.capsolverApiKey, stored.captchaSolverEnabled)')
+        && background.includes('stored.webbrainCloudManaged === true')
+        && background.includes('stored.webbrainCloudCapsolverBrokerEnabled === true'),
+      `${label}: background startup should require consent and a valid key or managed Cloud broker`,
     );
     assert.match(
       background,
-      /if \(changes\.capsolverApiKey \|\| changes\.captchaSolverEnabled\) \{[\s\S]*?loadCaptchaSolver\(\)[\s\S]*?agent\._refreshSystemPrompts\(\)/,
-      `${label}: key or consent changes should refresh CapSolver availability immediately`,
+      /if \(changes\.capsolverApiKey \|\| changes\.captchaSolverEnabled[\s\S]*?changes\.webbrainCloudCapsolverBrokerEnabled\) \{[\s\S]*?loadCaptchaSolver\(\)[\s\S]*?agent\._refreshSystemPrompts\(\)/,
+      `${label}: key, consent, or broker changes should refresh CapSolver availability immediately`,
     );
-    assert.match(
-      agent,
-      new RegExp(`const stored = await ${api}\\.storage\\.local\\.get\\(\\['capsolverApiKey', 'captchaSolverEnabled'\\]\\);[\\s\\S]*?const apiKey = normalizeCapsolverApiKey\\(stored\\.capsolverApiKey\\);[\\s\\S]*?if \\(!isCapsolverEnabled\\(apiKey, stored\\.captchaSolverEnabled\\)\\)`),
-      `${label}: solve_captcha should revalidate the saved key and consent at dispatch time`,
+    assert.ok(
+      agent.includes(`const stored = await ${api}.storage.local.get([`)
+        && agent.includes('stored.captchaSolverEnabled !== true')
+        && agent.includes('!isCapsolverEnabled(apiKey, true)')
+        && agent.includes('const result = await solveCaptcha(apiKey, params, { useCloudBroker });'),
+      `${label}: solve_captcha should revalidate consent and the direct key when the Cloud broker is absent`,
     );
 
     assert.equal(capsolverConfig.normalizeCapsolverApiKey('  CAP-0123456789abcdefghij  '), 'CAP-0123456789abcdefghij');

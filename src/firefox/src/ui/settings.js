@@ -697,8 +697,11 @@ async function init() {
   await loadUserMemorySettings();
 
   // A valid saved key is the CapSolver enable control.
-  const captchaStored = await browser.storage.local.get('capsolverApiKey');
-  if (captchaApiKeyInput) captchaApiKeyInput.value = captchaStored.capsolverApiKey || '';
+  const captchaStored = await browser.storage.local.get(['capsolverApiKey', 'webbrainCloudManaged']);
+  const cloudCaptchaCard = document.getElementById('captcha-card');
+  if (cloudCaptchaCard) cloudCaptchaCard.style.display = captchaStored.webbrainCloudManaged === true ? 'none' : '';
+  if (captchaApiKeyInput) captchaApiKeyInput.value = captchaStored.webbrainCloudManaged === true
+    ? '' : (captchaStored.capsolverApiKey || '');
 
   await loadCustomSkills();
 
