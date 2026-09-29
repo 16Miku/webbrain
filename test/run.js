@@ -6965,6 +6965,48 @@ test('chat workflow state survives worker restart and is durable before dispatch
       assert.equal(discordSent.chatWorkflow.newMessages[0].direction, 'unknown', `${AgentClass.name}: delivery verification must not claim the Discord message author`);
       assert.equal(discordSender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: default-avatar Discord send remained pending`);
 
+      const discordPreviewSender = new AgentClass({});
+      discordPreviewSender.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      discordPreviewSender.conversationIds.set(tabId, `conversation-discord-preview-${index}`);
+      discordPreviewSender._persist = () => {};
+      discordPreviewSender._persistNow = async () => true;
+      discordPreviewSender._messageRecipientGuardBlock = async () => null;
+      const discordPreviewThreadKey = 'dom:discord:123:789';
+      const discordPreviewBefore = {
+        ...baseSnapshot,
+        threadKey: discordPreviewThreadKey,
+        url: 'https://discord.com/channels/123/789',
+        observedAt: new Date().toISOString(),
+        composer: { ...baseSnapshot.composer, ref: `composer-preview-${index}` },
+      };
+      let discordPreviewAfter;
+      const discordPreviewObservations = [discordPreviewBefore];
+      discordPreviewSender._readChatObservation = async () => discordPreviewObservations.shift() || discordPreviewAfter;
+      discordPreviewSender.executeTool = async () => {
+        const observedAt = new Date().toISOString();
+        discordPreviewAfter = {
+          ...discordPreviewBefore,
+          observedAt,
+          messages: [{
+            id: `discord:789:preview-${index}`,
+            direction: 'outgoing',
+            text: 'https://example.com/release\nAttachment: Release notes\nAttachment: Preview description',
+            authoredText: 'https://example.com/release',
+            timestamp: observedAt,
+          }],
+        };
+        return { success: true, dispatched: true };
+      };
+      const discordPreviewSent = await discordPreviewSender._sendChatWorkflow(tabId, {
+        thread_key: discordPreviewThreadKey,
+        composer_ref: `composer-preview-${index}`,
+        text: 'https://example.com/release',
+      });
+      assert.equal(discordPreviewSent.success, true, `${AgentClass.name}: outgoing URL bubble with preview did not report send success`);
+      assert.equal(discordPreviewSent.sent, true, `${AgentClass.name}: outgoing URL bubble with preview was not reported as sent`);
+      assert.equal(discordPreviewSent.deliveryVerified, true, `${AgentClass.name}: authored URL was not used for final delivery verification`);
+      assert.equal(discordPreviewSender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: previewed URL send remained pending`);
+
       const nondurableMarkerSender = new AgentClass({});
       nondurableMarkerSender.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
       nondurableMarkerSender.conversationIds.set(tabId, `conversation-discord-nondurable-${index}`);

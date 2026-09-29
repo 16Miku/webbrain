@@ -23078,7 +23078,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const previouslySeenIds = new Set(observed.session.seenMessageIds);
     const outgoingVerified = verifiedState.snapshot.messages.some(message => (
       message.direction === 'outgoing'
-        && message.text === decision.text
+        && (message.authoredText ?? message.text) === decision.text
         && !previouslySeenIds.has(message.id)
     )) || verifiedState.pendingDeliveryVerified === true;
     const deliveryVerified = outgoingVerified && verifiedState.session.pendingOutbound === null;
