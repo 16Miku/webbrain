@@ -137,7 +137,7 @@ Use observed page parameters to prepare fallback tasks. Method IDs are WebBrain 
 
 Saved weights determine execution order, regardless of array order. Supply a task for each enabled provider that can solve that family and for which the required inputs are available. The tool does not invent another provider's parameters. Page URLs must belong to the active tab or an observed frame. Native methods do not automatically scrape every site's internal configuration.
 
-Provider-specific identifiers (for example `appId`/`app_id` and `miseryKey`/`misery_key`) must agree across fallback entries before any paid request.
+Provider-specific identifiers (for example `appId`/`app_id` and `miseryKey`/`misery_key`) must agree across fallback entries before any paid request. Recognition fallbacks must use the same image/audio and selection instruction. reCAPTCHA v2 fallbacks must also agree on `data-s` and visible/invisible mode when supplied.
 
 `solution` remains structured: tokens, cookie values, GeeTest objects, coordinates, arrays of booleans, text, and provider-specific response fields are not coerced into a single token string. A synchronous ready response is consumed without a redundant polling request.
 

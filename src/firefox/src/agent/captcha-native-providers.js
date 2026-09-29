@@ -205,9 +205,22 @@ function validateFallbackIdentifiers(built) {
       const parts = family === 'temu_recognition'
         ? task.parts || [task.part1, task.part2, task.part3]
         : null;
-      return JSON.stringify([media[0], parts]);
+      const instructions = ['comment', 'task', 'question', 'metadata.Task', 'metadata.TaskDefinition', 'metadata.TaskArgument']
+        .map(path => at(task, path)).filter(usable);
+      if (new Set(instructions.map(String)).size > 1) throw new Error('Fallback recognition tasks must use the same observed challenge instructions.');
+      return JSON.stringify([media[0], parts, instructions[0] ?? null]);
     });
-    if (new Set(signatures).size > 1) throw new Error('Fallback recognition tasks must use the same observed challenge media.');
+    if (new Set(signatures).size > 1) throw new Error('Fallback recognition tasks must use the same observed challenge media and instructions.');
+  }
+  if (['recaptcha_v2', 'recaptcha_v2_enterprise'].includes(family)) {
+    const modes = built.map(({ task }) => task.isInvisible ?? task.invisible);
+    if (modes.some(mode => mode !== undefined)) {
+      if (modes.some(mode => ![true, false, 0, 1].includes(mode))
+          || new Set(modes.map(mode => mode === true || mode === 1 ? 'invisible'
+            : mode === false || mode === 0 ? 'visible' : 'missing')).size > 1) {
+        throw new Error('Fallback tasks must use the same observed reCAPTCHA visibility mode.');
+      }
+    }
   }
   const groups = [
     { aliases: ['websiteURL', 'pageurl', 'url'], requireAll: false },

@@ -297,10 +297,26 @@ for (const browser of ['chrome', 'firefox']) {
     assert.throws(() => native.prepareNativeCaptchaTasks(entries.map(entry => ({ id: entry.provider, apiKey: 'key' })), entries), /same observed challenge|same proxy identity/);
     assert.equal(calls.length, 0);
   });
+  for (const [family, first, second] of [
+    ['v2', ['2captcha', 'RecaptchaV2TaskProxyless', { websiteURL: url, websiteKey: 'site', isInvisible: true }], ['solvecaptcha', 'recaptcha_v2', { pageurl: url, googlekey: 'site', invisible: 1 }]],
+    ['v2 enterprise', ['2captcha', 'RecaptchaV2EnterpriseTaskProxyless', { websiteURL: url, websiteKey: 'site', isInvisible: true }], ['solvecaptcha', 'recaptcha_v2_enterprise', { pageurl: url, googlekey: 'site', invisible: 1 }]],
+  ]) test(`${browser}: reCAPTCHA ${family} visibility agrees before fallback`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const entries = [first, second].map(([provider, method, parameters]) => ({ provider, method, parameters: structuredClone(parameters) }));
+    const enabled = entries.map(entry => ({ id: entry.provider, apiKey: 'key' }));
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, entries).length, 2);
+    entries[1].parameters.invisible = 0;
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed reCAPTCHA visibility mode/);
+    delete entries[1].parameters.invisible;
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed reCAPTCHA visibility mode/);
+    assert.equal(calls.length, 0);
+  });
   const recognitionPairs = [
     ['coordinates body', ['2captcha', 'CoordinatesTask', { body: 'image-A' }], ['solvecaptcha', 'coordinates', { body: 'image-A' }], task => { task.body = 'image-B'; }],
     ['image-to-text array alias', ['2captcha', 'ImageToTextTask', { body: 'image-A' }], ['nopecha', 'recognition/textcaptcha', { image_data: ['image-A'] }], task => { task.image_data = ['image-B']; }],
     ['Temu parts', ['2captcha', 'TemuImageTask', { image: 'background', parts: ['one', 'two', 'three'] }], ['solvecaptcha', 'temuimage', { body: 'background', part1: 'one', part2: 'two', part3: 'three' }], task => { task.part2 = 'different'; }],
+    ['FunCaptcha instruction', ['2captcha', 'GridTask:funcaptcha_recognition', { body: 'image-A', comment: 'cars' }], ['nopecha', 'recognition/funcaptcha', { image_data: ['image-A'], task: 'cars' }], task => { task.task = 'bicycles'; }],
+    ['reCAPTCHA recognition instruction', ['capsolver', 'ReCaptchaV2Classification', { image: 'image-A', question: 'cars' }], ['nopecha', 'recognition/recaptcha', { image_data: ['image-A'], grid: '3x3', task: 'cars' }], task => { task.task = 'bicycles'; }],
   ];
   for (const [label, a, b, change] of recognitionPairs) test(`${browser}: ${label} must match before paid fallback`, t => {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
