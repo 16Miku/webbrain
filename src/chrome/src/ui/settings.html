@@ -1383,6 +1383,13 @@
     #safesocial-labels .safesocial-label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
     #safesocial-labels input { width: auto; margin: 0; flex-shrink: 0; }
     #safesocial-status { margin-top: 12px; }
+    #captcha-heading { font-size: 15px; margin-bottom: 8px; }
+    .captcha-description { font-size: 12px; color: var(--text2); line-height: 1.55; margin: 0 0 14px; }
+    .captcha-provider { padding: 18px 0; border-top: 1px solid var(--border); }
+    .captcha-provider h4 { font-size: 13px; margin: 0 0 8px; }
+    .captcha-provider h4 a { color: var(--accent); text-decoration: none; }
+    .captcha-provider h4 a:hover { text-decoration: underline; }
+    .captcha-provider .btn-row { flex-wrap: wrap; }
   </style>
   <link rel="stylesheet" href="apocalypse-comm.css">
   <link rel="stylesheet" href="download-tracker.css">
@@ -1805,22 +1812,40 @@
             </label>
           </div>
 
-          <div class="provider-card" id="captcha-card">
-            <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.captcha.desc_html"></div>
+          <div class="provider-card" id="captcha-card" aria-labelledby="captcha-heading">
+            <h3 id="captcha-heading" data-i18n="st.captcha.heading"></h3>
+            <p class="captcha-description" data-i18n="st.captcha.order"></p>
 
-            <div class="field">
-              <label data-i18n="st.captcha.api_key.label"></label>
-              <input type="password" id="captcha-api-key" placeholder="CAP-XXXXXXXXXXXXXXXXXXXX" pattern="CAP-[A-Za-z0-9_-]{20,}" minlength="24" autocomplete="off" spellcheck="false">
-            </div>
+            <section class="captcha-provider" aria-labelledby="capsolver-heading">
+              <h4 id="capsolver-heading"><a href="https://capsolver.com" target="_blank" rel="noopener noreferrer">CapSolver</a></h4>
+              <p class="captcha-description" data-i18n="st.captcha.capsolver_desc"></p>
+              <div class="field">
+                <label for="captcha-api-key" data-i18n="st.captcha.api_key.label"></label>
+                <input type="password" id="captcha-api-key" placeholder="CAP-XXXXXXXXXXXXXXXXXXXX" pattern="CAP-[A-Za-z0-9_-]{20,}" minlength="24" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="btn-row">
+                <button class="btn-primary" id="btn-save-captcha" data-i18n="st.captcha.save"></button>
+                <button class="btn-secondary" id="btn-test-captcha" data-i18n="st.captcha.check_balance"></button>
+                <button class="btn-secondary" id="btn-clear-captcha" data-i18n="st.captcha.clear"></button>
+              </div>
+              <div class="test-result" id="test-captcha" role="status" aria-live="polite"></div>
+            </section>
 
-            <div class="btn-row">
-              <button class="btn-primary" id="btn-save-captcha" data-i18n="st.captcha.save"></button>
-              <button class="btn-secondary" id="btn-test-captcha" data-i18n="st.captcha.check_balance"></button>
-              <button class="btn-secondary" id="btn-clear-captcha" data-i18n="st.captcha.clear"></button>
-            </div>
-            <div class="test-result" id="test-captcha"></div>
-
-            <div class="info-box" style="margin-top:16px;" data-i18n-html="st.captcha.security_html"></div>
+            <section class="captcha-provider" aria-labelledby="two-captcha-heading">
+              <h4 id="two-captcha-heading"><a href="https://2captcha.com" target="_blank" rel="noopener noreferrer">2Captcha</a></h4>
+              <p class="captcha-description" data-i18n="st.captcha.two_desc"></p>
+              <div class="field">
+                <label for="two-captcha-api-key" data-i18n="st.captcha.two_key"></label>
+                <input type="password" id="two-captcha-api-key" placeholder="0123456789abcdef0123456789abcdef" pattern="[A-Fa-f0-9]{32}" minlength="32" maxlength="32" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="btn-row">
+                <button class="btn-primary" id="btn-save-two-captcha" data-i18n="st.captcha.save"></button>
+                <button class="btn-secondary" id="btn-test-two-captcha" data-i18n="st.captcha.check_balance"></button>
+                <button class="btn-secondary" id="btn-clear-two-captcha" data-i18n="st.captcha.clear"></button>
+              </div>
+              <div class="test-result" id="test-two-captcha" role="status" aria-live="polite"></div>
+            </section>
+            <div class="info-box" style="margin-top:16px;" data-i18n="st.captcha.providers_security"></div>
           </div>
 
 
