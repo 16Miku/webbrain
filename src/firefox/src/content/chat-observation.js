@@ -137,8 +137,8 @@
 
   const discordChannel = (composer) => {
     if (!composer || !/^(?:www\.)?discord\.com$/.test(window.location?.hostname || '')) return null;
-    const route = /^\/channels\/(\d+)\/(\d+)\/?$/.exec(window.location?.pathname || '');
-    const directMessageRoute = /^\/channels\/@me\/(\d+)\/?$/.exec(window.location?.pathname || '');
+    const route = /^\/channels\/(\d+)\/(\d+)(?:\/\d+)?\/?$/.exec(window.location?.pathname || '');
+    const directMessageRoute = /^\/channels\/@me\/(\d+)(?:\/\d+)?\/?$/.exec(window.location?.pathname || '');
     if ((!route && !directMessageRoute)
         || !composer.matches?.('[data-slate-editor="true"][contenteditable="true"][role="textbox"]')) return null;
     const root = composer.closest('main,[role="main"]');
@@ -161,10 +161,10 @@
         .some(node => {
           try {
             const url = new URL(attribute(node, 'href'), window.location.href);
+            const selectedDmChannelId = /^\/channels\/@me\/(\d+)(?:\/\d+)?\/?$/.exec(url.pathname)?.[1];
             return visible(node) && attribute(node, 'aria-current') === 'page'
               && url.origin === window.location.origin
-              && /^\/channels\/@me\/\d+\/?$/.test(url.pathname)
-              && url.pathname.replace(/\/$/, '') !== routePath;
+              && !!selectedDmChannelId && selectedDmChannelId !== channelId;
           } catch { return false; }
         });
     const name = /^Message #(.+)$/.exec(attribute(composer, 'aria-label'))?.[1]
@@ -289,6 +289,15 @@
     } catch { return ''; }
   };
 
+  const discordGlobalAvatarUserId = (node) => {
+    try {
+      const url = new URL(attribute(node, 'src'), window.location.href);
+      return url.hostname === 'cdn.discordapp.com'
+        ? /^\/avatars\/(\d+)\//.exec(url.pathname)?.[1] || ''
+        : '';
+    } catch { return ''; }
+  };
+
   const discordDefaultAvatarIndex = (node) => {
     try {
       const url = new URL(attribute(node, 'src'), window.location.href);
@@ -385,12 +394,14 @@
         || (!username ? previousAuthor : '');
       const avatar = username?.closest('h3')?.parentElement?.querySelector('img[src]');
       const avatarId = discordAvatarUserId(avatar);
+      const globalAvatarId = discordGlobalAvatarUserId(avatar);
       const defaultAvatarIndex = discordDefaultAvatarIndex(avatar);
       let direction = 'unknown';
       if (ownAvatarId && avatarId) direction = ownAvatarId === avatarId ? 'outgoing' : 'incoming';
       else if (ownAvatarId && defaultAvatarIndex) direction = 'incoming';
       else if (ownDefaultAvatarIndex && defaultAvatarIndex
           && ownDefaultAvatarIndex !== defaultAvatarIndex) direction = 'incoming';
+      else if (ownDefaultAvatarIndex && globalAvatarId) direction = 'incoming';
       else if (!username) direction = previousDirection;
       previousAuthor = author;
       previousDirection = direction;

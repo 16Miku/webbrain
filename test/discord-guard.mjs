@@ -40,6 +40,8 @@ for (const [kind, engine, AgentClass, policy] of [
   test(`${kind}: Discord management and observation regressions`, async t => {
     assert.deepEqual(policy(url), {adapterName:'discord',verifyActiveRecipient:true});
     assert.deepEqual(policy('https://discord.com/channels/@me/456'), {adapterName:'discord',verifyActiveRecipient:true});
+    assert.deepEqual(policy('https://discord.com/channels/123/456/789'), {adapterName:'discord',verifyActiveRecipient:true});
+    assert.deepEqual(policy('https://discord.com/channels/@me/456/789'), {adapterName:'discord',verifyActiveRecipient:true});
     assert.notEqual(policy('https://discord.com.evil.example/channels/123/456')?.adapterName,'discord');
     const browser = await engine.launch();
     const sources = await Promise.all(['accessibility-tree.js','rich-text-toolbar-heuristic.js','chat-observation.js','content.js']
@@ -229,7 +231,7 @@ for (const [kind, engine, AgentClass, policy] of [
           await page.locator('#composer').evaluate(el=>el.setAttribute('aria-label','Message Ada'));
           await page.locator('main').evaluate(el=>el.setAttribute('aria-label','Direct message'));
           await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.setAttribute('aria-label','Conversation'));
-          await page.evaluate(()=>history.replaceState(null,'','/channels/@me/456'));
+          await page.evaluate(()=>history.replaceState(null,'','/channels/@me/456/1001'));
           await page.locator('#composer').focus();
           const observe=()=>page.evaluate(()=>window.__wb_observe_chat_dom({}));
           const result=await observe();
@@ -260,6 +262,12 @@ for (const [kind, engine, AgentClass, policy] of [
             id:'discord:456:1001', direction:'incoming', text:'Hello from the fixture',
             author:'Ficsit', timestamp:'2026-09-29T01:00:00.000Z',
           }]);
+          await page.evaluate(()=>history.replaceState(null,'','/channels/123/456/1001'));
+          const permalink=await observe();
+          assert.equal(permalink.success,true,JSON.stringify(permalink));
+          assert.equal(permalink.conversationId,result.conversationId);
+          assert.equal(permalink.threadKey,result.threadKey);
+          await page.evaluate(()=>history.replaceState(null,'','/channels/123/456'));
           await page.locator('#composer').evaluate(el=>el.setAttribute('aria-label','Nachricht #general'));
           await page.locator('main').evaluate(el=>el.setAttribute('aria-label','general (Kanal)'));
           await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.setAttribute('aria-label','Nachrichten in general'));
@@ -281,7 +289,7 @@ for (const [kind, engine, AgentClass, policy] of [
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/guilds/123/users/11/avatars/self.webp?size=160'));
           assert.equal((await observe()).messages[0].direction,'unknown','a default-avatar account cannot disprove a guild-profile self avatar');
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/22/other.webp?size=160'));
-          assert.equal((await observe()).messages[0].direction,'unknown','a default-avatar account has no proven user ID for custom-avatar rows');
+          assert.equal((await observe()).messages[0].direction,'incoming','a global custom avatar cannot belong to a default-avatar account');
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
           const defaultAvatars=await observe();
           assert.equal(defaultAvatars.messages[0].direction,'unknown','shared Discord default avatars do not identify message authors');
@@ -290,7 +298,7 @@ for (const [kind, engine, AgentClass, policy] of [
           await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/11/self.webp?size=56'));
           assert.equal((await observe()).messages[0].direction,'incoming','a default avatar cannot belong to the custom-avatar account');
           await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
-          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/22/other.webp?size=160'));
+          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/guilds/123/users/22/avatars/other.webp?size=160'));
           assert.equal((await observe()).messages[0].direction,'unknown','a guild-specific avatar can belong to a default-avatar account');
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
           let advanced=advanceChatSession(createChatSession({threadKey:result.threadKey}),defaultAvatars);
