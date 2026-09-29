@@ -3,6 +3,7 @@
 // Works identically in Chrome MV3 and Firefox MV2.
 
 import en from './locales/en.js';
+import { captchaEnglish, captchaTranslations } from './locales/captcha-copy.mjs';
 import { safeSocialEnglish, safeSocialTranslations } from './locales/safesocial-copy.mjs';
 import es from './locales/es.js';
 import fr from './locales/fr.js';
@@ -33,6 +34,8 @@ const DICTS = Object.fromEntries(Object.entries({ en, es, fr, tr, zh, ru, uk, ar
     ...dict,
     ...providerGuideEnglish,
     ...safeSocialEnglish,
+    ...captchaEnglish,
+    ...(captchaTranslations[code] || {}),
     ...(safeSocialTranslations[code] || {}),
     ...(providerGuideTranslations[code] || {}),
   }]));

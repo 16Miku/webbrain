@@ -78,6 +78,8 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   enableAllPackagedSkills: false,
   captchaSolverEnabled: false,
   capsolverApiKey: '',
+  twoCaptchaApiKey: '',
+  twoCaptchaEnabled: false,
   systemOneEnabled: false,
   systemOneWatchEnabled: false,
   systemOneCompletionEnabled: false,
@@ -124,6 +126,7 @@ const BOOLEAN_KEYS = new Set([
   USER_MEMORY_FORM_CAPTURE_KEY,
   'enableAllPackagedSkills',
   'captchaSolverEnabled',
+  'twoCaptchaEnabled',
   'systemOneEnabled',
   'systemOneWatchEnabled',
   'systemOneCompletionEnabled',
@@ -153,6 +156,7 @@ const STRING_KEYS = new Set([
   'activeProvider',
   'profileText',
   'capsolverApiKey',
+  'twoCaptchaApiKey',
   'typesafeApiKey',
 ]);
 const ARRAY_KEYS = new Set([

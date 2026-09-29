@@ -20,6 +20,8 @@ import {
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
 import { buildCaptchaDiagnostics, captchaChallengeMatcherOptions } from './captcha-gate.js';
+import { solveWithTwoCaptcha } from './two-captcha.js';
+import { captchaProviderSupportsType } from './captcha-provider-config.js';
 
 export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
 
@@ -34,6 +36,7 @@ async function postJson(path, body) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -227,6 +230,36 @@ export async function solveCaptcha(apiKey, params, { useCloudBroker = false } = 
     })();
   const meta = solutionFor(params.type, solution);
   return { taskId, solution, ...meta };
+}
+
+// One tool dispatch, at most one task per enabled provider. Fallback happens
+// before token injection; a page/injection failure must not spend another solve.
+// A timeout can leave a paid task running upstream; fallback may charge both accounts.
+export async function solveCaptchaWithProviders(providers, params) {
+  if (!providers.length) throw new Error('No CAPTCHA solver is enabled with a valid API key.');
+  const paramError = captchaParamError(params);
+  if (paramError) throw new Error(paramError);
+  const task = buildTask(params);
+  const eligibleProviders = providers.filter(provider => captchaProviderSupportsType(provider.id, params.type));
+  if (!eligibleProviders.length) throw new Error(`No enabled provider supports ${params.type}. Ask the user to complete it manually.`);
+  const failures = [];
+  for (const provider of eligibleProviders) {
+    try {
+      const result = provider.id === 'capsolver'
+        ? await solveCaptcha(provider.apiKey, params, { useCloudBroker: provider.useCloudBroker === true })
+        : await (async () => {
+          const result = await solveWithTwoCaptcha(provider.apiKey, task);
+          return { ...result, ...solutionFor(params.type, result.solution) };
+        })();
+      if (typeof result.token !== 'string' || !result.token.trim()) {
+        throw new Error('No usable solution returned.');
+      }
+      return { ...result, provider: provider.id };
+    } catch (error) {
+      failures.push(`${provider.id}: ${error.message}`);
+    }
+  }
+  throw new Error(failures.join(' | '));
 }
 
 // ─── Page-side helpers (Firefox MV2 executeScript with code string) ──
