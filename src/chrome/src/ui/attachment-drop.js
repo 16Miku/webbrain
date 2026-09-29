@@ -23,13 +23,19 @@ export function clipboardImageFiles(event) {
   ));
 }
 
+function clipboardHasText(clipboardData) {
+  return Array.from(clipboardData?.types || []).some(type => (
+    type === 'text/plain' || type === 'text/html'
+  ));
+}
+
 export function installClipboardImagePasteHandler(target, onFiles) {
   if (!target?.addEventListener || typeof onFiles !== 'function') return () => {};
 
   const onPaste = (event) => {
     const files = clipboardImageFiles(event);
     if (!files.length) return;
-    event.preventDefault();
+    if (!clipboardHasText(event?.clipboardData)) event.preventDefault();
     onFiles(files);
   };
 

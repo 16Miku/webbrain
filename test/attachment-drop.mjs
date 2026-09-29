@@ -287,10 +287,17 @@ for (const [label, relativeModule] of implementations) {
     clipboardData: { files: [pastedImage] },
   });
   assert.equal(imagePaste.defaultPrevented, true, `${label}: image paste should be consumed as an attachment`);
-  assert.deepEqual(pasted, [[pastedImage]], `${label}: image paste should forward clipboard files to the attachment reader`);
+  const mixedPaste = pasteTarget.dispatch('paste', null, {
+    clipboardData: {
+      files: [pastedImage],
+      types: ['text/plain', 'image/png'],
+    },
+  });
+  assert.equal(mixedPaste.defaultPrevented, false, `${label}: mixed text+image paste should preserve native text insertion`);
+  assert.deepEqual(pasted, [[pastedImage], [pastedImage]], `${label}: image paste should forward clipboard files to the attachment reader`);
   cleanupPaste();
   pasteTarget.dispatch('paste', null, { clipboardData: { files: [pastedImage] } });
-  assert.deepEqual(pasted, [[pastedImage]], `${label}: paste cleanup should remove its listener`);
+  assert.deepEqual(pasted, [[pastedImage], [pastedImage]], `${label}: paste cleanup should remove its listener`);
 }
 
 console.log('attachment drag-and-drop tests passed for Chrome and Firefox');
