@@ -5898,19 +5898,25 @@
           // Discord keeps the channel composer mounted behind its settings.
           // Only the owning management dialog is a non-message surface.
           if (dialog.querySelector('[data-message-id],[data-list-id="chat-messages"],[role="textbox"][aria-label^="Message " i],[role="log"] article')) return false;
-          const dialogName = compact(dialog.getAttribute('aria-label'));
-          const creation = /^(?:Create Channel|Create Category)$/i.test(dialogName)
-            && Array.from(dialog.querySelectorAll('h1,h2,[role="heading"]'))
-              .some(el => visible(el) && compact(el.textContent) === dialogName)
-            && Array.from(dialog.querySelectorAll('input[type="text"],input:not([type])'))
-              .some(el => visible(el));
+          const dialogId = dialog.getAttribute('id');
+          const creationHeading = dialogId && Array.from(dialog.querySelectorAll('h1'))
+            .some(el => visible(el) && el.id === `heading-${dialogId}`);
+          const creationInputs = Array.from(dialog.querySelectorAll('input[type="text"],input:not([type])'))
+            .filter(visible);
+          const creationRadios = Array.from(dialog.querySelectorAll('input[type="radio"],[role="radio"]'))
+            .filter(visible);
+          const creation = dialog.getAttribute('data-dialog') === 'modal'
+            && creationHeading && creationInputs.length === 1
+            && Array.from(dialog.querySelectorAll('input[type="checkbox"],[role="switch"]')).some(visible)
+            && Array.from(dialog.querySelectorAll('button[type="submit"],input[type="submit"]')).some(visible)
+            && (creationRadios.length === 0 || creationRadios.length >= 2);
           const settingsNav = dialog.querySelector('nav [role="tablist"],[role="navigation"] [role="tablist"]');
           const serverSettings = !!settingsNav
             && !!settingsNav.querySelector('[role="tab"][aria-label="Manage Roles"]')
             && Array.from(settingsNav.querySelectorAll('[role="tab"]'))
               .some(el => compact(el.textContent) === 'Enable Community' || compact(el.textContent) === 'Safety Setup');
           const channelSettings = dialog.getAttribute('data-layer') === 'CHANNEL_SETTINGS'
-            && dialogName === 'Channel Settings' && !!settingsNav
+            && compact(dialog.getAttribute('aria-label')) === 'Channel Settings' && !!settingsNav
             && ['Overview', 'Permissions'].every(name => Array.from(settingsNav.querySelectorAll('[role="tab"]'))
               .some(el => compact(el.getAttribute('aria-label') || el.textContent) === name));
           if (!channelSettings && dialog.querySelector('[data-slate-editor]')) return false;

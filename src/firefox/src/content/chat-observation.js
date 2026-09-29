@@ -267,12 +267,16 @@
     } catch { return ''; }
   };
 
-  const discordDefaultAvatar = (node) => {
+  const discordDefaultAvatarIndex = (node) => {
     try {
       const url = new URL(attribute(node, 'src'), window.location.href);
-      return (url.hostname === 'cdn.discordapp.com' && /^\/embed\/avatars\/\d+\.png$/.test(url.pathname))
-        || (url.origin === window.location.origin && /^\/assets\/embed\/avatars\/\d+\.png$/.test(url.pathname));
-    } catch { return false; }
+      const match = url.hostname === 'cdn.discordapp.com'
+        ? /^\/embed\/avatars\/(\d+)\.png$/.exec(url.pathname)
+        : url.origin === window.location.origin
+          ? /^\/assets\/embed\/avatars\/(\d+)\.png$/.exec(url.pathname)
+          : null;
+      return match?.[1] || '';
+    } catch { return ''; }
   };
 
   const discordMessageText = (content) => {
@@ -334,7 +338,7 @@
     const account = query(document, '[class*="accountPopoutButtonWrapper"]')[0]?.parentElement;
     const ownAvatar = query(account, 'img[src*="/avatars/"]')[0];
     const ownAvatarId = discordAvatarUserId(ownAvatar);
-    const ownUsesDefaultAvatar = discordDefaultAvatar(ownAvatar);
+    const ownDefaultAvatarIndex = discordDefaultAvatarIndex(ownAvatar);
     const rows = query(channel.transcript, '[role="article"][data-list-item-id]');
     const messages = [];
     let previousAuthor = '';
@@ -359,9 +363,13 @@
         || (!username ? previousAuthor : '');
       const avatar = username?.closest('h3')?.parentElement?.querySelector('img[src]');
       const avatarId = discordAvatarUserId(avatar);
+      const defaultAvatarIndex = discordDefaultAvatarIndex(avatar);
       let direction = 'unknown';
       if (ownAvatarId && avatarId) direction = ownAvatarId === avatarId ? 'outgoing' : 'incoming';
-      else if (ownUsesDefaultAvatar && avatarId) direction = 'incoming';
+      else if (ownAvatarId && defaultAvatarIndex) direction = 'incoming';
+      else if (ownDefaultAvatarIndex && avatarId) direction = 'incoming';
+      else if (ownDefaultAvatarIndex && defaultAvatarIndex
+          && ownDefaultAvatarIndex !== defaultAvatarIndex) direction = 'incoming';
       else if (!username) direction = previousDirection;
       previousAuthor = author;
       previousDirection = direction;

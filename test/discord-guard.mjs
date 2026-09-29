@@ -114,10 +114,16 @@ for (const [kind, engine, AgentClass, policy] of [
         } finally {await page.close();}
       });
       await t.test('creation dialogs allow field submission and Enter while the channel composer is still mounted',async()=>{
-        for(const name of ['Create Channel','Create Category']) {
-          const {page,guard}=await setup(`<div role="dialog" aria-modal="true" aria-label="${name}"><div role="log"></div><div role="log"></div><h1>${name}</h1>
-<form><input id="name" type="text" aria-label="Name" value="test"><button id="save" type="submit">${name}</button><button id="cancel" type="button">Cancel</button></form></div>`);
+        for(const [id,label,radios] of [
+          ['channel-create','Kanal erstellen','<div role="radiogroup"><input type="radio" checked><input type="radio"><input type="radio"></div>'],
+          ['category-create','Kategori oluştur',''],
+        ]) {
+          const {page,guard,probe}=await setup(`<div id="${id}" data-dialog="modal" role="dialog" aria-modal="true" aria-label="${label}"><div role="log"></div><div role="log"></div>
+<header><h1 id="heading-${id}">${label}</h1><button type="button" aria-label="Close">×</button></header>${radios}
+<input id="name" type="text" placeholder="${label}" value="test"><input id="private" type="checkbox" role="switch">
+<button id="save" type="submit">${label}</button><button id="cancel" type="button">Esc</button></div>`);
           try {
+            assert.equal((await probe('click',{selector:'#save'})).nonMessagingTarget,true,'localized creation title is recognized structurally');
             assert.equal(await guard('click',{selector:'#save'}),null);
             assert.equal(await guard('click',{selector:'#cancel'}),null);
             assert.equal(await guard('set_field',{selector:'#name',value:'test',submit:true}),null);
@@ -215,6 +221,14 @@ for (const [kind, engine, AgentClass, policy] of [
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
           const defaultAvatars=await observe();
           assert.equal(defaultAvatars.messages[0].direction,'unknown','shared Discord default avatars do not identify message authors');
+          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/embed/avatars/4.png'));
+          assert.equal((await observe()).messages[0].direction,'incoming','different default avatar indices cannot be the same account');
+          await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/11/self.webp?size=56'));
+          assert.equal((await observe()).messages[0].direction,'incoming','a default avatar cannot belong to the custom-avatar account');
+          await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
+          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/22/other.webp?size=160'));
+          assert.equal((await observe()).messages[0].direction,'incoming','a custom avatar cannot belong to the default-avatar account');
+          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
           let advanced=advanceChatSession(createChatSession({threadKey:result.threadKey}),defaultAvatars);
           await page.locator('#wave').evaluate(el=>el.textContent='Changed hover action');
           const afterHover=await observe();
