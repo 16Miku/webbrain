@@ -4,6 +4,51 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [37.0.0] - 2026-09-29
+
+### Added
+
+- Added clipboard image paste to the chat composer in Chrome and Firefox, reusing the attachment pipeline so size limits, preview chips, and per-tab binding behave exactly like drag-and-drop.
+- Added 2Captcha as an independent fallback captcha provider with its own key, balance check, and localized Settings controls; a solve falls through to the next eligible provider before any token is injected.
+- Added Osaurus as a default-on local provider card with its own icon, model listing, and documentation.
+- Added GPT-6 Luna Pro, Sol, and Astra compatibility across context windows, temperature handling, streaming, and vision detection.
+- Added a structured `safe_first` contract to the clarify tool, so a waited timeout applies the declared first option instead of halting the run with a misleading authorization message.
+- Added a side-panel chime when a clarification or permission card appears, honoring the existing notification sound setting.
+- Enabled experimental WebMCP by default with an opt-out in Settings, and refreshed the privacy, security, and translated documentation to match.
+- Added Spark-X2.5 and MiniCPM5 compact-routing benchmark runs, the 15-model comparison write-up, and the published result artifacts with a replay harness.
+- Added an opt-in MemCode memory architecture proposal to the docs.
+- Added a WebBrain Cloud section to the landing page across every localized site.
+- Armed recipient verification on any site rather than only Gmail, LinkedIn, and Douyin, with mail-like and chat-like surfaces selecting which verification shape applies.
+- Added X group DM recipient binding alongside the existing X direct-message workflow, which binds approved bodies to workflow metadata and verifies delivery.
+
+### Changed
+
+- Routed WebBrain Cloud managed captcha solving through the broker and reported configured provider, memory record, and profile counts with each encrypted vault upload, so the authenticated admin stats page no longer needs to open a vault.
+- Made scheduled runs wait for the WebMCP preference before they start, and left WebMCP closed when its preference cannot be hydrated.
+- Trimmed the LICENSE to current terms, aligned the READMEs with it, and removed the Spanish README.
+- Made the recipient guard fail open: only a confident send classification reaches verification, and a bound recipient clarification authorizes the address observed on the page instead of looping.
+- Made screenshot capture repetition-aware within a burst of actions, so an eight-click turn costs roughly two screenshots and two vision calls instead of eight.
+- Refreshed provider and flag artwork and slimmed the largest icon assets.
+
+### Fixed
+
+- Stopped overlapping content elements and docked headers from blocking interaction. Fixed and sticky insets are detected, targets scroll clear of side rails, the perimeter is sampled when the center point is occluded, `pointer-events: none` wrappers no longer swallow clicks, the accessibility tree reports occlusion and hoists modern component overlays, and the loop detector names the obstruction instead of retrying blindly.
+- Hardened `safe_first` clarifications. Blank, Braille-blank, invisible, and format-only options are rejected, `safe_first` stays bound to the declared first option, a malformed option list fails closed, and a safe-first timeout no longer clears an earlier blocked clarification. Recipient binding and research escalation stay human-only after a timeout.
+- Corrected layered surface reads. Visible layers are now exposed alongside page text with bounded metadata, nested modal surfaces are hoisted once, ancestor pseudo-element covers and ancestor hits count as occluded, shadow hosts respect `aria-hidden`, and hidden assigned slots no longer become click candidates.
+- Preserved scroll position for visible fixed and pinned sticky controls, and told pinned elements apart from unstuck ones.
+- Verified X direct-message delivery against a settled history baseline and the same canonical handle, including group conversations, and recognized localized LinkedIn post controls without loosening the private-message guards.
+- Proved non-sends in the recipient probe, read typed and chipified addresses on any site, and made text clicks resolve reliably. A cached candidate list removes a full DOM walk per click, and the content script self-heals after an extension reload.
+- Forced one re-injection and a precise stale-script error for silent content-action replies instead of closing the channel.
+- Preserved nested code fences, list containers, quotes, and tabbed blocks through streaming and final Markdown renders, including fences inside lists, alternate fence lengths, empty markers, and quoted continuations.
+- Stopped duplicate images when a clipboard populates both the files and items collections, and kept the text when a paste carries text and an image together.
+
+### Tests
+
+- Added captcha provider, captcha Settings UI, Cloud broker, and profile-sync stats coverage.
+- Added mirrored Chrome and Firefox regressions for occlusion, docked insets, scroll clearance, layered surface reads, and `safe_first` clarification timeouts, keeping the two implementations byte-identical where they are paired.
+- Added local DOM fixtures for the X direct-message workflow and for LinkedIn public-post controls.
+- Added nested Markdown fence, list, and quote rendering tests, plus a replay harness for the compact model benchmark artifacts.
+
 ## [36.8.0] - 2026-09-20
 
 ### Added
