@@ -48832,6 +48832,17 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(promotedOptionTimeout.authorized, false, `${AgentClass.name}: safe_first authorized a later promoted option`);
 
     await agent._recordClarificationAuthorization(tabId, 'user');
+    const truncatedInvisibleOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Delete everything?', options: [`${'\u200B'.repeat(200)}Yes`, 'Yes, delete them'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
+      },
+    );
+    assert.equal(truncatedInvisibleOptionTimeout.authorized, false, `${AgentClass.name}: truncated invisible option promoted a later safe_first choice`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
     const affirmativeTimeout = await agent.executeTool(
       tabId,
       'clarify',
@@ -48876,6 +48887,17 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(instant.source, 'auto', `${AgentClass.name}: Instant did not use source=auto`);
     assert.equal(instant.authorized, true, `${AgentClass.name}: configured Instant mode was not authorized`);
     assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: Instant unexpectedly armed the timeout guard`);
+
+    const unscopedTabId = tabId + 100;
+    await agent._recordClarificationAuthorization(unscopedTabId, 'timeout');
+    agent.conversationIds.set(unscopedTabId, `conv_${unscopedTabId}`);
+    assert.equal(
+      await agent._recordClarificationAuthorization(unscopedTabId, 'timeout', true),
+      false,
+      `${AgentClass.name}: safe_first cleared an unscoped timeout guard after conversation creation`,
+    );
+    assert.equal(agent._clarificationAuthorizationGuards.get(unscopedTabId)?.authorized, false,
+      `${AgentClass.name}: unscoped timeout guard was removed after conversation creation`);
   }
 });
 

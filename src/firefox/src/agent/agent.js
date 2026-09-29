@@ -14493,7 +14493,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const previous = this._clarificationAuthorizationGuards.get(tabId);
     const priorTimeoutGuard = previous?.source === 'timeout'
       && previous?.authorized === false
-      && previous?.conversationId === conversationId;
+      && (!previous?.conversationId || previous.conversationId === conversationId);
     const timedOutAffirmative = normalizedSource === 'timeout' && safeFirst === true && !priorTimeoutGuard;
     if (normalizedSource === 'timeout' && !timedOutAffirmative) {
       const blockedAttempts = priorTimeoutGuard
@@ -30560,10 +30560,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!question) {
         return { success: false, error: 'clarify: `question` is required (a single sentence asking the user something specific).' };
       }
-      const rawOptions = Array.isArray(args?.options) ? args.options : [];
-      const options = rawOptions
-        .map(s => String(s).trim().slice(0, 200)).filter(option => /[\p{L}\p{N}\p{P}\p{S}]/u.test(option)).slice(0, 4);
-      const safeFirst = args?.safe_first === true && /[\p{L}\p{N}\p{P}\p{S}]/u.test(String(rawOptions[0] || ''));
+      const rawOptions = Array.isArray(args?.options) ? args.options.slice(0, 4) : [];
+      const normalizedOptions = rawOptions.map(s => String(s).trim().slice(0, 200));
+      const options = normalizedOptions.every(option => /[\p{L}\p{N}\p{P}\p{S}]/u.test(option))
+        ? normalizedOptions
+        : [];
+      const safeFirst = args?.safe_first === true && options.length > 0;
       const reason = args?.reason ? String(args.reason).slice(0, 300) : null;
       const purpose = args?.purpose === 'research_escalation'
         ? 'research_escalation'
