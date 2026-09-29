@@ -23250,7 +23250,7 @@ test('version 33-and-later licensing boundary is consistent across project metad
   const rootLicense = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8');
   assert.match(rootLicense, /WebBrain 33\.0\.0 and later/);
   assert.match(rootLicense, /GNU GENERAL PUBLIC LICENSE\s+Version 3/);
-  assert.match(rootLicense, /releases before 33\.0\.0 remain available under the MIT License/i);
+  assert.doesNotMatch(rootLicense, /releases before 33\.0\.0 remain available under the MIT License/i);
   assert.match(fs.readFileSync(path.join(ROOT, 'LICENSES/MIT.txt'), 'utf8'), /^MIT License/);
 
   for (const subproject of ['mcp-server', 'lmstudio-plugin']) {
@@ -44909,8 +44909,8 @@ test('chat history text serialization preserves rendered line structure', () => 
     );
     assert.equal(
       serialize(renderedCodeFollowedByText),
-      '```javascript\nline 1\n```\nClosing',
-      `${label}: rendered code wrappers should preserve their language and use the source <br> as the only post-fence newline`,
+      '``` javascript\nline 1\n```\nClosing',
+      `${label}: rendered code wrappers should preserve a safely separated language and use the source <br> as the only post-fence newline`,
     );
     const table = element(
       'TABLE',
@@ -45233,7 +45233,7 @@ test('sidepanel subscribe error card clears DOM without HTML reinterpretation', 
     assert.notEqual(runCompleteStart, -1, `${label}: run_complete handler missing`);
     assert.notEqual(runCompleteEnd, -1, `${label}: run_complete boundary missing`);
     const runCompleteBody = panel.slice(runCompleteStart, runCompleteEnd);
-    assert.match(runCompleteBody, /else if \(!renderCostAllowanceError\(textEl, data\.finalContent,[\s\S]*?submittedTurnDurable: data\.submittedTurnDurable,[\s\S]*?&& !renderSubscribeError\(textEl, data\.finalContent\)\) textEl\.innerHTML = formatMarkdown\(data\.finalContent\);/, `${label}: restored run finals should render durability-aware allowance cards before markdown fallback`);
+    assert.match(runCompleteBody, /else if \(!renderCostAllowanceError\(textEl, data\.finalContent,[\s\S]*?submittedTurnDurable: data\.submittedTurnDurable,[\s\S]*?&& !renderSubscribeError\(textEl, data\.finalContent\)\) textEl\.innerHTML = formatMarkdown\(data\.finalContent, \{ recoverNestedMarkdown: true \}\);/, `${label}: restored run finals should render durability-aware allowance cards before a nested-fence-safe Markdown fallback`);
     assert.match(styles, /\.subscribe-actions\s*\{[\s\S]*?flex-wrap:\s*wrap;/, `${label}: subscribe actions should wrap in narrow panels`);
     assert.match(styles, /\.subscribe-resume-btn\s*\{[\s\S]*?background:\s*transparent;[\s\S]*?border:\s*1px solid var\(--accent\);/, `${label}: resume action should use secondary styling`);
   }
@@ -45421,7 +45421,7 @@ test('sidepanel suppresses streamed raw tool-call text before rendering tool ste
     assert.match(panel, /const streamedAssistantTextByEl = new WeakMap\(\);/, `${label}: streamed final dedupe state should not be stored in serialized DOM attributes`);
     assert.match(panel, /const previousText = getStreamedAssistantText\(textEl\)\s*\|\| \(hasStreamedAssistantText\(textEl\) \? textEl\.innerText \|\| textEl\.textContent : ''\);\s*const nextText = previousText \+ String\(data\.content \|\| ''\);/, `${label}: text_delta should append to raw Markdown while legacy restored streams fall back to visible text without dropping prior output`);
     assert.match(panel, /streamedAssistantTextByEl\.set\(textEl, nextText\);\s*textEl\.dataset\.streamedAssistantActive = 'true';\s*scheduleStreamedAssistantMarkdownRender\(textEl\);/, `${label}: text_delta should retain raw Markdown, persist only an active-stream marker, and schedule incremental rendering`);
-    assert.match(panel, /const streamedAssistantRenderFrameByEl = new WeakMap\(\);[\s\S]*?function renderStreamedAssistantMarkdownNow\(textEl\)[\s\S]*?textEl\.innerHTML = formatMarkdown\(streamedText, \{ enhance: false \}\);[\s\S]*?scrollToBottom\(\);[\s\S]*?function scheduleStreamedAssistantMarkdownRender\(textEl\)[\s\S]*?requestAnimationFrame\([\s\S]*?renderStreamedAssistantMarkdownNow\(textEl\);/, `${label}: live Markdown should render at most once per animation frame before following output`);
+    assert.match(panel, /const streamedAssistantRenderFrameByEl = new WeakMap\(\);[\s\S]*?function renderStreamedAssistantMarkdownNow\(textEl\)[\s\S]*?textEl\.innerHTML = formatMarkdown\(streamedText, \{ enhance: false, recoverNestedMarkdown: true \}\);[\s\S]*?scrollToBottom\(\);[\s\S]*?function scheduleStreamedAssistantMarkdownRender\(textEl\)[\s\S]*?requestAnimationFrame\([\s\S]*?renderStreamedAssistantMarkdownNow\(textEl\);/, `${label}: live Markdown should render nested fences at most once per animation frame before following output`);
     assert.match(panel, /function clearStreamedAssistantText\(textEl\)[\s\S]*?cancelAnimationFrame\(frame\);[\s\S]*?streamedAssistantRenderFrameByEl\.delete\(textEl\);/, `${label}: terminal and tool transitions should cancel pending stream renders`);
     assert.match(panel, /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);/, `${label}: tab switches and visibility handoffs should render a queued frame before serializing its last acknowledged stream chunk`);
     assert.doesNotMatch(panel, /const nextText = textEl\.textContent \+ data\.content;/, `${label}: rendered Markdown must never become the source for later deltas`);
@@ -45431,8 +45431,8 @@ test('sidepanel suppresses streamed raw tool-call text before rendering tool ste
     assert.match(panel, /getStreamedAssistantText\(textEl\) === String\(res\.content\)[\s\S]*?renderAssistantTextUpdate\(assistantEl, res\.content\);/, `${label}: completed streams should format the visible final text in place`);
     assert.match(panel, /clearAssistantTextStreamState\(assistantEl\);/, `${label}: run completion should clear transient streamed-text state before persistence`);
     assert.match(panel, /case 'text':[\s\S]*?\(data\.content \|\| data\.replace === true\)[\s\S]*?renderAssistantTextUpdate\(currentAssistantEl, data\.content \|\| '', \{ replace: data\.replace === true \}\);/, `${label}: text updates should forward explicit replacement requests, including empty clears`);
-    assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const restoredStreamNeedsReplacement = hasStreamedText && !streamedText;[\s\S]*?if \(options\.replace === true \|\| restoredStreamNeedsReplacement\) \{[\s\S]*?if \(content\) \{[\s\S]*?textEl\.innerHTML = formatMarkdown\(content\);[\s\S]*?streamedAssistantTextByEl\.set\(textEl, String\(content\)\);[\s\S]*?\} else \{[\s\S]*?textEl\.textContent = '';[\s\S]*?clearStreamedAssistantText\(textEl\);[\s\S]*?\} else if \(verboseMode && !hasStreamedText\)/, `${label}: explicit and restored-stream replacements should overwrite or clear verbose streamed text`);
-    assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?else if \(verboseMode && !hasStreamedText\)[\s\S]*?textEl\.innerHTML = formatMarkdown\(content\);/, `${label}: every streamed final should format in place even when terminal cleanup changed the raw text`);
+    assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const restoredStreamNeedsReplacement = hasStreamedText && !streamedText;[\s\S]*?const renderedContent = formatMarkdown\(content, \{ recoverNestedMarkdown: true \}\);[\s\S]*?if \(options\.replace === true \|\| restoredStreamNeedsReplacement\) \{[\s\S]*?if \(content\) \{[\s\S]*?textEl\.innerHTML = renderedContent;[\s\S]*?streamedAssistantTextByEl\.set\(textEl, String\(content\)\);[\s\S]*?\} else \{[\s\S]*?textEl\.textContent = '';[\s\S]*?clearStreamedAssistantText\(textEl\);[\s\S]*?\} else if \(verboseMode && !hasStreamedText\)/, `${label}: explicit and restored-stream replacements should preserve nested fences while overwriting or clearing verbose streamed text`);
+    assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const renderedContent = formatMarkdown\(content, \{ recoverNestedMarkdown: true \}\);[\s\S]*?else if \(verboseMode && !hasStreamedText\)[\s\S]*?para\.innerHTML = renderedContent;[\s\S]*?else \{[\s\S]*?textEl\.innerHTML = renderedContent;/, `${label}: every streamed final should preserve nested fences in place even when terminal cleanup changed the raw text`);
     const start = panel.indexOf("case 'tool_call':");
     const end = panel.indexOf("case 'tool_result':", start);
     assert.notEqual(start, -1, `${label}: tool_call handler missing`);
@@ -54289,8 +54289,8 @@ test('/watch alert audio is background-owned, configurable, and distinct by styl
     );
     assert.match(
       panel,
-      /const watchPollEvent = \['polled', 'triggered'\]\.includes\(event\);[\s\S]*?watchPollEvent \|\| !textEl\.textContent\.trim\(\)[\s\S]*?formatMarkdown\(job\.lastResult\)/,
-      `${label}: every watch poll should replace the sticky message with its latest observation`,
+      /const watchPollEvent = \['polled', 'triggered'\]\.includes\(event\);[\s\S]*?watchPollEvent \|\| !textEl\.textContent\.trim\(\)[\s\S]*?formatMarkdown\(job\.lastResult, \{ recoverNestedMarkdown: true \}\)/,
+      `${label}: every watch poll should replace the sticky message with its latest nested-fence-safe observation`,
     );
   }
 });
@@ -55827,8 +55827,8 @@ test('sidepanel settles terminal scheduled clarification events and renders thei
     const handlerBody = panel.slice(handlerStart, handlerEnd);
     assert.match(
       settleBody,
-      /\['completed', 'clarification_required'\]\.includes\(event\)[\s\S]*?job\?\.lastResult[\s\S]*?formatMarkdown\(job\.lastResult\)/,
-      `${label}: terminal clarification result should render before settlement`,
+      /\['completed', 'clarification_required'\]\.includes\(event\)[\s\S]*?job\?\.lastResult[\s\S]*?formatMarkdown\(job\.lastResult, \{ recoverNestedMarkdown: true \}\)/,
+      `${label}: terminal clarification result should render with preserved nested fences before settlement`,
     );
     assert.match(
       handlerBody,
