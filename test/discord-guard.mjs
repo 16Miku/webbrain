@@ -451,6 +451,19 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.deepEqual(advanced.newMessages.map(item=>item.id),['discord:456:1008']);
           assert.equal(advanced.nextAction,'reply');
           await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
+            <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1010"><div class="contents">
+              <img src="https://cdn.discordapp.com/avatars/22/other.webp?size=160"><h3><span id="message-username-1010"><span data-text="Ficsit">Ficsit</span></span><time id="message-timestamp-1010" datetime="2026-09-29T01:05:00.000Z"></time></h3>
+              <div id="message-content-1010"></div></div><div id="message-accessories-1010"><div class="embed_fixture">
+                <div class="embedFieldName_fixture">Environment</div><div class="embedFieldValue_fixture">Production</div>
+              </div></div></div></li>`));
+          const afterFieldEmbed=await observe();
+          assert.equal(afterFieldEmbed.messages.at(-1).id,'discord:456:1010');
+          assert.equal(afterFieldEmbed.messages.at(-1).direction,'incoming');
+          assert.equal(afterFieldEmbed.messages.at(-1).text,'Attachment: Environment\nAttachment: Production');
+          advanced=advanceChatSession(advanced.session,afterFieldEmbed);
+          assert.deepEqual(advanced.newMessages.map(item=>item.id),['discord:456:1010']);
+          assert.equal(advanced.nextAction,'reply');
+          await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
             <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1007"><div class="contents">
               <h3><span id="message-username-1007"><span data-text="WebBrain">WebBrain</span></span><time id="message-timestamp-1007" datetime="${new Date().toISOString()}"></time></h3>
               <div id="message-content-1007">A member with the same display name</div></div></div></li>`));

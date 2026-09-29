@@ -346,6 +346,8 @@
       '[data-name]',
       '[class*="fileName"]',
       '[class*="filename"]',
+      '[class*="embedFieldName"]',
+      '[class*="embedFieldValue"]',
       '[class*="embedTitle"]',
       '[class*="embedDescription"]',
       'a[href*="/attachments/"]',
