@@ -2532,6 +2532,61 @@ test('Chrome: floating top bar clears a fully covered target', page =>
 firefoxTest('Firefox: floating top bar clears a fully covered target', page =>
   assertFloatingTopBarClearance(page, 'firefox'));
 
+async function assertUnclassifiedFixedOverlayClearance(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; height: 1700px; }
+      #cookie-banner { position: fixed; bottom: 0; left: 0; width: 100%; height: 80px; z-index: 20; background: white; }
+      #target { position: absolute; top: calc(300px + 100vh - 60px); left: 60px; width: 120px; height: 40px; }
+    </style>
+    <button id="target" onclick="window.__targetClicked = true">Behind cookie banner</button>
+    <div id="cookie-banner">Cookie notice</div>
+  `, browserKind);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const bottomClick = await call(page, 'click', { selector: '#target' });
+  const bottomState = await page.evaluate(() => ({
+    clicked: window.__targetClicked === true,
+    scrollY: window.scrollY,
+    bottom: document.getElementById('target').getBoundingClientRect().bottom,
+    viewportHeight: window.innerHeight,
+  }));
+  if (!bottomClick?.success || !bottomState.clicked || bottomState.scrollY <= 300
+    || bottomState.bottom > bottomState.viewportHeight - 80) {
+    throw new Error(`${browserKind}: unclassified bottom banner was not cleared: ${JSON.stringify({ bottomClick, bottomState })}`);
+  }
+
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; width: 2000px; height: 1700px; }
+      #side-panel { position: fixed; top: 0; left: 0; width: 240px; height: 100vh; z-index: 20; background: white; }
+      #target { position: absolute; top: 500px; left: 350px; width: 100px; height: 40px; }
+    </style>
+    <button id="target" onclick="window.__targetClicked = true">Behind side panel</button>
+    <div id="side-panel">Side panel</div>
+  `, browserKind);
+  const beforeSide = await page.evaluate(() => {
+    window.scrollTo(300, 300);
+    return { scrollX: window.scrollX, left: document.getElementById('target').getBoundingClientRect().left };
+  });
+  if (beforeSide.scrollX !== 300 || beforeSide.left >= 240) {
+    throw new Error(`${browserKind}: side panel fixture did not cover the target: ${JSON.stringify(beforeSide)}`);
+  }
+  const sideClick = await call(page, 'click', { selector: '#target' });
+  const sideState = await page.evaluate(() => ({
+    clicked: window.__targetClicked === true,
+    scrollX: window.scrollX,
+    left: document.getElementById('target').getBoundingClientRect().left,
+  }));
+  if (!sideClick?.success || !sideState.clicked || sideState.scrollX >= 300 || sideState.left < 240) {
+    throw new Error(`${browserKind}: unclassified side panel was not cleared: ${JSON.stringify({ sideClick, sideState })}`);
+  }
+}
+
+test('Chrome: unclassified bottom and side overlays clear their targets', page =>
+  assertUnclassifiedFixedOverlayClearance(page, 'chrome'));
+firefoxTest('Firefox: unclassified bottom and side overlays clear their targets', page =>
+  assertUnclassifiedFixedOverlayClearance(page, 'firefox'));
+
 async function assertInnerScrollerClearance(page, browserKind) {
   await setupContentHtml(page, `<!doctype html>
     <style>

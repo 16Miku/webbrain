@@ -395,6 +395,25 @@
     return null;
   }
 
+  function _isCoveredByFixedNonModalSurface(el, view = window) {
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    if (cx < 0 || cy < 0 || cx >= view.innerWidth || cy >= view.innerHeight) return false;
+    const hit = _shadowAwareElementFromPoint(cx, cy);
+    if (!hit || _isComposedAncestor(el, hit) || _isComposedAncestor(hit, el)) return false;
+    for (let node = hit; node; node = _composedParent(node)) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (node.matches?.('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]')) return false;
+      const style = view.getComputedStyle(node);
+      if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+      const blocker = node.getBoundingClientRect();
+      if (blocker.width >= view.innerWidth * 0.8 && blocker.height >= view.innerHeight * 0.8) return false;
+      return true;
+    }
+    return false;
+  }
+
   function _scrollElementIntoClearView(el) {
     if (!el?.isConnected) return;
     try {
@@ -402,8 +421,10 @@
       const insets = _getViewportDockedInsets(view, el);
       // A viewport-only rect check misses elements clipped by a scrollable
       // ancestor even when their bounding box is inside the viewport.
-      if (!_isFullyVisibleForInteraction(el, insets)) {
-        el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+      const fullyVisible = _isFullyVisibleForInteraction(el, insets);
+      const coveredByFixed = fullyVisible && _isCoveredByFixedNonModalSurface(el, view);
+      if (!fullyVisible || coveredByFixed) {
+        el.scrollIntoView({ block: 'center', inline: coveredByFixed ? 'center' : 'nearest', behavior: 'instant' });
         const rAfter = el.getBoundingClientRect();
         if (rAfter.top < insets.top) {
           view.scrollBy({ top: rAfter.top - insets.top - 16, behavior: 'instant' });
