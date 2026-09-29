@@ -2438,6 +2438,44 @@ test('Chrome: controls inside a fixed side rail keep document scroll position', 
 firefoxTest('Firefox: controls inside a fixed side rail keep document scroll position', page =>
   assertFixedSideRailControlsKeepScroll(page, 'firefox'));
 
+async function assertUnstuckStickyTargetClearsHeader(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; height: 1700px; }
+      header { position: fixed; top: 0; width: 100%; height: 80px; z-index: 20; background: white; }
+      #spacer { height: 350px; }
+      #sticky-row { position: sticky; top: 0; height: 40px; z-index: 10; }
+    </style>
+    <header>Fixed header</header>
+    <div id="spacer"></div>
+    <div id="sticky-row"><button id="target" onclick="window.__targetClicked = true">Unstuck sticky action</button></div>
+  `, browserKind);
+  const before = await page.evaluate(() => {
+    window.scrollTo(0, 300);
+    return {
+      scrollY: window.scrollY,
+      rowTop: document.getElementById('sticky-row').getBoundingClientRect().top,
+    };
+  });
+  if (before.scrollY !== 300 || before.rowTop <= 0 || before.rowTop >= 80) {
+    throw new Error(`${browserKind}: sticky fixture must be unstuck under the header: ${JSON.stringify(before)}`);
+  }
+  const click = await call(page, 'click', { selector: '#target' });
+  const after = await page.evaluate(() => ({
+    clicked: window.__targetClicked === true,
+    scrollY: window.scrollY,
+    top: document.getElementById('target').getBoundingClientRect().top,
+  }));
+  if (!click?.success || !after.clicked || after.scrollY >= 300 || after.top < 80) {
+    throw new Error(`${browserKind}: unstuck sticky target was not cleared: ${JSON.stringify({ before, click, after })}`);
+  }
+}
+
+test('Chrome: an unstuck sticky control clears a fixed header', page =>
+  assertUnstuckStickyTargetClearsHeader(page, 'chrome'));
+firefoxTest('Firefox: an unstuck sticky control clears a fixed header', page =>
+  assertUnstuckStickyTargetClearsHeader(page, 'firefox'));
+
 async function assertStackedDockedBars(page, browserKind) {
   await setupContentHtml(page, `<!doctype html>
     <style>

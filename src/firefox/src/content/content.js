@@ -731,8 +731,25 @@
     if (!_isFullyVisibleForInteraction(el, { top: 0, bottom: 0 })) return false;
     for (let node = el; node; node = _composedParent(node)) {
       if (node.nodeType !== Node.ELEMENT_NODE) continue;
-      const position = view.getComputedStyle(node).position;
-      if (position === 'fixed' || position === 'sticky') return true;
+      const style = view.getComputedStyle(node);
+      if (style.position === 'fixed') return true;
+      if (style.position !== 'sticky') continue;
+      let portTop = 0;
+      let portBottom = view.innerHeight;
+      for (let parent = _composedParent(node); parent; parent = _composedParent(parent)) {
+        if (parent.nodeType !== Node.ELEMENT_NODE) continue;
+        const parentStyle = view.getComputedStyle(parent);
+        if (!/^(?:auto|scroll|hidden)$/.test(parentStyle.overflowY)) continue;
+        const parentRect = parent.getBoundingClientRect();
+        portTop = parentRect.top + parent.clientTop;
+        portBottom = portTop + parent.clientHeight;
+        break;
+      }
+      const rect = node.getBoundingClientRect();
+      const top = parseFloat(style.top);
+      const bottom = parseFloat(style.bottom);
+      if ((Number.isFinite(top) && Math.abs(rect.top - portTop - top) <= 2)
+        || (Number.isFinite(bottom) && Math.abs(rect.bottom - portBottom + bottom) <= 2)) return true;
     }
     return false;
   }
