@@ -248,7 +248,10 @@ for (const browser of ['chrome', 'firefox']) {
     ['reCAPTCHA v2 data-s', ['2captcha', 'RecaptchaV2TaskProxyless', { websiteURL: url, websiteKey: 'site', recaptchaDataSValue: 'observed' }], ['solvecaptcha', 'recaptcha_v2', { pageurl: url, googlekey: 'site', 'data-s': 'observed' }], 'data-s'],
     ['reCAPTCHA v2 enterprise data-s', ['2captcha', 'RecaptchaV2EnterpriseTaskProxyless', { websiteURL: url, websiteKey: 'site', enterprisePayload: { s: 'observed' } }], ['solvecaptcha', 'recaptcha_v2_enterprise', { pageurl: url, googlekey: 'site', 'data-s': 'observed' }], 'data-s'],
     ['reCAPTCHA v2 nested data-s', ['2captcha', 'RecaptchaV2TaskProxyless', { websiteURL: url, websiteKey: 'site', recaptchaDataSValue: 'observed' }], ['nopecha', 'token/recaptcha2', { url, sitekey: 'site', data: { s: 'observed' } }], 'data.s'],
-    ['reCAPTCHA v3 action', ['2captcha', 'RecaptchaV3TaskProxyless', { websiteURL: url, websiteKey: 'site', minScore: 0.3, pageAction: 'login' }], ['solvecaptcha', 'recaptcha_v3', { pageurl: url, googlekey: 'site', action: 'login' }], 'action'],
+    ['reCAPTCHA v3 action', ['2captcha', 'RecaptchaV3TaskProxyless', { websiteURL: url, websiteKey: 'site', minScore: 0.3, pageAction: 'login' }], ['solvecaptcha', 'recaptcha_v3', { pageurl: url, googlekey: 'site', action: 'login', min_score: 0.3 }], 'action'],
+    ['reCAPTCHA v3 score', ['2captcha', 'RecaptchaV3TaskProxyless', { websiteURL: url, websiteKey: 'site', minScore: 0.9, pageAction: 'login' }], ['solvecaptcha', 'recaptcha_v3', { pageurl: url, googlekey: 'site', action: 'login', min_score: 0.9 }], 'min_score'],
+    ['reCAPTCHA v3 enterprise score', ['2captcha', 'RecaptchaV3TaskProxyless:enterprise', { websiteURL: url, websiteKey: 'site', minScore: 0.9, pageAction: 'login' }], ['solvecaptcha', 'recaptcha_v3:enterprise', { pageurl: url, googlekey: 'site', action: 'login', min_score: 0.9 }], 'min_score'],
+    ['TSPD page snapshot', ['2captcha', 'TspdTask', { websiteURL: url, tspdCookie: 'cookie', htmlPageBase64: 'PAGE-A', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080, userAgent: 'browser-UA' }], ['capmonster', 'CustomTask:tspd', { websiteURL: url, metadata: { tspdCookie: 'cookie', htmlPageBase64: 'PAGE-A' }, proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080, userAgent: 'browser-UA' }], 'metadata.htmlPageBase64'],
     ['reCAPTCHA v3 enterprise action', ['capsolver', 'ReCaptchaV3EnterpriseTaskProxyLess', { websiteURL: url, websiteKey: 'site', pageAction: 'login' }], ['nopecha', 'token/recaptcha3:enterprise', { url, sitekey: 'site', data: { action: 'login' } }], 'data.action'],
     ['Turnstile action', ['capsolver', 'AntiTurnstileTaskProxyLess', { websiteURL: url, websiteKey: 'site', metadata: { action: 'login', cdata: 'widget' } }], ['anti-captcha', 'TurnstileTaskProxyless', { websiteURL: url, websiteKey: 'site', action: 'login', cData: 'widget' }], 'action'],
     ['Turnstile cData', ['2captcha', 'TurnstileTaskProxyless', { websiteURL: url, websiteKey: 'site', action: 'login', data: 'widget' }], ['anti-captcha', 'TurnstileTaskProxyless', { websiteURL: url, websiteKey: 'site', action: 'login', cData: 'widget' }], 'cData'],
@@ -263,7 +266,7 @@ for (const browser of ['chrome', 'firefox']) {
     const path = changed.split('.');
     let target = entries[1].parameters;
     for (const part of path.slice(0, -1)) target = target[part];
-    target[path.at(-1)] = changed === 'proxy' ? 'other.test:8080' : 'different';
+    target[path.at(-1)] = changed === 'proxy' ? 'other.test:8080' : changed === 'min_score' ? 0.3 : 'different';
     assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed challenge|same proxy identity/);
     assert.equal(calls.length, 0);
   });
@@ -286,7 +289,11 @@ for (const browser of ['chrome', 'firefox']) {
     ]],
     ['reCAPTCHA v3 omitted action', [
       { provider: '2captcha', method: 'RecaptchaV3TaskProxyless', parameters: { websiteURL: url, websiteKey: 'site', minScore: 0.3, pageAction: 'delete' } },
-      { provider: 'solvecaptcha', method: 'recaptcha_v3', parameters: { pageurl: url, googlekey: 'site' } },
+      { provider: 'solvecaptcha', method: 'recaptcha_v3', parameters: { pageurl: url, googlekey: 'site', min_score: 0.3 } },
+    ]],
+    ['reCAPTCHA v3 omitted score', [
+      { provider: '2captcha', method: 'RecaptchaV3TaskProxyless', parameters: { websiteURL: url, websiteKey: 'site', minScore: 0.9, pageAction: 'login' } },
+      { provider: 'solvecaptcha', method: 'recaptcha_v3', parameters: { pageurl: url, googlekey: 'site', action: 'login' } },
     ]],
     ['Turnstile omitted cData', [
       { provider: '2captcha', method: 'TurnstileTaskProxyless', parameters: { websiteURL: url, websiteKey: 'site', data: 'observed-cdata' } },
