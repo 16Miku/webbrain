@@ -36,11 +36,7 @@ import {
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
   normalizeUserMemoryMaxPromptChars,
 } from '../agent/user-memory.js';
-import {
-  isValidCapsolverApiKey,
-  normalizeCapsolverApiKey,
-} from '../agent/capsolver-config.js';
-import { isValidTwoCaptchaApiKey, normalizeTwoCaptchaApiKey } from '../agent/captcha-provider-config.js';
+import { initCaptchaSettings } from './captcha-settings.js';
 import {
   isValidTypesafeApiKey,
   normalizeSystemOneThreshold,
@@ -213,16 +209,6 @@ const btnClearUserMemory = document.getElementById('btn-clear-user-memory');
 const userMemoryImportText = document.getElementById('user-memory-import-text');
 const btnImportUserMemory = document.getElementById('btn-import-user-memory');
 const userMemoryTestResult = document.getElementById('test-user-memory');
-const captchaApiKeyInput = document.getElementById('captcha-api-key');
-const btnSaveCaptcha = document.getElementById('btn-save-captcha');
-const btnTestCaptcha = document.getElementById('btn-test-captcha');
-const btnClearCaptcha = document.getElementById('btn-clear-captcha');
-const captchaTestResult = document.getElementById('test-captcha');
-const twoCaptchaApiKeyInput = document.getElementById('two-captcha-api-key');
-const btnSaveTwoCaptcha = document.getElementById('btn-save-two-captcha');
-const btnTestTwoCaptcha = document.getElementById('btn-test-two-captcha');
-const btnClearTwoCaptcha = document.getElementById('btn-clear-two-captcha');
-const twoCaptchaTestResult = document.getElementById('test-two-captcha');
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
 const systemOneEnabledToggle = document.getElementById('toggle-system-one');
 const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
@@ -940,14 +926,8 @@ async function init() {
   if (profileTextArea) profileTextArea.value = profileStored.profileText || '';
   await loadUserMemorySettings();
 
-  // Saving a valid key enables its provider independently.
-  const captchaStored = await chrome.storage.local.get(['capsolverApiKey', 'twoCaptchaApiKey', 'webbrainCloudManaged']);
-  const cloudCaptchaCard = document.getElementById('captcha-card');
-  if (cloudCaptchaCard) cloudCaptchaCard.style.display = captchaStored.webbrainCloudManaged === true ? 'none' : '';
-  if (captchaApiKeyInput) captchaApiKeyInput.value = captchaStored.webbrainCloudManaged === true
-    ? '' : (captchaStored.capsolverApiKey || '');
-  if (twoCaptchaApiKeyInput) twoCaptchaApiKeyInput.value = captchaStored.webbrainCloudManaged === true
-    ? '' : (captchaStored.twoCaptchaApiKey || '');
+  // Each provider has independent key, enable state, and fallback weight.
+  await initCaptchaSettings(chrome.storage.local, sendToBackground, t);
 
   await loadCustomSkills();
 
@@ -2379,133 +2359,6 @@ if (btnImportUserMemory) {
     if (userMemoryImportText) userMemoryImportText.value = '';
     flashUserMemoryResult('ok', t('st.memory.imported'));
     await loadUserMemorySettings();
-  });
-}
-
-// --- CapSolver (captcha solving) ---
-// Saving a structurally valid API key enables CapSolver automatically.
-
-function showCaptchaResult(className, text, color = '') {
-  if (!captchaTestResult) return;
-  captchaTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
-  captchaTestResult.textContent = text;
-  captchaTestResult.style.color = color || '';
-  return captchaTestResult;
-}
-
-function flashCaptchaResult(className, text) {
-  const resultEl = showCaptchaResult(className, text);
-  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 3000);
-}
-
-if (btnSaveCaptcha) {
-  btnSaveCaptcha.addEventListener('click', async () => {
-    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
-    if (!isValidCapsolverApiKey(key)) {
-      flashCaptchaResult('fail', t('st.captcha.need_key'));
-      return;
-    }
-    if (captchaApiKeyInput) captchaApiKeyInput.value = key;
-    // Saving the key is the user's explicit opt-in. Keep the legacy boolean
-    // as an internal consent bit so upgrades preserve an existing opt-out.
-    await chrome.storage.local.set({
-      capsolverApiKey: key,
-      captchaSolverEnabled: true,
-    });
-    flashCaptchaResult('ok', t('st.captcha.saved'));
-  });
-}
-
-if (btnTestCaptcha) {
-  btnTestCaptcha.addEventListener('click', async () => {
-    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
-    if (!isValidCapsolverApiKey(key)) {
-      flashCaptchaResult('fail', t('st.captcha.need_key'));
-      return;
-    }
-    showCaptchaResult('', t('st.captcha.checking'), 'var(--text2)');
-    try {
-      const res = await sendToBackground('test_capsolver_balance', { apiKey: key });
-      if (res?.ok) {
-        flashCaptchaResult('ok', t('st.captcha.balance_ok', { balance: `$${Number(res.balance).toFixed(4)}` }));
-      } else {
-        flashCaptchaResult('fail', t('st.captcha.balance_fail', { error: res?.error || 'Unknown error' }));
-      }
-    } catch (e) {
-      flashCaptchaResult('fail', t('st.captcha.balance_fail', { error: e.message }));
-    }
-  });
-}
-
-if (btnClearCaptcha) {
-  btnClearCaptcha.addEventListener('click', async () => {
-    if (captchaApiKeyInput) captchaApiKeyInput.value = '';
-    // Remove the legacy flag too so old exports cannot preserve a
-    // contradictory enabled-without-a-key state.
-    await chrome.storage.local.remove(['capsolverApiKey', 'captchaSolverEnabled']);
-    flashCaptchaResult('ok', t('st.captcha.cleared'));
-  });
-}
-
-// --- 2Captcha (independent opt-in and balance check) ---
-
-function showTwoCaptchaResult(className, text, color = '') {
-  if (!twoCaptchaTestResult) return;
-  twoCaptchaTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
-  twoCaptchaTestResult.textContent = text;
-  twoCaptchaTestResult.style.color = color || '';
-  return twoCaptchaTestResult;
-}
-
-function flashTwoCaptchaResult(className, text) {
-  const resultEl = showTwoCaptchaResult(className, text);
-  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 3000);
-}
-
-if (btnSaveTwoCaptcha) {
-  btnSaveTwoCaptcha.addEventListener('click', async () => {
-    const key = normalizeTwoCaptchaApiKey(twoCaptchaApiKeyInput?.value);
-    if (!isValidTwoCaptchaApiKey(key)) {
-      flashTwoCaptchaResult('fail', t('st.captcha.two_need_key'));
-      return;
-    }
-    if (twoCaptchaApiKeyInput) twoCaptchaApiKeyInput.value = key;
-    // Saving this key opts in to 2Captcha independently of CapSolver.
-    await chrome.storage.local.set({
-      twoCaptchaApiKey: key,
-      twoCaptchaEnabled: true,
-    });
-    flashTwoCaptchaResult('ok', t('st.captcha.two_saved'));
-  });
-}
-
-if (btnTestTwoCaptcha) {
-  btnTestTwoCaptcha.addEventListener('click', async () => {
-    const key = normalizeTwoCaptchaApiKey(twoCaptchaApiKeyInput?.value);
-    if (!isValidTwoCaptchaApiKey(key)) {
-      flashTwoCaptchaResult('fail', t('st.captcha.two_need_key'));
-      return;
-    }
-    showTwoCaptchaResult('', t('st.captcha.checking'), 'var(--text2)');
-    try {
-      const res = await sendToBackground('test_two_captcha_balance', { apiKey: key });
-      if (res?.ok) {
-        flashTwoCaptchaResult('ok', t('st.captcha.balance_ok', { balance: `$${Number(res.balance).toFixed(4)}` }));
-      } else {
-        flashTwoCaptchaResult('fail', t('st.captcha.balance_fail', { error: res?.error || 'Unknown error' }));
-      }
-    } catch (e) {
-      flashTwoCaptchaResult('fail', t('st.captcha.balance_fail', { error: e.message }));
-    }
-  });
-}
-
-if (btnClearTwoCaptcha) {
-  btnClearTwoCaptcha.addEventListener('click', async () => {
-    if (twoCaptchaApiKeyInput) twoCaptchaApiKeyInput.value = '';
-    // Clear only this provider's key and consent.
-    await chrome.storage.local.remove(['twoCaptchaApiKey', 'twoCaptchaEnabled']);
-    flashTwoCaptchaResult('ok', t('st.captcha.cleared'));
   });
 }
 

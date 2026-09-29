@@ -23,6 +23,7 @@ import {
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
 import { buildCaptchaDiagnostics, captchaChallengeMatcherOptions } from './captcha-gate.js';
+import { solveWithAdditionalProvider } from './captcha-additional-providers.js';
 import { solveWithTwoCaptcha } from './two-captcha.js';
 import { captchaProviderSupportsType } from './captcha-provider-config.js';
 
@@ -198,6 +199,7 @@ export function buildTask({ type, websiteURL, websiteKey, ...rest }) {
       websiteURL,
       websiteKey,
       ...(rest.metadata ? { metadata: rest.metadata } : {}),
+      ...(rest.userAgent ? { userAgent: rest.userAgent } : {}),
     };
   }
   if (t === 'image_to_text' || t === 'image') {
@@ -282,7 +284,9 @@ export async function solveCaptchaWithProviders(providers, params) {
       const result = provider.id === 'capsolver'
         ? await solveCaptcha(provider.apiKey, params, { useCloudBroker: provider.useCloudBroker === true })
         : await (async () => {
-          const result = await solveWithTwoCaptcha(provider.apiKey, task);
+          const result = provider.id === '2captcha'
+            ? await solveWithTwoCaptcha(provider.apiKey, task)
+            : await solveWithAdditionalProvider(provider.id, provider.apiKey, task);
           return { ...result, ...solutionFor(params.type, result.solution) };
         })();
       if (typeof result.token !== 'string' || !result.token.trim()) {

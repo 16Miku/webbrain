@@ -31,7 +31,7 @@ for (const build of ['chrome', 'firefox']) {
     const base = new URL(`../src/${build}/src/ui/locales/`, import.meta.url);
     const locales = (await readdir(base)).filter(name => name.endsWith('.js')).map(name => name.slice(0, -3));
     const markup = await readFile(new URL('../settings.html', base), 'utf8');
-    const settings = await readFile(new URL('../settings.js', base), 'utf8');
+    const settings = await readFile(new URL('../captcha-settings.js', base), 'utf8');
     const keys = Object.keys(captchaEnglish).sort();
     for (const key of keys) assert.ok(markup.includes(key) || settings.includes(key), `${key}: unused copy`);
     for (const lang of locales) {
@@ -39,7 +39,7 @@ for (const build of ['chrome', 'firefox']) {
       assert.ok(copy, `${lang}: missing translation`);
       assert.deepEqual(Object.keys(copy).sort(), keys, `${lang}: incomplete translation`);
       for (const key of keys) assert.ok(copy[key].trim().length > 0, `${lang}/${key}: empty translation`);
-      assert.match(copy['st.captcha.two_desc'], /hCaptcha.*CapSolver|CapSolver.*hCaptcha/, lang);
+      assert.match(copy['st.captcha.provider_desc'], /hCaptcha.*CapSolver|CapSolver.*hCaptcha/, lang);
       const legacy = (await import(new URL(`${lang}.js`, base))).default;
       for (const key of ['desc_html', 'security_html', 'enabled.label', 'enabled.desc']) {
         assert.equal(legacy[`st.captcha.${key}`], undefined, `${lang}: stale copy retained`);

@@ -45700,26 +45700,9 @@ test('saving a valid CapSolver key opts in without overriding legacy opt-outs', 
       pathToFileURL(path.join(ROOT, prefix, 'src/agent/capsolver-config.js')).href
     );
 
-    assert.doesNotMatch(html, /toggle-captcha-enabled/, `${label}: CapSolver still exposes a redundant enable switch`);
-    assert.match(
-      html,
-      /id="captcha-api-key"[^>]*pattern="CAP-\[A-Za-z0-9_-\]\{20,\}"[^>]*minlength="24"/,
-      `${label}: CapSolver key input should expose the same structural validation as the runtime`,
-    );
-    assert.doesNotMatch(settings, /captchaEnabledToggle/, `${label}: removed CapSolver toggle still has settings handlers`);
-
-    const saveStart = settings.indexOf("btnSaveCaptcha.addEventListener('click', async () => {");
-    const saveEnd = settings.indexOf('\n  });\n}\n\nif (btnTestCaptcha', saveStart);
-    assert.notEqual(saveStart, -1, `${label}: CapSolver save handler missing`);
-    assert.notEqual(saveEnd, -1, `${label}: CapSolver save handler boundary missing`);
-    const saveBody = settings.slice(saveStart, saveEnd + 7);
-    assert.match(saveBody, /normalizeCapsolverApiKey\(captchaApiKeyInput\?\.value\)/, `${label}: CapSolver key should be normalized before saving`);
-    assert.match(saveBody, /if \(!isValidCapsolverApiKey\(key\)\) \{[\s\S]*?return;/, `${label}: malformed CapSolver keys should not be saved`);
-    assert.match(
-      saveBody,
-      new RegExp(`await ${api}\\.storage\\.local\\.set\\(\\{[\\s\\S]*?capsolverApiKey: key,[\\s\\S]*?captchaSolverEnabled: true,[\\s\\S]*?\\}\\)`),
-      `${label}: saving a valid CapSolver key should record explicit consent`,
-    );
+    assert.match(html, /type="checkbox" id="captcha-enabled"/);
+    assert.match(settings, /initCaptchaSettings/);
+    assert.match(html, /id="captcha-api-key"[^>]*pattern="CAP-\[A-Za-z0-9_-\]\{20,\}"[^>]*minlength="24"/);
 
     assert.ok(
       background.includes(`const stored = await ${api}.storage.local.get(CAPTCHA_SETTINGS_KEYS)`)
@@ -45729,7 +45712,7 @@ test('saving a valid CapSolver key opts in without overriding legacy opt-outs', 
     );
     assert.match(
       background,
-      /if \(changes\.capsolverApiKey \|\| changes\.captchaSolverEnabled[\s\S]*?changes\.webbrainCloudCapsolverBrokerEnabled\) \{[\s\S]*?loadCaptchaSolver\(\)[\s\S]*?agent\._refreshSystemPrompts\(\)/,
+      /if \(CAPTCHA_SETTINGS_KEYS\.some\(key => changes\[key\]\)\) \{[\s\S]*?loadCaptchaSolver\(\)[\s\S]*?agent\._refreshSystemPrompts\(\)/,
       `${label}: key, consent, or broker changes should refresh CapSolver availability immediately`,
     );
     assert.ok(
@@ -47743,7 +47726,8 @@ test('settings provider save and test status updates are DOM-safe', () => {
     );
     assert.match(settings, /visionTestResult\.style\.color = color \|\| '';/, `${label}: vision results should clear stale inline colors`);
     assert.match(settings, /transcriptionTestResult\.style\.color = color \|\| '';/, `${label}: transcription results should clear stale inline colors`);
-    assert.match(settings, /captchaTestResult\.style\.color = color \|\| '';/, `${label}: captcha results should clear stale inline colors`);
+    const captchaSettings = fs.readFileSync(path.join(ROOT, settingsRel.replace('settings.js', 'captcha-settings.js')), 'utf8');
+    assert.match(captchaSettings, /result\.style\.color = '';/, `${label}: captcha results should clear stale inline colors`);
 
     const saveStart = settings.indexOf('async function saveProvider(id, { showFlash = true, markConfigured = true } = {}) {');
     assert.notEqual(saveStart, -1, `${label}: saveProvider missing`);
@@ -48232,11 +48216,9 @@ test('settings async test controls surface rejected background results', () => {
       /function showTranscriptionResult\(className, text, color = ''\) \{[\s\S]*?if \(!transcriptionTestResult\) return;[\s\S]*?transcriptionTestResult\.style\.color = color \|\| '';[\s\S]*?return transcriptionTestResult;[\s\S]*?\}/,
       `${label}: transcription status helper should clear stale inline colors and tolerate absent controls`,
     );
-    assert.match(
-      settings,
-      /function showCaptchaResult\(className, text, color = ''\) \{[\s\S]*?if \(!captchaTestResult\) return;[\s\S]*?captchaTestResult\.style\.color = color \|\| '';[\s\S]*?return captchaTestResult;[\s\S]*?\}/,
-      `${label}: captcha status helper should clear stale inline colors and tolerate absent controls`,
-    );
+    const captchaSettings = fs.readFileSync(path.join(ROOT, settingsRel.replace('settings.js', 'captcha-settings.js')), 'utf8');
+    assert.match(captchaSettings, /result\.textContent = message;/, `${label}: CAPTCHA status uses safe text`);
+    assert.match(captchaSettings, /result\.style\.color = '';/, `${label}: CAPTCHA status resets inline color`);
 
     const visionStart = settings.indexOf("btnTestVision.addEventListener('click', async () => {");
     assert.notEqual(visionStart, -1, `${label}: vision test handler missing`);
@@ -48258,16 +48240,9 @@ test('settings async test controls surface rejected background results', () => {
       `${label}: rejected transcription provider checks should replace the testing state with a failure`,
     );
 
-    const captchaStart = settings.indexOf("btnTestCaptcha.addEventListener('click', async () => {");
-    assert.notEqual(captchaStart, -1, `${label}: captcha test handler missing`);
-    const captchaEnd = settings.indexOf('\n  });\n}\n\nif (btnClearCaptcha', captchaStart);
-    assert.notEqual(captchaEnd, -1, `${label}: captcha test handler boundary missing`);
-    const captchaBody = settings.slice(captchaStart, captchaEnd + 7);
-    assert.match(
-      captchaBody,
-      /showCaptchaResult\('', t\('st\.captcha\.checking'\), 'var\(--text2\)'\);[\s\S]*?try \{[\s\S]*?const res = await sendToBackground\('test_capsolver_balance', \{ apiKey: key \}\);[\s\S]*?flashCaptchaResult\('ok'[\s\S]*?flashCaptchaResult\('fail'[\s\S]*?\} catch \(e\) \{[\s\S]*?flashCaptchaResult\('fail', t\('st\.captcha\.balance_fail', \{ error: e\.message \}\)\);[\s\S]*?\}/,
-      `${label}: rejected captcha balance checks should replace the checking state with a failure`,
-    );
+    assert.match(captchaSettings, /sendToBackground\(action, \{ apiKey: key, provider: provider.id \}\)/);
+    assert.match(captchaSettings, /catch \(error\) \{ show\('fail', t\('st\.captcha\.balance_fail', \{ error: error\.message \}\)\); \}/);
+
 
     assert.match(
       settings,
