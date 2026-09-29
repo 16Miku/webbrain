@@ -10805,14 +10805,84 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && !postSolveFailure
       && (
         publicGate?.solverDisabled === true
+        || gate?.captchaToolsReenabled === true
         || publicGate?.detectionFailed === true
         || (publicGate?.providerUnsupported === true
           && this.captchaProviderIds.some(id => captchaProviderSupportsType(id, publicGate.selectedType)))
       );
   }
 
+  _captchaToolsAvailable(tabId, mode = this._effectiveRunMode(tabId, 'act'), tier = this._resolvePromptTier()) {
+    return this._isActionMode(mode) && ['mid', 'full'].includes(tier);
+  }
+
+  _captchaGateForTools(tabId, gate) {
+    if (!gate || gate.status === 'cleared') return gate;
+    if (this._captchaToolsAvailable(tabId)) {
+      if (!gate.publicGate?.toolsUnavailable) return gate;
+      const { toolsUnavailable, ...publicGate } = gate.publicGate;
+      const { captchaToolsPreviousStatus, ...previous } = gate;
+      const restored = { ...previous, captchaToolsReenabled: true, status: captchaToolsPreviousStatus || 'manual_required',
+        publicGate: { ...publicGate, status: captchaToolsPreviousStatus || 'manual_required' } };
+      this._captchaGateStates.set(tabId, restored);
+      return restored;
+    }
+    const publicGate = { ...gate.publicGate, status: 'manual_required', toolsUnavailable: true };
+    const manual = { ...gate, captchaToolsPreviousStatus: gate.captchaToolsPreviousStatus || gate.status,
+      status: 'manual_required', publicGate };
+    this._captchaGateStates.set(tabId, manual);
+    return manual;
+  }
+
+  _canTryNativeCaptcha(tabId, gate) {
+    const state = gate?.publicGate || gate;
+    return this._captchaToolsAvailable(tabId) && this.captchaSolverEnabled
+      && !state?.solveAttempted && !state?.solveFailed && !state?.activeChallengeAfterSolve;
+  }
+
+  _captchaRoutingMessage(tabId, captchaGateDecision, captchaSolveOutcome, toolResult = {}, onUpdate = () => {}) {
+    let resultContent = '';
+    const gate = captchaGateDecision || captchaSolveOutcome;
+    if (gate && gate.status !== 'cleared' && !this._captchaToolsAvailable(tabId)) {
+      resultContent += '\n[TRUSTED CAPTCHA GATE: Ask the user to complete verification manually. Do not dismiss, close, or resubmit it. Report blocked work with done({outcome:"partial"}).]';
+    } else if (captchaGateDecision?.status === 'solve_required') {
+      resultContent += '\n[TRUSTED CAPTCHA GATE: A supported verification challenge is active. Call solve_captcha once now. Do not dismiss or close the dialog, click Continue/Submit, or use another page-changing tool until solve_captcha returns.]';
+      onUpdate('warning', { message: 'Supported verification challenge detected; solve_captcha is required.' });
+    } else if (captchaGateDecision?.status === 'manual_required') {
+      resultContent += captchaGateDecision.cloudflareManagedChallenge === true
+        ? '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Inspect get_captcha_capabilities for a Cloudflare native method; use one solve_captcha providerTasks dispatch only with all required observed inputs, otherwise ask for manual completion. Do not submit; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]'
+        : captchaGateDecision.activeChallengeAfterSolve === true
+        ? '\n[TRUSTED CAPTCHA GATE: The active challenge frame is visible again after the one automatic solve. The site may have rejected the token. Do not call solve_captcha again; stop automation and ask the user to complete the challenge manually.]'
+        : '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable automatic widget was detected. Inspect get_captcha_capabilities and use one native providerTasks solve only if its required parameters can be observed. Otherwise ask for manual completion. Do not dismiss, close, or resubmit the challenge.]';
+      onUpdate('warning', { message: 'Verification challenge requires manual completion.' });
+    } else if (captchaGateDecision?.status === 'cleared') {
+      if (captchaGateDecision.clearedByNativeApplication === true) {
+        resultContent += '\n[TRUSTED CAPTCHA GATE: A fresh complete inspection confirms the applied native challenge is gone. Continue only on a fresh model turn.]';
+      } else if (captchaGateDecision.clearedByResponseToken === true) {
+        resultContent += '\n[TRUSTED CAPTCHA GATE: The gated widget now exposes a response token and no active challenge frame remains. The CAPTCHA gate is cleared. Choose any continuation or submit action only on a fresh model turn; the mutation preflight will re-arm the gate if the site rejects the token and shows the challenge again.]';
+        onUpdate('warning', { message: 'Response-token verification confirmed the CAPTCHA widget cleared.' });
+      } else {
+        resultContent += '\n[TRUSTED CAPTCHA GATE: Manual completion was confirmed for an unrecognized challenge with no correlated widget state. The CAPTCHA gate is cleared. Choose any continuation or submit action only on a fresh model turn.]';
+        onUpdate('warning', { message: 'Manual completion confirmed the unrecognized challenge cleared.' });
+      }
+    } else if ((captchaGateDecision || captchaSolveOutcome)?.status === 'verification_pending'
+        && this._nativeCaptchaSolutions?.get(tabId)?.solution && !this._nativeCaptchaSolutions.get(tabId).applied) {
+      resultContent += '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
+    } else if (captchaGateDecision?.status === 'verification_pending') {
+      resultContent += '\n[TRUSTED CAPTCHA GATE: Verification is still pending because the exact widget has no response token or its frame state could not be inspected conclusively. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
+    } else if (toolResult?.applicationRequired === true && captchaSolveOutcome?.status === 'verification_pending') {
+      resultContent += '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
+    } else if (captchaSolveOutcome?.status === 'verification_pending') {
+      resultContent += '\n[TRUSTED CAPTCHA GATE: The supported CAPTCHA token was injected, but clearance must be confirmed from the exact widget token and active challenge-frame state. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
+    } else if (captchaSolveOutcome?.status === 'manual_required') {
+      resultContent += '\n[TRUSTED CAPTCHA GATE: The one allowed automatic solve did not clear the verification challenge. Stop automation and ask the user to complete it manually. Do not retry solve_captcha, dismiss, close, or resubmit the challenge.]';
+      onUpdate('warning', { message: 'Automatic CAPTCHA solve did not clear the challenge; manual completion is required.' });
+    }
+    return resultContent;
+  }
+
   _captchaGateBlockResult(tabId, toolName, toolArgs = {}) {
-    const gate = this._captchaGateStates.get(tabId);
+    const gate = this._captchaGateForTools(tabId, this._captchaGateStates.get(tabId));
     const gatedCompletion = toolName === 'done' || toolName === 'done_json';
     const abandonmentNavigation = Agent.NAV_TOOLS.has(toolName);
     const gatedAction = this._isBrowserMutationTool(toolName)
@@ -10823,10 +10893,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || gate.status === 'cleared'
       || !gatedAction
       || abandonmentNavigation
-      || (gatedCompletion && gate.status === 'manual_required')
+      || (gatedCompletion && gate.status === 'manual_required'
+        && (!gate.publicGate?.toolsUnavailable || toolArgs.outcome === 'partial'))
     ) {
       return null;
     }
+    if (gate.publicGate?.toolsUnavailable) return {
+      success: false, denied: true, noDispatch: true, captchaGate: true,
+      manualCompletionRequired: true,
+      error: 'Verification requires manual completion in this mode/tier. Ask the user to complete it; report blocked work with done({outcome:"partial"}). Do not dismiss, close, or resubmit it.',
+    };
     if (toolName === 'apply_captcha_solution' && this._nativeCaptchaSolutions?.get(tabId)?.solution && !this._nativeCaptchaSolutions.get(tabId).applied) return null;
     if (toolName === 'solve_captcha' && Array.isArray(toolArgs.providerTasks)
         && !gate.publicGate?.solveAttempted && !gate.publicGate?.solveFailed
@@ -11022,7 +11098,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || gatedCompletion
       || isNetworkMutation(toolName, toolArgs);
     if (!gatedAction || toolName === 'solve_captcha' || Agent.NAV_TOOLS.has(toolName)) return null;
-    const activeGate = this._captchaGateStates.get(tabId);
+    const activeGate = this._captchaGateForTools(tabId, this._captchaGateStates.get(tabId));
     if (
       activeGate
       && activeGate.status !== 'cleared'
@@ -11070,11 +11146,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const cloudflareManagedGate = this._activeCloudflareManagedChallengeGate(tabId);
     if (cloudflareManagedGate) {
-      toolResult.captchaGate = cloudflareManagedGate;
-      return { gate: cloudflareManagedGate, loopCheck: { kind: 'none' } };
+      const constrained = this._captchaGateForTools(tabId, this._captchaGateStates.get(tabId));
+      const gate = constrained?.publicGate || cloudflareManagedGate;
+      toolResult.captchaGate = gate;
+      return { gate, loopCheck: { kind: 'none' } };
     }
 
-    const activeGate = this._captchaGateStates.get(tabId);
+    const activeGate = this._captchaGateForTools(tabId, this._captchaGateStates.get(tabId));
     const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
     let observedChallengeFrameId = Number.isInteger(toolResult.captchaChallengeFrameId)
       ? toolResult.captchaChallengeFrameId
@@ -11253,6 +11331,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (
       postSolveTokenState?.visibleActiveChallenge === true
       && ['verification_pending', 'cleared'].includes(activeGate?.status)
+      && !(this._nativeCaptchaSolutions?.get(tabId)?.solution && !this._nativeCaptchaSolutions.get(tabId).applied)
     ) {
       const manualGate = {
         ...withoutCaptchaTokenClearanceState(
@@ -11290,6 +11369,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       toolResult.captchaGate = pendingGate;
       return { gate: pendingGate, loopCheck };
+    }
+    // Native families need not have an automatic widget identity. Only a
+    // successfully applied answer plus a complete fresh DOM inspection can
+    // clear their gate; an answer that is merely ready cannot clear it.
+    const native = this._nativeCaptchaSolutions?.get(tabId);
+    if (!challenge && authoritativeRootRead && !correlatedCaptchaCandidateIdentity
+        && activeGate?.status === 'verification_pending'
+        && native?.applicationSucceeded === true && native.pageUrl === pageUrl) {
+      const inspection = await this._detectChallengeDialogBeforeMutation(tabId, {
+        includeStatus: true,
+        ...(Number.isInteger(activeGate.challengeFrameId) ? { expectedFrameId: activeGate.challengeFrameId } : {}),
+      });
+      if (inspection.inspectionComplete && !inspection.challenge) {
+        const clearedGate = { ...activeGate.publicGate, status: 'cleared', clearedByNativeApplication: true };
+        this._captchaGateStates.set(tabId, { ...activeGate, status: 'cleared', publicGate: clearedGate });
+        toolResult.captchaGate = clearedGate;
+        return { gate: clearedGate, loopCheck };
+      }
     }
     if (!challenge) {
       if (activeGate?.status === 'manual_required' && !directCaptchaEvidence) {
@@ -11393,7 +11490,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
     const providerSupportsCandidate = this.captchaProviderIds.some(id =>
       captchaProviderSupportsType(id, detection?.selected?.type));
-    const supported = this.captchaSolverEnabled
+    const supported = this._captchaToolsAvailable(tabId) && this.captchaSolverEnabled
       && providerSupportsCandidate
       && !detectionFailed
       && !detection?.error
@@ -11402,6 +11499,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && unsupportedVendors.length === 0;
     const publicGate = {
       status: supported ? 'solve_required' : 'manual_required',
+      ...(!this._captchaToolsAvailable(tabId) ? { toolsUnavailable: true } : {}),
       challengeDialog: { label: challenge.label },
       diagnostics,
       ...(detection?.selected?.type ? { selectedType: detection.selected.type } : {}),
@@ -13333,32 +13431,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             : 'Chrome-protected dashboard detected; DOM automation is unavailable.',
         });
       }
-      if (captchaGateDecision?.status === 'solve_required') {
-        resultContent += '\n[TRUSTED CAPTCHA GATE: A supported verification challenge is active. Call solve_captcha once now. Do not dismiss or close the dialog, click Continue/Submit, or use another page-changing tool until solve_captcha returns.]';
-        onUpdate('warning', { message: 'Supported verification challenge detected; solve_captcha is required.' });
-      } else if (captchaGateDecision?.status === 'manual_required') {
-        resultContent += captchaGateDecision.cloudflareManagedChallenge === true
-          ? '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Inspect get_captcha_capabilities for a Cloudflare native method; use one solve_captcha providerTasks dispatch only with all required observed inputs, otherwise ask for manual completion. Do not submit; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]'
-          : captchaGateDecision.activeChallengeAfterSolve === true
-          ? '\n[TRUSTED CAPTCHA GATE: The active challenge frame is visible again after the one automatic solve. The site may have rejected the token. Do not call solve_captcha again; stop automation and ask the user to complete the challenge manually.]'
-          : '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable automatic widget was detected. Inspect get_captcha_capabilities and use one native providerTasks solve only if its required parameters can be observed. Otherwise ask for manual completion. Do not dismiss, close, or resubmit the challenge.]';
-        onUpdate('warning', { message: 'Verification challenge requires manual completion.' });
-      } else if (captchaGateDecision?.status === 'cleared') {
-        if (captchaGateDecision.clearedByResponseToken === true) {
-          resultContent += '\n[TRUSTED CAPTCHA GATE: The gated widget now exposes a response token and no active challenge frame remains. The CAPTCHA gate is cleared. Choose any continuation or submit action only on a fresh model turn; the mutation preflight will re-arm the gate if the site rejects the token and shows the challenge again.]';
-          onUpdate('warning', { message: 'Response-token verification confirmed the CAPTCHA widget cleared.' });
-        } else {
-          resultContent += '\n[TRUSTED CAPTCHA GATE: Manual completion was confirmed for an unrecognized challenge with no correlated widget state. The CAPTCHA gate is cleared. Choose any continuation or submit action only on a fresh model turn.]';
-          onUpdate('warning', { message: 'Manual completion confirmed the unrecognized challenge cleared.' });
-        }
-      } else if (captchaGateDecision?.status === 'verification_pending') {
-        resultContent += '\n[TRUSTED CAPTCHA GATE: Verification is still pending because the exact widget has no response token or its frame state could not be inspected conclusively. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
-      } else if (captchaSolveOutcome?.status === 'verification_pending') {
-        resultContent += '\n[TRUSTED CAPTCHA GATE: The supported CAPTCHA token was injected, but clearance must be confirmed from the exact widget token and active challenge-frame state. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
-      } else if (captchaSolveOutcome?.status === 'manual_required') {
-        resultContent += '\n[TRUSTED CAPTCHA GATE: The one allowed automatic solve did not clear the verification challenge. Stop automation and ask the user to complete it manually. Do not retry solve_captcha, dismiss, close, or resubmit the challenge.]';
-        onUpdate('warning', { message: 'Automatic CAPTCHA solve did not clear the challenge; manual completion is required.' });
-      }
+      resultContent += this._captchaRoutingMessage(tabId, captchaGateDecision, captchaSolveOutcome, toolResult, onUpdate);
       if (nytimesPageGateFallback) {
         resultContent += `\n${nytimesPageGateFallback.note}`;
         onUpdate('warning', {
@@ -13414,7 +13487,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await settleConsequentialTool();
 
       this._throwIfAborted(this._runAbortSignal(tabId));
-      if (captchaGateDecision?.status === 'manual_required' || captchaSolveOutcome?.status === 'manual_required') {
+      if ((captchaGateDecision?.status === 'manual_required' || captchaSolveOutcome?.status === 'manual_required')
+          && !this._canTryNativeCaptcha(tabId, captchaGateDecision || captchaSolveOutcome)) {
         this._appendSyntheticToolResults(
           tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
           () => ({ success: false, skipped: true, error: 'skipped: manual CAPTCHA completion is required' }),
@@ -13425,7 +13499,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._persist(tabId);
         return { action: 'return', value, status: 'captcha_manual_required' };
       }
-      if (captchaGateDecision?.status === 'solve_required'
+      if (captchaGateDecision?.status === 'manual_required'
+          || captchaGateDecision?.status === 'solve_required'
           || captchaGateDecision?.status === 'cleared'
           || captchaGateDecision?.status === 'verification_pending'
           || captchaSolveOutcome?.status === 'verification_pending') {
@@ -25029,7 +25104,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     // a CAPTCHA provider — otherwise the default "stop and ask the user" rule in
     // SYSTEM_PROMPT_ACT stands. The note unlocks the solve_captcha tool
     // path described there.
-    if (this.captchaSolverEnabled) {
+    if (this.captchaSolverEnabled && this._captchaToolsAvailable(tabId, mode, tier)) {
       prompt += `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. Enabled coverage: ${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'recaptcha_v2')) ? 'reCAPTCHA v2/v3 including Enterprise, Turnstile, and image CAPTCHAs. ' : ''}${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'hcaptcha')) ? 'hCaptcha via NopeCHA or NoneCap. ' : 'hCaptcha requires manual completion. '} For other CAPTCHA families, call get_captcha_capabilities, inspect the chosen method schemas, and supply providerTasks to solve_captcha with inject:false. All documented token, recognition, cookie, and structured-answer methods are available through that route. Supply observed inputs for each compatible enabled provider so weight-based fallback can run. Apply the answer with apply_captcha_solution. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If neither automatic nor native inputs can be obtained, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha.]`;
     }
 
@@ -35654,6 +35729,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       try {
         const record = this._nativeCaptchaSolutions?.get(tabId);
         const result = await applyNativeCaptchaSolution(tabId, record, args, chrome);
+        if (record && result.success === true) record.applicationSucceeded = true;
         return { ...result, injected: result.success === true, dispatched: record?.applied === true };
       } catch (error) {
         return { success: false, error: error.message, dispatched: this._nativeCaptchaSolutions?.get(tabId)?.applied === true };
@@ -35792,7 +35868,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
                 `solve_captcha: requested isInvisible=${Boolean(isInvisible)} conflicts with the active detected candidate isInvisible=${Boolean(detected.isInvisible)} in ${detected.frameUrl}. Retry without isInvisible or use the detected value.`
               );
             }
-            if (/^recaptcha_v[23](?:_enterprise)?$/.test(String(detected.type || ''))
+            if ((/^recaptcha_v[23](?:_enterprise)?$/.test(String(detected.type || ''))
+                  || (detected.type === 'hcaptcha' && detected.isEnterprise === true))
                 && isEnterprise != null
                 && detected.isEnterprise != null
                 && Boolean(isEnterprise) !== Boolean(detected.isEnterprise)) {

@@ -837,7 +837,7 @@ export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = nul
     add({
       type: 'hcaptcha',
       websiteKey,
-      ...(host.getAttribute('data-rqdata') ? { rqdata: host.getAttribute('data-rqdata') } : {}),
+      ...(host.getAttribute('data-rqdata') ? { rqdata: host.getAttribute('data-rqdata'), isEnterprise: true } : {}),
       isInvisible,
       visible: visibleElement(host) && !isInvisible,
       normalCheckbox: visibleElement(host) && !isInvisible,

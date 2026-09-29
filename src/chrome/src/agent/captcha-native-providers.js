@@ -98,6 +98,51 @@ export function buildNativeCaptchaTask(entry) {
   return { contract, task };
 }
 
+// Compare equivalent identifiers, not only the shared reCAPTCHA-style key.
+// Each group names one semantic identifier in the provider-specific schemas.
+const FAMILY_IDENTIFIERS = {
+  atb: [['appId', 'app_id'], ['apiServer', 'api_server']],
+  cutcaptcha: [['miseryKey', 'misery_key'], ['apiKey', 'api_key']],
+  tencent: [['appId', 'app_id', 'websiteKey']],
+  lemin: [['captchaId', 'captcha_id'], ['divId', 'div_id']],
+  vk: [['redirectUri', 'redirect_uri']],
+  aws_waf: [['websiteKey', 'sitekey', 'awsKey'], ['iv', 'awsIv'], ['context', 'awsContext'],
+    ['challengeScript', 'challenge_script', 'awsChallengeJS']],
+  alibaba: [['sceneId', 'metadata.sceneId'], ['prefix', 'metadata.prefix'],
+    ['userId', 'metadata.userId'], ['userUserId', 'metadata.userUserId'],
+    ['userCertifyId', 'metadata.UserCertifyId']],
+  datadome: [['captchaUrl', 'captcha_url', 'metadata.captchaUrl']],
+  hunt: [['apiGetLib', 'metadata.apiGetLib'], ['data', 'metadata.data']],
+  imperva: [['incapsulaScriptUrl', 'metadata.incapsulaScriptUrl'],
+    ['incapsulaCookies', 'metadata.incapsulaCookies'], ['reese84UrlEndpoint', 'metadata.reese84UrlEndpoint']],
+  tspd: [['tspdCookie', 'metadata.tspdCookie']],
+  binance: [['validateId']],
+  yidun: [['challenge'], ['hcg'], ['hct']],
+  hcaptcha: [['rqdata', 'data.rqdata']],
+  funcaptcha: [['data']],
+};
+function validateFallbackIdentifiers(built) {
+  const family = built[0].contract.family;
+  const groups = [
+    ['websiteURL', 'pageurl', 'url'],
+    ['websiteKey', 'sitekey', 'googlekey', 'websitePublicKey', 'publickey'],
+    ...(FAMILY_IDENTIFIERS[family] || []),
+  ];
+  if (family === 'geetest') {
+    const versions = built.map(({contract, task}) => task.version === 4 || task.captchaId
+      || task.captcha_id || task.initParameters?.captcha_id || contract.method === 'geetest_v4' ? 4 : 3);
+    if (new Set(versions).size > 1) throw new Error('Fallback tasks must use the same GeeTest version.');
+    groups.push(versions[0] === 4 ? ['captchaId', 'captcha_id', 'initParameters.captcha_id', 'gt'] : ['gt']);
+    if (versions[0] === 3) groups.push(['challenge']);
+  }
+  for (const aliases of groups) {
+    const values = built.flatMap(({task}) => aliases.map(path => at(task, path))).filter(usable);
+    if (new Set(values.map(value => typeof value === 'object' ? JSON.stringify(value) : String(value))).size > 1) {
+      throw new Error(`Fallback tasks must reference the same observed challenge (${aliases.join('/')}).`);
+    }
+  }
+}
+
 // All validation happens before any paid create request. A provider is never
 // submitted twice, and a failed page application never restarts this loop.
 export function prepareNativeCaptchaTasks(providers, entries) {
@@ -111,12 +156,25 @@ export function prepareNativeCaptchaTasks(providers, entries) {
     return { provider, ...buildNativeCaptchaTask(entry) };
   });
   if (new Set(built.map(x => x.contract.family)).size !== 1) throw new Error('Fallback methods must solve the same CAPTCHA family.');
-  for (const values of [
-    built.map(({ task }) => task.websiteURL || task.pageurl || task.url),
-    built.map(({ task }) => task.websiteKey || task.sitekey || task.googlekey || task.websitePublicKey || task.publickey),
-    built.map(({ task }) => task.captchaId || task.captcha_id || task.initParameters?.captcha_id || (task.version === 4 ? task.gt : undefined)),
-  ]) if (new Set(values.filter(Boolean)).size > 1) throw new Error('Fallback tasks must reference the same observed page and site/challenge key.');
+  validateFallbackIdentifiers(built);
   return providers.flatMap(provider => built.filter(x => x.provider.id === provider.id));
+}
+
+export function decodeSolveCaptchaAnswer(method, answer) {
+  if (typeof answer !== 'string') return answer;
+  if (method === 'grid' && answer.startsWith('click:')) {
+    const cells = answer.slice(6).replace(/\/$/, '').split('/');
+    if (cells.some(cell => !/^(?:[1-9]\d*|[a-g])$/i.test(cell))) throw new Error('SolveCaptcha: invalid grid answer.');
+    return cells.map(cell => /^[a-g]$/i.test(cell) ? cell.toLowerCase().charCodeAt(0) - 87 : Number(cell));
+  }
+  if (method === 'coordinates' && /^coordinates?:/.test(answer)) {
+    return answer.replace(/^coordinates?:/, '').replace(/;$/, '').split(';').map(point => {
+      const match = /^x=(\d+(?:\.\d+)?),y=(\d+(?:\.\d+)?)$/.exec(point);
+      if (!match) throw new Error('SolveCaptcha: invalid coordinate answer.');
+      return { x: Number(match[1]), y: Number(match[2]) };
+    });
+  }
+  return answer;
 }
 
 async function solveForm(apiKey, contract, task) {
@@ -131,6 +189,7 @@ async function solveForm(apiKey, contract, task) {
     if (Number(result.status) !== 1) continue;
     let solution = result.request;
     if (typeof solution === 'string' && /^[\[{]/.test(solution)) { try { solution = JSON.parse(solution); } catch {} }
+    solution = decodeSolveCaptchaAnswer(contract.method, solution);
     return { taskId: created.request, solution, ...(result.useragent ? { userAgent: result.useragent } : {}) };
   }
   throw new Error('SolveCaptcha: timed out waiting for solution.');

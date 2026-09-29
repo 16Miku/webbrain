@@ -31,7 +31,6 @@ export function hcaptchaParamError(params) {
   try {
     if (!['http:', 'https:'].includes(new URL(params.websiteURL).protocol)) throw new Error();
   } catch { return 'solve_captcha: hCaptcha requires an HTTP(S) page URL.'; }
-  if (params.isEnterprise && !params.rqdata) return 'solve_captcha: hCaptcha Enterprise requires the observed rqdata value.';
   return null;
 }
 

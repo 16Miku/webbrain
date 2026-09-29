@@ -38,6 +38,8 @@ Open the provider's collapsed **Advanced** section to change its weight. Any num
 | NopeCHA | 95 | `nopechaApiKey` | `nopechaEnabled` | Credits |
 | NoneCap | 94 | `nonecapApiKey` | `nonecapEnabled` | Credits |
 
+CAPTCHA discovery, solving, and application tools are available only in **Act/Dev with Mid or Full tiers**. Ask never exposes these tools or receives solving instructions. Compact asks for manual completion and permits `done({outcome:"partial"})` for blocked work; Dev itself requires Mid or Full.
+
 Keys and consent settings participate in configuration export/import. A key-only import does not silently enable a service. NoneCap uses `nc_live_` keys; NopeCHA uses opaque subscription keys, not the 32-character hexadecimal format used by several other providers. Pricing and account eligibility are controlled by the providers; [NopeCHA pricing](https://nopecha.com/pricing) is linked from Settings.
 
 ## Coverage by provider
@@ -67,7 +69,7 @@ This is grounded in their current public catalogs, not a claim that every privat
 - The current [2Captcha API catalog](https://2captcha.com/api-docs) omits hCaptcha. Its [sandbox guide](https://2captcha.com/h/how-to-use-sandbox-mode) mentions hCaptcha for manually solving your own submissions; that does not establish production worker availability.
 - CapMonster's source repository contains an hCaptcha document marked `draft: true`; the published catalog does not expose it. Draft/withdrawn methods are not enabled by this integration.
 - NopeCHA's current `/v1/token/hcaptcha` route and its separate `/v1/recognition/hcaptcha` route are different products. Recognition returns puzzle answers, not a completed token.
-- NoneCap's `hcaptcha_enterprise` type requires observed `rqdata`. Caller-supplied User-Agent is not sent because its API documents that input as ignored/deprecated. The returned `resp_key` and `user_agent` are retained.
+- NoneCap's `hcaptcha_enterprise` type accepts optional `rqdata`; include it whenever the site supplies it. Observed `data-rqdata` marks an automatically detected widget as Enterprise. Caller-supplied User-Agent is not sent because its API documents that input as ignored/deprecated. The returned `resp_key` and `user_agent` are retained.
 
 Automatic detection still validates the hCaptcha UUID site key and observed `rqdata`. An explicit value that conflicts with the selected widget fails before dispatch. Enabling a compatible provider can re-evaluate a previously unsupported gate; a failed paid solve does not authorize another one.
 
@@ -135,6 +137,8 @@ Use observed page parameters to prepare fallback tasks. Method IDs are WebBrain 
 
 Saved weights determine execution order, regardless of array order. Supply a task for each enabled provider that can solve that family and for which the required inputs are available. The tool does not invent another provider's parameters. Page URLs must belong to the active tab or an observed frame. Native methods do not automatically scrape every site's internal configuration.
 
+Provider-specific identifiers (for example `appId`/`app_id` and `miseryKey`/`misery_key`) must agree across fallback entries before any paid request.
+
 `solution` remains structured: tokens, cookie values, GeeTest objects, coordinates, arrays of booleans, text, and provider-specific response fields are not coerced into a single token string. A synchronous ready response is consumed without a redundant polling request.
 
 ## Applying answers
@@ -145,8 +149,8 @@ Supported bindings:
 
 - `fields`: bind a solution path to one observed input/textarea selector; structured values require `encoding: "json"`.
 - `callback`: pass a solution value or object to an observed named page callback. Native/global code evaluators and unsafe property paths are rejected. Provider-returned code is never evaluated.
-- `cookies`: bind explicit cookie names to returned values. Cookies are host-only, scoped to the active top-level page and its browser cookie store. Provider-supplied domains/URLs are not adopted. Both extension manifests declare the `cookies` permission for this behavior.
-- `clicks`: apply coordinate arrays, numbered grid cells, or boolean grids to one observed challenge image/grid. Original image dimensions are converted once into CSS coordinates; out-of-bounds, ambiguous, obscured, or invisible targets fail. These are synthetic page events; some challenges require trusted input and will reject them.
+- `cookies`: bind explicit cookie names to returned values. Complete Set-Cookie strings are reduced to the explicitly named cookie value; returned attributes are ignored. Cookies are host-only, scoped to the active top-level page and its browser cookie store. Provider-supplied domains/URLs are not adopted. Both extension manifests declare the `cookies` permission for this behavior.
+- `clicks`: apply coordinate arrays, numbered grid cells, or boolean grids to one observed challenge image/grid. Original image dimensions are converted once into CSS coordinates; out-of-bounds, ambiguous, obscured, or invisible targets fail. SolveCaptcha `click:` grid answers (including letter-numbered cells) and `coordinate:` answers are decoded into these arrays. These are synthetic page events; some challenges require trusted input and will reject them.
 
 Example for a site whose observed callback accepts a complete GeeTest object:
 
@@ -161,6 +165,8 @@ Example for a numbered grid answer:
 ```
 
 Selectors, callback names, frame IDs, and response paths in examples are placeholders. Read the actual page and returned answer. Binding does not implement every site's slider, drag trajectory, rotation control, puzzle refresh cycle, or proprietary submission protocol. Such answers remain available as data for a site-specific integration or manual completion. Even after successful binding, a fresh page read must confirm that the challenge cleared.
+
+After native application succeeds, a complete fresh inspection confirming the challenge has disappeared clears the gate even when the family has no automatic widget identity. Merely receiving an answer does not clear it.
 
 ## Proxy, cookies, and browser identity
 

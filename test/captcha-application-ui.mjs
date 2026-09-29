@@ -29,11 +29,11 @@ try {
    else api.tabs.executeScript=async(tabId,spec)=>{calls.push(spec);return [await page.evaluate(spec.code)];};
    globalThis.chrome=name==='chrome'?api:undefined;globalThis.browser=name==='firefox'?api:undefined;
    const documents=[{frameId:0,url:page.url(),timeOrigin:await page.evaluate(()=>performance.timeOrigin)}];
-   const record={documents,pageUrl:page.url(),createdAt:Date.now(),solution:{token:'solved',cookie:'clearance',geetest:{lot_number:'lot'},click:[1,6]}};
+   const record={documents,pageUrl:page.url(),createdAt:Date.now(),solution:{token:'solved',cookie:'cf_clearance=clearance; Domain=.unrelated.test; Path=/other; Secure',geetest:{lot_number:'lot'},click:[1,6]}};
    const result=await applyNativeCaptchaSolution(1,record,{frameId:0,frameUrl:page.url(),fields:[{selector:'#response',path:'token'}],cookies:[{name:'cf_clearance',path:'cookie'}],callback:{name:'captcha.done',path:'geetest'},clicks:[{selector:'#grid',path:'click',mode:'grid',rows:2,columns:3}]});
    assert.equal(result.success,true);assert.equal(result.clicksApplied,2);
    assert.equal(await page.locator('#response').inputValue(),'solved');assert.deepEqual(await page.evaluate(()=>answers),[{lot_number:'lot'}]);
-   assert.equal(cookies[0].storeId,'isolated-store');assert.equal(cookies[0].url,origin+'/fixture');assert.equal(cookies[0].domain,undefined);
+   assert.equal(cookies[0].storeId,'isolated-store');assert.equal(cookies[0].url,origin+'/fixture');assert.equal(cookies[0].domain,undefined);assert.equal(cookies[0].value,'clearance');assert.equal(cookies[0].path,'/');
    const points=await page.evaluate(()=>({points:clickPoints,rect:document.querySelector('#grid').getBoundingClientRect().toJSON()}));
    assert.deepEqual(points.points,[[points.rect.left+50,points.rect.top+50],[points.rect.left+250,points.rect.top+150]]);
    await assert.rejects(applyNativeCaptchaSolution(1,record,{frameId:0,frameUrl:page.url()}),/unapplied/);

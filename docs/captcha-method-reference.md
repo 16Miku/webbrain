@@ -1085,7 +1085,7 @@ Family: `recaptcha_v2`. [Official contract](https://solvecaptcha.com/captcha-sol
 Family: `recaptcha_v3`. [Official contract](https://solvecaptcha.com/captcha-solver-api).
 
 - Required: `googlekey` (string), `pageurl` (string).
-- Optional: `domain` (string), `action` (string), `min_score` (integer), `proxy` (string), `proxytype` (string), `cookies` (string), `userAgent` (string).
+- Optional: `domain` (string), `action` (string), `min_score` (number), `proxy` (string), `proxytype` (string), `cookies` (string), `userAgent` (string).
 - Fixed wire values: `{"method":"userrecaptcha","version":"v3"}`.
 
 ### recaptcha_v2_enterprise
@@ -1278,7 +1278,7 @@ Family: `text_captcha`. [Official contract](https://solvecaptcha.com/captcha-sol
 Family: `recaptcha_v3_enterprise`. [Official contract](https://solvecaptcha.com/captcha-solver-api).
 
 - Required: `googlekey` (string), `pageurl` (string).
-- Optional: `domain` (string), `action` (string), `min_score` (integer), `proxy` (string), `proxytype` (string), `cookies` (string), `userAgent` (string).
+- Optional: `domain` (string), `action` (string), `min_score` (number), `proxy` (string), `proxytype` (string), `cookies` (string), `userAgent` (string).
 - Fixed wire values: `{"method":"userrecaptcha","version":"v3","enterprise":1}`.
 
 ## anti-captcha (23 variants)
@@ -1597,6 +1597,6 @@ Family: `hcaptcha`. [Official contract](https://nonecap.com/api-reference/).
 
 Family: `hcaptcha`. [Official contract](https://nonecap.com/api-reference/).
 
-- Required: `sitekey` (string), `url` (string), `rqdata` (string).
-- Optional: `proxy` (object or string).
+- Required: `sitekey` (string), `url` (string).
+- Optional: `rqdata` (string), `proxy` (object or string).
 - Fixed wire values: `{"type":"hcaptcha_enterprise"}`. Route: `/v1/solves`.

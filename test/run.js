@@ -121955,7 +121955,11 @@ test('CAPTCHA providers: observed hCaptcha rqdata reaches fallback and returns t
       };
       try {
         const agent = new AgentClass({});
-        const result = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, isEnterprise: true });
+        const flagConflict = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, isEnterprise: false });
+        assert.equal(flagConflict.dispatched, false, build);
+        assert.match(flagConflict.error, /isEnterprise=.*conflicts/, build);
+        assert.equal(calls.length, 0, build);
+        const result = await agent._executeToolImpl(1, 'solve_captcha', { inject: false });
         assert.equal(result.success, true, `${build}: ${result.error}`);
         assert.equal(result.provider, 'nonecap', build);
         assert.equal(result.respKey, 'E0_key', build);
@@ -122009,6 +122013,15 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
         assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {}), null, build);
         assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', args)?.denied, true, build);
         assert.equal(agent._captchaGateBlockResult(1, 'click', {})?.denied, true, build);
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { success: true } }];
+        else api.tabs.executeScript = async () => [{ success: true }];
+        const applied = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form', callback: { name: 'captcha.done', path: '' } });
+        assert.equal(applied.success, true, build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).applicationSucceeded, true, build);
+        agent._detectChallengeDialogBeforeMutation = async () => ({ inspectionComplete: true, challenge: null });
+        const cleared = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', { pageUrl: 'https://example.test/form', pageContent: 'heading "Verification complete"' });
+        assert.equal(cleared.gate.status, 'cleared', build);
+        assert.equal(agent._captchaGateBlockResult(1, 'click', {}), null, build);
       } finally { globalThis.fetch = previousFetch; }
     });
   }
@@ -122982,6 +122995,39 @@ test('challenge dialog with no enabled supported solver stops the batch for manu
     assert.match(result.value, /complete the verification manually/i, `${label}: manual request missing`);
     assert.equal(updates.some(update => update.type === 'captcha_gate' && update.data?.status === 'manual_required'), true, `${label}: trace diagnostic update missing`);
     assert.match(String(messages[0]?.content), /TRUSTED CAPTCHA GATE/, `${label}: model-facing hard gate note missing`);
+  }
+});
+
+test('CAPTCHA batch routing offers native tools only in Act/Dev mid/full and exits compact manually', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full'], ['dev', 'mid'], ['dev', 'full']]) {
+      await withCaptchaFakePage(build, [], async () => {
+        const agent = new AgentClass({ getActive: () => ({ promptTier: tier }), getVisionProvider: async () => null });
+        agent.conversationModes.set(1, mode);
+        agent.captchaSolverEnabled = true;
+        agent.captchaProviderIds = ['capsolver'];
+        agent._skipPermissionGate = true;
+        agent._ensureGateSetting = async () => {};
+        agent._currentUrl = async () => 'https://example.test/signup';
+        agent._rememberMastodonObservation = async () => null;
+        agent._recordProgressObservation = async () => null;
+        agent._autoRecordProgressAction = () => null;
+        agent._persist = () => {};
+        agent.executeTool = async () => ({ success: true, pageContent: 'dialog "Security verification" [ref_10]' });
+        const messages = [];
+        const result = await agent._executeToolBatch(1,
+          [{ id: 'captcha_observe', function: { name: 'get_accessibility_tree', arguments: '{}' } }],
+          messages, () => {}, { supportsVision: false, promptTier: tier }, '', new Set(['get_accessibility_tree']), 1);
+        const available = mode !== 'ask' && tier !== 'compact';
+        assert.equal(result.action, available ? 'continue' : 'return', `${build}/${mode}/${tier}`);
+        if (available) assert.match(messages[0].content, /get_captcha_capabilities/);
+        else {
+          assert.equal(result.status, 'captcha_manual_required');
+          assert.doesNotMatch(messages[0].content, /get_captcha_capabilities|solve_captcha|apply_captcha_solution/);
+          assert.equal(agent._captchaGateBlockResult(1, 'done', { outcome: 'partial' }), null);
+        }
+      });
+    }
   }
 });
 

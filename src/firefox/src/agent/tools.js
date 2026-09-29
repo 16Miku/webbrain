@@ -1213,7 +1213,7 @@ export const AGENT_TOOLS = [
             description: 'Exact iframe-index path from a candidate\'s framePathIndexes diagnostic. Use with frameId when inherited-origin candidates share the same URL and site key.',
           },
           isInvisible: { type: 'boolean', description: 'reCAPTCHA v2 / hCaptcha only — true when the widget uses invisible mode (no visible checkbox). Auto-detected when omitted.' },
-          isEnterprise: { type: 'boolean', description: 'reCAPTCHA v2/v3 or hCaptcha — true for an Enterprise widget; hCaptcha Enterprise also requires rqdata. Auto-detected when omitted.' },
+          isEnterprise: { type: 'boolean', description: 'reCAPTCHA v2/v3 or hCaptcha — true for an Enterprise widget; include hCaptcha rqdata when the page supplies it. Auto-detected when omitted.' },
           pageAction: { type: 'string', description: 'Required for reCAPTCHA v3 — the action name the page uses (e.g. "login", "submit"). Auto-detected from data-action or the loader script when present; pass it explicitly if detection reports it missing.' },
           minScore: { type: 'number', enum: [0.3, 0.7, 0.9], description: 'reCAPTCHA v3 only — requested score for providers that expose this option. Defaults to 0.3. CapSolver does not expose this option. A returned token does not guarantee a score or acceptance.' },
           metadata: {
@@ -1241,7 +1241,7 @@ export const AGENT_TOOLS = [
  */
 export const ASK_ONLY_TOOLS = [
   'chat_observe', 'get_accessibility_tree', 'inspect_viewport', 'read_page', 'read_pdf',
-  'list_webmcp_tools', 'get_captcha_capabilities',
+  'list_webmcp_tools',
   'get_window_info', 'get_interactive_elements', 'scroll',
   'extract_data', 'get_selection', 'done',
   // wait_for_stable just polls — safe in Ask mode.
@@ -1809,7 +1809,8 @@ RULES:
 12. When the task is complete, call done({summary:"...", outcome:"success"}). Verify success first.
 13. Call \`inspect_viewport\` when rendered pixels matter. Mention \`/screenshot\` only when the user explicitly wants to capture, save, or attach a page image; never require it just so the agent can see.
 14. Recording is not supported in the Firefox build. Do not call or invent recording tools.
-15. Before filling an external email/message/post composer, formulate the exact recipient, subject, and body. For more than a one-line body, save the complete text as \`[pending draft]\` with scratchpad_write first so it can be recovered if the UI fails; never mark it sent until verified.
+15. CAPTCHA: stop and ask the user to complete verification manually. Never dismiss, close, or resubmit the challenge. Report blocked work with done({outcome:"partial"}).
+16. Before filling an external email/message/post composer, formulate the exact recipient, subject, and body. For more than a one-line body, save the complete text as \`[pending draft]\` with scratchpad_write first so it can be recovered if the UI fails; never mark it sent until verified.
 
 ${SENSITIVE_PAGE_DATA_GUIDANCE}
 

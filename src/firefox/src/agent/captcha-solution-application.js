@@ -18,7 +18,14 @@ export function prepareCaptchaApplication(solution, application) {
     return String(value);
   };
   const fields = (application.fields || []).map(binding => ({ selector: binding.selector, value: encode(binding) }));
-  const cookies = (application.cookies || []).map(binding => ({ name: binding.name, value: encode(binding) }));
+  const cookies = (application.cookies || []).map(binding => {
+    let value = encode(binding);
+    // Some APIs return a Set-Cookie string. Extract only the explicitly bound
+    // cookie's value; never adopt the provider's domain, path, or attributes.
+    if (/[\r\n]/.test(value)) throw new Error('Invalid CAPTCHA cookie binding.');
+    if (value.startsWith(`${binding.name}=`)) value = value.slice(binding.name.length + 1).split(';', 1)[0];
+    return { name: binding.name, value };
+  });
   if (fields.length > 20 || cookies.length > 20) throw new Error('Too many CAPTCHA bindings.');
   if (fields.some(b => typeof b.selector !== 'string' || !b.selector)) throw new Error('Every response field needs an observed selector.');
   if (cookies.some(b => !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(b.name) || /[\r\n;]/.test(b.value))) throw new Error('Invalid CAPTCHA cookie binding.');

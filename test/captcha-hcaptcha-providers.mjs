@@ -45,8 +45,10 @@ for (const build of ['chrome', 'firefox']) {
     const options = {...params,isEnterprise:true,rqdata:'observed-rqdata',userAgent:'browser-agent'};
     assert.deepEqual(h.buildHcaptchaTask('nopecha',options),{sitekey:params.websiteKey,url:params.websiteURL,data:{rqdata:'observed-rqdata'},useragent:'browser-agent'});
     assert.deepEqual(h.buildHcaptchaTask('nonecap',options),{type:'hcaptcha_enterprise',sitekey:params.websiteKey,url:params.websiteURL,rqdata:'observed-rqdata'});
-    for (const invalid of [{...params,websiteKey:'invalid'},{...params,websiteURL:'file:///secret'},{...params,isEnterprise:true}]) assert.ok(h.hcaptchaParamError(invalid));
+    for (const invalid of [{...params,websiteKey:'invalid'},{...params,websiteURL:'file:///secret'}]) assert.ok(h.hcaptchaParamError(invalid));
     assert.equal(h.hcaptchaParamError(params),null);
+    assert.equal(h.hcaptchaParamError({...params,isEnterprise:true}),null);
+    assert.deepEqual(h.buildHcaptchaTask('nonecap',{...params,isEnterprise:true}),{type:'hcaptcha_enterprise',sitekey:params.websiteKey,url:params.websiteURL});
   });
   test(`${build}: NopeCHA v1 polls incomplete jobs without re-creating them or leaking keys in URLs`, async t => {
     const calls=api(t,(call,n)=> n===1 ? {data:'job/id'} : n===2 ? Response.json({code:14,message:'Incomplete job'},{status:409}) : {data:'hcaptcha-token'});

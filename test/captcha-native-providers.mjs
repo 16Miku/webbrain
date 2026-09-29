@@ -107,3 +107,47 @@ for (const browser of ['chrome','firefox']) {
 test('native CAPTCHA modules stay mirrored',async()=>{
   for(const name of ['captcha-catalog.js','captcha-native-providers.js','captcha-solution-application.js','captcha-hcaptcha-providers.js','captcha-json-api.js']) assert.equal(await readFile(`src/chrome/src/agent/${name}`,'utf8'),await readFile(`src/firefox/src/agent/${name}`,'utf8'),name);
 });
+
+for (const browser of ['chrome', 'firefox']) {
+  const native = await import(`../src/${browser}/src/agent/captcha-native-providers.js`);
+  const { prepareCaptchaApplication } = await import(`../src/${browser}/src/agent/captcha-solution-application.js`);
+  test(`${browser}: documented cookie responses bind only the requested host-only value`, () => {
+    const result = prepareCaptchaApplication({ cookie: 'datadome=ANSWER==; Path=/; Secure; Domain=.other.test; SameSite=Lax' }, { cookies: [{ name: 'datadome', path: 'cookie' }] });
+    assert.deepEqual(result.cookies, [{ name: 'datadome', value: 'ANSWER==' }]);
+    for (const cookie of ['other=ANSWER; Path=/', 'datadome=ANSWER\r\nSet-Cookie: other=x']) {
+      assert.throws(() => prepareCaptchaApplication({ cookie }, { cookies: [{ name: 'datadome', path: 'cookie' }] }), /Invalid CAPTCHA cookie/);
+    }
+  });
+  for (const [method, answer, expected, binding] of [
+    ['grid', 'click:3/a/g/', [3, 10, 16], { mode: 'grid', rows: 4, columns: 4 }],
+    ['coordinates', 'coordinate:x=0,y=59;x=252,y=72', [{ x: 0, y: 59 }, { x: 252, y: 72 }], { mode: 'coordinates', sourceWidth: 300, sourceHeight: 300 }],
+  ]) test(`${browser}: ${method} paid answer can be applied without another solve`, async t => {
+    const calls = mockApi(t, call => call.url.pathname === '/in.php' ? { status: 1, request: 'job' } : { status: 1, request: answer });
+    const result = await native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks([{ id: 'solvecaptcha', apiKey: 'key' }], [{ provider: 'solvecaptcha', method, parameters: { body: 'image' } }]));
+    assert.deepEqual(result.solution, expected);
+    const application = prepareCaptchaApplication(result.solution, { clicks: [{ selector: '#grid', path: '', ...binding }] });
+    assert.equal(application.clicks[0].points.length, expected.length);
+    assert.equal(calls.length, 2);
+  });
+  test(`${browser}: NoneCap Enterprise without rqdata and fractional SolveCaptcha scores are accepted`, () => {
+    assert.equal(native.buildNativeCaptchaTask({ provider: 'nonecap', method: 'hcaptcha_enterprise', parameters: { sitekey: 'site', url } }).task.type, 'hcaptcha_enterprise');
+    for (const method of ['recaptcha_v3', 'recaptcha_v3:enterprise']) assert.equal(native.buildNativeCaptchaTask({ provider: 'solvecaptcha', method, parameters: { googlekey: 'site', pageurl: url, min_score: 0.5 } }).task.min_score, 0.5);
+  });
+  const pairs = [
+    ['atb', ['2captcha', 'AtbCaptchaTaskProxyless', { websiteURL: url, appId: 'A', apiServer: 'https://api.test' }], ['solvecaptcha', 'atb_captcha', { pageurl: url, app_id: 'A', api_server: 'https://api.test' }], 'app_id'],
+    ['cutcaptcha', ['2captcha', 'CutCaptchaTaskProxyless', { websiteURL: url, miseryKey: 'A', apiKey: 'site-key' }], ['solvecaptcha', 'cutcaptcha', { pageurl: url, misery_key: 'A', api_key: 'site-key' }], 'misery_key'],
+    ['tencent', ['2captcha', 'TencentTaskProxyless', { websiteURL: url, appId: 'A' }], ['solvecaptcha', 'tencent', { pageurl: url, app_id: 'A' }], 'app_id'],
+    ['lemin', ['2captcha', 'LeminTaskProxyless', { websiteURL: url, captchaId: 'A', divId: 'div' }], ['solvecaptcha', 'lemin', { pageurl: url, captcha_id: 'A', div_id: 'div' }], 'captcha_id'],
+    ['aws_waf', ['2captcha', 'AmazonTaskProxyless', { websiteURL: url, websiteKey: 'A', iv: 'iv', context: 'context' }], ['capsolver', 'AntiAwsWafTaskProxyLess', { websiteURL: url, awsKey: 'A', awsIv: 'iv', awsContext: 'context' }], 'awsKey'],
+    ['geetest', ['2captcha', 'GeeTestTaskProxyless', { websiteURL: url, gt: 'A', challenge: 'fresh' }], ['solvecaptcha', 'geetest', { pageurl: url, gt: 'A', challenge: 'fresh' }], 'challenge'],
+  ];
+  for (const [family, a, b, changed] of pairs) test(`${browser}: ${family} identifier aliases agree before any paid request`, async t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const entries = [a,b].map(([provider, method, parameters]) => ({ provider, method, parameters }));
+    const providers = entries.map(entry => ({ id: entry.provider, apiKey: 'key' }));
+    assert.equal(native.prepareNativeCaptchaTasks(providers, entries).length, 2);
+    entries[1].parameters = { ...entries[1].parameters, [changed]: 'different' };
+    await assert.rejects(async () => native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers, entries)), /same observed challenge/);
+    assert.equal(calls.length, 0);
+  });
+}
