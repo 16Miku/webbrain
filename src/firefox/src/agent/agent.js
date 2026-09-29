@@ -32714,7 +32714,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const record = this._nativeCaptchaSolutions?.get(tabId);
       const applicationRetryable = async () => {
         if (record?.solution === undefined || record.applied || Date.now() - record.createdAt > 180_000) return false;
-        try { return (await browser.tabs.get(tabId))?.url === record.pageUrl; } catch { return false; }
+        // A transient tab read cannot consume the answer; the next apply
+        // rechecks the URL and document before any page mutation.
+        try { return (await browser.tabs.get(tabId))?.url === record.pageUrl; } catch { return true; }
       };
       try {
         const result = await applyNativeCaptchaSolution(tabId, record, args, browser);

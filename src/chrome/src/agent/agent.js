@@ -35728,7 +35728,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       const record = this._nativeCaptchaSolutions?.get(tabId);
       const applicationRetryable = async () => {
         if (record?.solution === undefined || record.applied || Date.now() - record.createdAt > 180_000) return false;
-        try { return (await chrome.tabs.get(tabId))?.url === record.pageUrl; } catch { return false; }
+        // A transient tab read cannot consume the answer; the next apply
+        // rechecks the URL and document before any page mutation.
+        try { return (await chrome.tabs.get(tabId))?.url === record.pageUrl; } catch { return true; }
       };
       try {
         const result = await applyNativeCaptchaSolution(tabId, record, args, chrome);

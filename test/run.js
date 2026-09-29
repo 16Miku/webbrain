@@ -122023,6 +122023,12 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
         assert.equal(pendingAfterPreflight.solveFailed, undefined, build);
         assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {})?.denied, undefined, build);
         assert.equal(calls.length, 1, build);
+        const getTab = api.tabs.get;
+        api.tabs.get = async () => { throw new Error('Temporary tab read failure'); };
+        const transientRead = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form' });
+        assert.equal(transientRead.applicationRetryable, true, build);
+        assert.equal(agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', transientRead).status, 'verification_pending', build);
+        api.tabs.get = getTab;
         if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { success: true } }];
         else api.tabs.executeScript = async () => [{ success: true }];
         const applied = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form', callback: { name: 'captcha.done', path: '' } });

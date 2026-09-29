@@ -162,14 +162,15 @@ export async function applyNativeCaptchaSolution(tabId, record, application, api
   const stores = cookies.length ? await api.cookies.getAllCookieStores() : [];
   const storeId = stores.find(store => store.tabIds.includes(tabId))?.id;
   if (cookies.length && !storeId) throw new Error('Could not identify this tab’s cookie store.');
-  record.applied = true;
   // Install cookies before callbacks or response-field events can submit.
   for (const cookie of cookies) {
     const current = await api.tabs.get(tabId);
     if (current.url !== record.pageUrl) throw new Error('Page changed before CAPTCHA cookie application.');
     const saved = await api.cookies.set({ url: record.pageUrl, name: cookie.name, value: cookie.value, path: '/', secure: record.pageUrl.startsWith('https:'), storeId });
     if (!saved) throw new Error('CAPTCHA cookie could not be set.');
+    record.applied = true;
   }
+  if (!cookies.length) record.applied = true;
   const applied = await execute(false);
   if (!applied?.success) return applied || { success: false, error: 'No application result from the selected frame.' };
   return { ...applied, cookiesUpdated: cookies.length, note: 'Solution applied; verify fresh page state. Do not request another paid solve.' };

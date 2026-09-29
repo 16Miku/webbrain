@@ -110,13 +110,69 @@ test('native CAPTCHA modules stay mirrored',async()=>{
 
 for (const browser of ['chrome', 'firefox']) {
   const native = await import(`../src/${browser}/src/agent/captcha-native-providers.js`);
-  const { prepareCaptchaApplication } = await import(`../src/${browser}/src/agent/captcha-solution-application.js`);
+  const { prepareCaptchaApplication, applyNativeCaptchaSolution } = await import(`../src/${browser}/src/agent/captcha-solution-application.js`);
   test(`${browser}: documented cookie responses bind only the requested host-only value`, () => {
     const result = prepareCaptchaApplication({ cookie: 'datadome=ANSWER==; Path=/; Secure; Domain=.other.test; SameSite=Lax' }, { cookies: [{ name: 'datadome', path: 'cookie' }] });
     assert.deepEqual(result.cookies, [{ name: 'datadome', value: 'ANSWER==' }]);
     for (const cookie of ['other=ANSWER; Path=/', 'datadome=ANSWER\r\nSet-Cookie: other=x']) {
       assert.throws(() => prepareCaptchaApplication({ cookie }, { cookies: [{ name: 'datadome', path: 'cookie' }] }), /Invalid CAPTCHA cookie/);
     }
+  });
+  test(`${browser}: a failed read or first cookie write keeps the paid answer reusable`, async () => {
+    for (const failure of ['tab-read', 'cookie-write']) {
+      const record = { pageUrl: url, createdAt: Date.now(), applied: false,
+        documents: [{ frameId: 0, url, timeOrigin: 1000 }], solution: { cookie: 'clearance' } };
+      let tabReads = 0;
+      let cookieWrites = 0;
+      let pageMutations = 0;
+      const api = {
+        tabs: {
+          get: async () => {
+            if (failure === 'tab-read' && ++tabReads === 2) throw new Error('Temporary tab read failure');
+            return { url };
+          },
+          executeScript: async (_tabId, options) => {
+            if (/false\]\)$/.test(options.code)) pageMutations++;
+            return [{ success: true }];
+          },
+        },
+        scripting: browser === 'chrome' ? { executeScript: async options => {
+          if (options.args.at(-1) === false) pageMutations++;
+          return [{ frameId: 0, result: { success: true } }];
+        } } : undefined,
+        webNavigation: { getAllFrames: async () => [{ frameId: 0, url }] },
+        cookies: {
+          getAllCookieStores: async () => [{ id: 'store', tabIds: [1] }],
+          set: async value => {
+            if (failure === 'cookie-write' && ++cookieWrites === 1) return null;
+            return value;
+          },
+        },
+      };
+      const binding = { frameId: 0, frameUrl: url, cookies: [{ name: 'cf_clearance', path: 'cookie' }] };
+      await assert.rejects(applyNativeCaptchaSolution(1, record, binding, api), /Temporary tab read failure|cookie could not be set/);
+      assert.equal(record.applied, false, failure);
+      assert.equal(pageMutations, 0, failure);
+      assert.equal((await applyNativeCaptchaSolution(1, record, binding, api)).success, true, failure);
+      assert.equal(record.applied, true, failure);
+      assert.equal(pageMutations, 1, failure);
+    }
+  });
+  test(`${browser}: a successful first cookie write consumes the answer before later failures`, async () => {
+    const record = { pageUrl: url, createdAt: Date.now(), applied: false,
+      documents: [{ frameId: 0, url, timeOrigin: 1000 }], solution: { first: 'one', second: 'two' } };
+    let writes = 0;
+    const api = {
+      tabs: { get: async () => ({ url }), executeScript: async () => [{ success: true }] },
+      scripting: browser === 'chrome' ? { executeScript: async () => [{ frameId: 0, result: { success: true } }] } : undefined,
+      webNavigation: { getAllFrames: async () => [{ frameId: 0, url }] },
+      cookies: { getAllCookieStores: async () => [{ id: 'store', tabIds: [1] }],
+        set: async value => ++writes === 1 ? value : null },
+    };
+    await assert.rejects(applyNativeCaptchaSolution(1, record, { frameId: 0, frameUrl: url,
+      cookies: [{ name: 'first', path: 'first' }, { name: 'second', path: 'second' }] }, api), /cookie could not be set/);
+    assert.equal(record.applied, true);
+    assert.equal(writes, 2);
   });
   for (const [method, answer, expected, binding] of [
     ['grid', 'click:3/a/g/', [3, 10, 16], { mode: 'grid', rows: 4, columns: 4 }],
