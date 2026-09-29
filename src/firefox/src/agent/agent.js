@@ -14489,13 +14489,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _recordClarificationAuthorization(tabId, source, safeFirst = false) {
     const normalizedSource = source === 'timeout' ? 'timeout' : (source === 'auto' ? 'auto' : 'user');
-    const timedOutAffirmative = normalizedSource === 'timeout' && safeFirst === true;
+    const conversationId = this.conversationIds.get(tabId) || null;
+    const previous = this._clarificationAuthorizationGuards.get(tabId);
+    const priorTimeoutGuard = previous?.source === 'timeout'
+      && previous?.authorized === false
+      && previous?.conversationId === conversationId;
+    const timedOutAffirmative = normalizedSource === 'timeout' && safeFirst === true && !priorTimeoutGuard;
     if (normalizedSource === 'timeout' && !timedOutAffirmative) {
-      const conversationId = this.conversationIds.get(tabId) || null;
-      const previous = this._clarificationAuthorizationGuards.get(tabId);
-      const blockedAttempts = previous?.source === 'timeout'
-        && previous?.authorized === false
-        && previous?.conversationId === conversationId
+      const blockedAttempts = priorTimeoutGuard
         ? Math.max(0, Number(previous.blockedAttempts) || 0)
         : 0;
       this._clarificationAuthorizationGuards.set(tabId, {
@@ -14516,10 +14517,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // response cannot revive a stale guard after restart.
     if (this.conversations.has(tabId)) await this._persistNow(tabId);
     return normalizedSource !== 'timeout' || timedOutAffirmative;
-  }
-
-  _clarificationTimeoutAuthorized(source, safeFirst = false) {
-    return source !== 'timeout' || safeFirst === true;
   }
 
   _prepareClarificationAuthorizationForRun(tabId) {

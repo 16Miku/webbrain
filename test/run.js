@@ -48775,6 +48775,29 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(waitedTimeout.requiresExplicitConfirmation, true, `${AgentClass.name}: timeout did not require an explicit answer`);
     assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: timeout guard was not armed`);
 
+    const guardedSafeFirst = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue browsing?', options: ['Continue browsing', 'Stop'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Continue browsing', 'timeout');
+      },
+    );
+    assert.equal(guardedSafeFirst.authorized, false, `${AgentClass.name}: later safe_first timeout cleared an existing guard`);
+    assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: later safe_first timeout removed an existing guard`);
+
+    const userReply = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Which record?', options: ['First', 'Second'] },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Second', 'user');
+      },
+    );
+    assert.equal(userReply.authorized, true, `${AgentClass.name}: direct user reply was not authorized`);
+    assert.equal(userReply.requiresExplicitConfirmation, false, `${AgentClass.name}: direct reply kept the timeout warning`);
+    assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: direct reply did not clear the timeout guard`);
+
     const affirmativeTimeout = await agent.executeTool(
       tabId,
       'clarify',
@@ -48808,18 +48831,6 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
       },
     );
     assert.equal(emptyOptionsTimeout.authorized, false, `${AgentClass.name}: safe_first without options was accepted`);
-
-    const userReply = await agent.executeTool(
-      tabId,
-      'clarify',
-      { question: 'Which record?', options: ['First', 'Second'] },
-      (type, data) => {
-        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Second', 'user');
-      },
-    );
-    assert.equal(userReply.authorized, true, `${AgentClass.name}: direct user reply was not authorized`);
-    assert.equal(userReply.requiresExplicitConfirmation, false, `${AgentClass.name}: direct reply kept the timeout warning`);
-    assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: direct reply did not clear the timeout guard`);
 
     agent.clarifyTimeoutSec = 0;
     const instant = await agent.executeTool(
