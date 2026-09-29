@@ -48810,6 +48810,17 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: whitespace-only option did not arm a timeout guard`);
 
     await agent._recordClarificationAuthorization(tabId, 'user');
+    const invisibleOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', options: ['\u200B'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '\u200B', 'timeout');
+      },
+    );
+    assert.equal(invisibleOptionTimeout.authorized, false, `${AgentClass.name}: invisible safe_first option was accepted`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
     const promotedOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',

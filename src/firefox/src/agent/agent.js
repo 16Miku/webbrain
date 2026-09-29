@@ -30562,8 +30562,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const rawOptions = Array.isArray(args?.options) ? args.options : [];
       const options = rawOptions
-        .map(s => String(s).trim().slice(0, 200)).filter(Boolean).slice(0, 4);
-      const safeFirst = args?.safe_first === true && String(rawOptions[0] || '').trim().length > 0;
+        .map(s => String(s).trim().slice(0, 200)).filter(option => /[\p{L}\p{N}\p{P}\p{S}]/u.test(option)).slice(0, 4);
+      const safeFirst = args?.safe_first === true && /[\p{L}\p{N}\p{P}\p{S}]/u.test(String(rawOptions[0] || ''));
       const reason = args?.reason ? String(args.reason).slice(0, 300) : null;
       const purpose = args?.purpose === 'research_escalation'
         ? 'research_escalation'
