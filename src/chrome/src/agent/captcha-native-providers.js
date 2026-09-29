@@ -273,6 +273,39 @@ function validateFallbackIdentifiers(built) {
       return JSON.stringify([media[0], parts, instructions[0] ?? null]);
     });
     if (new Set(signatures).size > 1) throw new Error('Fallback recognition tasks must use the same observed challenge media and instructions.');
+    // Worker instructions may match while their answer contract differs.
+    // Compare only documented challenge constraints, including provider aliases.
+    const constraints = [
+      { aliases: ['minClicks', 'min_clicks'] },
+      { aliases: ['maxClicks', 'max_clicks'] },
+      { aliases: ['minLength', 'min_len'] },
+      { aliases: ['maxLength', 'max_len'] },
+      { aliases: ['case', 'regsense'], boolean: true },
+      { aliases: ['phrase'], boolean: true },
+      { aliases: ['math', 'calc'], boolean: true },
+      { aliases: ['numeric'] },
+      { aliases: ['canNoAnswer', 'can_no_answer'], boolean: true },
+      { aliases: ['angle'] },
+    ];
+    for (const { aliases, boolean } of constraints) {
+      const values = built.map(({ task }) => {
+        const found = aliases.map(path => at(task, path)).filter(value => value !== undefined);
+        if (found.length > 1 && new Set(found.map(String)).size > 1) {
+          throw new Error(`Fallback recognition tasks must use the same ${aliases[0]} constraint.`);
+        }
+        const value = found[0];
+        return boolean && value !== undefined ? Number(value) : value;
+      });
+      if (new Set(values.map(value => JSON.stringify(value))).size > 1) {
+        throw new Error(`Fallback recognition tasks must use the same ${aliases[0]} constraint.`);
+      }
+    }
+    if (family === 'recaptcha_recognition') {
+      const grids = built.map(({ task }) => task.grid ?? task.metadata?.Grid
+        ?? (task.rows !== undefined || task.columns !== undefined
+          ? `${task.rows ?? '?'}x${task.columns ?? '?'}` : null));
+      if (new Set(grids.filter(Boolean)).size > 1) throw new Error('Fallback recognition tasks must use the same grid dimensions.');
+    }
   }
   if (['recaptcha_v2', 'recaptcha_v2_enterprise'].includes(family)) {
     const modes = built.map(({ task }) => task.isInvisible ?? task.invisible);

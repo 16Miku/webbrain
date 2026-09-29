@@ -400,6 +400,38 @@ for (const browser of ['chrome', 'firefox']) {
     ['coordinate image instruction', ['2captcha', 'CoordinatesTask', { body: 'image-A', imgInstructions: 'cars' }], ['solvecaptcha', 'coordinates', { body: 'image-A', textinstructions: 'cars' }], task => { task.textinstructions = 'bicycles'; }],
     ['coordinate lowercase image instruction', ['2captcha', 'CoordinatesTask', { body: 'image-A', imgInstructions: 'cars' }], ['solvecaptcha', 'coordinates', { body: 'image-A', imginstructions: 'cars' }], task => { task.imginstructions = 'bicycles'; }],
   ];
+  test(`${browser}: recognition fallback compares click counts, text classes, and answer lengths`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const enabled = ['2captcha', 'solvecaptcha', 'nopecha'].map(id => ({ id, apiKey: 'key' }));
+    const coordinates = [
+      { provider: '2captcha', method: 'CoordinatesTask', parameters: { body: 'image-A', minClicks: 1, maxClicks: 1 } },
+      { provider: 'solvecaptcha', method: 'coordinates', parameters: { body: 'image-A', min_clicks: 1, max_clicks: 1 } },
+    ];
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, coordinates).length, 2);
+    for (const changed of [{ min_clicks: 5 }, { max_clicks: 5 }, { min_clicks: undefined }]) {
+      const parameters = { ...coordinates[1].parameters, ...changed };
+      if (changed.min_clicks === undefined) delete parameters.min_clicks;
+      assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [coordinates[0],
+        { ...coordinates[1], parameters }]), /same minClicks|same maxClicks/);
+    }
+    const textTasks = [
+      { provider: '2captcha', method: 'ImageToTextTask', parameters: { body: 'image-A',
+        case: true, phrase: false, math: false, numeric: 2, minLength: 4, maxLength: 6 } },
+      { provider: 'solvecaptcha', method: 'base64', parameters: { body: 'image-A',
+        regsense: 1, phrase: 0, calc: 0, numeric: 2, min_len: 4, max_len: 6 } },
+    ];
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, textTasks).length, 2);
+    for (const changed of [{ regsense: 0 }, { numeric: 1 }, { min_len: 5 }, { max_len: 8 }, { calc: 1 }, { phrase: 1 }]) {
+      assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [textTasks[0],
+        { ...textTasks[1], parameters: { ...textTasks[1].parameters, ...changed } }]), /same .* constraint/);
+    }
+    const grids = [
+      { provider: '2captcha', method: 'GridTask:recaptcha_recognition', parameters: { body: 'image-A', rows: 3, columns: 3, comment: 'cars' } },
+      { provider: 'nopecha', method: 'recognition/recaptcha', parameters: { image_data: ['image-A'], grid: '4x4', task: 'cars' } },
+    ];
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, grids), /same grid dimensions/);
+    assert.equal(calls.length, 0);
+  });
   for (const [label, a, b, change] of recognitionPairs) test(`${browser}: ${label} must match before paid fallback`, t => {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
     const entries = [a, b].map(([provider, method, parameters]) => ({ provider, method, parameters: structuredClone(parameters) }));
