@@ -321,6 +321,9 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(localized.threadKey,result.threadKey);
           assert.deepEqual(localized.messages,result.messages);
 
+          await page.locator('#channel').evaluate(el=>el.removeAttribute('aria-current'));
+          assert.equal((await observe()).success,true,'a matching populated guild transcript can bind without a selected rail link');
+          await page.locator('#channel').evaluate(el=>el.setAttribute('aria-current','page'));
           await page.locator('nav').evaluate(el=>el.insertAdjacentHTML('beforeend',
             '<a id="channel-b" href="/channels/123/789" aria-current="page">second channel</a>'));
           await page.evaluate(()=>history.replaceState(null,'','/channels/123/789'));

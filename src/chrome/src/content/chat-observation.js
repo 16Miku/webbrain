@@ -181,7 +181,7 @@
     return transcript && (directMessageRoute
       ? !selectedDmRouteMismatch
         && (transcriptRows.length > 0 ? transcriptMatchesRoute : channelLink)
-      : channelLink && (transcriptRows.length === 0 || transcriptMatchesRoute))
+      : (transcriptRows.length > 0 ? transcriptMatchesRoute : channelLink))
       ? {
         root, transcript, name, channelId,
         isDirectMessage: !!directMessageRoute,
