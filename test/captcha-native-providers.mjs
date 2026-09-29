@@ -395,6 +395,34 @@ for (const browser of ['chrome', 'firefox']) {
     await assert.rejects(async () => native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers, entries)), /same observed challenge/);
     assert.equal(calls.length, 0);
   });
+  test(`${browser}: Alibaba fallback preserves verification mode, region and script identity`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const enabled = ['2captcha', 'capmonster'].map(id => ({ id, apiKey: 'key' }));
+    const twoCaptcha = { provider: '2captcha', method: 'AlibabaTaskProxyless', parameters: {
+      websiteURL: url, sceneId: 'scene', prefix: 'prefix', verifyType: 'slide',
+      region: 'cn', apiGetLib: 'https://g.test/lib.js',
+    } };
+    const capmonster = { provider: 'capmonster', method: 'CustomTask:alibaba', parameters: {
+      websiteURL: url, metadata: { sceneId: 'scene', prefix: 'prefix', verifyType: 'slide',
+        region: 'cn', apiGetLib: 'https://g.test/lib.js' },
+    } };
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, [twoCaptcha, capmonster]).length, 2);
+    for (const [key, value] of [
+      ['verifyType', 'click'], ['region', 'sg'], ['apiGetLib', 'https://other.test/lib.js'],
+    ]) assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [twoCaptcha, {
+      ...capmonster, parameters: { ...capmonster.parameters,
+        metadata: { ...capmonster.parameters.metadata, [key]: value } },
+    }]), /same observed challenge/);
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [twoCaptcha, {
+      ...capmonster, parameters: { ...capmonster.parameters,
+        metadata: { sceneId: 'scene', prefix: 'prefix' } },
+    }]), /same observed challenge/);
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [twoCaptcha, {
+      ...capmonster, parameters: { ...capmonster.parameters,
+        metadata: { ...capmonster.parameters.metadata, cookieRequired: true } },
+    }]), /same observed challenge/);
+    assert.equal(calls.length, 0);
+  });
   const actionBoundPairs = [
     ['DataDome User-Agent', ['2captcha', 'DataDomeSliderTask', { websiteURL: url, captchaUrl: 'https://example.test/captcha', userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080 }], ['solvecaptcha', 'datadome', { pageurl: url, captcha_url: 'https://example.test/captcha', userAgent: 'browser-UA', proxy: 'proxy.test:8080', proxytype: 'http' }], 'userAgent'],
     ['DataDome proxy', ['2captcha', 'DataDomeSliderTask', { websiteURL: url, captchaUrl: 'https://example.test/captcha', userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080 }], ['solvecaptcha', 'datadome', { pageurl: url, captcha_url: 'https://example.test/captcha', userAgent: 'browser-UA', proxy: 'proxy.test:8080', proxytype: 'http' }], 'proxy'],
