@@ -94,6 +94,19 @@ for (const [kind, engine, AgentClass, policy] of [
           for(const selector of ['#create','#category','#channel','#edit']) assert.equal(await guard('click',{selector}),null);
         } finally {await page.close();}
       });
+      await t.test('Discord management controls remain available on message permalink routes',async()=>{
+        const {page,guard,probe}=await setup();
+        try {
+          for(const path of ['/channels/123/456/789','/channels/@me/456/789']) {
+            await page.evaluate(path=>history.replaceState(null,'',path),path);
+            for(const selector of ['#user-settings-trigger','#server']) {
+              const classified=await probe('click',{selector});
+              assert.equal(classified.nonMessagingTarget,true,JSON.stringify({path,selector,classified}));
+              assert.equal(await guard('click',{selector}),null,`${path} ${selector}`);
+            }
+          }
+        } finally {await page.close();}
+      });
       await t.test('only the known server menu entries bypass message classification',async()=>{
         const {page,guard,probe}=await setup(`<div role="menu" id="guild-header-popout">
 <div role="menuitem" id="guild-header-popout-settings">Server Settings</div>
