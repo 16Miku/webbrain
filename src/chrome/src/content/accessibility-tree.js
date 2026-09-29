@@ -586,6 +586,13 @@
       : null;
   }
 
+  function isComposedAncestor(ancestor, node) {
+    for (let current = node; current; current = composedParent(current)) {
+      if (current === ancestor) return true;
+    }
+    return false;
+  }
+
   function deepestOpenShadowHit(x, y) {
     let hit = document.elementFromPoint(x, y);
     const seen = new Set();
@@ -596,6 +603,58 @@
       hit = inner;
     }
     return hit;
+  }
+
+  function isNodeOccluded(el) {
+    if (!el || !el.isConnected || el.nodeType !== Node.ELEMENT_NODE) return false;
+    try {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return false;
+      const vw = window.innerWidth || 800;
+      const vh = window.innerHeight || 600;
+      if (r.top >= vh || r.bottom <= 0 || r.left >= vw || r.right <= 0) return false;
+
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      if (cx >= 0 && cx <= vw && cy >= 0 && cy <= vh) {
+        const hit = deepestOpenShadowHit(cx, cy);
+        if (hit && isComposedAncestor(el, hit)) return false;
+      }
+
+      const sampleOffsets = [
+        [cx, Math.round(r.top + Math.max(2, Math.min(8, r.height * 0.2)))],
+        [cx, Math.round(r.bottom - Math.max(2, Math.min(8, r.height * 0.2)))],
+        [Math.round(r.left + Math.max(2, Math.min(8, r.width * 0.2))), cy],
+        [Math.round(r.right - Math.max(2, Math.min(8, r.width * 0.2))), cy],
+      ];
+      for (const [sx, sy] of sampleOffsets) {
+        if (sx < 0 || sy < 0 || sx > vw || sy > vh) continue;
+        const sampleHit = deepestOpenShadowHit(sx, sy);
+        if (sampleHit && isComposedAncestor(el, sampleHit)) {
+          return false;
+        }
+      }
+
+      if (document.elementsFromPoint && cx >= 0 && cx <= vw && cy >= 0 && cy <= vh) {
+        const elements = document.elementsFromPoint(cx, cy);
+        const targetIdx = elements.indexOf(el);
+        if (targetIdx > 0) {
+          const allAboveNone = elements.slice(0, targetIdx).every(item => {
+            try {
+              const pe = window.getComputedStyle(item).pointerEvents;
+              return pe === 'none' || isComposedAncestor(el, item);
+            } catch {
+              return false;
+            }
+          });
+          if (allAboveNone) return false;
+        }
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function visualTargetEligibility(el) {
@@ -879,6 +938,11 @@
         }
       } catch {}
     }
+    try {
+      if (isInteractive(el) && isNodeOccluded(el)) {
+        line += ' occluded=true';
+      }
+    } catch {}
     if (inputType === 'checkbox' || inputType === 'radio') {
       line += ` checked=${el.checked ? 'true' : 'false'}`;
     } else if (['checkbox', 'radio', 'switch'].includes(attrRole) || el.hasAttribute('aria-checked')) {
@@ -1010,16 +1074,15 @@
     return false;
   }
 
-  function walk(el, depth, opts, lines) {
+  function walk(el, depth, opts, lines, hoistedRoot = false) {
     if (!el || !el.tagName) return;
 
     // Skip nodes already emitted in the priority/action prelude.
     if (depth > 0 && opts._skipPrioritySet && opts._skipPrioritySet.has(el)) return;
 
-    // Skip nodes already emitted in the hoisted-overlay prelude. depth>0
-    // guard ensures we still enter the overlay itself when it's the
-    // explicit walk root.
-    if (depth > 0 && opts._skipOverlaySet && opts._skipOverlaySet.has(el)) return;
+    // Skip nodes already emitted in the hoisted-overlay prelude. An
+    // unlabelled wrapper can still be at depth 0 during the body walk.
+    if (!hoistedRoot && opts._skipOverlaySet && opts._skipOverlaySet.has(el)) return;
 
     if (depth > opts.maxDepth) {
       if (shouldInclude(el, opts) || omittedDescendantWouldBeIncluded(el, opts)) {
@@ -1565,6 +1628,13 @@
           '[aria-modal="true"]',
           '[role=combobox][aria-expanded="true"]',
           'dialog[open]',
+          '[data-overlay]',
+          '.modal.show',
+          '.modal-overlay',
+          '.modal.open',
+          '[class*="DialogContent"]',
+          '[class*="ModalContent"]',
+          '[data-state="open"][role="dialog"]',
         ];
         const overlayEls = [];
         const seen = new WeakSet();
@@ -1596,13 +1666,6 @@
               for (const n of nodes) {
                 if (seen.has(n)) continue;
                 if (!n.isConnected) continue;
-                // Skip if ancestor already collected — avoids emitting a
-                // nested listbox twice when its ancestor dialog is also hit.
-                let ancIsOverlay = false;
-                for (let p = n.parentElement; p; p = p.parentElement) {
-                  if (seen.has(p)) { ancIsOverlay = true; break; }
-                }
-                if (ancIsOverlay) continue;
                 // Quick visibility gate — don't emit hidden overlay shells.
                 try {
                   const r = n.getBoundingClientRect();
@@ -1610,8 +1673,18 @@
                   const s = window.getComputedStyle(n);
                   if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) continue;
                 } catch (e) { continue; }
+                // Selector order may find a dialog before its modal wrapper.
+                // Keep only the outermost visible overlay in either order.
+                if (overlayEls.some(existing => isComposedAncestor(existing, n))) continue;
+                let insertionIndex = overlayEls.length;
+                for (let i = overlayEls.length - 1; i >= 0; i--) {
+                  if (!isComposedAncestor(n, overlayEls[i])) continue;
+                  seen.delete(overlayEls[i]);
+                  overlayEls.splice(i, 1);
+                  insertionIndex = i;
+                }
                 seen.add(n);
-                overlayEls.push(n);
+                overlayEls.splice(insertionIndex, 0, n);
               }
             }
           }
@@ -1619,7 +1692,7 @@
         if (overlayEls.length) {
           lines.push('[open overlays — rendered first so they survive truncation]');
           for (const n of overlayEls) {
-            walk(n, 0, opts, lines);
+            walk(n, 0, opts, lines, true);
           }
           lines.push('[/open overlays]');
           opts._skipOverlaySet = seen;

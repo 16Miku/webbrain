@@ -621,21 +621,28 @@ export class LoopDetector {
       }
       const failures = this.failedActionLoops.get(tabId) || new Map();
       if (this._isToolResultErroredForLoop(toolName, toolArgs, toolResult)) {
+        const isOcclusionFailure = toolResult?.occluded === true
+          || /occluded|covered by another element|topmost/i.test(String(toolResult?.error || ''));
+        const maxAttempts = isOcclusionFailure ? 4 : 3;
         const attempts = (failures.get(failureScope) || 0) + 1;
         failures.set(failureScope, attempts);
         if (failures.size > 32) failures.delete(failures.keys().next().value);
         this.failedActionLoops.set(tabId, failures);
-        if (attempts >= 3) {
+        if (attempts >= maxAttempts) {
           this._clearLoopState(tabId);
           return {
             kind: 'stop',
-            message: `Stopped: ${toolName} failed or made no progress three times for the same target. Repeating it or switching to a precomputed fallback cannot make progress without fresh page evidence.`,
+            message: isOcclusionFailure
+              ? `Stopped: ${toolName} failed ${maxAttempts} times because the target is occluded by an overlapping layer or docked header. Close the overlay, scroll past the obstruction, or re-read the page before retrying.`
+              : `Stopped: ${toolName} failed or made no progress three times for the same target. Repeating it or switching to a precomputed fallback cannot make progress without fresh page evidence.`,
           };
         }
-        if (attempts === 2) {
+        if (attempts >= 2) {
           return {
             kind: 'nudge',
-            warning: `[FAILED ACTION LOOP: ${toolName} has failed or made no progress twice for the same target. Do not retry it or use a queued fallback. Re-read the page/tree and choose a new action from current evidence.]`,
+            warning: isOcclusionFailure
+              ? `[OVERLAY OCCLUSION: ${toolName} failed because the target element is occluded or covered by an overlapping element (such as a modal backdrop, fixed header, or sticky toolbar). Try closing the overlay (e.g. clicking a close/dismiss button or pressing Escape), scrolling the element into clear view, or re-reading the accessibility tree.]`
+              : `[FAILED ACTION LOOP: ${toolName} has failed or made no progress twice for the same target. Do not retry it or use a queued fallback. Re-read the page/tree and choose a new action from current evidence.]`,
           };
         }
       } else if (toolResult?.success === true && toolResult?.verified !== false) {
