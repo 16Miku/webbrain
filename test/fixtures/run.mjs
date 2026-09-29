@@ -2491,6 +2491,47 @@ test('Chrome: top obstruction retry moves targets below the blocker', page =>
 firefoxTest('Firefox: top obstruction retry moves targets below the blocker', page =>
   assertTopObstructionScrollDirection(page, 'firefox'));
 
+async function assertFloatingTopBarClearance(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; height: 1700px; }
+      #obstruction { position: fixed; top: 40px; left: 0; width: 100%; height: 80px; z-index: 20; background: white; }
+      #target { position: absolute; top: 350px; left: 60px; width: 120px; height: 40px; }
+      #row { position: absolute; top: 350px; left: 220px; width: 120px; height: 40px; }
+    </style>
+    <button id="target" onclick="window.__targetClicked = true">Covered target</button>
+    <div id="row" role="listitem">Covered row</div>
+    <div id="obstruction">Floating obstruction</div>
+  `, browserKind);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const click = await call(page, 'click', { selector: '#target' });
+  const afterClick = await page.evaluate(() => ({
+    clicked: window.__targetClicked === true,
+    scrollY: window.scrollY,
+    top: document.getElementById('target').getBoundingClientRect().top,
+  }));
+  if (!click?.success || !afterClick.clicked || afterClick.scrollY >= 300 || afterClick.top < 120) {
+    throw new Error(`${browserKind}: floating top bar did not clear the click target: ${JSON.stringify({ click, afterClick })}`);
+  }
+  if (browserKind === 'chrome') {
+    await page.evaluate(() => window.scrollTo(0, 300));
+    const refId = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('row')));
+    const resolved = await call(page, 'ax_resolve_rect', { ref_id: refId, forClickFallback: true });
+    const afterResolve = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      top: document.getElementById('row').getBoundingClientRect().top,
+    }));
+    if (!resolved?.success || !resolved.hitOk || afterResolve.scrollY >= 300 || afterResolve.top < 120) {
+      throw new Error(`Chrome floating top bar did not clear rect resolution: ${JSON.stringify({ resolved, afterResolve })}`);
+    }
+  }
+}
+
+test('Chrome: floating top bar clears a fully covered target', page =>
+  assertFloatingTopBarClearance(page, 'chrome'));
+firefoxTest('Firefox: floating top bar clears a fully covered target', page =>
+  assertFloatingTopBarClearance(page, 'firefox'));
+
 async function assertInnerScrollerClearance(page, browserKind) {
   await setupContentHtml(page, `<!doctype html>
     <style>

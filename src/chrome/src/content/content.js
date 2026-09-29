@@ -380,6 +380,21 @@
     };
   }
 
+  function _floatingTopBarRect(blocker, view = window) {
+    const vh = view.innerHeight || 600;
+    const vw = view.innerWidth || 800;
+    for (let node = blocker; node; node = _composedParent(node)) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (node.matches?.('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]')) return null;
+      const style = view.getComputedStyle(node);
+      if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.top > 10 && rect.top < vh * 0.35 && rect.bottom < vh * 0.45
+        && rect.height <= vh * 0.25 && rect.width >= vw * 0.4) return rect;
+    }
+    return null;
+  }
+
   function _scrollElementIntoClearView(el) {
     if (!el?.isConnected) return;
     try {
@@ -2005,8 +2020,10 @@
 
           // If covered at center, test if scrolling can clear a fixed/sticky header
           if (topmost && !_isComposedAncestor(el, topmost) && !_isComposedAncestor(topmost, el)) {
-            const bRect = topmost.getBoundingClientRect();
-            if (bRect.top <= _getViewportDockedInsets(window, el).top + 10 && bRect.bottom > r.top && bRect.bottom < window.innerHeight * 0.45) {
+            const floatingBar = _floatingTopBarRect(topmost);
+            const bRect = floatingBar || topmost.getBoundingClientRect();
+            if ((floatingBar || bRect.top <= _getViewportDockedInsets(window, el).top + 10)
+              && bRect.bottom > r.top && bRect.bottom < window.innerHeight * 0.45) {
               window.scrollBy({ top: r.top - bRect.bottom - 20, behavior: 'instant' });
               r = el.getBoundingClientRect();
               cx = Math.round(r.left + r.width / 2);
@@ -8032,8 +8049,10 @@
             }
             if (!hitOk && topmost) {
               try {
-                const bRect = topmost.getBoundingClientRect();
-                if (bRect.top <= _getViewportDockedInsets(window, el).top + 10 && bRect.bottom > r.top && bRect.bottom < vh * 0.45) {
+                const floatingBar = _floatingTopBarRect(topmost);
+                const bRect = floatingBar || topmost.getBoundingClientRect();
+                if ((floatingBar || bRect.top <= _getViewportDockedInsets(window, el).top + 10)
+                  && bRect.bottom > r.top && bRect.bottom < vh * 0.45) {
                   window.scrollBy({ top: r.top - bRect.bottom - 20, behavior: 'instant' });
                   r = el.getBoundingClientRect();
                   effectiveCx = r.left + r.width / 2;
