@@ -7,6 +7,10 @@
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
   const typeOf = value => value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
   const limits = { steps: 100, parameters: 50 };
+  const tools = new Set(['navigate', 'go_back', 'go_forward', 'click', 'click_ax', 'set_checked', 'type_ax', 'set_field', 'scroll', 'wait_for_element']);
+  const targetFields = { id: 12, fieldName: 9, label: 8, ariaLabel: 8, name: 7, href: 7, placeholder: 5, type: 3, role: 2 };
+  const targetRequired = new Set(['click_ax', 'set_checked', 'type_ax', 'set_field']);
+  const maxPortableBytes = 1024 * 1024;
   const defaults = { string: '', number: 0, boolean: false, null: null, object: {}, array: [] };
   const at = (value, path) => path.reduce((node, key) => node[key], value);
   const put = (value, key, next) => Object.defineProperty(value, key, { value: next, writable: true, enumerable: true, configurable: true });
@@ -33,6 +37,44 @@
     if (!value || typeof value !== 'object') return;
     if (own(value, '$workflowParam')) visit(value);
     Object.values(value).forEach(child => references(child, visit));
+  }
+  function replayableTarget(target) {
+    if (!object(target)) return false;
+    let score = 0;
+    for (const [field, points] of Object.entries(targetFields)) {
+      const value = String(target[field] ?? '').trim();
+      if (value && !/^ref_[A-Za-z0-9_-]+$/i.test(value)) score += points;
+    }
+    return score >= 7;
+  }
+  function validStepArgs(step, parameterIds) {
+    const args = step.args;
+    if (!object(args) || Object.keys(args).some(key => /^(ref_?id|x|y|index|replayRequestId|apiReplayRequestId)$/i.test(key))) return false;
+    const only = keys => Object.keys(args).every(key => keys.includes(key));
+    switch (step.tool) {
+      case 'navigate': {
+        if (!only(['url']) || typeof args.url !== 'string') return false;
+        try { return ['http:', 'https:'].includes(new URL(args.url).protocol); } catch { return false; }
+      }
+      case 'go_back': case 'go_forward': case 'click_ax': return only([]);
+      case 'set_checked': return only(['checked']) && typeof args.checked === 'boolean';
+      case 'type_ax': case 'set_field': {
+        const keys = step.tool === 'set_field' ? ['text', 'clear', 'submit'] : ['text', 'clear'];
+        const ref = args.text;
+        return only(keys) && object(ref) && Object.keys(ref).length === 1
+          && typeof ref.$workflowParam === 'string' && parameterIds.has(ref.$workflowParam)
+          && (!own(args, 'clear') || typeof args.clear === 'boolean')
+          && (step.tool !== 'set_field' || !own(args, 'submit') || typeof args.submit === 'boolean');
+      }
+      case 'click': return only(['text']) && typeof args.text === 'string' && !!args.text.trim() && !/^ref_[A-Za-z0-9_-]+$/i.test(args.text.trim());
+      case 'scroll': return only(['direction', 'amount'])
+        && (!own(args, 'direction') || ['up', 'down', 'left', 'right'].includes(args.direction))
+        && (!own(args, 'amount') || Number.isFinite(args.amount));
+      case 'wait_for_element': return only(['text', 'timeout']) && typeof args.text === 'string' && !!args.text.trim()
+        && !/^ref_[A-Za-z0-9_-]+$/i.test(args.text.trim())
+        && (!own(args, 'timeout') || Number.isFinite(args.timeout));
+      default: return false;
+    }
   }
   function warnings(value) {
     const issues = [];
@@ -68,6 +110,15 @@
       ids.add(normalized);
     });
     references(value, ref => { if (!ids.has(ref.$workflowParam)) issues.push(`Unknown parameter reference: ${String(ref.$workflowParam)}`); });
+    (Array.isArray(value.steps) ? value.steps : []).forEach((step, index) => {
+      if (!object(step)) return;
+      if (!tools.has(step.tool)) issues.push(`Step ${index + 1} uses an unsupported tool: ${String(step.tool || '(empty)')}.`);
+      else if (!validStepArgs(step, ids)) issues.push(`Step ${index + 1} has arguments that the workflow importer cannot use.`);
+      if (targetRequired.has(step.tool) && !replayableTarget(step.target)) issues.push(`Step ${index + 1} needs a replayable target with a name, label, id, or other strong locator.`);
+    });
+    try {
+      if (new TextEncoder().encode(JSON.stringify(value)).byteLength > maxPortableBytes) issues.push('Workflow JSON exceeds the importer 1 MiB file limit.');
+    } catch { issues.push('Workflow JSON cannot be serialized.'); }
     return [...new Set(issues)];
   }
 

@@ -92,7 +92,9 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     assert.deepEqual(await page.evaluate(() => editor.validate()), []);
     await page.getByRole('button', { name: '+ Add', exact: true }).last().click();
     assert.deepEqual(await page.evaluate(() => editor.getValue().steps[0].scope), { origin: 'https://example.com', pathFamily: '/' });
+    assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('needs a replayable target')));
     await edit(val(page, ['steps', 0, 'target', 'name']), 'Continue');
+    assert.deepEqual(await page.evaluate(() => editor.validate()), []);
     const output = JSON.parse(await page.evaluate(() => editor.toJSON()));
     const imported = (name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(output);
     assert.equal(imported.reason, '');
@@ -151,6 +153,13 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     assert.equal(await page.getByRole('button', { name: '+ Add', exact: true }).last().isDisabled(), true);
     await page.getByRole('button', { name: 'Parameter 1: Parameter 1', exact: true }).click();
     assert.equal(await page.getByRole('button', { name: 'Duplicate', exact: true }).isDisabled(), true);
+  }));
+
+  test(`${name}: portable JSON byte limit is reported before export`, () => withEditor(async page => {
+    const oversized = { ...fixture, extra: { payload: 'x'.repeat(1024 * 1024) } };
+    await page.evaluate(value => editor.load(value), oversized);
+    assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('exceeds the importer 1 MiB file limit')));
+    assert.equal((name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(oversized).reason, 'workflow_too_large');
   }));
 
   test(`${name}: offline file import, editing, preservation, export, embedding`, async () => {
