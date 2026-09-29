@@ -23209,6 +23209,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       dispatchedSession = { ...pending, pendingOutbound: null };
       this.chatSessions.set(tabId, dispatchedSession);
       this._persist(tabId);
+    } else if (dispatch?.noDispatch !== true
+        && (dispatch?.dispatched === true || dispatch?.success === true)
+        && dispatchedSession.pendingOutbound) {
+      dispatchedSession = {
+        ...dispatchedSession,
+        pendingOutbound: {
+          ...dispatchedSession.pendingOutbound,
+          dispatchedAt: new Date().toISOString(),
+        },
+      };
+      this.chatSessions.set(tabId, dispatchedSession);
+      let dispatchStatePersisted = false;
+      try {
+        const persisted = await this._persistNow(tabId);
+        dispatchStatePersisted = persisted === true || persisted?.ok === true;
+      } catch {}
+      if (!dispatchStatePersisted) {
+        // The pending record without a dispatch marker was persisted before
+        // typing. Keep that durable state so a restart cannot treat an
+        // unknown-direction Discord bubble as proof of delivery.
+        dispatchedSession = pending;
+        this.chatSessions.set(tabId, dispatchedSession);
+      }
     }
 
     const after = await this._readChatObservation(tabId);
@@ -23242,17 +23265,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const previouslySeenIds = new Set(observed.session.seenMessageIds);
     const outgoingVerified = verifiedState.snapshot.messages.some(message => (
       message.direction === 'outgoing'
-        && message.text === decision.text
+        && (message.authoredText ?? message.text) === decision.text
         && !previouslySeenIds.has(message.id)
-    )) && verifiedState.session.pendingOutbound === null;
+    )) || verifiedState.pendingDeliveryVerified === true;
+    const deliveryVerified = outgoingVerified && verifiedState.session.pendingOutbound === null;
     return {
       ...this._chatObservationResult(after, verifiedState),
-      success: outgoingVerified,
-      sent: outgoingVerified,
+      success: deliveryVerified,
+      sent: deliveryVerified,
       dispatched: dispatch?.dispatched === true || dispatch?.success === true,
-      deliveryVerified: outgoingVerified,
-      verificationRequired: !outgoingVerified,
-      ...(outgoingVerified ? {} : {
+      deliveryVerified,
+      verificationRequired: !deliveryVerified,
+      ...(deliveryVerified ? {} : {
         outcomeUnknown: dispatch?.dispatched !== false && dispatch?.noDispatch !== true,
         error: 'The composer action completed without a new matching outgoing bubble. Do not retry until chat_observe confirms the result.',
       }),
