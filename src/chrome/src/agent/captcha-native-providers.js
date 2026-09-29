@@ -64,6 +64,39 @@ function validateDocumentedPaths(task, contract) {
   };
   visit(task);
 }
+function validateDocumentedArrays(task, contract) {
+  const stringItem = value => typeof value === 'string' && !!value.trim();
+  const exactObject = (value, required, optional = {}) => object(value)
+    && Object.entries(required).every(([key, valid]) => valid(value[key]))
+    && Object.entries(value).every(([key, item]) => (required[key] || optional[key])?.(item) === true);
+  const cookiePair = value => exactObject(value, { name: stringItem, value: v => typeof v === 'string' });
+  const nopechaCookie = value => exactObject(value, {
+    name: stringItem, value: v => typeof v === 'string', domain: stringItem, path: stringItem,
+    hostOnly: v => typeof v === 'boolean', httpOnly: v => typeof v === 'boolean',
+    secure: v => typeof v === 'boolean', session: v => typeof v === 'boolean',
+  }, { expirationDate: v => Number.isInteger(v) && v >= 1 });
+  const coordinates = value => Array.isArray(value) && value.length === 2
+    && value.every(v => typeof v === 'number' && Number.isFinite(v));
+  const entity = value => exactObject(value, {
+    entity_id: stringItem, entity_uri: stringItem, coords: coordinates, size: coordinates,
+  });
+  const hcaptchaTask = value => exactObject(value, {
+    task_key: stringItem, datapoint_uri: stringItem,
+  }, { entities: value => Array.isArray(value) && value.length > 0 && value.every(entity) });
+  for (const [path, field] of Object.entries(contract.fields)) {
+    if (!field.type.split('|').includes('array')) continue;
+    const values = at(task, path);
+    if (!Array.isArray(values)) continue;
+    const validItem = path === 'cookie' ? nopechaCookie
+      : path === 'cookies' ? cookiePair
+      : path === 'data.tasklist' ? hcaptchaTask
+      : path === 'steps' ? value => Number.isInteger(value) && value >= 0
+      : stringItem;
+    if (values.some(value => !validItem(value))) {
+      throw new Error(`${contract.method}: ${path} contains an undocumented or invalid array element.`);
+    }
+  }
+}
 
 // No keys, credentials, or account balances are exposed by discovery.
 export function getCaptchaCapabilities(providers, { provider, family, method } = {}) {
@@ -90,6 +123,7 @@ export function buildNativeCaptchaTask(entry) {
     put(task, path, value);
   }
   validateDocumentedPaths(task, contract);
+  validateDocumentedArrays(task, contract);
   for (const [path, field] of Object.entries(contract.fields)) {
     const value = at(task, path);
     if (value === undefined) { if (field.required) throw new Error(`${entry.method}: ${path} is required.`); continue; }

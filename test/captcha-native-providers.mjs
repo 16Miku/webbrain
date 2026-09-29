@@ -134,7 +134,8 @@ for (const browser of ['chrome','firefox']) {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
     const nopecha = { provider: 'nopecha', method: 'token/hcaptcha', parameters: {
       sitekey: 'site', url,
-      cookie: [{ name: 'SID', value: 'session', domain: 'example.test', path: '/' }],
+      cookie: [{ name: 'SID', value: 'session', domain: 'example.test', path: '/',
+        hostOnly: true, httpOnly: false, secure: true, session: true }],
     } };
     const nonecap = { provider: 'nonecap', method: 'hcaptcha', parameters: { sitekey: 'site', url } };
     assert.equal(native.prepareNativeCaptchaTasks(providers, [
@@ -198,6 +199,35 @@ for (const browser of ['chrome','firefox']) {
     // Provider-documented option objects remain open where their schemas say so.
     assert.equal(native.buildNativeCaptchaTask({ provider: 'nopecha', method: 'token/recaptcha2:enterprise',
       parameters: { url, sitekey: 'site', data: { s: 'observed' } } }).task.data.s, 'observed');
+    const cookie = { name: 'SID', value: 'x', domain: 'example.test', path: '/',
+      hostOnly: true, httpOnly: false, secure: true, session: true };
+    const token = { provider: 'nopecha', method: 'token/recaptcha2', parameters: {
+      url, sitekey: 'site', cookie: [cookie],
+    } };
+    assert.equal(native.prepareNativeCaptchaTasks(providers, [token]).length, 1);
+    for (const item of [{ ...cookie, undocumentedSecret: 'page data' }, { name: 'SID', value: 'x' }]) {
+      assert.throws(() => native.prepareNativeCaptchaTasks(providers, [{ ...token,
+        parameters: { ...token.parameters, cookie: [item] },
+      }]), /invalid array element/);
+    }
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [{
+      provider: 'nopecha', method: 'recognition/textcaptcha', parameters: { image_data: [{ secret: 'page data' }] },
+    }]), /invalid array element/);
+    const hcaptcha = { provider: 'nopecha', method: 'recognition/hcaptcha', parameters: { data: {
+      request_type: 'image_drag_drop', requester_question: { en: 'Match the objects' },
+      tasklist: [{ task_key: 'task', datapoint_uri: 'data:image/jpeg;base64,a', entities: [{
+        entity_id: 'entity', entity_uri: 'data:image/png;base64,b', coords: [10, 20], size: [30, 40],
+      }] }],
+    } } };
+    assert.equal(native.prepareNativeCaptchaTasks(providers, [hcaptcha]).length, 1);
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [{ ...hcaptcha,
+      parameters: { data: { ...hcaptcha.parameters.data, tasklist: [{
+        ...hcaptcha.parameters.data.tasklist[0], entities: [{
+          ...hcaptcha.parameters.data.tasklist[0].entities[0], secret: 'page data',
+        }],
+      }] } },
+    }]), /invalid array element/);
+    assert.equal(calls.length, 0);
   });
   test(`${browser}: weighted JSON fallback preserves structured answers and synchronous results`,async t=>{
     const calls=mockApi(t,c=>c.url.hostname==='api.capsolver.com'?{errorId:1,errorDescription:'failed'}:{status:'ready',solution:{captcha_id:'id',lot_number:'lot',pass_token:'pass',gen_time:'time',captcha_output:'out'}});

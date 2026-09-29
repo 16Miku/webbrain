@@ -141,6 +141,23 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), false);
     assert.equal(record.dispatchedTimeOrigins.has(1000), true);
   });
+  test(`${build}: clearing a chat preserves the page-scoped paid answer and dispatch lock`, () => {
+    const agent = agentFor('act', 'full');
+    const record = { pageUrl: 'https://example.test/challenge', createdAt: Date.now(),
+      solution: { token: 'paid-answer' }, applied: false,
+      documents: [{ frameId: 0, url: 'https://example.test/challenge', timeOrigin: 1000 }],
+      dispatchedTimeOrigins: new Set([1000]) };
+    agent._nativeCaptchaSolutions = new Map([[1, record]]);
+    agent.clearConversation(1);
+    assert.equal(agent._nativeCaptchaSolutions.get(1), record);
+    assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), true);
+    assert.equal(agent._nativeCaptchaSolutions.get(1).dispatchedTimeOrigins.has(1000), true);
+    // A still-running solve can fill the same record after the chat is cleared.
+    record.solution = { token: 'late-answer' };
+    assert.equal(agent._nativeCaptchaSolutions.get(1).solution.token, 'late-answer');
+    agent._cleanupTab(1);
+    assert.equal(agent._nativeCaptchaSolutions.has(1), false);
+  });
   test(`${build}: query and fragment navigation retire an answer and release its gate`, () => {
     for (const to of ['https://example.test/challenge?step=2', 'https://example.test/challenge?step=1#next']) {
       const agent = agentFor('act', 'full');

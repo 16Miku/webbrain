@@ -26145,7 +26145,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     this.completionInvariants.delete(tabId);
     this.readCompletenessStates.delete(tabId);
     this._captchaGateStates.delete(tabId);
-    this._nativeCaptchaSolutions?.delete(tabId);
+    // Native paid answers and dispatch locks belong to the page document,
+    // not the conversation. A new chat on the same document must reuse them.
+    if (!preserveRunGuard) this._nativeCaptchaSolutions?.delete(tabId);
     if (preserveRunGuard) {
       this._activeCloudflareManagedChallengeGate(tabId);
     } else {
