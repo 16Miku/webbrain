@@ -40,6 +40,7 @@ import {
   isValidCapsolverApiKey,
   normalizeCapsolverApiKey,
 } from '../agent/capsolver-config.js';
+import { isValidTwoCaptchaApiKey, normalizeTwoCaptchaApiKey } from '../agent/captcha-provider-config.js';
 import {
   isValidTypesafeApiKey,
   normalizeSystemOneThreshold,
@@ -217,6 +218,11 @@ const btnSaveCaptcha = document.getElementById('btn-save-captcha');
 const btnTestCaptcha = document.getElementById('btn-test-captcha');
 const btnClearCaptcha = document.getElementById('btn-clear-captcha');
 const captchaTestResult = document.getElementById('test-captcha');
+const twoCaptchaApiKeyInput = document.getElementById('two-captcha-api-key');
+const btnSaveTwoCaptcha = document.getElementById('btn-save-two-captcha');
+const btnTestTwoCaptcha = document.getElementById('btn-test-two-captcha');
+const btnClearTwoCaptcha = document.getElementById('btn-clear-two-captcha');
+const twoCaptchaTestResult = document.getElementById('test-two-captcha');
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
 const systemOneEnabledToggle = document.getElementById('toggle-system-one');
 const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
@@ -934,12 +940,14 @@ async function init() {
   if (profileTextArea) profileTextArea.value = profileStored.profileText || '';
   await loadUserMemorySettings();
 
-  // A valid saved key is the CapSolver enable control.
-  const captchaStored = await chrome.storage.local.get(['capsolverApiKey', 'webbrainCloudManaged']);
+  // Saving a valid key enables its provider independently.
+  const captchaStored = await chrome.storage.local.get(['capsolverApiKey', 'twoCaptchaApiKey', 'webbrainCloudManaged']);
   const cloudCaptchaCard = document.getElementById('captcha-card');
   if (cloudCaptchaCard) cloudCaptchaCard.style.display = captchaStored.webbrainCloudManaged === true ? 'none' : '';
   if (captchaApiKeyInput) captchaApiKeyInput.value = captchaStored.webbrainCloudManaged === true
     ? '' : (captchaStored.capsolverApiKey || '');
+  if (twoCaptchaApiKeyInput) twoCaptchaApiKeyInput.value = captchaStored.webbrainCloudManaged === true
+    ? '' : (captchaStored.twoCaptchaApiKey || '');
 
   await loadCustomSkills();
 
@@ -2436,6 +2444,68 @@ if (btnClearCaptcha) {
     // contradictory enabled-without-a-key state.
     await chrome.storage.local.remove(['capsolverApiKey', 'captchaSolverEnabled']);
     flashCaptchaResult('ok', t('st.captcha.cleared'));
+  });
+}
+
+// --- 2Captcha (independent opt-in and balance check) ---
+
+function showTwoCaptchaResult(className, text, color = '') {
+  if (!twoCaptchaTestResult) return;
+  twoCaptchaTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
+  twoCaptchaTestResult.textContent = text;
+  twoCaptchaTestResult.style.color = color || '';
+  return twoCaptchaTestResult;
+}
+
+function flashTwoCaptchaResult(className, text) {
+  const resultEl = showTwoCaptchaResult(className, text);
+  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 3000);
+}
+
+if (btnSaveTwoCaptcha) {
+  btnSaveTwoCaptcha.addEventListener('click', async () => {
+    const key = normalizeTwoCaptchaApiKey(twoCaptchaApiKeyInput?.value);
+    if (!isValidTwoCaptchaApiKey(key)) {
+      flashTwoCaptchaResult('fail', t('st.captcha.two_need_key'));
+      return;
+    }
+    if (twoCaptchaApiKeyInput) twoCaptchaApiKeyInput.value = key;
+    // Saving this key opts in to 2Captcha independently of CapSolver.
+    await chrome.storage.local.set({
+      twoCaptchaApiKey: key,
+      twoCaptchaEnabled: true,
+    });
+    flashTwoCaptchaResult('ok', t('st.captcha.two_saved'));
+  });
+}
+
+if (btnTestTwoCaptcha) {
+  btnTestTwoCaptcha.addEventListener('click', async () => {
+    const key = normalizeTwoCaptchaApiKey(twoCaptchaApiKeyInput?.value);
+    if (!isValidTwoCaptchaApiKey(key)) {
+      flashTwoCaptchaResult('fail', t('st.captcha.two_need_key'));
+      return;
+    }
+    showTwoCaptchaResult('', t('st.captcha.checking'), 'var(--text2)');
+    try {
+      const res = await sendToBackground('test_two_captcha_balance', { apiKey: key });
+      if (res?.ok) {
+        flashTwoCaptchaResult('ok', t('st.captcha.balance_ok', { balance: `$${Number(res.balance).toFixed(4)}` }));
+      } else {
+        flashTwoCaptchaResult('fail', t('st.captcha.balance_fail', { error: res?.error || 'Unknown error' }));
+      }
+    } catch (e) {
+      flashTwoCaptchaResult('fail', t('st.captcha.balance_fail', { error: e.message }));
+    }
+  });
+}
+
+if (btnClearTwoCaptcha) {
+  btnClearTwoCaptcha.addEventListener('click', async () => {
+    if (twoCaptchaApiKeyInput) twoCaptchaApiKeyInput.value = '';
+    // Clear only this provider's key and consent.
+    await chrome.storage.local.remove(['twoCaptchaApiKey', 'twoCaptchaEnabled']);
+    flashTwoCaptchaResult('ok', t('st.captcha.cleared'));
   });
 }
 

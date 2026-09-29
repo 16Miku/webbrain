@@ -942,9 +942,6 @@ export default {
   'st.memory.reason.not_found': "Không có bộ nhớ đã lưu nào có ID đó.",
   'st.memory.security_html': "<strong>Quyền riêng tư:</strong> bộ nhớ người dùng được lưu trữ dưới dạng văn bản gốc trong hồ sơ trình duyệt này. Khi được bật, các bản ghi bộ nhớ hoạt động sẽ được gửi đến bất kỳ nhà cung cấp LLM nào mà bạn định cấu hình như một phần của lời nhắc hệ thống. Không lưu trữ mật khẩu, khóa API, mã thông báo, mã khôi phục hoặc bí mật nhạy cảm ở đây.",
 
-  'st.captcha.desc_html': "Cho phép tác nhân tự động giải CAPTCHA qua API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Hỗ trợ reCAPTCHA v2/v3, hCaptcha và Cloudflare Turnstile. Lưu khóa API hợp lệ sẽ tự động bật CapSolver; nếu không có khóa, tác nhân sẽ dừng và yêu cầu bạn tự giải CAPTCHA. CapSolver tính phí cho mỗi lần giải (~$0,001–$0,003); bạn sử dụng tài khoản và khóa API của riêng mình.",
-  'st.captcha.enabled.label': "Kích hoạt CapSolver",
-  'st.captcha.enabled.desc': "Khi nhân viên chạm vào CAPTCHA, nó sẽ gọi CapSolver một lần trước khi quay lại hỏi bạn. Yêu cầu khóa API bên dưới.",
   'st.captcha.api_key.label': "Khóa API CapSolver",
   'st.captcha.save': "Lưu khóa",
   'st.captcha.check_balance': "Kiểm tra số dư",
@@ -955,7 +952,6 @@ export default {
   'st.captcha.need_key': "Nhập khóa API CapSolver hợp lệ bắt đầu bằng CAP-.",
   'st.captcha.balance_ok': "Được rồi — số dư: {balance}",
   'st.captcha.balance_fail': "Không thành công: {error}",
-  'st.captcha.security_html': "<strong>Lưu ý:</strong> khóa API được lưu trữ <strong>trong bản rõ</strong> trong bộ nhớ cục bộ của trình duyệt. CapSolver tính phí tài khoản của bạn cho mỗi lần giải; tác nhân sẽ chỉ gọi nó khi CAPTCHA thực sự chặn một bước (tối đa một lần cho mỗi lần gặp - nó sẽ không thử lại nếu thất bại). Điều khoản dịch vụ của một số trang web nghiêm cấm việc giải CAPTCHA tự động; sử dụng phán đoán của bạn.",
 
   "st.system_one.desc_html": "Xác minh bổ sung cho theo dõi định kỳ và hoàn thành tác vụ.",
   "st.system_one.enabled.label": "Bật Jev",
