@@ -261,9 +261,10 @@
   const discordAvatarUserId = (node) => {
     try {
       const url = new URL(attribute(node, 'src'), window.location.href);
-      return url.hostname === 'cdn.discordapp.com'
-        ? /^\/avatars\/(\d+)\//.exec(url.pathname)?.[1] || ''
-        : '';
+      if (url.hostname !== 'cdn.discordapp.com') return '';
+      return /^\/avatars\/(\d+)\//.exec(url.pathname)?.[1]
+        || /^\/guilds\/\d+\/users\/(\d+)\/avatars\//.exec(url.pathname)?.[1]
+        || '';
     } catch { return ''; }
   };
 

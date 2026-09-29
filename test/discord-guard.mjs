@@ -24,7 +24,7 @@ ol {min-height:30px} main {position:fixed;left:320px;top:0;width:550px;height:70
 <a id="channel" href="/channels/123/456" aria-label="genel (metin kanalı)" aria-current="page">genel</a>
 <button id="edit" type="button" aria-label="Kanalı düzenle">Kanalı düzenle</button>
 <button id="nav-send" type="button">Send message</button></div></nav>
-<section aria-label="User status and settings"><div class="accountPopoutButtonWrapper_fixture"><img id="profile-avatar" src="https://cdn.discordapp.com/avatars/11/self.webp?size=56"></div><div class="nameTag_fixture"><div class="panelTitleContainer_fixture">WebBrain</div><div class="panelSubtext_fixture"><span class="hovered_fixture">webbrain_one</span></div></div></section>
+<section class="panels_fixture" aria-label="User status and settings"><div class="accountPopoutButtonWrapper_fixture"><img id="profile-avatar" src="https://cdn.discordapp.com/avatars/11/self.webp?size=56"></div><div class="nameTag_fixture"><div class="panelTitleContainer_fixture">WebBrain</div><div class="panelSubtext_fixture"><span class="hovered_fixture">webbrain_one</span></div></div><div class="buttons_fixture"><button id="user-settings-trigger" aria-label="Kullanıcı ayarları">⚙</button><button id="mute" role="switch" aria-label="Sessize al">●</button></div></section>
 <main aria-label="general (channel)"><h2>general chat</h2><ol role="list" aria-label="Messages in general" data-list-id="chat-messages">
 <li><div id="message" role="article" data-list-item-id="chat-messages___chat-messages-456-1001"><div class="contents"><img src="https://cdn.discordapp.com/avatars/22/other.webp?size=160"><h3><span id="message-username-1001"><span data-text="Ficsit">Ficsit</span></span><time id="message-timestamp-1001" datetime="2026-09-29T01:00:00.000Z"></time></h3><div id="message-content-1001">Hello from the fixture</div></div><div role="group" aria-label="Message Actions"><button id="wave">Wave to say hi!</button><button id="lookalike" aria-expanded="false">Test, server actions</button></div></div></li>
 </ol><div id="composer" role="textbox" aria-label="Message #general" contenteditable="true" data-slate-editor="true">Draft</div><button id="send" type="button">Send</button></main>`;
@@ -155,6 +155,18 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.notEqual((await probe('click',{selector:'#save'})).nonMessagingTarget,true);
         } finally {await page.close();}
       });
+      await t.test('account settings gear and user settings surface use structural markers',async()=>{
+        const {page,guard,probe}=await setup();
+        try {
+          assert.notEqual((await probe('click',{selector:'#mute'})).nonMessagingTarget,true,'account audio switch is not a settings action');
+          assert.equal((await guard('click',{selector:'#mute'}))?.noDispatch,true);
+          assert.equal((await probe('click',{selector:'#user-settings-trigger'})).nonMessagingTarget,true,'localized account gear is recognized by its account-panel structure');
+          assert.equal(await guard('click',{selector:'#user-settings-trigger'}),null);
+          await page.locator('body').evaluate(el=>el.insertAdjacentHTML('beforeend',`<div id="user-settings-modal" role="dialog" aria-modal="true" aria-labelledby="heading-user-settings-modal"><h1 id="heading-user-settings-modal">Hesap</h1><nav aria-label="Einstellungen"><ul><li data-settings-sidebar-item="account_panel"><div role="link">Hesap</div></li><li data-settings-sidebar-item="appearance_panel"><div role="link">Görünüm</div></li></ul></nav><main><button id="theme-control">Temayı değiştir</button></main></div>`));
+          assert.equal((await probe('click',{selector:'#theme-control'})).nonMessagingTarget,true,'user settings sidebar identifies the dialog without English labels');
+          assert.equal(await guard('click',{selector:'#theme-control'}),null);
+        } finally {await page.close();}
+      });
       await t.test('sends, message actions, lookalikes and foreign origins remain protected',async()=>{
         const {page,guard,probe}=await setup();
         try {
@@ -216,6 +228,12 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(localized.conversationId,result.conversationId);
           assert.equal(localized.threadKey,result.threadKey);
           assert.deepEqual(localized.messages,result.messages);
+
+          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/guilds/123/users/22/avatars/other.webp?size=160'));
+          assert.equal((await observe()).messages[0].direction,'incoming','guild-profile avatars retain the member identity');
+          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/guilds/123/users/11/avatars/self.webp?size=160'));
+          assert.equal((await observe()).messages[0].direction,'outgoing','guild-profile avatar identity detects the signed-in user');
+          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/22/other.webp?size=160'));
 
           await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));

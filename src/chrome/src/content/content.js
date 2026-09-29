@@ -5916,8 +5916,13 @@
           const serverSettings = dialog.getAttribute('data-layer') === 'GUILD_SETTINGS' && hasSettingsTabs;
           const channelSettings = dialog.getAttribute('data-layer') === 'CHANNEL_SETTINGS'
             && hasSettingsTabs;
+          const userSettings = !!dialog.id
+            && dialog.getAttribute('aria-modal') === 'true'
+            && dialog.getAttribute('aria-labelledby') === `heading-${dialog.id}`
+            && !!dialog.querySelector('nav [data-settings-sidebar-item="account_panel"]')
+            && !!dialog.querySelector('nav [data-settings-sidebar-item="appearance_panel"]');
           if (!channelSettings && dialog.querySelector('[data-slate-editor]')) return false;
-          return (creation || serverSettings || channelSettings) && !control.hasAttribute('form');
+          return (creation || serverSettings || channelSettings || userSettings) && !control.hasAttribute('form');
         }
         if (editable(control) || control.form || control.hasAttribute('form')
             || _composedClosestElement(control, 'form')) return false;
@@ -5932,6 +5937,10 @@
             && control.getAttribute('role') === 'menuitem'
             && menuActionIds.has(control.id);
         }
+        const accountSettingsPanel = _composedClosestElement(control, 'section[class*="panels"]');
+        if (accountSettingsPanel?.querySelector('[class*="accountPopoutButtonWrapper"]')
+            && control.matches('button:not([role])')
+            && control.parentElement?.matches('[class*="buttons"]')) return true;
         const nav = _composedClosestElement(control, 'nav,[role="navigation"]');
         const channelsList = nav?.querySelector('#channels');
         const serverHeader = nav?.querySelector('header');
