@@ -122002,6 +122002,10 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
         const wrongPage = structuredClone(args); wrongPage.providerTasks[0].parameters.websiteURL = 'https://other.test/';
         const rejected = await agent._executeToolImpl(1, 'solve_captcha', wrongPage);
         assert.equal(rejected.dispatched, false, build); assert.equal(calls.length, 0, build);
+        const wrongPath = structuredClone(args); wrongPath.providerTasks[0].parameters.websiteURL = 'https://example.test/admin';
+        const unobserved = await agent._executeToolImpl(1, 'solve_captcha', wrongPath);
+        assert.equal(unobserved.dispatched, false, build); assert.match(unobserved.error, /observed frames/);
+        assert.equal(calls.length, 0, build);
         const result = await agent._executeToolImpl(1, 'solve_captcha', args);
         assert.equal(result.success, true, `${build}: ${result.error}`);
         assert.equal(result.applicationRequired, true, build); assert.equal(result.solution.lot_number, 'lot', build);

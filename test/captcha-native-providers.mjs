@@ -226,4 +226,27 @@ for (const browser of ['chrome', 'firefox']) {
     assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed challenge/);
     assert.equal(calls.length, 0);
   });
+  const recognitionPairs = [
+    ['coordinates body', ['2captcha', 'CoordinatesTask', { body: 'image-A' }], ['solvecaptcha', 'coordinates', { body: 'image-A' }], task => { task.body = 'image-B'; }],
+    ['image-to-text array alias', ['2captcha', 'ImageToTextTask', { body: 'image-A' }], ['nopecha', 'recognition/textcaptcha', { image_data: ['image-A'] }], task => { task.image_data = ['image-B']; }],
+    ['Temu parts', ['2captcha', 'TemuImageTask', { image: 'background', parts: ['one', 'two', 'three'] }], ['solvecaptcha', 'temuimage', { body: 'background', part1: 'one', part2: 'two', part3: 'three' }], task => { task.part2 = 'different'; }],
+  ];
+  for (const [label, a, b, change] of recognitionPairs) test(`${browser}: ${label} must match before paid fallback`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const entries = [a, b].map(([provider, method, parameters]) => ({ provider, method, parameters: structuredClone(parameters) }));
+    const enabled = entries.map(entry => ({ id: entry.provider, apiKey: 'key' }));
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, entries).length, 2);
+    change(entries[1].parameters);
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed challenge media/);
+    assert.equal(calls.length, 0);
+  });
+  test(`${browser}: image and audio AWS recognition cannot share a fallback`, () => {
+    assert.throws(() => native.prepareNativeCaptchaTasks(
+      [{ id: 'capsolver', apiKey: 'key' }, { id: 'nopecha', apiKey: 'key' }],
+      [
+        { provider: 'capsolver', method: 'AwsWafClassification', parameters: { images: ['same-bytes'], question: 'cars' } },
+        { provider: 'nopecha', method: 'recognition/awscaptcha', parameters: { audio_data: ['same-bytes'] } },
+      ],
+    ), /same observed challenge media/);
+  });
 }

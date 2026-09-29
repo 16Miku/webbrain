@@ -127,9 +127,35 @@ const FAMILY_IDENTIFIERS = {
     ['data', 'cData', 'metadata.cdata', 'data.cdata', 'data.cData'],
     ['pagedata', 'pageData', 'chlPageData', 'data.pagedata', 'data.pageData', 'data.chlPageData'],
   ],
+  vk_recognition: [['steps']],
+  grid: [['rows', 'recaptcharows'], ['columns', 'recaptchacols']],
 };
+const RECOGNITION_FAMILIES = new Set([
+  'audio', 'bounding_box', 'coordinates', 'drag_and_drop', 'draw_around',
+  'funcaptcha_recognition', 'grid', 'image_to_text', 'recaptcha_recognition',
+  'rotate', 'temu_recognition', 'vk_recognition', 'yandex_recognition',
+  'aws_recognition', 'vision_engine', 'complex_image', 'funcaptcha_match',
+  'geetest_recognition', 'lemin_recognition',
+]);
+const RECOGNITION_MEDIA_FIELDS = ['body', 'image', 'images', 'image_data', 'imagesBase64', 'imageUrls', 'audio_data'];
 function validateFallbackIdentifiers(built) {
   const family = built[0].contract.family;
+  if (built.length > 1 && RECOGNITION_FAMILIES.has(family)) {
+    const signatures = built.map(({ task }) => {
+      const media = RECOGNITION_MEDIA_FIELDS.flatMap(path => {
+        const value = at(task, path);
+        if (!usable(value)) return [];
+        const kind = path === 'audio_data' ? 'audio' : path === 'imageUrls' ? 'image-url' : 'image';
+        return [JSON.stringify([kind, Array.isArray(value) ? value : [value]])];
+      });
+      if (!media.length || new Set(media).size !== 1) throw new Error('Fallback recognition tasks must use the same observed challenge media.');
+      const parts = family === 'temu_recognition'
+        ? task.parts || [task.part1, task.part2, task.part3]
+        : null;
+      return JSON.stringify([media[0], parts]);
+    });
+    if (new Set(signatures).size > 1) throw new Error('Fallback recognition tasks must use the same observed challenge media.');
+  }
   const groups = [
     ['websiteURL', 'pageurl', 'url'],
     ['websiteKey', 'sitekey', 'googlekey', 'websitePublicKey', 'publickey'],

@@ -32753,18 +32753,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (args.inject !== false) return noDispatchFailure('Native CAPTCHA methods require inject: false. Apply the returned structured answer with apply_captcha_solution after inspecting the page.');
           const prepared = prepareNativeCaptchaTasks(providers, args.providerTasks);
           const frames = typeof browser.webNavigation?.getAllFrames === 'function' ? await browser.webNavigation.getAllFrames({ tabId }) : [];
-          const origins = new Set([websiteURL, ...frames.map(frame => frame.url)].flatMap(url => { try { return [new URL(url).origin]; } catch { return []; } }));
-          for (const { task } of prepared) {
-            for (const key of ['websiteURL', 'pageurl', 'url']) {
-              if (task[key] && (!/^https?:/.test(task[key]) || !origins.has(new URL(task[key]).origin))) return noDispatchFailure('Native CAPTCHA page URLs must belong to the active tab or one of its observed frames.');
-            }
-          }
           this._nativeCaptchaSolutions ||= new Map();
           // Record dispatch before sending. Even timeout/failure cannot trigger
           // a second call for this document; fallback stays inside one call.
           const documents = await captureCaptchaDocuments(tabId, frames, browser);
           const rootDocument = documents.find(d => d.frameId === 0 && d.url === websiteURL);
           if (!rootDocument) return noDispatchFailure('Could not bind this page document before the native CAPTCHA request.');
+          const normalizedPageUrl = value => {
+            try { const parsed = new URL(value); return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : null; } catch { return null; }
+          };
+          const observedUrls = new Set(documents.map(d => normalizedPageUrl(d.url)).filter(Boolean));
+          for (const { task } of prepared) {
+            for (const key of ['websiteURL', 'pageurl', 'url']) {
+              if (task[key] && !observedUrls.has(normalizedPageUrl(task[key]))) return noDispatchFailure('Native CAPTCHA page URLs must match the active tab or one of its observed frames.');
+            }
+          }
           const previous = this._nativeCaptchaSolutions.get(tabId);
           const dispatchedTimeOrigins = previous?.dispatchedTimeOrigins || new Set(previous?.documents
             ?.filter(d => d.frameId === 0).map(d => d.timeOrigin) || []);
