@@ -244,6 +244,12 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       assert.equal(rejectedDownloads, 0);
       assert.equal(await page.evaluate(() => editor.getValue().parameters[0].id), 'address');
       assert.match(await page.getByRole('status').innerText(), /Parameter ids must use/);
+      await val(page, ['parameters', 0, 'id']).fill('Invalid ID');
+      await page.getByRole('button', { name: 'Download JSON', exact: true }).click();
+      await page.waitForTimeout(100);
+      assert.equal(rejectedDownloads, 0);
+      assert.equal(await page.evaluate(() => editor.getValue().parameters[0].id), 'address');
+      assert.match(await page.getByRole('status').innerText(), /Parameter ids must use/);
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole('button', { name: 'Workflow details', exact: true }).click();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

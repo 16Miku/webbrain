@@ -149,6 +149,8 @@
       this.filename = 'untitled.webbrain-workflow.json';
       this.saved = 'null';
       this.rawDraft = null;
+      this.handlingFieldChange = false;
+      this.changeFailed = false;
       this.closed = new Set();
       this.destroyed = false;
       // Let blur/change and the following click finish before replacing controls.
@@ -162,10 +164,12 @@
       document.addEventListener('click', this.releasePointer);
       document.addEventListener('pointerup', this.pointerUp);
       document.addEventListener('pointercancel', this.releasePointer);
-      this.root.addEventListener('change', () => {
+      this.root.addEventListener('change', event => {
+        this.handlingFieldChange = !!event.target.closest?.('[data-path]');
+        if (this.handlingFieldChange) this.changeFailed = false;
         this.pendingField = null;
         this.deferRender = true;
-        setTimeout(() => { this.deferRender = false; this.flushRender(); }, 0);
+        setTimeout(() => { this.handlingFieldChange = false; this.deferRender = false; this.flushRender(); }, 0);
       }, true);
       this.root.addEventListener('input', event => {
         if (event.target.closest('[data-path]')) this.pendingField = event.target;
@@ -204,7 +208,7 @@
       this.notice = { text, error };
       if (this.status) { this.status.textContent = text; this.status.classList.toggle('error', error); }
     }
-    attempt(action) { try { action(); } catch (error) { this.render(); this.message(error.message, true); } }
+    attempt(action) { try { action(); } catch (error) { if (this.handlingFieldChange) this.changeFailed = true; this.render(); this.message(error.message, true); } }
     notify() {
       const value = this.getValue();
       this.host.dispatchEvent(new CustomEvent('workflowchange', { detail: { value }, bubbles: true }));
@@ -213,6 +217,7 @@
     load(value, filename = 'workflow.webbrain-workflow.json') {
       const next = parse(value);
       this.value = next;
+      this.changeFailed = false;
       this.notice = null;
       this.filename = String(filename || 'workflow.webbrain-workflow.json');
       this.saved = JSON.stringify(next);
@@ -277,13 +282,13 @@
     }
     download() {
       if (!this.value) return;
+      if (this.changeFailed) return;
       const active = this.root.activeElement;
       if (active?.matches('.filename')) this.filename = active.value.trim() || 'workflow.json';
       // Keyboard save must include the text still focused in the form.
       if (this.pendingField?.isConnected) {
-        const previousNotice = this.notice;
         this.pendingField.dispatchEvent(new Event('change', { bubbles: true }));
-        if (this.notice !== previousNotice && this.notice?.error) return;
+        if (this.changeFailed) return;
       }
       this.attempt(() => {
         const blob = new Blob([this.toJSON()], { type: 'application/json' });
@@ -548,7 +553,7 @@
         else { input.type = 'number'; input.step = 'any'; }
         input.value = value;
         input.addEventListener('change', () => {
-          if (type === 'number' && (!input.value.trim() || !Number.isFinite(Number(input.value)))) { input.value = value; this.message('Enter a finite number.', true); return; }
+          if (type === 'number' && (!input.value.trim() || !Number.isFinite(Number(input.value)))) { if (this.handlingFieldChange) this.changeFailed = true; input.value = value; this.message('Enter a finite number.', true); return; }
           this.set(path, type === 'number' ? Number(input.value) : input.value);
         });
         field.append(input);
