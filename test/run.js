@@ -48832,6 +48832,17 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(brailleBlankOptionTimeout.authorized, false, `${AgentClass.name}: braille blank safe_first option was accepted`);
 
     await agent._recordClarificationAuthorization(tabId, 'user');
+    const emojiOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', options: ['👩‍💻 Continue', 'Stop'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '👩‍💻 Continue', 'timeout');
+      },
+    );
+    assert.equal(emojiOptionTimeout.authorized, true, `${AgentClass.name}: visible ZWJ emoji safe_first option was rejected`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
     const promotedOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
