@@ -10881,6 +10881,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return resultContent;
   }
 
+  _captchaSolveGateAfterTool(tabId, toolName, toolResult) {
+    const activeGate = this._captchaGateStates.get(tabId);
+    if (!['solve_captcha', 'apply_captcha_solution'].includes(toolName) || !activeGate
+        || !toolResult || typeof toolResult !== 'object' || toolResult.noDispatch === true) return null;
+    // A failed binding/preflight has not consumed the paid answer. Keep its
+    // gate pending so the model can inspect the page and correct the binding.
+    const pending = (toolResult.success === true && (toolResult.injected === true || toolResult.applicationRequired === true))
+      || (toolName === 'apply_captcha_solution' && toolResult.applicationRetryable === true);
+    const publicGate = pending ? {
+      ...withoutLegacyCaptchaVerificationState(activeGate.publicGate),
+      status: 'verification_pending',
+      solveAttempted: true,
+    } : {
+      ...activeGate.publicGate,
+      status: 'manual_required',
+      solveFailed: true,
+    };
+    this._captchaGateStates.set(tabId, {
+      ...(pending ? withoutLegacyCaptchaVerificationState(activeGate) : activeGate),
+      status: publicGate.status,
+      publicGate,
+    });
+    return publicGate;
+  }
+
   _captchaGateBlockResult(tabId, toolName, toolArgs = {}) {
     const gate = this._captchaGateForTools(tabId, this._captchaGateStates.get(tabId));
     const gatedCompletion = toolName === 'done' || toolName === 'done_json';
@@ -13109,34 +13134,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
 
-      let captchaSolveOutcome = null;
-      const activeCaptchaGate = this._captchaGateStates.get(tabId);
-      if (['solve_captcha', 'apply_captcha_solution'].includes(fnName) && activeCaptchaGate && toolResult && typeof toolResult === 'object' && toolResult.noDispatch !== true) {
-        if (toolResult.success === true && (toolResult.injected === true || toolResult.applicationRequired === true)) {
-          const verificationGate = {
-            ...withoutLegacyCaptchaVerificationState(activeCaptchaGate.publicGate),
-            status: 'verification_pending',
-            solveAttempted: true,
-          };
-          captchaSolveOutcome = verificationGate;
-          this._captchaGateStates.set(tabId, {
-            ...withoutLegacyCaptchaVerificationState(activeCaptchaGate),
-            status: 'verification_pending',
-            publicGate: verificationGate,
-          });
-        } else {
-          const manualGate = {
-            ...activeCaptchaGate.publicGate,
-            status: 'manual_required',
-            solveFailed: true,
-          };
-          captchaSolveOutcome = manualGate;
-          this._captchaGateStates.set(tabId, {
-            ...activeCaptchaGate,
-            status: 'manual_required',
-            publicGate: manualGate,
-          });
-        }
+      const captchaSolveOutcome = this._captchaSolveGateAfterTool(tabId, fnName, toolResult);
+      if (captchaSolveOutcome) {
         toolResult.captchaGate = captchaSolveOutcome;
         onUpdate('captcha_gate', captchaSolveOutcome);
       }
@@ -35726,13 +35725,19 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       return getCaptchaCapabilities(getCaptchaProviders(stored), args || {});
     }
     if (name === 'apply_captcha_solution') {
+      const record = this._nativeCaptchaSolutions?.get(tabId);
+      const applicationRetryable = async () => {
+        if (record?.solution === undefined || record.applied || Date.now() - record.createdAt > 180_000) return false;
+        try { return (await chrome.tabs.get(tabId))?.url === record.pageUrl; } catch { return false; }
+      };
       try {
-        const record = this._nativeCaptchaSolutions?.get(tabId);
         const result = await applyNativeCaptchaSolution(tabId, record, args, chrome);
         if (record && result.success === true) record.applicationSucceeded = true;
-        return { ...result, injected: result.success === true, dispatched: record?.applied === true };
+        return { ...result, injected: result.success === true, dispatched: record?.applied === true,
+          applicationRetryable: result.success !== true && await applicationRetryable() };
       } catch (error) {
-        return { success: false, error: error.message, dispatched: this._nativeCaptchaSolutions?.get(tabId)?.applied === true };
+        return { success: false, error: error.message, dispatched: record?.applied === true,
+          applicationRetryable: await applicationRetryable() };
       }
     }
     if (name === 'solve_captcha') {

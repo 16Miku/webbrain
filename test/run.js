@@ -122013,10 +122013,21 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
         assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {}), null, build);
         assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', args)?.denied, true, build);
         assert.equal(agent._captchaGateBlockResult(1, 'click', {})?.denied, true, build);
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { success: false, error: 'Observed target is ambiguous.' } }];
+        else api.tabs.executeScript = async () => [{ success: false, error: 'Observed target is ambiguous.' }];
+        const preflightFailure = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form', callback: { name: 'captcha.done', path: '' } });
+        assert.equal(preflightFailure.applicationRetryable, true, build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).applied, false, build);
+        const pendingAfterPreflight = agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', preflightFailure);
+        assert.equal(pendingAfterPreflight.status, 'verification_pending', build);
+        assert.equal(pendingAfterPreflight.solveFailed, undefined, build);
+        assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {})?.denied, undefined, build);
+        assert.equal(calls.length, 1, build);
         if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { success: true } }];
         else api.tabs.executeScript = async () => [{ success: true }];
         const applied = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form', callback: { name: 'captcha.done', path: '' } });
         assert.equal(applied.success, true, build);
+        assert.equal(applied.applicationRetryable, false, build);
         assert.equal(agent._nativeCaptchaSolutions.get(1).applicationSucceeded, true, build);
         agent._detectChallengeDialogBeforeMutation = async () => ({ inspectionComplete: true, challenge: null });
         const cleared = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', { pageUrl: 'https://example.test/form', pageContent: 'heading "Verification complete"' });
@@ -122040,6 +122051,10 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
         const restored = await agent._executeToolImpl(1, 'solve_captcha', args);
         assert.equal(restored.dispatched, false, `${build}: a restored document cannot incur a second charge`);
         assert.equal(calls.length, 2, build);
+        agent._nativeCaptchaSolutions.get(1).applied = true;
+        const consumed = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form' });
+        assert.equal(consumed.applicationRetryable, false, build);
+        assert.equal(agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', consumed).status, 'manual_required', build);
       } finally { globalThis.fetch = previousFetch; }
     });
   }
