@@ -3407,7 +3407,7 @@ export class CDPClient {
               })) continue;
               layers.push({
                 element: el,
-                role: el.getAttribute('role') || el.tagName.toLowerCase(),
+                role: (el.getAttribute('role') || el.tagName.toLowerCase()).slice(0, 80),
                 text,
                 position: style.position,
                 rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },

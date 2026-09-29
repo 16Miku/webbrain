@@ -1196,6 +1196,22 @@ test('read_page windows keep layer context when oversized output is compacted', 
     if (JSON.stringify(fitted).length > 1200 || fitted.visibleLayers?.[0]?.text !== 'Open filters dialog') {
       throw new Error(`${label}: bounded read lost the visible layer: ${JSON.stringify(fitted)}`);
     }
+    const oversized = {
+      ...raw,
+      visibleLayers: [
+        { ...raw.visibleLayers[0], role: 'dialog' + 'x'.repeat(10000) },
+        ...Array.from({ length: 3 }, (_, i) => ({
+          role: 'toolbar', text: `Toolbar ${i} ${'x'.repeat(220)}`, position: 'fixed',
+          rect: { x: 0, y: i * 30, w: 800, h: 30 },
+        })),
+      ],
+    };
+    const bounded = fitWindow(applyWindow(oversized, { limit: 6000 }), 1200);
+    if (JSON.stringify(bounded).length > 1200
+      || bounded.visibleLayers?.[0]?.text !== 'Open filters dialog'
+      || bounded.visibleLayers[0].role.length > 80) {
+      throw new Error(`${label}: oversized layer metadata broke the read_page cap: ${JSON.stringify(bounded)}`);
+    }
   }
 });
 

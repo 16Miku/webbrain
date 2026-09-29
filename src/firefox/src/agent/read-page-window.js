@@ -88,6 +88,20 @@ function compactCoreResult(result) {
   const shortString = (value, limit) => (
     typeof value === 'string' ? value.slice(0, limit) : value
   );
+  const finiteCoord = value => Number.isFinite(value) ? value : 0;
+  const visibleLayers = Array.isArray(result.visibleLayers)
+    ? result.visibleLayers.slice(0, 4).map(layer => ({
+      role: shortString(layer?.role, 80),
+      text: shortString(layer?.text, 240),
+      position: shortString(layer?.position, 20),
+      rect: {
+        x: finiteCoord(layer?.rect?.x),
+        y: finiteCoord(layer?.rect?.y),
+        w: finiteCoord(layer?.rect?.w),
+        h: finiteCoord(layer?.rect?.h),
+      },
+    }))
+    : undefined;
   const pageGate = result.pageGate && typeof result.pageGate === 'object'
     ? {
       type: shortString(result.pageGate.type, 100),
@@ -109,7 +123,7 @@ function compactCoreResult(result) {
     accessState: result.accessState,
     accessGateEvidence: result.accessGateEvidence,
     ...(pageGate ? { pageGate } : {}),
-    ...(Array.isArray(result.visibleLayers) ? { visibleLayers: result.visibleLayers.slice(0, 4) } : {}),
+    ...(visibleLayers ? { visibleLayers } : {}),
     auxiliaryContentTruncated: true,
   }, result.text);
 }
@@ -180,6 +194,9 @@ export function fitReadPageWindowResult(result, maxChars = 8000) {
   }
   if (!fits(withDeliveredText(compact, ''))) {
     compact = compactCoreResult(result);
+    while (compact.visibleLayers?.length && !fits(withDeliveredText(compact, ''))) {
+      compact = { ...compact, visibleLayers: compact.visibleLayers.slice(0, -1) };
+    }
   }
 
   let low = 0;
