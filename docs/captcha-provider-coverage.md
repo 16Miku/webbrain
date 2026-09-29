@@ -148,7 +148,7 @@ Provider-specific identifiers (for example `appId`/`app_id` and `miseryKey`/`mis
 Supported bindings:
 
 - `fields`: bind a solution path to one observed input/textarea selector; structured values require `encoding: "json"`.
-- `callback`: pass a solution value or object to an observed named page callback. Native/global code evaluators and unsafe property paths are rejected. Provider-returned code is never evaluated.
+- `callback`: pass a solution value or object to an observed named page callback. Application uses the frame host's normal permissions: Type for response fields, Click for image/grid clicks, and JavaScript for callbacks or cookies. Native/global code evaluators and unsafe property paths are rejected. Provider-returned code is never evaluated.
 - `cookies`: bind explicit cookie names to returned values. Complete Set-Cookie strings are reduced to the explicitly named cookie value; returned attributes are ignored. Cookies are host-only, scoped to the active top-level page and its browser cookie store. Provider-supplied domains/URLs are not adopted. Both extension manifests declare the `cookies` permission for this behavior.
 - `clicks`: apply coordinate arrays, numbered grid cells, or boolean grids to one observed challenge image/grid. Original image dimensions are converted once into CSS coordinates; out-of-bounds, ambiguous, obscured, or invisible targets fail. SolveCaptcha `click:` grid answers (including letter-numbered cells) and `coordinate:` answers are decoded into these arrays. These are synthetic page events; some challenges require trusted input and will reject them.
 
@@ -177,6 +177,7 @@ A proxyless method means the solver chooses its network route. It does not guara
 - **CapSolver Cloudflare and DataDome** require the proxy inputs documented for their native methods.
 - **NoneCap** accepts optional string/object proxies. Its returned User-Agent and response key can matter for acceptance.
 - Proxied JSON APIs use provider-specific `proxyType`, `proxyAddress`, `proxyPort`, and optional authentication fields. SolveCaptcha uses form-encoded proxy fields.
+- Weighted native fallbacks compare supplied proxy scheme, host, port, and credentials across provider-specific formats before any paid request. Identity-bound fallbacks require a proxy on every attempt; supplied User-Agent values must also agree.
 
 WebBrain does not silently change the browser's proxy or User-Agent, transplant a complete remote session, or infer an IP match. Satisfy those prerequisites separately. Returned cookies can be explicitly bound; returned JavaScript, arbitrary storage dumps, and arbitrary navigation instructions cannot.
 

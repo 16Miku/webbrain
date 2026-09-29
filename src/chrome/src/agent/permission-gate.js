@@ -492,6 +492,14 @@ export function capabilityFor(name, args) {
  */
 export function capabilitiesFor(name, args) {
   args = args || {};
+  // CAPTCHA application mutates the selected page. A named callback executes
+  // page JavaScript; cookies likewise change browser state. Page-authored
+  // bindings must not bypass the ordinary host-specific permission gate.
+  if (name === 'apply_captcha_solution') return [
+    ...(args.fields?.length ? [Capability.TYPE] : []),
+    ...(args.clicks?.length ? [Capability.CLICK] : []),
+    ...(args.callback || args.cookies?.length ? [Capability.EXECUTE_JS] : []),
+  ];
   if (name === 'chat_send') return [Capability.TYPE, Capability.CLICK];
   if (name === 'delegate_research') {
     // agent.js substitutes explicit one-use research authorization for these
@@ -561,6 +569,9 @@ function resolveHostAgainst(url, base) {
  */
 export function hostForCapability(capability, args, currentUrlOrHost, toolName) {
   args = args || {};
+  if (toolName === 'apply_captcha_solution') {
+    return normalizeHost(args.frameUrl);
+  }
   if (toolName === 'read_email_verification_message' && capability === Capability.CLICK) {
     // agent.js supplies this from its opaque inspected-mailbox session only to
     // the permission check; it never comes from model arguments.

@@ -144,8 +144,55 @@ const RECOGNITION_FAMILIES = new Set([
   'geetest_recognition', 'lemin_recognition',
 ]);
 const RECOGNITION_MEDIA_FIELDS = ['body', 'image', 'images', 'image_data', 'imagesBase64', 'imageUrls', 'audio_data'];
+function proxyIdentity(task) {
+  const raw = task.proxy;
+  if (!raw && !task.proxyAddress) return null;
+  let scheme = String(task.proxyType || task.proxytype || (object(raw) && raw.scheme) || '').toLowerCase();
+  let host, port, login = '', password = '';
+  if (task.proxyAddress) {
+    host = task.proxyAddress;
+    port = task.proxyPort;
+    login = task.proxyLogin || '';
+    password = task.proxyPassword || '';
+  } else if (object(raw)) {
+    host = raw.host;
+    port = raw.port;
+    login = raw.username || raw.login || '';
+    password = raw.password || '';
+  } else if (typeof raw === 'string') {
+    // CapSolver accepts scheme:host:port:login:password; other providers use
+    // scheme://login:password@host:port or login:password@host:port.
+    const colonForm = raw.match(/^(https?|socks[45]):([^:/@]+):(\d+)(?::([^:]*):(.+))?$/i);
+    if (colonForm) {
+      [, scheme, host, port, login = '', password = ''] = colonForm;
+    } else {
+      let parsed;
+      try { parsed = new URL(raw.includes('://') ? raw : `${scheme || 'http'}://${raw}`); }
+      catch { throw new Error('Fallback tasks must use comparable proxy identities.'); }
+      const parsedScheme = parsed.protocol.slice(0, -1).toLowerCase();
+      if (scheme && scheme !== parsedScheme) throw new Error('Fallback tasks must use the same proxy identity.');
+      scheme = parsedScheme;
+      host = parsed.hostname;
+      port = parsed.port;
+      login = decodeURIComponent(parsed.username);
+      password = decodeURIComponent(parsed.password);
+    }
+  }
+  if (!scheme || !host || !Number.isInteger(Number(port)) || Number(port) < 1 || Number(port) > 65535) {
+    throw new Error('Fallback tasks must use comparable proxy identities.');
+  }
+  return JSON.stringify([scheme.toLowerCase(), String(host).toLowerCase(), Number(port), String(login), String(password)]);
+}
 function validateFallbackIdentifiers(built) {
   const family = built[0].contract.family;
+  if (built.length > 1) {
+    const proxies = built.map(({ task }) => proxyIdentity(task));
+    const present = proxies.filter(Boolean);
+    if (new Set(present).size > 1 || (present.length && present.length !== built.length
+        && ['datadome', 'captchafox', 'cybersiara', 'cloudflare_challenge', 'cloudflare_waiting_room', 'imperva', 'tspd'].includes(family))) {
+      throw new Error('Fallback tasks must use the same proxy identity.');
+    }
+  }
   if (built.length > 1 && RECOGNITION_FAMILIES.has(family)) {
     const signatures = built.map(({ task }) => {
       const media = RECOGNITION_MEDIA_FIELDS.flatMap(path => {

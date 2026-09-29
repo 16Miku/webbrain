@@ -14,6 +14,19 @@ test('CAPTCHA tool matrix matches Ask, Compact, Mid, Full and Dev availability',
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
   const { getToolsForMode } = await import(`../src/${build}/src/agent/tools.js`);
+  const { Capability, capabilitiesFor, requiredHosts } = await import(`../src/${build}/src/agent/permission-gate.js`);
+  test(`${build}: CAPTCHA bindings require their mutation permissions for the selected frame host`, () => {
+    const args = { frameId: 3, frameUrl: 'https://captcha.example.test/challenge', callback: { name: 'app.deleteAccount', path: 'token' } };
+    assert.deepEqual(capabilitiesFor('apply_captcha_solution', args), [Capability.EXECUTE_JS]);
+    assert.deepEqual(capabilitiesFor('apply_captcha_solution', { ...args, callback: undefined, fields: [{ selector: '#answer', path: 'token' }] }), [Capability.TYPE]);
+    assert.deepEqual(capabilitiesFor('apply_captcha_solution', { ...args, callback: undefined, clicks: [{ selector: '#grid', path: 'points' }] }), [Capability.CLICK]);
+    assert.deepEqual(capabilitiesFor('apply_captcha_solution', { ...args, callback: undefined, cookies: [{ name: 'clearance', path: 'cookie' }] }), [Capability.EXECUTE_JS]);
+    assert.deepEqual(capabilitiesFor('apply_captcha_solution', { ...args, fields: [{}], clicks: [{}], cookies: [{}] }), [Capability.TYPE, Capability.CLICK, Capability.EXECUTE_JS]);
+    assert.deepEqual(requiredHosts(Capability.EXECUTE_JS, args, 'https://main.example.test/', 'apply_captcha_solution'), ['captcha.example.test']);
+    assert.deepEqual(requiredHosts(Capability.CLICK, args, 'https://main.example.test/', 'apply_captcha_solution'), ['captcha.example.test']);
+    assert.deepEqual(capabilitiesFor('apply_captcha_solution', { ...args, callback: undefined }), []);
+    assert.deepEqual(requiredHosts(Capability.EXECUTE_JS, { ...args, frameUrl: '' }, 'https://main.example.test/', 'apply_captcha_solution'), []);
+  });
   test(`${build}: hCaptcha Enterprise rqdata is optional in the model-visible tool schema`, () => {
     const solve = getToolsForMode('act', { tier: 'full' }).find(tool => tool.function.name === 'solve_captcha');
     assert.match(solve.function.parameters.properties.rqdata.description, /optional.*when the widget exposes it/i);

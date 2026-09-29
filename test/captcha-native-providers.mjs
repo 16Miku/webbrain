@@ -244,6 +244,7 @@ for (const browser of ['chrome', 'firefox']) {
   });
   const actionBoundPairs = [
     ['DataDome User-Agent', ['2captcha', 'DataDomeSliderTask', { websiteURL: url, captchaUrl: 'https://example.test/captcha', userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080 }], ['solvecaptcha', 'datadome', { pageurl: url, captcha_url: 'https://example.test/captcha', userAgent: 'browser-UA', proxy: 'proxy.test:8080', proxytype: 'http' }], 'userAgent'],
+    ['DataDome proxy', ['2captcha', 'DataDomeSliderTask', { websiteURL: url, captchaUrl: 'https://example.test/captcha', userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080 }], ['solvecaptcha', 'datadome', { pageurl: url, captcha_url: 'https://example.test/captcha', userAgent: 'browser-UA', proxy: 'proxy.test:8080', proxytype: 'http' }], 'proxy'],
     ['reCAPTCHA v2 data-s', ['2captcha', 'RecaptchaV2TaskProxyless', { websiteURL: url, websiteKey: 'site', recaptchaDataSValue: 'observed' }], ['solvecaptcha', 'recaptcha_v2', { pageurl: url, googlekey: 'site', 'data-s': 'observed' }], 'data-s'],
     ['reCAPTCHA v2 enterprise data-s', ['2captcha', 'RecaptchaV2EnterpriseTaskProxyless', { websiteURL: url, websiteKey: 'site', enterprisePayload: { s: 'observed' } }], ['solvecaptcha', 'recaptcha_v2_enterprise', { pageurl: url, googlekey: 'site', 'data-s': 'observed' }], 'data-s'],
     ['reCAPTCHA v2 nested data-s', ['2captcha', 'RecaptchaV2TaskProxyless', { websiteURL: url, websiteKey: 'site', recaptchaDataSValue: 'observed' }], ['nopecha', 'token/recaptcha2', { url, sitekey: 'site', data: { s: 'observed' } }], 'data.s'],
@@ -262,11 +263,15 @@ for (const browser of ['chrome', 'firefox']) {
     const path = changed.split('.');
     let target = entries[1].parameters;
     for (const part of path.slice(0, -1)) target = target[part];
-    target[path.at(-1)] = 'different';
-    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed challenge/);
+    target[path.at(-1)] = changed === 'proxy' ? 'other.test:8080' : 'different';
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed challenge|same proxy identity/);
     assert.equal(calls.length, 0);
   });
   for (const [label, entries] of [
+    ['DataDome proxy credentials mismatch', [
+      { provider: '2captcha', method: 'DataDomeSliderTask', parameters: { websiteURL: url, captchaUrl: 'https://example.test/captcha', userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080, proxyLogin: 'alice' } },
+      { provider: 'capmonster', method: 'CustomTask:DataDome', parameters: { websiteURL: url, metadata: { datadomeCookie: 'observed', captchaUrl: 'https://example.test/captcha' }, userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080, proxyLogin: 'bob' } },
+    ]],
     ['reCAPTCHA v2 omitted User-Agent', [
       { provider: '2captcha', method: 'RecaptchaV2TaskProxyless', parameters: { websiteURL: url, websiteKey: 'site', userAgent: 'browser-UA' } },
       { provider: 'solvecaptcha', method: 'recaptcha_v2', parameters: { pageurl: url, googlekey: 'site' } },
@@ -289,7 +294,7 @@ for (const browser of ['chrome', 'firefox']) {
     ]],
   ]) test(`${browser}: ${label} cannot spend`, t => {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
-    assert.throws(() => native.prepareNativeCaptchaTasks(entries.map(entry => ({ id: entry.provider, apiKey: 'key' })), entries), /same observed challenge/);
+    assert.throws(() => native.prepareNativeCaptchaTasks(entries.map(entry => ({ id: entry.provider, apiKey: 'key' })), entries), /same observed challenge|same proxy identity/);
     assert.equal(calls.length, 0);
   });
   const recognitionPairs = [
