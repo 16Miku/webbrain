@@ -310,6 +310,7 @@ function candidateSummary(candidate) {
     pageAction: candidate?.pageAction || null,
     enterprisePayload: candidate?.enterprisePayload || null,
     recaptchaDataSValue: candidate?.recaptchaDataSValue || null,
+    ...(candidate?.rqdata ? { rqdata: candidate.rqdata } : {}),
     ...(candidate?.metadata ? { metadata: candidate.metadata } : {}),
     explicitWebsiteKey: candidate?.explicitWebsiteKey === true,
     callbackName: candidate?.callbackName || null,
@@ -363,6 +364,7 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
     'enterprisePayload',
     'recaptchaDataSValue',
     'metadata',
+    'rqdata',
   ];
   const hasParameterValue = value =>
     value !== undefined && value !== null && value !== '';
@@ -835,6 +837,7 @@ export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = nul
     add({
       type: 'hcaptcha',
       websiteKey,
+      ...(host.getAttribute('data-rqdata') ? { rqdata: host.getAttribute('data-rqdata') } : {}),
       isInvisible,
       visible: visibleElement(host) && !isInvisible,
       normalCheckbox: visibleElement(host) && !isInvisible,

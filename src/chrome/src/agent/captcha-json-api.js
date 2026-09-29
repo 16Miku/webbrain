@@ -22,15 +22,15 @@ export async function getJsonCaptchaBalance(apiBase, name, apiKey) {
 export async function solveJsonCaptcha(apiBase, name, apiKey, task) {
   if (!apiKey) throw new Error(`No ${name} API key configured.`);
   const created = await postJson(apiBase, name, 'createTask', { clientKey: apiKey, task });
+  if (created.status === 'ready') return { taskId: created.taskId, solution: created.solution ?? {} };
   if (!created.taskId) throw new Error(`${name} createTask: missing taskId`);
-  if (created.status === 'ready') return { taskId: created.taskId, solution: created.solution || {} };
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 5_000));
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
     const result = await postJson(apiBase, name, 'getTaskResult', { clientKey: apiKey, taskId: created.taskId }, Math.min(30_000, remaining));
-    if (result.status === 'ready') return { taskId: created.taskId, solution: result.solution || {} };
+    if (result.status === 'ready') return { taskId: created.taskId, solution: result.solution ?? {} };
     if (result.status !== 'processing') throw new Error(`${name} getTaskResult: unexpected status`);
   }
   throw new Error(`${name}: timed out waiting for solution.`);

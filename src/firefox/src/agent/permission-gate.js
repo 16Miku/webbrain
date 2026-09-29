@@ -54,6 +54,9 @@ export const CAPABILITY_LABEL = {
  * tool is classified as gated, untrusted-read, or explicitly known-safe.
  */
 export const UNTRUSTED_CONTENT_TOOLS = new Set([
+  // Native solver answers/errors and callback failures contain external data.
+  'solve_captcha',
+  'apply_captcha_solution',
   'chat_observe',
   'chat_send',
   'read_page',

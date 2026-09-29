@@ -85,7 +85,9 @@ Legend: **Yes** = available · **-** = not available · **C** = Chrome only ·
 | `progress_update` | No | Yes | Yes | Yes | - |
 | `progress_read` | No | Yes | Yes | Yes | - |
 | `download_social_media` | No | No | Yes | Yes | - |
-| `solve_captcha` | No | No | Yes | Yes | - |
+| `get_captcha_capabilities` | Yes | No | Yes | Yes | Read-only provider/method discovery |
+| `solve_captcha` | No | No | Yes | Yes | Automatic widgets or documented native methods |
+| `apply_captcha_solution` | No | No | Yes | Yes | Apply the stored native answer without another paid solve |
 | `go_back` | No | No | Yes | Yes | - |
 | `go_forward` | No | No | Yes | Yes | - |
 | `schedule_resume` | No | No | Yes | Yes | - |
@@ -183,3 +185,7 @@ Compact-tier providers. Chrome's reversible editing tools return patch IDs:
 - [Accessibility tree and refs](accessibility-tree-and-refs.md)
 - [Security model](security-model.md) and
   [prompt-injection defense](prompt-injection-defense.md)
+
+## CAPTCHA providers
+
+See [CAPTCHA provider coverage](captcha-provider-coverage.md) for setup, weighted fallback, hCaptcha, browser identity requirements and answer application, and the [complete method reference](captcha-method-reference.md) for all seven providers’ native contracts. The agent reads `get_captcha_capabilities` before supplying `providerTasks` to `solve_captcha`; structured results remain available to `apply_captcha_solution`. A result must still be verified on the page.
