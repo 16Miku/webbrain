@@ -172,6 +172,7 @@ export default {
   'sp.slash.remember': "उपयोगकर्ता प्राथमिकता याद रखें",
   'sp.slash.show_memory': "सहेजी गई उपयोगकर्ता मेमोरी दिखाएँ",
   'sp.slash.forget_memory': "आईडी द्वारा सहेजी गई मेमोरी को भूल जाएं",
+  'sp.slash.workflow_editor': "वर्कफ़्लो एडिटर",
   'sp.slash.workflows': "सहेजे गए वर्कफ़्लो को सूचीबद्ध करें और प्रबंधित करें",
   "sp.slash.teach": "अपने कार्यों को सहेजे गए वर्कफ़्लो के रूप में रिकॉर्ड करें",
   'sp.slash.run_workflow': "आईडी द्वारा सहेजा गया वर्कफ़्लो चलाएँ",

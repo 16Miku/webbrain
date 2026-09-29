@@ -939,6 +939,7 @@ export default {
   "sp.memory.error": "Ralat memori: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Tidak disimpan: teks kosong selepas dibersihkan atau kelihatan mengandungi rahsia (kata laluan, kunci API, token).",
   "sp.memory.reason.not_found": "Tiada memori yang disimpan dengan ID tersebut.",
+  'sp.slash.workflow_editor': "Editor aliran kerja",
   "sp.slash.workflows": "Senarai dan urus aliran kerja tersimpan",
   "sp.slash.teach": "Rakam tindakan anda sebagai aliran kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan aliran kerja tersimpan mengikut ID",

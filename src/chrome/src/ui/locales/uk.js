@@ -939,6 +939,7 @@ export default {
   "sp.memory.error": "Помилка пам’яті: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Не збережено: після очищення текст порожній або схожий на секрет (пароль, ключ API, токен).",
   "sp.memory.reason.not_found": "Збереженого запису з таким ID немає.",
+  'sp.slash.workflow_editor': "Редактор робочих процесів",
   "sp.slash.workflows": "Перегляд і керування збереженими сценаріями",
   "sp.slash.teach": "Записати ваші дії як збережений робочий процес",
   "sp.slash.run_workflow": "Запустити збережений сценарій за ID",

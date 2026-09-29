@@ -26202,10 +26202,29 @@ test('cloud run controller pauses and resumes clarify, permission, and submit in
     );
   }
 
+  emitUpdate('clarify', { clarifyId: 'clr_expired', question: 'Complete the challenge?', deadlineTs: 1790000000000 });
+  assert.equal((await controller.status({ runId: 'run_input' })).status, 'needs_user_input');
+  emitUpdate('clarify_timeout_extended', { clarifyId: 'clr_expired', deadlineTs: 1790000060000 });
+  assert.equal((await controller.status({ runId: 'run_input' })).pendingInput.deadlineTs, 1790000060000);
+  emitUpdate('clarify_timeout_extended', { clarifyId: 'clr_other', deadlineTs: 1790000120000 });
+  assert.equal((await controller.status({ runId: 'run_input' })).pendingInput.deadlineTs, 1790000060000);
+  emitUpdate('clarify_auto', { clarifyId: 'clr_expired', source: 'timeout', answer: '(no response — timed out)' });
+  const expired = await controller.status({ runId: 'run_input' });
+  assert.equal(expired.status, 'running');
+  assert.equal(expired.pendingInput, null);
+  await assert.rejects(
+    () => controller.respond({ runId: 'run_input', clarifyId: 'clr_expired', answer: 'Continue' }),
+    /not waiting for user input/,
+  );
+  emitUpdate('clarify', { clarifyId: 'clr_replacement', question: 'Continue now?' });
+  assert.equal((await controller.status({ runId: 'run_input' })).pendingInput.clarifyId, 'clr_replacement');
+  await controller.respond({ runId: 'run_input', clarifyId: 'clr_replacement', answer: 'Continue' });
+
   assert.deepEqual(submitted, [
     [20, 'clr_general', 'Work', 'cloud_api'],
     [20, 'perm_network', 'once', 'cloud_api'],
     [20, 'submit_form', 'once', 'cloud_api'],
+    [20, 'clr_replacement', 'Continue', 'cloud_api'],
   ]);
   finishRun('Done');
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -43600,6 +43619,17 @@ test('canonical slash parser handles flags, values, casing, termination, and har
   }
   for (const text of retired) {
     assert.ok(!chromeHelp.includes(text.split(' ')[0]), `Chrome help must omit retired syntax ${text}`);
+  }
+
+  for (const [label, runtime] of [['chrome', chrome], ['firefox', firefox]]) {
+    const workflow = runtime.SLASH_COMMANDS.find((command) => command.value === '/workflow');
+    const link = '<a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">sp.slash.workflow_editor</a>';
+    const detail = runtime.buildSlashCommandDetailHtml(workflow);
+    assert.equal((detail.match(/<a href="https:\/\/webbrain\.one\/workflow-editor\/"/g) || []).length, 3, `${label}: workflow save, export, and import help should link to the editor`);
+    assert.ok(detail.includes(`sp.slash.save_workflow ${link}`), `${label}: --save help should end with the workflow editor link`);
+    assert.ok(detail.includes(`sp.slash.workflows ${link}`), `${label}: --export and --import help should end with the workflow editor link`);
+    assert.equal((runtime.buildSlashCommandHelpHtml().match(/<a href="https:\/\/webbrain\.one\/workflow-editor\/"/g) || []).length, 3, `${label}: global slash help should include the editor link for workflow file actions`);
+    assert.ok(!runtime.buildSlashCommandDetailHtml(runtime.SLASH_COMMANDS.find((command) => command.value === '/export')).includes(link), `${label}: unrelated --export command should not link to the workflow editor`);
   }
 
   assert.equal(firefox.parseSlashInvocation('/record --full-screen --transcribe').unsupported, true, 'Firefox should reject canonical recording locally');

@@ -911,6 +911,7 @@ export default {
   "sp.memory.error": "ข้อผิดพลาดของหน่วยความจำ: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "ไม่ได้บันทึก: ข้อความว่างหลังการล้างหรือดูเหมือนมีข้อมูลลับ (รหัสผ่าน คีย์ API โทเค็น)",
   "sp.memory.reason.not_found": "ไม่มีหน่วยความจำที่บันทึกไว้ด้วย ID นี้",
+  'sp.slash.workflow_editor': "ตัวแก้ไขเวิร์กโฟลว์",
   "sp.slash.workflows": "แสดงและจัดการเวิร์กโฟลว์ที่บันทึกไว้",
   "sp.slash.teach": "บันทึกการทำงานของคุณเป็นเวิร์กโฟลว์ที่บันทึกไว้",
   "sp.slash.run_workflow": "เรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ด้วย ID",
