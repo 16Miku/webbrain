@@ -30562,7 +30562,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const rawOptions = Array.isArray(args?.options) ? args.options.slice(0, 4) : [];
       const normalizedOptions = rawOptions.map(s => String(s).trim().slice(0, 200));
-      const options = normalizedOptions.every(option => /[\p{L}\p{N}\p{P}\p{S}]/u.test(option))
+      const hasVisibleOptionContent = option => /[\p{L}\p{N}\p{P}\p{S}]/u.test(option)
+        && !/[\p{Cf}\u2800]/u.test(option);
+      const options = normalizedOptions.every(hasVisibleOptionContent)
         ? normalizedOptions
         : [];
       const safeFirst = args?.safe_first === true && options.length > 0;

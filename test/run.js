@@ -48821,6 +48821,17 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(invisibleOptionTimeout.authorized, false, `${AgentClass.name}: invisible safe_first option was accepted`);
 
     await agent._recordClarificationAuthorization(tabId, 'user');
+    const brailleBlankOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', options: ['\u2800'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '\u2800', 'timeout');
+      },
+    );
+    assert.equal(brailleBlankOptionTimeout.authorized, false, `${AgentClass.name}: braille blank safe_first option was accepted`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
     const promotedOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
