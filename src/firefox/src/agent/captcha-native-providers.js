@@ -161,20 +161,24 @@ function validateFallbackIdentifiers(built) {
     if (new Set(signatures).size > 1) throw new Error('Fallback recognition tasks must use the same observed challenge media.');
   }
   const groups = [
-    ['websiteURL', 'pageurl', 'url'],
-    ['websiteKey', 'sitekey', 'googlekey', 'websitePublicKey', 'publickey'],
-    ...(FAMILY_IDENTIFIERS[family] || []),
+    { aliases: ['websiteURL', 'pageurl', 'url'], requireAll: false },
+    { aliases: ['websiteKey', 'sitekey', 'googlekey', 'websitePublicKey', 'publickey'], requireAll: false },
+    ...(FAMILY_IDENTIFIERS[family] || []).map(aliases => ({ aliases, requireAll: true })),
   ];
   if (family === 'geetest') {
     const versions = built.map(({contract, task}) => task.version === 4 || task.captchaId
       || task.captcha_id || task.initParameters?.captcha_id || contract.method === 'geetest_v4' ? 4 : 3);
     if (new Set(versions).size > 1) throw new Error('Fallback tasks must use the same GeeTest version.');
-    groups.push(versions[0] === 4 ? ['captchaId', 'captcha_id', 'initParameters.captcha_id', 'gt'] : ['gt']);
-    if (versions[0] === 3) groups.push(['challenge']);
+    groups.push({ aliases: versions[0] === 4 ? ['captchaId', 'captcha_id', 'initParameters.captcha_id', 'gt'] : ['gt'], requireAll: true });
+    if (versions[0] === 3) groups.push({ aliases: ['challenge'], requireAll: true });
   }
-  for (const aliases of groups) {
-    const values = built.flatMap(({task}) => aliases.map(path => at(task, path)))
-      .filter(value => usable(value) && !(family === 'turnstile' && aliases.includes('data') && object(value)));
+  for (const { aliases, requireAll } of groups) {
+    const valuesByTask = built.map(({task}) => aliases.map(path => at(task, path))
+      .filter(value => usable(value) && !(family === 'turnstile' && aliases.includes('data') && object(value))));
+    const values = valuesByTask.flat();
+    if (requireAll && values.length && valuesByTask.some(taskValues => !taskValues.length)) {
+      throw new Error(`Fallback tasks must reference the same observed challenge (${aliases.join('/')}).`);
+    }
     if (new Set(values.map(value => typeof value === 'object' ? JSON.stringify(value) : String(value))).size > 1) {
       throw new Error(`Fallback tasks must reference the same observed challenge (${aliases.join('/')}).`);
     }

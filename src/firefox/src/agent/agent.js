@@ -9454,6 +9454,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && !state?.solveAttempted && !state?.solveFailed && !state?.activeChallengeAfterSolve;
   }
 
+  _hasUnappliedNativeCaptchaSolution(tabId) {
+    const record = this._nativeCaptchaSolutions?.get(tabId);
+    return record?.solution !== undefined && record.applied !== true;
+  }
+
   _captchaRoutingMessage(tabId, captchaGateDecision, captchaSolveOutcome, toolResult = {}, onUpdate = () => {}) {
     let resultContent = '';
     const gate = captchaGateDecision || captchaSolveOutcome;
@@ -9480,7 +9485,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: 'Manual completion confirmed the unrecognized challenge cleared.' });
       }
     } else if ((captchaGateDecision || captchaSolveOutcome)?.status === 'verification_pending'
-        && this._nativeCaptchaSolutions?.get(tabId)?.solution && !this._nativeCaptchaSolutions.get(tabId).applied) {
+        && this._hasUnappliedNativeCaptchaSolution(tabId)) {
       resultContent += '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
     } else if (captchaGateDecision?.status === 'verification_pending') {
       resultContent += '\n[TRUSTED CAPTCHA GATE: Verification is still pending because the exact widget has no response token or its frame state could not be inspected conclusively. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
@@ -9542,7 +9547,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       manualCompletionRequired: true,
       error: 'Verification requires manual completion in this mode/tier. Ask the user to complete it; report blocked work with done({outcome:"partial"}). Do not dismiss, close, or resubmit it.',
     };
-    if (toolName === 'apply_captcha_solution' && this._nativeCaptchaSolutions?.get(tabId)?.solution && !this._nativeCaptchaSolutions.get(tabId).applied) return null;
+    if (toolName === 'apply_captcha_solution' && this._hasUnappliedNativeCaptchaSolution(tabId)) return null;
     if (toolName === 'solve_captcha' && Array.isArray(toolArgs.providerTasks)
         && !gate.publicGate?.solveAttempted && !gate.publicGate?.solveFailed
         && gate.status !== 'verification_pending') return null;
@@ -9961,7 +9966,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (
       postSolveTokenState?.visibleActiveChallenge === true
       && ['verification_pending', 'cleared'].includes(activeGate?.status)
-      && !(this._nativeCaptchaSolutions?.get(tabId)?.solution && !this._nativeCaptchaSolutions.get(tabId).applied)
+      && !this._hasUnappliedNativeCaptchaSolution(tabId)
     ) {
       const manualGate = {
         ...withoutCaptchaTokenClearanceState(

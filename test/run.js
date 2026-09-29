@@ -122070,6 +122070,25 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
   }
 });
 
+test('CAPTCHA gates keep false and zero native answers available for application', () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const solution of [false, 0]) {
+      const agent = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
+      agent.conversationModes.set(1, 'act');
+      agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['2captcha'];
+      agent._nativeCaptchaSolutions = new Map([[1, { pageUrl: 'https://example.test/form', solution, applied: false }]]);
+      const gate = { status: 'verification_pending', solveAttempted: true };
+      agent._captchaGateStates.set(1, { status: 'verification_pending', publicGate: gate });
+      assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), true, `${build}: ${solution}`);
+      assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {}), null, `${build}: ${solution}`);
+      assert.match(agent._captchaRoutingMessage(1, gate), /use apply_captcha_solution/, `${build}: ${solution}`);
+      agent._nativeCaptchaSolutions.get(1).applied = true;
+      assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), false, `${build}: consumed ${solution}`);
+    }
+  }
+});
+
 test('challenge-dialog routing detects supported widgets and diagnoses unsupported Arkose frames', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const supportedNodes = [

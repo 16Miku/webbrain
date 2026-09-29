@@ -230,6 +230,20 @@ for (const browser of ['chrome', 'firefox']) {
     assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed challenge/);
     assert.equal(calls.length, 0);
   });
+  for (const [label, entries] of [
+    ['reCAPTCHA v3 omitted action', [
+      { provider: '2captcha', method: 'RecaptchaV3TaskProxyless', parameters: { websiteURL: url, websiteKey: 'site', minScore: 0.3, pageAction: 'delete' } },
+      { provider: 'solvecaptcha', method: 'recaptcha_v3', parameters: { pageurl: url, googlekey: 'site' } },
+    ]],
+    ['Turnstile omitted cData', [
+      { provider: '2captcha', method: 'TurnstileTaskProxyless', parameters: { websiteURL: url, websiteKey: 'site', data: 'observed-cdata' } },
+      { provider: 'anti-captcha', method: 'TurnstileTaskProxyless', parameters: { websiteURL: url, websiteKey: 'site' } },
+    ]],
+  ]) test(`${browser}: ${label} cannot spend`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    assert.throws(() => native.prepareNativeCaptchaTasks(entries.map(entry => ({ id: entry.provider, apiKey: 'key' })), entries), /same observed challenge/);
+    assert.equal(calls.length, 0);
+  });
   const recognitionPairs = [
     ['coordinates body', ['2captcha', 'CoordinatesTask', { body: 'image-A' }], ['solvecaptcha', 'coordinates', { body: 'image-A' }], task => { task.body = 'image-B'; }],
     ['image-to-text array alias', ['2captcha', 'ImageToTextTask', { body: 'image-A' }], ['nopecha', 'recognition/textcaptcha', { image_data: ['image-A'] }], task => { task.image_data = ['image-B']; }],
