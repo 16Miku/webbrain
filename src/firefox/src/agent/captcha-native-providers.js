@@ -209,8 +209,33 @@ function funcaptchaServiceHost(value) {
     return url.host.toLowerCase();
   } catch { throw new Error('Fallback FunCaptcha tasks must use comparable service hosts.'); }
 }
+function cloudflareChallengeSignature({ contract, task }) {
+  const mode = contract.provider === 'capsolver' && contract.method === 'AntiCloudflareTask'
+    ? 'cf_clearance' : task.cloudflareTaskType;
+  if (mode === 'cf_clearance') {
+    let html = task.html;
+    if (task.htmlPageBase64 !== undefined) {
+      try {
+        const bytes = Uint8Array.from(atob(task.htmlPageBase64), char => char.charCodeAt(0));
+        html = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      } catch {
+        throw new Error('Fallback Cloudflare challenge requires a valid page snapshot.');
+      }
+    }
+    if (!usable(html)) throw new Error('Fallback Cloudflare challenge requires the same observed page snapshot.');
+    return JSON.stringify([mode, html]);
+  }
+  if (mode === 'token') {
+    return JSON.stringify([mode, task.pageAction, task.data, task.pageData, task.apiJsUrl ?? null]);
+  }
+  throw new Error('Fallback Cloudflare challenge requires a comparable task mode.');
+}
 function validateFallbackIdentifiers(built) {
   const family = built[0].contract.family;
+  if (family === 'cloudflare_challenge' && built.length > 1
+      && new Set(built.map(cloudflareChallengeSignature)).size > 1) {
+    throw new Error('Fallback Cloudflare tasks must use the same challenge mode and observed page snapshot.');
+  }
   if (family === 'funcaptcha' && built.length > 1) {
     const services = built.map(({ task }) => task.funcaptchaApiJSSubdomain || task.surl);
     if (services.some(usable)) {

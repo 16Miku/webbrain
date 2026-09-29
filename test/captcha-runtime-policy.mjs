@@ -141,6 +141,40 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), false);
     assert.equal(record.dispatchedTimeOrigins.has(1000), true);
   });
+  test(`${build}: query and fragment navigation retire an answer and release its gate`, () => {
+    for (const to of ['https://example.test/challenge?step=2', 'https://example.test/challenge?step=1#next']) {
+      const agent = agentFor('act', 'full');
+      const from = 'https://example.test/challenge?step=1';
+      const record = { pageUrl: from, solution: { token: 'answer' }, applied: false,
+        dispatchedTimeOrigins: new Set([1000]) };
+      agent._nativeCaptchaSolutions = new Map([[1, record]]);
+      agent._captchaGateStates.set(1, { status: 'verification_pending', publicGate: { status: 'verification_pending' } });
+      const result = {};
+      assert.equal(agent._clearCaptchaGateAfterNavigation(1, 'navigate', from, to, result)?.status, 'cleared');
+      assert.equal(result.captchaGate.clearedByNavigation, true);
+      assert.equal(record.solution, undefined);
+      assert.equal(record.dispatchedTimeOrigins.has(1000), true);
+      assert.equal(agent._captchaGateStates.has(1), false);
+    }
+  });
+  test(`${build}: a fresh page read retires a stale native answer and gate`, async () => {
+    const agent = agentFor('act', 'full');
+    const from = 'https://example.test/challenge?step=1';
+    const to = 'https://example.test/challenge?step=2';
+    const record = { pageUrl: from, solution: { token: 'answer' }, applied: false,
+      dispatchedTimeOrigins: new Set([1000]) };
+    agent._nativeCaptchaSolutions = new Map([[1, record]]);
+    agent._captchaGateStates.set(1, { status: 'verification_pending', publicGate: { status: 'verification_pending' } });
+    agent._currentUrl = async () => to;
+    agent._activeCloudflareManagedChallengeGate = () => null;
+    agent._checkVerificationChallengeLoop = () => ({ kind: 'none' });
+    await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
+      pageUrl: to, pageContent: 'heading "Next step"', truncated: false,
+    });
+    assert.equal(record.solution, undefined);
+    assert.equal(record.dispatchedTimeOrigins.has(1000), true);
+    assert.equal(agent._captchaGateStates.has(1), false);
+  });
   test(`${build}: a same-URL reload retires the answer and releases the previous gate`, async () => {
     const agent = agentFor('act', 'full');
     const pageUrl = 'https://example.test/challenge';

@@ -76,6 +76,31 @@ for (const browser of ['chrome','firefox']) {
     assert.throws(()=>native.buildNativeCaptchaTask({provider:'nopecha',method:'token/turnstile',parameters:{sitekey:'site',url}}),/proxy/);
     assert.throws(()=>native.buildNativeCaptchaTask({provider:'capmonster',method:'ComplexImageTask:recaptcha',parameters:{metadata:{Grid:'3x3',Task:'cars'}}}),/imageUrls or imagesBase64/);
   });
+  test(`${browser}: Cloudflare fallback requires the same mode and page snapshot before dispatch`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const html = '<html><body>Fresh challenge ✓</body></html>';
+    const capsolver = { provider: 'capsolver', method: 'AntiCloudflareTask', parameters: {
+      websiteURL: url, proxy: 'http:proxy.test:8080', userAgent: 'browser-UA', html,
+    } };
+    const capmonster = { provider: 'capmonster', method: 'TurnstileTask:cf_clearance:2', parameters: {
+      websiteURL: url, websiteKey: 'site', htmlPageBase64: Buffer.from(html, 'utf8').toString('base64'),
+      userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080,
+    } };
+    assert.equal(native.prepareNativeCaptchaTasks(providers, [capsolver, capmonster]).length, 2);
+    for (const changed of [
+      { ...capsolver, parameters: { ...capsolver.parameters, html: '<html>Previous challenge</html>' } },
+      { ...capsolver, parameters: { websiteURL: url, proxy: 'http:proxy.test:8080', userAgent: 'browser-UA' } },
+    ]) assert.throws(() => native.prepareNativeCaptchaTasks(providers, [changed, capmonster]), /same observed page snapshot|same challenge mode/);
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [capsolver, {
+      ...capmonster, parameters: { ...capmonster.parameters, htmlPageBase64: 'not base64' },
+    }]), /valid page snapshot/);
+    const token = { provider: 'capmonster', method: 'TurnstileTask:token:1', parameters: {
+      websiteURL: url, websiteKey: 'site', pageAction: 'managed', data: 'data', pageData: 'page',
+      userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080,
+    } };
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [capsolver, token]), /same challenge mode/);
+    assert.equal(calls.length, 0);
+  });
   test(`${browser}: enumerated nested task fields reject undocumented data before paid dispatch`, t => {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
     const entry = { provider: 'capmonster', method: 'CustomTask:alibaba', parameters: {

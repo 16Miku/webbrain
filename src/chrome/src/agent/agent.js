@@ -10851,7 +10851,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Keep dispatchedTimeOrigins to prevent a second paid solve if the old
       // document is restored, but never apply its answer to the new page.
       delete record.solution;
+      return true;
     }
+    return false;
   }
 
   _captchaRoutingMessage(tabId, captchaGateDecision, captchaSolveOutcome, toolResult = {}, onUpdate = () => {}) {
@@ -10996,8 +10998,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!Agent.NAV_TOOLS.has(toolName)) return null;
     const beforeDocument = this._normalizeUrlPath(beforeUrl);
     const afterDocument = this._normalizeUrlPath(afterUrl);
-    if (!beforeDocument || !afterDocument || beforeDocument === afterDocument) return null;
-    this._retireNativeCaptchaAnswerIfPageChanged(tabId, afterUrl);
+    if (!beforeDocument || !afterDocument) return null;
+    const nativeAnswerRetired = this._retireNativeCaptchaAnswerIfPageChanged(tabId, afterUrl);
+    if (beforeDocument === afterDocument && !nativeAnswerRetired) return null;
     const gate = this._captchaGateStates.get(tabId);
     if (!gate) return null;
     const clearedGate = {
@@ -11192,7 +11195,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return { gate, loopCheck: { kind: 'none' } };
     }
 
-    const activeGate = this._captchaGateForTools(tabId, this._captchaGateStates.get(tabId));
+    let activeGate = this._captchaGateForTools(tabId, this._captchaGateStates.get(tabId));
     const treeFilter = String(toolArgs?.filter || 'all').toLowerCase();
     let observedChallengeFrameId = Number.isInteger(toolResult.captchaChallengeFrameId)
       ? toolResult.captchaChallengeFrameId
@@ -11233,7 +11236,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try { pageUrl = await this._currentUrl(tabId); } catch {}
     }
     if (pageUrl && this._nativeCaptchaSolutions?.get(tabId)?.pageUrl !== pageUrl) {
-      try { this._retireNativeCaptchaAnswerIfPageChanged(tabId, await this._currentUrl(tabId)); } catch {}
+      try {
+        if (this._retireNativeCaptchaAnswerIfPageChanged(tabId, await this._currentUrl(tabId))) {
+          this._captchaGateStates.delete(tabId);
+          activeGate = null;
+        }
+      } catch {}
     }
     let detection = null;
     let detectionFailed = false;
