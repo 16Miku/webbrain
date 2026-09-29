@@ -45,6 +45,9 @@ for (const build of ['chrome', 'firefox']) {
     const options = {...params,isEnterprise:true,rqdata:'observed-rqdata',userAgent:'browser-agent'};
     assert.deepEqual(h.buildHcaptchaTask('nopecha',options),{sitekey:params.websiteKey,url:params.websiteURL,data:{rqdata:'observed-rqdata'},useragent:'browser-agent'});
     assert.deepEqual(h.buildHcaptchaTask('nonecap',options),{type:'hcaptcha_enterprise',sitekey:params.websiteKey,url:params.websiteURL,rqdata:'observed-rqdata'});
+    assert.deepEqual(h.buildHcaptchaTask('nonecap',{...params,rqdata:'observed-rqdata'}),{type:'hcaptcha_enterprise',sitekey:params.websiteKey,url:params.websiteURL,rqdata:'observed-rqdata'});
+    assert.match(h.hcaptchaParamError({...params,rqdata:'observed-rqdata',isEnterprise:false}),/conflicts with observed hCaptcha rqdata/);
+    assert.throws(()=>h.buildHcaptchaTask('nonecap',{...params,rqdata:'observed-rqdata',isEnterprise:false}),/conflicts with observed hCaptcha rqdata/);
     for (const invalid of [{...params,websiteKey:'invalid'},{...params,websiteURL:'file:///secret'}]) assert.ok(h.hcaptchaParamError(invalid));
     assert.equal(h.hcaptchaParamError(params),null);
     assert.equal(h.hcaptchaParamError({...params,isEnterprise:true}),null);

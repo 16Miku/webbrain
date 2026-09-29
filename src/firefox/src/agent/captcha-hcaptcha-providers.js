@@ -31,6 +31,9 @@ export function hcaptchaParamError(params) {
   try {
     if (!['http:', 'https:'].includes(new URL(params.websiteURL).protocol)) throw new Error();
   } catch { return 'solve_captcha: hCaptcha requires an HTTP(S) page URL.'; }
+  if (params.rqdata && params.isEnterprise === false) {
+    return 'solve_captcha: isEnterprise=false conflicts with observed hCaptcha rqdata, which requires Enterprise.';
+  }
   return null;
 }
 
@@ -44,7 +47,7 @@ export function buildHcaptchaTask(id, params) {
     ...(params.userAgent ? { useragent: params.userAgent } : {}),
   };
   // NoneCap ignores caller-supplied user_agent; do not claim to control it.
-  return { type: params.isEnterprise ? 'hcaptcha_enterprise' : 'hcaptcha', ...common,
+  return { type: params.isEnterprise || params.rqdata ? 'hcaptcha_enterprise' : 'hcaptcha', ...common,
     ...(params.rqdata ? { rqdata: params.rqdata } : {}),
   };
 }

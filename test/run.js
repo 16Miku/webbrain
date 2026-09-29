@@ -121976,6 +121976,39 @@ test('CAPTCHA providers: observed hCaptcha rqdata reaches fallback and returns t
   }
 });
 
+test('CAPTCHA providers: explicit rqdata selects NoneCap Enterprise when frame detection is unavailable', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    await withCaptchaFakePage(build, [], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({
+        nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32),
+      }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }),
+        ...(build === 'firefox' ? { executeScript: async () => { throw new Error('frame detection unavailable'); } } : {}) };
+      if (build === 'chrome') api.scripting.executeScript = async () => { throw new Error('frame detection unavailable'); };
+      const originalFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (_url, options) => {
+        calls.push(JSON.parse(options.body));
+        return Response.json({ id: 'solve_test', status: 'solved', token: 'P1_token' });
+      };
+      try {
+        const agent = new AgentClass({});
+        const args = { type: 'hcaptcha', websiteKey: 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8', rqdata: 'observed-rqdata', inject: false };
+        const conflict = await agent._executeToolImpl(1, 'solve_captcha', { ...args, isEnterprise: false });
+        assert.equal(conflict.dispatched, false, build);
+        assert.match(conflict.error, /conflicts with observed hCaptcha rqdata/, build);
+        assert.equal(calls.length, 0, build);
+        const result = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(result.success, true, `${build}: ${result.error}`);
+        assert.equal(result.provider, 'nonecap', build);
+        assert.deepEqual(calls, [{ type: 'hcaptcha_enterprise', sitekey: args.websiteKey,
+          url: 'https://example.test/form', rqdata: 'observed-rqdata' }]);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+});
+
 test('CAPTCHA native methods dispatch through the real agent, preserve structured answers, and keep gates scoped', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     await withCaptchaFakePage(build, [], async () => {
