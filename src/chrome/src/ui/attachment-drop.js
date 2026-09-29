@@ -7,6 +7,33 @@ export function hasFileDragPayload(event) {
   return types.includes(FILE_DRAG_TYPE) || Number(dataTransfer.files?.length || 0) > 0;
 }
 
+export function clipboardImageFiles(event) {
+  const clipboardData = event?.clipboardData;
+  if (!clipboardData) return [];
+  const fromFiles = Array.from(clipboardData.files || []);
+  const fromItems = Array.from(clipboardData.items || [])
+    .filter(item => item?.kind === 'file')
+    .map(item => item.getAsFile?.())
+    .filter(Boolean);
+  return [...fromFiles, ...fromItems].filter(file => (
+    String(file?.type || '').startsWith('image/')
+  ));
+}
+
+export function installClipboardImagePasteHandler(target, onFiles) {
+  if (!target?.addEventListener || typeof onFiles !== 'function') return () => {};
+
+  const onPaste = (event) => {
+    const files = clipboardImageFiles(event);
+    if (!files.length) return;
+    event.preventDefault();
+    onFiles(files);
+  };
+
+  target.addEventListener('paste', onPaste);
+  return () => target.removeEventListener?.('paste', onPaste);
+}
+
 export function installFileDropHandlers(target, onFiles) {
   if (!target?.addEventListener || typeof onFiles !== 'function') return () => {};
 

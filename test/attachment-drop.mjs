@@ -180,6 +180,32 @@ for (const [label, relativeModule] of implementations) {
     `${label}: file-list fallback should recognize a drop with no exposed type`
   );
 
+  const pastedImage = { name: 'clipboard.png', type: 'image/png' };
+  assert.deepEqual(
+    module.clipboardImageFiles({ clipboardData: { files: [pastedImage, { name: 'notes.txt', type: 'text/plain' }] } }),
+    [pastedImage],
+    `${label}: clipboard images should be selected without treating text files as attachments`
+  );
+  assert.deepEqual(
+    module.clipboardImageFiles({ clipboardData: { files: [] } }),
+    [],
+    `${label}: text-only clipboard payloads should not produce attachments`
+  );
+  const itemsImage = { name: 'screenshot.png', type: 'image/png' };
+  assert.deepEqual(
+    module.clipboardImageFiles({
+      clipboardData: {
+        files: [],
+        items: [
+          { kind: 'file', getAsFile: () => itemsImage },
+          { kind: 'string', getAsFile: () => null },
+        ],
+      },
+    }),
+    [itemsImage],
+    `${label}: clipboard images from items should be recognized when files is empty`
+  );
+
   const target = createTarget();
   const files = [{ name: 'notes.txt', type: 'text/plain' }];
   const received = [];
@@ -238,6 +264,22 @@ for (const [label, relativeModule] of implementations) {
   globalThis.document.dispatchEvent('dragleave', { relatedTarget: null });
   assert.equal(target2.classList.contains('drag-over'), false, `${label}: document dragleave should reset a cancelled OS drag`);
   cleanup2();
+
+  const pasted = [];
+  const pasteTarget = createTarget();
+  const cleanupPaste = module.installClipboardImagePasteHandler(pasteTarget, files => pasted.push(files));
+  const textPaste = pasteTarget.dispatch('paste', null, {
+    clipboardData: { files: [{ name: 'notes.txt', type: 'text/plain' }] },
+  });
+  assert.equal(textPaste.defaultPrevented, false, `${label}: text paste should remain native composer behavior`);
+  const imagePaste = pasteTarget.dispatch('paste', null, {
+    clipboardData: { files: [pastedImage] },
+  });
+  assert.equal(imagePaste.defaultPrevented, true, `${label}: image paste should be consumed as an attachment`);
+  assert.deepEqual(pasted, [[pastedImage]], `${label}: image paste should forward clipboard files to the attachment reader`);
+  cleanupPaste();
+  pasteTarget.dispatch('paste', null, { clipboardData: { files: [pastedImage] } });
+  assert.deepEqual(pasted, [[pastedImage]], `${label}: paste cleanup should remove its listener`);
 }
 
 console.log('attachment drag-and-drop tests passed for Chrome and Firefox');
