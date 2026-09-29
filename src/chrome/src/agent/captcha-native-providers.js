@@ -120,6 +120,10 @@ const FAMILY_IDENTIFIERS = {
   yidun: [['challenge'], ['hcg'], ['hct']],
   hcaptcha: [['rqdata', 'data.rqdata']],
   funcaptcha: [['data']],
+  text_captcha: [['comment', 'textcaptcha']],
+  captchafox: [['apiServer', 'api_server']],
+  altcha: [['challengeURL', 'challenge_url'], ['challengeJSON', 'challenge_json']],
+  friendly: [['version'], ['moduleScript', 'module_script'], ['nomoduleScript', 'nomodule_script']],
   recaptcha_v3: [['pageAction', 'action', 'data.action']],
   recaptcha_v3_enterprise: [['pageAction', 'action', 'data.action']],
   turnstile: [

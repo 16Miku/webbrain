@@ -196,6 +196,10 @@ for (const browser of ['chrome', 'firefox']) {
     ['lemin', ['2captcha', 'LeminTaskProxyless', { websiteURL: url, captchaId: 'A', divId: 'div' }], ['solvecaptcha', 'lemin', { pageurl: url, captcha_id: 'A', div_id: 'div' }], 'captcha_id'],
     ['aws_waf', ['2captcha', 'AmazonTaskProxyless', { websiteURL: url, websiteKey: 'A', iv: 'iv', context: 'context' }], ['capsolver', 'AntiAwsWafTaskProxyLess', { websiteURL: url, awsKey: 'A', awsIv: 'iv', awsContext: 'context' }], 'awsKey'],
     ['geetest', ['2captcha', 'GeeTestTaskProxyless', { websiteURL: url, gt: 'A', challenge: 'fresh' }], ['solvecaptcha', 'geetest', { pageurl: url, gt: 'A', challenge: 'fresh' }], 'challenge'],
+    ['text_captcha', ['2captcha', 'TextCaptchaTask', { comment: '2+2?' }], ['solvecaptcha', 'text', { textcaptcha: '2+2?' }], 'textcaptcha'],
+    ['captchafox', ['2captcha', 'CaptchaFoxTask', { websiteURL: url, websiteKey: 'site', apiServer: 'https://api.test', userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080 }], ['solvecaptcha', 'captchafox', { pageurl: url, sitekey: 'site', api_server: 'https://api.test', proxy: 'proxy.test:8080', proxytype: 'http', useragent: 'browser-UA' }], 'api_server'],
+    ['altcha', ['2captcha', 'AltchaTaskProxyless', { websiteURL: url, challengeURL: 'https://example.test/challenge.json' }], ['solvecaptcha', 'altcha', { pageurl: url, challenge_url: 'https://example.test/challenge.json' }], 'challenge_url'],
+    ['friendly', ['2captcha', 'FriendlyCaptchaTaskProxyless', { websiteURL: url, websiteKey: 'site', version: 'v2' }], ['solvecaptcha', 'friendly_captcha', { pageurl: url, sitekey: 'site', version: 'v2' }], 'version'],
   ];
   for (const [family, a, b, changed] of pairs) test(`${browser}: ${family} identifier aliases agree before any paid request`, async t => {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
