@@ -67043,6 +67043,66 @@ test('Osaurus requires a selected model and uses the local Chat Completions cont
   }
 });
 
+test('ODS local provider discovers its running model and uses Chat Completions', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith('/v1/models')) {
+      return new Response(JSON.stringify({ data: [{ id: 'qwen-ods' }] }), { status: 200 });
+    }
+    if (new URL(url).pathname === '/props') {
+      return new Response(JSON.stringify({ n_ctx: 16384, modalities: { vision: false } }), { status: 200 });
+    }
+    if (String(url).endsWith('/v1/chat/completions')) {
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Hello from ODS' } }] }), { status: 200 });
+    }
+    return new Response('', { status: 404 });
+  };
+  try {
+    for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().ods;
+      assert.equal(defaults.category, 'local');
+      assert.equal(defaults.baseUrl, 'http://localhost:11434/v1');
+      assert.throws(() => manager._createProvider('ods', defaults).model, /model is required/);
+      manager.providers.set('ods', manager._createProvider('ods', defaults));
+      assert.deepEqual(await manager.listProviderModels('ods', { detectServerIdentity: true }), {
+        ok: true, models: ['qwen-ods'], contextWindow: 16384,
+      });
+      assert.ok(calls.some(call => call.url === 'http://localhost:11434/props'));
+      assert.deepEqual(await manager._fetchVisionCapability('ods', { config: defaults }, {
+        baseUrl: defaults.baseUrl, model: 'qwen-ods',
+      }), { ok: true, supportsVision: false });
+
+      const provider = manager._createProvider('ods', { ...defaults, model: 'qwen-ods', apiKey: 'local-secret' });
+      assert.equal(provider.supportsVision, false);
+      const result = await provider.chat([{ role: 'user', content: 'Hello' }]);
+      assert.equal(result.content, 'Hello from ODS');
+      const call = calls.at(-1);
+      assert.equal(call.url, 'http://localhost:11434/v1/chat/completions');
+      assert.equal(call.options.headers.Authorization, 'Bearer local-secret');
+      assert.equal(JSON.parse(call.options.body).model, 'qwen-ods');
+    }
+
+    globalThis.fetch = async (url) => String(url).endsWith('/props')
+      ? new Response('', { status: 404 })
+      : new Response(JSON.stringify({ data: [{ id: 'ollama-model' }] }), { status: 200 });
+    for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().ods;
+      manager.providers.set('ods', manager._createProvider('ods', defaults));
+      assert.deepEqual(await manager.listProviderModels('ods', { detectServerIdentity: true }), {
+        ok: true, models: [],
+      }, 'automatic onboarding must not mistake Ollama for ODS on port 11434');
+      assert.deepEqual(await manager.listProviderModels('ods'), { ok: true, models: ['ollama-model'] },
+        'manual setup should allow a compatible endpoint without /props');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Osaurus discovers models and handles chat, streaming, tools, and access keys', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -67212,7 +67272,7 @@ test('Osaurus identity checks preserve manual model loading and configured provi
 
 test('categoryFor: local family', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth']) {
+    for (const id of ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth']) {
       assert.equal(PM.categoryFor(id, { type: id === 'llamacpp' ? 'llamacpp' : 'openai' }), 'local');
     }
     assert.equal(PM.categoryFor('custom_llama_cpp', { type: 'llamacpp' }), 'local');
@@ -69699,7 +69759,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 111 : 110;
+    const expectedDefaultCount = label === 'chrome' ? 112 : 111;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,

@@ -53,7 +53,7 @@ import {
 const WEBBRAIN_CLOUD_PROVIDER_ID = 'webbrain_cloud';
 const WEBBRAIN_CLOUD_PROVIDER_LABEL = 'WebBrain Compass';
 const DUPLICATE_PROVIDER_SUFFIX = '__duplicate';
-const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
 const WEBBRAIN_CLOUD_CONTEXT_WINDOW = 1000000;
 const WEBBRAIN_CLOUD_LEGACY_CONTEXT_WINDOW = 256000;
 const WEBBRAIN_DEVICE_GUID_KEY = 'webbrainDeviceGuid';
@@ -442,6 +442,21 @@ export class ProviderManager {
         model: '',
         contextWindow: 16384,
         apiKey: 'ollama',
+        supportsAskStreaming: true,
+        visionMode: 'auto',
+        visionDetection: null,
+        enabled: true,
+      },
+      ods: {
+        type: 'openai',
+        category: 'local',
+        label: 'ODS (Local)',
+        providerName: 'ods',
+        requiresModel: true,
+        baseUrl: 'http://localhost:11434/v1',
+        model: '',
+        contextWindow: 16384,
+        apiKey: '',
         supportsAskStreaming: true,
         visionMode: 'auto',
         visionDetection: null,
@@ -1133,7 +1148,7 @@ export class ProviderManager {
   static categoryFor(id, config) {
     if (config && config.category) return config.category;
     if (config?.type === 'llamacpp') return 'local';
-    if (['llamacpp', 'ollama', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'].includes(id)) return 'local';
+    if (['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'].includes(id)) return 'local';
     if (ROUTER_PROVIDER_IDS.includes(id)) return 'router';
     return 'cloud';
   }
@@ -1253,7 +1268,7 @@ export class ProviderManager {
     };
     const request = (async () => {
       try {
-        if (providerId === 'llamacpp') {
+        if (providerId === 'llamacpp' || providerId === 'ods') {
           const query = identity.model ? `?model=${encodeURIComponent(identity.model)}` : '';
           const result = await fetchJson(`${root}/props${query}`);
           if (!result.ok) return result;
@@ -1854,7 +1869,7 @@ export class ProviderManager {
 
   /**
    * Fetch selectable models for local providers. Ollama uses its native
-   * /api/tags endpoint; llama.cpp, LM Studio, Osaurus, Jan, vLLM, SGLang, LocalAI,
+   * /api/tags endpoint; ODS, llama.cpp, LM Studio, Osaurus, Jan, vLLM, SGLang, LocalAI,
    * GPT4All, Unsloth Studio, and generic local proxies use
    * OpenAI-compatible /v1/models.
    */
@@ -1930,6 +1945,15 @@ export class ProviderManager {
           continue;
         }
         const data = await res.json();
+        // ODS commonly shares Ollama's port. During automatic onboarding,
+        // require its llama-server /props endpoint before offering an ODS card.
+        if (detectServerIdentity && provider.config.configured !== true && definitionId === 'ods') {
+          try {
+            const root = candidate.configBaseUrl.replace(/\/v1$/i, '');
+            const identity = await fetchWithTimeout(`${root}/props`, { method: 'GET', headers });
+            if (!identity.ok) return { ok: true, models: [] };
+          } catch { return { ok: true, models: [] }; }
+        }
         // Jan and Osaurus share port 1337. Successful OpenAI model discovery
         // alone cannot identify which server answered an unconfigured card.
         if (detectServerIdentity && provider.config.configured !== true
@@ -2170,7 +2194,7 @@ export class ProviderManager {
         };
       }
 
-      if (definitionId === 'llamacpp') {
+      if (definitionId === 'llamacpp' || definitionId === 'ods') {
         const res = await fetch(`${root}/props`, { method: 'GET', headers });
         if (!res.ok) return null;
         const contextWindow = parseLlamaCppPropsContextWindow(await res.json());
