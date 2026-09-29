@@ -1220,7 +1220,7 @@ export const AGENT_TOOLS = [
   "type": "function",
   "function": {
     "name": "get_captcha_capabilities",
-    "description": "Read the documented CAPTCHA methods for enabled providers without spending or exposing API keys. Filter by family/provider, then request a method to get its exact native fields, fixed values, and official documentation. Use this before solve_captcha providerTasks for any token, recognition, cookie, or structured-answer method.",
+    "description": "Read the documented CAPTCHA methods for enabled providers without spending or exposing API keys. Also returns an unapplied paid native answer for the same page document, if one is pending; use it after a chat clear without solving again. Filter by family/provider, then request a method to get its exact native fields, fixed values, and official documentation. Use this before solve_captcha providerTasks for any token, recognition, cookie, or structured-answer method.",
     "parameters": {
       "type": "object",
       "properties": {

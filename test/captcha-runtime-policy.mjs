@@ -141,20 +141,63 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), false);
     assert.equal(record.dispatchedTimeOrigins.has(1000), true);
   });
-  test(`${build}: clearing a chat preserves the page-scoped paid answer and dispatch lock`, () => {
+  test(`${build}: clearing a chat keeps a recoverable paid answer and pending gate`, async () => {
     const agent = agentFor('act', 'full');
     const record = { pageUrl: 'https://example.test/challenge', createdAt: Date.now(),
       solution: { token: 'paid-answer' }, applied: false,
+      provider: '2captcha', method: 'GeeTestTaskProxyless', family: 'geetest', taskId: 'paid-task',
       documents: [{ frameId: 0, url: 'https://example.test/challenge', timeOrigin: 1000 }],
       dispatchedTimeOrigins: new Set([1000]) };
     agent._nativeCaptchaSolutions = new Map([[1, record]]);
-    agent.clearConversation(1);
+    agent._captchaGateStates.set(1, { status: 'verification_pending',
+      publicGate: { status: 'verification_pending', nativeAnswerPending: true } });
+    const apiName = build === 'chrome' ? 'chrome' : 'browser';
+    const previous = globalThis[apiName];
+    const stored = {};
+    globalThis[apiName] = { storage: { session: {
+      remove: async key => { delete stored[key]; },
+      set: async entries => { Object.assign(stored, entries); },
+      get: async key => key in stored ? { [key]: stored[key] } : {},
+    } } };
+    try {
+      await agent.clearConversation(1);
+    } finally { globalThis[apiName] = previous; }
     assert.equal(agent._nativeCaptchaSolutions.get(1), record);
     assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), true);
     assert.equal(agent._nativeCaptchaSolutions.get(1).dispatchedTimeOrigins.has(1000), true);
+    assert.equal(agent._captchaGateStates.get(1).status, 'verification_pending');
+    assert.match(agent._captchaRoutingMessage(1, agent._captchaGateStates.get(1).publicGate),
+      /get_captcha_capabilities.*pending paid answer/);
+    const entry = stored[agent._convKey(1)];
+    assert.deepEqual(entry.messages, []);
+    assert.equal(entry.nativeCaptchaAnswer.provider, '2captcha');
+    assert.equal(entry.nativeCaptchaAnswer.method, 'GeeTestTaskProxyless');
+    const fresh = agentFor('act', 'full');
+    const fakePageApi = {
+      tabs: { get: async () => ({ url: record.pageUrl }) },
+      webNavigation: { getAllFrames: async () => [{ frameId: 0, url: record.pageUrl }] },
+      scripting: { executeScript: async () => [{ frameId: 0,
+        result: { url: record.pageUrl, timeOrigin: 1000 } }] },
+    };
+    assert.deepEqual((await agent._pendingNativeCaptchaAnswer(1, fakePageApi)).solution, { token: 'paid-answer' });
+    assert.equal((await agent._pendingNativeCaptchaAnswer(1, fakePageApi)).method, 'GeeTestTaskProxyless');
+    globalThis[apiName] = { ...fakePageApi, storage: { local: { get: async () => ({}) } } };
+    try {
+      const discovery = await agent._executeToolImpl(1, 'get_captcha_capabilities', {});
+      assert.equal(discovery.pendingNativeAnswer.provider, '2captcha');
+      assert.deepEqual(discovery.pendingNativeAnswer.solution, { token: 'paid-answer' });
+    } finally { globalThis[apiName] = previous; }
+    globalThis[apiName] = { storage: { session: { get: async key => key in stored ? { [key]: stored[key] } : {} } } };
+    try { await fresh._hydrate(1); } finally { globalThis[apiName] = previous; }
+    assert.equal(fresh._nativeCaptchaSolutions.get(1).solution.token, 'paid-answer');
+    assert.equal(fresh._nativeCaptchaSolutions.get(1).method, 'GeeTestTaskProxyless');
+    assert.equal(fresh._captchaGateStates.get(1).status, 'verification_pending');
     // A still-running solve can fill the same record after the chat is cleared.
     record.solution = { token: 'late-answer' };
     assert.equal(agent._nativeCaptchaSolutions.get(1).solution.token, 'late-answer');
+    fakePageApi.tabs.get = async () => ({ url: 'https://example.test/other' });
+    assert.equal(await agent._pendingNativeCaptchaAnswer(1, fakePageApi), null);
+    assert.equal(record.solution, undefined);
     agent._cleanupTab(1);
     assert.equal(agent._nativeCaptchaSolutions.has(1), false);
   });
