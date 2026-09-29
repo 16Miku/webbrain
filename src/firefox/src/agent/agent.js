@@ -22598,7 +22598,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (memoryPrompt) prompt += `\n\n${memoryPrompt}`;
     }
     if (this.captchaSolverEnabled) {
-      prompt += `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. When both local providers are enabled, the runtime tries CapSolver first, then 2Captcha on failure or timeout; both may charge. This fallback is internal to one tool call, not permission to call the tool again. 2Captcha supports reCAPTCHA v2/v3, Turnstile, and image CAPTCHAs; hCaptcha requires enabled CapSolver. Unsupported challenges require manual completion. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If no supported widget is detected, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha.]`;
+      prompt += `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. All five providers support reCAPTCHA v2/v3, Turnstile, and image CAPTCHAs; hCaptcha requires enabled CapSolver. Unsupported challenges require manual completion. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If no supported widget is detected, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha.]`;
     }
     // Ordinary turns get the one-line rendering; the full block is reserved for
     // policies that need the precise wording (translation targets, multilingual
@@ -32637,7 +32637,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const stored = await browser.storage.local.get(CAPTCHA_SETTINGS_KEYS);
         const providers = getCaptchaProviders(stored);
         if (!providers.length) {
-          return noDispatchFailure('No CAPTCHA solver is enabled with a valid API key. Save a CapSolver or 2Captcha key in Settings → General → Advanced, or ask the user to solve the CAPTCHA manually.');
+          return noDispatchFailure('No CAPTCHA solver is enabled with a valid API key. Save and enable a CAPTCHA provider key in Settings → General → Advanced, or ask the user to solve the CAPTCHA manually.');
         }
 
         let websiteURL = '';
@@ -32774,6 +32774,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(recaptchaDataSValue ? { recaptchaDataSValue } : {}),
           ...(imageBase64 ? { body: imageBase64 } : {}),
           ...(type === 'turnstile' && metadata ? { metadata } : {}),
+          ...(type === 'turnstile' && globalThis.navigator?.userAgent ? { userAgent: globalThis.navigator.userAgent } : {}),
         };
 
         if (type === 'image_to_text') {

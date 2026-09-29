@@ -140,7 +140,9 @@ export function translationsForKey(key) {
 export function applyDOMTranslations(root) {
   root = root || document;
   root.querySelectorAll('[data-i18n]').forEach((el) => {
-    el.textContent = t(el.dataset.i18n);
+    let params;
+    try { params = JSON.parse(el.dataset.i18nParams || '{}'); } catch { /* ignore malformed optional parameters */ }
+    el.textContent = t(el.dataset.i18n, params);
   });
   root.querySelectorAll('[data-i18n-html]').forEach((el) => {
     el.innerHTML = t(el.dataset.i18nHtml);
