@@ -372,6 +372,16 @@
       seen.add(key);
       descriptions.push(value);
     }
+    const pollSelector = '[class*="poll"],[data-poll]';
+    const pollRoots = queryMany(accessories, [pollSelector])
+      .filter(node => visible(node) && !node.parentElement?.closest(pollSelector));
+    for (const node of pollRoots) {
+      const value = compact(node.innerText || node.textContent, 240);
+      const key = canonicalText(value);
+      if (!value || seen.has(key)) continue;
+      seen.add(key);
+      descriptions.push(`Poll: ${value}`);
+    }
     return descriptions;
   };
 

@@ -378,6 +378,12 @@ for (const [kind, engine, AgentClass, policy] of [
           const delayedAdvance=workflow(dispatchedPending,delayedSnapshot,delayedObservedAt);
           assert.equal(delayedAdvance.pendingDeliveryVerified,true,'a timestamp-matching bubble reconciles after a delayed observation');
           assert.equal(delayedAdvance.session.pendingOutbound,null,'delayed reconciliation clears the durable pending send');
+          const lateEchoAt=Date.parse(attemptedAt)+180_000;
+          const lateEchoSnapshot={...delayedSnapshot,messages:delayedSnapshot.messages.map(message=>
+            message.id==='discord:456:1002'?{...message,timestamp:new Date(lateEchoAt).toISOString()}:message)};
+          const lateEchoAdvance=workflow(dispatchedPending,lateEchoSnapshot,delayedObservedAt);
+          assert.equal(lateEchoAdvance.pendingDeliveryVerified,false,'a later counterparty echo cannot verify our send');
+          assert.ok(lateEchoAdvance.session.pendingOutbound,'late echoes leave uncertain sends pending');
 
           await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/11/self.webp?size=56'));
           await page.locator('[data-list-item-id="chat-messages___chat-messages-456-1001"] .contents img')
@@ -406,6 +412,22 @@ for (const [kind, engine, AgentClass, policy] of [
             'Attachment: support-error.png\nAttachment: Sticker, Wave\nAttachment: Build error report\nAttachment: Setup fails on startup');
           advanced=advanceChatSession(advanced.session,afterAttachment);
           assert.deepEqual(advanced.newMessages.map(item=>item.id),['discord:456:1006']);
+          assert.equal(advanced.nextAction,'reply');
+          await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
+            <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1008"><div class="contents">
+              <img src="https://cdn.discordapp.com/avatars/22/other.webp?size=160"><h3><span id="message-username-1008"><span data-text="Ficsit">Ficsit</span></span><time id="message-timestamp-1008" datetime="2026-09-29T01:04:00.000Z"></time></h3>
+              <div id="message-content-1008"></div></div><div id="message-accessories-1008"><div class="pollContainer_fixture">
+                <div class="pollQuestion_fixture">Which option should we choose?</div>
+                <div class="pollAnswer_fixture">Option Alpha</div><div class="pollAnswer_fixture">Option Beta</div>
+                <button type="button">Vote</button>
+              </div></div></div></li>`));
+          const afterPoll=await observe();
+          assert.equal(afterPoll.messages.at(-1).id,'discord:456:1008');
+          assert.match(afterPoll.messages.at(-1).text,/Which option should we choose\?/);
+          assert.match(afterPoll.messages.at(-1).text,/Option Alpha/);
+          assert.match(afterPoll.messages.at(-1).text,/Option Beta/);
+          advanced=advanceChatSession(advanced.session,afterPoll);
+          assert.deepEqual(advanced.newMessages.map(item=>item.id),['discord:456:1008']);
           assert.equal(advanced.nextAction,'reply');
           await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
             <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1007"><div class="contents">

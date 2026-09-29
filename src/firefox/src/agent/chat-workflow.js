@@ -517,7 +517,8 @@ function discordPendingDeliveryMatch(pending, snapshot, newMessages) {
   const [candidate] = matchingMessages;
   const messageAt = Date.parse(candidate.timestamp || '');
   if (!Number.isFinite(messageAt)
-      || messageAt < dispatchedAt - 5_000 || messageAt > observedAt + 5_000) return null;
+      || messageAt < dispatchedAt - 5_000 || messageAt > dispatchedAt + 5_000
+      || messageAt > observedAt + 5_000) return null;
   return candidate;
 }
 
