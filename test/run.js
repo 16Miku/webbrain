@@ -19850,6 +19850,7 @@ test('mutation batch invokes CAPTCHA preflight before dispatch when no gate exis
       const executed = [];
       let preflightCalls = 0;
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._persist = () => {};
       agent.executeTool = async (_tabId, name) => {
         executed.push(name);
@@ -45732,11 +45733,10 @@ test('saving a valid CapSolver key opts in without overriding legacy opt-outs', 
     );
 
     assert.ok(
-      background.includes(`const stored = await ${api}.storage.local.get([`)
-        && background.includes('isCapsolverEnabled(stored.capsolverApiKey, stored.captchaSolverEnabled)')
-        && background.includes('stored.webbrainCloudManaged === true')
-        && background.includes('stored.webbrainCloudCapsolverBrokerEnabled === true'),
-      `${label}: background startup should require consent and a valid key or managed Cloud broker`,
+      background.includes(`const stored = await ${api}.storage.local.get(CAPTCHA_SETTINGS_KEYS)`)
+        && background.includes('getCaptchaProviders(stored)')
+        && background.includes('agent.captchaProviderIds = providers.map(provider => provider.id)'),
+      `${label}: startup should use the shared consent-aware provider selection`,
     );
     assert.match(
       background,
@@ -45744,11 +45744,11 @@ test('saving a valid CapSolver key opts in without overriding legacy opt-outs', 
       `${label}: key, consent, or broker changes should refresh CapSolver availability immediately`,
     );
     assert.ok(
-      agent.includes(`const stored = await ${api}.storage.local.get([`)
-        && agent.includes('stored.captchaSolverEnabled !== true')
-        && agent.includes('!isCapsolverEnabled(apiKey, true)')
-        && agent.includes('const result = await solveCaptcha(apiKey, params, { useCloudBroker });'),
-      `${label}: solve_captcha should revalidate consent and the direct key when the Cloud broker is absent`,
+      agent.includes(`const stored = await ${api}.storage.local.get(CAPTCHA_SETTINGS_KEYS)`)
+        && agent.includes('const providers = getCaptchaProviders(stored)')
+        && agent.includes('if (!providers.length)')
+        && agent.includes('const result = await solveCaptchaWithProviders(providers, params);'),
+      `${label}: solve_captcha should revalidate enabled providers on each call`,
     );
 
     assert.equal(capsolverConfig.normalizeCapsolverApiKey('  CAP-0123456789abcdefghij  '), 'CAP-0123456789abcdefghij');
@@ -45788,16 +45788,11 @@ test('config import preserves CapSolver consent independently from a saved key',
   }
 });
 
-test('all locales explain CapSolver auto-enablement and key validation', async () => {
+test('all locales retain CapSolver save feedback and key validation', async () => {
   for (const browser of ['chrome', 'firefox']) {
     const localeDir = path.join(ROOT, `src/${browser}/src/ui/locales`);
     for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
-      assert.match(
-        locale['st.captcha.desc_html'],
-        /CapSolver/,
-        `${browser}/${filename}: CapSolver description missing`,
-      );
       assert.match(
         locale['st.captcha.saved'],
         /CapSolver/,
@@ -121804,6 +121799,89 @@ async function detectCaptchaDetailsOnFakePage(build, nodes) {
   });
 }
 
+
+test('CAPTCHA providers: hCaptcha routes directly to manual completion with 2Captcha alone', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const nodes = [captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
+      captchaEl('h2', { textContent: 'Security verification' }),
+      captchaEl('div', { class: 'h-captcha', 'data-sitekey': 'HCAPTCHA_KEY' }),
+    ])];
+    await withCaptchaFakePage(build, nodes, async () => {
+      const agent = new AgentClass({});
+      agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['2captcha'];
+      agent._currentUrl = async () => 'https://example.test/form';
+      const observation = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
+        pageContent: 'dialog "Security verification" [ref_100]\n button "Continue" [ref_3]',
+      });
+      assert.equal(observation.gate?.status, 'manual_required', build);
+      assert.equal(observation.gate?.providerUnsupported, true, build);
+      assert.equal(observation.gate?.solveAttempted, undefined, build);
+      assert.equal(agent._captchaGateBlockResult(1, 'click_ax')?.manualCompletionRequired, true, build);
+      assert.equal(agent._shouldRetryCaptchaManualGate(agent._captchaGateStates.get(1)), false, build);
+
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({ twoCaptchaEnabled: true, twoCaptchaApiKey: 'a'.repeat(32) }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const originalFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (...args) => { calls.push(args); throw Error('must not dispatch'); };
+      try {
+        const result = await agent._executeToolImpl(1, 'solve_captcha', { inject: false });
+        assert.equal(result.dispatched, false, `${build}: ${result.error}`);
+        assert.equal(result.manualCompletionRequired, true, build);
+        assert.equal(calls.length, 0, build);
+      } finally { globalThis.fetch = originalFetch; }
+
+      agent.captchaProviderIds = ['capsolver', '2captcha'];
+      assert.equal(agent._shouldRetryCaptchaManualGate(agent._captchaGateStates.get(1)), true, build);
+      const refreshed = await agent._captchaMutationPreflight(1, 'click_ax');
+      assert.equal(refreshed?.status, 'solve_required', `${build}: enabling a capable provider should refresh the gate`);
+    });
+  }
+});
+
+test('CAPTCHA providers: real Turnstile detection reaches the 2Captcha request with widget metadata', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const nodes = [captchaEl('div', {
+      class: 'cf-turnstile', 'data-sitekey': 'TURNSTILE_KEY',
+      'data-action': 'signup', 'data-cdata': 'widget-data',
+    })];
+    await withCaptchaFakePage(build, nodes, async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({ twoCaptchaEnabled: true, twoCaptchaApiKey: 'a'.repeat(32) }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const originalFetch = globalThis.fetch;
+      const originalTimeout = globalThis.setTimeout;
+      const calls = [];
+      globalThis.setTimeout = (callback, delay, ...args) => originalTimeout(callback, delay === 5000 ? 0 : delay, ...args);
+      globalThis.fetch = async (url, options) => {
+        calls.push({ url, body: JSON.parse(options.body) });
+        return Response.json(url.endsWith('/createTask') ? { taskId: 123 } : { status: 'ready', solution: { token: 'solved-token' } });
+      };
+      try {
+        const agent = new AgentClass({});
+        const result = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, metadata: { chlPageData: 'observed-page-data' } });
+        assert.equal(result.success, true, `${build}: ${result.error}`);
+        assert.equal(result.provider, '2captcha', build);
+        assert.equal(calls[0].url, 'https://api.2captcha.com/createTask');
+        assert.deepEqual(calls[0].body.task, {
+          type: 'TurnstileTaskProxyless', websiteURL: 'https://example.test/form', websiteKey: 'TURNSTILE_KEY',
+          action: 'signup', data: 'widget-data', pagedata: 'observed-page-data',
+        }, build);
+        const beforeConflict = calls.length;
+        const conflict = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, metadata: { action: 'another-widget' } });
+        assert.equal(conflict.dispatched, false, build);
+        assert.match(conflict.error, /conflicts with the selected widget/, build);
+        assert.equal(calls.length, beforeConflict, build);
+      } finally {
+        globalThis.fetch = originalFetch;
+        globalThis.setTimeout = originalTimeout;
+      }
+    });
+  }
+});
+
 test('challenge-dialog routing detects supported widgets and diagnoses unsupported Arkose frames', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const supportedNodes = [
@@ -121822,6 +121900,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     await withCaptchaFakePage(build, supportedNodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const result = {
         pageContent: 'dialog "Security verification" [ref_100]\n button "Dismiss" [ref_101]\nbutton "Continue" [ref_3]',
@@ -121851,11 +121930,13 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(disabledObservation.gate?.status, 'manual_required', `${build}: disabled solver did not fail closed`);
       assert.equal(disabledObservation.gate?.solverDisabled, true, `${build}: disabled-solver reason missing`);
       disabledAgent.captchaSolverEnabled = true;
+      disabledAgent.captchaProviderIds = ['capsolver'];
       const enabledGate = await disabledAgent._captchaMutationPreflight(2, 'click_ax');
       assert.equal(enabledGate?.status, 'solve_required', `${build}: enabling the solver did not re-evaluate the manual gate before mutation`);
 
       const transientAgent = new AgentClass({});
       transientAgent.captchaSolverEnabled = true;
+      transientAgent.captchaProviderIds = ['capsolver'];
       transientAgent._currentUrl = async () => 'https://example.test/signup';
       transientAgent._captchaGateStates.set(3, {
         key: 'https://example.test/signup\nsecurity verification',
@@ -121918,6 +121999,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     await withCaptchaFakePage(build, invisibleV3Nodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
         pageContent: 'dialog "Verify that you\u2019re a human" [ref_150]\n button "Dismiss" [ref_151]',
@@ -121940,6 +122022,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     await withCaptchaFakePage(build, unrelatedV3Nodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
         pageContent: 'dialog "Security verification" [ref_170]\n heading "Use your passkey" [ref_171]',
@@ -121968,6 +122051,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     await withCaptchaFakePage(build, unrelatedVisibleNodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
         pageContent: 'dialog "Security verification" [ref_180]\n heading "Use your passkey" [ref_181]',
@@ -122003,6 +122087,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     await withCaptchaFakePage(build, arkoseNodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const result = {
         pageContent: 'dialog "Security verification" [ref_200]\n button "Dismiss" [ref_201]\nbutton "Continue" [ref_3]',
@@ -122073,6 +122158,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
       await withCaptchaFakePage(build, example.nodes, async () => {
         const agent = new AgentClass({});
         agent.captchaSolverEnabled = true;
+        agent.captchaProviderIds = ['capsolver'];
         agent._currentUrl = async () => 'https://example.test/signup';
         const observed = await agent._observeCaptchaChallenge(
           1,
@@ -122128,6 +122214,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
 
         const preflightAgent = new AgentClass({});
         preflightAgent.captchaSolverEnabled = true;
+        preflightAgent.captchaProviderIds = ['capsolver'];
         preflightAgent._currentUrl = async () => 'https://example.test/signup';
         const preflight = await preflightAgent._captchaMutationPreflight(2, 'click_ax');
         assert.equal(
@@ -122196,6 +122283,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
       ], async () => {
         const agent = new AgentClass({});
         agent.captchaSolverEnabled = true;
+        agent.captchaProviderIds = ['capsolver'];
         agent._currentUrl = async () => 'https://example.test/signup';
         const observed = await agent._observeCaptchaChallenge(
           3,
@@ -122226,6 +122314,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
     ], async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const observed = await agent._observeCaptchaChallenge(
         5,
@@ -122269,6 +122358,7 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const initial = await agent._observeCaptchaChallenge(
         1,
@@ -122522,6 +122612,7 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const gate = await agent._captchaMutationPreflight(1, 'click_ax');
       assert.equal(gate?.status, 'solve_required', `${build}: first mutation bypassed read-only dialog detection`);

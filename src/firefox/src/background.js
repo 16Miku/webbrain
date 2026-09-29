@@ -39,7 +39,8 @@ import {
   getClaudeOAuthStatus,
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
-import { isCapsolverEnabled } from './agent/capsolver-config.js';
+import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
+import { getTwoCaptchaBalance } from './agent/two-captcha.js';
 import { createSystemOneJudge } from './agent/systemone-judge.js';
 import {
   SELECTION_CONTEXT_SOURCE_GROUNDING,
@@ -959,13 +960,10 @@ const customSkillsReady = loadCustomSkills();
 // Local browsers require a valid key and explicit consent. Managed Cloud
 // browsers use the broker flag and never use a CapSolver key from storage.
 async function loadCaptchaSolver() {
-  const stored = await browser.storage.local.get([
-    'capsolverApiKey', 'captchaSolverEnabled',
-    'webbrainCloudManaged', 'webbrainCloudCapsolverBrokerEnabled',
-  ]);
-  agent.captchaSolverEnabled = stored.webbrainCloudManaged === true
-    ? stored.captchaSolverEnabled === true && stored.webbrainCloudCapsolverBrokerEnabled === true
-    : isCapsolverEnabled(stored.capsolverApiKey, stored.captchaSolverEnabled);
+  const stored = await browser.storage.local.get(CAPTCHA_SETTINGS_KEYS);
+  const providers = getCaptchaProviders(stored);
+  agent.captchaProviderIds = providers.map(provider => provider.id);
+  agent.captchaSolverEnabled = providers.length > 0;
 }
 loadCaptchaSolver();
 
@@ -1155,10 +1153,11 @@ browser.storage.onChanged.addListener((changes) => {
     refreshPrompts = true;
   }
   if (changes.capsolverApiKey || changes.captchaSolverEnabled
+      || changes.twoCaptchaApiKey || changes.twoCaptchaEnabled
       || changes.webbrainCloudManaged || changes.webbrainCloudCapsolverBrokerEnabled) {
     loadCaptchaSolver()
       .then(() => agent._refreshSystemPrompts())
-      .catch((error) => console.warn('[WebBrain] CapSolver setting could not be refreshed', error));
+      .catch((error) => console.warn('[WebBrain] CAPTCHA settings could not be refreshed', error));
   }
   if (changes.planBeforeActMode || changes.planBeforeAct) {
     applyPlanBeforeActMode(normalizePlanBeforeActMode({
@@ -3481,6 +3480,16 @@ async function handleMessage(msg, sender) {
         });
         return { success: true, model: result.model };
       } catch (error) { return { success: false, error: error.message }; }
+    }
+
+    case 'test_two_captcha_balance': {
+      try {
+        const key = String(msg.apiKey || '').trim();
+        if (!key) return { ok: false, error: 'No API key provided' };
+        return { ok: true, ...await getTwoCaptchaBalance(key) };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
     }
 
     case 'test_capsolver_balance': {

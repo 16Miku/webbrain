@@ -884,9 +884,6 @@ export default {
   'st.memory.security_html': '<strong>Datenschutz:</strong> Benutzermemorie wird als Klartext in diesem Browser-Profil gespeichert...',
 
   // --- CAPTCHA settings ---
-  'st.captcha.desc_html': 'Lassen Sie den Agenten CAPTCHAs automatisch über die <a href="https://capsolver.com" target="_blank" style="color:var(--accent);">CapSolver</a>-API lösen. Unterstützt reCAPTCHA v2/v3, hCaptcha und Cloudflare Turnstile. Das Speichern eines gültigen API-Schlüssels aktiviert CapSolver automatisch; ohne Schlüssel hält der Agent an und bittet Sie, das CAPTCHA selbst zu lösen. CapSolver berechnet jede Lösung (~$0.001–$0.003); Sie verwenden Ihr eigenes Konto und Ihren eigenen API-Schlüssel.',
-  'st.captcha.enabled.label': 'CapSolver aktivieren',
-  'st.captcha.enabled.desc': 'Wenn der Agent auf ein CAPTCHA trifft, wird CapSolver einmal aufgerufen, bevor er Sie zur Lösung auffordert.',
   'st.captcha.api_key.label': 'CapSolver API-Schlüssel',
   'st.captcha.save': 'Schlüssel speichern',
   'st.captcha.check_balance': 'Guthaben prüfen',
@@ -897,7 +894,6 @@ export default {
   'st.captcha.need_key': 'Geben Sie einen gültigen CapSolver-API-Schlüssel ein, der mit CAP- beginnt.',
   'st.captcha.balance_ok': 'OK — Guthaben: {balance}',
   'st.captcha.balance_fail': 'Fehlgeschlagen: {error}',
-  'st.captcha.security_html': '<strong>Hinweis:</strong> Der API-Schlüssel wird als Klartext im Browser-Speicher gespeichert...',
 
   "st.system_one.desc_html": "Zusätzliche Prüfung geplanter Überwachungen und Aufgabenabschlüsse.",
   "st.system_one.enabled.label": "Jev aktivieren",

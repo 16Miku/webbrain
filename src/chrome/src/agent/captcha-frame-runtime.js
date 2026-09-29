@@ -310,6 +310,7 @@ function candidateSummary(candidate) {
     pageAction: candidate?.pageAction || null,
     enterprisePayload: candidate?.enterprisePayload || null,
     recaptchaDataSValue: candidate?.recaptchaDataSValue || null,
+    ...(candidate?.metadata ? { metadata: candidate.metadata } : {}),
     explicitWebsiteKey: candidate?.explicitWebsiteKey === true,
     callbackName: candidate?.callbackName || null,
     responseTokenPresent: candidate?.responseTokenPresent === true,
@@ -361,6 +362,7 @@ export function selectCaptchaCandidate(candidates, constraints = {}) {
     'pageAction',
     'enterprisePayload',
     'recaptchaDataSValue',
+    'metadata',
   ];
   const hasParameterValue = value =>
     value !== undefined && value !== null && value !== '';
@@ -849,9 +851,12 @@ export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = nul
   for (const [widgetIndex, host] of turnstileHosts.entries()) {
     const websiteKey = host.getAttribute('data-sitekey') || host.getAttribute('data-turnstile-sitekey');
     if (!websiteKey) continue;
+    const action = host.getAttribute('data-action');
+    const cdata = host.getAttribute('data-cdata');
     add({
       type: 'turnstile',
       websiteKey,
+      ...((action || cdata) ? { metadata: { ...(action ? { action } : {}), ...(cdata ? { cdata } : {}) } } : {}),
       visible: visibleElement(host),
       normalCheckbox: false,
       callbackName: host.getAttribute('data-callback') || null,

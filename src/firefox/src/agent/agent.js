@@ -78,8 +78,8 @@ import { buildTerminalRuntimeEvent, enqueueCloudRuntimeEvent, flushCloudRuntimeO
 import { buildShareGenerationItem, enqueueShareGeneration, flushShareOutbox, purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
-import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
-import { isCapsolverEnabled, normalizeCapsolverApiKey } from './capsolver-config.js';
+import { solveCaptchaWithProviders, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
+import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders, captchaProviderSupportsType } from './captcha-provider-config.js';
 import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
 import {
@@ -857,11 +857,12 @@ export class Agent extends LoopDetector {
     this.userMemoryEnabled = true;
     this.userMemoryRecords = [];
     this.userMemoryMaxPromptChars = USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS;
-    // CapSolver integration. A valid saved API key enables the
+    // CAPTCHA integration. An explicitly enabled provider enables the
     // "[CAPTCHA SOLVER]" system-prompt note telling the
     // model to try `solve_captcha` once before falling back to asking
     // the user. The API key is read at call time from browser.storage.
     this.captchaSolverEnabled = false;
+    this.captchaProviderIds = [];
     this._captchaGateStates = new Map(); // tabId -> { key, status, publicGate, challengeFrameId? }
     this._cloudflareManagedChallenges = new Map(); // tabId -> sanitized response-backed interstitial state
     this._cloudflareManagedChallengeTransitions = new Map(); // tabId -> serialized transition promise
@@ -9416,6 +9417,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && (
         publicGate?.solverDisabled === true
         || publicGate?.detectionFailed === true
+        || (publicGate?.providerUnsupported === true
+          && this.captchaProviderIds.some(id => captchaProviderSupportsType(id, publicGate.selectedType)))
       );
   }
 
@@ -9986,7 +9989,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && detection?.selected?.visible === true
         )
       );
+    const providerSupportsCandidate = this.captchaProviderIds.some(id =>
+      captchaProviderSupportsType(id, detection?.selected?.type));
     const supported = this.captchaSolverEnabled
+      && providerSupportsCandidate
       && !detectionFailed
       && !detection?.error
       && !!detection?.selected
@@ -10000,6 +10006,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(unsupportedVendors.length ? { unsupportedVendors } : {}),
       ...(detectionFailed ? { detectionFailed: true } : {}),
       ...(!this.captchaSolverEnabled ? { solverDisabled: true } : {}),
+      ...(detection?.selected && !providerSupportsCandidate ? { providerUnsupported: true } : {}),
       ...(detection?.error ? { selectionFailed: true } : {}),
       ...(detection?.selected && !selectedCorrelated ? { candidateNotCorrelated: true } : {}),
       ...(languageNeutralFrameTrigger ? { languageNeutralFrameTrigger: true } : {}),
@@ -22591,7 +22598,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (memoryPrompt) prompt += `\n\n${memoryPrompt}`;
     }
     if (this.captchaSolverEnabled) {
-      prompt += `\n\n[CAPTCHA SOLVER — the user has configured CapSolver. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If no supported widget is detected, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha.]`;
+      prompt += `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. When both local providers are enabled, the runtime tries CapSolver first, then 2Captcha on failure or timeout; both may charge. This fallback is internal to one tool call, not permission to call the tool again. 2Captcha supports reCAPTCHA v2/v3, Turnstile, and image CAPTCHAs; hCaptcha requires enabled CapSolver. Unsupported challenges require manual completion. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If no supported widget is detected, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha.]`;
     }
     // Ordinary turns get the one-line rendering; the full block is reserved for
     // policies that need the precise wording (translation targets, multilingual
@@ -32627,18 +32634,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         error,
       });
       try {
-        const stored = await browser.storage.local.get([
-          'capsolverApiKey', 'captchaSolverEnabled',
-          'webbrainCloudManaged', 'webbrainCloudCapsolverBrokerEnabled',
-        ]);
-        const apiKey = normalizeCapsolverApiKey(stored.capsolverApiKey);
-        const useCloudBroker = stored.webbrainCloudManaged === true
-          && stored.webbrainCloudCapsolverBrokerEnabled === true;
-        if (stored.captchaSolverEnabled !== true
-            || (stored.webbrainCloudManaged === true
-              ? !useCloudBroker
-              : !isCapsolverEnabled(apiKey, true))) {
-          return noDispatchFailure('CapSolver is not enabled with a valid API key. Ask the user to save their key in Settings → General → Advanced, or fall back to asking them to solve the captcha manually.');
+        const stored = await browser.storage.local.get(CAPTCHA_SETTINGS_KEYS);
+        const providers = getCaptchaProviders(stored);
+        if (!providers.length) {
+          return noDispatchFailure('No CAPTCHA solver is enabled with a valid API key. Save a CapSolver or 2Captcha key in Settings → General → Advanced, or ask the user to solve the CAPTCHA manually.');
         }
 
         let websiteURL = '';
@@ -32660,6 +32659,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           imageBase64,
           enterprisePayload,
           recaptchaDataSValue,
+          metadata,
         } = args || {};
         // Detection notes explain *why* a field is missing (e.g. a v3 widget
         // that never exposed its action name). Carry it into the failure so
@@ -32748,6 +32748,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             if (!pageAction && detected.pageAction) pageAction = detected.pageAction;
             if (!enterprisePayload && detected.enterprisePayload) enterprisePayload = detected.enterprisePayload;
             if (!recaptchaDataSValue && detected.recaptchaDataSValue) recaptchaDataSValue = detected.recaptchaDataSValue;
+            if (detected.metadata) {
+              for (const key of ['action', 'cdata', 'chlPageData']) {
+                if (metadata?.[key] && detected.metadata[key] && metadata[key] !== detected.metadata[key]) {
+                  return noDispatchFailure(`solve_captcha: requested Turnstile ${key} conflicts with the selected widget. Use its detected value or omit metadata.`);
+                }
+              }
+              metadata = { ...detected.metadata, ...metadata };
+            }
           }
           if (!detected && args?.inject === false && frameUrl) {
             websiteURL = captchaWebsiteUrl(frameUrl, websiteURL);
@@ -32765,6 +32773,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(enterprisePayload ? { enterprisePayload } : {}),
           ...(recaptchaDataSValue ? { recaptchaDataSValue } : {}),
           ...(imageBase64 ? { body: imageBase64 } : {}),
+          ...(type === 'turnstile' && metadata ? { metadata } : {}),
         };
 
         if (type === 'image_to_text') {
@@ -32782,15 +32791,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return noDispatchFailure(detectionNote ? `${paramError} ${detectionNote}` : paramError);
         }
 
+        if (!providers.some(provider => captchaProviderSupportsType(provider.id, type))) {
+          return {
+            ...noDispatchFailure(`No enabled CAPTCHA provider supports ${type}. Ask the user to complete it manually.`),
+            manualCompletionRequired: true,
+          };
+        }
+
         const wantInject = args?.inject !== false && type !== 'image_to_text';
         if (wantInject && !detected) {
           return noDispatchFailure(
-            'solve_captcha: token injection requires a detected CAPTCHA frame. The explicit type and websiteKey were not sent to CapSolver because no safe injection target could be verified. Retry with `inject: false` to receive the token without page injection, or ask the user to solve the challenge manually.'
+            'solve_captcha: token injection requires a detected CAPTCHA frame. The explicit type and websiteKey were not sent to a CAPTCHA solver because no safe injection target could be verified. Retry with `inject: false` to receive the token without page injection, or ask the user to solve the challenge manually.'
           );
         }
 
         dispatched = true;
-        const result = await solveCaptcha(apiKey, params, { useCloudBroker });
+        const result = await solveCaptchaWithProviders(providers, params);
 
         let injection = null;
         if (wantInject && result.fieldName && result.token) {
@@ -32824,6 +32840,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           dispatched: true,
           type,
           taskId: result.taskId,
+          provider: result.provider,
           token: result.token,
           tokenPreview: result.token ? `${String(result.token).slice(0, 24)}…(${String(result.token).length} chars)` : null,
           selectedFrameId: Number.isInteger(detected?.frameId) ? detected.frameId : null,
@@ -32839,7 +32856,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               ? (injection.calledCallback
                 ? 'Token was inserted into the selected frame and its callback was invoked. Wait for the page to react, then verify whether the challenge cleared.'
                 : 'Token was inserted into the selected frame, but no unique callback was invoked. Verify page progress before submitting or taking another action; do not request another paid solve.')
-              : 'CapSolver returned a token, but targeted injection failed. The challenge is not confirmed cleared; do not request another paid solve for the same token.',
+              : 'The CAPTCHA solver returned a token, but targeted injection failed. The challenge is not confirmed cleared; do not request another paid solve for the same token.',
         };
       } catch (e) {
         const error = `solve_captcha failed: ${e.message}`;
