@@ -81,6 +81,10 @@ export function canonicalChatText(value) {
   try { return text.normalize('NFKC').toLocaleLowerCase(); } catch { return text.toLowerCase(); }
 }
 
+function messageTextForMatching(message) {
+  return message?.authoredText ?? message?.text ?? '';
+}
+
 function hashText(value) {
   let hash = 2166136261;
   for (const char of String(value || '')) {
@@ -149,6 +153,7 @@ export function normalizeChatMessage(value, { threadKey = '', occurrence = 0 } =
   const direction = normalizeDirection(value.direction ?? value.authorRole ?? value.role);
   const text = normalizeChatText(value.text ?? value.content ?? value.message);
   if (!text) return null;
+  const authoredText = normalizeChatText(value.authoredText ?? value.primaryText);
   const author = bounded(value.author ?? value.authorName ?? value.sender, 240);
   const timestamp = bounded(value.timestamp ?? value.time ?? value.createdAt, 80);
   const explicitId = bounded(value.id ?? value.messageId ?? value.message_id, MAX_ID);
@@ -156,6 +161,7 @@ export function normalizeChatMessage(value, { threadKey = '', occurrence = 0 } =
     id: explicitId || stableChatMessageId({ threadKey, direction, text, author, timestamp, occurrence }),
     direction,
     text,
+    ...(authoredText ? { authoredText } : {}),
     ...(author ? { author } : {}),
     ...(timestamp ? { timestamp } : {}),
     ...(value.verified === true ? { verified: true } : {}),
@@ -281,7 +287,7 @@ function outgoingMessageKeys(snapshot) {
   let replyAnchor = 'chat_start';
   for (const message of snapshot.messages) {
     if (message.direction === 'incoming') replyAnchor = message.id;
-    if (message.direction === 'outgoing') keys.add(messageKey(snapshot.threadKey, message.text, replyAnchor));
+    if (message.direction === 'outgoing') keys.add(messageKey(snapshot.threadKey, messageTextForMatching(message), replyAnchor));
   }
   return keys;
 }
@@ -380,7 +386,7 @@ export function advanceChatSession(value, rawSnapshot, now = Date.now()) {
   // pending text is the same proof of delivery without depending on the anchor.
   const matchedPending = session.pendingOutbound
     && (visibleOutgoingKeys.has(session.pendingOutbound.key)
-      || newOutgoing.some(message => canonicalChatText(message.text) === canonicalChatText(session.pendingOutbound.text))
+      || newOutgoing.some(message => canonicalChatText(messageTextForMatching(message)) === canonicalChatText(session.pendingOutbound.text))
       || !!pendingDiscordDelivery
       || (!session.pendingOutbound.replyAnchor
         && session.pendingOutbound.key === legacyMessageKey(snapshot.threadKey, session.pendingOutbound.text)));
@@ -454,7 +460,7 @@ export function decideChatSend(value, rawSnapshot, text, now = Date.now()) {
   const sameReplyAlreadyVisible = snapshot.messages.some((message, index) => (
     index > latestIncomingIndex
       && message.direction === 'outgoing'
-      && canonicalChatText(message.text) === canonicalChatText(body)
+      && canonicalChatText(messageTextForMatching(message)) === canonicalChatText(body)
   ));
   if (session.sentMessageKeys.includes(key)
       || sameReplyAlreadyVisible) {
@@ -508,7 +514,7 @@ function discordPendingDeliveryMatch(pending, snapshot, newMessages) {
   if (!Number.isFinite(dispatchedAt) || !Number.isFinite(observedAt)
       || observedAt < dispatchedAt - 5_000) return null;
   const matchingMessages = newMessages.filter(message => (
-    canonicalChatText(message.text) === canonicalChatText(pending.text)
+    canonicalChatText(messageTextForMatching(message)) === canonicalChatText(pending.text)
   ));
   // Discord default avatars and server nicknames do not identify an author.
   // Correlate delivery only after a persisted successful dispatch, with one
