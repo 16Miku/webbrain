@@ -955,6 +955,17 @@ export function createCloudRunController({
       run.status = 'needs_user_input';
       run.pendingInput = scrubbedData;
     }
+    if (type === 'clarify_timeout_extended' && scrubbedData?.clarifyId
+        && (run.pendingInput?.clarifyId || run.pendingInput?.clarify_id) === scrubbedData.clarifyId
+        && run.status === 'needs_user_input' && Number(scrubbedData.deadlineTs) > 0) {
+      run.pendingInput = { ...run.pendingInput, deadlineTs: Number(scrubbedData.deadlineTs) };
+    }
+    if (type === 'clarify_auto' && scrubbedData?.clarifyId
+        && (run.pendingInput?.clarifyId || run.pendingInput?.clarify_id) === scrubbedData.clarifyId
+        && run.status === 'needs_user_input') {
+      run.status = 'running';
+      run.pendingInput = null;
+    }
     if (type === 'run_status'
         && ['clarification_required', 'captcha_manual_required'].includes(scrubbedData?.status)
         && run.status !== 'aborting'
