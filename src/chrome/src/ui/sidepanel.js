@@ -80,7 +80,7 @@ import {
   removeStagedScreenshots,
   saveStagedScreenshot,
 } from './staged-screenshot-store.js';
-import { installFileDropHandlers } from './attachment-drop.js';
+import { installClipboardImagePasteHandler, installFileDropHandlers } from './attachment-drop.js';
 import { isTextAttachment } from './attachment-file.js';
 
 const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
@@ -14243,6 +14243,10 @@ if (attachBtn && fileAttachInput) {
 }
 
 installFileDropHandlers(inputArea, (files) => {
+  handleAttachedFiles(files, renderedTabId ?? currentTabId);
+});
+
+installClipboardImagePasteHandler(inputEl, (files) => {
   handleAttachedFiles(files, renderedTabId ?? currentTabId);
 });
 
