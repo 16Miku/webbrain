@@ -2290,6 +2290,102 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
 });
 
 // ─── occlusion ────────────────────────────────────────────────────────────
+async function assertDockedControlsKeepScroll(page, browserKind) {
+  for (const position of ['fixed', 'sticky']) {
+    await setupContentHtml(page, `<!doctype html>
+      <style>
+        html { scroll-padding-top: 80px; scroll-padding-bottom: 60px; }
+        body { margin: 0; height: 1700px; }
+        header { position: ${position}; top: 0; height: 80px; width: 100%; background: white; }
+        .toolbar { position: fixed; bottom: 0; height: 60px; width: 100%; background: white; }
+      </style>
+      <header><button id="top-control" onclick="window.__topClicked = true">Top control</button><input id="top-input" aria-label="Top input"></header>
+      <div class="toolbar"><button id="bottom-control" onclick="window.__bottomClicked = true">Bottom control</button><input id="bottom-check" type="checkbox" aria-label="Bottom check"></div>
+    `, browserKind);
+    await page.evaluate(() => window.scrollTo(0, 300));
+    const before = await page.evaluate(() => window.scrollY);
+    for (const [selector, flag] of [['#top-control', '__topClicked'], ['#bottom-control', '__bottomClicked']]) {
+      const result = await call(page, 'click', { selector });
+      const after = await page.evaluate(name => ({ scrollY: window.scrollY, clicked: window[name] === true }), flag);
+      if (!result?.success || !after.clicked || Math.abs(after.scrollY - before) > 1) {
+        throw new Error(`${browserKind} ${position} ${selector} jumped from ${before}: ${JSON.stringify({ result, after })}`);
+      }
+    }
+    const inputRef = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('top-input')));
+    const typed = await call(page, 'type_ax', { ref_id: inputRef, text: 'Ada', clear: true });
+    const typedState = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      value: document.getElementById('top-input').value,
+    }));
+    if (!typed?.success || typedState.value !== 'Ada' || Math.abs(typedState.scrollY - before) > 1) {
+      throw new Error(`${browserKind} ${position} input jumped from ${before}: ${JSON.stringify({ typed, typedState })}`);
+    }
+    const checkRef = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('bottom-check')));
+    const checked = await call(page, 'set_checked', { ref_id: checkRef, checked: true });
+    const checkedState = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      checked: document.getElementById('bottom-check').checked,
+    }));
+    if (!checked?.success || !checkedState.checked || Math.abs(checkedState.scrollY - before) > 1) {
+      throw new Error(`${browserKind} ${position} checkbox jumped from ${before}: ${JSON.stringify({ checked, checkedState })}`);
+    }
+    if (browserKind === 'chrome') {
+      const rect = await call(page, 'ax_resolve_rect', { ref_id: inputRef });
+      const afterRect = await page.evaluate(() => window.scrollY);
+      if (!rect?.success || Math.abs(afterRect - before) > 1) {
+        throw new Error(`Chrome ${position} rect resolution jumped from ${before}: ${JSON.stringify({ rect, afterRect })}`);
+      }
+    }
+  }
+}
+
+test('Chrome: controls inside docked bars keep the document scroll position', page =>
+  assertDockedControlsKeepScroll(page, 'chrome'));
+firefoxTest('Firefox: controls inside docked bars keep the document scroll position', page =>
+  assertDockedControlsKeepScroll(page, 'firefox'));
+
+async function assertTopObstructionScrollDirection(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; height: 1700px; }
+      #obstruction { position: fixed; top: 0; left: 0; width: 100%; height: 80px; z-index: 20; background: white; }
+      #target { position: absolute; top: 320px; left: 60px; width: 120px; height: 100px; }
+      #row { position: absolute; top: 320px; left: 220px; width: 120px; height: 40px; }
+    </style>
+    <button id="target" onclick="window.__targetClicked = true">Partly covered</button>
+    <div id="row" role="listitem">Covered row</div>
+    <div id="obstruction">Floating obstruction</div>
+  `, browserKind);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const click = await call(page, 'click', { selector: '#target' });
+  const afterClick = await page.evaluate(() => ({
+    scrollY: window.scrollY,
+    clicked: window.__targetClicked === true,
+    top: document.getElementById('target').getBoundingClientRect().top,
+  }));
+  if (!click?.success || !afterClick.clicked || afterClick.scrollY >= 300 || afterClick.top < 80) {
+    throw new Error(`${browserKind} top obstruction retry scrolled the wrong way: ${JSON.stringify({ click, afterClick })}`);
+  }
+  if (browserKind === 'chrome') {
+    await page.evaluate(() => window.scrollTo(0, 300));
+    const refId = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('row')));
+    const resolved = await call(page, 'ax_resolve_rect', { ref_id: refId, forClickFallback: true });
+    const afterResolve = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      top: document.getElementById('row').getBoundingClientRect().top,
+    }));
+    if (!resolved?.success || !resolved.hitOk || afterResolve.scrollY >= 300 || afterResolve.top < 80
+      || Math.abs(resolved.rect?.y - afterResolve.top) > 1) {
+      throw new Error(`Chrome rect resolver scrolled the wrong way: ${JSON.stringify({ resolved, afterResolve })}`);
+    }
+  }
+}
+
+test('Chrome: top obstruction retry moves targets below the blocker', page =>
+  assertTopObstructionScrollDirection(page, 'chrome'));
+firefoxTest('Firefox: top obstruction retry moves targets below the blocker', page =>
+  assertTopObstructionScrollDirection(page, 'firefox'));
+
 async function assertInnerScrollerClearance(page, browserKind) {
   await setupContentHtml(page, `<!doctype html>
     <style>

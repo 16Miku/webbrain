@@ -312,7 +312,7 @@
       : null;
   }
 
-  function _getViewportDockedInsets(view = window) {
+  function _getViewportDockedInsets(view = window, target = null) {
     let top = 0;
     let bottom = 0;
     try {
@@ -324,16 +324,27 @@
         const n = parseFloat(val);
         return Number.isFinite(n) && n > 0 ? n : 0;
       };
-      top = Math.max(top, parsePadding(htmlStyle.scrollPaddingTop));
-      bottom = Math.max(bottom, parsePadding(htmlStyle.scrollPaddingBottom));
+      let targetInTopDock = false;
+      let targetInBottomDock = false;
+      for (let node = target; node && node !== doc; node = _composedParent(node)) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const style = view.getComputedStyle(node);
+        if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+        const rect = node.getBoundingClientRect();
+        if (rect.top <= 10 && rect.bottom > 0 && rect.bottom < view.innerHeight * 0.4) targetInTopDock = true;
+        if (rect.bottom >= view.innerHeight - 10 && rect.top > view.innerHeight * 0.6) targetInBottomDock = true;
+      }
+      if (!targetInTopDock) top = Math.max(top, parsePadding(htmlStyle.scrollPaddingTop));
+      if (!targetInBottomDock) bottom = Math.max(bottom, parsePadding(htmlStyle.scrollPaddingBottom));
       if (bodyStyle) {
-        top = Math.max(top, parsePadding(bodyStyle.scrollPaddingTop));
-        bottom = Math.max(bottom, parsePadding(bodyStyle.scrollPaddingBottom));
+        if (!targetInTopDock) top = Math.max(top, parsePadding(bodyStyle.scrollPaddingTop));
+        if (!targetInBottomDock) bottom = Math.max(bottom, parsePadding(bodyStyle.scrollPaddingBottom));
       }
       const candidates = doc.querySelectorAll('header, nav, [role="banner"], [role="navigation"], [class*="header" i], [class*="navbar" i], [class*="toolbar" i]');
       const vw = view.innerWidth || 800;
       const vh = view.innerHeight || 600;
       for (const c of candidates) {
+        if (target && _isComposedAncestor(c, target)) continue;
         if (!c.isConnected || c.offsetWidth <= 0 || c.offsetHeight <= 0) continue;
         const cs = view.getComputedStyle(c);
         if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
@@ -358,7 +369,7 @@
     if (!el?.isConnected) return;
     try {
       const view = el.ownerDocument?.defaultView || window;
-      const insets = _getViewportDockedInsets(view);
+      const insets = _getViewportDockedInsets(view, el);
       // A viewport-only rect check misses elements clipped by a scrollable
       // ancestor even when their bounding box is inside the viewport.
       if (!_isFullyVisibleForInteraction(el, insets)) {
@@ -380,7 +391,7 @@
       if (!el?.isConnected) return false;
       const view = el.ownerDocument?.defaultView || window;
       const rect = el.getBoundingClientRect();
-      const insets = dockedInsets || _getViewportDockedInsets(view);
+      const insets = dockedInsets || _getViewportDockedInsets(view, el);
       if (
         rect.width < 1
         || rect.height < 1
@@ -1981,7 +1992,7 @@
           if (topmost && !_isComposedAncestor(el, topmost) && !_isComposedAncestor(topmost, el)) {
             const bRect = topmost.getBoundingClientRect();
             if (bRect.top <= 10 && bRect.bottom > r.top && bRect.bottom < window.innerHeight * 0.45) {
-              window.scrollBy({ top: bRect.bottom - r.top + 20, behavior: 'instant' });
+              window.scrollBy({ top: r.top - bRect.bottom - 20, behavior: 'instant' });
               r = el.getBoundingClientRect();
               cx = Math.round(r.left + r.width / 2);
               cy = Math.round(r.top + r.height / 2);
@@ -7956,7 +7967,7 @@
           }
           try { _scrollElementIntoClearView(el); } catch {}
           showAgentWorkingTarget(el, 'ax_resolve_rect');
-          const r = el.getBoundingClientRect();
+          let r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
           const cy = r.top + r.height / 2;
           const vw = window.innerWidth, vh = window.innerHeight;
@@ -8008,10 +8019,10 @@
               try {
                 const bRect = topmost.getBoundingClientRect();
                 if (bRect.top <= 10 && bRect.bottom > r.top && bRect.bottom < vh * 0.45) {
-                  window.scrollBy({ top: bRect.bottom - r.top + 20, behavior: 'instant' });
-                  const rNew = el.getBoundingClientRect();
-                  effectiveCx = rNew.left + rNew.width / 2;
-                  effectiveCy = rNew.top + rNew.height / 2;
+                  window.scrollBy({ top: r.top - bRect.bottom - 20, behavior: 'instant' });
+                  r = el.getBoundingClientRect();
+                  effectiveCx = r.left + r.width / 2;
+                  effectiveCy = r.top + r.height / 2;
                   topmost = document.elementFromPoint(effectiveCx, effectiveCy);
                   if (topmost && (topmost === el || el.contains?.(topmost) || topmost.contains?.(el))) {
                     hitOk = true;
