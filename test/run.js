@@ -48799,6 +48799,16 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(unsafeTimeout.authorized, false, `${AgentClass.name}: timed-out destructive Yes without safe_first was accepted`);
     assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: unsafe timeout left no guard armed`);
 
+    const emptyOptionsTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '(no response - timed out)', 'timeout');
+      },
+    );
+    assert.equal(emptyOptionsTimeout.authorized, false, `${AgentClass.name}: safe_first without options was accepted`);
+
     const userReply = await agent.executeTool(
       tabId,
       'clarify',

@@ -23541,7 +23541,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     guard.pendingRecipientAuthorization = false;
     guard.observedRecipientCandidates = null;
     if (!pending || !pendingType || observed.length === 0) return false;
-    if (!answer || (source === 'timeout' && !clarifyContext?.safeFirst) || source === 'auto') return false;
+    if (!answer || source === 'timeout' || source === 'auto') return false;
     if (pendingType === 'recipient_change') {
       if (!clarifyContext || !this._isRecipientClarification(clarifyContext, 'recipient_change', observed)) {
         return false;
@@ -33857,7 +33857,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       const options = Array.isArray(args?.options)
         ? args.options.map(s => String(s).slice(0, 200)).filter(Boolean).slice(0, 4)
         : [];
-      const safeFirst = args?.safe_first === true;
+      const safeFirst = args?.safe_first === true && options.length > 0;
       const reason = args?.reason ? String(args.reason).slice(0, 300) : null;
       const purpose = args?.purpose === 'research_escalation'
         ? 'research_escalation'
@@ -33982,7 +33982,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       this._bindClarifiedMessageRecipient(tabId, answer, source, { question, options, reason, purpose, safeFirst: entrySafeFirst });
       this._recordSocialPublicationClarification(tabId, clarificationGuard, question, answer, source);
       const explicitResearchApproval = isResearchEscalation
-        && (source !== 'timeout' || entrySafeFirst)
+        && source !== 'timeout'
         && source !== 'auto'
         && answer === approveOption;
       const authorizationToken = explicitResearchApproval
