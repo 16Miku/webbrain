@@ -167,25 +167,21 @@
               && !!selectedDmChannelId && selectedDmChannelId !== channelId;
           } catch { return false; }
         });
-    const transcriptDmRows = directMessageRoute
-      ? query(transcript, '[role="article"]').filter(visible)
-      : [];
-    const transcriptDmChannelIds = directMessageRoute
-      ? transcriptDmRows
-        .map(node => /^chat-messages___chat-messages-(\d+)-\d+$/.exec(attribute(node, 'data-list-item-id'))?.[1])
-        .filter(Boolean)
-      : [];
-    const transcriptMatchesDmRoute = transcriptDmRows.length > 0
-      && transcriptDmChannelIds.length === transcriptDmRows.length
-      && transcriptDmChannelIds.every(id => id === channelId);
+    const transcriptRows = query(transcript, '[role="article"]').filter(visible);
+    const transcriptChannelIds = transcriptRows
+      .map(node => /^chat-messages___chat-messages-(\d+)-\d+$/.exec(attribute(node, 'data-list-item-id'))?.[1])
+      .filter(Boolean);
+    const transcriptMatchesRoute = transcriptRows.length > 0
+      && transcriptChannelIds.length === transcriptRows.length
+      && transcriptChannelIds.every(id => id === channelId);
     const name = /^Message #(.+)$/.exec(attribute(composer, 'aria-label'))?.[1]
       || /^Messages in (.+)$/.exec(attribute(transcript, 'aria-label'))?.[1]
       || /^(.+) \(channel\)$/.exec(attribute(root, 'aria-label'))?.[1]
       || (directMessageRoute ? `direct-message-${channelId}` : `channel-${channelId}`);
     return transcript && (directMessageRoute
       ? !selectedDmRouteMismatch
-        && (transcriptDmRows.length > 0 ? transcriptMatchesDmRoute : channelLink)
-      : channelLink)
+        && (transcriptRows.length > 0 ? transcriptMatchesRoute : channelLink)
+      : channelLink && (transcriptRows.length === 0 || transcriptMatchesRoute))
       ? {
         root, transcript, name, channelId,
         isDirectMessage: !!directMessageRoute,

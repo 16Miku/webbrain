@@ -321,6 +321,14 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(localized.threadKey,result.threadKey);
           assert.deepEqual(localized.messages,result.messages);
 
+          await page.locator('nav').evaluate(el=>el.insertAdjacentHTML('beforeend',
+            '<a id="channel-b" href="/channels/123/789" aria-current="page">second channel</a>'));
+          await page.evaluate(()=>history.replaceState(null,'','/channels/123/789'));
+          assert.equal((await observe()).success,false,'a matching current guild rail link cannot override stale transcript rows');
+          await page.locator('#channel-b').evaluate(el=>el.remove());
+          await page.evaluate(()=>history.replaceState(null,'','/channels/123/456'));
+          assert.equal((await observe()).success,true,'the guild route succeeds again when the transcript IDs match it');
+
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/guilds/123/users/22/avatars/other.webp?size=160'));
           assert.equal((await observe()).messages[0].direction,'incoming','guild-profile avatars retain the member identity');
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/guilds/123/users/11/avatars/self.webp?size=160'));
@@ -356,8 +364,11 @@ for (const [kind, engine, AgentClass, policy] of [
             <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1002"><div class="contents">
               <img src="/assets/embed/avatars/3.png"><h3><span id="message-username-1002"><span data-text="WebBrain">WebBrain</span></span><time id="message-timestamp-1002" datetime="${new Date().toISOString()}"></time></h3>
               <div id="message-content-1002">My answer</div></div><div id="message-accessories-1002"><div class="embedTitle_fixture">My answer link preview</div><div class="embedDescription_fixture">Preview description</div></div></div></li>
-            <li><div role="article" data-list-item-id="chat-messages___chat-messages-999-1003"><div id="message-content-1003">Wrong channel</div></div></li>
             <li><div role="article" class="isSystemMessage_fixture" data-list-item-id="chat-messages___chat-messages-456-1004"><div id="message-content-1004">A member joined</div></div></li>`));
+          await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',
+            '<li id="foreign-channel-row"><div role="article" data-list-item-id="chat-messages___chat-messages-999-1003"><div id="message-content-1003">Wrong channel</div></div></li>'));
+          assert.equal((await observe()).success,false,'a visible conflicting guild transcript row fails closed');
+          await page.locator('#foreign-channel-row').evaluate(el=>el.remove());
           const afterDraft=await observe();
           const pending=markChatSendPending(advanced.session,{
             ok:true,messageKey:'test-pending',threadKey:result.threadKey,text:'My answer',attemptedAt,
