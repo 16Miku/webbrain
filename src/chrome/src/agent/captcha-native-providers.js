@@ -124,6 +124,8 @@ const FAMILY_IDENTIFIERS = {
   captchafox: [['apiServer', 'api_server']],
   altcha: [['challengeURL', 'challenge_url'], ['challengeJSON', 'challenge_json']],
   friendly: [['version'], ['moduleScript', 'module_script'], ['nomoduleScript', 'nomodule_script']],
+  recaptcha_v2: [['recaptchaDataSValue', 'enterprisePayload.s', 'data-s', 'data.s']],
+  recaptcha_v2_enterprise: [['recaptchaDataSValue', 'enterprisePayload.s', 'data-s', 'data.s']],
   recaptcha_v3: [['pageAction', 'action', 'data.action']],
   recaptcha_v3_enterprise: [['pageAction', 'action', 'data.action']],
   turnstile: [

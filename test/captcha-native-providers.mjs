@@ -174,6 +174,38 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(record.applied, true);
     assert.equal(writes, 2);
   });
+  test(`${browser}: a non-cookie answer survives a second pre-mutation frame check`, async () => {
+    const record = { pageUrl: url, createdAt: Date.now(), applied: false,
+      documents: [{ frameId: 0, url, timeOrigin: 1000 }], solution: { token: 'answer' } };
+    let attempts = 0;
+    const result = () => ++attempts === 2
+      ? { success: false, error: 'Observed CAPTCHA callback is unavailable.' }
+      : { success: true };
+    const api = {
+      tabs: { get: async () => ({ url }), executeScript: async () => [result()] },
+      scripting: browser === 'chrome' ? { executeScript: async () => [{ frameId: 0, result: result() }] } : undefined,
+      webNavigation: { getAllFrames: async () => [{ frameId: 0, url }] },
+    };
+    const binding = { frameId: 0, frameUrl: url, fields: [{ selector: '#response', path: 'token' }] };
+    assert.equal((await applyNativeCaptchaSolution(1, record, binding, api)).success, false);
+    assert.equal(record.applied, false);
+    assert.equal((await applyNativeCaptchaSolution(1, record, binding, api)).success, true);
+    assert.equal(record.applied, true);
+  });
+  test(`${browser}: an indeterminate non-cookie application consumes the answer`, async () => {
+    const record = { pageUrl: url, createdAt: Date.now(), applied: false,
+      documents: [{ frameId: 0, url, timeOrigin: 1000 }], solution: { token: 'answer' } };
+    let attempts = 0;
+    const result = () => { if (++attempts === 2) throw new Error('Frame execution failed'); return { success: true }; };
+    const api = {
+      tabs: { get: async () => ({ url }), executeScript: async () => [result()] },
+      scripting: browser === 'chrome' ? { executeScript: async () => [{ frameId: 0, result: result() }] } : undefined,
+      webNavigation: { getAllFrames: async () => [{ frameId: 0, url }] },
+    };
+    await assert.rejects(applyNativeCaptchaSolution(1, record, { frameId: 0, frameUrl: url,
+      fields: [{ selector: '#response', path: 'token' }] }, api), /Frame execution failed/);
+    assert.equal(record.applied, true);
+  });
   for (const [method, answer, expected, binding] of [
     ['grid', 'click:3/a/g/', [3, 10, 16], { mode: 'grid', rows: 4, columns: 4 }],
     ['coordinates', 'coordinate:x=0,y=59;x=252,y=72', [{ x: 0, y: 59 }, { x: 252, y: 72 }], { mode: 'coordinates', sourceWidth: 300, sourceHeight: 300 }],
@@ -211,6 +243,9 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(calls.length, 0);
   });
   const actionBoundPairs = [
+    ['reCAPTCHA v2 data-s', ['2captcha', 'RecaptchaV2TaskProxyless', { websiteURL: url, websiteKey: 'site', recaptchaDataSValue: 'observed' }], ['solvecaptcha', 'recaptcha_v2', { pageurl: url, googlekey: 'site', 'data-s': 'observed' }], 'data-s'],
+    ['reCAPTCHA v2 enterprise data-s', ['2captcha', 'RecaptchaV2EnterpriseTaskProxyless', { websiteURL: url, websiteKey: 'site', enterprisePayload: { s: 'observed' } }], ['solvecaptcha', 'recaptcha_v2_enterprise', { pageurl: url, googlekey: 'site', 'data-s': 'observed' }], 'data-s'],
+    ['reCAPTCHA v2 nested data-s', ['2captcha', 'RecaptchaV2TaskProxyless', { websiteURL: url, websiteKey: 'site', recaptchaDataSValue: 'observed' }], ['nopecha', 'token/recaptcha2', { url, sitekey: 'site', data: { s: 'observed' } }], 'data.s'],
     ['reCAPTCHA v3 action', ['2captcha', 'RecaptchaV3TaskProxyless', { websiteURL: url, websiteKey: 'site', minScore: 0.3, pageAction: 'login' }], ['solvecaptcha', 'recaptcha_v3', { pageurl: url, googlekey: 'site', action: 'login' }], 'action'],
     ['reCAPTCHA v3 enterprise action', ['capsolver', 'ReCaptchaV3EnterpriseTaskProxyLess', { websiteURL: url, websiteKey: 'site', pageAction: 'login' }], ['nopecha', 'token/recaptcha3:enterprise', { url, sitekey: 'site', data: { action: 'login' } }], 'data.action'],
     ['Turnstile action', ['capsolver', 'AntiTurnstileTaskProxyLess', { websiteURL: url, websiteKey: 'site', metadata: { action: 'login', cdata: 'widget' } }], ['anti-captcha', 'TurnstileTaskProxyless', { websiteURL: url, websiteKey: 'site', action: 'login', cData: 'widget' }], 'action'],
@@ -231,6 +266,14 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(calls.length, 0);
   });
   for (const [label, entries] of [
+    ['reCAPTCHA v2 omitted data-s', [
+      { provider: '2captcha', method: 'RecaptchaV2TaskProxyless', parameters: { websiteURL: url, websiteKey: 'site', recaptchaDataSValue: 'observed' } },
+      { provider: 'solvecaptcha', method: 'recaptcha_v2', parameters: { pageurl: url, googlekey: 'site' } },
+    ]],
+    ['reCAPTCHA v2 enterprise omitted data-s', [
+      { provider: '2captcha', method: 'RecaptchaV2EnterpriseTaskProxyless', parameters: { websiteURL: url, websiteKey: 'site', enterprisePayload: { s: 'observed' } } },
+      { provider: 'solvecaptcha', method: 'recaptcha_v2_enterprise', parameters: { pageurl: url, googlekey: 'site' } },
+    ]],
     ['reCAPTCHA v3 omitted action', [
       { provider: '2captcha', method: 'RecaptchaV3TaskProxyless', parameters: { websiteURL: url, websiteKey: 'site', minScore: 0.3, pageAction: 'delete' } },
       { provider: 'solvecaptcha', method: 'recaptcha_v3', parameters: { pageurl: url, googlekey: 'site' } },

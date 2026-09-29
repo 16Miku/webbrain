@@ -133,7 +133,7 @@ export function applyCaptchaValuesInPage(expectedUrl, fields, callback, clicks =
 }
 
 export async function applyNativeCaptchaSolution(tabId, record, application, api = globalThis.browser || globalThis.chrome) {
-  if (!record || record.applied) throw new Error('No unapplied CAPTCHA solution is available. Do not request another solve.');
+  if (!record || record.applied || record.applying) throw new Error('No unapplied CAPTCHA solution is available. Do not request another solve.');
   const tab = await api.tabs.get(tabId);
   if (tab.url !== record.pageUrl) throw new Error('The page changed after the CAPTCHA solve.');
   if (Date.now() - record.createdAt > 180_000) throw new Error('The stored CAPTCHA solution has expired.');
@@ -159,19 +159,39 @@ export async function applyNativeCaptchaSolution(tabId, record, application, api
   };
   const preflight = await execute(true);
   if (!preflight?.success) return preflight || { success: false, error: 'No result from the selected CAPTCHA frame.' };
-  const stores = cookies.length ? await api.cookies.getAllCookieStores() : [];
-  const storeId = stores.find(store => store.tabIds.includes(tabId))?.id;
-  if (cookies.length && !storeId) throw new Error('Could not identify this tab’s cookie store.');
-  // Install cookies before callbacks or response-field events can submit.
-  for (const cookie of cookies) {
-    const current = await api.tabs.get(tabId);
-    if (current.url !== record.pageUrl) throw new Error('Page changed before CAPTCHA cookie application.');
-    const saved = await api.cookies.set({ url: record.pageUrl, name: cookie.name, value: cookie.value, path: '/', secure: record.pageUrl.startsWith('https:'), storeId });
-    if (!saved) throw new Error('CAPTCHA cookie could not be set.');
+  if (record.applied || record.applying) throw new Error('No unapplied CAPTCHA solution is available. Do not request another solve.');
+  record.applying = true;
+  try {
+    const stores = cookies.length ? await api.cookies.getAllCookieStores() : [];
+    const storeId = stores.find(store => store.tabIds.includes(tabId))?.id;
+    if (cookies.length && !storeId) throw new Error('Could not identify this tab’s cookie store.');
+    // Install cookies before callbacks or response-field events can submit.
+    for (const cookie of cookies) {
+      const current = await api.tabs.get(tabId);
+      if (current.url !== record.pageUrl) throw new Error('Page changed before CAPTCHA cookie application.');
+      const saved = await api.cookies.set({ url: record.pageUrl, name: cookie.name, value: cookie.value, path: '/', secure: record.pageUrl.startsWith('https:'), storeId });
+      if (!saved) throw new Error('CAPTCHA cookie could not be set.');
+      record.applied = true;
+    }
+    let applied;
+    try {
+      applied = await execute(false);
+    } catch (error) {
+      // The page may have changed after a field event or callback. Its state is
+      // indeterminate, so never replay the paid answer in that case.
+      record.applied = true;
+      throw error;
+    }
+    if (!applied) {
+      record.applied = true;
+      return { success: false, error: 'No application result from the selected frame.' };
+    }
+    // The page helper returns failures only from validation before mutation.
+    // Keep a field/callback/click answer available when that second check fails.
+    if (!applied.success) return applied;
     record.applied = true;
+    return { ...applied, cookiesUpdated: cookies.length, note: 'Solution applied; verify fresh page state. Do not request another paid solve.' };
+  } finally {
+    record.applying = false;
   }
-  if (!cookies.length) record.applied = true;
-  const applied = await execute(false);
-  if (!applied?.success) return applied || { success: false, error: 'No application result from the selected frame.' };
-  return { ...applied, cookiesUpdated: cookies.length, note: 'Solution applied; verify fresh page state. Do not request another paid solve.' };
 }
