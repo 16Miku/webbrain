@@ -368,7 +368,6 @@
       let direction = 'unknown';
       if (ownAvatarId && avatarId) direction = ownAvatarId === avatarId ? 'outgoing' : 'incoming';
       else if (ownAvatarId && defaultAvatarIndex) direction = 'incoming';
-      else if (ownDefaultAvatarIndex && avatarId) direction = 'incoming';
       else if (ownDefaultAvatarIndex && defaultAvatarIndex
           && ownDefaultAvatarIndex !== defaultAvatarIndex) direction = 'incoming';
       else if (!username) direction = previousDirection;

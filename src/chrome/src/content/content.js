@@ -5876,7 +5876,7 @@
       const verifiedDiscordManagementControl = (clicked) => {
         if (params.adapterName !== 'discord'
             || !/^(?:www\.)?discord\.com$/.test(location.hostname)
-            || !/^\/channels\/\d+(?:\/\d+)?\/?$/.test(location.pathname)) return false;
+            || !/^\/channels\/(?:\d+|@me)(?:\/\d+)?\/?$/.test(location.pathname)) return false;
         const control = _composedClosestElement(clicked,
           'button,a[href],input,select,textarea,[role="textbox"],[role="button"],[role="menuitem"],[role="tab"],[role="switch"],[role="radio"],[role="checkbox"]');
         if (!control || !visible(control) || control.disabled

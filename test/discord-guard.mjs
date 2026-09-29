@@ -160,8 +160,9 @@ for (const [kind, engine, AgentClass, policy] of [
         try {
           assert.notEqual((await probe('click',{selector:'#mute'})).nonMessagingTarget,true,'account audio switch is not a settings action');
           assert.equal((await guard('click',{selector:'#mute'}))?.noDispatch,true);
+          await page.evaluate(()=>history.replaceState(null,'','/channels/@me/789'));
           assert.equal((await probe('click',{selector:'#user-settings-trigger'})).nonMessagingTarget,true,'localized account gear is recognized by its account-panel structure');
-          assert.equal(await guard('click',{selector:'#user-settings-trigger'}),null);
+          assert.equal(await guard('click',{selector:'#user-settings-trigger'}),null,'account settings remain available on a DM route');
           await page.locator('body').evaluate(el=>el.insertAdjacentHTML('beforeend',`<div id="user-settings-modal" role="dialog" aria-modal="true" aria-labelledby="heading-user-settings-modal"><h1 id="heading-user-settings-modal">Hesap</h1><nav aria-label="Einstellungen"><ul><li data-settings-sidebar-item="account_panel"><div role="link">Hesap</div></li><li data-settings-sidebar-item="appearance_panel"><div role="link">Görünüm</div></li></ul></nav><main><button id="theme-control">Temayı değiştir</button></main></div>`));
           assert.equal((await probe('click',{selector:'#theme-control'})).nonMessagingTarget,true,'user settings sidebar identifies the dialog without English labels');
           assert.equal(await guard('click',{selector:'#theme-control'}),null);
@@ -236,6 +237,10 @@ for (const [kind, engine, AgentClass, policy] of [
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/22/other.webp?size=160'));
 
           await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
+          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/guilds/123/users/11/avatars/self.webp?size=160'));
+          assert.equal((await observe()).messages[0].direction,'unknown','a default-avatar account cannot disprove a guild-profile self avatar');
+          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/22/other.webp?size=160'));
+          assert.equal((await observe()).messages[0].direction,'unknown','a default-avatar account has no proven user ID for custom-avatar rows');
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
           const defaultAvatars=await observe();
           assert.equal(defaultAvatars.messages[0].direction,'unknown','shared Discord default avatars do not identify message authors');
@@ -245,7 +250,7 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal((await observe()).messages[0].direction,'incoming','a default avatar cannot belong to the custom-avatar account');
           await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/22/other.webp?size=160'));
-          assert.equal((await observe()).messages[0].direction,'incoming','a custom avatar cannot belong to the default-avatar account');
+          assert.equal((await observe()).messages[0].direction,'unknown','a guild-specific avatar can belong to a default-avatar account');
           await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
           let advanced=advanceChatSession(createChatSession({threadKey:result.threadKey}),defaultAvatars);
           await page.locator('#wave').evaluate(el=>el.textContent='Changed hover action');
@@ -282,6 +287,11 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(advanced.session.pendingOutbound,null,'self-authored default-avatar message clears pending send');
           assert.equal(advanced.pendingDeliveryVerified,true,'the unique fresh exact-text bubble and empty composer verify this pending send');
 
+          await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/11/self.webp?size=56'));
+          await page.locator('[data-list-item-id="chat-messages___chat-messages-456-1001"] .contents img')
+            .evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/22/other.webp?size=160'));
+          await page.locator('[data-list-item-id="chat-messages___chat-messages-456-1002"] .contents img')
+            .evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/11/self.webp?size=160'));
           await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
             <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1005">
               <div id="message-reply-context-1005"><div id="message-content-1002">My answer</div></div>
@@ -307,7 +317,7 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(advanced.nextAction,'reply');
           await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
             <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1007"><div class="contents">
-              <img src="/assets/embed/avatars/3.png"><h3><span id="message-username-1007"><span data-text="WebBrain">WebBrain</span></span><time id="message-timestamp-1007" datetime="${new Date().toISOString()}"></time></h3>
+              <h3><span id="message-username-1007"><span data-text="WebBrain">WebBrain</span></span><time id="message-timestamp-1007" datetime="${new Date().toISOString()}"></time></h3>
               <div id="message-content-1007">A member with the same display name</div></div></div></li>`));
           const collidingNickname=await observe();
           assert.equal(collidingNickname.messages.at(-1).direction,'unknown','a member sharing the account display name is not called outgoing');
