@@ -120,6 +120,13 @@ const FAMILY_IDENTIFIERS = {
   yidun: [['challenge'], ['hcg'], ['hct']],
   hcaptcha: [['rqdata', 'data.rqdata']],
   funcaptcha: [['data']],
+  recaptcha_v3: [['pageAction', 'action', 'data.action']],
+  recaptcha_v3_enterprise: [['pageAction', 'action', 'data.action']],
+  turnstile: [
+    ['action', 'pageAction', 'metadata.action', 'data.action'],
+    ['data', 'cData', 'metadata.cdata', 'data.cdata', 'data.cData'],
+    ['pagedata', 'pageData', 'chlPageData', 'data.pagedata', 'data.pageData', 'data.chlPageData'],
+  ],
 };
 function validateFallbackIdentifiers(built) {
   const family = built[0].contract.family;
@@ -136,7 +143,8 @@ function validateFallbackIdentifiers(built) {
     if (versions[0] === 3) groups.push(['challenge']);
   }
   for (const aliases of groups) {
-    const values = built.flatMap(({task}) => aliases.map(path => at(task, path))).filter(usable);
+    const values = built.flatMap(({task}) => aliases.map(path => at(task, path)))
+      .filter(value => usable(value) && !(family === 'turnstile' && aliases.includes('data') && object(value)));
     if (new Set(values.map(value => typeof value === 'object' ? JSON.stringify(value) : String(value))).size > 1) {
       throw new Error(`Fallback tasks must reference the same observed challenge (${aliases.join('/')}).`);
     }

@@ -122022,6 +122022,19 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
         const cleared = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', { pageUrl: 'https://example.test/form', pageContent: 'heading "Verification complete"' });
         assert.equal(cleared.gate.status, 'cleared', build);
         assert.equal(agent._captchaGateBlockResult(1, 'click', {}), null, build);
+        // A paid task may time out after the solution's short application TTL.
+        // Its dispatch lock must still hold for the original document.
+        const prior = agent._nativeCaptchaSolutions.get(1);
+        prior.createdAt = Date.now() - 200_000;
+        delete prior.solution;
+        const aged = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(aged.dispatched, false, build);
+        assert.equal(calls.length, 1, build);
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { url: 'https://example.test/form', timeOrigin: 2000 } }];
+        else api.tabs.executeScript = async () => [{ url: 'https://example.test/form', timeOrigin: 2000 }];
+        const reloaded = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(reloaded.success, true, `${build}: new document at the same URL should be eligible: ${reloaded.error}`);
+        assert.equal(calls.length, 2, build);
       } finally { globalThis.fetch = previousFetch; }
     });
   }

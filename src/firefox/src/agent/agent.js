@@ -32753,12 +32753,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             }
           }
           this._nativeCaptchaSolutions ||= new Map();
-          const previous = this._nativeCaptchaSolutions.get(tabId);
-          if (previous?.pageUrl === websiteURL && Date.now() - previous.createdAt < 180_000) return noDispatchFailure('A native solve was already dispatched for this page. Use its result or ask for manual completion; do not spend again.');
           // Record dispatch before sending. Even timeout/failure cannot trigger
-          // a second call for this challenge; fallback stays inside one call.
+          // a second call for this document; fallback stays inside one call.
           const documents = await captureCaptchaDocuments(tabId, frames, browser);
-          if (!documents.some(d => d.frameId === 0 && d.url === websiteURL)) return noDispatchFailure('Could not bind this page document before the native CAPTCHA request.');
+          const rootDocument = documents.find(d => d.frameId === 0 && d.url === websiteURL);
+          if (!rootDocument) return noDispatchFailure('Could not bind this page document before the native CAPTCHA request.');
+          const previous = this._nativeCaptchaSolutions.get(tabId);
+          const previousRoot = previous?.documents?.find(d => d.frameId === 0);
+          if (previousRoot?.url === rootDocument.url && previousRoot.timeOrigin === rootDocument.timeOrigin) {
+            return noDispatchFailure('A native solve was already dispatched for this page document. Use its result or ask for manual completion; do not spend again.');
+          }
           const record = { pageUrl: websiteURL, createdAt: Date.now(), applied: false, documents };
           this._nativeCaptchaSolutions.set(tabId, record);
           dispatched = true;

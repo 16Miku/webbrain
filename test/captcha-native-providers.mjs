@@ -150,4 +150,24 @@ for (const browser of ['chrome', 'firefox']) {
     await assert.rejects(async () => native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers, entries)), /same observed challenge/);
     assert.equal(calls.length, 0);
   });
+  const actionBoundPairs = [
+    ['reCAPTCHA v3 action', ['2captcha', 'RecaptchaV3TaskProxyless', { websiteURL: url, websiteKey: 'site', minScore: 0.3, pageAction: 'login' }], ['solvecaptcha', 'recaptcha_v3', { pageurl: url, googlekey: 'site', action: 'login' }], 'action'],
+    ['reCAPTCHA v3 enterprise action', ['capsolver', 'ReCaptchaV3EnterpriseTaskProxyLess', { websiteURL: url, websiteKey: 'site', pageAction: 'login' }], ['nopecha', 'token/recaptcha3:enterprise', { url, sitekey: 'site', data: { action: 'login' } }], 'data.action'],
+    ['Turnstile action', ['capsolver', 'AntiTurnstileTaskProxyLess', { websiteURL: url, websiteKey: 'site', metadata: { action: 'login', cdata: 'widget' } }], ['anti-captcha', 'TurnstileTaskProxyless', { websiteURL: url, websiteKey: 'site', action: 'login', cData: 'widget' }], 'action'],
+    ['Turnstile cData', ['2captcha', 'TurnstileTaskProxyless', { websiteURL: url, websiteKey: 'site', action: 'login', data: 'widget' }], ['anti-captcha', 'TurnstileTaskProxyless', { websiteURL: url, websiteKey: 'site', action: 'login', cData: 'widget' }], 'cData'],
+    ['Turnstile page data', ['2captcha', 'TurnstileTaskProxyless', { websiteURL: url, websiteKey: 'site', pagedata: 'page' }], ['solvecaptcha', 'turnstile', { pageurl: url, sitekey: 'site', pagedata: 'page' }], 'pagedata'],
+    ['Turnstile nested metadata', ['capmonster', 'TurnstileTask', { websiteURL: url, websiteKey: 'site', pageAction: 'login', data: 'widget' }], ['nopecha', 'token/turnstile', { url, sitekey: 'site', proxy: { scheme: 'http', host: 'proxy.test', port: 8080 }, data: { action: 'login', cdata: 'widget' } }], 'data.cdata'],
+  ];
+  for (const [label, a, b, changed] of actionBoundPairs) test(`${browser}: ${label} mismatch cannot spend`, async t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const entries = [a, b].map(([provider, method, parameters]) => ({ provider, method, parameters: structuredClone(parameters) }));
+    const enabled = entries.map(entry => ({ id: entry.provider, apiKey: 'key' }));
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, entries).length, 2);
+    const path = changed.split('.');
+    let target = entries[1].parameters;
+    for (const part of path.slice(0, -1)) target = target[part];
+    target[path.at(-1)] = 'different';
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed challenge/);
+    assert.equal(calls.length, 0);
+  });
 }
