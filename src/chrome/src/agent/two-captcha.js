@@ -1,30 +1,8 @@
 // 2Captcha API v2: https://2captcha.com/api-docs
+import { getJsonCaptchaBalance, solveJsonCaptcha } from './captcha-json-api.js';
 const API_BASE = 'https://api.2captcha.com';
-const POLL_INTERVAL_MS = 5_000;
-const SOLVE_TIMEOUT_MS = 180_000;
 
-async function postJson(path, body, timeoutMs = 30_000) {
-  const response = await fetch(`${API_BASE}/${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!response.ok) throw new Error(`2Captcha ${path}: HTTP ${response.status}`);
-  const result = await response.json().catch(() => null);
-  if (!result || typeof result !== 'object') throw new Error(`2Captcha ${path}: invalid response`);
-  if (result.errorId) throw new Error(`2Captcha ${path}: ${result.errorDescription || result.errorCode || 'unknown error'}`);
-  return result;
-}
-
-export async function getTwoCaptchaBalance(apiKey) {
-  if (!apiKey) throw new Error('No 2Captcha API key configured.');
-  const result = await postJson('getBalance', { clientKey: apiKey });
-  if (!Number.isFinite(Number(result.balance)) || result.balance == null) {
-    throw new Error('2Captcha getBalance: missing balance');
-  }
-  return { balance: Number(result.balance) };
-}
+export const getTwoCaptchaBalance = apiKey => getJsonCaptchaBalance(API_BASE, '2Captcha', apiKey);
 
 // Translate the existing normalized task to 2Captcha's case-sensitive types
 // and fields. Never forward CapSolver-specific task names or affiliate IDs.
@@ -65,18 +43,4 @@ export function buildTwoCaptchaTask(task) {
   }
 }
 
-export async function solveWithTwoCaptcha(apiKey, task) {
-  if (!apiKey) throw new Error('No 2Captcha API key configured.');
-  const created = await postJson('createTask', { clientKey: apiKey, task: buildTwoCaptchaTask(task) });
-  if (!created.taskId) throw new Error('2Captcha createTask: missing taskId');
-  const deadline = Date.now() + SOLVE_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    const result = await postJson('getTaskResult', { clientKey: apiKey, taskId: created.taskId }, Math.min(30_000, remaining));
-    if (result.status === 'ready') return { taskId: created.taskId, solution: result.solution || {} };
-    if (result.status !== 'processing') throw new Error('2Captcha getTaskResult: unexpected status');
-  }
-  throw new Error('2Captcha: timed out waiting for solution.');
-}
+export const solveWithTwoCaptcha = (apiKey, task) => solveJsonCaptcha(API_BASE, '2Captcha', apiKey, buildTwoCaptchaTask(task));

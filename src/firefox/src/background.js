@@ -40,6 +40,7 @@ import {
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
+import { getAdditionalCaptchaBalance } from './agent/captcha-additional-providers.js';
 import { getTwoCaptchaBalance } from './agent/two-captcha.js';
 import { createSystemOneJudge } from './agent/systemone-judge.js';
 import {
@@ -1152,9 +1153,7 @@ browser.storage.onChanged.addListener((changes) => {
     }
     refreshPrompts = true;
   }
-  if (changes.capsolverApiKey || changes.captchaSolverEnabled
-      || changes.twoCaptchaApiKey || changes.twoCaptchaEnabled
-      || changes.webbrainCloudManaged || changes.webbrainCloudCapsolverBrokerEnabled) {
+  if (CAPTCHA_SETTINGS_KEYS.some(key => changes[key])) {
     loadCaptchaSolver()
       .then(() => agent._refreshSystemPrompts())
       .catch((error) => console.warn('[WebBrain] CAPTCHA settings could not be refreshed', error));
@@ -3480,6 +3479,12 @@ async function handleMessage(msg, sender) {
         });
         return { success: true, model: result.model };
       } catch (error) { return { success: false, error: error.message }; }
+    }
+
+    case 'test_captcha_provider_balance': {
+      try {
+        return { ok: true, ...await getAdditionalCaptchaBalance(msg.provider, String(msg.apiKey || '').trim()) };
+      } catch (error) { return { ok: false, error: error.message }; }
     }
 
     case 'test_two_captcha_balance': {
