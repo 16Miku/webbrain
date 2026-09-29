@@ -6,7 +6,7 @@ import { Agent } from '../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../src/firefox/src/agent/agent.js';
 import { getMessageRecipientGuardPolicy } from '../src/chrome/src/agent/adapters.js';
 import { getMessageRecipientGuardPolicy as firefoxPolicy } from '../src/firefox/src/agent/adapters.js';
-import { advanceChatSession, createChatSession } from '../src/chrome/src/agent/chat-workflow.js';
+import { advanceChatSession, createChatSession, markChatSendPending } from '../src/chrome/src/agent/chat-workflow.js';
 
 const url = 'https://discord.com/channels/123/456';
 const fixture = `<!doctype html><style>
@@ -24,7 +24,7 @@ ol {min-height:30px} main {position:fixed;left:320px;top:0;width:550px;height:70
 <a id="channel" href="/channels/123/456" aria-label="general (text channel)" aria-current="page">general</a>
 <button id="edit" type="button" aria-label="Edit Channel">Edit Channel</button>
 <button id="nav-send" type="button">Send message</button></nav>
-<section aria-label="User status and settings"><div class="panelTitleContainer_fixture">WebBrain</div><img src="https://cdn.discordapp.com/avatars/11/self.webp?size=56"></section>
+<section aria-label="User status and settings"><div class="accountPopoutButtonWrapper_fixture"><img id="profile-avatar" src="https://cdn.discordapp.com/avatars/11/self.webp?size=56"></div><div class="nameTag_fixture"><div class="panelTitleContainer_fixture">WebBrain</div><div class="panelSubtext_fixture"><span class="hovered_fixture">webbrain_one</span></div></div></section>
 <main aria-label="general (channel)"><h2>general chat</h2><ol role="list" aria-label="Messages in general" data-list-id="chat-messages">
 <li><div id="message" role="article" data-list-item-id="chat-messages___chat-messages-456-1001"><div class="contents"><img src="https://cdn.discordapp.com/avatars/22/other.webp?size=160"><h3><span id="message-username-1001"><span data-text="Ficsit">Ficsit</span></span><time id="message-timestamp-1001" datetime="2026-09-29T01:00:00.000Z"></time></h3><div id="message-content-1001">Hello from the fixture</div></div><div role="group" aria-label="Message Actions"><button id="wave">Wave to say hi!</button><button id="lookalike" aria-expanded="false">Test, server actions</button></div></div></li>
 </ol><div id="composer" role="textbox" aria-label="Message #general" contenteditable="true" data-slate-editor="true">Draft</div><button id="send" type="button">Send</button></main>`;
@@ -192,7 +192,22 @@ for (const [kind, engine, AgentClass, policy] of [
             id:'discord:456:1001', direction:'incoming', text:'Hello from the fixture',
             author:'Ficsit', timestamp:'2026-09-29T01:00:00.000Z',
           }]);
-          let advanced=advanceChatSession(createChatSession({threadKey:result.threadKey}),result);
+          await page.locator('#composer').evaluate(el=>el.setAttribute('aria-label','Nachricht #general'));
+          await page.locator('main').evaluate(el=>el.setAttribute('aria-label','general (Kanal)'));
+          await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.setAttribute('aria-label','Nachrichten in general'));
+          await page.locator('#channel').evaluate(el=>el.setAttribute('aria-label','general (Textkanal)'));
+          await page.locator('section').evaluate(el=>el.setAttribute('aria-label','Benutzerstatus und Einstellungen'));
+          const localized=await observe();
+          assert.equal(localized.success,true,JSON.stringify(localized));
+          assert.equal(localized.conversationId,result.conversationId);
+          assert.equal(localized.threadKey,result.threadKey);
+          assert.deepEqual(localized.messages,result.messages);
+
+          await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
+          await page.locator('#message .contents img').evaluate(el=>el.setAttribute('src','/assets/embed/avatars/3.png'));
+          const defaultAvatars=await observe();
+          assert.equal(defaultAvatars.messages[0].direction,'incoming','a shared Discord default avatar does not make a different author outgoing');
+          let advanced=advanceChatSession(createChatSession({threadKey:result.threadKey}),defaultAvatars);
           await page.locator('#wave').evaluate(el=>el.textContent='Changed hover action');
           const afterHover=await observe();
           assert.deepEqual(afterHover.messages,result.messages,'message actions do not alter observed content');
@@ -201,16 +216,20 @@ for (const [kind, engine, AgentClass, policy] of [
 
           await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
             <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1002"><div class="contents">
-              <img src="https://cdn.discordapp.com/avatars/11/self.webp?size=160"><h3><span id="message-username-1002"><span data-text="WebBrain">WebBrain</span></span><time id="message-timestamp-1002" datetime="2026-09-29T01:01:00.000Z"></time></h3>
+              <img src="/assets/embed/avatars/3.png"><h3><span id="message-username-1002"><span data-text="WebBrain">WebBrain</span></span><time id="message-timestamp-1002" datetime="2026-09-29T01:01:00.000Z"></time></h3>
               <div id="message-content-1002">My answer</div></div></div></li>
             <li><div role="article" data-list-item-id="chat-messages___chat-messages-999-1003"><div id="message-content-1003">Wrong channel</div></div></li>
             <li><div role="article" class="isSystemMessage_fixture" data-list-item-id="chat-messages___chat-messages-456-1004"><div id="message-content-1004">A member joined</div></div></li>`));
           const afterSend=await observe();
           assert.deepEqual(afterSend.messages.map(item=>item.id),['discord:456:1001','discord:456:1002']);
           assert.equal(afterSend.messages[1].direction,'outgoing');
-          advanced=advanceChatSession(advanced.session,afterSend);
+          const pending=markChatSendPending(advanced.session,{
+            ok:true,messageKey:'test-pending',threadKey:result.threadKey,text:'My answer',
+          });
+          advanced=advanceChatSession(pending,afterSend);
           assert.equal(advanced.newMessages[0].direction,'outgoing');
           assert.equal(advanced.session.state,'we_responded');
+          assert.equal(advanced.session.pendingOutbound,null,'self-authored default-avatar message clears pending send');
 
           await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
             <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1005">
@@ -222,6 +241,18 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(afterReply.messages[2].direction,'incoming');
           advanced=advanceChatSession(advanced.session,afterReply);
           assert.deepEqual(advanced.newMessages.map(item=>item.id),['discord:456:1005']);
+          assert.equal(advanced.nextAction,'reply');
+          await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
+            <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1006"><div class="contents">
+              <img src="/assets/embed/avatars/3.png"><h3><span id="message-username-1006"><span data-text="Ficsit">Ficsit</span></span><time id="message-timestamp-1006" datetime="2026-09-29T01:03:00.000Z"></time></h3>
+              <div id="message-content-1006"></div></div><div id="message-accessories-1006"><div class="attachment_fixture"><img width="64" height="64" alt="support-error.png" src="/assets/support-error.png"></div>
+              <div role="img" aria-label="Sticker, Wave" style="display:block;width:24px;height:24px"></div><div class="embedTitle_fixture">Build error report</div><div class="embedDescription_fixture">Setup fails on startup</div></div></div></li>`));
+          const afterAttachment=await observe();
+          assert.equal(afterAttachment.messages[3].direction,'incoming');
+          assert.equal(afterAttachment.messages[3].text,
+            'Attachment: support-error.png\nAttachment: Sticker, Wave\nAttachment: Build error report\nAttachment: Setup fails on startup');
+          advanced=advanceChatSession(advanced.session,afterAttachment);
+          assert.deepEqual(advanced.newMessages.map(item=>item.id),['discord:456:1006']);
           assert.equal(advanced.nextAction,'reply');
           await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.replaceChildren());
           assert.equal((await observe()).success,true);

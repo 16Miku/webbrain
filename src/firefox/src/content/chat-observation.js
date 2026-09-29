@@ -138,20 +138,22 @@
   const discordChannel = (composer) => {
     if (!composer || !/^(?:www\.)?discord\.com$/.test(window.location?.hostname || '')) return null;
     const route = /^\/channels\/(\d+)\/(\d+)\/?$/.exec(window.location?.pathname || '');
-    const name = /^Message #(.+)$/.exec(attribute(composer, 'aria-label'))?.[1];
-    if (!route || !name || !composer.matches?.('[data-slate-editor="true"][contenteditable="true"][role="textbox"]')) return null;
+    if (!route || !composer.matches?.('[data-slate-editor="true"][contenteditable="true"][role="textbox"]')) return null;
     const root = composer.closest('main,[role="main"]');
-    if (!root || attribute(root, 'aria-label') !== `${name} (channel)` || !visible(root)) return null;
-    const transcript = query(root, '[role="list"],ol,ul').find(node =>
-      attribute(node, 'aria-label') === `Messages in ${name}` && visible(node) && !contains(node, composer));
+    if (!root || !visible(root)) return null;
+    const transcript = query(root, '[data-list-id="chat-messages"]').find(node =>
+      visible(node) && !contains(node, composer));
     const channelLink = query(document, 'nav a[href],[role="navigation"] a[href]').find(node => {
       try {
         const url = new URL(attribute(node, 'href'), window.location.href);
         return visible(node) && attribute(node, 'aria-current') === 'page' && url.origin === window.location.origin
-          && url.pathname.replace(/\/$/, '') === `/channels/${route[1]}/${route[2]}`
-          && attribute(node, 'aria-label') === `${name} (text channel)`;
+          && url.pathname.replace(/\/$/, '') === `/channels/${route[1]}/${route[2]}`;
       } catch { return false; }
     });
+    const name = /^Message #(.+)$/.exec(attribute(composer, 'aria-label'))?.[1]
+      || /^Messages in (.+)$/.exec(attribute(transcript, 'aria-label'))?.[1]
+      || /^(.+) \(channel\)$/.exec(attribute(root, 'aria-label'))?.[1]
+      || `channel-${route[2]}`;
     return transcript && channelLink
       ? { root, transcript, name, channelId: route[2], id: `discord:${route[1]}:${route[2]}` }
       : null;
@@ -280,10 +282,52 @@
     return normalizeText(read(content));
   };
 
+  const discordAttachmentDescriptions = (row, messageId) => {
+    const accessories = query(row, `[id="message-accessories-${messageId}"]`)[0];
+    if (!accessories) return [];
+    const reactions = query(accessories, `[id="message-reactions-${messageId}"]`)[0];
+    const selectors = [
+      '[role="img"][aria-label]',
+      'img[alt]',
+      '[data-filename]',
+      '[data-name]',
+      '[class*="fileName"]',
+      '[class*="filename"]',
+      '[class*="embedTitle"]',
+      '[class*="embedDescription"]',
+      'a[href*="/attachments/"]',
+      'a[href*="/ephemeral-attachments/"]',
+    ];
+    const seen = new Set();
+    const descriptions = [];
+    for (const node of queryMany(accessories, selectors)) {
+      if (!visible(node) || (reactions && contains(reactions, node))) continue;
+      const labelledMedia = node.closest?.('[role="img"][aria-label]');
+      if (labelledMedia && labelledMedia !== node) continue;
+      const value = compact(
+        attribute(node, 'aria-label')
+          || attribute(node, 'alt')
+          || attribute(node, 'title')
+          || attribute(node, 'data-filename')
+          || attribute(node, 'data-name')
+          || node.innerText
+          || node.textContent,
+        240,
+      );
+      const key = canonicalText(value);
+      if (!value || seen.has(key)) continue;
+      seen.add(key);
+      descriptions.push(value);
+    }
+    return descriptions;
+  };
+
   const collectDiscordMessages = (channel) => {
-    const panel = query(document, 'section[aria-label="User status and settings"]')[0];
-    const ownAvatarId = discordAvatarUserId(query(panel, 'img[src*="/avatars/"]')[0]);
-    const ownName = compact(query(panel, '[class*="panelTitle"]')[0]?.textContent, 240);
+    const account = query(document, '[class*="accountPopoutButtonWrapper"]')[0]?.parentElement;
+    const ownAvatarId = discordAvatarUserId(query(account, 'img[src*="/avatars/"]')[0]);
+    const ownNames = new Set(query(account, '[class*="panelTitle"],[class*="hovered"]')
+      .map(node => canonicalText(node.textContent))
+      .filter(Boolean));
     const rows = query(channel.transcript, '[role="article"][data-list-item-id]');
     const messages = [];
     let previousAuthor = '';
@@ -301,14 +345,16 @@
         continue;
       }
       const content = query(row, `[id="message-content-${messageId}"]`)[0];
-      const body = discordMessageText(content);
+      const text = discordMessageText(content);
+      const attachments = discordAttachmentDescriptions(row, messageId);
+      const body = [text, ...attachments.map(value => `Attachment: ${value}`)].filter(Boolean).join('\n');
       const author = compact(attribute(username, 'data-text') || username?.textContent, 240)
         || (!username ? previousAuthor : '');
       const avatar = username?.closest('h3')?.parentElement?.querySelector('img[src]');
       const avatarId = discordAvatarUserId(avatar);
       let direction = 'unknown';
       if (ownAvatarId && avatarId) direction = ownAvatarId === avatarId ? 'outgoing' : 'incoming';
-      else if (author && ownName && author !== ownName) direction = 'incoming';
+      else if (author && ownNames.size) direction = ownNames.has(canonicalText(author)) ? 'outgoing' : 'incoming';
       else if (!username) direction = previousDirection;
       previousAuthor = author;
       previousDirection = direction;
