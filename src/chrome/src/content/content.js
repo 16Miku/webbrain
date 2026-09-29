@@ -5873,6 +5873,75 @@
         }
       };
 
+      const verifiedDiscordManagementControl = (clicked) => {
+        if (params.adapterName !== 'discord'
+            || !/^(?:www\.)?discord\.com$/.test(location.hostname)
+            || !/^\/channels\/\d+(?:\/\d+)?\/?$/.test(location.pathname)) return false;
+        const control = _composedClosestElement(clicked,
+          'button,a[href],input,select,textarea,[role="textbox"],[role="button"],[role="menuitem"],[role="tab"],[role="switch"],[role="radio"],[role="checkbox"]');
+        if (!control || !visible(control) || control.disabled
+            || control.getAttribute('aria-disabled') === 'true'
+            || _composedClosestElement(control,
+              'article,[role="log"],[data-message-id],[data-list-item-id^="chat-messages"]')) return false;
+        const label = compact(control.getAttribute('aria-label') || control.innerText || control.textContent);
+        const messageCommit = /(?:^|[^\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\p{L}]|$)/iu;
+        const actionLabels = [control.getAttribute('aria-label'), control.getAttribute('title'),
+          ...(!editable(control) ? [control.innerText || control.textContent, control.value] : [])];
+        if (actionLabels.some(value => messageCommit.test(value || ''))) return false;
+        const modal = _findTopmostBlockingModal();
+        if (modal && !_isComposedAncestor(modal, control)) return false;
+        const rect = control.getBoundingClientRect();
+        if (!_isComposedAncestor(control, _shadowAwareElementFromPoint(
+          rect.left + rect.width / 2, rect.top + rect.height / 2))) return false;
+        const dialog = _composedClosestElement(control, 'dialog,[role="dialog"],[role="alertdialog"]');
+        if (dialog) {
+          // Discord keeps the channel composer mounted behind its settings.
+          // Only the owning management dialog is a non-message surface.
+          if (dialog.querySelector('[data-message-id],[data-list-id="chat-messages"],[role="textbox"][aria-label^="Message " i],[role="log"] article')) return false;
+          const dialogName = compact(dialog.getAttribute('aria-label'));
+          const creation = /^(?:Create Channel|Create Category)$/i.test(dialogName)
+            && Array.from(dialog.querySelectorAll('h1,h2,[role="heading"]'))
+              .some(el => visible(el) && compact(el.textContent) === dialogName)
+            && Array.from(dialog.querySelectorAll('input[type="text"],input:not([type])'))
+              .some(el => visible(el));
+          const settingsNav = dialog.querySelector('nav [role="tablist"],[role="navigation"] [role="tablist"]');
+          const serverSettings = !!settingsNav
+            && !!settingsNav.querySelector('[role="tab"][aria-label="Manage Roles"]')
+            && Array.from(settingsNav.querySelectorAll('[role="tab"]'))
+              .some(el => compact(el.textContent) === 'Enable Community' || compact(el.textContent) === 'Safety Setup');
+          const channelSettings = dialog.getAttribute('data-layer') === 'CHANNEL_SETTINGS'
+            && dialogName === 'Channel Settings' && !!settingsNav
+            && ['Overview', 'Permissions'].every(name => Array.from(settingsNav.querySelectorAll('[role="tab"]'))
+              .some(el => compact(el.getAttribute('aria-label') || el.textContent) === name));
+          if (!channelSettings && dialog.querySelector('[data-slate-editor]')) return false;
+          return (creation || serverSettings || channelSettings) && !control.hasAttribute('form');
+        }
+        if (editable(control) || control.form || control.hasAttribute('form')
+            || _composedClosestElement(control, 'form')) return false;
+        const menu = _composedClosestElement(control, '[role="menu"]');
+        if (menu) {
+          const menuActions = {
+            'guild-header-popout-settings': 'Server Settings',
+            'guild-header-popout-create-channel': 'Create Channel',
+            'guild-header-popout-create-category': 'Create Category',
+          };
+          return menu.id === 'guild-header-popout'
+            && control.getAttribute('role') === 'menuitem'
+            && menuActions[control.id] === label;
+        }
+        const nav = _composedClosestElement(control, 'nav,[role="navigation"]');
+        if (!nav || !/\(server\)$/.test(compact(nav.getAttribute('aria-label')))) return false;
+        if (control.matches('a[href]')) {
+          const destination = new URL(control.getAttribute('href'), location.href);
+          return destination.origin === location.origin && !destination.search && !destination.hash
+            && !destination.username && !destination.password
+            && /^\/channels\/\d+\/\d+\/?$/.test(destination.pathname);
+        }
+        return /^(?:Create Channel|Edit Channel|Create Category)$/i.test(label)
+          || (control.hasAttribute('aria-expanded')
+            && (/[, ]server actions$/i.test(label) || /\(category\)$/.test(label)));
+      };
+
       const verifiedLinkedInPostEntry = (clicked) => {
         if (params.adapterName !== 'linkedin' || !/^\/feed\/?$/.test(location.pathname)) return false;
         const button = _composedClosestElement(clicked, 'button,[role="button"]');
@@ -5948,6 +6017,15 @@
 
       let composer = null;
       let messageSend = null;
+      const discordManagementTarget = tool === 'press_keys' && String(args.key) === 'Enter'
+        ? active : (targetResolved ? target : null);
+      if (!observationOnly && ['click', 'click_ax', 'set_field', 'press_keys'].includes(tool)
+          && verifiedDiscordManagementControl(discordManagementTarget)) {
+        return {
+          success: true, messageSend: false, conclusive: true,
+          nonMessagingTarget: true, reasonCode: 'non_messaging_target', identityCandidates: [],
+        };
+      }
       if (observationOnly) {
         composer = layoutComposer;
       } else if (tool === 'press_keys') {

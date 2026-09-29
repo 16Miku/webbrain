@@ -17599,6 +17599,7 @@ const ADAPTERS = [
   {
     name: 'discord',
     category: 'general',
+    messaging: { verifyActiveRecipient: true },
     matches: (url) => /^https?:\/\/(www\.)?discord\.com\/(channels|app)/.test(url) || /^https?:\/\/(www\.)?discord\.com\/$/.test(url),
     notes: `
 - Three-pane layout: Server list (icons, left-most rail) → Channel list (per-server, second rail) → Channel chat (main pane). Selecting a server reveals its channels; selecting a channel loads its message history.

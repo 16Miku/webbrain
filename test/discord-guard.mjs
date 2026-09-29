@@ -1,0 +1,234 @@
+import { strict as assert } from 'node:assert';
+import { readFile } from 'node:fs/promises';
+import { test } from 'node:test';
+import { chromium, firefox } from 'playwright';
+import { Agent } from '../src/chrome/src/agent/agent.js';
+import { Agent as FirefoxAgent } from '../src/firefox/src/agent/agent.js';
+import { getMessageRecipientGuardPolicy } from '../src/chrome/src/agent/adapters.js';
+import { getMessageRecipientGuardPolicy as firefoxPolicy } from '../src/firefox/src/agent/adapters.js';
+import { advanceChatSession, createChatSession } from '../src/chrome/src/agent/chat-workflow.js';
+
+const url = 'https://discord.com/channels/123/456';
+const fixture = `<!doctype html><style>
+body {margin:0;font:16px sans-serif} nav {width:270px} button,[role=button],[role=menuitem],a {display:block;padding:8px}
+ol {min-height:30px} main {position:fixed;left:320px;top:0;width:550px;height:700px}
+#composer {position:fixed;left:330px;bottom:20px;width:420px;min-height:50px}
+#send {position:fixed;left:760px;bottom:20px}
+[role=dialog] {position:fixed;inset:40px;background:white;z-index:100;padding:20px}
+[role=dialog] main {position:static;height:auto} [role=menu] {position:fixed;left:20px;top:250px;background:white;z-index:10}
+[hidden] {display:none!important}
+</style><nav aria-label="Test (server)">
+<header><div id="server" role="button" tabindex="0" aria-label="Test, server actions" aria-expanded="false"><h2>Test</h2></div></header>
+<button id="create" type="button" aria-label="Create Channel">+</button>
+<button id="category" type="button" aria-expanded="true">Text Channels (category)</button>
+<a id="channel" href="/channels/123/456" aria-label="general (text channel)" aria-current="page">general</a>
+<button id="edit" type="button" aria-label="Edit Channel">Edit Channel</button>
+<button id="nav-send" type="button">Send message</button></nav>
+<section aria-label="User status and settings"><div class="panelTitleContainer_fixture">WebBrain</div><img src="https://cdn.discordapp.com/avatars/11/self.webp?size=56"></section>
+<main aria-label="general (channel)"><h2>general chat</h2><ol role="list" aria-label="Messages in general" data-list-id="chat-messages">
+<li><div id="message" role="article" data-list-item-id="chat-messages___chat-messages-456-1001"><div class="contents"><img src="https://cdn.discordapp.com/avatars/22/other.webp?size=160"><h3><span id="message-username-1001"><span data-text="Ficsit">Ficsit</span></span><time id="message-timestamp-1001" datetime="2026-09-29T01:00:00.000Z"></time></h3><div id="message-content-1001">Hello from the fixture</div></div><div role="group" aria-label="Message Actions"><button id="wave">Wave to say hi!</button><button id="lookalike" aria-expanded="false">Test, server actions</button></div></div></li>
+</ol><div id="composer" role="textbox" aria-label="Message #general" contenteditable="true" data-slate-editor="true">Draft</div><button id="send" type="button">Send</button></main>`;
+const call = (page, action, params={}) => page.evaluate(({action,params}) => new Promise(resolve => {
+  const result = window.__wb_handler({target:'content',action,params},{},resolve);
+  if (result !== true && result !== undefined) resolve(result);
+}), {action,params});
+
+for (const [kind, engine, AgentClass, policy] of [
+  ['chrome',chromium,Agent,getMessageRecipientGuardPolicy],
+  ['firefox',firefox,FirefoxAgent,firefoxPolicy],
+]) {
+  test(`${kind}: Discord management and observation regressions`, async t => {
+    assert.deepEqual(policy(url), {adapterName:'discord',verifyActiveRecipient:true});
+    assert.deepEqual(policy('https://discord.com/channels/@me/456'), {adapterName:'discord',verifyActiveRecipient:true});
+    assert.notEqual(policy('https://discord.com.evil.example/channels/123/456')?.adapterName,'discord');
+    const browser = await engine.launch();
+    const sources = await Promise.all(['accessibility-tree.js','rich-text-toolbar-heuristic.js','chat-observation.js','content.js']
+      .map(file=>readFile(new URL(`../src/${kind}/src/content/${file}`,import.meta.url),'utf8')));
+    const setup = async (extra='') => {
+      const page=await browser.newPage({viewport:{width:1000,height:800}});
+      await page.route('**/*',route=>route.fulfill({contentType:'text/html',body:fixture+extra}));
+      await page.addInitScript(() => {
+        const runtime={onMessage:{addListener:fn=>{window.__wb_handler=fn;}},getURL:path=>path};
+        window.chrome={runtime};window.browser={runtime};
+        window.fixtureClicks=[];
+        document.addEventListener('click',event=>{event.preventDefault();window.fixtureClicks.push(event.target.closest('[id]')?.id);});
+      });
+      await page.goto(url);
+      for (const source of sources) await page.addScriptTag({content:source});
+      const agent=new AgentClass({getActive:()=>({supportsVision:false})});
+      agent._messageRecipientContentProbe=(_,params)=>call(page,'probe_message_recipient_guard',params);
+      const guard=async(tool,args)=>{
+        if(tool==='set_field' && args.selector){
+          await call(page,'get_accessibility_tree',{filter:'all',maxChars:30000});
+          args={...args,ref_id:await page.locator(args.selector).evaluate(el=>window.__wb_ax_ref(el))};
+        }
+        return agent._messageRecipientGuardBlock(1,tool,args,page.url());
+      };
+      const probe=(tool,args)=>call(page,'probe_message_recipient_guard',{tool,args,adapterName:'discord'});
+      return {page,guard,probe};
+    };
+    try {
+      await t.test('server menu works by selector, text, AX ref, index and coordinates with or without a composer',async()=>{
+        const {page,guard,probe}=await setup();
+        try {
+          for (const withComposer of [true,false]) {
+            if(!withComposer) await page.locator('#composer').evaluate(el=>el.remove());
+            await call(page,'get_accessibility_tree',{filter:'all',maxChars:30000});
+            const ref=await page.locator('#server').evaluate(el=>window.__wb_ax_ref(el));
+            const items=await call(page,'get_interactive_elements');
+            const index=items.findIndex(el=>el.id==='server');
+            assert.ok(index>=0);
+            const rect=await page.locator('#server').boundingBox();
+            for (const [tool,args] of [['click',{selector:'#server'}],['click',{text:'Test'}],
+              ['click_ax',{ref_id:ref}],['click',{index}],['click',{x:rect.x+rect.width/2,y:rect.y+rect.height/2}]]) {
+              const classified=await probe(tool,args);
+              assert.equal(classified.nonMessagingTarget,true,JSON.stringify({tool,args,classified}));
+              assert.equal(await guard(tool,args),null);
+              const result=await call(page,tool,args);
+              assert.equal(result.success,true,JSON.stringify(result));
+            }
+          }
+          assert.equal((await page.evaluate(()=>window.fixtureClicks)).filter(id=>id==='server').length,10);
+          for(const selector of ['#create','#category','#channel','#edit']) assert.equal(await guard('click',{selector}),null);
+        } finally {await page.close();}
+      });
+      await t.test('only the known server menu entries bypass message classification',async()=>{
+        const {page,guard,probe}=await setup(`<div role="menu" id="guild-header-popout">
+<div role="menuitem" id="guild-header-popout-settings">Server Settings</div>
+<div role="menuitem" id="guild-header-popout-create-channel">Create Channel</div>
+<div role="menuitem" id="guild-header-popout-create-category">Create Category</div>
+<div role="menuitem" id="unknown">Forward</div></div>`);
+        try {
+          for(const id of ['settings','create-channel','create-category']) assert.equal(await guard('click',{selector:`#guild-header-popout-${id}`}),null);
+          assert.equal((await guard('click',{selector:'#unknown'}))?.noDispatch,true);
+          await page.locator('#guild-header-popout-settings').evaluate(el=>el.textContent='Send invitation');
+          assert.notEqual((await probe('click',{selector:'#guild-header-popout-settings'})).nonMessagingTarget,true);
+        } finally {await page.close();}
+      });
+      await t.test('creation dialogs allow field submission and Enter while the channel composer is still mounted',async()=>{
+        for(const name of ['Create Channel','Create Category']) {
+          const {page,guard}=await setup(`<div role="dialog" aria-modal="true" aria-label="${name}"><div role="log"></div><div role="log"></div><h1>${name}</h1>
+<form><input id="name" type="text" aria-label="Name" value="test"><button id="save" type="submit">${name}</button><button id="cancel" type="button">Cancel</button></form></div>`);
+          try {
+            assert.equal(await guard('click',{selector:'#save'}),null);
+            assert.equal(await guard('click',{selector:'#cancel'}),null);
+            assert.equal(await guard('set_field',{selector:'#name',value:'test',submit:true}),null);
+            await page.locator('#name').focus();
+            assert.equal(await guard('press_keys',{key:'Enter'}),null);
+            assert.equal((await guard('click',{selector:'#server'}))?.noDispatch,true,'background menu stays blocked');
+          } finally {await page.close();}
+        }
+      });
+      await t.test('server settings are recognized by their own navigation, including non-message textareas',async()=>{
+        const {page,guard}=await setup(`<div role="dialog" aria-modal="true"><nav><div role="tablist"><div role="tab" id="roles" aria-label="Manage Roles">Roles</div><div role="tab">Safety Setup</div></div></nav><main><textarea id="description">Server description</textarea><button id="save">Save Changes</button></main><button id="test-send">Send test message</button></div>`);
+        try {
+          for(const selector of ['#roles','#description','#save']) assert.equal(await guard('click',{selector}),null);
+          assert.equal(await guard('set_field',{selector:'#description',value:'new',submit:true}),null);
+          assert.equal((await guard('click',{selector:'#test-send'}))?.noDispatch,true);
+        } finally {await page.close();}
+      });
+      await t.test('channel settings allow the Slate topic editor but not a message composer',async()=>{
+        const {page,guard,probe}=await setup(`<div role="dialog" data-layer="CHANNEL_SETTINGS" aria-modal="true" aria-label="Channel Settings">
+<nav><div role="tablist"><div role="tab">Overview</div><div id="permissions" role="tab">Permissions</div></div></nav>
+<div role="tabpanel"><input type="text" aria-label="Channel Name"><div id="topic" role="textbox" contenteditable="true" data-slate-editor="true" aria-label="Let everyone know how to use this channel!">Send bug reports here</div><button id="save">Save Changes</button><input id="input-send" type="submit" value="Send"></div></div>`);
+        try {
+          for(const selector of ['#permissions','#topic','#save']) assert.equal(await guard('click',{selector}),null);
+          assert.equal(await guard('set_field',{selector:'#topic',value:'new topic',submit:true}),null);
+          await page.locator('#topic').focus();
+          assert.equal(await guard('press_keys',{key:'Enter'}),null);
+          assert.notEqual((await probe('click',{selector:'#input-send'})).nonMessagingTarget,true);
+          await page.locator('#topic').evaluate(el=>el.setAttribute('aria-label','Message #general'));
+          assert.notEqual((await probe('click',{selector:'#save'})).nonMessagingTarget,true);
+        } finally {await page.close();}
+      });
+      await t.test('sends, message actions, lookalikes and foreign origins remain protected',async()=>{
+        const {page,guard,probe}=await setup();
+        try {
+          for(const selector of ['#send','#nav-send','#wave','#lookalike']) {
+            assert.notEqual((await probe('click',{selector})).nonMessagingTarget,true);
+            assert.equal((await guard('click',{selector}))?.noDispatch,true);
+          }
+          await page.locator('#composer').focus();
+          assert.equal((await guard('press_keys',{key:'Enter'}))?.noDispatch,true);
+          assert.equal((await guard('set_field',{selector:'#composer',value:'Draft',submit:true}))?.noDispatch,true);
+          await page.locator('#server').evaluate(el=>el.setAttribute('aria-disabled','true'));
+          assert.notEqual((await probe('click',{selector:'#server'})).nonMessagingTarget,true);
+          await page.locator('#server').evaluate(el=>{
+            el.removeAttribute('aria-disabled');
+            const overlay=document.createElement('div');overlay.id='overlay';
+            overlay.style='position:fixed;inset:0;background:white;z-index:999';document.body.append(overlay);
+          });
+          assert.notEqual((await probe('click',{selector:'#server'})).nonMessagingTarget,true,'covered controls fail closed');
+          await page.goto('https://discord.com.evil.example/channels/123/456');
+          for(const source of sources) await page.addScriptTag({content:source});
+          assert.notEqual((await probe('click',{selector:'#server'})).nonMessagingTarget,true,'origin is checked even with an adapter hint');
+          await page.locator('#composer').focus();
+          const result=await page.evaluate(()=>window.__wb_observe_chat_dom({}));
+          assert.equal(result.success,false);
+        } finally {await page.close();}
+      });
+      await t.test('unknown dialogs and chat editors inside settings never gain management classification',async()=>{
+        const {page,probe}=await setup(`<div role="dialog" aria-modal="true" aria-label="Forward"><h1>Forward</h1><input type="text"><button id="forward">Create Channel</button></div>`);
+        try {
+          assert.notEqual((await probe('click',{selector:'#forward'})).nonMessagingTarget,true);
+          await page.locator('[role=dialog]').evaluate(el=>{
+            el.setAttribute('aria-label','Create Channel');el.querySelector('h1').textContent='Create Channel';
+            const editor=document.createElement('div');editor.setAttribute('data-slate-editor','true');el.append(editor);
+          });
+          assert.notEqual((await probe('click',{selector:'#forward'})).nonMessagingTarget,true);
+        } finally {await page.close();}
+      });
+      await t.test('channel observation recognizes the transcript, empty channels and stable server/channel identity',async()=>{
+        const {page}=await setup();
+        try {
+          await page.locator('#composer').focus();
+          const observe=()=>page.evaluate(()=>window.__wb_observe_chat_dom({}));
+          const result=await observe();
+          assert.equal(result.success,true,JSON.stringify(result));
+          assert.equal(result.conversationId,'discord:123:456');
+          assert.equal(result.threadKey,'dom:discord:123:456');
+          assert.equal(result.conversationIdentity,'#general');
+          assert.deepEqual(result.messages,[{
+            id:'discord:456:1001', direction:'incoming', text:'Hello from the fixture',
+            author:'Ficsit', timestamp:'2026-09-29T01:00:00.000Z',
+          }]);
+          let advanced=advanceChatSession(createChatSession({threadKey:result.threadKey}),result);
+          await page.locator('#wave').evaluate(el=>el.textContent='Changed hover action');
+          const afterHover=await observe();
+          assert.deepEqual(afterHover.messages,result.messages,'message actions do not alter observed content');
+          advanced=advanceChatSession(advanced.session,afterHover);
+          assert.deepEqual(advanced.newMessages,[],'hover does not create a new message');
+
+          await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
+            <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1002"><div class="contents">
+              <img src="https://cdn.discordapp.com/avatars/11/self.webp?size=160"><h3><span id="message-username-1002"><span data-text="WebBrain">WebBrain</span></span><time id="message-timestamp-1002" datetime="2026-09-29T01:01:00.000Z"></time></h3>
+              <div id="message-content-1002">My answer</div></div></div></li>
+            <li><div role="article" data-list-item-id="chat-messages___chat-messages-999-1003"><div id="message-content-1003">Wrong channel</div></div></li>
+            <li><div role="article" class="isSystemMessage_fixture" data-list-item-id="chat-messages___chat-messages-456-1004"><div id="message-content-1004">A member joined</div></div></li>`));
+          const afterSend=await observe();
+          assert.deepEqual(afterSend.messages.map(item=>item.id),['discord:456:1001','discord:456:1002']);
+          assert.equal(afterSend.messages[1].direction,'outgoing');
+          advanced=advanceChatSession(advanced.session,afterSend);
+          assert.equal(advanced.newMessages[0].direction,'outgoing');
+          assert.equal(advanced.session.state,'we_responded');
+
+          await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.insertAdjacentHTML('beforeend',`
+            <li><div role="article" data-list-item-id="chat-messages___chat-messages-456-1005">
+              <div id="message-reply-context-1005"><div id="message-content-1002">My answer</div></div>
+              <div class="contents"><img src="https://cdn.discordapp.com/avatars/22/other.webp?size=160"><h3><span id="message-username-1005"><span data-text="Ficsit">Ficsit</span></span><time id="message-timestamp-1005" datetime="2026-09-29T01:02:00.000Z"></time></h3>
+              <div id="message-content-1005">A new reply <span role="button"><img class="emoji" alt="🚀" src="/emoji.svg"></span></div></div><div role="group">Reply Forward Add Reaction</div></div></li>`));
+          const afterReply=await observe();
+          assert.equal(afterReply.messages[2].text,'A new reply 🚀');
+          assert.equal(afterReply.messages[2].direction,'incoming');
+          advanced=advanceChatSession(advanced.session,afterReply);
+          assert.deepEqual(advanced.newMessages.map(item=>item.id),['discord:456:1005']);
+          assert.equal(advanced.nextAction,'reply');
+          await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.replaceChildren());
+          assert.equal((await observe()).success,true);
+          await page.locator('#channel').evaluate(el=>el.setAttribute('href','/channels/123/999'));
+          assert.equal((await observe()).success,false,'stale channel identity fails closed');
+        } finally {await page.close();}
+      });
+    } finally {await browser.close();}
+  });
+}

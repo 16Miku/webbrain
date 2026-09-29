@@ -135,8 +135,32 @@
     return attributePresent && !normalized ? true : null;
   };
 
+  const discordChannel = (composer) => {
+    if (!composer || !/^(?:www\.)?discord\.com$/.test(window.location?.hostname || '')) return null;
+    const route = /^\/channels\/(\d+)\/(\d+)\/?$/.exec(window.location?.pathname || '');
+    const name = /^Message #(.+)$/.exec(attribute(composer, 'aria-label'))?.[1];
+    if (!route || !name || !composer.matches?.('[data-slate-editor="true"][contenteditable="true"][role="textbox"]')) return null;
+    const root = composer.closest('main,[role="main"]');
+    if (!root || attribute(root, 'aria-label') !== `${name} (channel)` || !visible(root)) return null;
+    const transcript = query(root, '[role="list"],ol,ul').find(node =>
+      attribute(node, 'aria-label') === `Messages in ${name}` && visible(node) && !contains(node, composer));
+    const channelLink = query(document, 'nav a[href],[role="navigation"] a[href]').find(node => {
+      try {
+        const url = new URL(attribute(node, 'href'), window.location.href);
+        return visible(node) && attribute(node, 'aria-current') === 'page' && url.origin === window.location.origin
+          && url.pathname.replace(/\/$/, '') === `/channels/${route[1]}/${route[2]}`
+          && attribute(node, 'aria-label') === `${name} (text channel)`;
+      } catch { return false; }
+    });
+    return transcript && channelLink
+      ? { root, transcript, name, channelId: route[2], id: `discord:${route[1]}:${route[2]}` }
+      : null;
+  };
+
   const activeRoot = (composer) => {
     if (!composer) return null;
+    const channel = discordChannel(composer);
+    if (channel) return channel.root;
     const chain = parentChain(composer);
     const explicit = chain.find(node => THREAD_ID_ATTRIBUTES.some(name => attribute(node, name))
       || CHAT_ROOT_SELECTORS.some(selector => {
@@ -161,6 +185,8 @@
   };
 
   const markerFor = (composer, root) => {
+    const channel = discordChannel(composer);
+    if (channel?.root === root) return { value: channel.id };
     const fromComposer = firstAttribute(parentChain(composer), THREAD_ID_ATTRIBUTES);
     if (fromComposer) return fromComposer;
     const activeMarker = queryMany(root, THREAD_ID_ATTRIBUTES.map(name => `[${name}]`))
@@ -173,6 +199,8 @@
   };
 
   const identityFor = (composer, root, probe) => {
+    const channel = discordChannel(composer);
+    if (channel?.root === root) return `#${channel.name}`;
     const explicit = firstAttribute(parentChain(composer), IDENTITY_ATTRIBUTES)
       || firstAttribute([root], IDENTITY_ATTRIBUTES)
       || firstAttribute(queryMany(root, IDENTITY_ATTRIBUTES.map(name => `[${name}]`)), IDENTITY_ATTRIBUTES);
@@ -228,7 +256,78 @@
     }
   };
 
+  const discordAvatarUserId = (node) => {
+    try {
+      const url = new URL(attribute(node, 'src'), window.location.href);
+      return url.hostname === 'cdn.discordapp.com'
+        ? /^\/avatars\/(\d+)\//.exec(url.pathname)?.[1] || ''
+        : '';
+    } catch { return ''; }
+  };
+
+  const discordMessageText = (content) => {
+    const read = (node) => {
+      if (node?.nodeType === 3) return node.nodeValue || '';
+      if (node?.nodeType !== 1 || node.hidden || attribute(node, 'aria-hidden') === 'true') return '';
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden') return '';
+      const tag = String(node.tagName || '').toLowerCase();
+      if (tag === 'br') return '\n';
+      if (tag === 'img') return node.matches?.('.emoji,[data-type="emoji"]') ? attribute(node, 'alt') : '';
+      const text = Array.from(node.childNodes || []).map(read).join('');
+      return /^(?:div|p|li|blockquote|pre)$/.test(tag) ? `${text}\n` : text;
+    };
+    return normalizeText(read(content));
+  };
+
+  const collectDiscordMessages = (channel) => {
+    const panel = query(document, 'section[aria-label="User status and settings"]')[0];
+    const ownAvatarId = discordAvatarUserId(query(panel, 'img[src*="/avatars/"]')[0]);
+    const ownName = compact(query(panel, '[class*="panelTitle"]')[0]?.textContent, 240);
+    const rows = query(channel.transcript, '[role="article"][data-list-item-id]');
+    const messages = [];
+    let previousAuthor = '';
+    let previousDirection = 'unknown';
+    for (const row of rows) {
+      const match = /^chat-messages___chat-messages-(\d+)-(\d+)$/.exec(attribute(row, 'data-list-item-id'));
+      if (!match || match[1] !== channel.channelId || !visible(row)) continue;
+      const messageId = match[2];
+      const usernameNode = query(row, `[id="message-username-${messageId}"]`)[0];
+      const username = query(usernameNode, '[data-text]')[0] || usernameNode;
+      const system = !username && /(?:^|\s)(?:isSystemMessage|systemMessage)/.test(String(row.className || ''));
+      if (system) {
+        previousAuthor = '';
+        previousDirection = 'unknown';
+        continue;
+      }
+      const content = query(row, `[id="message-content-${messageId}"]`)[0];
+      const body = discordMessageText(content);
+      const author = compact(attribute(username, 'data-text') || username?.textContent, 240)
+        || (!username ? previousAuthor : '');
+      const avatar = username?.closest('h3')?.parentElement?.querySelector('img[src]');
+      const avatarId = discordAvatarUserId(avatar);
+      let direction = 'unknown';
+      if (ownAvatarId && avatarId) direction = ownAvatarId === avatarId ? 'outgoing' : 'incoming';
+      else if (author && ownName && author !== ownName) direction = 'incoming';
+      else if (!username) direction = previousDirection;
+      previousAuthor = author;
+      previousDirection = direction;
+      if (!body) continue;
+      const timestamp = attribute(query(row, `[id="message-timestamp-${messageId}"]`)[0], 'datetime');
+      messages.push({
+        id: `discord:${channel.channelId}:${messageId}`,
+        direction,
+        text: body,
+        ...(author ? { author } : {}),
+        ...(timestamp ? { timestamp } : {}),
+      });
+    }
+    return messages.slice(-MAX_ITEMS);
+  };
+
   const collectMessages = (root, composer) => {
+    const channel = discordChannel(composer);
+    if (channel?.root === root) return collectDiscordMessages(channel);
     const candidates = queryMany(root, MESSAGE_SELECTORS)
       .filter(node => visible(node) && !ignoredMessageNode(node, composer))
       .map((node, index) => {
