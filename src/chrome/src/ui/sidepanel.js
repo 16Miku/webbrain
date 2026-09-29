@@ -896,6 +896,14 @@ function slashOptionIsDiscoverable(option) {
   return option?.unsupported !== true;
 }
 
+function slashOptionDescriptionHtml(command, option) {
+  const description = escapeHtml(t(option.descriptionKey));
+  if (command.value !== '/workflow' || !['--save', '--export', '--import'].includes(option.value)) {
+    return description;
+  }
+  return `${description} <a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">Workflow editor</a>`;
+}
+
 function slashOptionIsAvailable(option, selectedValues, selectedGroups) {
   return slashOptionIsDiscoverable(option)
     && !selectedValues.has(option.value)
@@ -1015,7 +1023,7 @@ function buildSlashCommandHelpHtml() {
     lines.push(`<code>${escapeHtml(command.usage)}</code> — ${escapeHtml(t(command.descriptionKey))}`);
     for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
       const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
-      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${slashOptionDescriptionHtml(command, option)}`);
     }
   }
   const shortcuts = t('sp.help.shortcuts_html');
@@ -1033,7 +1041,7 @@ function buildSlashCommandDetailHtml(command) {
   ];
   for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
     const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
-    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${slashOptionDescriptionHtml(command, option)}`);
   }
   return lines.join('<br>');
 }
