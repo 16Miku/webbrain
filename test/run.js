@@ -48831,6 +48831,20 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     );
     assert.equal(brailleBlankOptionTimeout.authorized, false, `${AgentClass.name}: braille blank safe_first option was accepted`);
 
+    for (const filler of ['\u115F', '\u1160', '\u3164', '\uFFA0']) {
+      await agent._recordClarificationAuthorization(tabId, 'user');
+      const fillerTimeout = await agent.executeTool(
+        tabId,
+        'clarify',
+        { question: 'Continue?', options: [filler], safe_first: true },
+        (type, data) => {
+          if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, filler, 'timeout');
+        },
+      );
+      assert.equal(fillerTimeout.authorized, false, `${AgentClass.name}: U+${filler.codePointAt(0).toString(16)} filler safe_first option was accepted`);
+      assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: filler timeout did not arm a guard`);
+    }
+
     await agent._recordClarificationAuthorization(tabId, 'user');
     const emojiOptionTimeout = await agent.executeTool(
       tabId,

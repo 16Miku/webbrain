@@ -30562,7 +30562,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const rawOptions = Array.isArray(args?.options) ? args.options.slice(0, 4) : [];
       const normalizedOptions = rawOptions.map(s => String(s).trim().slice(0, 200));
-      const hasVisibleOptionContent = option => /[\p{L}\p{N}\p{P}\p{S}]/u.test(option.replace(/[\p{Cf}\u2800]/gu, ''));
+      const hasVisibleOptionContent = option => /[\p{L}\p{N}\p{P}\p{S}]/u.test(option.replace(/[\p{Default_Ignorable_Code_Point}\u2800]/gu, ''));
       const options = normalizedOptions.every(hasVisibleOptionContent)
         ? normalizedOptions
         : [];
