@@ -4,6 +4,179 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [37.0.1] - 2026-09-29
+
+### Changed
+- Link workflow editor from workflow docs
+- Remove WebBrain Cloud footer link
+- Hide WebBrain Cloud homepage panel
+- Keep catalog icon guidance SVG-only
+- Use official ODS product logo
+- Guide WordPress editor recovery and preserve post type
+- Add ODS local provider support
+- Update discord-setup.md
+- Delete docs/memcode-memory-proposal.md
+- Update memcode-memory-proposal.md
+- test: align packaging checks with current rendering
+- Fix cloud clarification timeout state and deadline updates
+- fix: match imported workflow save state
+- fix: validate normalized workflow locators
+- fix: measure canonical workflow import size
+- fix: consume rejected saves and reserve import headroom
+- fix: block downloads after rejected blur edits
+- Add weighted CAPTCHA fallback across five providers
+- fix: stop shortcut save after invalid edits
+- fix: require at least one workflow step
+- fix: flag workflows that cannot be imported
+- test: isolate social submission gate fixture
+- fix: enforce workflow editor importer constraints
+- docs: add 37.0.0 changelog entry
+- fix: make workflow editor import-safe
+- build(deps): bump ip-address
+- 37
+- feat: link workflow editor from slash help
+- feat: add 2Captcha fallback provider
+- feat: add offline workflow editor
+- fix: reject invisible Unicode clarification options
+- fix: allow visible format characters in clarify options
+- fix: center horizontal scroll targets clear of side rails
+- fix: distinguish pinned and unstuck sticky controls
+- fix: preserve scroll for visible fixed-surface controls
+- fix: reject braille blank safe-first options
+- fix: mark ancestor pseudo-element covers as occluded
+- fix: fail closed for malformed safe-first options
+- fix: reject ancestor hits for trusted click fallback
+- fix: reject invisible safe-first options
+- fix: clear targets covered by unclassified fixed overlays
+- fix: bind safe-first to the declared first option
+- fix: clear floating fixed bars above covered targets
+- fix: detect ARIA toolbars and ignore modal-open page state
+- fix: clear stacked docked bars during interactions
+- fix: reject blank safe-first options
+- fix: bound visible layer metadata in page reads
+- fix: hoist nested modal surfaces only once
+- fix: preserve timeout guard across safe-first clarifications
+- fix: preserve docked controls and correct obstruction scroll
+- fix: keep timed-out sensitive choices unconfirmed
+- fix: expose layered surfaces alongside page text
+- fix: accept affirmative clarify timeout with safe_first flag
+- fix: handle clipped scrollers and shadow host occlusion
+- fix: handle overlapping content elements and docked headers (#3085)
+- fix: preserve text in mixed image clipboard payloads
+- fix: avoid duplicate clipboard images from files+items union
+- feat: paste images into chat from clipboard
+- Route managed Cloud captcha solving through broker
+- Report encrypted vault counts for storage stats
+- Delete README.es.md
+- Revise README.es.md for improved organization
+- Add Osaurus provider support
+- docs: propose opt-in MemCode memory architecture
+- Benchmark Spark X2.5 and MiniCPM5 Compact routing
+- Add GPT-6 Sol and Astra compatibility
+- Mark GPT-6 Luna Pro vision-capable
+- Wait for WebMCP preference before scheduled runs
+- Add GPT-6 Luna Pro compatibility
+- Clarify French WebMCP opt-out disclosure
+- fix: fail closed WebMCP hydration
+- feat: enable WebMCP by default
+- Preserve list continuation after empty bullet markers
+- Stop Markdown list scans at HTML blocks
+- Preserve nested Markdown fences in final assistant renders
+- Keep trailing blank outside quoted Markdown fences
+- Reprocess fences after Markdown container boundaries
+- Scan quoted Markdown list continuations
+- Handle empty ordered markers and thematic lines
+- Respect lazy ordered Markdown continuations
+- Bound lazy Markdown list scans
+- Scan lazy Markdown list continuations
+- Scope cached Markdown list continuations
+- Cache Markdown list continuations
+- Avoid duplicate Markdown list padding
+- Retain nested Markdown list indentation
+- Track innermost Markdown list padding
+- Detect nested empty Markdown list items
+- Track Markdown list continuation columns
+- Preserve tabbed Markdown list padding
+- Handle whitespace-only Markdown list items
+- Limit Markdown ordered list markers
+- Preserve Markdown quote continuation prefixes
+- Respect mixed Markdown quote boundaries
+- End Markdown quotes at blank boundaries
+- Honor implicit Markdown list padding
+- Preserve streamed alternate Markdown fences
+- Respect nested Markdown container indentation
+- Handle empty Markdown list fence containers
+- Honor visual Markdown list padding
+- Preserve indented Markdown list snippets
+- Parse nested Markdown list containers
+- Limit Markdown fence recovery to streams
+- Align Markdown fences in quoted tabs
+- Handle nested tabbed list fences
+- Validate nested Markdown fence closures
+- Index nested Markdown fence closers
+- Scan complete alternate Markdown fences
+- Bound alternate Markdown fence nesting
+- Validate nested Markdown fence indentation
+- Cache list-free Markdown fence regions
+- Preserve list fences in Markdown wrappers
+- Strip Markdown fence indentation from code
+- Preserve Markdown fence boundary newlines
+- Support wide list quote fences
+- Preserve longer nested Markdown fences
+- Find indented Markdown fence continuations
+- Scan Markdown fence blank lines once
+- Handle Markdown fence container whitespace
+- Avoid copying Markdown fence prefixes
+- Track Markdown fence container indentation
+- Preserve quoted fence boundaries
+- Cache Markdown fence container boundaries
+- Avoid backtracking in fence container parsing
+- Parse nested Markdown fence containers
+- Reprocess fences after container boundaries
+- Preserve fenced blocks across final renders
+- Use streaming state for nested Markdown fences
+- End unfinished fences at container boundaries
+- Retain list context for indented fences
+- Support continuation list code fences
+- Bound nested fence lookahead
+- Distinguish streamed and completed nested fences
+- Keep unmatched nested fences from consuming prose
+- Separate history fence info strings
+- Handle tab-indented list code fences
+- Reject over-indented list fence closers
+- Handle variable fence container indentation
+- Harden Markdown fence container handling
+- Preserve Markdown fence containers
+- Potential fix for pull request finding 'CodeQL / Bad HTML filtering regexp'
+- Fix nested Markdown code fence rendering
+- Update LICENSE to reflect current licensing terms
+- docs: sync zh-CN and fr README license ending with README.md
+- Update licensing details in README.fr.md
+- Update license statement in README.md
+- fix: address recipient guard review findings
+- feat(sidepanel): chime when a clarification/permission card appears
+- feat(adapters): generic-first recipient guard on any site
+- fix(agent): fail-open recipient guard, user-granted send authorization, silent-reply recovery, screenshot budget
+- fix(content): prove non-sends in recipient probe, reliable text-click locator, content-script self-heal, candidate cache
+- [ImgBot] Optimize images
+- Respect hidden assigned slots in click candidates
+- Fix _hasVisibleBox shadow host aria-hidden traversal
+- Support X group DM recipient binding
+- Stabilize X message history baselines
+- Harden message metadata and X history proofs
+- Recognize localized LinkedIn post controls
+- Accept settled empty X conversations
+- Scope message and public-post guards
+- Require settled X message history
+- Recover route-local X DM body commands
+- Bind approved X DM bodies in workflow metadata
+- Resolve named X message recipients to observed handles
+- Fix social click guards and verify X message delivery
+- Refine SafeSocial explainer copy
+- Add SafeSocial 36.8.0 blog and visual
+- test: publish compact model benchmark artifacts
+- Add WebBrain Cloud section strip
+
 ## [37.0.0] - 2026-09-29
 
 ### Added
