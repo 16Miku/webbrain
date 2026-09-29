@@ -231,8 +231,43 @@ function cloudflareChallengeSignature({ contract, task }) {
   }
   throw new Error('Fallback Cloudflare challenge requires a comparable task mode.');
 }
+function recaptchaCookieSignature({ contract, task }) {
+  const input = task.cookie ?? task.cookies;
+  if (!usable(input)) return null;
+  let cookies;
+  if (typeof input === 'string') {
+    const delimiter = contract.provider === 'solvecaptcha' ? ':' : '=';
+    cookies = input.split(';').map(part => part.trim()).filter(Boolean).map(part => {
+      const separator = part.indexOf(delimiter);
+      if (separator <= 0) throw new Error('Fallback reCAPTCHA cookies must use comparable name/value pairs.');
+      return { name: part.slice(0, separator).trim(), value: part.slice(separator + 1).trim() };
+    });
+  } else if (Array.isArray(input)) {
+    cookies = input;
+  } else {
+    throw new Error('Fallback reCAPTCHA cookies must use comparable name/value pairs.');
+  }
+  if (cookies.some(cookie => !object(cookie) || typeof cookie.name !== 'string'
+      || !cookie.name.trim() || typeof cookie.value !== 'string')) {
+    throw new Error('Fallback reCAPTCHA cookies must use comparable name/value pairs.');
+  }
+  const names = cookies.map(cookie => cookie.name.trim());
+  if (new Set(names).size !== names.length) throw new Error('Fallback reCAPTCHA cookies must have unique names.');
+  const pairs = cookies.map(cookie => [cookie.name.trim(), cookie.value]).sort(([a], [b]) => a.localeCompare(b));
+  // NopeCHA's cookie objects include domain/path/security scope. A plain
+  // cookie string cannot prove those attributes, so it cannot share a fallback.
+  const scope = contract.provider === 'nopecha'
+    ? cookies.map(cookie => [cookie.name.trim(), cookie.domain, cookie.path,
+        cookie.hostOnly, cookie.httpOnly, cookie.secure, cookie.session, cookie.expirationDate ?? null])
+      .sort(([a], [b]) => a.localeCompare(b)) : null;
+  return JSON.stringify([pairs, scope]);
+}
 function validateFallbackIdentifiers(built) {
   const family = built[0].contract.family;
+  if (family.startsWith('recaptcha_v') && built.length > 1
+      && new Set(built.map(recaptchaCookieSignature)).size > 1) {
+    throw new Error('Fallback reCAPTCHA tasks must use the same observed cookie set.');
+  }
   if (family === 'cloudflare_challenge' && built.length > 1
       && new Set(built.map(cloudflareChallengeSignature)).size > 1) {
     throw new Error('Fallback Cloudflare tasks must use the same challenge mode and observed page snapshot.');

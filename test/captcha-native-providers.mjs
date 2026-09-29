@@ -101,6 +101,35 @@ for (const browser of ['chrome','firefox']) {
     assert.throws(() => native.prepareNativeCaptchaTasks(providers, [capsolver, token]), /same challenge mode/);
     assert.equal(calls.length, 0);
   });
+  test(`${browser}: reCAPTCHA fallback preserves observed session cookies across provider formats`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const twoCaptcha = { provider: '2captcha', method: 'RecaptchaV2TaskProxyless', parameters: {
+      websiteURL: url, websiteKey: 'site', cookies: 'SID=A; PREF=one=two',
+    } };
+    const solveCaptcha = { provider: 'solvecaptcha', method: 'recaptcha_v2', parameters: {
+      pageurl: url, googlekey: 'site', cookies: 'PREF:one=two; SID:A;',
+    } };
+    const capsolver = { provider: 'capsolver', method: 'ReCaptchaV2TaskProxyLess', parameters: {
+      websiteURL: url, websiteKey: 'site', cookies: [
+        { name: 'PREF', value: 'one=two' }, { name: 'SID', value: 'A' },
+      ],
+    } };
+    assert.equal(native.prepareNativeCaptchaTasks(providers, [twoCaptcha, solveCaptcha, capsolver]).length, 3);
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [twoCaptcha, {
+      ...solveCaptcha, parameters: { ...solveCaptcha.parameters, cookies: 'SID:B; PREF:one=two' },
+    }]), /same observed cookie set/);
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [twoCaptcha, {
+      ...solveCaptcha, parameters: { pageurl: url, googlekey: 'site' },
+    }]), /same observed cookie set/);
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [twoCaptcha, {
+      provider: 'nopecha', method: 'token/recaptcha2', parameters: { sitekey: 'site', url,
+        cookie: [{ name: 'SID', value: 'A', domain: 'example.test', path: '/',
+          hostOnly: true, httpOnly: false, secure: true, session: true }] },
+    }]), /same observed cookie set/);
+    assert.throws(() => native.buildNativeCaptchaTask({ ...capsolver,
+      parameters: { ...capsolver.parameters, cookies: 'SID=A' } }), /must be array/);
+    assert.equal(calls.length, 0);
+  });
   test(`${browser}: AWS WAF fallback compares API, challenge, and CAPTCHA scripts before dispatch`, t => {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
     const twoCaptcha = { provider: '2captcha', method: 'AmazonTaskProxyless', parameters: {

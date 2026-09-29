@@ -35,7 +35,7 @@ Family: `mtcaptcha`. [Official contract](https://docs.capsolver.com/en/guide/cap
 Family: `recaptcha_v2`. [Official contract](https://docs.capsolver.com/en/guide/captcha/ReCaptchaV2/).
 
 - Required: `websiteURL` (string), `websiteKey` (string).
-- Optional: `cookies` (string), `proxy` (string), `pageAction` (string), `recaptchaDataSValue` (string), `enterprisePayload` (object), `isInvisible` (boolean), `isSession` (boolean), `apiDomain` (string).
+- Optional: `cookies` (array), `proxy` (string), `pageAction` (string), `recaptchaDataSValue` (string), `enterprisePayload` (object), `isInvisible` (boolean), `isSession` (boolean), `apiDomain` (string).
 - Fixed wire values: `{"type":"ReCaptchaV2TaskProxyLess"}`.
 
 ### ReCaptchaV2EnterpriseTask
@@ -43,7 +43,7 @@ Family: `recaptcha_v2`. [Official contract](https://docs.capsolver.com/en/guide/
 Family: `recaptcha_v2_enterprise`. [Official contract](https://docs.capsolver.com/en/guide/captcha/ReCaptchaV2/).
 
 - Required: `websiteURL` (string), `websiteKey` (string), `proxy` (string).
-- Optional: `cookies` (string), `pageAction` (string), `recaptchaDataSValue` (string), `enterprisePayload` (object), `isInvisible` (boolean), `isSession` (boolean), `apiDomain` (string).
+- Optional: `cookies` (array), `pageAction` (string), `recaptchaDataSValue` (string), `enterprisePayload` (object), `isInvisible` (boolean), `isSession` (boolean), `apiDomain` (string).
 - Fixed wire values: `{"type":"ReCaptchaV2EnterpriseTask"}`.
 
 ### ReCaptchaV2EnterpriseTaskProxyLess
@@ -51,7 +51,7 @@ Family: `recaptcha_v2_enterprise`. [Official contract](https://docs.capsolver.co
 Family: `recaptcha_v2_enterprise`. [Official contract](https://docs.capsolver.com/en/guide/captcha/ReCaptchaV2/).
 
 - Required: `websiteURL` (string), `websiteKey` (string).
-- Optional: `cookies` (string), `proxy` (string), `pageAction` (string), `recaptchaDataSValue` (string), `enterprisePayload` (object), `isInvisible` (boolean), `isSession` (boolean), `apiDomain` (string).
+- Optional: `cookies` (array), `proxy` (string), `pageAction` (string), `recaptchaDataSValue` (string), `enterprisePayload` (object), `isInvisible` (boolean), `isSession` (boolean), `apiDomain` (string).
 - Fixed wire values: `{"type":"ReCaptchaV2EnterpriseTaskProxyLess"}`.
 
 ### ReCaptchaV2Task
@@ -59,7 +59,7 @@ Family: `recaptcha_v2_enterprise`. [Official contract](https://docs.capsolver.co
 Family: `recaptcha_v2`. [Official contract](https://docs.capsolver.com/en/guide/captcha/ReCaptchaV2/).
 
 - Required: `websiteURL` (string), `websiteKey` (string), `proxy` (string).
-- Optional: `cookies` (string), `pageAction` (string), `recaptchaDataSValue` (string), `enterprisePayload` (object), `isInvisible` (boolean), `isSession` (boolean), `apiDomain` (string).
+- Optional: `cookies` (array), `pageAction` (string), `recaptchaDataSValue` (string), `enterprisePayload` (object), `isInvisible` (boolean), `isSession` (boolean), `apiDomain` (string).
 - Fixed wire values: `{"type":"ReCaptchaV2Task"}`.
 
 ### ReCaptchaV3Task
