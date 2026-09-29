@@ -138,24 +138,45 @@
   const discordChannel = (composer) => {
     if (!composer || !/^(?:www\.)?discord\.com$/.test(window.location?.hostname || '')) return null;
     const route = /^\/channels\/(\d+)\/(\d+)\/?$/.exec(window.location?.pathname || '');
-    if (!route || !composer.matches?.('[data-slate-editor="true"][contenteditable="true"][role="textbox"]')) return null;
+    const directMessageRoute = /^\/channels\/@me\/(\d+)\/?$/.exec(window.location?.pathname || '');
+    if ((!route && !directMessageRoute)
+        || !composer.matches?.('[data-slate-editor="true"][contenteditable="true"][role="textbox"]')) return null;
     const root = composer.closest('main,[role="main"]');
     if (!root || !visible(root)) return null;
     const transcript = query(root, '[data-list-id="chat-messages"]').find(node =>
       visible(node) && !contains(node, composer));
+    const channelId = route?.[2] || directMessageRoute[1];
+    const routePath = route
+      ? `/channels/${route[1]}/${channelId}`
+      : `/channels/@me/${channelId}`;
     const channelLink = query(document, 'nav a[href],[role="navigation"] a[href]').find(node => {
       try {
         const url = new URL(attribute(node, 'href'), window.location.href);
         return visible(node) && attribute(node, 'aria-current') === 'page' && url.origin === window.location.origin
-          && url.pathname.replace(/\/$/, '') === `/channels/${route[1]}/${route[2]}`;
+          && url.pathname.replace(/\/$/, '') === routePath;
       } catch { return false; }
     });
+    const selectedDmRouteMismatch = !!directMessageRoute
+      && query(document, 'nav a[href][data-list-item-id^="private-channels-"],[role="navigation"] a[href][data-list-item-id^="private-channels-"]')
+        .some(node => {
+          try {
+            const url = new URL(attribute(node, 'href'), window.location.href);
+            return visible(node) && attribute(node, 'aria-current') === 'page'
+              && url.origin === window.location.origin
+              && /^\/channels\/@me\/\d+\/?$/.test(url.pathname)
+              && url.pathname.replace(/\/$/, '') !== routePath;
+          } catch { return false; }
+        });
     const name = /^Message #(.+)$/.exec(attribute(composer, 'aria-label'))?.[1]
       || /^Messages in (.+)$/.exec(attribute(transcript, 'aria-label'))?.[1]
       || /^(.+) \(channel\)$/.exec(attribute(root, 'aria-label'))?.[1]
-      || `channel-${route[2]}`;
-    return transcript && channelLink
-      ? { root, transcript, name, channelId: route[2], id: `discord:${route[1]}:${route[2]}` }
+      || (directMessageRoute ? `direct-message-${channelId}` : `channel-${channelId}`);
+    return transcript && (channelLink || (directMessageRoute && !selectedDmRouteMismatch))
+      ? {
+        root, transcript, name, channelId,
+        isDirectMessage: !!directMessageRoute,
+        id: directMessageRoute ? `discord:dm:${channelId}` : `discord:${route[1]}:${channelId}`,
+      }
       : null;
   };
 
@@ -202,7 +223,7 @@
 
   const identityFor = (composer, root, probe) => {
     const channel = discordChannel(composer);
-    if (channel?.root === root) return `#${channel.name}`;
+    if (channel?.root === root) return channel.isDirectMessage ? channel.name : `#${channel.name}`;
     const explicit = firstAttribute(parentChain(composer), IDENTITY_ATTRIBUTES)
       || firstAttribute([root], IDENTITY_ATTRIBUTES)
       || firstAttribute(queryMany(root, IDENTITY_ATTRIBUTES.map(name => `[${name}]`)), IDENTITY_ATTRIBUTES);

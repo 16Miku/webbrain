@@ -219,6 +219,33 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.notEqual((await probe('click',{selector:'#forward'})).nonMessagingTarget,true);
         } finally {await page.close();}
       });
+      await t.test('DM routes use their stable route identity and Discord transcript',async()=>{
+        const {page}=await setup();
+        try {
+          await page.locator('#channel').evaluate(el=>{
+            el.setAttribute('href','/channels/@me/456');
+            el.setAttribute('aria-label','Ada direct message');
+          });
+          await page.locator('#composer').evaluate(el=>el.setAttribute('aria-label','Message Ada'));
+          await page.locator('main').evaluate(el=>el.setAttribute('aria-label','Direct message'));
+          await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.setAttribute('aria-label','Conversation'));
+          await page.evaluate(()=>history.replaceState(null,'','/channels/@me/456'));
+          await page.locator('#composer').focus();
+          const observe=()=>page.evaluate(()=>window.__wb_observe_chat_dom({}));
+          const result=await observe();
+          assert.equal(result.success,true,JSON.stringify(result));
+          assert.equal(result.conversationId,'discord:dm:456');
+          assert.equal(result.threadKey,'dom:discord:dm:456');
+          assert.equal(result.conversationIdentity,'direct-message-456');
+          assert.equal(result.messages[0].id,'discord:456:1001');
+
+          await page.locator('#channel').evaluate(el=>el.remove());
+          assert.equal((await observe()).success,true,'a strict DM route plus the composer and transcript retains stable identity without an active link');
+          await page.locator('nav').evaluate(el=>el.insertAdjacentHTML('beforeend',
+            '<a aria-current="page" data-list-item-id="private-channels-uid_11___789" href="/channels/@me/789">Stale DM</a>'));
+          assert.equal((await observe()).success,false,'a conflicting selected DM route fails closed');
+        } finally {await page.close();}
+      });
       await t.test('channel observation recognizes the transcript, empty channels and stable server/channel identity',async()=>{
         const {page}=await setup();
         try {
