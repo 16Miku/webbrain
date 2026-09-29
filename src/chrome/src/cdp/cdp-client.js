@@ -3368,6 +3368,54 @@ export class CDPClient {
           }
           return blocks.join('\\n\\n').trim();
         };
+        const getVisibleLayers = () => {
+          const selectors = [
+            'header', 'nav', '[role="banner"]', '[role="navigation"]',
+            '[role="toolbar"]', '[class*="toolbar" i]',
+            '[role="dialog"]', '[role="alertdialog"]', '[aria-modal="true"]',
+            'dialog[open]', '.modal.show', '[class*="DialogContent"]', '[class*="ModalContent"]',
+            '[data-overlay]', '[class*="overlay" i]', '[class*="popover" i]', '[class*="drawer" i]',
+          ].join(',');
+          const layers = [];
+          let candidates = [];
+          try { candidates = Array.from(document.querySelectorAll(selectors)); } catch (e) { return []; }
+          const dialogSelector = '[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog[open],.modal.show,[class*="DialogContent"],[class*="ModalContent"]';
+          // Preserve the active dialog even when the page has many fixed nav items.
+          candidates.sort((a, b) => Number(b.matches(dialogSelector)) - Number(a.matches(dialogSelector)));
+          for (const el of candidates) {
+            if (layers.length >= 4) break;
+            try {
+              if (!gateElementIsRendered(el)) continue;
+              const style = getComputedStyle(el);
+              if (!['fixed', 'sticky', 'absolute'].includes(style.position) && !(el.tagName === 'DIALOG' && el.open)) continue;
+              const r = el.getBoundingClientRect();
+              const left = Math.max(0, r.left), right = Math.min(window.innerWidth, r.right);
+              const top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom);
+              if (right - left < 10 || bottom - top < 10) continue;
+              if (layers.some(layer => layer.element.contains(el) || el.contains(layer.element))) continue;
+              const text = String(el.innerText || el.getAttribute('aria-label') || '')
+                .replace(/\\s+/g, ' ').trim().slice(0, 240);
+              if (!text) continue;
+              const points = [
+                [(left + right) / 2, (top + bottom) / 2],
+                [left + (right - left) * 0.2, top + (bottom - top) * 0.2],
+                [right - (right - left) * 0.2, bottom - (bottom - top) * 0.2],
+              ];
+              if (!points.some(([x, y]) => {
+                const hit = document.elementFromPoint(x, y);
+                return hit === el || el.contains(hit);
+              })) continue;
+              layers.push({
+                element: el,
+                role: el.getAttribute('role') || el.tagName.toLowerCase(),
+                text,
+                position: style.position,
+                rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+              });
+            } catch (e) { /* ignore malformed or changing page surfaces */ }
+          }
+          return layers.map(({ element, ...layer }) => layer);
+        };
         const stripChrome = (root) => {
           if (includeChrome || !root) return root;
           let clone;
@@ -3423,6 +3471,7 @@ export class CDPClient {
           textSource,
           isArticlePage,
           includeChrome,
+          visibleLayers: blockedAuxiliaryContent ? [] : getVisibleLayers(),
           links: blockedAuxiliaryContent ? [] : Array.from(document.querySelectorAll('a[href]')).slice(0, 100).map(a => ({
             text: a.innerText.trim().slice(0, 100),
             href: a.href,

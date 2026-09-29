@@ -109,6 +109,7 @@ function compactCoreResult(result) {
     accessState: result.accessState,
     accessGateEvidence: result.accessGateEvidence,
     ...(pageGate ? { pageGate } : {}),
+    ...(Array.isArray(result.visibleLayers) ? { visibleLayers: result.visibleLayers.slice(0, 4) } : {}),
     auxiliaryContentTruncated: true,
   }, result.text);
 }

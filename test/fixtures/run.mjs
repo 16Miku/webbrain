@@ -18,6 +18,14 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Agent } from '../../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../../src/firefox/src/agent/agent.js';
+import {
+  applyReadPageWindow as applyChromeReadPageWindow,
+  fitReadPageWindowResult as fitChromeReadPageWindowResult,
+} from '../../src/chrome/src/agent/read-page-window.js';
+import {
+  applyReadPageWindow as applyFirefoxReadPageWindow,
+  fitReadPageWindowResult as fitFirefoxReadPageWindowResult,
+} from '../../src/firefox/src/agent/read-page-window.js';
 import { CDPClient, cdpClient } from '../../src/chrome/src/cdp/cdp-client.js';
 import {
   SELECTION_SHORTCUT_LOCALES,
@@ -1089,6 +1097,107 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
     }
   });
 }
+
+const layeredReadingHtml = `<!doctype html>
+  <style>
+    body { margin: 0; }
+    header { position: fixed; top: 0; width: 100%; height: 40px; z-index: 5; background: white; }
+    article { padding: 70px 20px 20px; }
+    #read-target { position: absolute; left: 70px; top: 130px; width: 100px; height: 36px; }
+    [role="dialog"] { position: fixed; left: 50px; top: 100px; width: 240px; height: 120px; z-index: 20; background: white; }
+    [role="toolbar"] { position: fixed; right: 0; bottom: 0; width: 160px; height: 40px; z-index: 10; background: white; }
+  </style>
+  <header>Pinned navigation</header>
+  <article>
+    <button id="read-target">Read target</button>
+    <p>${'UNDERLYING_ARTICLE_TEXT describes the public inventory and its normal display. '.repeat(8)}</p>
+    <table><tr><th>Item</th><th>Count</th></tr><tr><td>Widget</td><td>42</td></tr></table>
+  </article>
+  <div role="dialog" aria-label="Open filters">Open filters dialog <button>Close filters</button></div>
+  <div data-overlay style="position:absolute;left:330px;top:120px;width:140px;height:60px;z-index:11;background:white">Floating panel</div>
+  <div role="toolbar">Floating tools</div>
+  <div role="dialog" style="display:none">Hidden dialog</div>`;
+
+function assertLayeredPageInfo(result, label) {
+  if (result?.pageGate || !result?.text?.includes('UNDERLYING_ARTICLE_TEXT')) {
+    throw new Error(`${label}: underlying article was lost: ${JSON.stringify(result)}`);
+  }
+  const layers = result.visibleLayers || [];
+  if (!layers.some(layer => layer.role === 'dialog' && layer.text.includes('Open filters dialog'))
+    || !layers.some(layer => layer.role === 'toolbar' && layer.text.includes('Floating tools'))
+    || !layers.some(layer => layer.role === 'header' && layer.text.includes('Pinned navigation'))
+    || !layers.some(layer => layer.role === 'div' && layer.position === 'absolute' && layer.text.includes('Floating panel'))
+    || layers.some(layer => layer.text.includes('Hidden dialog'))
+    || layers.some(layer => !Number.isFinite(layer.rect?.x) || !Number.isFinite(layer.rect?.y))) {
+    throw new Error(`${label}: visible layer context is incomplete: ${JSON.stringify(layers)}`);
+  }
+}
+
+async function assertLayeredContentReading(page, browserKind) {
+  await setupContentHtml(page, layeredReadingHtml, browserKind);
+  const overlapsTarget = await page.evaluate(() => {
+    const r = document.getElementById('read-target').getBoundingClientRect();
+    return !!document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('[role="dialog"]');
+  });
+  if (!overlapsTarget) throw new Error(`${browserKind}: fixture dialog does not cover the target`);
+  const pageInfo = await call(page, 'get_page_info_cdp', {});
+  assertLayeredPageInfo(pageInfo, browserKind);
+  const basicPageInfo = await call(page, 'get_page_info', {});
+  if (!basicPageInfo?.visibleLayers?.some(layer => layer.role === 'dialog' && layer.text.includes('Open filters dialog'))) {
+    throw new Error(`${browserKind}: basic page info omitted the dialog: ${JSON.stringify(basicPageInfo?.visibleLayers)}`);
+  }
+  const tables = await call(page, 'extract_data', { type: 'tables' });
+  if (tables?.[0]?.rows?.[1]?.join('|') !== 'Widget|42') {
+    throw new Error(`${browserKind}: underlying table data was lost: ${JSON.stringify(tables)}`);
+  }
+  const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 8, maxChars: 20000 });
+  if (!/button "Read target" \[ref_\d+\][^\n]*occluded=true/.test(tree?.pageContent || '')) {
+    throw new Error(`${browserKind}: accessibility tree did not mark the covered target: ${tree?.pageContent}`);
+  }
+  await page.evaluate(() => {
+    const dialog = document.querySelector('[role="dialog"]');
+    for (let i = 0; i < 5; i++) {
+      const nav = document.createElement('nav');
+      nav.textContent = `Floating navigation ${i}`;
+      nav.style.cssText = `position:fixed;left:0;top:${390 + i * 42}px;width:180px;height:32px;background:white`;
+      document.body.insertBefore(nav, dialog);
+    }
+  });
+  const crowded = await call(page, 'get_page_info_cdp', {});
+  if (crowded.visibleLayers?.length > 4
+    || !crowded.visibleLayers?.some(layer => layer.role === 'dialog' && layer.text.includes('Open filters dialog'))) {
+    throw new Error(`${browserKind}: dialog was displaced by navigation layers: ${JSON.stringify(crowded.visibleLayers)}`);
+  }
+}
+
+test('Chrome: layered page read keeps underlying data and visible surfaces', page =>
+  assertLayeredContentReading(page, 'chrome'));
+firefoxTest('Firefox: layered page read keeps underlying data and visible surfaces', page =>
+  assertLayeredContentReading(page, 'firefox'));
+
+test('Chrome CDP mirror: layered page read keeps underlying data and visible surfaces', async (page) => {
+  await page.setContent(layeredReadingHtml);
+  assertLayeredPageInfo(await readThroughCdpMirror(page), 'CDP mirror');
+});
+
+test('read_page windows keep layer context when oversized output is compacted', async () => {
+  for (const [label, applyWindow, fitWindow] of [
+    ['chrome', applyChromeReadPageWindow, fitChromeReadPageWindowResult],
+    ['firefox', applyFirefoxReadPageWindow, fitFirefoxReadPageWindowResult],
+  ]) {
+    const raw = {
+      url: 'https://example.test/article',
+      title: 'Layered article',
+      text: 'Article text. '.repeat(500),
+      visibleLayers: [{ role: 'dialog', text: 'Open filters dialog', position: 'fixed', rect: { x: 50, y: 100, w: 240, h: 120 } }],
+      links: Array.from({ length: 100 }, (_, i) => ({ text: `Link ${i}`, href: `https://example.test/${i}` })),
+    };
+    const fitted = fitWindow(applyWindow(raw, { limit: 6000 }), 1200);
+    if (JSON.stringify(fitted).length > 1200 || fitted.visibleLayers?.[0]?.text !== 'Open filters dialog') {
+      throw new Error(`${label}: bounded read lost the visible layer: ${JSON.stringify(fitted)}`);
+    }
+  }
+});
 
 test('Chrome CDP mirror suppresses a blocking Athletic article body', async (page) => {
   await page.goto(fixtureUrl('athletic-subscription-overlay.html'));
