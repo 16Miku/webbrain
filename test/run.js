@@ -121976,6 +121976,42 @@ test('CAPTCHA providers: observed hCaptcha rqdata reaches fallback and returns t
   }
 });
 
+test('NoneCap hCaptcha token is not injected when its User-Agent differs from the browser', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sitekey = 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8';
+    await withCaptchaFakePage(build, [captchaEl('div', { class: 'h-captcha', 'data-sitekey': sitekey })], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({ nonecapEnabled: true,
+        nonecapApiKey: 'nc_live_' + 'a'.repeat(32) }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const originalExecute = build === 'chrome' ? api.scripting.executeScript : api.tabs.executeScript;
+      let injections = 0;
+      if (build === 'chrome') api.scripting.executeScript = async options => {
+        if (options.world === 'MAIN') injections++;
+        return originalExecute(options);
+      };
+      else api.tabs.executeScript = async (tabId, options) => {
+        if (options.code.includes('injectCaptchaTokenInPage')) injections++;
+        return originalExecute(tabId, options);
+      };
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () => Response.json({ id: 'solve_test', status: 'solved',
+        token: 'paid-token', user_agent: `${globalThis.navigator?.userAgent || ''}-mismatch` });
+      try {
+        const agent = new AgentClass({});
+        const result = await agent._executeToolImpl(1, 'solve_captcha', {});
+        assert.equal(result.success, false, build);
+        assert.equal(result.dispatched, true, build);
+        assert.equal(result.manualCompletionRequired, true, build);
+        assert.equal(result.injected, false, build);
+        assert.equal(result.token, undefined, build);
+        assert.match(result.error, /different User-Agent/, build);
+        assert.equal(injections, 0, build);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+});
+
 test('CAPTCHA providers: explicit rqdata selects NoneCap Enterprise when frame detection is unavailable', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     await withCaptchaFakePage(build, [], async () => {

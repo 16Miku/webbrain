@@ -36091,6 +36091,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
 
         dispatched = true;
         const result = await solveCaptchaWithProviders(providers, params);
+        if (wantInject && result.provider === 'nonecap' && result.solution?.userAgent
+            && result.solution.userAgent !== params.userAgent) {
+          return { success: false, dispatched: true, manualCompletionRequired: true,
+            provider: result.provider, taskId: result.taskId, injected: false,
+            solverUserAgent: result.solution.userAgent,
+            error: 'NoneCap solved this hCaptcha with a different User-Agent. The token was not injected; ask the user to complete the challenge manually.' };
+        }
 
         // For non-image types, push the token into the page response field
         // unless the caller explicitly opted out.
