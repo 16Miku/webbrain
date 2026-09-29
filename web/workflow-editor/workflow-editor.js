@@ -11,6 +11,7 @@
   const targetFields = { id: 12, fieldName: 9, label: 8, ariaLabel: 8, name: 7, href: 7, placeholder: 5, type: 3, role: 2 };
   const targetRequired = new Set(['click_ax', 'set_checked', 'type_ax', 'set_field']);
   const maxPortableBytes = 1024 * 1024;
+  const normalizationReserveBytes = 16 * 1024;
   const defaults = { string: '', number: 0, boolean: false, null: null, object: {}, array: [] };
   const at = (value, path) => path.reduce((node, key) => node[key], value);
   const put = (value, key, next) => Object.defineProperty(value, key, { value: next, writable: true, enumerable: true, configurable: true });
@@ -118,7 +119,9 @@
       if (targetRequired.has(step.tool) && !replayableTarget(step.target)) issues.push(`Step ${index + 1} needs a replayable target with a name, label, id, or other strong locator.`);
     });
     try {
-      if (new TextEncoder().encode(JSON.stringify(value)).byteLength > maxPortableBytes) issues.push('Workflow JSON exceeds the importer 1 MiB file limit.');
+      if (new TextEncoder().encode(JSON.stringify(value)).byteLength > maxPortableBytes - normalizationReserveBytes) {
+        issues.push('Workflow JSON is too close to the importer 1 MiB file limit; leave room for normalized metadata.');
+      }
     } catch { issues.push('Workflow JSON cannot be serialized.'); }
     return [...new Set(issues)];
   }
@@ -282,13 +285,13 @@
     }
     download() {
       if (!this.value) return;
-      if (this.changeFailed) return;
+      if (this.changeFailed) { this.changeFailed = false; return; }
       const active = this.root.activeElement;
       if (active?.matches('.filename')) this.filename = active.value.trim() || 'workflow.json';
       // Keyboard save must include the text still focused in the form.
       if (this.pendingField?.isConnected) {
         this.pendingField.dispatchEvent(new Event('change', { bubbles: true }));
-        if (this.changeFailed) return;
+        if (this.changeFailed) { this.changeFailed = false; return; }
       }
       this.attempt(() => {
         const blob = new Blob([this.toJSON()], { type: 'application/json' });
@@ -333,6 +336,7 @@
       if (this.pointerActive || this.deferRender) { this.needsRender = true; return; }
       this.needsRender = false;
       this.pendingField = null;
+      this.changeFailed = false;
       this.renderPaths = new Set();
       const focused = this.root.activeElement;
       const focusLabel = focused?.matches('input,textarea,select') ? focused.getAttribute('aria-label') : null;

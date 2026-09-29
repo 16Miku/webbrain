@@ -159,8 +159,16 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
   test(`${name}: portable JSON byte limit is reported before export`, () => withEditor(async page => {
     const oversized = { ...fixture, extra: { payload: 'x'.repeat(1024 * 1024) } };
     await page.evaluate(value => editor.load(value), oversized);
-    assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('exceeds the importer 1 MiB file limit')));
+    assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('importer 1 MiB file limit')));
     assert.equal((name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(oversized).reason, 'workflow_too_large');
+
+    const nearLimit = { ...fixture, start: { origin: 'https://example.com', pathFamily: '/' }, steps: [{ id: 'step_1', tool: 'navigate', args: { url: 'https://example.com/' } }] };
+    const initialBytes = new TextEncoder().encode(JSON.stringify(nearLimit)).byteLength;
+    nearLimit.steps[0].args.url += 'a'.repeat(1024 * 1024 - 10 - initialBytes);
+    assert.equal(new TextEncoder().encode(JSON.stringify(nearLimit)).byteLength, 1024 * 1024 - 10);
+    assert.equal((name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(nearLimit).reason, 'workflow_too_large');
+    await page.evaluate(value => editor.load(value), nearLimit);
+    assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('leave room for normalized metadata')));
   }));
 
   test(`${name}: offline file import, editing, preservation, export, embedding`, async () => {
@@ -244,12 +252,20 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       assert.equal(rejectedDownloads, 0);
       assert.equal(await page.evaluate(() => editor.getValue().parameters[0].id), 'address');
       assert.match(await page.getByRole('status').innerText(), /Parameter ids must use/);
+      assert.equal(await page.evaluate(() => editor.changeFailed), false);
+      const recoveredDownload = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download JSON', exact: true }).click();
+      assert.equal((await recoveredDownload).suggestedFilename(), 'keyboard-name.json');
+      const beforeMouseReject = rejectedDownloads;
       await val(page, ['parameters', 0, 'id']).fill('Invalid ID');
       await page.getByRole('button', { name: 'Download JSON', exact: true }).click();
       await page.waitForTimeout(100);
-      assert.equal(rejectedDownloads, 0);
+      assert.equal(rejectedDownloads, beforeMouseReject);
       assert.equal(await page.evaluate(() => editor.getValue().parameters[0].id), 'address');
       assert.match(await page.getByRole('status').innerText(), /Parameter ids must use/);
+      const mouseRecovery = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download JSON', exact: true }).click();
+      assert.equal((await mouseRecovery).suggestedFilename(), 'keyboard-name.json');
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole('button', { name: 'Workflow details', exact: true }).click();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
