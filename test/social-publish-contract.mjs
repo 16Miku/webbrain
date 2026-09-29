@@ -922,6 +922,7 @@ for (const browser of ['chrome', 'firefox']) {
       f.agent._progressWarningForAction=()=>'';
       f.agent._captureFormValidationState=async()=>[];
       f.agent._waitForFormValidationFailure=async()=>null;
+      f.agent._messageRecipientGuardBlock=async()=>null;
       const events=[];
       f.agent._detectLikelySubmitAction=async(_tab,name,args)=>{
         events.push({kind:'probe',name,submit:args.submit});
