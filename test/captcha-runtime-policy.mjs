@@ -14,6 +14,11 @@ test('CAPTCHA tool matrix matches Ask, Compact, Mid, Full and Dev availability',
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
   const { getToolsForMode } = await import(`../src/${build}/src/agent/tools.js`);
+  test(`${build}: hCaptcha Enterprise rqdata is optional in the model-visible tool schema`, () => {
+    const solve = getToolsForMode('act', { tier: 'full' }).find(tool => tool.function.name === 'solve_captcha');
+    assert.match(solve.function.parameters.properties.rqdata.description, /optional.*when the widget exposes it/i);
+    assert.doesNotMatch(solve.function.parameters.properties.rqdata.description, /required/i);
+  });
   function agentFor(mode, tier, enabled = true) {
     const agent = new Agent({ getActive: () => ({ promptTier: tier }) });
     agent.conversationModes.set(1, mode);
@@ -97,5 +102,30 @@ for (const build of ['chrome', 'firefox']) {
         if (!scenario.applied) assert.match(agent._captchaRoutingMessage(1, result.gate), /use apply_captcha_solution/);
       }
     }
+  });
+  test(`${build}: navigation retires an unapplied answer but retains its paid-dispatch history`, async () => {
+    const agent = agentFor('act', 'full');
+    const from = 'https://example.test/first';
+    const to = 'https://example.test/second';
+    const record = { pageUrl: from, solution: false, applied: false, dispatchedTimeOrigins: new Set([1000]) };
+    agent._nativeCaptchaSolutions = new Map([[1, record]]);
+    agent._captchaGateStates.set(1, { status: 'verification_pending', publicGate: { status: 'verification_pending' } });
+    assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), true);
+    agent._clearCaptchaGateAfterNavigation(1, 'navigate', from, to, {});
+    assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), false);
+    assert.equal(record.dispatchedTimeOrigins.has(1000), true);
+    assert.equal(agent._captchaGateStates.has(1), false);
+    agent._captchaGateStates.set(1, { status: 'solve_required', publicGate: { status: 'solve_required' } });
+    assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {}).denied, true);
+    assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', {}), null);
+
+    record.solution = 0;
+    agent._captchaGateStates.delete(1);
+    agent._currentUrl = async () => to;
+    agent._activeCloudflareManagedChallengeGate = () => null;
+    agent._checkVerificationChallengeLoop = () => ({ kind: 'none' });
+    await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', { pageUrl: to, pageContent: 'heading "Next page"' });
+    assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), false);
+    assert.equal(record.dispatchedTimeOrigins.has(1000), true);
   });
 }

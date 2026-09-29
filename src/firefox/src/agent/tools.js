@@ -1226,7 +1226,7 @@ export const AGENT_TOOLS = [
             },
             additionalProperties: false,
           },
-          rqdata: { type: 'string', description: 'hCaptcha only — exact rqdata observed in the widget configuration; never invent it. Required when isEnterprise is true.' },
+          rqdata: { type: 'string', description: 'hCaptcha only — optional; preserve the exact rqdata when the widget exposes it. Never invent it.' },
           imageBase64: { type: 'string', description: 'image_to_text only — base64-encoded image bytes (no data: prefix).' },
           inject: { type: 'boolean', description: 'After solving, inject the token into the detected frame\'s response field (textarea[name=g-recaptcha-response] etc.) and fire the widget\'s callback. Default true and requires a detected frame target. If the widget cannot be detected but type/websiteKey are known, set false to get only the token without page injection.' },
         },

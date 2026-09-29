@@ -9459,6 +9459,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return record?.solution !== undefined && record.applied !== true;
   }
 
+  _retireNativeCaptchaAnswerIfPageChanged(tabId, pageUrl) {
+    const record = this._nativeCaptchaSolutions?.get(tabId);
+    if (record?.pageUrl && pageUrl && record.pageUrl !== pageUrl) {
+      // Keep dispatchedTimeOrigins to prevent a second paid solve if the old
+      // document is restored, but never apply its answer to the new page.
+      delete record.solution;
+    }
+  }
+
   _captchaRoutingMessage(tabId, captchaGateDecision, captchaSolveOutcome, toolResult = {}, onUpdate = () => {}) {
     let resultContent = '';
     const gate = captchaGateDecision || captchaSolveOutcome;
@@ -9599,11 +9608,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _clearCaptchaGateAfterNavigation(tabId, toolName, beforeUrl, afterUrl, toolResult) {
     if (!Agent.NAV_TOOLS.has(toolName)) return null;
-    const gate = this._captchaGateStates.get(tabId);
-    if (!gate) return null;
     const beforeDocument = this._normalizeUrlPath(beforeUrl);
     const afterDocument = this._normalizeUrlPath(afterUrl);
     if (!beforeDocument || !afterDocument || beforeDocument === afterDocument) return null;
+    this._retireNativeCaptchaAnswerIfPageChanged(tabId, afterUrl);
+    const gate = this._captchaGateStates.get(tabId);
+    if (!gate) return null;
     const clearedGate = {
       ...gate.publicGate,
       status: 'cleared',
@@ -9826,6 +9836,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let pageUrl = String(toolResult.currentUrl || toolResult.pageUrl || '');
     if (!pageUrl) {
       try { pageUrl = await this._currentUrl(tabId); } catch {}
+    }
+    if (pageUrl && this._nativeCaptchaSolutions?.get(tabId)?.pageUrl !== pageUrl) {
+      try { this._retireNativeCaptchaAnswerIfPageChanged(tabId, await this._currentUrl(tabId)); } catch {}
     }
     let detection = null;
     let detectionFailed = false;
