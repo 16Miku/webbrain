@@ -202,8 +202,24 @@ function proxyIdentity(task) {
   }
   return JSON.stringify([scheme.toLowerCase(), String(host).toLowerCase(), Number(port), String(login), String(password)]);
 }
+function funcaptchaServiceHost(value) {
+  try {
+    const url = new URL(value.includes('://') ? value : `https://${value}`);
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.pathname !== '/' || url.search || url.hash) throw new Error();
+    return url.host.toLowerCase();
+  } catch { throw new Error('Fallback FunCaptcha tasks must use comparable service hosts.'); }
+}
 function validateFallbackIdentifiers(built) {
   const family = built[0].contract.family;
+  if (family === 'funcaptcha' && built.length > 1) {
+    const services = built.map(({ task }) => task.funcaptchaApiJSSubdomain || task.surl);
+    if (services.some(usable)) {
+      if (services.some(value => !usable(value))
+          || new Set(services.map(funcaptchaServiceHost)).size > 1) {
+        throw new Error('Fallback FunCaptcha tasks must use the same observed service host.');
+      }
+    }
+  }
   if (built.length > 1) {
     const proxies = built.map(({ task }) => proxyIdentity(task));
     const present = proxies.filter(Boolean);

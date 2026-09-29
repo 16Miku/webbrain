@@ -138,6 +138,7 @@ Use observed page parameters to prepare fallback tasks. Method IDs are WebBrain 
 Saved weights determine execution order, regardless of array order. Supply a task for each enabled provider that can solve that family and for which the required inputs are available. The tool does not invent another provider's parameters. Page URLs must belong to the active tab or an observed frame. Native methods do not automatically scrape every site's internal configuration.
 
 Provider-specific identifiers (for example `appId`/`app_id` and `miseryKey`/`misery_key`) must agree across fallback entries before any paid request. Recognition fallbacks must use the same image/audio and selection instruction; TSPD fallbacks must use the same captured page. reCAPTCHA v2 fallbacks must agree on `data-s` and visible/invisible mode, and reCAPTCHA v3 fallbacks on action and minimum score, when supplied.
+FunCaptcha fallbacks compare the Arkose service host even when one provider takes a subdomain and another takes a full `surl` URL.
 
 The native adapter rejects undeclared nested fields in schemas with enumerated children, such as CapMonster `metadata`. Provider-documented free-form option objects, including NopeCHA Enterprise `data`, remain available.
 

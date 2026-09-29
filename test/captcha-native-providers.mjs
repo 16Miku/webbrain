@@ -332,6 +332,20 @@ for (const browser of ['chrome', 'firefox']) {
     assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed reCAPTCHA visibility mode/);
     assert.equal(calls.length, 0);
   });
+  test(`${browser}: FunCaptcha service host agrees across subdomain and URL formats`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const entries = [
+      { provider: '2captcha', method: 'FunCaptchaTaskProxyless', parameters: { websiteURL: url, websitePublicKey: 'site', funcaptchaApiJSSubdomain: 'sample-api.arkoselabs.com' } },
+      { provider: 'solvecaptcha', method: 'funcaptcha', parameters: { pageurl: url, publickey: 'site', surl: 'https://sample-api.arkoselabs.com' } },
+    ];
+    const enabled = entries.map(entry => ({ id: entry.provider, apiKey: 'key' }));
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, entries).length, 2);
+    entries[1].parameters.surl = 'https://other-api.arkoselabs.com';
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed service host/);
+    delete entries[1].parameters.surl;
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed service host/);
+    assert.equal(calls.length, 0);
+  });
   const recognitionPairs = [
     ['coordinates body', ['2captcha', 'CoordinatesTask', { body: 'image-A' }], ['solvecaptcha', 'coordinates', { body: 'image-A' }], task => { task.body = 'image-B'; }],
     ['image-to-text array alias', ['2captcha', 'ImageToTextTask', { body: 'image-A' }], ['nopecha', 'recognition/textcaptcha', { image_data: ['image-A'] }], task => { task.image_data = ['image-B']; }],
