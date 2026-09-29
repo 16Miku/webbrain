@@ -6964,6 +6964,43 @@ test('chat workflow state survives worker restart and is durable before dispatch
       assert.equal(discordSent.deliveryVerified, true, `${AgentClass.name}: exact fresh Discord bubble and empty composer did not verify the pending send`);
       assert.equal(discordSent.chatWorkflow.newMessages[0].direction, 'unknown', `${AgentClass.name}: delivery verification must not claim the Discord message author`);
       assert.equal(discordSender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: default-avatar Discord send remained pending`);
+
+      const nondurableMarkerSender = new AgentClass({});
+      nondurableMarkerSender.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      nondurableMarkerSender.conversationIds.set(tabId, `conversation-discord-nondurable-${index}`);
+      nondurableMarkerSender._persist = () => {};
+      let dispatchPersistenceAttempts = 0;
+      nondurableMarkerSender._persistNow = async () => {
+        dispatchPersistenceAttempts += 1;
+        return dispatchPersistenceAttempts === 1 ? { ok: true } : { ok: false, degraded: true };
+      };
+      nondurableMarkerSender._messageRecipientGuardBlock = async () => null;
+      let nondurableAfter;
+      const nondurableObservations = [discordBefore];
+      nondurableMarkerSender._readChatObservation = async () => nondurableObservations.shift() || nondurableAfter;
+      nondurableMarkerSender.executeTool = async () => {
+        const observedAt = new Date().toISOString();
+        nondurableAfter = {
+          ...discordBefore,
+          observedAt,
+          messages: [{
+            id: `discord:nondurable:${index}`,
+            direction: 'unknown',
+            text: 'Send once with a default avatar.',
+            timestamp: observedAt,
+          }],
+        };
+        return { success: true, dispatched: true };
+      };
+      const nondurableSent = await nondurableMarkerSender._sendChatWorkflow(tabId, {
+        thread_key: discordThreadKey,
+        composer_ref: `composer-${index}`,
+        text: 'Send once with a default avatar.',
+      });
+      assert.equal(dispatchPersistenceAttempts, 2, `${AgentClass.name}: dispatch marker persistence was not attempted after the send`);
+      assert.equal(nondurableSent.deliveryVerified, false, `${AgentClass.name}: an unknown-direction Discord bubble was verified without a durable dispatch marker`);
+      assert.ok(nondurableMarkerSender.chatSessions.get(tabId)?.pendingOutbound, `${AgentClass.name}: uncertain send was cleared after marker persistence failed`);
+      assert.equal(nondurableMarkerSender.chatSessions.get(tabId)?.pendingOutbound?.dispatchedAt, undefined, `${AgentClass.name}: failed dispatch marker remained in memory`);
     }
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;

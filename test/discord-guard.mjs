@@ -168,6 +168,20 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(await guard('click',{selector:'#theme-control'}),null);
         } finally {await page.close();}
       });
+      await t.test('DM and server rail navigation stays available outside the channel rail',async()=>{
+        const {page,guard,probe}=await setup(`<nav id="guilds-sidebar" style="position:fixed;left:0;top:0;width:200px;height:80px;z-index:50;background:white"><div role="tree" data-list-id="guildsnav"><div id="guild-rail-link" role="treeitem" data-list-item-id="guildsnav___789">Server</div></div></nav>
+<nav id="dm-sidebar" style="position:fixed;left:0;top:100px;width:200px;height:100px;z-index:50;background:white"><a id="dm-rail-link" data-list-item-id="private-channels-uid_11___123" href="/channels/@me/123">Direct message</a><a id="dm-wrong-route" data-list-item-id="private-channels-uid_11___124" href="/channels/123/456?unexpected=1">Unexpected route</a></nav>
+<a id="dm-lookalike" href="/channels/@me/123">Lookalike</a>`);
+        try {
+          await page.evaluate(()=>history.replaceState(null,'','/channels/@me/456'));
+          for(const selector of ['#dm-rail-link','#guild-rail-link']) {
+            assert.equal((await probe('click',{selector})).nonMessagingTarget,true,`${selector} has a structurally verified Discord rail destination`);
+            assert.equal(await guard('click',{selector}),null,`${selector} is not blocked as a message action`);
+          }
+          assert.notEqual((await probe('click',{selector:'#dm-wrong-route'})).nonMessagingTarget,true,'DM rail metadata does not authorize query-bearing routes');
+          assert.notEqual((await probe('click',{selector:'#dm-lookalike'})).nonMessagingTarget,true,'an ordinary same-origin link is not a DM rail item');
+        } finally {await page.close();}
+      });
       await t.test('sends, message actions, lookalikes and foreign origins remain protected',async()=>{
         const {page,guard,probe}=await setup();
         try {

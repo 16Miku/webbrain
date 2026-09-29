@@ -20776,7 +20776,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         },
       };
       this.chatSessions.set(tabId, dispatchedSession);
-      try { await this._persistNow(tabId); } catch {}
+      let dispatchStatePersisted = false;
+      try {
+        const persisted = await this._persistNow(tabId);
+        dispatchStatePersisted = persisted === true || persisted?.ok === true;
+      } catch {}
+      if (!dispatchStatePersisted) {
+        // The pending record without a dispatch marker was persisted before
+        // typing. Keep that durable state so a restart cannot treat an
+        // unknown-direction Discord bubble as proof of delivery.
+        dispatchedSession = pending;
+        this.chatSessions.set(tabId, dispatchedSession);
+      }
     }
 
     const after = await this._readChatObservation(tabId);

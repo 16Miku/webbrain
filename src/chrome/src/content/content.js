@@ -5878,7 +5878,7 @@
             || !/^(?:www\.)?discord\.com$/.test(location.hostname)
             || !/^\/channels\/(?:\d+|@me)(?:\/\d+)?\/?$/.test(location.pathname)) return false;
         const control = _composedClosestElement(clicked,
-          'button,a[href],input,select,textarea,[role="textbox"],[role="button"],[role="menuitem"],[role="tab"],[role="switch"],[role="radio"],[role="checkbox"]');
+          'button,a[href],input,select,textarea,[role="textbox"],[role="button"],[role="menuitem"],[role="tab"],[role="treeitem"],[role="switch"],[role="radio"],[role="checkbox"]');
         if (!control || !visible(control) || control.disabled
             || control.getAttribute('aria-disabled') === 'true'
             || _composedClosestElement(control,
@@ -5942,9 +5942,24 @@
             && control.matches('button:not([role])')
             && control.parentElement?.matches('[class*="buttons"]')) return true;
         const nav = _composedClosestElement(control, 'nav,[role="navigation"]');
+        if (!nav) return false;
+        const serverRailItem = _composedClosestElement(control, '[role="treeitem"][data-list-item-id^="guildsnav___"]');
+        if (serverRailItem) {
+          const guildsTree = _composedClosestElement(serverRailItem, '[role="tree"][data-list-id="guildsnav"]');
+          return /^guildsnav___(?:home|\d+)$/.test(serverRailItem.getAttribute('data-list-item-id') || '')
+            && !!guildsTree && _isComposedAncestor(nav, guildsTree);
+        }
+        if (control.matches('a[href][data-list-item-id^="private-channels-"]')) {
+          try {
+            const destination = new URL(control.getAttribute('href'), location.href);
+            return destination.origin === location.origin && !destination.search && !destination.hash
+              && !destination.username && !destination.password
+              && /^\/channels\/@me(?:\/\d+)?\/?$/.test(destination.pathname);
+          } catch { return false; }
+        }
         const channelsList = nav?.querySelector('#channels');
         const serverHeader = nav?.querySelector('header');
-        if (!nav || !channelsList || !serverHeader) return false;
+        if (!channelsList || !serverHeader) return false;
         if (control.matches('a[href]')) {
           const destination = new URL(control.getAttribute('href'), location.href);
           return destination.origin === location.origin && !destination.search && !destination.hash
