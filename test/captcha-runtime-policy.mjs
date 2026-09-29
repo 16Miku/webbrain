@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 const captchaNames = ['get_captcha_capabilities', 'solve_captcha', 'apply_captcha_solution'];
 const solverInstructions = /get_captcha_capabilities|solve_captcha|apply_captcha_solution|\[CAPTCHA SOLVER/;
+test('CAPTCHA tool matrix matches Ask, Compact, Mid, Full and Dev availability', async () => {
+  const rows = (await readFile(new URL('../docs/agent-tools.md', import.meta.url), 'utf8')).split('\n');
+  for (const name of captchaNames) {
+    const row = rows.find(line => line.startsWith(`| \`${name}\` |`));
+    assert.ok(row, name);
+    assert.deepEqual(row.split('|').slice(2, -1).map(cell => cell.trim()), ['No', 'No', 'Yes', 'Yes', 'Yes'], name);
+  }
+});
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
   const { getToolsForMode } = await import(`../src/${build}/src/agent/tools.js`);
