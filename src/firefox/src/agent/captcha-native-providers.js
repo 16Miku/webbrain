@@ -203,12 +203,12 @@ function proxyIdentity(task) {
   }
   return JSON.stringify([scheme.toLowerCase(), String(host).toLowerCase(), Number(port), String(login), String(password)]);
 }
-function funcaptchaServiceHost(value) {
+function captchaServiceHost(value, family) {
   try {
     const url = new URL(value.includes('://') ? value : `https://${value}`);
     if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.pathname !== '/' || url.search || url.hash) throw new Error();
     return url.host.toLowerCase();
-  } catch { throw new Error('Fallback FunCaptcha tasks must use comparable service hosts.'); }
+  } catch { throw new Error(`Fallback ${family} tasks must use comparable service hosts.`); }
 }
 function cloudflareChallengeSignature({ contract, task }) {
   const mode = contract.provider === 'capsolver' && contract.method === 'AntiCloudflareTask'
@@ -268,6 +268,12 @@ function validateFallbackIdentifiers(built) {
       && new Set(built.map(recaptchaCookieSignature)).size > 1) {
     throw new Error('Fallback reCAPTCHA tasks must use the same observed cookie set.');
   }
+  // Only NopeCHA accepts hCaptcha cookies. A later provider cannot continue
+  // the same page session when those cookies are part of the observed task.
+  if (family === 'hcaptcha' && built.length > 1
+      && built.some(({ task }) => usable(task.cookie))) {
+    throw new Error('Fallback hCaptcha tasks cannot preserve the observed cookie set across providers.');
+  }
   if (family === 'cloudflare_challenge' && built.length > 1
       && new Set(built.map(cloudflareChallengeSignature)).size > 1) {
     throw new Error('Fallback Cloudflare tasks must use the same challenge mode and observed page snapshot.');
@@ -276,7 +282,7 @@ function validateFallbackIdentifiers(built) {
     const services = built.map(({ task }) => task.funcaptchaApiJSSubdomain || task.surl);
     if (services.some(usable)) {
       if (services.some(value => !usable(value))
-          || new Set(services.map(funcaptchaServiceHost)).size > 1) {
+          || new Set(services.map(value => captchaServiceHost(value, 'FunCaptcha'))).size > 1) {
         throw new Error('Fallback FunCaptcha tasks must use the same observed service host.');
       }
     }
@@ -362,6 +368,13 @@ function validateFallbackIdentifiers(built) {
     const versions = built.map(({contract, task}) => task.version === 4 || task.captchaId
       || task.captcha_id || task.initParameters?.captcha_id || contract.method === 'geetest_v4' ? 4 : 3);
     if (new Set(versions).size > 1) throw new Error('Fallback tasks must use the same GeeTest version.');
+    if (built.length > 1) {
+      const services = built.map(({ task }) => task.geetestApiServerSubdomain ?? task.api_server);
+      if (services.some(usable) && (services.some(value => !usable(value))
+          || new Set(services.map(value => captchaServiceHost(value, 'GeeTest'))).size > 1)) {
+        throw new Error('Fallback GeeTest tasks must use the same observed service host.');
+      }
+    }
     groups.push({ aliases: versions[0] === 4 ? ['captchaId', 'captcha_id', 'initParameters.captcha_id', 'gt'] : ['gt'], requireAll: true });
     if (versions[0] === 3) groups.push({ aliases: ['challenge'], requireAll: true });
   }

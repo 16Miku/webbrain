@@ -130,6 +130,41 @@ for (const browser of ['chrome','firefox']) {
       parameters: { ...capsolver.parameters, cookies: 'SID=A' } }), /must be array/);
     assert.equal(calls.length, 0);
   });
+  test(`${browser}: hCaptcha fallback rejects cookies that a later provider cannot preserve`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const nopecha = { provider: 'nopecha', method: 'token/hcaptcha', parameters: {
+      sitekey: 'site', url,
+      cookie: [{ name: 'SID', value: 'session', domain: 'example.test', path: '/' }],
+    } };
+    const nonecap = { provider: 'nonecap', method: 'hcaptcha', parameters: { sitekey: 'site', url } };
+    assert.equal(native.prepareNativeCaptchaTasks(providers, [
+      { ...nopecha, parameters: { sitekey: 'site', url } }, nonecap,
+    ]).length, 2);
+    assert.equal(native.prepareNativeCaptchaTasks(providers, [nopecha]).length, 1);
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [nopecha, nonecap]),
+      /cannot preserve the observed cookie set/);
+    assert.equal(calls.length, 0);
+  });
+  test(`${browser}: GeeTest fallback matches provider-specific API service hosts`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const twoCaptcha = { provider: '2captcha', method: 'GeeTestTaskProxyless', parameters: {
+      websiteURL: url, gt: 'site', challenge: 'fresh', geetestApiServerSubdomain: 'api-na.geetest.com',
+    } };
+    const solveCaptcha = { provider: 'solvecaptcha', method: 'geetest', parameters: {
+      pageurl: url, gt: 'site', challenge: 'fresh', api_server: 'https://API-NA.GEETEST.COM/',
+    } };
+    assert.equal(native.prepareNativeCaptchaTasks(providers, [twoCaptcha, solveCaptcha]).length, 2);
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [twoCaptcha, {
+      ...solveCaptcha, parameters: { ...solveCaptcha.parameters, api_server: 'api-eu.geetest.com' },
+    }]), /same observed service host/);
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [twoCaptcha, {
+      ...solveCaptcha, parameters: { pageurl: url, gt: 'site', challenge: 'fresh' },
+    }]), /same observed service host/);
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [twoCaptcha, {
+      ...solveCaptcha, parameters: { ...solveCaptcha.parameters, api_server: 'https://api-na.geetest.com/other' },
+    }]), /comparable service hosts/);
+    assert.equal(calls.length, 0);
+  });
   test(`${browser}: AWS WAF fallback compares API, challenge, and CAPTCHA scripts before dispatch`, t => {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
     const twoCaptcha = { provider: '2captcha', method: 'AmazonTaskProxyless', parameters: {
