@@ -175,6 +175,48 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(record.dispatchedTimeOrigins.has(1000), true);
     assert.equal(agent._captchaGateStates.has(1), false);
   });
+  test(`${build}: an unexpired paid native answer survives background restart with its gate`, async () => {
+    const agent = agentFor('act', 'full');
+    const pageUrl = 'https://example.test/challenge';
+    agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+    agent._nativeCaptchaSolutions = new Map([[1, {
+      pageUrl, createdAt: Date.now(), applied: false, solution: { token: 'paid-answer' },
+      documents: [{ frameId: 0, url: pageUrl, timeOrigin: 1000 }],
+      dispatchedTimeOrigins: new Set([1000]),
+    }]]);
+    agent._captchaGateStates.set(1, { key: `${pageUrl}\nchallenge`, status: 'verification_pending',
+      publicGate: { status: 'verification_pending', nativeAnswerPending: true, solveAttempted: true } });
+    const entry = structuredClone(agent._conversationStorageEntry(1));
+    const savedAnswer = entry.nativeCaptchaAnswer;
+    assert.deepEqual(entry.nativeCaptchaAnswer.solution, { token: 'paid-answer' });
+    agent._nativeCaptchaSolutions.get(1).applied = true;
+    agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', { success: true, injected: true });
+    assert.equal(agent._conversationStorageEntry(1).nativeCaptchaAnswer, null);
+    assert.equal(agent._captchaGateStates.get(1).publicGate.nativeAnswerPending, false);
+    const restored = agentFor('act', 'full');
+    const apiName = build === 'chrome' ? 'chrome' : 'browser';
+    const previous = globalThis[apiName];
+    globalThis[apiName] = { storage: { session: { get: async key => key === restored._convKey(1)
+      ? { [key]: entry } : {} } } };
+    try {
+      await restored._hydrate(1);
+      assert.deepEqual(restored._nativeCaptchaSolutions.get(1).solution, { token: 'paid-answer' });
+      assert.equal(restored._nativeCaptchaSolutions.get(1).dispatchedTimeOrigins.has(1000), true);
+      assert.equal(restored._captchaGateStates.get(1).status, 'verification_pending');
+      assert.equal(restored._hasUnappliedNativeCaptchaSolution(1), true);
+
+      const missing = agentFor('act', 'full');
+      delete entry.nativeCaptchaAnswer;
+      await missing._hydrate(1);
+      assert.equal(missing._captchaGateStates.has(1), false);
+      const expired = agentFor('act', 'full');
+      entry.nativeCaptchaAnswer = { ...savedAnswer, createdAt: Date.now() - 180_001 };
+      await expired._hydrate(1);
+      assert.equal(expired._captchaGateStates.has(1), false);
+    } finally {
+      if (previous === undefined) delete globalThis[apiName]; else globalThis[apiName] = previous;
+    }
+  });
   test(`${build}: a same-URL reload retires the answer and releases the previous gate`, async () => {
     const agent = agentFor('act', 'full');
     const pageUrl = 'https://example.test/challenge';

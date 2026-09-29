@@ -10909,10 +10909,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...withoutLegacyCaptchaVerificationState(activeGate.publicGate),
       status: 'verification_pending',
       solveAttempted: true,
+      nativeAnswerPending: toolResult.applicationRequired === true || toolResult.applicationRetryable === true,
     } : {
       ...activeGate.publicGate,
       status: 'manual_required',
       solveFailed: true,
+      nativeAnswerPending: false,
     };
     this._captchaGateStates.set(tabId, {
       ...(pending ? withoutLegacyCaptchaVerificationState(activeGate) : activeGate),
@@ -16500,6 +16502,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           });
         }
         this._restorePersistedRichTextToolbarAudit(tabId, entry.richTextToolbarAudit);
+        const savedAnswer = entry.nativeCaptchaAnswer;
+        const nativeAnswerRestored = savedAnswer && typeof savedAnswer.pageUrl === 'string'
+          && Number.isFinite(savedAnswer.createdAt)
+          && Date.now() >= savedAnswer.createdAt && Date.now() - savedAnswer.createdAt <= 180_000
+          && savedAnswer.applied === false && savedAnswer.solution !== undefined
+          && Array.isArray(savedAnswer.documents)
+          && savedAnswer.documents.some(document => document?.frameId === 0);
+        if (nativeAnswerRestored) {
+          this._nativeCaptchaSolutions ||= new Map();
+          this._nativeCaptchaSolutions.set(tabId, {
+            ...savedAnswer,
+            dispatchedTimeOrigins: new Set(Array.isArray(savedAnswer.dispatchedTimeOrigins)
+              ? savedAnswer.dispatchedTimeOrigins.filter(Number.isFinite) : []),
+          });
+        }
         const captchaGateState = entry.captchaGateState;
         if (
           captchaGateState
@@ -16513,7 +16530,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && captchaGateState.cloudflareManagedChallenge !== true
           && captchaGateState.publicGate.cloudflareManagedChallenge !== true
         ) {
-          if (!cloudflareSignal) {
+          if (!cloudflareSignal && (!captchaGateState.publicGate.nativeAnswerPending || nativeAnswerRestored)) {
             this._captchaGateStates.set(tabId, normalizeCaptchaGateState(captchaGateState));
           }
         }
@@ -16557,6 +16574,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         })
       : { messages: [], compacted: false, bytes: 2 };
     const captchaGateState = this._captchaGateStates.get(tabId) || null;
+    const nativeAnswer = this._nativeCaptchaSolutions?.get(tabId);
+    const savedNativeAnswer = nativeAnswer?.solution !== undefined && nativeAnswer.applied === false
+      && Date.now() - nativeAnswer.createdAt <= 180_000
+      ? { pageUrl: nativeAnswer.pageUrl, createdAt: nativeAnswer.createdAt, applied: false,
+          documents: nativeAnswer.documents, solution: nativeAnswer.solution,
+          dispatchedTimeOrigins: [...(nativeAnswer.dispatchedTimeOrigins || [])] }
+      : null;
+    const nativeCaptchaAnswer = savedNativeAnswer && JSON.stringify(savedNativeAnswer).length <= 250_000
+      ? savedNativeAnswer : null;
     return {
       mode: this.conversationModes.get(tabId) || 'ask',
       messages: serialized.messages,
@@ -16577,6 +16603,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || captchaGateState?.publicGate?.cloudflareManagedChallenge === true
         ? null
         : captchaGateState,
+      nativeCaptchaAnswer,
     };
   }
 
@@ -26087,6 +26114,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     this.completionInvariants.delete(tabId);
     this.readCompletenessStates.delete(tabId);
     this._captchaGateStates.delete(tabId);
+    this._nativeCaptchaSolutions?.delete(tabId);
     if (preserveRunGuard) {
       this._activeCloudflareManagedChallengeGate(tabId);
     } else {
@@ -35771,11 +35799,21 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       try {
         const result = await applyNativeCaptchaSolution(tabId, record, args, chrome);
         if (record && result.success === true) record.applicationSucceeded = true;
-        return { ...result, injected: result.success === true, dispatched: record?.applied === true,
+        const outcome = { ...result, injected: result.success === true, dispatched: record?.applied === true,
           applicationRetryable: result.success !== true && await applicationRetryable() };
+        if (record?.applied === true) {
+          this._captchaSolveGateAfterTool(tabId, name, outcome);
+          await this._persistNow(tabId);
+        }
+        return outcome;
       } catch (error) {
-        return { success: false, error: error.message, dispatched: record?.applied === true,
+        const outcome = { success: false, error: error.message, dispatched: record?.applied === true,
           applicationRetryable: await applicationRetryable() };
+        if (record?.applied === true) {
+          this._captchaSolveGateAfterTool(tabId, name, outcome);
+          await this._persistNow(tabId);
+        }
+        return outcome;
       }
     }
     if (name === 'solve_captcha') {
@@ -35834,6 +35872,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           const result = await solveNativeCaptchaTasks(prepared);
           record.solution = result.solution;
           record.createdAt = Date.now();
+          this._captchaSolveGateAfterTool(tabId, 'solve_captcha', { success: true, applicationRequired: true });
+          await this._persistNow(tabId);
           return { success: true, dispatched: true, type: result.family, provider: result.provider, method: result.method, taskId: result.taskId,
             solution: result.solution, ...(result.userAgent ? { solverUserAgent: result.userAgent } : {}),
             injected: false, applicationRequired: true,

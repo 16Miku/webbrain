@@ -101,6 +101,26 @@ for (const browser of ['chrome','firefox']) {
     assert.throws(() => native.prepareNativeCaptchaTasks(providers, [capsolver, token]), /same challenge mode/);
     assert.equal(calls.length, 0);
   });
+  test(`${browser}: AWS WAF fallback compares API, challenge, and CAPTCHA scripts before dispatch`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const twoCaptcha = { provider: '2captcha', method: 'AmazonTaskProxyless', parameters: {
+      websiteURL: url, websiteKey: 'key', jsapiScript: 'https://a.test/jsapi.js',
+      challengeScript: 'https://a.test/challenge.js',
+    } };
+    const capsolver = { provider: 'capsolver', method: 'AntiAwsWafTaskProxyLess', parameters: {
+      websiteURL: url, awsKey: 'key', awsApiJs: 'https://a.test/jsapi.js',
+      awsChallengeJS: 'https://a.test/challenge.js',
+    } };
+    assert.equal(native.prepareNativeCaptchaTasks(providers, [twoCaptcha, capsolver]).length, 2);
+    for (const parameters of [
+      { ...capsolver.parameters, awsApiJs: 'https://b.test/jsapi.js' },
+      { ...capsolver.parameters, awsChallengeJS: 'https://b.test/challenge.js' },
+    ]) assert.throws(() => native.prepareNativeCaptchaTasks(providers, [twoCaptcha, { ...capsolver, parameters }]), /same observed challenge/);
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [
+      { ...twoCaptcha, parameters: { ...twoCaptcha.parameters, captchaScript: 'https://a.test/captcha.js' } }, capsolver,
+    ]), /same observed challenge/);
+    assert.equal(calls.length, 0);
+  });
   test(`${browser}: enumerated nested task fields reject undocumented data before paid dispatch`, t => {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
     const entry = { provider: 'capmonster', method: 'CustomTask:alibaba', parameters: {
