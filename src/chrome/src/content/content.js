@@ -8047,7 +8047,6 @@
           let hitOk = !forClickFallback || (!!topmost && (
             topmost === el
             || el.contains?.(topmost)
-            || topmost.contains?.(el)
           ));
           if (forClickFallback && inViewport && !hitOk) {
             const sampleOffsets = [
@@ -8060,7 +8059,7 @@
               if (sx < 0 || sy < 0 || sx > vw || sy > vh) continue;
               let sampleHit = null;
               try { sampleHit = document.elementFromPoint(sx, sy); } catch {}
-              if (sampleHit && (sampleHit === el || el.contains?.(sampleHit) || sampleHit.contains?.(el))) {
+              if (sampleHit && (sampleHit === el || el.contains?.(sampleHit))) {
                 topmost = sampleHit;
                 effectiveCx = sx;
                 effectiveCy = sy;
@@ -8079,7 +8078,7 @@
                   effectiveCx = r.left + r.width / 2;
                   effectiveCy = r.top + r.height / 2;
                   topmost = document.elementFromPoint(effectiveCx, effectiveCy);
-                  if (topmost && (topmost === el || el.contains?.(topmost) || topmost.contains?.(el))) {
+                  if (topmost && (topmost === el || el.contains?.(topmost))) {
                     hitOk = true;
                   }
                 }

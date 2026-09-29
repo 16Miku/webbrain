@@ -4657,6 +4657,34 @@ test('ax_resolve_rect: trusted fallback eligibility rejects interactive descenda
   }
 });
 
+test('ax_resolve_rect: an ancestor pseudo-element cannot authorize a trusted fallback click', async (page) => {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      #cover-parent { position: relative; margin: 100px; width: 220px; height: 100px; }
+      #cover-parent::after { content: ''; position: absolute; inset: 0; z-index: 2; background: rgba(255,255,255,.1); pointer-events: auto; }
+      #target { position: absolute; top: 20px; left: 20px; width: 120px; height: 40px; }
+    </style>
+    <div id="cover-parent">
+      <div id="target" role="listitem" tabindex="0" aria-label="Safe row">Safe row</div>
+    </div>
+  `, 'chrome');
+  const setupState = await page.evaluate(() => {
+    const target = document.getElementById('target');
+    const rect = target.getBoundingClientRect();
+    return {
+      refId: window.__wb_ax_ref(target),
+      hitIsParent: document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+        === document.getElementById('cover-parent'),
+    };
+  });
+  if (!setupState.hitIsParent) throw new Error(`pseudo-element fixture did not cover its child: ${JSON.stringify(setupState)}`);
+  const resolved = await call(page, 'ax_resolve_rect', { ref_id: setupState.refId, forClickFallback: true });
+  if (!resolved?.success || resolved.hitOk !== false || resolved.fallbackEligible !== false
+    || !/covered/.test(resolved.fallbackBlockedReason || '')) {
+    throw new Error(`ancestor pseudo-element incorrectly authorized the target: ${JSON.stringify(resolved)}`);
+  }
+});
+
 test('ax_resolve_rect: English action labels stay blocked under Turkish locale casing', async (page) => {
   await page.addInitScript(() => {
     const original = String.prototype.toLocaleLowerCase;
