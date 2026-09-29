@@ -19,6 +19,7 @@ await new Promise(r => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
 try {
   for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
+    if (process.env.CAPTCHA_UI_BROWSER && process.env.CAPTCHA_UI_BROWSER !== build) continue;
     const browser = await engine.launch();
     try {
       for (const lang of ['en', 'tr', 'de', 'zh', 'ar']) for (const width of [390, 1280]) {
@@ -39,7 +40,7 @@ try {
             runtime: { getURL: path => `${location.origin}/src/${build}/${path}`, getManifest: () => ({ version: '36.7.5' }), onMessage: { addListener() {} }, sendMessage(msg, callback) {
               testRequests.push(msg);
               const result = msg.action === 'get_providers' ? { providers: {}, active: '' }
-                : msg.action === 'test_two_captcha_balance' || msg.action === 'test_capsolver_balance' ? { ok: !window.failBalance, balance: 2.5, error: window.failBalance ? 'Synthetic balance failure' : undefined }
+                : msg.action === 'test_captcha_provider_balance' || msg.action === 'test_two_captcha_balance' || msg.action === 'test_capsolver_balance' ? { ok: !window.failBalance, balance: 2.5, error: window.failBalance ? 'Synthetic balance failure' : undefined }
                 : {};
               callback?.(result); return Promise.resolve(result);
             } }, commands: { getAll: async () => [] }, tabs: { create: async () => ({}) },
@@ -50,15 +51,21 @@ try {
           await page.goto(`${origin}/src/${build}/src/ui/settings.html#display`);
           await page.reload();
           await page.waitForFunction(() => testRequests.some(r => r.action === 'get_providers'));
-          await page.locator('details.advanced-settings').first().locator('summary').click();
+          await page.locator('details.advanced-settings').first().locator(':scope > summary').click();
         };
         await openSettings();
         const card = page.locator('#captcha-card');
         await card.scrollIntoViewIfNeeded();
-        assert.equal(await card.locator('section').count(), 2);
-        assert.equal(await card.evaluate(el => el.textContent.includes('st.captcha.')), false);
+        assert.equal(await card.locator('section').count(), 5);
+        assert.equal(await card.evaluate(el => el.textContent.includes('st.captcha.') || el.textContent.includes('{provider}')), false);
+        assert.equal(await card.locator('.captcha-advanced[open]').count(), 0);
+        for (const [id, defaultWeight] of [['captcha', 100], ['two-captcha', 99], ['capmonster', 98], ['solve-captcha', 97], ['anti-captcha', 96]]) {
+          assert.equal(await page.locator(`#${id}-weight`).isVisible(), false);
+          assert.equal(await page.locator(`#${id}-weight`).locator('xpath=ancestor::details[1]/summary').evaluate(el => getComputedStyle(el, '::after').content), '"+"');
+          assert.equal(await page.locator(`#${id}-weight`).inputValue(), String(defaultWeight));
+        }
         assert.equal(await page.evaluate(() => testStore.twoCaptchaEnabled), undefined);
-        await card.screenshot({ path: `${output}/${build}-${lang}-${width}.png` });
+        await card.screenshot({ path: `${output}/${build}-${lang}-${width}.png`, style: '.tabs { visibility: hidden; }' });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         await page.locator('#two-captcha-api-key').fill('invalid');
         await page.locator('#btn-save-two-captcha').click();
@@ -69,7 +76,12 @@ try {
         await page.locator('#btn-test-two-captcha').click();
         await page.waitForFunction(() => document.querySelector('#test-two-captcha').textContent.includes('2.5000'));
         assert.equal(await page.evaluate(() => testStore.twoCaptchaEnabled), undefined, 'balance check is not consent');
+        assert.equal(await page.locator('#two-captcha-enabled').isChecked(), true);
+        await page.locator('#two-captcha-enabled').uncheck();
         await page.locator('#btn-save-two-captcha').click();
+        assert.equal(await page.evaluate(() => testStore.twoCaptchaEnabled), false, 'save respects an explicit opt-out');
+        assert.equal(await page.evaluate(() => testStore.twoCaptchaApiKey), key);
+        await page.locator('#two-captcha-enabled').check();
         assert.equal(await page.evaluate(() => testStore.twoCaptchaEnabled), true);
         assert.equal(await page.evaluate(() => testStore.captchaSolverEnabled), undefined);
         await page.locator('#captcha-api-key').fill('CAP-0123456789abcdefghij');
@@ -88,6 +100,34 @@ try {
         await page.locator('#btn-clear-two-captcha').click();
         assert.equal(await page.evaluate(() => testStore.twoCaptchaEnabled), undefined);
         assert.equal(await page.evaluate(() => testStore.twoCaptchaApiKey), undefined);
+        for (const [id, keyName, enabledName, weightName] of [
+          ['capmonster', 'capmonsterApiKey', 'capmonsterEnabled', 'capmonsterWeight'],
+          ['solve-captcha', 'solveCaptchaApiKey', 'solveCaptchaEnabled', 'solveCaptchaWeight'],
+          ['anti-captcha', 'antiCaptchaApiKey', 'antiCaptchaEnabled', 'antiCaptchaWeight'],
+        ]) {
+          await page.locator(`#${id}-api-key`).fill(key);
+          assert.equal(await page.locator(`#${id}-enabled`).isChecked(), true);
+          await page.locator(`#btn-save-${id}`).click();
+          assert.equal(await page.evaluate(name => testStore[name], enabledName), true);
+          await page.locator(`#${id}-enabled`).uncheck();
+          await page.locator(`#${id}-api-key`).fill('f'.repeat(32));
+          assert.equal(await page.locator(`#${id}-enabled`).isChecked(), false, 'manual opt-out survives further typing');
+          await page.locator(`#btn-save-${id}`).click();
+          assert.equal(await page.evaluate(name => testStore[name], enabledName), false);
+          await page.locator(`#${id}-weight`).locator('xpath=ancestor::details[1]/summary').click();
+          await page.locator(`#${id}-weight`).fill('110');
+          await page.locator(`#${id}-weight`).blur();
+          await page.waitForFunction(name => testStore[name] === 110, weightName);
+          await openSettings();
+          assert.equal(await page.locator(`#${id}-enabled`).isChecked(), false);
+          assert.equal(await page.locator(`#${id}-api-key`).inputValue(), 'f'.repeat(32));
+          assert.equal(await page.locator(`#${id}-weight`).inputValue(), '110');
+          assert.equal(await page.locator(`#${id}-weight`).isVisible(), false);
+          await page.locator(`#${id}-enabled`).check();
+          await page.locator(`#btn-test-${id}`).click();
+          await page.waitForFunction(dom => document.querySelector(`#test-${dom}`).textContent.includes('2.5000'), id);
+          assert.equal(await page.evaluate(name => testStore[name], enabledName), true);
+        }
         await page.evaluate(() => chrome.storage.local.set({ webbrainCloudManaged: true }));
         await openSettings();
         assert.equal(await card.isVisible(), false, 'managed settings keep broker-only UI');
