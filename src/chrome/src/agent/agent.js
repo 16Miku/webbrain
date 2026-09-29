@@ -33851,10 +33851,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       if (!question) {
         return { success: false, error: 'clarify: `question` is required (a single sentence asking the user something specific).' };
       }
-      const options = Array.isArray(args?.options)
-        ? args.options.map(s => String(s).trim().slice(0, 200)).filter(Boolean).slice(0, 4)
-        : [];
-      const safeFirst = args?.safe_first === true && options.length > 0;
+      const rawOptions = Array.isArray(args?.options) ? args.options : [];
+      const options = rawOptions
+        .map(s => String(s).trim().slice(0, 200)).filter(Boolean).slice(0, 4);
+      const safeFirst = args?.safe_first === true && String(rawOptions[0] || '').trim().length > 0;
       const reason = args?.reason ? String(args.reason).slice(0, 300) : null;
       const purpose = args?.purpose === 'research_escalation'
         ? 'research_escalation'

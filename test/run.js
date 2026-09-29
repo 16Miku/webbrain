@@ -48810,6 +48810,17 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: whitespace-only option did not arm a timeout guard`);
 
     await agent._recordClarificationAuthorization(tabId, 'user');
+    const promotedOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Delete everything?', options: [' ', 'Yes, delete them'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
+      },
+    );
+    assert.equal(promotedOptionTimeout.authorized, false, `${AgentClass.name}: safe_first authorized a later promoted option`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
     const affirmativeTimeout = await agent.executeTool(
       tabId,
       'clarify',
