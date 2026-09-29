@@ -101,6 +101,7 @@
         if (key === 'steps' && (typeof item.tool !== 'string' || !item.tool.trim())) issues.push(`Step ${i + 1} needs a tool.`);
       });
     }
+    if (Array.isArray(value.steps) && value.steps.length === 0) issues.push('Add at least one workflow step before importing.');
     const ids = new Set();
     (Array.isArray(value.parameters) ? value.parameters : []).forEach((item, index) => {
       if (typeof item?.id !== 'string' || !item.id) return;

@@ -89,7 +89,8 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     await edit(val(page, ['start', 'pathFamily']), 'missing-leading-slash');
     assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('start.pathFamily')));
     await edit(val(page, ['start', 'pathFamily']), '/');
-    assert.deepEqual(await page.evaluate(() => editor.validate()), []);
+    assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('Add at least one workflow step')));
+    assert.equal((name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(await page.evaluate(() => editor.getValue())).reason, 'invalid_workflow');
     await page.getByRole('button', { name: '+ Add', exact: true }).last().click();
     assert.deepEqual(await page.evaluate(() => editor.getValue().steps[0].scope), { origin: 'https://example.com', pathFamily: '/' });
     assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('needs a replayable target')));
