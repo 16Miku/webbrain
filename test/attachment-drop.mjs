@@ -205,6 +205,17 @@ for (const [label, relativeModule] of implementations) {
     [itemsImage],
     `${label}: clipboard images from items should be recognized when files is empty`
   );
+  const sharedImage = { name: 'shared.png', type: 'image/png' };
+  assert.deepEqual(
+    module.clipboardImageFiles({
+      clipboardData: {
+        files: [sharedImage],
+        items: [{ kind: 'file', getAsFile: () => sharedImage }],
+      },
+    }),
+    [sharedImage],
+    `${label}: files and items should not produce duplicate attachments`
+  );
 
   const target = createTarget();
   const files = [{ name: 'notes.txt', type: 'text/plain' }];

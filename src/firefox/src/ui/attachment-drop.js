@@ -11,11 +11,14 @@ export function clipboardImageFiles(event) {
   const clipboardData = event?.clipboardData;
   if (!clipboardData) return [];
   const fromFiles = Array.from(clipboardData.files || []);
+  if (fromFiles.length) return fromFiles.filter(file => (
+    String(file?.type || '').startsWith('image/')
+  ));
   const fromItems = Array.from(clipboardData.items || [])
     .filter(item => item?.kind === 'file')
     .map(item => item.getAsFile?.())
     .filter(Boolean);
-  return [...fromFiles, ...fromItems].filter(file => (
+  return fromItems.filter(file => (
     String(file?.type || '').startsWith('image/')
   ));
 }
