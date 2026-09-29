@@ -266,6 +266,25 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal((await observe()).success,false,'a conflicting selected DM route fails closed');
         } finally {await page.close();}
       });
+      await t.test('empty DMs bind only when the selected rail route confirms the pane',async()=>{
+        const {page}=await setup();
+        try {
+          await page.locator('#channel').evaluate(el=>{
+            el.setAttribute('href','/channels/@me/456');
+            el.setAttribute('data-list-item-id','private-channels-uid_11___456');
+          });
+          await page.evaluate(()=>history.replaceState(null,'','/channels/@me/456'));
+          await page.locator('[data-list-id=chat-messages]').evaluate(el=>el.replaceChildren());
+          await page.locator('#composer').focus();
+          const observe=()=>page.evaluate(()=>window.__wb_observe_chat_dom({}));
+          assert.equal((await observe()).success,true,'an empty DM can bind from its matching selected rail link');
+          await page.locator('#channel').evaluate(el=>el.removeAttribute('aria-current'));
+          assert.equal((await observe()).success,false,'an empty DM without pane or rail route evidence fails closed');
+          await page.locator('#channel').evaluate(el=>el.setAttribute('aria-current','page'));
+          await page.evaluate(()=>history.replaceState(null,'','/channels/@me/789'));
+          assert.equal((await observe()).success,false,'an empty DM cannot bind to a different selected route');
+        } finally {await page.close();}
+      });
       await t.test('channel observation recognizes the transcript, empty channels and stable server/channel identity',async()=>{
         const {page}=await setup();
         try {

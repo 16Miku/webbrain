@@ -180,7 +180,7 @@
       || /^(.+) \(channel\)$/.exec(attribute(root, 'aria-label'))?.[1]
       || (directMessageRoute ? `direct-message-${channelId}` : `channel-${channelId}`);
     return transcript && (directMessageRoute
-      ? !selectedDmRouteMismatch && transcriptMatchesDmRoute
+      ? !selectedDmRouteMismatch && (channelLink || transcriptMatchesDmRoute)
       : channelLink)
       ? {
         root, transcript, name, channelId,
