@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Edit workflow JSON files locally. No uploads, account, or connection required.">
+  <title>Workflow editor — WebBrain</title>
+  <style>
+    body { margin: 0; background: #f3f5f8; }
+    #editor { min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <main id="editor"></main>
+  <script>
+    // Resolve both the clean hosted route and a directly opened local HTML file.
+    const base = new URL(location.href);
+    if (!base.pathname.endsWith('/') && !base.pathname.endsWith('.html')) base.pathname += '/';
+    const script = document.createElement('script');
+    script.src = new URL('workflow-editor.js', base).href;
+    script.onload = () => {
+      window.editor = WorkflowEditor.mount('#editor');
+      window.addEventListener('beforeunload', (event) => {
+        if (editor.isDirty()) { event.preventDefault(); event.returnValue = ''; }
+      });
+    };
+    document.head.append(script);
+  </script>
+</body>
+</html>

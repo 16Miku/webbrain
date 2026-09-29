@@ -911,6 +911,7 @@ export default {
   "sp.memory.error": "Error de memoria: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "No se guardó: el texto queda vacío tras la limpieza o parece contener un secreto (contraseña, clave de API o token).",
   "sp.memory.reason.not_found": "Ninguna memoria guardada tiene ese ID.",
+  'sp.slash.workflow_editor': "Editor de flujos de trabajo",
   "sp.slash.workflows": "Listar y administrar flujos de trabajo guardados",
   "sp.slash.teach": "Graba tus acciones como un flujo de trabajo guardado",
   "sp.slash.run_workflow": "Ejecutar un flujo guardado por ID",

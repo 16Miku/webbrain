@@ -911,6 +911,7 @@ export default {
   "sp.memory.error": "Error sa memory: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Hindi na-save: walang laman ang text pagkatapos linisin o mukhang may lihim (password, API key, token).",
   "sp.memory.reason.not_found": "Walang naka-save na memory na may ganoong ID.",
+  'sp.slash.workflow_editor': "Editor ng workflow",
   "sp.slash.workflows": "Ilista at pamahalaan ang mga naka-save na workflow",
   "sp.slash.teach": "I-record ang iyong mga kilos bilang naka-save na workflow",
   "sp.slash.run_workflow": "Patakbuhin ang naka-save na workflow ayon sa ID",

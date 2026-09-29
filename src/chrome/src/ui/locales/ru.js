@@ -939,6 +939,7 @@ export default {
   "sp.memory.error": "Ошибка памяти: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Не сохранено: после очистки текст пуст или похож на секрет (пароль, API-ключ, токен).",
   "sp.memory.reason.not_found": "Сохранённой записи с таким ID нет.",
+  'sp.slash.workflow_editor': "Редактор рабочих процессов",
   "sp.slash.workflows": "Просмотр и управление сохранёнными сценариями",
   "sp.slash.teach": "Записать ваши действия как сохранённый рабочий процесс",
   "sp.slash.run_workflow": "Запустить сохранённый сценарий по ID",

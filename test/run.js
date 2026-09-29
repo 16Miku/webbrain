@@ -43621,6 +43621,17 @@ test('canonical slash parser handles flags, values, casing, termination, and har
     assert.ok(!chromeHelp.includes(text.split(' ')[0]), `Chrome help must omit retired syntax ${text}`);
   }
 
+  for (const [label, runtime] of [['chrome', chrome], ['firefox', firefox]]) {
+    const workflow = runtime.SLASH_COMMANDS.find((command) => command.value === '/workflow');
+    const link = '<a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">sp.slash.workflow_editor</a>';
+    const detail = runtime.buildSlashCommandDetailHtml(workflow);
+    assert.equal((detail.match(/<a href="https:\/\/webbrain\.one\/workflow-editor\/"/g) || []).length, 3, `${label}: workflow save, export, and import help should link to the editor`);
+    assert.ok(detail.includes(`sp.slash.save_workflow ${link}`), `${label}: --save help should end with the workflow editor link`);
+    assert.ok(detail.includes(`sp.slash.workflows ${link}`), `${label}: --export and --import help should end with the workflow editor link`);
+    assert.equal((runtime.buildSlashCommandHelpHtml().match(/<a href="https:\/\/webbrain\.one\/workflow-editor\/"/g) || []).length, 3, `${label}: global slash help should include the editor link for workflow file actions`);
+    assert.ok(!runtime.buildSlashCommandDetailHtml(runtime.SLASH_COMMANDS.find((command) => command.value === '/export')).includes(link), `${label}: unrelated --export command should not link to the workflow editor`);
+  }
+
   assert.equal(firefox.parseSlashInvocation('/record --full-screen --transcribe').unsupported, true, 'Firefox should reject canonical recording locally');
   assert.equal(firefox.parseSlashInvocation('/screenshot --full-page').unsupported, true, 'Firefox should reject the unsupported canonical screenshot flag locally');
   assert.equal(firefox.SLASH_COMMANDS.find((command) => command.value === '/record').unsupported, true, 'Firefox recording should be hidden from discovery');

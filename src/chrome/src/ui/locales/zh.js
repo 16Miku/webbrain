@@ -939,6 +939,7 @@ export default {
   "sp.memory.error": "记忆错误：{msg}",
   "sp.memory.reason.invalid_or_sensitive": "未保存：清理后的文本为空，或看起来包含机密信息（密码、API 密钥、令牌）。",
   "sp.memory.reason.not_found": "没有使用该 ID 的已保存记忆。",
+  'sp.slash.workflow_editor': "工作流编辑器",
   "sp.slash.workflows": "列出和管理已保存的工作流",
   "sp.slash.teach": "将您的操作记录为已保存的工作流",
   "sp.slash.run_workflow": "按 ID 运行已保存的工作流",

@@ -931,6 +931,7 @@ export default {
   "sp.memory.error": "Błąd pamięci: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Nie zapisano: po oczyszczeniu tekst jest pusty lub wygląda na zawierający sekret (hasło, klucz API, token).",
   "sp.memory.reason.not_found": "Nie ma zapisanego wpisu o tym ID.",
+  'sp.slash.workflow_editor': "Edytor przepływów pracy",
   "sp.slash.workflows": "Wyświetlaj i zarządzaj zapisanymi przepływami pracy",
   "sp.slash.teach": "Nagraj działania jako zapisany przepływ pracy",
   "sp.slash.run_workflow": "Uruchom zapisany przepływ pracy według ID",
