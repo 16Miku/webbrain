@@ -121815,6 +121815,7 @@ async function withCaptchaFakePage(build, nodes, callback) {
         location,
         URL,
         URLSearchParams,
+        navigator: globalThis.navigator,
         innerWidth: 1280,
         innerHeight: 720,
         getComputedStyle: globalThis.getComputedStyle,
@@ -121987,7 +121988,7 @@ test('NoneCap hCaptcha token is not injected when its User-Agent differs from th
       const originalExecute = build === 'chrome' ? api.scripting.executeScript : api.tabs.executeScript;
       let injections = 0;
       if (build === 'chrome') api.scripting.executeScript = async options => {
-        if (options.world === 'MAIN') injections++;
+        if (options.world === 'MAIN' && options.args?.length) injections++;
         return originalExecute(options);
       };
       else api.tabs.executeScript = async (tabId, options) => {
@@ -122006,6 +122007,54 @@ test('NoneCap hCaptcha token is not injected when its User-Agent differs from th
         assert.equal(result.injected, false, build);
         assert.equal(result.token, undefined, build);
         assert.match(result.error, /different User-Agent/, build);
+        assert.equal(injections, 0, build);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+});
+
+test('hCaptcha dispatch and NoneCap validation use the selected frame User-Agent', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sitekey = 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8';
+    await withCaptchaFakePage(build, [captchaEl('div', { class: 'h-captcha', 'data-sitekey': sitekey })], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({
+        nopechaEnabled: true, nopechaApiKey: 'nopecha_key',
+        nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32),
+      }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const frameUserAgent = 'target-frame-UA';
+      const originalExecute = build === 'chrome' ? api.scripting.executeScript : api.tabs.executeScript;
+      let injections = 0;
+      if (build === 'chrome') api.scripting.executeScript = async options => {
+        if (options.func?.toString().includes('navigator.userAgent')) {
+          return [{ frameId: 0, result: frameUserAgent }];
+        }
+        if (options.world === 'MAIN' && options.args?.length) injections++;
+        return originalExecute(options);
+      };
+      else api.tabs.executeScript = async (tabId, options) => {
+        if (options.code === 'navigator.userAgent') return [frameUserAgent];
+        if (options.code.includes('injectCaptchaTokenInPage')) injections++;
+        return originalExecute(tabId, options);
+      };
+      const originalFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (requestUrl, options) => {
+        calls.push({ url: requestUrl, body: JSON.parse(options.body) });
+        return requestUrl.includes('nopecha')
+          ? Response.json({ code: 16, message: 'Out of credit' }, { status: 403 })
+          : Response.json({ id: 'solve_test', status: 'solved', token: 'paid-token',
+            user_agent: 'background-UA' });
+      };
+      try {
+        const agent = new AgentClass({});
+        const result = await agent._executeToolImpl(1, 'solve_captcha', {});
+        assert.equal(result.dispatched, true, build);
+        assert.equal(result.injected, false, build);
+        assert.equal(result.manualCompletionRequired, true, build);
+        assert.match(result.error, /different User-Agent/, build);
+        assert.equal(calls[0].body.useragent, frameUserAgent, build);
         assert.equal(injections, 0, build);
       } finally { globalThis.fetch = originalFetch; }
     });

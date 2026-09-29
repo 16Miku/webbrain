@@ -331,6 +331,17 @@ export async function detectCaptcha(tabId, constraints = {}) {
   };
 }
 
+export async function readCaptchaFrameUserAgent(tabId, frameId) {
+  if (!Number.isInteger(frameId)) return null;
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [frameId] },
+    world: 'MAIN',
+    func: () => navigator.userAgent,
+  });
+  const value = results?.find(entry => entry?.frameId === frameId)?.result;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
 // ─── Token injection ───────────────────────────────────────────────────
 
 export async function injectToken(tabId, {

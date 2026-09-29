@@ -396,6 +396,15 @@ export async function detectCaptcha(tabId, constraints = {}) {
   };
 }
 
+export async function readCaptchaFrameUserAgent(tabId, frameId) {
+  if (!Number.isInteger(frameId)) return null;
+  const results = await browser.tabs.executeScript(tabId, {
+    frameId, matchAboutBlank: true, code: 'navigator.userAgent',
+  });
+  const value = results?.[0];
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
 export async function injectToken(tabId, {
   fieldName,
   alsoSet,

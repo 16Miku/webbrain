@@ -156,7 +156,7 @@ export function buildNativeCaptchaTask(entry) {
 const FAMILY_IDENTIFIERS = {
   atb: [['appId', 'app_id'], ['apiServer', 'api_server']],
   cutcaptcha: [['miseryKey', 'misery_key'], ['apiKey', 'api_key']],
-  tencent: [['appId', 'app_id', 'websiteKey']],
+  tencent: [['appId', 'app_id', 'websiteKey'], ['captchaScript', 'captcha_script', 'metadata.captchaUrl']],
   lemin: [['captchaId', 'captcha_id'], ['divId', 'div_id']],
   vk: [['redirectUri', 'redirect_uri']],
   aws_waf: [['websiteKey', 'sitekey', 'awsKey'], ['iv', 'awsIv'], ['context', 'awsContext'],

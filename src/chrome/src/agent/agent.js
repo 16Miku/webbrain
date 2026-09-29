@@ -86,7 +86,7 @@ import { tracesToMarkdown } from './trace-export.js';
 import { hcaptchaParamError } from './captcha-hcaptcha-providers.js';
 import { getCaptchaCapabilities, prepareNativeCaptchaTasks, solveNativeCaptchaTasks } from './captcha-native-providers.js';
 import { applyNativeCaptchaSolution, captureCaptchaDocuments, captchaAnswerDocumentStatus } from './captcha-solution-application.js';
-import { solveCaptchaWithProviders, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
+import { solveCaptchaWithProviders, detectCaptcha, injectToken, readCaptchaFrameUserAgent, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders, captchaProviderSupportsType } from './captcha-provider-config.js';
 import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
@@ -36041,6 +36041,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           }
         }
 
+        let frameUserAgent = null;
+        if (['turnstile', 'hcaptcha'].includes(type) && Number.isInteger(detected?.frameId)) {
+          try { frameUserAgent = await readCaptchaFrameUserAgent(tabId, detected.frameId); } catch {}
+          if (type === 'hcaptcha' && !frameUserAgent) {
+            return noDispatchFailure('solve_captcha: could not read the selected hCaptcha frame User-Agent before dispatch. Ask the user to complete it manually.');
+          }
+        }
         const params = {
           type,
           websiteURL,
@@ -36054,7 +36061,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           ...(imageBase64 ? { body: imageBase64 } : {}),
           ...(type === 'hcaptcha' && rqdata ? { rqdata } : {}),
           ...(type === 'turnstile' && metadata ? { metadata } : {}),
-          ...(['turnstile', 'hcaptcha'].includes(type) && globalThis.navigator?.userAgent ? { userAgent: globalThis.navigator.userAgent } : {}),
+          ...(frameUserAgent ? { userAgent: frameUserAgent } : {}),
         };
 
         if (type === 'image_to_text') {
