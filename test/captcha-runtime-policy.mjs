@@ -172,4 +172,39 @@ for (const build of ['chrome', 'firefox']) {
       if (previous === undefined) delete globalThis[key]; else globalThis[key] = previous;
     }
   });
+  test(`${build}: a same-URL challenge-frame reload retires its answer and requires manual completion`, async () => {
+    const agent = agentFor('act', 'full');
+    const pageUrl = 'https://example.test/challenge';
+    const frameUrl = 'https://captcha.example.test/widget';
+    const record = { pageUrl, createdAt: Date.now(), applied: false, solution: { token: 'answer' },
+      documents: [{ frameId: 0, url: pageUrl, timeOrigin: 1000 }, { frameId: 2, url: frameUrl, timeOrigin: 2000 }],
+      dispatchedTimeOrigins: new Set([1000]) };
+    agent._nativeCaptchaSolutions = new Map([[1, record]]);
+    agent._captchaGateStates.set(1, { status: 'verification_pending', publicGate: { status: 'verification_pending' } });
+    const api = {
+      tabs: {
+        get: async () => ({ url: pageUrl }),
+        executeScript: async (_tabId, options) => [options.code.includes('applyCaptchaValuesInPage')
+          ? { success: false, error: 'CAPTCHA frame navigated before application.' }
+          : options.frameId === 2 ? { url: frameUrl, timeOrigin: 3000 } : { url: pageUrl, timeOrigin: 1000 }],
+      },
+      scripting: build === 'chrome' ? { executeScript: async options => options.func.name === 'read'
+        ? [{ frameId: 0, result: { url: pageUrl, timeOrigin: 1000 } }, { frameId: 2, result: { url: frameUrl, timeOrigin: 3000 } }]
+        : [{ frameId: 2, result: { success: false, error: 'CAPTCHA frame navigated before application.' } }] } : undefined,
+      webNavigation: { getAllFrames: async () => [{ frameId: 0, url: pageUrl }, { frameId: 2, url: frameUrl }] },
+    };
+    const key = build === 'chrome' ? 'chrome' : 'browser';
+    const previous = globalThis[key];
+    globalThis[key] = api;
+    try {
+      const result = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 2, frameUrl,
+        fields: [{ selector: '#response', path: 'token' }] });
+      assert.equal(result.applicationRetryable, false);
+      assert.equal(record.solution, undefined);
+      assert.equal(record.dispatchedTimeOrigins.has(1000), true);
+      assert.equal(agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', result).status, 'manual_required');
+    } finally {
+      if (previous === undefined) delete globalThis[key]; else globalThis[key] = previous;
+    }
+  });
 }

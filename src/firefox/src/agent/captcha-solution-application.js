@@ -77,18 +77,31 @@ export async function captureCaptchaDocuments(tabId, frames, api = globalThis.br
   return identities.filter(Boolean);
 }
 
-// A same-URL reload is a different document and cannot reuse its paid answer.
-// Null means the current document could not be read, so a transient API error
-// does not discard an answer that may still be valid.
-export async function captchaAnswerDocumentCurrent(tabId, record, api = globalThis.browser || globalThis.chrome) {
+// A same-URL reload of either the root or selected challenge frame invalidates
+// its paid answer. Null means inspection was inconclusive, not a confirmed
+// reload; transient API errors must not discard a usable answer.
+export async function captchaAnswerDocumentStatus(tabId, record, application, api = globalThis.browser || globalThis.chrome) {
   const tab = await api.tabs.get(tabId);
-  if (tab?.url !== record.pageUrl) return false;
-  const expected = record.documents?.find(d => d.frameId === 0 && d.url === record.pageUrl);
-  if (!expected) return null;
-  const documents = await captureCaptchaDocuments(tabId, [{ frameId: 0, url: record.pageUrl }], api);
-  const current = documents.find(d => d.frameId === 0);
-  if (!current) return null;
-  return current.url === expected.url && current.timeOrigin === expected.timeOrigin;
+  if (tab?.url !== record.pageUrl) return 'root_changed';
+  const expectedRoot = record.documents?.find(d => d.frameId === 0 && d.url === record.pageUrl);
+  if (!expectedRoot) return null;
+  const expectedFrame = record.documents?.find(d => d.frameId === application?.frameId && d.url === application?.frameUrl);
+  const selectedFrame = expectedFrame && expectedFrame.frameId !== 0 ? expectedFrame : null;
+  const frames = typeof api.webNavigation?.getAllFrames === 'function'
+    ? await api.webNavigation.getAllFrames({ tabId }) : null;
+  const selectedFrameMissing = selectedFrame && frames
+    && !frames.some(f => f.frameId === selectedFrame.frameId && f.url === selectedFrame.url);
+  const documents = await captureCaptchaDocuments(tabId, [expectedRoot, ...(selectedFrame ? [selectedFrame] : [])], api);
+  const root = documents.find(d => d.frameId === 0);
+  if (!root) return null;
+  if (root.url !== expectedRoot.url || root.timeOrigin !== expectedRoot.timeOrigin) return 'root_changed';
+  if (selectedFrame) {
+    if (selectedFrameMissing) return 'frame_changed';
+    const currentFrame = documents.find(d => d.frameId === selectedFrame.frameId);
+    if (!currentFrame) return null;
+    if (currentFrame.url !== selectedFrame.url || currentFrame.timeOrigin !== selectedFrame.timeOrigin) return 'frame_changed';
+  }
+  return 'current';
 }
 
 // Self-contained for MAIN-world execution in one explicitly selected frame.

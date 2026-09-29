@@ -224,7 +224,8 @@ function validateFallbackIdentifiers(built) {
       const parts = family === 'temu_recognition'
         ? task.parts || [task.part1, task.part2, task.part3]
         : null;
-      const instructions = ['comment', 'task', 'question', 'metadata.Task', 'metadata.TaskDefinition', 'metadata.TaskArgument']
+      const instructions = ['comment', 'task', 'question', 'imgInstructions', 'imginstructions', 'textinstructions',
+        'metadata.Task', 'metadata.TaskDefinition', 'metadata.TaskArgument']
         .map(path => at(task, path)).filter(usable);
       if (new Set(instructions.map(String)).size > 1) throw new Error('Fallback recognition tasks must use the same observed challenge instructions.');
       return JSON.stringify([media[0], parts, instructions[0] ?? null]);

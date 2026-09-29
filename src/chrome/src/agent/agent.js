@@ -85,7 +85,7 @@ import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { hcaptchaParamError } from './captcha-hcaptcha-providers.js';
 import { getCaptchaCapabilities, prepareNativeCaptchaTasks, solveNativeCaptchaTasks } from './captcha-native-providers.js';
-import { applyNativeCaptchaSolution, captureCaptchaDocuments, captchaAnswerDocumentCurrent } from './captcha-solution-application.js';
+import { applyNativeCaptchaSolution, captureCaptchaDocuments, captchaAnswerDocumentStatus } from './captcha-solution-application.js';
 import { solveCaptchaWithProviders, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders, captchaProviderSupportsType } from './captcha-provider-config.js';
 import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
@@ -35749,10 +35749,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         // A same-URL reload also invalidates the answer. Only a confirmed
         // document change retires it; transient inspection failures do not.
         try {
-          const current = await captchaAnswerDocumentCurrent(tabId, record, chrome);
-          if (current === false) {
+          const documentStatus = await captchaAnswerDocumentStatus(tabId, record, args, chrome);
+          if (documentStatus === 'root_changed' || documentStatus === 'frame_changed') {
             delete record.solution;
-            this._captchaGateStates.delete(tabId);
+            // A new root may expose a new CAPTCHA. A reloaded child frame in
+            // the same root has already used this document's paid dispatch.
+            if (documentStatus === 'root_changed') this._captchaGateStates.delete(tabId);
             return false;
           }
           return true;

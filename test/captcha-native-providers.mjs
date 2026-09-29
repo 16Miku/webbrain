@@ -338,6 +338,8 @@ for (const browser of ['chrome', 'firefox']) {
     ['Temu parts', ['2captcha', 'TemuImageTask', { image: 'background', parts: ['one', 'two', 'three'] }], ['solvecaptcha', 'temuimage', { body: 'background', part1: 'one', part2: 'two', part3: 'three' }], task => { task.part2 = 'different'; }],
     ['FunCaptcha instruction', ['2captcha', 'GridTask:funcaptcha_recognition', { body: 'image-A', comment: 'cars' }], ['nopecha', 'recognition/funcaptcha', { image_data: ['image-A'], task: 'cars' }], task => { task.task = 'bicycles'; }],
     ['reCAPTCHA recognition instruction', ['capsolver', 'ReCaptchaV2Classification', { image: 'image-A', question: 'cars' }], ['nopecha', 'recognition/recaptcha', { image_data: ['image-A'], grid: '3x3', task: 'cars' }], task => { task.task = 'bicycles'; }],
+    ['coordinate image instruction', ['2captcha', 'CoordinatesTask', { body: 'image-A', imgInstructions: 'cars' }], ['solvecaptcha', 'coordinates', { body: 'image-A', textinstructions: 'cars' }], task => { task.textinstructions = 'bicycles'; }],
+    ['coordinate lowercase image instruction', ['2captcha', 'CoordinatesTask', { body: 'image-A', imgInstructions: 'cars' }], ['solvecaptcha', 'coordinates', { body: 'image-A', imginstructions: 'cars' }], task => { task.imginstructions = 'bicycles'; }],
   ];
   for (const [label, a, b, change] of recognitionPairs) test(`${browser}: ${label} must match before paid fallback`, t => {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
