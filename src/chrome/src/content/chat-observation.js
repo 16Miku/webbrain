@@ -167,11 +167,21 @@
               && !!selectedDmChannelId && selectedDmChannelId !== channelId;
           } catch { return false; }
         });
+    const transcriptDmChannelIds = directMessageRoute
+      ? query(transcript, '[role="article"][data-list-item-id]')
+        .filter(visible)
+        .map(node => /^chat-messages___chat-messages-(\d+)-\d+$/.exec(attribute(node, 'data-list-item-id'))?.[1])
+        .filter(Boolean)
+      : [];
+    const transcriptMatchesDmRoute = transcriptDmChannelIds.length > 0
+      && transcriptDmChannelIds.every(id => id === channelId);
     const name = /^Message #(.+)$/.exec(attribute(composer, 'aria-label'))?.[1]
       || /^Messages in (.+)$/.exec(attribute(transcript, 'aria-label'))?.[1]
       || /^(.+) \(channel\)$/.exec(attribute(root, 'aria-label'))?.[1]
       || (directMessageRoute ? `direct-message-${channelId}` : `channel-${channelId}`);
-    return transcript && (channelLink || (directMessageRoute && !selectedDmRouteMismatch))
+    return transcript && (directMessageRoute
+      ? !selectedDmRouteMismatch && transcriptMatchesDmRoute
+      : channelLink)
       ? {
         root, transcript, name, channelId,
         isDirectMessage: !!directMessageRoute,

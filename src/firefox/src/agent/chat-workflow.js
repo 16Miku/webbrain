@@ -506,7 +506,7 @@ function discordPendingDeliveryMatch(pending, snapshot, newMessages) {
   const dispatchedAt = Date.parse(pending.dispatchedAt);
   const observedAt = Date.parse(snapshot.observedAt);
   if (!Number.isFinite(dispatchedAt) || !Number.isFinite(observedAt)
-      || observedAt < dispatchedAt - 5_000 || observedAt - dispatchedAt > 120_000) return null;
+      || observedAt < dispatchedAt - 5_000) return null;
   const matchingMessages = newMessages.filter(message => (
     canonicalChatText(message.text) === canonicalChatText(pending.text)
   ));

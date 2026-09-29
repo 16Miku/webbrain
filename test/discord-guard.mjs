@@ -7,6 +7,7 @@ import { Agent as FirefoxAgent } from '../src/firefox/src/agent/agent.js';
 import { getMessageRecipientGuardPolicy } from '../src/chrome/src/agent/adapters.js';
 import { getMessageRecipientGuardPolicy as firefoxPolicy } from '../src/firefox/src/agent/adapters.js';
 import { advanceChatSession, createChatSession, markChatSendPending } from '../src/chrome/src/agent/chat-workflow.js';
+import { advanceChatSession as advanceChatSessionFirefox } from '../src/firefox/src/agent/chat-workflow.js';
 
 const url = 'https://discord.com/channels/123/456';
 const fixture = `<!doctype html><style>
@@ -255,7 +256,11 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(result.messages[0].id,'discord:456:1001');
 
           await page.locator('#channel').evaluate(el=>el.remove());
-          assert.equal((await observe()).success,true,'a strict DM route plus the composer and transcript retains stable identity without an active link');
+          assert.equal((await observe()).success,true,'matching message-row channel IDs bind the DM pane without an active rail link');
+          await page.evaluate(()=>history.replaceState(null,'','/channels/@me/789'));
+          assert.equal((await observe()).success,false,'stale transcript rows cannot bind to a different DM route without an active rail link');
+          await page.evaluate(()=>history.replaceState(null,'','/channels/@me/456/1001'));
+          assert.equal((await observe()).success,true,'the route succeeds again when the transcript IDs match it');
           await page.locator('nav').evaluate(el=>el.insertAdjacentHTML('beforeend',
             '<a aria-current="page" data-list-item-id="private-channels-uid_11___789" href="/channels/@me/789">Stale DM</a>'));
           assert.equal((await observe()).success,false,'a conflicting selected DM route fails closed');
@@ -348,6 +353,12 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(advanced.session.state,'we_responded');
           assert.equal(advanced.session.pendingOutbound,null,'self-authored default-avatar message clears pending send');
           assert.equal(advanced.pendingDeliveryVerified,true,'the unique fresh exact-text bubble and empty composer verify this pending send');
+          const delayedObservedAt=Date.parse(afterSend.observedAt)+180_000;
+          const delayedSnapshot={...afterSend,observedAt:new Date(delayedObservedAt).toISOString()};
+          const workflow=kind==='firefox'?advanceChatSessionFirefox:advanceChatSession;
+          const delayedAdvance=workflow(dispatchedPending,delayedSnapshot,delayedObservedAt);
+          assert.equal(delayedAdvance.pendingDeliveryVerified,true,'a timestamp-matching bubble reconciles after a delayed observation');
+          assert.equal(delayedAdvance.session.pendingOutbound,null,'delayed reconciliation clears the durable pending send');
 
           await page.locator('#profile-avatar').evaluate(el=>el.setAttribute('src','https://cdn.discordapp.com/avatars/11/self.webp?size=56'));
           await page.locator('[data-list-item-id="chat-messages___chat-messages-456-1001"] .contents img')
