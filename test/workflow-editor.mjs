@@ -39,7 +39,7 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     const nameInput = val(page, ['name']);
     await nameInput.fill('Typing while an earlier save finishes');
     const before = await nameInput.evaluate(input => ({ start: input.selectionStart, end: input.selectionEnd }));
-    await page.evaluate(() => editor.markSaved());
+    await page.evaluate(() => editor.markSaved(editor.getValue()));
     assert.equal(await nameInput.inputValue(), 'Typing while an earlier save finishes');
     assert.equal(await nameInput.evaluate(input => input.getRootNode().activeElement === input), true);
     assert.deepEqual(await nameInput.evaluate(input => ({ start: input.selectionStart, end: input.selectionEnd })), before);
@@ -48,13 +48,26 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     await nameInput.press('Tab');
     assert.equal(await page.evaluate(() => editor.getValue().name), 'Typing while an earlier save finishes');
     assert.equal(await page.evaluate(() => editor.isDirty()), true);
-    await page.evaluate(() => editor.markSaved());
+    await page.evaluate(() => editor.markSaved(editor.getValue()));
     assert.equal(await page.evaluate(() => editor.isDirty()), false);
     await page.getByRole('button', { name: 'JSON source', exact: true }).click();
     const source = page.getByRole('textbox', { name: 'Workflow JSON source' });
     await source.fill('{unfinished');
-    await page.evaluate(() => editor.markSaved());
+    await page.evaluate(() => editor.markSaved(editor.getValue()));
     assert.equal(await source.inputValue(), '{unfinished');
+    assert.equal(await page.evaluate(() => editor.isDirty()), true);
+  }));
+
+  test(`${name}: completed async saves only mark their captured snapshot`, () => withEditor(async page => {
+    await page.evaluate(value => editor.load(value), fixture);
+    await edit(val(page, ['name']), 'Snapshot A');
+    const savedSnapshot = await page.evaluate(() => editor.getValue());
+    await edit(val(page, ['name']), 'Newer edit B');
+    await page.evaluate(snapshot => editor.markSaved(snapshot), savedSnapshot);
+    assert.equal(await page.evaluate(() => editor.getValue().name), 'Newer edit B');
+    assert.equal(await page.evaluate(() => editor.isDirty()), true);
+    assert.equal(await page.getByText('Unsaved changes remain', { exact: true }).count(), 1);
+    await assert.rejects(page.evaluate(() => editor.markSaved()), /markSaved requires the snapshot/);
     assert.equal(await page.evaluate(() => editor.isDirty()), true);
   }));
 
@@ -203,6 +216,21 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     assert.equal(new TextEncoder().encode(JSON.stringify(nearLimit)).byteLength, 1024 * 1024 - 500);
     assert.equal((name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(nearLimit).reason, 'workflow_too_large');
     await page.evaluate(value => editor.load(value), nearLimit);
+    assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('Normalized workflow JSON exceeds')));
+
+    const shortIdWorkflow = {
+      schema: fixture.schema, id: 'w', name: 'Generated ID size',
+      start: { origin: 'https://example.com', pathFamily: '/' }, parameters: [],
+      steps: [{ id: 'step_1', tool: 'navigate', args: { url: 'https://example.com/' } }]
+    };
+    const importer = name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow;
+    const baseImport = importer(shortIdWorkflow);
+    assert.equal(baseImport.reason, '');
+    const baseBytes = new TextEncoder().encode(JSON.stringify(baseImport.workflow)).byteLength;
+    shortIdWorkflow.steps[0].args.url += 'a'.repeat(1024 * 1024 - baseBytes + 1);
+    assert.ok(new TextEncoder().encode(JSON.stringify(shortIdWorkflow)).byteLength < 1024 * 1024);
+    assert.equal(importer(shortIdWorkflow).reason, 'workflow_too_large');
+    await page.evaluate(value => editor.load(value), shortIdWorkflow);
     assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('Normalized workflow JSON exceeds')));
   }));
 

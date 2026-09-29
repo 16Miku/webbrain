@@ -164,8 +164,9 @@
     }
     if (!steps.length) return null;
     // Import assigns fresh identity and timestamps after its first normalization.
-    const importedTimestamp = 1790572374560;
-    return { schema: value.schema, id: workflowCleanId(value.id, 'workflow_1234567890123_12345678'), name,
+    const importedTimestamp = Date.now();
+    const importedId = `workflow_${importedTimestamp}_${'0'.repeat(8)}`;
+    return { schema: value.schema, id: importedId, name,
       createdAt: importedTimestamp, updatedAt: importedTimestamp,
       source: { runId: workflowCleanId(value.source?.runId), webbrainVersion: workflowCleanText(value.source?.webbrainVersion, 40) },
       start, parameters, steps,
@@ -336,8 +337,10 @@
     }
     isDirty() { return !!this.pendingField || this.rawDraft !== null || JSON.stringify(this.value) !== this.saved; }
     validate() { return this.value ? warnings(this.value) : []; }
-    markSaved() {
-      this.saved = JSON.stringify(this.value);
+    markSaved(snapshot) {
+      const serialized = JSON.stringify(snapshot);
+      if (serialized === undefined) throw Error('markSaved requires the snapshot that finished saving.');
+      this.saved = serialized;
       // A host may finish saving while the user is typing their next edit.
       // Do not rebuild controls: that can discard or commit the pending text.
       this.message(this.isDirty() ? 'Unsaved changes remain' : 'Saved');

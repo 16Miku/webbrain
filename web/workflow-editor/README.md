@@ -65,7 +65,7 @@ style element. The editor never executes imported workflows or renders their HTM
 | `toJSON(space = 2)` | Serialize committed data. Throws while raw JSON edits are pending. |
 | `validate()` | Return an array of basic workflow warning messages. |
 | `isDirty()` | Whether the document differs from the loaded/downloaded version or has pending raw edits. |
-| `markSaved()` | Mark committed data as saved by the host application. Pending field or raw JSON edits remain intact and dirty; focus is preserved. |
+| `markSaved(snapshot)` | Mark the exact document snapshot persisted by the host as saved. Pass the value captured when starting an asynchronous save; later edits remain dirty when that save completes. Pending field or raw JSON edits remain intact, and focus is preserved. |
 | `download()` | Download the current JSON using the editable filename. |
 | `undo()` / `redo()` | Navigate document history. |
 | `destroy()` | Remove the interface; discard the host element before mounting again. |
