@@ -172,6 +172,7 @@ export default {
   'sp.slash.remember': "Ghi nhớ sở thích của người dùng",
   'sp.slash.show_memory': "Hiển thị bộ nhớ người dùng đã lưu",
   'sp.slash.forget_memory': "Quên bộ nhớ đã lưu bằng ID",
+  'sp.slash.workflow_editor': "Trình chỉnh sửa quy trình làm việc",
   'sp.slash.workflows': "Liệt kê và quản lý quy trình công việc đã lưu",
   "sp.slash.teach": "Ghi lại thao tác của bạn thành quy trình đã lưu",
   'sp.slash.run_workflow': "Chạy quy trình công việc đã lưu theo ID",

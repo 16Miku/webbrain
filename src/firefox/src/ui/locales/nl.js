@@ -168,6 +168,7 @@ export default {
   'sp.slash.remember': 'Een gebruikersvoorkeur onthouden',
   'sp.slash.show_memory': 'Toon opgeslagen gebruikersgeheugen',
   'sp.slash.forget_memory': 'Een opgeslagen geheugen vergeten op ID',
+  'sp.slash.workflow_editor': "Workfloweditor",
   'sp.slash.workflows': 'Lijst en beheer opgeslagen workflows',
   "sp.slash.teach": "Acties opnemen als opgeslagen workflow",
   'sp.slash.run_workflow': 'Voer een opgeslagen workflow uit op ID',

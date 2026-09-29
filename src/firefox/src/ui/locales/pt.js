@@ -172,6 +172,7 @@ export default {
   'sp.slash.remember': "Lembre-se de uma preferência do usuário",
   'sp.slash.show_memory': "Mostrar memória salva do usuário",
   'sp.slash.forget_memory': "Esqueça uma memória salva por ID",
+  'sp.slash.workflow_editor': "Editor de fluxos de trabalho",
   'sp.slash.workflows': "Liste e gerencie fluxos de trabalho salvos",
   "sp.slash.teach": "Grave suas ações como um fluxo de trabalho salvo",
   'sp.slash.run_workflow': "Execute um fluxo de trabalho salvo por ID",

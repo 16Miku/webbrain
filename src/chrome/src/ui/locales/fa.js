@@ -172,6 +172,7 @@ export default {
   'sp.slash.remember': "یک اولویت کاربر را به خاطر بسپارید",
   'sp.slash.show_memory': "نمایش حافظه کاربر ذخیره شده",
   'sp.slash.forget_memory': "یک حافظه ذخیره شده توسط ID را فراموش کنید",
+  'sp.slash.workflow_editor': "ویرایشگر گردش کار",
   'sp.slash.workflows': "گردش کار ذخیره شده را فهرست و مدیریت کنید",
   "sp.slash.teach": "اقدامات خود را به‌صورت گردش‌کار ذخیره‌شده ضبط کنید",
   'sp.slash.run_workflow': "یک گردش کار ذخیره شده توسط ID را اجرا کنید",

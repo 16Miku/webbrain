@@ -14,6 +14,15 @@
     while (items.some(item => item?.id === `${prefix}_${n}`)) n++;
     return `${prefix}_${n}`;
   };
+  const normalizeParameterId = value => String(value ?? '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100)
+    .replace(/[^A-Za-z0-9_-]/g, '')
+    .slice(0, 80)
+    .toLowerCase();
   function parse(value) {
     const result = typeof value === 'string' ? JSON.parse(value) : copy(value);
     if (!object(result)) throw Error('The workflow must be a JSON object at the top level.');
@@ -48,7 +57,14 @@
         if (key === 'steps' && (typeof item.tool !== 'string' || !item.tool.trim())) issues.push(`Step ${i + 1} needs a tool.`);
       });
     }
-    const ids = new Set((Array.isArray(value.parameters) ? value.parameters : []).map(item => item?.id));
+    const ids = new Set();
+    (Array.isArray(value.parameters) ? value.parameters : []).forEach((item, index) => {
+      if (typeof item?.id !== 'string' || !item.id) return;
+      const normalized = normalizeParameterId(item.id);
+      if (item.id !== normalized) issues.push(`Parameter ${index + 1} id is not canonical; use lowercase letters, numbers, underscores, or hyphens (up to 80 characters).`);
+      if (ids.has(normalized)) issues.push(`Parameter id duplicates another id after normalization: ${normalized}`);
+      ids.add(normalized);
+    });
     references(value, ref => { if (!ids.has(ref.$workflowParam)) issues.push(`Unknown parameter reference: ${String(ref.$workflowParam)}`); });
     return [...new Set(issues)];
   }
@@ -222,8 +238,12 @@
       this.attempt(() => this.commit(next => {
         if (path.length === 3 && path[0] === 'parameters' && path[2] === 'id') {
           const old = at(next, path);
-          if (typeof value !== 'string' || !value.trim()) throw Error('Parameter ids must be non-empty text.');
-          if (next.parameters.some((item, i) => i !== path[1] && item?.id === value)) throw Error('That parameter id already exists.');
+          if (typeof value !== 'string' || !/^[a-z0-9_-]{1,80}$/.test(value) || normalizeParameterId(value) !== value) {
+            throw Error('Parameter ids must use 1–80 lowercase letters, numbers, underscores, or hyphens.');
+          }
+          if (next.parameters.some((item, i) => i !== path[1] && normalizeParameterId(item?.id) === value)) {
+            throw Error('That parameter id already exists after normalization.');
+          }
           if (typeof old === 'string' && old && !next.parameters.some((item, i) => i !== path[1] && item?.id === old)) {
             references(next, ref => { if (ref.$workflowParam === old) ref.$workflowParam = value; });
           }

@@ -914,6 +914,7 @@ export default {
   "sp.memory.error": "Bellek hatası: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Kaydedilmedi: temizleme sonrasında metin boş kalıyor veya bir gizli bilgi (parola, API anahtarı, token) içeriyor gibi görünüyor.",
   "sp.memory.reason.not_found": "Bu kimliğe sahip kaydedilmiş bellek yok.",
+  'sp.slash.workflow_editor': "İş akışı düzenleyicisi",
   "sp.slash.workflows": "Kayıtlı iş akışlarını listele ve yönet",
   "sp.slash.teach": "Eylemlerinizi kayıtlı bir iş akışı olarak kaydedin",
   "sp.slash.run_workflow": "Kaydedilmiş iş akışını kimliğe göre çalıştır",

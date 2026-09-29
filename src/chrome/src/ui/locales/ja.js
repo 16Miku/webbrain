@@ -943,6 +943,7 @@ export default {
   "sp.memory.error": "メモリエラー: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "保存されませんでした。整理後のテキストが空か、秘密情報（パスワード、API キー、トークン）が含まれているようです。",
   "sp.memory.reason.not_found": "その ID の保存済みメモリはありません。",
+  'sp.slash.workflow_editor': "ワークフローエディター",
   "sp.slash.workflows": "保存済みワークフローを一覧・管理",
   "sp.slash.teach": "操作を保存済みワークフローとして記録",
   "sp.slash.run_workflow": "保存済みワークフローを ID で実行",

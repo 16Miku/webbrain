@@ -534,6 +534,7 @@ export default {
   "st.tab.skills": "מיומנויות",
   "st.tab.vision": "ראייה",
   "st.tab.multimodal": "מודלים מסייעים",
+  'sp.slash.workflow_editor': "עורך תהליכי עבודה",
   "sp.slash.workflows": "הצגה וניהול של תהליכי עבודה שמורים",
   "sp.slash.teach": "הקלטת הפעולות שלך כתהליך עבודה שמור",
   "sp.slash.run_workflow": "הפעלת תהליך עבודה שמור לפי מזהה",

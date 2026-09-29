@@ -43603,7 +43603,7 @@ test('canonical slash parser handles flags, values, casing, termination, and har
 
   for (const [label, runtime] of [['chrome', chrome], ['firefox', firefox]]) {
     const workflow = runtime.SLASH_COMMANDS.find((command) => command.value === '/workflow');
-    const link = '<a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">Workflow editor</a>';
+    const link = '<a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">sp.slash.workflow_editor</a>';
     const detail = runtime.buildSlashCommandDetailHtml(workflow);
     assert.equal((detail.match(/<a href="https:\/\/webbrain\.one\/workflow-editor\/"/g) || []).length, 3, `${label}: workflow save, export, and import help should link to the editor`);
     assert.ok(detail.includes(`sp.slash.save_workflow ${link}`), `${label}: --save help should end with the workflow editor link`);

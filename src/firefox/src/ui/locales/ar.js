@@ -915,6 +915,7 @@ export default {
   "sp.memory.error": "خطأ في الذاكرة: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "لم يتم الحفظ: النص فارغ بعد التنظيف أو يبدو أنه يحتوي على سر (كلمة مرور أو مفتاح API أو رمز مميز).",
   "sp.memory.reason.not_found": "لا توجد ذاكرة محفوظة بهذا المعرّف.",
+  'sp.slash.workflow_editor': "محرر مهام سير العمل",
   "sp.slash.workflows": "عرض مهام سير العمل المحفوظة وإدارتها",
   "sp.slash.teach": "سجّل إجراءاتك كمسار عمل محفوظ",
   "sp.slash.run_workflow": "تشغيل سير عمل محفوظ حسب المعرّف",

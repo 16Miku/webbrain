@@ -943,6 +943,7 @@ export default {
   "sp.memory.error": "Erreur de mémoire : {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Non enregistré : le texte est vide après nettoyage ou semble contenir un secret (mot de passe, clé API, jeton).",
   "sp.memory.reason.not_found": "Aucune mémoire enregistrée ne possède cet identifiant.",
+  'sp.slash.workflow_editor': "Éditeur de workflows",
   "sp.slash.workflows": "Lister et gérer les workflows enregistrés",
   "sp.slash.teach": "Enregistrer vos actions comme workflow sauvegardé",
   "sp.slash.run_workflow": "Exécuter un workflow enregistré par ID",

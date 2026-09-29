@@ -99,6 +99,35 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     assert.equal(imported.workflow.steps.length, 1);
   }));
 
+  test(`${name}: parameter ids follow importer normalization and remain unique`, () => withEditor(async page => {
+    const workflow = {
+      ...fixture,
+      start: { origin: 'https://example.com', pathFamily: '/' },
+      parameters: [
+        ...fixture.parameters,
+        { id: 'NEW-ID', label: 'Legacy uppercase id', required: false, sensitive: false, type: 'text' }
+      ]
+    };
+    await page.evaluate(value => editor.load(value), workflow);
+    await page.getByRole('button', { name: 'Parameter 1: Email', exact: true }).click();
+    await page.getByRole('heading', { name: 'Parameter 1', exact: true }).waitFor();
+    const id = val(page, ['parameters', 0, 'id']);
+    assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('not canonical')));
+    for (const invalid of ['Email', 'email address', 'x'.repeat(81)]) {
+      await edit(id, invalid);
+      assert.equal(await page.evaluate(() => editor.getValue().parameters[0].id), 'email');
+      assert.equal(await page.evaluate(() => editor.getValue().steps[0].args.text.$workflowParam), 'email');
+    }
+    // `new-id` collides with the legacy uppercase id after importer normalization.
+    await edit(id, 'new-id');
+    assert.equal(await page.evaluate(() => editor.getValue().parameters[0].id), 'email');
+    await edit(id, 'address_2');
+    assert.equal(await page.evaluate(() => editor.getValue().parameters[0].id), 'address_2');
+    assert.equal(await page.evaluate(() => editor.getValue().steps[0].args.text.$workflowParam), 'address_2');
+    const normalized = (name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(await page.evaluate(() => editor.getValue()));
+    assert.equal(normalized.reason, '');
+  }));
+
   test(`${name}: offline file import, editing, preservation, export, embedding`, async () => {
     const browser = await browserType.launch();
     try {

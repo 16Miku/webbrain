@@ -168,6 +168,7 @@ export default {
   'sp.slash.remember': 'Benutzerpräferenz merken',
   'sp.slash.show_memory': 'Gespeicherte Benutzermemorie anzeigen',
   'sp.slash.forget_memory': 'Gespeicherte Memorie nach ID vergessen',
+  'sp.slash.workflow_editor': "Workflow-Editor",
   'sp.slash.workflows': 'Gespeicherte Workflows auflisten und verwalten',
   "sp.slash.teach": "Aktionen als gespeicherten Workflow aufzeichnen",
   'sp.slash.run_workflow': 'Gespeicherten Workflow nach ID ausführen',

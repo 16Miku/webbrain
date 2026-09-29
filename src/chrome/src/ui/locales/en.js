@@ -172,6 +172,7 @@ export default {
   'sp.slash.remember': 'Remember a user preference',
   'sp.slash.show_memory': 'Show saved user memory',
   'sp.slash.forget_memory': 'Forget a saved memory by ID',
+  'sp.slash.workflow_editor': "Workflow editor",
   'sp.slash.workflows': 'List and manage saved workflows',
   "sp.slash.teach": "Record your actions as a saved workflow",
   'sp.slash.run_workflow': 'Run a saved workflow by ID',

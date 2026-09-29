@@ -14,7 +14,9 @@ to reorder them, or use the move buttons. **JSON source** supports bulk edits;
 apply or discard those edits before switching views or downloading.
 
 Renaming a unique parameter's `id` in the field editor updates matching
-`$workflowParam` references throughout the document. Raw JSON edits and field-key
+`$workflowParam` references throughout the document. Parameter ids must match
+the importer's lowercase `[a-z0-9_-]` format and 80-character limit; checks flag
+noncanonical or normalized duplicate ids already present in a file. Raw JSON edits and field-key
 renames are literal changes. Removing a referenced parameter surfaces a warning.
 Unknown fields are retained; timestamps and recorded statistics are not silently
 rewritten. Basic checks are advisory, not a guarantee that a workflow will run.

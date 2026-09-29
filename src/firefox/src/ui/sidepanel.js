@@ -776,7 +776,7 @@ function slashOptionDescriptionHtml(command, option) {
   if (command.value !== '/workflow' || !['--save', '--export', '--import'].includes(option.value)) {
     return description;
   }
-  return `${description} <a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">Workflow editor</a>`;
+  return `${description} <a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">${escapeHtml(t('sp.slash.workflow_editor'))}</a>`;
 }
 
 function slashOptionIsAvailable(option, selectedValues, selectedGroups) {

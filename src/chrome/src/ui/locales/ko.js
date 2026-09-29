@@ -943,6 +943,7 @@ export default {
   "sp.memory.error": "메모리 오류: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "저장하지 않았습니다. 정리 후 텍스트가 비어 있거나 비밀 정보(비밀번호, API 키, 토큰)가 포함된 것으로 보입니다.",
   "sp.memory.reason.not_found": "해당 ID의 저장된 메모리가 없습니다.",
+  'sp.slash.workflow_editor': "워크플로 편집기",
   "sp.slash.workflows": "저장된 워크플로 목록 및 관리",
   "sp.slash.teach": "작업을 저장된 워크플로로 기록",
   "sp.slash.run_workflow": "ID로 저장된 워크플로 실행",
