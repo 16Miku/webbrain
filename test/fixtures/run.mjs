@@ -2655,6 +2655,35 @@ test('Chrome: visible shadow host is not marked occluded', page =>
 firefoxTest('Firefox: visible shadow host is not marked occluded', page =>
   assertShadowHostOcclusion(page, firefoxAccessibilityTreeJsPath));
 
+async function assertAncestorPseudoElementOcclusion(page, sourcePath, label) {
+  await setupAccessibilityTreeHtml(page, `<!doctype html>
+    <style>
+      #cover-parent { position: relative; margin: 100px; width: 220px; height: 100px; }
+      #cover-parent::after { content: ''; position: absolute; inset: 0; z-index: 2; background: rgba(255,255,255,.1); pointer-events: auto; }
+      #target { position: absolute; top: 20px; left: 20px; width: 120px; height: 40px; }
+    </style>
+    <div id="cover-parent"><button id="target">Pseudo covered action</button></div>
+  `, sourcePath);
+  const state = await page.evaluate(() => {
+    const target = document.getElementById('target');
+    const rect = target.getBoundingClientRect();
+    const tree = window.__generateAccessibilityTree('all', 5, 20000);
+    return {
+      hitIsParent: document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+        === document.getElementById('cover-parent'),
+      line: String(tree?.pageContent || '').split('\n').find(item => item.includes('"Pseudo covered action"')) || '',
+    };
+  });
+  if (!state.hitIsParent || !state.line.includes('occluded=true')) {
+    throw new Error(`${label}: ancestor pseudo-element was not marked as covering the target: ${JSON.stringify(state)}`);
+  }
+}
+
+test('Chrome: ancestor pseudo-element marks its child control occluded', page =>
+  assertAncestorPseudoElementOcclusion(page, accessibilityTreeJsPath, 'chrome'));
+firefoxTest('Firefox: ancestor pseudo-element marks its child control occluded', page =>
+  assertAncestorPseudoElementOcclusion(page, firefoxAccessibilityTreeJsPath, 'firefox'));
+
 test('occlusion: click({text:"Submit"}) refuses when covered', async (page) => {
   await setup(page, 'occlusion.html');
   const resp = await call(page, 'click', { text: 'Submit' });
