@@ -30561,7 +30561,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { success: false, error: 'clarify: `question` is required (a single sentence asking the user something specific).' };
       }
       const options = Array.isArray(args?.options)
-        ? args.options.map(s => String(s).slice(0, 200)).filter(Boolean).slice(0, 4)
+        ? args.options.map(s => String(s).trim().slice(0, 200)).filter(Boolean).slice(0, 4)
         : [];
       const safeFirst = args?.safe_first === true && options.length > 0;
       const reason = args?.reason ? String(args.reason).slice(0, 300) : null;

@@ -48798,6 +48798,18 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(userReply.requiresExplicitConfirmation, false, `${AgentClass.name}: direct reply kept the timeout warning`);
     assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: direct reply did not clear the timeout guard`);
 
+    const blankOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', options: [' '], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '', 'timeout');
+      },
+    );
+    assert.equal(blankOptionTimeout.authorized, false, `${AgentClass.name}: whitespace-only safe_first option was accepted`);
+    assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: whitespace-only option did not arm a timeout guard`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
     const affirmativeTimeout = await agent.executeTool(
       tabId,
       'clarify',
