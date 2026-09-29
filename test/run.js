@@ -6925,6 +6925,124 @@ test('chat workflow state survives worker restart and is durable before dispatch
       });
       assert.equal(sent.deliveryVerified, true, `${AgentClass.name}: durable send did not verify delivery`);
       assert.equal(sender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: pending send remained after verification`);
+
+      const discordThreadKey = 'dom:discord:123:456';
+      const discordSender = new AgentClass({});
+      discordSender.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      discordSender.conversationIds.set(tabId, `conversation-discord-${index}`);
+      discordSender._persist = () => {};
+      discordSender._persistNow = async () => true;
+      discordSender._messageRecipientGuardBlock = async () => null;
+      const discordBefore = {
+        ...baseSnapshot,
+        threadKey: discordThreadKey,
+        url: 'https://discord.com/channels/123/456',
+        observedAt: new Date().toISOString(),
+      };
+      let discordAfter;
+      const discordObservations = [discordBefore];
+      discordSender._readChatObservation = async () => discordObservations.shift() || discordAfter;
+      discordSender.executeTool = async () => {
+        const observedAt = new Date().toISOString();
+        discordAfter = {
+          ...discordBefore,
+          observedAt,
+          messages: [{
+            id: `discord:456:${index}`,
+            direction: 'unknown',
+            text: 'Send once with a default avatar.',
+            timestamp: observedAt,
+          }],
+        };
+        return { success: true, dispatched: true };
+      };
+      const discordSent = await discordSender._sendChatWorkflow(tabId, {
+        thread_key: discordThreadKey,
+        composer_ref: `composer-${index}`,
+        text: 'Send once with a default avatar.',
+      });
+      assert.equal(discordSent.deliveryVerified, true, `${AgentClass.name}: exact fresh Discord bubble and empty composer did not verify the pending send`);
+      assert.equal(discordSent.chatWorkflow.newMessages[0].direction, 'unknown', `${AgentClass.name}: delivery verification must not claim the Discord message author`);
+      assert.equal(discordSender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: default-avatar Discord send remained pending`);
+
+      const discordPreviewSender = new AgentClass({});
+      discordPreviewSender.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      discordPreviewSender.conversationIds.set(tabId, `conversation-discord-preview-${index}`);
+      discordPreviewSender._persist = () => {};
+      discordPreviewSender._persistNow = async () => true;
+      discordPreviewSender._messageRecipientGuardBlock = async () => null;
+      const discordPreviewThreadKey = 'dom:discord:123:789';
+      const discordPreviewBefore = {
+        ...baseSnapshot,
+        threadKey: discordPreviewThreadKey,
+        url: 'https://discord.com/channels/123/789',
+        observedAt: new Date().toISOString(),
+        composer: { ...baseSnapshot.composer, ref: `composer-preview-${index}` },
+      };
+      let discordPreviewAfter;
+      const discordPreviewObservations = [discordPreviewBefore];
+      discordPreviewSender._readChatObservation = async () => discordPreviewObservations.shift() || discordPreviewAfter;
+      discordPreviewSender.executeTool = async () => {
+        const observedAt = new Date().toISOString();
+        discordPreviewAfter = {
+          ...discordPreviewBefore,
+          observedAt,
+          messages: [{
+            id: `discord:789:preview-${index}`,
+            direction: 'outgoing',
+            text: 'https://example.com/release\nAttachment: Release notes\nAttachment: Preview description',
+            authoredText: 'https://example.com/release',
+            timestamp: observedAt,
+          }],
+        };
+        return { success: true, dispatched: true };
+      };
+      const discordPreviewSent = await discordPreviewSender._sendChatWorkflow(tabId, {
+        thread_key: discordPreviewThreadKey,
+        composer_ref: `composer-preview-${index}`,
+        text: 'https://example.com/release',
+      });
+      assert.equal(discordPreviewSent.success, true, `${AgentClass.name}: outgoing URL bubble with preview did not report send success`);
+      assert.equal(discordPreviewSent.sent, true, `${AgentClass.name}: outgoing URL bubble with preview was not reported as sent`);
+      assert.equal(discordPreviewSent.deliveryVerified, true, `${AgentClass.name}: authored URL was not used for final delivery verification`);
+      assert.equal(discordPreviewSender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: previewed URL send remained pending`);
+
+      const nondurableMarkerSender = new AgentClass({});
+      nondurableMarkerSender.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      nondurableMarkerSender.conversationIds.set(tabId, `conversation-discord-nondurable-${index}`);
+      nondurableMarkerSender._persist = () => {};
+      let dispatchPersistenceAttempts = 0;
+      nondurableMarkerSender._persistNow = async () => {
+        dispatchPersistenceAttempts += 1;
+        return dispatchPersistenceAttempts === 1 ? { ok: true } : { ok: false, degraded: true };
+      };
+      nondurableMarkerSender._messageRecipientGuardBlock = async () => null;
+      let nondurableAfter;
+      const nondurableObservations = [discordBefore];
+      nondurableMarkerSender._readChatObservation = async () => nondurableObservations.shift() || nondurableAfter;
+      nondurableMarkerSender.executeTool = async () => {
+        const observedAt = new Date().toISOString();
+        nondurableAfter = {
+          ...discordBefore,
+          observedAt,
+          messages: [{
+            id: `discord:nondurable:${index}`,
+            direction: 'unknown',
+            text: 'Send once with a default avatar.',
+            timestamp: observedAt,
+          }],
+        };
+        return { success: true, dispatched: true };
+      };
+      const nondurableSent = await nondurableMarkerSender._sendChatWorkflow(tabId, {
+        thread_key: discordThreadKey,
+        composer_ref: `composer-${index}`,
+        text: 'Send once with a default avatar.',
+      });
+      assert.equal(dispatchPersistenceAttempts, 2, `${AgentClass.name}: dispatch marker persistence was not attempted after the send`);
+      assert.equal(nondurableSent.deliveryVerified, false, `${AgentClass.name}: an unknown-direction Discord bubble was verified without a durable dispatch marker`);
+      assert.ok(nondurableMarkerSender.chatSessions.get(tabId)?.pendingOutbound, `${AgentClass.name}: uncertain send was cleared after marker persistence failed`);
+      assert.equal(nondurableMarkerSender.chatSessions.get(tabId)?.pendingOutbound?.dispatchedAt, undefined, `${AgentClass.name}: failed dispatch marker remained in memory`);
     }
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
