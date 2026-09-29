@@ -22,3 +22,6 @@ This is an architecture proposal, not an installable skill or an enabled integra
 - One end-to-end signed-in test and an attribution check showing `webbrain` assigned by the server, never from a caller-provided header.
 
 This proposal deliberately does not replace WebBrain's local preference memory or change its default privacy posture. Maintainers can choose the smaller first slice or decline remote write support entirely.
+
+## REVIEWER NOTES
+Reviewer note: I reviewed it and it doesn't make sense for general use! @ELIF
