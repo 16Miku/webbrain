@@ -567,16 +567,9 @@
     try {
       const view = el.ownerDocument?.defaultView || window;
       const insets = _getViewportDockedInsets(view);
-      const rBefore = el.getBoundingClientRect();
-      const inClear = (
-        rBefore.width >= 1
-        && rBefore.height >= 1
-        && rBefore.left >= 0
-        && rBefore.right <= view.innerWidth
-        && rBefore.top >= insets.top
-        && rBefore.bottom <= (view.innerHeight - insets.bottom)
-      );
-      if (!inClear) {
+      // A viewport-only rect check misses elements clipped by a scrollable
+      // ancestor even when their bounding box is inside the viewport.
+      if (!_isFullyVisibleForInteraction(el, insets)) {
         el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
         const rAfter = el.getBoundingClientRect();
         if (rAfter.top < insets.top) {
@@ -590,12 +583,12 @@
     }
   }
 
-  function _isFullyVisibleForInteraction(el) {
+  function _isFullyVisibleForInteraction(el, dockedInsets = null) {
     try {
       if (!el?.isConnected) return false;
       const view = el.ownerDocument?.defaultView || window;
       const rect = el.getBoundingClientRect();
-      const insets = _getViewportDockedInsets(view);
+      const insets = dockedInsets || _getViewportDockedInsets(view);
       if (
         rect.width < 1
         || rect.height < 1

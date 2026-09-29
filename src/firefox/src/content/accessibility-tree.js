@@ -586,6 +586,17 @@
       : null;
   }
 
+  function isComposedAncestor(ancestor, node) {
+    for (let current = node; current; current = composedParent(current)) {
+      if (current === ancestor) return true;
+    }
+    return false;
+  }
+
+  function isComposedRelated(a, b) {
+    return isComposedAncestor(a, b) || isComposedAncestor(b, a);
+  }
+
   function deepestOpenShadowHit(x, y) {
     let hit = document.elementFromPoint(x, y);
     const seen = new Set();
@@ -611,7 +622,7 @@
       const cy = r.top + r.height / 2;
       if (cx >= 0 && cx <= vw && cy >= 0 && cy <= vh) {
         const hit = deepestOpenShadowHit(cx, cy);
-        if (hit && (hit === el || el.contains(hit) || hit.contains(el))) return false;
+        if (hit && isComposedRelated(el, hit)) return false;
       }
 
       const sampleOffsets = [
@@ -623,7 +634,7 @@
       for (const [sx, sy] of sampleOffsets) {
         if (sx < 0 || sy < 0 || sx > vw || sy > vh) continue;
         const sampleHit = deepestOpenShadowHit(sx, sy);
-        if (sampleHit && (sampleHit === el || el.contains(sampleHit) || sampleHit.contains(el))) {
+        if (sampleHit && isComposedRelated(el, sampleHit)) {
           return false;
         }
       }
@@ -635,7 +646,7 @@
           const allAboveNone = elements.slice(0, targetIdx).every(item => {
             try {
               const pe = window.getComputedStyle(item).pointerEvents;
-              return pe === 'none' || el.contains(item) || item.contains(el);
+              return pe === 'none' || isComposedRelated(el, item);
             } catch {
               return false;
             }

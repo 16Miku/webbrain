@@ -2181,6 +2181,74 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
 });
 
 // ─── occlusion ────────────────────────────────────────────────────────────
+async function assertInnerScrollerClearance(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; }
+      #scroller { margin: 20px; width: 260px; height: 100px; overflow: auto; }
+      #target { display: block; margin-top: 200px; width: 120px; height: 32px; }
+    </style>
+    <div id="scroller"><button id="target" onclick="window.__targetClicked = true">Target</button></div>
+  `, browserKind);
+  const before = await page.evaluate(() => {
+    const scroller = document.getElementById('scroller');
+    const target = document.getElementById('target');
+    return {
+      scrollTop: scroller.scrollTop,
+      targetTop: target.getBoundingClientRect().top,
+      scrollerBottom: scroller.getBoundingClientRect().bottom,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  if (before.scrollTop !== 0 || before.targetTop <= before.scrollerBottom || before.targetTop >= before.viewportHeight) {
+    throw new Error(`fixture must be clipped by its scroller but inside the viewport: ${JSON.stringify(before)}`);
+  }
+  const result = await call(page, 'click', { selector: '#target' });
+  const after = await page.evaluate(() => ({
+    scrollTop: document.getElementById('scroller').scrollTop,
+    clicked: window.__targetClicked === true,
+  }));
+  if (!result?.success || !after.clicked || after.scrollTop <= 0) {
+    throw new Error(`${browserKind} click did not expose the clipped target: ${JSON.stringify({ result, after })}`);
+  }
+}
+
+test('Chrome: click scrolls a target clipped by an inner scroller', page =>
+  assertInnerScrollerClearance(page, 'chrome'));
+firefoxTest('Firefox: click scrolls a target clipped by an inner scroller', page =>
+  assertInnerScrollerClearance(page, 'firefox'));
+
+async function assertShadowHostOcclusion(page, sourcePath) {
+  await setupAccessibilityTreeHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; }
+      #host { position: absolute; left: 20px; top: 20px; width: 200px; height: 50px; }
+    </style>
+    <div id="host" role="button" tabindex="0" aria-label="Shadow control"></div>
+    <script>
+      document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML =
+        '<span style="display:block;width:100%;height:100%;background:green">Visible content</span>';
+    </script>
+  `, sourcePath);
+  const result = await page.evaluate(() => {
+    const line = () => String(window.__generateAccessibilityTree('all', 5, 20000).pageContent || '')
+      .split('\n').find(item => item.includes('"Shadow control"')) || '';
+    const visible = line();
+    const cover = document.createElement('div');
+    cover.style.cssText = 'position:absolute;left:20px;top:20px;width:200px;height:50px;z-index:2;background:red';
+    document.body.append(cover);
+    return { visible, covered: line() };
+  });
+  if (!result.visible || result.visible.includes('occluded=true') || !result.covered.includes('occluded=true')) {
+    throw new Error(`shadow host occlusion state is wrong: ${JSON.stringify(result)}`);
+  }
+}
+
+test('Chrome: visible shadow host is not marked occluded', page =>
+  assertShadowHostOcclusion(page, accessibilityTreeJsPath));
+firefoxTest('Firefox: visible shadow host is not marked occluded', page =>
+  assertShadowHostOcclusion(page, firefoxAccessibilityTreeJsPath));
+
 test('occlusion: click({text:"Submit"}) refuses when covered', async (page) => {
   await setup(page, 'occlusion.html');
   const resp = await call(page, 'click', { text: 'Submit' });
