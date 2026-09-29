@@ -280,7 +280,11 @@
       const active = this.root.activeElement;
       if (active?.matches('.filename')) this.filename = active.value.trim() || 'workflow.json';
       // Keyboard save must include the text still focused in the form.
-      if (this.pendingField?.isConnected) this.pendingField.dispatchEvent(new Event('change', { bubbles: true }));
+      if (this.pendingField?.isConnected) {
+        const previousNotice = this.notice;
+        this.pendingField.dispatchEvent(new Event('change', { bubbles: true }));
+        if (this.notice !== previousNotice && this.notice?.error) return;
+      }
       this.attempt(() => {
         const blob = new Blob([this.toJSON()], { type: 'application/json' });
         const url = URL.createObjectURL(blob);

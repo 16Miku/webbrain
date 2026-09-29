@@ -235,6 +235,15 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       await page.getByLabel('Download filename').fill('keyboard-name.json');
       await page.getByLabel('Download filename').press('Control+s');
       assert.equal((await filenameDownload).suggestedFilename(), 'keyboard-name.json');
+      let rejectedDownloads = 0;
+      page.on('download', () => { rejectedDownloads++; });
+      await page.getByRole('button', { name: 'Parameter 1: Email', exact: true }).click();
+      await val(page, ['parameters', 0, 'id']).fill('Invalid ID');
+      await val(page, ['parameters', 0, 'id']).press('Control+s');
+      await page.waitForTimeout(100);
+      assert.equal(rejectedDownloads, 0);
+      assert.equal(await page.evaluate(() => editor.getValue().parameters[0].id), 'address');
+      assert.match(await page.getByRole('status').innerText(), /Parameter ids must use/);
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole('button', { name: 'Workflow details', exact: true }).click();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
