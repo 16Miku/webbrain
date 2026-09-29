@@ -17,13 +17,13 @@ ol {min-height:30px} main {position:fixed;left:320px;top:0;width:550px;height:70
 [role=dialog] {position:fixed;inset:40px;background:white;z-index:100;padding:20px}
 [role=dialog] main {position:static;height:auto} [role=menu] {position:fixed;left:20px;top:250px;background:white;z-index:10}
 [hidden] {display:none!important}
-</style><nav aria-label="Test (server)">
-<header><div id="server" role="button" tabindex="0" aria-label="Test, server actions" aria-expanded="false"><h2>Test</h2></div></header>
-<button id="create" type="button" aria-label="Create Channel">+</button>
-<button id="category" type="button" aria-expanded="true">Text Channels (category)</button>
-<a id="channel" href="/channels/123/456" aria-label="general (text channel)" aria-current="page">general</a>
-<button id="edit" type="button" aria-label="Edit Channel">Edit Channel</button>
-<button id="nav-send" type="button">Send message</button></nav>
+</style><nav aria-label="Kanallar">
+<header><div id="server" role="button" tabindex="0" aria-label="Test, sunucu işlemleri" aria-expanded="false"><h2>Test</h2></div></header>
+<div id="channels"><button id="create" type="button" aria-label="Kanal oluştur">+</button>
+<button id="category" type="button" aria-label="Metin kanalları (kategori)" aria-expanded="true">Metin kanalları</button>
+<a id="channel" href="/channels/123/456" aria-label="genel (metin kanalı)" aria-current="page">genel</a>
+<button id="edit" type="button" aria-label="Kanalı düzenle">Kanalı düzenle</button>
+<button id="nav-send" type="button">Send message</button></div></nav>
 <section aria-label="User status and settings"><div class="accountPopoutButtonWrapper_fixture"><img id="profile-avatar" src="https://cdn.discordapp.com/avatars/11/self.webp?size=56"></div><div class="nameTag_fixture"><div class="panelTitleContainer_fixture">WebBrain</div><div class="panelSubtext_fixture"><span class="hovered_fixture">webbrain_one</span></div></div></section>
 <main aria-label="general (channel)"><h2>general chat</h2><ol role="list" aria-label="Messages in general" data-list-id="chat-messages">
 <li><div id="message" role="article" data-list-item-id="chat-messages___chat-messages-456-1001"><div class="contents"><img src="https://cdn.discordapp.com/avatars/22/other.webp?size=160"><h3><span id="message-username-1001"><span data-text="Ficsit">Ficsit</span></span><time id="message-timestamp-1001" datetime="2026-09-29T01:00:00.000Z"></time></h3><div id="message-content-1001">Hello from the fixture</div></div><div role="group" aria-label="Message Actions"><button id="wave">Wave to say hi!</button><button id="lookalike" aria-expanded="false">Test, server actions</button></div></div></li>
@@ -133,17 +133,17 @@ for (const [kind, engine, AgentClass, policy] of [
           } finally {await page.close();}
         }
       });
-      await t.test('server settings are recognized by their own navigation, including non-message textareas',async()=>{
-        const {page,guard}=await setup(`<div role="dialog" aria-modal="true"><nav><div role="tablist"><div role="tab" id="roles" aria-label="Manage Roles">Roles</div><div role="tab">Safety Setup</div></div></nav><main><textarea id="description">Server description</textarea><button id="save">Save Changes</button></main><button id="test-send">Send test message</button></div>`);
+      await t.test('server settings are recognized by their stable layer and tab structure',async()=>{
+        const {page,guard}=await setup(`<div role="dialog" data-layer="GUILD_SETTINGS" aria-label="Sunucu ayarları" aria-modal="true"><nav><div role="tablist"><div role="tab" id="roles">Rolleri yönet</div><div role="tab">Güvenlik kurulumu</div></div></nav><main><textarea id="description">Server description</textarea><button id="save">Değişiklikleri kaydet</button></main><button id="test-send">Send test message</button></div>`);
         try {
           for(const selector of ['#roles','#description','#save']) assert.equal(await guard('click',{selector}),null);
           assert.equal(await guard('set_field',{selector:'#description',value:'new',submit:true}),null);
           assert.equal((await guard('click',{selector:'#test-send'}))?.noDispatch,true);
         } finally {await page.close();}
       });
-      await t.test('channel settings allow the Slate topic editor but not a message composer',async()=>{
-        const {page,guard,probe}=await setup(`<div role="dialog" data-layer="CHANNEL_SETTINGS" aria-modal="true" aria-label="Channel Settings">
-<nav><div role="tablist"><div role="tab">Overview</div><div id="permissions" role="tab">Permissions</div></div></nav>
+      await t.test('localized channel settings allow the Slate topic editor but not a message composer',async()=>{
+        const {page,guard,probe}=await setup(`<div role="dialog" data-layer="CHANNEL_SETTINGS" aria-modal="true" aria-label="Kanal ayarları">
+<nav><div role="tablist"><div role="tab">Genel</div><div id="permissions" role="tab">İzinler</div></div></nav>
 <div role="tabpanel"><input type="text" aria-label="Channel Name"><div id="topic" role="textbox" contenteditable="true" data-slate-editor="true" aria-label="Let everyone know how to use this channel!">Send bug reports here</div><button id="save">Save Changes</button><input id="input-send" type="submit" value="Send"></div></div>`);
         try {
           for(const selector of ['#permissions','#topic','#save']) assert.equal(await guard('click',{selector}),null);

@@ -5911,14 +5911,11 @@
             && Array.from(dialog.querySelectorAll('button[type="submit"],input[type="submit"]')).some(visible)
             && (creationRadios.length === 0 || creationRadios.length >= 2);
           const settingsNav = dialog.querySelector('nav [role="tablist"],[role="navigation"] [role="tablist"]');
-          const serverSettings = !!settingsNav
-            && !!settingsNav.querySelector('[role="tab"][aria-label="Manage Roles"]')
-            && Array.from(settingsNav.querySelectorAll('[role="tab"]'))
-              .some(el => compact(el.textContent) === 'Enable Community' || compact(el.textContent) === 'Safety Setup');
+          const hasSettingsTabs = !!settingsNav
+            && Array.from(settingsNav.querySelectorAll('[role="tab"]')).some(visible);
+          const serverSettings = dialog.getAttribute('data-layer') === 'GUILD_SETTINGS' && hasSettingsTabs;
           const channelSettings = dialog.getAttribute('data-layer') === 'CHANNEL_SETTINGS'
-            && compact(dialog.getAttribute('aria-label')) === 'Channel Settings' && !!settingsNav
-            && ['Overview', 'Permissions'].every(name => Array.from(settingsNav.querySelectorAll('[role="tab"]'))
-              .some(el => compact(el.getAttribute('aria-label') || el.textContent) === name));
+            && hasSettingsTabs;
           if (!channelSettings && dialog.querySelector('[data-slate-editor]')) return false;
           return (creation || serverSettings || channelSettings) && !control.hasAttribute('form');
         }
@@ -5936,16 +5933,19 @@
             && menuActionIds.has(control.id);
         }
         const nav = _composedClosestElement(control, 'nav,[role="navigation"]');
-        if (!nav || !/\(server\)$/.test(compact(nav.getAttribute('aria-label')))) return false;
+        const channelsList = nav?.querySelector('#channels');
+        const serverHeader = nav?.querySelector('header');
+        if (!nav || !channelsList || !serverHeader) return false;
         if (control.matches('a[href]')) {
           const destination = new URL(control.getAttribute('href'), location.href);
           return destination.origin === location.origin && !destination.search && !destination.hash
             && !destination.username && !destination.password
             && /^\/channels\/\d+\/\d+\/?$/.test(destination.pathname);
         }
-        return /^(?:Create Channel|Edit Channel|Create Category)$/i.test(label)
-          || (control.hasAttribute('aria-expanded')
-            && (/[, ]server actions$/i.test(label) || /\(category\)$/.test(label)));
+        if (control.hasAttribute('aria-expanded') && _isComposedAncestor(serverHeader, control)) return true;
+        const channelControl = /^(?:button|input)$/i.test(control.tagName)
+          || control.getAttribute('role') === 'button';
+        return channelControl && _isComposedAncestor(channelsList, control);
       };
 
       const verifiedLinkedInPostEntry = (clicked) => {
