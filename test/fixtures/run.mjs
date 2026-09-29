@@ -1610,6 +1610,26 @@ function assertGmailComposeRecipientTree(tree, label) {
   return normalizeTreeRefs(content);
 }
 
+async function assertNestedModalHoistedOnce(page, sourcePath, label) {
+  await setupAccessibilityTreeHtml(page, `<!doctype html>
+    <div class="modal-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.3)">
+      <div role="dialog" aria-label="Review dialog" style="background:white;padding:20px">
+        <button>Confirm layered action</button>
+      </div>
+    </div>`, sourcePath);
+  const tree = await page.evaluate(() => window.__generateAccessibilityTree('all', 10, null, null, 1));
+  const content = String(tree?.pageContent || '');
+  const matches = content.match(/button "Confirm layered action"/g) || [];
+  if (!content.includes('[open overlays') || matches.length !== 1) {
+    throw new Error(`${label}: nested modal should appear once in the hoisted tree: ${content}`);
+  }
+}
+
+test('accessibility tree (Chrome): a dialog inside its modal wrapper is hoisted once', page =>
+  assertNestedModalHoistedOnce(page, accessibilityTreeJsPath, 'chrome'));
+test('accessibility tree (Firefox): a dialog inside its modal wrapper is hoisted once', page =>
+  assertNestedModalHoistedOnce(page, firefoxAccessibilityTreeJsPath, 'firefox'));
+
 test('accessibility tree (Chrome): existing Gmail compose exposes the selected recipient chip', async (page) => {
   await setupAccessibilityTreeHtml(page, gmailComposeRecipientFixture, accessibilityTreeJsPath);
   const tree = await page.evaluate(() => window.__generateAccessibilityTree('visible', 10, null, null, 1));

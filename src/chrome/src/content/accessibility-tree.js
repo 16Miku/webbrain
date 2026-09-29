@@ -1078,16 +1078,15 @@
     return false;
   }
 
-  function walk(el, depth, opts, lines) {
+  function walk(el, depth, opts, lines, hoistedRoot = false) {
     if (!el || !el.tagName) return;
 
     // Skip nodes already emitted in the priority/action prelude.
     if (depth > 0 && opts._skipPrioritySet && opts._skipPrioritySet.has(el)) return;
 
-    // Skip nodes already emitted in the hoisted-overlay prelude. depth>0
-    // guard ensures we still enter the overlay itself when it's the
-    // explicit walk root.
-    if (depth > 0 && opts._skipOverlaySet && opts._skipOverlaySet.has(el)) return;
+    // Skip nodes already emitted in the hoisted-overlay prelude. An
+    // unlabelled wrapper can still be at depth 0 during the body walk.
+    if (!hoistedRoot && opts._skipOverlaySet && opts._skipOverlaySet.has(el)) return;
 
     if (depth > opts.maxDepth) {
       if (shouldInclude(el, opts) || omittedDescendantWouldBeIncluded(el, opts)) {
@@ -1671,13 +1670,6 @@
               for (const n of nodes) {
                 if (seen.has(n)) continue;
                 if (!n.isConnected) continue;
-                // Skip if ancestor already collected — avoids emitting a
-                // nested listbox twice when its ancestor dialog is also hit.
-                let ancIsOverlay = false;
-                for (let p = n.parentElement; p; p = p.parentElement) {
-                  if (seen.has(p)) { ancIsOverlay = true; break; }
-                }
-                if (ancIsOverlay) continue;
                 // Quick visibility gate — don't emit hidden overlay shells.
                 try {
                   const r = n.getBoundingClientRect();
@@ -1685,8 +1677,18 @@
                   const s = window.getComputedStyle(n);
                   if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) continue;
                 } catch (e) { continue; }
+                // Selector order may find a dialog before its modal wrapper.
+                // Keep only the outermost visible overlay in either order.
+                if (overlayEls.some(existing => isComposedAncestor(existing, n))) continue;
+                let insertionIndex = overlayEls.length;
+                for (let i = overlayEls.length - 1; i >= 0; i--) {
+                  if (!isComposedAncestor(n, overlayEls[i])) continue;
+                  seen.delete(overlayEls[i]);
+                  overlayEls.splice(i, 1);
+                  insertionIndex = i;
+                }
                 seen.add(n);
-                overlayEls.push(n);
+                overlayEls.splice(insertionIndex, 0, n);
               }
             }
           }
@@ -1694,7 +1696,7 @@
         if (overlayEls.length) {
           lines.push('[open overlays — rendered first so they survive truncation]');
           for (const n of overlayEls) {
-            walk(n, 0, opts, lines);
+            walk(n, 0, opts, lines, true);
           }
           lines.push('[/open overlays]');
           opts._skipOverlaySet = seen;
