@@ -11,7 +11,6 @@
   const targetFields = { id: 12, fieldName: 9, label: 8, ariaLabel: 8, name: 7, href: 7, placeholder: 5, type: 3, role: 2 };
   const targetRequired = new Set(['click_ax', 'set_checked', 'type_ax', 'set_field']);
   const maxPortableBytes = 1024 * 1024;
-  const normalizationReserveBytes = 16 * 1024;
   const defaults = { string: '', number: 0, boolean: false, null: null, object: {}, array: [] };
   const at = (value, path) => path.reduce((node, key) => node[key], value);
   const put = (value, key, next) => Object.defineProperty(value, key, { value: next, writable: true, enumerable: true, configurable: true });
@@ -77,6 +76,96 @@
       default: return false;
     }
   }
+  function workflowCleanText(value, max = 240) {
+    const text = String(value ?? '').replace(/\u00a0/g, ' ').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return text.length > max ? text.slice(0, max).trim() : text;
+  }
+  function workflowCleanId(value, fallback = '') {
+    return workflowCleanText(value, 100).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || fallback;
+  }
+  function workflowSafeUrl(value) {
+    try {
+      const url = new URL(String(value || ''));
+      if (!['http:', 'https:'].includes(url.protocol)) return '';
+      url.username = ''; url.password = ''; url.search = ''; url.hash = '';
+      return url.toString();
+    } catch { return ''; }
+  }
+  function normalizedWorkflowForSize(value) {
+    const name = workflowCleanText(value.name, 80);
+    const rawStart = value.start;
+    const origin = workflowCleanText(rawStart?.origin, 300);
+    let start = null;
+    try {
+      const parsed = new URL(origin);
+      if (['http:', 'https:'].includes(parsed.protocol) && parsed.origin === origin) {
+        start = { origin, pathFamily: workflowCleanText(rawStart?.pathFamily || '/', 500) || '/' };
+      }
+    } catch {}
+    if (!name || !start) return null;
+
+    const parameters = [], parameterIds = new Set();
+    for (const raw of Array.isArray(value.parameters) ? value.parameters : []) {
+      const id = normalizeParameterId(workflowCleanId(raw?.id)).toLowerCase();
+      if (!id || parameterIds.has(id)) continue;
+      parameterIds.add(id);
+      const identity = [raw?.id, raw?.label, raw?.type].filter(Boolean).join(' ').toLowerCase();
+      parameters.push({ id, label: workflowCleanText(raw?.label || id, 120), required: raw?.required !== false,
+        sensitive: raw?.sensitive === true || /password|passcode|secret|token|api.?key|otp|2fa|mfa|one.?time|recovery.?code/.test(identity), type: 'text' });
+      if (parameters.length >= limits.parameters) break;
+    }
+
+    const steps = [];
+    for (const raw of Array.isArray(value.steps) ? value.steps : []) {
+      const tool = workflowCleanText(raw?.tool, 80);
+      if (!tools.has(tool) || !validStepArgs({ ...raw, tool }, parameterIds)) continue;
+      const args = raw.args;
+      let normalizedArgs;
+      if (tool === 'navigate') normalizedArgs = { url: workflowSafeUrl(args.url) };
+      else if (tool === 'go_back' || tool === 'go_forward' || tool === 'click_ax') normalizedArgs = {};
+      else if (tool === 'set_checked') normalizedArgs = { checked: args.checked };
+      else if (tool === 'type_ax' || tool === 'set_field') normalizedArgs = { text: { $workflowParam: args.text.$workflowParam },
+        ...(own(args, 'clear') ? { clear: args.clear } : {}), ...(tool === 'set_field' && own(args, 'submit') ? { submit: args.submit } : {}) };
+      else if (tool === 'click') normalizedArgs = { text: workflowCleanText(args.text) };
+      else if (tool === 'scroll') normalizedArgs = { direction: args.direction || 'down',
+        ...(own(args, 'amount') ? { amount: Math.max(1, Math.min(5000, Math.round(args.amount))) } : {}) };
+      else normalizedArgs = { text: workflowCleanText(args.text), ...(own(args, 'timeout') ? { timeout: Math.max(100, Math.min(30000, Math.round(args.timeout))) } : {}) };
+
+      const target = {};
+      for (const field of Object.keys(targetFields)) {
+        const text = workflowCleanText(raw.target?.[field]);
+        if (!text || /^ref_[A-Za-z0-9_-]+$/i.test(text)) continue;
+        target[field] = field === 'href' ? (workflowSafeUrl(text) || text) : text;
+      }
+      const normalizedTarget = Object.keys(target).length ? target : null;
+      if (targetRequired.has(tool) && !replayableTarget(normalizedTarget)) continue;
+      const rawScope = raw.scope;
+      const scopeOrigin = workflowCleanText(rawScope?.origin, 300);
+      let scope = null;
+      try {
+        const parsed = new URL(scopeOrigin);
+        if (['http:', 'https:'].includes(parsed.protocol) && parsed.origin === scopeOrigin) {
+          scope = { origin: scopeOrigin, pathFamily: workflowCleanText(rawScope?.pathFamily || '/', 500) || '/' };
+        }
+      } catch {}
+      const expectedKind = workflowCleanText(raw.expected?.kind, 40);
+      const expected = ['tool_success', 'tool_verified', 'url_changed', 'checked'].includes(expectedKind)
+        ? (expectedKind === 'checked' ? { kind: expectedKind, value: raw.expected?.value === true } : { kind: expectedKind })
+        : { kind: 'tool_success' };
+      steps.push({ id: workflowCleanId(raw.id, `step_${steps.length + 1}`), tool, args: normalizedArgs,
+        ...(normalizedTarget ? { target: normalizedTarget } : {}), ...(scope ? { scope } : {}), expected });
+      if (steps.length >= limits.steps) break;
+    }
+    if (!steps.length) return null;
+    // Import assigns fresh identity and timestamps after its first normalization.
+    const importedTimestamp = 1790572374560;
+    return { schema: value.schema, id: workflowCleanId(value.id, 'workflow_1234567890123_12345678'), name,
+      createdAt: importedTimestamp, updatedAt: importedTimestamp,
+      source: { runId: workflowCleanId(value.source?.runId), webbrainVersion: workflowCleanText(value.source?.webbrainVersion, 40) },
+      start, parameters, steps,
+      stats: { sourceToolCount: Math.max(0, Math.floor(Number(value.stats?.sourceToolCount) || 0)), compiledStepCount: steps.length,
+        skippedToolCount: Math.max(0, Math.floor(Number(value.stats?.skippedToolCount) || 0)) } };
+  }
   function warnings(value) {
     const issues = [];
     if (value.schema !== 'webbrain-workflow/1') issues.push('Expected schema “webbrain-workflow/1”.');
@@ -119,8 +208,13 @@
       if (targetRequired.has(step.tool) && !replayableTarget(step.target)) issues.push(`Step ${index + 1} needs a replayable target with a name, label, id, or other strong locator.`);
     });
     try {
-      if (new TextEncoder().encode(JSON.stringify(value)).byteLength > maxPortableBytes - normalizationReserveBytes) {
-        issues.push('Workflow JSON is too close to the importer 1 MiB file limit; leave room for normalized metadata.');
+      if (new TextEncoder().encode(JSON.stringify(value)).byteLength > maxPortableBytes) {
+        issues.push('Workflow JSON exceeds the importer 1 MiB file limit.');
+      } else {
+        const normalized = normalizedWorkflowForSize(value);
+        if (normalized && new TextEncoder().encode(JSON.stringify(normalized)).byteLength > maxPortableBytes) {
+          issues.push('Normalized workflow JSON exceeds the importer 1 MiB file limit.');
+        }
       }
     } catch { issues.push('Workflow JSON cannot be serialized.'); }
     return [...new Set(issues)];

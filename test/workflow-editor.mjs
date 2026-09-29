@@ -162,13 +162,21 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('importer 1 MiB file limit')));
     assert.equal((name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(oversized).reason, 'workflow_too_large');
 
-    const nearLimit = { ...fixture, start: { origin: 'https://example.com', pathFamily: '/' }, steps: [{ id: 'step_1', tool: 'navigate', args: { url: 'https://example.com/' } }] };
+    const nearLimit = {
+      schema: fixture.schema, name: 'Large but importable', id: 'workflow_1',
+      start: { origin: 'https://example.com', pathFamily: '/' },
+      parameters: Array.from({ length: 50 }, (_, index) => ({ id: `p${index}` })),
+      steps: [
+        ...Array.from({ length: 99 }, (_, index) => ({ id: `s${index}`, tool: 'click_ax', args: {}, target: { name: 'x' } })),
+        { id: 'navigate', tool: 'navigate', args: { url: 'https://example.com/' } }
+      ]
+    };
     const initialBytes = new TextEncoder().encode(JSON.stringify(nearLimit)).byteLength;
-    nearLimit.steps[0].args.url += 'a'.repeat(1024 * 1024 - 10 - initialBytes);
-    assert.equal(new TextEncoder().encode(JSON.stringify(nearLimit)).byteLength, 1024 * 1024 - 10);
+    nearLimit.steps[99].args.url += 'a'.repeat(1024 * 1024 - 500 - initialBytes);
+    assert.equal(new TextEncoder().encode(JSON.stringify(nearLimit)).byteLength, 1024 * 1024 - 500);
     assert.equal((name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(nearLimit).reason, 'workflow_too_large');
     await page.evaluate(value => editor.load(value), nearLimit);
-    assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('leave room for normalized metadata')));
+    assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes('Normalized workflow JSON exceeds')));
   }));
 
   test(`${name}: offline file import, editing, preservation, export, embedding`, async () => {
