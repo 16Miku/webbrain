@@ -445,6 +445,52 @@ for (const browser of ['chrome', 'firefox']) {
     }]), /same observed service host/);
     assert.equal(calls.length, 0);
   });
+  test(`${browser}: session-bound native fallbacks reject providers that cannot carry cookies`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const enabled = ['2captcha', 'capmonster'].map(id => ({ id, apiKey: 'key' }));
+    const proxy = { proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080 };
+    const datadome = [
+      { provider: '2captcha', method: 'DataDomeSliderTask', parameters: {
+        websiteURL: url, captchaUrl: 'https://captcha.test/widget', userAgent: 'browser-UA', ...proxy,
+      } },
+      { provider: 'capmonster', method: 'CustomTask:DataDome', parameters: {
+        websiteURL: url, metadata: { captchaUrl: 'https://captcha.test/widget', datadomeCookie: 'datadome=session' },
+        userAgent: 'browser-UA', ...proxy,
+      } },
+    ];
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, [datadome[0]]).length, 1);
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, [datadome[1]]).length, 1);
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, datadome), /same observed challenge/);
+    const funcaptcha = [
+      { provider: '2captcha', method: 'FunCaptchaTask', parameters: {
+        websiteURL: url, websitePublicKey: 'site', ...proxy,
+      } },
+      { provider: 'capmonster', method: 'FunCaptchaTask', parameters: {
+        websiteURL: url, websitePublicKey: 'site', cookies: 'SID=session', ...proxy,
+      } },
+    ];
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, [funcaptcha[1]]).length, 1);
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, funcaptcha), /same observed challenge/);
+    assert.equal(calls.length, 0);
+  });
+  test(`${browser}: GeeTest v4 fallback preserves risk type aliases`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const enabled = ['capsolver', '2captcha'].map(id => ({ id, apiKey: 'key' }));
+    const capsolver = { provider: 'capsolver', method: 'GeeTestTaskProxyLess', parameters: {
+      websiteURL: url, captchaId: 'captcha', riskType: 'slide',
+    } };
+    const twoCaptcha = { provider: '2captcha', method: 'GeeTestTaskProxyless', parameters: {
+      websiteURL: url, version: 4, initParameters: { captcha_id: 'captcha' }, risk_type: 'slide',
+    } };
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, [capsolver, twoCaptcha]).length, 2);
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [capsolver, {
+      ...twoCaptcha, parameters: { ...twoCaptcha.parameters, risk_type: 'match' },
+    }]), /same observed challenge/);
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [capsolver, {
+      ...twoCaptcha, parameters: { websiteURL: url, version: 4, initParameters: { captcha_id: 'captcha' } },
+    }]), /same observed challenge/);
+    assert.equal(calls.length, 0);
+  });
   const actionBoundPairs = [
     ['DataDome User-Agent', ['2captcha', 'DataDomeSliderTask', { websiteURL: url, captchaUrl: 'https://example.test/captcha', userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080 }], ['solvecaptcha', 'datadome', { pageurl: url, captcha_url: 'https://example.test/captcha', userAgent: 'browser-UA', proxy: 'proxy.test:8080', proxytype: 'http' }], 'userAgent'],
     ['DataDome proxy', ['2captcha', 'DataDomeSliderTask', { websiteURL: url, captchaUrl: 'https://example.test/captcha', userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080 }], ['solvecaptcha', 'datadome', { pageurl: url, captcha_url: 'https://example.test/captcha', userAgent: 'browser-UA', proxy: 'proxy.test:8080', proxytype: 'http' }], 'proxy'],

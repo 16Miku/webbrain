@@ -167,7 +167,8 @@ const FAMILY_IDENTIFIERS = {
     ['userCertifyId', 'metadata.UserCertifyId'], ['verifyType', 'metadata.verifyType'],
     ['region', 'metadata.region'], ['apiGetLib', 'metadata.apiGetLib'],
     ['metadata.punishUrl'], ['metadata.cookieRequired']],
-  datadome: [['captchaUrl', 'captcha_url', 'metadata.captchaUrl']],
+  datadome: [['captchaUrl', 'captcha_url', 'metadata.captchaUrl'],
+    ['metadata.datadomeCookie'], ['metadata.datadomeVersion'], ['html']],
   hunt: [['apiGetLib', 'metadata.apiGetLib'], ['data', 'metadata.data']],
   imperva: [['incapsulaScriptUrl', 'metadata.incapsulaScriptUrl'],
     ['incapsulaCookies', 'metadata.incapsulaCookies'], ['reese84UrlEndpoint', 'metadata.reese84UrlEndpoint']],
@@ -175,7 +176,7 @@ const FAMILY_IDENTIFIERS = {
   binance: [['validateId']],
   yidun: [['challenge'], ['hcg'], ['hct'], ['yidunApiServerSubdomain'], ['yidunGetLib']],
   hcaptcha: [['rqdata', 'data.rqdata']],
-  funcaptcha: [['data']],
+  funcaptcha: [['data'], ['cookies']],
   text_captcha: [['comment', 'textcaptcha']],
   captchafox: [['apiServer', 'api_server']],
   altcha: [['challengeURL', 'challenge_url'], ['challengeJSON', 'challenge_json']],
@@ -419,7 +420,14 @@ function validateFallbackIdentifiers(built) {
       }
     }
     groups.push({ aliases: versions[0] === 4 ? ['captchaId', 'captcha_id', 'initParameters.captcha_id', 'gt'] : ['gt'], requireAll: true });
-    if (versions[0] === 3) groups.push({ aliases: ['challenge'], requireAll: true });
+    groups.push({ aliases: ['geetestGetLib'], requireAll: true });
+    if (versions[0] === 3) {
+      groups.push({ aliases: ['challenge'], requireAll: true });
+      groups.push({ aliases: ['offline'], requireAll: true });
+      groups.push({ aliases: ['new_captcha'], requireAll: true });
+    } else {
+      groups.push({ aliases: ['riskType', 'risk_type'], requireAll: true });
+    }
   }
   for (const { aliases, requireAll } of groups) {
     const valuesByTask = built.map(({task}) => aliases.map(path => at(task, path))
