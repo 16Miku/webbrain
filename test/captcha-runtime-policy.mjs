@@ -128,4 +128,35 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), false);
     assert.equal(record.dispatchedTimeOrigins.has(1000), true);
   });
+  test(`${build}: a same-URL reload retires the answer and releases the previous gate`, async () => {
+    const agent = agentFor('act', 'full');
+    const pageUrl = 'https://example.test/challenge';
+    const record = { pageUrl, createdAt: Date.now(), applied: false, solution: { token: 'answer' },
+      documents: [{ frameId: 0, url: pageUrl, timeOrigin: 1000 }], dispatchedTimeOrigins: new Set([1000]) };
+    agent._nativeCaptchaSolutions = new Map([[1, record]]);
+    agent._captchaGateStates.set(1, { status: 'verification_pending', publicGate: { status: 'verification_pending' } });
+    const api = {
+      tabs: {
+        get: async () => ({ url: pageUrl }),
+        executeScript: async (_tabId, options) => [options.code.includes('performance.timeOrigin') && !options.code.includes('applyCaptchaValuesInPage')
+          ? { url: pageUrl, timeOrigin: 2000 } : { success: false, error: 'CAPTCHA frame navigated before application.' }],
+      },
+      scripting: build === 'chrome' ? { executeScript: async options => [{ frameId: 0, result: options.func.name === 'read'
+        ? { url: pageUrl, timeOrigin: 2000 } : { success: false, error: 'CAPTCHA frame navigated before application.' } }] } : undefined,
+      webNavigation: { getAllFrames: async () => [{ frameId: 0, url: pageUrl }] },
+    };
+    const key = build === 'chrome' ? 'chrome' : 'browser';
+    const previous = globalThis[key];
+    globalThis[key] = api;
+    try {
+      const result = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: pageUrl,
+        fields: [{ selector: '#response', path: 'token' }] });
+      assert.equal(result.applicationRetryable, false);
+      assert.equal(record.solution, undefined);
+      assert.equal(record.dispatchedTimeOrigins.has(1000), true);
+      assert.equal(agent._captchaGateStates.has(1), false);
+    } finally {
+      if (previous === undefined) delete globalThis[key]; else globalThis[key] = previous;
+    }
+  });
 }

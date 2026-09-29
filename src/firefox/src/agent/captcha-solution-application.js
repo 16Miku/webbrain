@@ -77,6 +77,20 @@ export async function captureCaptchaDocuments(tabId, frames, api = globalThis.br
   return identities.filter(Boolean);
 }
 
+// A same-URL reload is a different document and cannot reuse its paid answer.
+// Null means the current document could not be read, so a transient API error
+// does not discard an answer that may still be valid.
+export async function captchaAnswerDocumentCurrent(tabId, record, api = globalThis.browser || globalThis.chrome) {
+  const tab = await api.tabs.get(tabId);
+  if (tab?.url !== record.pageUrl) return false;
+  const expected = record.documents?.find(d => d.frameId === 0 && d.url === record.pageUrl);
+  if (!expected) return null;
+  const documents = await captureCaptchaDocuments(tabId, [{ frameId: 0, url: record.pageUrl }], api);
+  const current = documents.find(d => d.frameId === 0);
+  if (!current) return null;
+  return current.url === expected.url && current.timeOrigin === expected.timeOrigin;
+}
+
 // Self-contained for MAIN-world execution in one explicitly selected frame.
 export function applyCaptchaValuesInPage(expectedUrl, fields, callback, clicks = [], expectedTimeOrigin, validateOnly = false) {
   if (location.href !== expectedUrl || performance.timeOrigin !== expectedTimeOrigin) return { success: false, error: 'CAPTCHA frame navigated before application.' };

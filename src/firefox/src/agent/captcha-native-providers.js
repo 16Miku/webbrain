@@ -165,6 +165,7 @@ function validateFallbackIdentifiers(built) {
   const groups = [
     { aliases: ['websiteURL', 'pageurl', 'url'], requireAll: false },
     { aliases: ['websiteKey', 'sitekey', 'googlekey', 'websitePublicKey', 'publickey'], requireAll: false },
+    { aliases: ['userAgent', 'useragent', 'user_agent'], requireAll: true },
     ...(FAMILY_IDENTIFIERS[family] || []).map(aliases => ({ aliases, requireAll: true })),
   ];
   if (family === 'geetest') {

@@ -85,7 +85,7 @@ import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { hcaptchaParamError } from './captcha-hcaptcha-providers.js';
 import { getCaptchaCapabilities, prepareNativeCaptchaTasks, solveNativeCaptchaTasks } from './captcha-native-providers.js';
-import { applyNativeCaptchaSolution, captureCaptchaDocuments } from './captcha-solution-application.js';
+import { applyNativeCaptchaSolution, captureCaptchaDocuments, captchaAnswerDocumentCurrent } from './captcha-solution-application.js';
 import { solveCaptchaWithProviders, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders, captchaProviderSupportsType } from './captcha-provider-config.js';
 import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
@@ -35746,9 +35746,17 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       const record = this._nativeCaptchaSolutions?.get(tabId);
       const applicationRetryable = async () => {
         if (record?.solution === undefined || record.applied || Date.now() - record.createdAt > 180_000) return false;
-        // A transient tab read cannot consume the answer; the next apply
-        // rechecks the URL and document before any page mutation.
-        try { return (await chrome.tabs.get(tabId))?.url === record.pageUrl; } catch { return true; }
+        // A same-URL reload also invalidates the answer. Only a confirmed
+        // document change retires it; transient inspection failures do not.
+        try {
+          const current = await captchaAnswerDocumentCurrent(tabId, record, chrome);
+          if (current === false) {
+            delete record.solution;
+            this._captchaGateStates.delete(tabId);
+            return false;
+          }
+          return true;
+        } catch { return true; }
       };
       try {
         const result = await applyNativeCaptchaSolution(tabId, record, args, chrome);
