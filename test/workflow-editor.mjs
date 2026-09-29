@@ -105,7 +105,8 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       start: { origin: 'https://example.com', pathFamily: '/' },
       parameters: [
         ...fixture.parameters,
-        { id: 'NEW-ID', label: 'Legacy uppercase id', required: false, sensitive: false, type: 'text' }
+        { id: 'NEW-ID', label: 'Legacy id', required: false, sensitive: false, type: 'text' },
+        { id: 'PARAMETER_1', label: 'Legacy uppercase id', required: false, sensitive: false, type: 'text' }
       ]
     };
     await page.evaluate(value => editor.load(value), workflow);
@@ -126,6 +127,30 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     assert.equal(await page.evaluate(() => editor.getValue().steps[0].args.text.$workflowParam), 'address_2');
     const normalized = (name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(await page.evaluate(() => editor.getValue()));
     assert.equal(normalized.reason, '');
+    await page.getByRole('button', { name: '+ Add', exact: true }).first().click();
+    assert.equal(await page.evaluate(() => editor.getValue().parameters.at(-1).id), 'parameter_2');
+    await page.getByRole('button', { name: /Parameter 4: New parameter/ }).click();
+    await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
+    assert.equal(await page.evaluate(() => editor.getValue().parameters.at(-1).id), 'parameter_3');
+    const ids = await page.evaluate(() => editor.getValue().parameters.map(parameter => parameter.id.toLowerCase()));
+    assert.equal(new Set(ids).size, ids.length);
+  }));
+
+  test(`${name}: workflow size limits are visible and enforced`, () => withEditor(async page => {
+    const oversized = {
+      ...fixture,
+      parameters: Array.from({ length: 51 }, (_, index) => ({ id: `parameter_${index + 1}`, label: `Parameter ${index + 1}`, type: 'text' })),
+      steps: Array.from({ length: 101 }, (_, index) => ({ id: `step_${index + 1}`, tool: 'click_ax', args: {}, target: { name: `Step ${index + 1}` } }))
+    };
+    await page.evaluate(value => editor.load(value), oversized);
+    const issues = await page.evaluate(() => editor.validate());
+    assert.ok(issues.some(issue => issue.includes('parameters cannot contain more than 50')));
+    assert.ok(issues.some(issue => issue.includes('steps cannot contain more than 100')));
+    assert.equal((name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(oversized).reason, 'invalid_workflow');
+    assert.equal(await page.getByRole('button', { name: '+ Add', exact: true }).first().isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: '+ Add', exact: true }).last().isDisabled(), true);
+    await page.getByRole('button', { name: 'Parameter 1: Parameter 1', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'Duplicate', exact: true }).isDisabled(), true);
   }));
 
   test(`${name}: offline file import, editing, preservation, export, embedding`, async () => {
@@ -196,6 +221,10 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       const keyStream = await (await keyboardDownload).createReadStream(); const keyChunks = [];
       for await (const chunk of keyStream) keyChunks.push(chunk);
       assert.equal(JSON.parse(Buffer.concat(keyChunks).toString()).name, 'Keyboard save');
+      const filenameDownload = page.waitForEvent('download');
+      await page.getByLabel('Download filename').fill('keyboard-name.json');
+      await page.getByLabel('Download filename').press('Control+s');
+      assert.equal((await filenameDownload).suggestedFilename(), 'keyboard-name.json');
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole('button', { name: 'Workflow details', exact: true }).click();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

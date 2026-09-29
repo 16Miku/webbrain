@@ -6,12 +6,13 @@
   const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
   const typeOf = value => value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+  const limits = { steps: 100, parameters: 50 };
   const defaults = { string: '', number: 0, boolean: false, null: null, object: {}, array: [] };
   const at = (value, path) => path.reduce((node, key) => node[key], value);
   const put = (value, key, next) => Object.defineProperty(value, key, { value: next, writable: true, enumerable: true, configurable: true });
-  const freshId = (prefix, items) => {
+  const freshId = (prefix, items, normalize = value => value) => {
     let n = 1;
-    while (items.some(item => item?.id === `${prefix}_${n}`)) n++;
+    while (items.some(item => normalize(item?.id) === normalize(`${prefix}_${n}`))) n++;
     return `${prefix}_${n}`;
   };
   const normalizeParameterId = value => String(value ?? '')
@@ -48,6 +49,7 @@
     }
     for (const key of ['steps', 'parameters']) {
       if (!Array.isArray(value[key])) { issues.push(`${key} should be an array.`); continue; }
+      if (value[key].length > limits[key]) issues.push(`${key} cannot contain more than ${limits[key]} items.`);
       const ids = new Set();
       value[key].forEach((item, i) => {
         if (!object(item)) { issues.push(`${key}[${i}] should be an object.`); return; }
@@ -223,6 +225,8 @@
     }
     download() {
       if (!this.value) return;
+      const active = this.root.activeElement;
+      if (active?.matches('.filename')) this.filename = active.value.trim() || 'workflow.json';
       // Keyboard save must include the text still focused in the form.
       if (this.pendingField?.isConnected) this.pendingField.dispatchEvent(new Event('change', { bubbles: true }));
       this.attempt(() => {
@@ -259,7 +263,7 @@
         const items = next[kind];
         items.push(kind === 'steps'
           ? { id: freshId('step', items), tool: 'click_ax', args: {}, target: { role: 'button', name: '' }, scope: copy(object(next.start) ? next.start : { origin: '', pathFamily: '/' }), expected: { kind: 'tool_success' } }
-          : { id: freshId('parameter', items), label: 'New parameter', type: 'text', required: false, sensitive: false });
+          : { id: freshId('parameter', items, normalizeParameterId), label: 'New parameter', type: 'text', required: false, sensitive: false });
         this.selection = { kind, index: items.length - 1 };
       });
     }
@@ -322,7 +326,7 @@
       }
       for (const kind of ['parameters', 'steps']) {
         if (!Array.isArray(this.value[kind])) continue;
-        sidebar.append(this.el('div', { class: 'section-head' }, [this.el('h3', { text: `${kind === 'steps' ? 'Steps' : 'Parameters'} (${this.value[kind].length})` }), this.button('+ Add', () => this.addItem(kind), 'small', this.rawDraft !== null)]));
+        sidebar.append(this.el('div', { class: 'section-head' }, [this.el('h3', { text: `${kind === 'steps' ? 'Steps' : 'Parameters'} (${this.value[kind].length})` }), this.button('+ Add', () => this.addItem(kind), 'small', this.rawDraft !== null || this.value[kind].length >= limits[kind])]));
         const list = this.el('div', { class: 'steps' });
         if (!this.value[kind].length) list.append(this.el('div', { class: 'empty-list', text: `No ${kind} yet.` }));
         this.value[kind].forEach((item, index) => {
@@ -381,7 +385,7 @@
           heading.append(this.el('div', { class: 'row' }, [
             this.button('↑', () => { this.selection.index--; this.move([kind], index, index - 1); }, '', index === 0),
             this.button('↓', () => { this.selection.index++; this.move([kind], index, index + 1); }, '', index === this.value[kind].length - 1),
-            this.button('Duplicate', () => this.commit(next => { const item = copy(next[kind][index]); if (object(item)) item.id = freshId(kind === 'steps' ? 'step' : 'parameter', next[kind]); next[kind].splice(index + 1, 0, item); this.selection.index++; })),
+            this.button('Duplicate', () => this.commit(next => { const item = copy(next[kind][index]); if (object(item)) item.id = freshId(kind === 'steps' ? 'step' : 'parameter', next[kind], kind === 'parameters' ? normalizeParameterId : undefined); next[kind].splice(index + 1, 0, item); this.selection.index++; }), '', this.value[kind].length >= limits[kind]),
             this.button('Remove', () => this.commit(next => { next[kind].splice(index, 1); this.selection = { kind: 'overview' }; }), 'danger')
           ]));
           heading.querySelectorAll('button').forEach(button => { if (button.textContent === '↑') button.setAttribute('aria-label', 'Move up'); if (button.textContent === '↓') button.setAttribute('aria-label', 'Move down'); });
