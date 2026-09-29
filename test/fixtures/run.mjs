@@ -2438,6 +2438,40 @@ test('Chrome: controls inside a fixed side rail keep document scroll position', 
 firefoxTest('Firefox: controls inside a fixed side rail keep document scroll position', page =>
   assertFixedSideRailControlsKeepScroll(page, 'firefox'));
 
+async function assertHorizontalTargetClearsSideRail(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; }
+      #side { position: fixed; top: 0; left: 0; width: 200px; height: 100vh; z-index: 20; background: white; }
+      #scroller { width: 500px; height: 160px; overflow: auto; margin-top: 120px; }
+      #content { width: 1200px; height: 100px; position: relative; }
+      #target { position: absolute; left: 300px; top: 20px; }
+    </style>
+    <div id="side">Fixed side rail</div>
+    <div id="scroller"><div id="content"><input id="target" type="checkbox" aria-label="Grid checkbox"></div></div>
+  `, browserKind);
+  const before = await page.evaluate(() => {
+    document.getElementById('scroller').scrollLeft = 600;
+    return document.getElementById('target').getBoundingClientRect().left;
+  });
+  if (before >= 0) throw new Error(`${browserKind}: target must start outside the horizontal scrollport: ${before}`);
+  const ref = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('target')));
+  const result = await call(page, 'set_checked', { ref_id: ref, checked: true });
+  const after = await page.evaluate(() => ({
+    checked: document.getElementById('target').checked,
+    left: document.getElementById('target').getBoundingClientRect().left,
+    scrollLeft: document.getElementById('scroller').scrollLeft,
+  }));
+  if (!result?.success || !after.checked || after.left < 200) {
+    throw new Error(`${browserKind}: horizontal target remained behind the side rail: ${JSON.stringify({ before, result, after })}`);
+  }
+}
+
+test('Chrome: horizontal target clears a fixed side rail', page =>
+  assertHorizontalTargetClearsSideRail(page, 'chrome'));
+firefoxTest('Firefox: horizontal target clears a fixed side rail', page =>
+  assertHorizontalTargetClearsSideRail(page, 'firefox'));
+
 async function assertUnstuckStickyTargetClearsHeader(page, browserKind) {
   await setupContentHtml(page, `<!doctype html>
     <style>

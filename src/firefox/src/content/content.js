@@ -684,7 +684,7 @@
       const fullyVisible = _isFullyVisibleForInteraction(el, insets);
       const coveredByFixed = fullyVisible && _isCoveredByFixedNonModalSurface(el, view);
       if (!fullyVisible || coveredByFixed) {
-        el.scrollIntoView({ block: 'center', inline: coveredByFixed ? 'center' : 'nearest', behavior: 'instant' });
+        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
         const rAfter = el.getBoundingClientRect();
         if (rAfter.top < insets.top) {
           view.scrollBy({ top: rAfter.top - insets.top - 16, behavior: 'instant' });
@@ -693,7 +693,7 @@
         }
       }
     } catch {
-      try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch {}
+      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
     }
   }
 
