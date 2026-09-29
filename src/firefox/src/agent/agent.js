@@ -5951,19 +5951,32 @@ export class Agent extends LoopDetector {
           });
         }
         this._restorePersistedRichTextToolbarAudit(tabId, entry.richTextToolbarAudit);
+        const savedDispatch = entry.nativeCaptchaDispatch;
+        const rootDocument = Array.isArray(savedDispatch?.documents)
+          ? savedDispatch.documents.find(document => document?.frameId === 0) : null;
+        const nativeDispatchRestored = typeof savedDispatch?.pageUrl === 'string'
+          && savedDispatch.pageUrl && rootDocument?.url === savedDispatch.pageUrl
+          && Number.isFinite(rootDocument.timeOrigin)
+          && Array.isArray(savedDispatch.dispatchedTimeOrigins)
+          && savedDispatch.dispatchedTimeOrigins.includes(rootDocument.timeOrigin);
         const savedAnswer = entry.nativeCaptchaAnswer;
         const nativeAnswerRestored = savedAnswer && typeof savedAnswer.pageUrl === 'string'
           && Number.isFinite(savedAnswer.createdAt)
           && Date.now() >= savedAnswer.createdAt && Date.now() - savedAnswer.createdAt <= 180_000
           && savedAnswer.applied === false && savedAnswer.solution !== undefined
           && Array.isArray(savedAnswer.documents)
-          && savedAnswer.documents.some(document => document?.frameId === 0);
-        if (nativeAnswerRestored) {
+          && savedAnswer.documents.some(document => document?.frameId === 0)
+          && (!nativeDispatchRestored || (savedAnswer.pageUrl === savedDispatch.pageUrl
+            && savedAnswer.documents.some(document => document?.frameId === 0
+              && document.timeOrigin === rootDocument.timeOrigin)));
+        if (nativeDispatchRestored || nativeAnswerRestored) {
+          const record = nativeDispatchRestored ? savedDispatch : savedAnswer;
           this._nativeCaptchaSolutions ||= new Map();
           this._nativeCaptchaSolutions.set(tabId, {
-            ...savedAnswer,
-            dispatchedTimeOrigins: new Set(Array.isArray(savedAnswer.dispatchedTimeOrigins)
-              ? savedAnswer.dispatchedTimeOrigins.filter(Number.isFinite) : []),
+            ...record,
+            ...(nativeAnswerRestored ? { solution: savedAnswer.solution, createdAt: savedAnswer.createdAt } : {}),
+            dispatchedTimeOrigins: new Set(Array.isArray(record.dispatchedTimeOrigins)
+              ? record.dispatchedTimeOrigins.filter(Number.isFinite) : []),
           });
         }
         const captchaGateState = entry.captchaGateState;
@@ -5979,8 +5992,16 @@ export class Agent extends LoopDetector {
           && captchaGateState.cloudflareManagedChallenge !== true
           && captchaGateState.publicGate.cloudflareManagedChallenge !== true
         ) {
-          if (!cloudflareSignal && (!captchaGateState.publicGate.nativeAnswerPending || nativeAnswerRestored)) {
-            this._captchaGateStates.set(tabId, normalizeCaptchaGateState(captchaGateState));
+          if (!cloudflareSignal) {
+            const gate = normalizeCaptchaGateState(captchaGateState);
+            if (nativeDispatchRestored && !nativeAnswerRestored && !savedDispatch.applied
+                && ['solve_required', 'verification_pending'].includes(gate.status)) {
+              this._captchaGateStates.set(tabId, { ...gate, status: 'manual_required',
+                publicGate: { ...gate.publicGate, status: 'manual_required', solveAttempted: true,
+                  solveFailed: true, nativeAnswerPending: false, nativeDispatchInterrupted: true } });
+            } else if (!gate.publicGate.nativeAnswerPending || nativeAnswerRestored || savedDispatch?.applied) {
+              this._captchaGateStates.set(tabId, gate);
+            }
           }
         }
       }
@@ -6024,6 +6045,13 @@ export class Agent extends LoopDetector {
       : { messages: [], compacted: false, bytes: 2 };
     const captchaGateState = this._captchaGateStates.get(tabId) || null;
     const nativeAnswer = this._nativeCaptchaSolutions?.get(tabId);
+    const nativeCaptchaDispatch = nativeAnswer?.pageUrl && Array.isArray(nativeAnswer.documents)
+      && nativeAnswer.dispatchedTimeOrigins instanceof Set
+      ? { pageUrl: nativeAnswer.pageUrl, createdAt: nativeAnswer.createdAt,
+          applied: nativeAnswer.applied === true, applicationSucceeded: nativeAnswer.applicationSucceeded === true,
+          documents: nativeAnswer.documents,
+          dispatchedTimeOrigins: [...nativeAnswer.dispatchedTimeOrigins] }
+      : null;
     const savedNativeAnswer = nativeAnswer?.solution !== undefined && nativeAnswer.applied === false
       && Date.now() - nativeAnswer.createdAt <= 180_000
       ? { pageUrl: nativeAnswer.pageUrl, createdAt: nativeAnswer.createdAt, applied: false,
@@ -6053,6 +6081,7 @@ export class Agent extends LoopDetector {
         ? null
         : captchaGateState,
       nativeCaptchaAnswer,
+      nativeCaptchaDispatch,
     };
   }
 
@@ -9504,7 +9533,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       resultContent += '\n[TRUSTED CAPTCHA GATE: A supported verification challenge is active. Call solve_captcha once now. Do not dismiss or close the dialog, click Continue/Submit, or use another page-changing tool until solve_captcha returns.]';
       onUpdate('warning', { message: 'Supported verification challenge detected; solve_captcha is required.' });
     } else if (captchaGateDecision?.status === 'manual_required') {
-      resultContent += captchaGateDecision.cloudflareManagedChallenge === true
+      resultContent += captchaGateDecision.nativeDispatchInterrupted === true
+        ? '\n[TRUSTED CAPTCHA GATE: A native solve was already dispatched for this document, but its answer is unavailable after restart. Do not send another paid request or submit the page; ask the user to complete the challenge manually.]'
+        : captchaGateDecision.cloudflareManagedChallenge === true
         ? '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Inspect get_captcha_capabilities for a Cloudflare native method; use one solve_captcha providerTasks dispatch only with all required observed inputs, otherwise ask for manual completion. Do not submit; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]'
         : captchaGateDecision.activeChallengeAfterSolve === true
         ? '\n[TRUSTED CAPTCHA GATE: The active challenge frame is visible again after the one automatic solve. The site may have rejected the token. Do not call solve_captcha again; stop automation and ask the user to complete the challenge manually.]'
@@ -32843,7 +32874,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             }
           }
           const previous = this._nativeCaptchaSolutions.get(tabId);
-          const dispatchedTimeOrigins = previous?.dispatchedTimeOrigins || new Set(previous?.documents
+          const dispatchedTimeOrigins = new Set(previous?.dispatchedTimeOrigins || previous?.documents
             ?.filter(d => d.frameId === 0).map(d => d.timeOrigin) || []);
           if (dispatchedTimeOrigins.has(rootDocument.timeOrigin)) {
             return noDispatchFailure('A native solve was already dispatched for this page document. Use its result or ask for manual completion; do not spend again.');
@@ -32851,6 +32882,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           dispatchedTimeOrigins.add(rootDocument.timeOrigin);
           const record = { pageUrl: websiteURL, createdAt: Date.now(), applied: false, documents, dispatchedTimeOrigins };
           this._nativeCaptchaSolutions.set(tabId, record);
+          const lockPersistence = await this._persistNow(tabId);
+          if (!lockPersistence.ok) {
+            if (previous) this._nativeCaptchaSolutions.set(tabId, previous);
+            else this._nativeCaptchaSolutions.delete(tabId);
+            return noDispatchFailure('Could not save the native CAPTCHA dispatch lock. No provider was contacted; retry after session storage is available.');
+          }
           dispatched = true;
           const result = await solveNativeCaptchaTasks(prepared);
           record.solution = result.solution;

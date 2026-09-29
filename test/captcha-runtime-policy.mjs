@@ -189,6 +189,7 @@ for (const build of ['chrome', 'firefox']) {
     const entry = structuredClone(agent._conversationStorageEntry(1));
     const savedAnswer = entry.nativeCaptchaAnswer;
     assert.deepEqual(entry.nativeCaptchaAnswer.solution, { token: 'paid-answer' });
+    assert.deepEqual(entry.nativeCaptchaDispatch.dispatchedTimeOrigins, [1000]);
     agent._nativeCaptchaSolutions.get(1).applied = true;
     agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', { success: true, injected: true });
     assert.equal(agent._conversationStorageEntry(1).nativeCaptchaAnswer, null);
@@ -208,11 +209,20 @@ for (const build of ['chrome', 'firefox']) {
       const missing = agentFor('act', 'full');
       delete entry.nativeCaptchaAnswer;
       await missing._hydrate(1);
-      assert.equal(missing._captchaGateStates.has(1), false);
+      assert.equal(missing._captchaGateStates.get(1).status, 'manual_required');
+      assert.equal(missing._nativeCaptchaSolutions.get(1).dispatchedTimeOrigins.has(1000), true);
+      assert.equal(missing._captchaGateBlockResult(1, 'solve_captcha', {}).denied, true);
+      assert.equal(missing._captchaGateBlockResult(1, 'done', { outcome: 'partial' }), null);
       const expired = agentFor('act', 'full');
       entry.nativeCaptchaAnswer = { ...savedAnswer, createdAt: Date.now() - 180_001 };
       await expired._hydrate(1);
-      assert.equal(expired._captchaGateStates.has(1), false);
+      assert.equal(expired._captchaGateStates.get(1).status, 'manual_required');
+      const interrupted = agentFor('act', 'full');
+      delete entry.nativeCaptchaAnswer;
+      entry.captchaGateState = { ...entry.captchaGateState, status: 'solve_required',
+        publicGate: { status: 'solve_required' } };
+      await interrupted._hydrate(1);
+      assert.equal(interrupted._captchaGateStates.get(1).publicGate.nativeDispatchInterrupted, true);
     } finally {
       if (previous === undefined) delete globalThis[apiName]; else globalThis[apiName] = previous;
     }

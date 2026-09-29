@@ -122013,7 +122013,13 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     await withCaptchaFakePage(build, [], async () => {
       const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
-      api.storage = { local: { get: async () => ({ twoCaptchaEnabled: true, twoCaptchaApiKey: 'a'.repeat(32) }) } };
+      const persisted = [];
+      let storageUnavailable = false;
+      api.storage = { local: { get: async () => ({ twoCaptchaEnabled: true, twoCaptchaApiKey: 'a'.repeat(32) }) },
+        session: { set: async value => {
+          if (storageUnavailable) throw new Error('Session storage unavailable');
+          persisted.push(structuredClone(Object.values(value)[0]));
+        } } };
       api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
       api.webNavigation = { getAllFrames: async () => [{ frameId: 0, url: 'https://example.test/form' }] };
       if (build === 'chrome') api.scripting = { executeScript: async () => [{ frameId: 0, result: { url: 'https://example.test/form', timeOrigin: 1000 } }] };
@@ -122021,11 +122027,14 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
       const previousFetch = globalThis.fetch;
       const calls = [];
       globalThis.fetch = async (url, options) => {
+        assert.ok(persisted.at(-1)?.nativeCaptchaDispatch?.dispatchedTimeOrigins.length,
+          `${build}: provider was contacted before its dispatch lock was saved`);
         calls.push({ url, body: JSON.parse(options.body) });
         return Response.json({ taskId: 42, status: 'ready', solution: { lot_number: 'lot', pass_token: 'pass', captcha_output: 'out' } });
       };
       try {
         const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
         const catalog = await agent._executeToolImpl(1, 'get_captcha_capabilities', { family: 'geetest' });
         assert.ok(catalog.methods.some(method => method.method === 'GeeTestTaskProxyless'), build);
         const args = { inject: false, providerTasks: [{ provider: '2captcha', method: 'GeeTestTaskProxyless', parameters: { websiteURL: 'https://example.test/form', version: 4, initParameters: { captcha_id: 'observed-id' } } }] };
@@ -122039,6 +122048,11 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
         const unobserved = await agent._executeToolImpl(1, 'solve_captcha', wrongPath);
         assert.equal(unobserved.dispatched, false, build); assert.match(unobserved.error, /observed frames/);
         assert.equal(calls.length, 0, build);
+        storageUnavailable = true;
+        const unpersisted = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(unpersisted.noDispatch, true, `${build}: a paid task started without a persisted lock`);
+        assert.equal(calls.length, 0, build);
+        storageUnavailable = false;
         const result = await agent._executeToolImpl(1, 'solve_captcha', args);
         assert.equal(result.success, true, `${build}: ${result.error}`);
         assert.equal(result.applicationRequired, true, build); assert.equal(result.solution.lot_number, 'lot', build);
