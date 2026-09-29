@@ -17,6 +17,7 @@ export const OPENROUTER_ROUTING_VARIANTS = Object.freeze(['standard', 'nitro', '
 const STRUCTURED_OUTPUT_PROVIDER_NAMES = new Set([
   'azure-openai',
   'llamacpp',
+  'ods',
   'lmstudio',
   'localai',
   'ollama',
@@ -27,6 +28,7 @@ const STRUCTURED_OUTPUT_PROVIDER_NAMES = new Set([
 ]);
 const LOCAL_OPENAI_COMPAT_PROVIDER_NAMES = new Set([
   'llamacpp',
+  'ods',
   'lmstudio',
   'localai',
   'ollama',
