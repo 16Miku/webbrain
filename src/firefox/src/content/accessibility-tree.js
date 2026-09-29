@@ -598,6 +598,58 @@
     return hit;
   }
 
+  function isNodeOccluded(el) {
+    if (!el || !el.isConnected || el.nodeType !== Node.ELEMENT_NODE) return false;
+    try {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return false;
+      const vw = window.innerWidth || 800;
+      const vh = window.innerHeight || 600;
+      if (r.top >= vh || r.bottom <= 0 || r.left >= vw || r.right <= 0) return false;
+
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      if (cx >= 0 && cx <= vw && cy >= 0 && cy <= vh) {
+        const hit = deepestOpenShadowHit(cx, cy);
+        if (hit && (hit === el || el.contains(hit) || hit.contains(el))) return false;
+      }
+
+      const sampleOffsets = [
+        [cx, Math.round(r.top + Math.max(2, Math.min(8, r.height * 0.2)))],
+        [cx, Math.round(r.bottom - Math.max(2, Math.min(8, r.height * 0.2)))],
+        [Math.round(r.left + Math.max(2, Math.min(8, r.width * 0.2))), cy],
+        [Math.round(r.right - Math.max(2, Math.min(8, r.width * 0.2))), cy],
+      ];
+      for (const [sx, sy] of sampleOffsets) {
+        if (sx < 0 || sy < 0 || sx > vw || sy > vh) continue;
+        const sampleHit = deepestOpenShadowHit(sx, sy);
+        if (sampleHit && (sampleHit === el || el.contains(sampleHit) || sampleHit.contains(el))) {
+          return false;
+        }
+      }
+
+      if (document.elementsFromPoint && cx >= 0 && cx <= vw && cy >= 0 && cy <= vh) {
+        const elements = document.elementsFromPoint(cx, cy);
+        const targetIdx = elements.indexOf(el);
+        if (targetIdx > 0) {
+          const allAboveNone = elements.slice(0, targetIdx).every(item => {
+            try {
+              const pe = window.getComputedStyle(item).pointerEvents;
+              return pe === 'none' || el.contains(item) || item.contains(el);
+            } catch {
+              return false;
+            }
+          });
+          if (allAboveNone) return false;
+        }
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function visualTargetEligibility(el) {
     const tag = el.tagName?.toLowerCase() || '';
     if (tag === 'button') return 'semantic-button';
@@ -879,6 +931,11 @@
         }
       } catch {}
     }
+    try {
+      if (isInteractive(el) && isNodeOccluded(el)) {
+        line += ' occluded=true';
+      }
+    } catch {}
     if (inputType === 'checkbox' || inputType === 'radio') {
       line += ` checked=${el.checked ? 'true' : 'false'}`;
     } else if (['checkbox', 'radio', 'switch'].includes(attrRole) || el.hasAttribute('aria-checked')) {
@@ -1565,6 +1622,13 @@
           '[aria-modal="true"]',
           '[role=combobox][aria-expanded="true"]',
           'dialog[open]',
+          '[data-overlay]',
+          '.modal.show',
+          '.modal-overlay',
+          '[class*="modal"][class*="open"]',
+          '[class*="DialogContent"]',
+          '[class*="ModalContent"]',
+          '[data-state="open"][role="dialog"]',
         ];
         const overlayEls = [];
         const seen = new WeakSet();

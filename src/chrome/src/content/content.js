@@ -311,18 +311,89 @@
       : null;
   }
 
+  function _getViewportDockedInsets(view = window) {
+    let top = 0;
+    let bottom = 0;
+    try {
+      const doc = view.document;
+      if (!doc) return { top: 0, bottom: 0 };
+      const htmlStyle = view.getComputedStyle(doc.documentElement);
+      const bodyStyle = doc.body ? view.getComputedStyle(doc.body) : null;
+      const parsePadding = val => {
+        const n = parseFloat(val);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      };
+      top = Math.max(top, parsePadding(htmlStyle.scrollPaddingTop));
+      bottom = Math.max(bottom, parsePadding(htmlStyle.scrollPaddingBottom));
+      if (bodyStyle) {
+        top = Math.max(top, parsePadding(bodyStyle.scrollPaddingTop));
+        bottom = Math.max(bottom, parsePadding(bodyStyle.scrollPaddingBottom));
+      }
+      const candidates = doc.querySelectorAll('header, nav, [role="banner"], [role="navigation"], [class*="header" i], [class*="navbar" i], [class*="toolbar" i]');
+      const vw = view.innerWidth || 800;
+      const vh = view.innerHeight || 600;
+      for (const c of candidates) {
+        if (!c.isConnected || c.offsetWidth <= 0 || c.offsetHeight <= 0) continue;
+        const cs = view.getComputedStyle(c);
+        if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+        if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const r = c.getBoundingClientRect();
+        if (r.width < vw * 0.4) continue;
+        if (r.top <= 10 && r.bottom > 0 && r.bottom < vh * 0.4) {
+          if (r.bottom > top) top = r.bottom;
+        } else if (r.bottom >= vh - 10 && r.top < vh && r.top > vh * 0.6) {
+          const h = vh - r.top;
+          if (h > bottom) bottom = h;
+        }
+      }
+    } catch {}
+    return {
+      top: Math.min(top, (view.innerHeight || 600) * 0.4),
+      bottom: Math.min(bottom, (view.innerHeight || 600) * 0.4),
+    };
+  }
+
+  function _scrollElementIntoClearView(el) {
+    if (!el?.isConnected) return;
+    try {
+      const view = el.ownerDocument?.defaultView || window;
+      const insets = _getViewportDockedInsets(view);
+      const rBefore = el.getBoundingClientRect();
+      const inClear = (
+        rBefore.width >= 1
+        && rBefore.height >= 1
+        && rBefore.left >= 0
+        && rBefore.right <= view.innerWidth
+        && rBefore.top >= insets.top
+        && rBefore.bottom <= (view.innerHeight - insets.bottom)
+      );
+      if (!inClear) {
+        el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+        const rAfter = el.getBoundingClientRect();
+        if (rAfter.top < insets.top) {
+          view.scrollBy({ top: rAfter.top - insets.top - 16, behavior: 'instant' });
+        } else if (rAfter.bottom > view.innerHeight - insets.bottom) {
+          view.scrollBy({ top: rAfter.bottom - (view.innerHeight - insets.bottom) + 16, behavior: 'instant' });
+        }
+      }
+    } catch {
+      try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch {}
+    }
+  }
+
   function _isFullyVisibleForInteraction(el) {
     try {
       if (!el?.isConnected) return false;
       const view = el.ownerDocument?.defaultView || window;
       const rect = el.getBoundingClientRect();
+      const insets = _getViewportDockedInsets(view);
       if (
         rect.width < 1
         || rect.height < 1
         || rect.left < 0
-        || rect.top < 0
+        || rect.top < insets.top
         || rect.right > view.innerWidth
-        || rect.bottom > view.innerHeight
+        || rect.bottom > (view.innerHeight - insets.bottom)
       ) return false;
       for (let node = _composedParent(el); node && node !== el.ownerDocument; node = _composedParent(node)) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
@@ -1893,7 +1964,7 @@
     // Do NOT scrollIntoView on SELECT elements (hidden selects in modals cause scroll jumps)
     if (el.tagName !== 'SELECT') {
       if (actionDeadlineExpired()) return deadlineFailure();
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      _scrollElementIntoClearView(el);
     }
 
     // Occlusion hit-test: for text/selector/index clicks, verify that the
@@ -1906,11 +1977,59 @@
     // elements with real bounding rects.
     if (el.tagName !== 'SELECT' && params.x == null && params.y == null) {
       try {
-        const r = el.getBoundingClientRect();
+        let r = el.getBoundingClientRect();
         if (r.width >= 1 && r.height >= 1 && r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth) {
-          const cx = Math.round(r.left + r.width / 2);
-          const cy = Math.round(r.top + r.height / 2);
-          const topmost = _shadowAwareElementFromPoint(cx, cy);
+          let cx = Math.round(r.left + r.width / 2);
+          let cy = Math.round(r.top + r.height / 2);
+          let topmost = _shadowAwareElementFromPoint(cx, cy);
+
+          // If covered at center, test if scrolling can clear a fixed/sticky header
+          if (topmost && !_isComposedAncestor(el, topmost) && !_isComposedAncestor(topmost, el)) {
+            const bRect = topmost.getBoundingClientRect();
+            if (bRect.top <= 10 && bRect.bottom > r.top && bRect.bottom < window.innerHeight * 0.45) {
+              window.scrollBy({ top: bRect.bottom - r.top + 20, behavior: 'instant' });
+              r = el.getBoundingClientRect();
+              cx = Math.round(r.left + r.width / 2);
+              cy = Math.round(r.top + r.height / 2);
+              topmost = _shadowAwareElementFromPoint(cx, cy);
+            }
+          }
+
+          // If still covered at center, test sample perimeter points
+          if (topmost && !_isComposedAncestor(el, topmost) && !_isComposedAncestor(topmost, el)) {
+            const sampleOffsets = [
+              [cx, Math.round(r.top + Math.max(2, Math.min(8, r.height * 0.2)))],
+              [cx, Math.round(r.bottom - Math.max(2, Math.min(8, r.height * 0.2)))],
+              [Math.round(r.left + Math.max(2, Math.min(8, r.width * 0.2))), cy],
+              [Math.round(r.right - Math.max(2, Math.min(8, r.width * 0.2))), cy],
+            ];
+            for (const [sx, sy] of sampleOffsets) {
+              if (sx < 0 || sy < 0 || sx > window.innerWidth || sy > window.innerHeight) continue;
+              const sampleHit = _shadowAwareElementFromPoint(sx, sy);
+              if (sampleHit && (_isComposedAncestor(el, sampleHit) || _isComposedAncestor(sampleHit, el))) {
+                topmost = sampleHit;
+                cx = sx;
+                cy = sy;
+                break;
+              }
+            }
+          }
+
+          // If still covered, check if the blocker chain has pointer-events: none
+          if (topmost && !_isComposedAncestor(el, topmost) && !_isComposedAncestor(topmost, el)) {
+            try {
+              const elements = document.elementsFromPoint ? document.elementsFromPoint(cx, cy) : [];
+              const targetIdx = elements.indexOf(el);
+              if (targetIdx > 0) {
+                const allAboveNone = elements.slice(0, targetIdx).every(item => {
+                  const pe = window.getComputedStyle(item).pointerEvents;
+                  return pe === 'none' || _isComposedAncestor(el, item) || _isComposedAncestor(item, el);
+                });
+                if (allAboveNone) topmost = el;
+              }
+            } catch {}
+          }
+
           if (topmost && !_isComposedAncestor(el, topmost) && !_isComposedAncestor(topmost, el)) {
             // Another element is painted on top. Give the model actionable
             // info (what's blocking, where, what to do) instead of silently
@@ -6636,7 +6755,7 @@
             );
           }
           if (!_isFullyVisibleForInteraction(el)) {
-            try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+            try { _scrollElementIntoClearView(el); } catch {}
           }
           try { el.focus({ preventScroll: true }); } catch {}
           const rect = el.getBoundingClientRect();
@@ -7020,7 +7139,7 @@
             return failure(`set_checked only supports native input[type="checkbox"] controls; ${ref_id} resolved to ${tag || 'unknown'}${inputType ? `[type="${inputType}"]` : ''}.`);
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -7168,7 +7287,7 @@
             return failure(`ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids — do NOT guess ref numbers or invent placeholders.`, { suggestions });
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -7355,7 +7474,7 @@
             return failure(`ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids — do NOT guess ref numbers or invent placeholders.`, { suggestions });
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -7791,7 +7910,7 @@
               : '';
             return { success: false, error: `ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids.`, suggestions };
           }
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch {}
           showAgentWorkingTarget(el, 'ax_resolve_rect');
           const r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
@@ -7812,11 +7931,51 @@
             hasStatefulSemantics,
           } = fallbackStatic;
           let topmost = null;
-          try { if (forClickFallback && inViewport) topmost = document.elementFromPoint(cx, cy); } catch {}
-          const hitOk = !forClickFallback || (!!topmost && (
+          let effectiveCx = cx;
+          let effectiveCy = cy;
+          if (forClickFallback && inViewport) {
+            try { topmost = document.elementFromPoint(cx, cy); } catch {}
+          }
+          let hitOk = !forClickFallback || (!!topmost && (
             topmost === el
             || el.contains?.(topmost)
+            || topmost.contains?.(el)
           ));
+          if (forClickFallback && inViewport && !hitOk) {
+            const sampleOffsets = [
+              [cx, r.top + Math.max(2, Math.min(8, r.height * 0.2))],
+              [cx, r.bottom - Math.max(2, Math.min(8, r.height * 0.2))],
+              [r.left + Math.max(2, Math.min(8, r.width * 0.2)), cy],
+              [r.right - Math.max(2, Math.min(8, r.width * 0.2)), cy],
+            ];
+            for (const [sx, sy] of sampleOffsets) {
+              if (sx < 0 || sy < 0 || sx > vw || sy > vh) continue;
+              let sampleHit = null;
+              try { sampleHit = document.elementFromPoint(sx, sy); } catch {}
+              if (sampleHit && (sampleHit === el || el.contains?.(sampleHit) || sampleHit.contains?.(el))) {
+                topmost = sampleHit;
+                effectiveCx = sx;
+                effectiveCy = sy;
+                hitOk = true;
+                break;
+              }
+            }
+            if (!hitOk && topmost) {
+              try {
+                const bRect = topmost.getBoundingClientRect();
+                if (bRect.top <= 10 && bRect.bottom > r.top && bRect.bottom < vh * 0.45) {
+                  window.scrollBy({ top: bRect.bottom - r.top + 20, behavior: 'instant' });
+                  const rNew = el.getBoundingClientRect();
+                  effectiveCx = rNew.left + rNew.width / 2;
+                  effectiveCy = rNew.top + rNew.height / 2;
+                  topmost = document.elementFromPoint(effectiveCx, effectiveCy);
+                  if (topmost && (topmost === el || el.contains?.(topmost) || topmost.contains?.(el))) {
+                    hitOk = true;
+                  }
+                }
+              } catch {}
+            }
+          }
           const interactiveHitDescendant = forClickFallback
             ? _axInteractiveHitDescendant(el, topmost)
             : null;
@@ -7839,8 +7998,8 @@
             tag,
             role,
             name,
-            x: Math.round(cx),
-            y: Math.round(cy),
+            x: Math.round(effectiveCx),
+            y: Math.round(effectiveCy),
             rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
             inViewport,
             ...(forClickFallback ? {
