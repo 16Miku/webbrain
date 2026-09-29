@@ -677,6 +677,7 @@
     if (!el?.isConnected) return;
     try {
       const view = el.ownerDocument?.defaultView || window;
+      if (_isAlreadyVisibleInFixedSurface(el, view)) return;
       const insets = _getViewportDockedInsets(view, el);
       // A viewport-only rect check misses elements clipped by a scrollable
       // ancestor even when their bounding box is inside the viewport.
@@ -724,6 +725,16 @@
     } catch {
       return false;
     }
+  }
+
+  function _isAlreadyVisibleInFixedSurface(el, view = window) {
+    if (!_isFullyVisibleForInteraction(el, { top: 0, bottom: 0 })) return false;
+    for (let node = el; node; node = _composedParent(node)) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      const position = view.getComputedStyle(node).position;
+      if (position === 'fixed' || position === 'sticky') return true;
+    }
+    return false;
   }
 
   function _isComposedAncestor(ancestor, node) {
@@ -2342,7 +2353,8 @@
           if (topmost && !_hitTestMatchesTarget(el, topmost)) {
             const floatingBar = _floatingTopBarRect(topmost);
             const bRect = floatingBar || topmost.getBoundingClientRect();
-            if ((floatingBar || bRect.top <= _getViewportDockedInsets(window, el).top + 10)
+            if (!_isAlreadyVisibleInFixedSurface(el)
+              && (floatingBar || bRect.top <= _getViewportDockedInsets(window, el).top + 10)
               && bRect.bottom > r.top && bRect.bottom < window.innerHeight * 0.45) {
               window.scrollBy({ top: r.top - bRect.bottom - 20, behavior: 'instant' });
               r = el.getBoundingClientRect();

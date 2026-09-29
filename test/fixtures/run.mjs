@@ -2386,6 +2386,58 @@ test('Chrome: controls inside docked bars keep the document scroll position', pa
 firefoxTest('Firefox: controls inside docked bars keep the document scroll position', page =>
   assertDockedControlsKeepScroll(page, 'firefox'));
 
+async function assertFixedSideRailControlsKeepScroll(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      html { scroll-padding-top: 80px; }
+      body { margin: 0; height: 1700px; }
+      header { position: fixed; top: 0; width: 100%; height: 80px; z-index: 10; background: white; }
+      #side { position: fixed; top: 0; left: 0; width: 220px; height: 100vh; z-index: 20; background: white; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px; }
+    </style>
+    <header>Page header</header>
+    <div id="side">
+      <button id="rail-button" onclick="window.__railClicked = true">Rail action</button>
+      <input id="rail-input" aria-label="Rail input">
+      <input id="rail-check" type="checkbox" aria-label="Rail check">
+    </div>
+  `, browserKind);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const before = await page.evaluate(() => window.scrollY);
+  const click = await call(page, 'click', { selector: '#rail-button' });
+  const clicked = await page.evaluate(() => ({ clicked: window.__railClicked === true, scrollY: window.scrollY }));
+  if (!click?.success || !clicked.clicked || Math.abs(clicked.scrollY - before) > 1) {
+    throw new Error(`${browserKind}: fixed side-rail click scrolled the page: ${JSON.stringify({ before, click, clicked })}`);
+  }
+  const inputRef = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('rail-input')));
+  const typed = await call(page, 'type_ax', { ref_id: inputRef, text: 'Ada', clear: true });
+  const inputState = await page.evaluate(() => ({
+    value: document.getElementById('rail-input').value, scrollY: window.scrollY,
+  }));
+  if (!typed?.success || inputState.value !== 'Ada' || Math.abs(inputState.scrollY - before) > 1) {
+    throw new Error(`${browserKind}: fixed side-rail input scrolled the page: ${JSON.stringify({ before, typed, inputState })}`);
+  }
+  const checkRef = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('rail-check')));
+  const checked = await call(page, 'set_checked', { ref_id: checkRef, checked: true });
+  const checkState = await page.evaluate(() => ({
+    checked: document.getElementById('rail-check').checked, scrollY: window.scrollY,
+  }));
+  if (!checked?.success || !checkState.checked || Math.abs(checkState.scrollY - before) > 1) {
+    throw new Error(`${browserKind}: fixed side-rail checkbox scrolled the page: ${JSON.stringify({ before, checked, checkState })}`);
+  }
+  if (browserKind === 'chrome') {
+    const resolved = await call(page, 'ax_resolve_rect', { ref_id: inputRef });
+    const afterResolve = await page.evaluate(() => window.scrollY);
+    if (!resolved?.success || Math.abs(afterResolve - before) > 1) {
+      throw new Error(`Chrome fixed side-rail rect resolution scrolled the page: ${JSON.stringify({ before, resolved, afterResolve })}`);
+    }
+  }
+}
+
+test('Chrome: controls inside a fixed side rail keep document scroll position', page =>
+  assertFixedSideRailControlsKeepScroll(page, 'chrome'));
+firefoxTest('Firefox: controls inside a fixed side rail keep document scroll position', page =>
+  assertFixedSideRailControlsKeepScroll(page, 'firefox'));
+
 async function assertStackedDockedBars(page, browserKind) {
   await setupContentHtml(page, `<!doctype html>
     <style>
