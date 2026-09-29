@@ -2380,6 +2380,69 @@ test('Chrome: controls inside docked bars keep the document scroll position', pa
 firefoxTest('Firefox: controls inside docked bars keep the document scroll position', page =>
   assertDockedControlsKeepScroll(page, 'firefox'));
 
+async function assertStackedDockedBars(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; height: 2000px; }
+      header { position: fixed; top: 0; width: 100%; height: 64px; background: white; }
+      nav { position: fixed; top: 64px; width: 100%; height: 48px; background: white; }
+      .toolbar-lower { position: fixed; bottom: 0; width: 100%; height: 50px; background: white; }
+      .toolbar-upper { position: fixed; bottom: 50px; width: 100%; height: 50px; background: white; }
+      #top-target { position: absolute; top: 376px; left: 30px; height: 30px; }
+      #bottom-target { position: absolute; top: calc(300px + 100vh - 80px); left: 30px; height: 30px; }
+    </style>
+    <header>Primary header</header>
+    <nav><button id="secondary-control" onclick="window.__secondaryClicked = true">Secondary control</button></nav>
+    <div class="toolbar-lower">Lower toolbar</div>
+    <div class="toolbar-upper"><button id="upper-control" onclick="window.__upperClicked = true">Upper control</button></div>
+    <button id="top-target" onclick="window.__topTargetClicked = true">Covered by secondary header</button>
+    <button id="bottom-target" onclick="window.__bottomTargetClicked = true">Covered by upper toolbar</button>
+  `, browserKind);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const topClick = await call(page, 'click', { selector: '#top-target' });
+  const topState = await page.evaluate(() => ({
+    clicked: window.__topTargetClicked === true,
+    scrollY: window.scrollY,
+    top: document.getElementById('top-target').getBoundingClientRect().top,
+  }));
+  if (!topClick?.success || !topState.clicked || topState.scrollY >= 300 || topState.top < 112) {
+    throw new Error(`${browserKind}: stacked top bars did not clear the target: ${JSON.stringify({ topClick, topState })}`);
+  }
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const bottomClick = await call(page, 'click', { selector: '#bottom-target' });
+  const bottomState = await page.evaluate(() => ({
+    clicked: window.__bottomTargetClicked === true,
+    scrollY: window.scrollY,
+    bottom: document.getElementById('bottom-target').getBoundingClientRect().bottom,
+    viewportHeight: window.innerHeight,
+  }));
+  if (!bottomClick?.success || !bottomState.clicked || bottomState.scrollY <= 300
+    || bottomState.bottom > bottomState.viewportHeight - 100) {
+    throw new Error(`${browserKind}: stacked bottom bars did not clear the target: ${JSON.stringify({ bottomClick, bottomState })}`);
+  }
+  await page.evaluate(() => {
+    document.documentElement.style.scrollPaddingTop = '112px';
+    document.documentElement.style.scrollPaddingBottom = '100px';
+  });
+  const dockedBefore = await page.evaluate(() => ({
+    scrollY: window.scrollY,
+    secondaryTop: document.getElementById('secondary-control').getBoundingClientRect().top,
+    upperBottom: document.getElementById('upper-control').getBoundingClientRect().bottom,
+  }));
+  for (const [selector, flag] of [['#secondary-control', '__secondaryClicked'], ['#upper-control', '__upperClicked']]) {
+    const result = await call(page, 'click', { selector });
+    const state = await page.evaluate(name => ({ clicked: window[name] === true, scrollY: window.scrollY }), flag);
+    if (!result?.success || !state.clicked || Math.abs(state.scrollY - dockedBefore.scrollY) > 1) {
+      throw new Error(`${browserKind}: offset dock control ${selector} scrolled the page: ${JSON.stringify({ dockedBefore, result, state })}`);
+    }
+  }
+}
+
+test('Chrome: stacked docked bars clear targets and preserve docked controls', page =>
+  assertStackedDockedBars(page, 'chrome'));
+firefoxTest('Firefox: stacked docked bars clear targets and preserve docked controls', page =>
+  assertStackedDockedBars(page, 'firefox'));
+
 async function assertTopObstructionScrollDirection(page, browserKind) {
   await setupContentHtml(page, `<!doctype html>
     <style>

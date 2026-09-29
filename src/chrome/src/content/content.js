@@ -331,8 +331,8 @@
         const style = view.getComputedStyle(node);
         if (style.position !== 'fixed' && style.position !== 'sticky') continue;
         const rect = node.getBoundingClientRect();
-        if (rect.top <= 10 && rect.bottom > 0 && rect.bottom < view.innerHeight * 0.4) targetInTopDock = true;
-        if (rect.bottom >= view.innerHeight - 10 && rect.top > view.innerHeight * 0.6) targetInBottomDock = true;
+        if (rect.top >= -10 && rect.top < view.innerHeight * 0.4 && rect.bottom > 0 && rect.bottom <= view.innerHeight * 0.4) targetInTopDock = true;
+        if (rect.bottom <= view.innerHeight + 10 && rect.bottom > view.innerHeight * 0.6 && rect.top >= view.innerHeight * 0.6) targetInBottomDock = true;
       }
       if (!targetInTopDock) top = Math.max(top, parsePadding(htmlStyle.scrollPaddingTop));
       if (!targetInBottomDock) bottom = Math.max(bottom, parsePadding(htmlStyle.scrollPaddingBottom));
@@ -343,6 +343,8 @@
       const candidates = doc.querySelectorAll('header, nav, [role="banner"], [role="navigation"], [class*="header" i], [class*="navbar" i], [class*="toolbar" i]');
       const vw = view.innerWidth || 800;
       const vh = view.innerHeight || 600;
+      const topRects = [];
+      const bottomRects = [];
       for (const c of candidates) {
         if (target && _isComposedAncestor(c, target)) continue;
         if (!c.isConnected || c.offsetWidth <= 0 || c.offsetHeight <= 0) continue;
@@ -351,11 +353,24 @@
         if (cs.display === 'none' || cs.visibility === 'hidden') continue;
         const r = c.getBoundingClientRect();
         if (r.width < vw * 0.4) continue;
-        if (r.top <= 10 && r.bottom > 0 && r.bottom < vh * 0.4) {
-          if (r.bottom > top) top = r.bottom;
-        } else if (r.bottom >= vh - 10 && r.top < vh && r.top > vh * 0.6) {
-          const h = vh - r.top;
-          if (h > bottom) bottom = h;
+        if (r.top < vh * 0.4 && r.bottom > 0 && r.bottom < vh * 0.4) topRects.push(r);
+        if (r.bottom > vh * 0.6 && r.top < vh && r.top > vh * 0.6) bottomRects.push(r);
+      }
+      // Recheck until all contiguous bars are included, regardless of DOM order.
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const r of topRects) {
+          if (r.top <= top + 10 && r.bottom > top) {
+            top = r.bottom;
+            changed = true;
+          }
+        }
+        for (const r of bottomRects) {
+          if (r.bottom >= vh - bottom - 10 && r.top < vh - bottom) {
+            bottom = vh - r.top;
+            changed = true;
+          }
         }
       }
     } catch {}
@@ -1991,7 +2006,7 @@
           // If covered at center, test if scrolling can clear a fixed/sticky header
           if (topmost && !_isComposedAncestor(el, topmost) && !_isComposedAncestor(topmost, el)) {
             const bRect = topmost.getBoundingClientRect();
-            if (bRect.top <= 10 && bRect.bottom > r.top && bRect.bottom < window.innerHeight * 0.45) {
+            if (bRect.top <= _getViewportDockedInsets(window, el).top + 10 && bRect.bottom > r.top && bRect.bottom < window.innerHeight * 0.45) {
               window.scrollBy({ top: r.top - bRect.bottom - 20, behavior: 'instant' });
               r = el.getBoundingClientRect();
               cx = Math.round(r.left + r.width / 2);
@@ -8018,7 +8033,7 @@
             if (!hitOk && topmost) {
               try {
                 const bRect = topmost.getBoundingClientRect();
-                if (bRect.top <= 10 && bRect.bottom > r.top && bRect.bottom < vh * 0.45) {
+                if (bRect.top <= _getViewportDockedInsets(window, el).top + 10 && bRect.bottom > r.top && bRect.bottom < vh * 0.45) {
                   window.scrollBy({ top: r.top - bRect.bottom - 20, behavior: 'instant' });
                   r = el.getBoundingClientRect();
                   effectiveCx = r.left + r.width / 2;
