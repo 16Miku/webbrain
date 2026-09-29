@@ -4998,14 +4998,14 @@
             || _composedClosestElement(control, 'form')) return false;
         const menu = _composedClosestElement(control, '[role="menu"]');
         if (menu) {
-          const menuActions = {
-            'guild-header-popout-settings': 'Server Settings',
-            'guild-header-popout-create-channel': 'Create Channel',
-            'guild-header-popout-create-category': 'Create Category',
-          };
+          const menuActionIds = new Set([
+            'guild-header-popout-settings',
+            'guild-header-popout-create-channel',
+            'guild-header-popout-create-category',
+          ]);
           return menu.id === 'guild-header-popout'
             && control.getAttribute('role') === 'menuitem'
-            && menuActions[control.id] === label;
+            && menuActionIds.has(control.id);
         }
         const nav = _composedClosestElement(control, 'nav,[role="navigation"]');
         if (!nav || !/\(server\)$/.test(compact(nav.getAttribute('aria-label')))) return false;

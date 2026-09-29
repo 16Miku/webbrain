@@ -244,6 +244,9 @@ export function normalizeChatSession(value, now = Date.now()) {
           ? { replyAnchor: bounded(source.pendingOutbound.replyAnchor, MAX_ID) }
           : {}),
         attemptedAt: bounded(source.pendingOutbound.attemptedAt, 80),
+        ...(bounded(source.pendingOutbound.dispatchedAt, 80)
+          ? { dispatchedAt: bounded(source.pendingOutbound.dispatchedAt, 80) }
+          : {}),
       }
     : null;
   return {
@@ -330,8 +333,10 @@ export function advanceChatSession(value, rawSnapshot, now = Date.now()) {
   const newMessages = snapshot.messages.filter(message => !known.has(message.id));
   const newIncoming = newMessages.filter(message => message.direction === 'incoming');
   const newOutgoing = newMessages.filter(message => message.direction === 'outgoing');
+  const pendingDiscordDelivery = discordPendingDeliveryMatch(session.pendingOutbound, snapshot, newMessages);
   const outgoingKeys = new Set(session.sentMessageKeys);
   for (const key of outgoingMessageKeys(snapshot)) outgoingKeys.add(key);
+  if (pendingDiscordDelivery && session.pendingOutbound) outgoingKeys.add(session.pendingOutbound.key);
 
   if (snapshot.userInput?.required) {
     events.push({ type: 'user_input_required', ...snapshot.userInput });
@@ -353,6 +358,12 @@ export function advanceChatSession(value, rawSnapshot, now = Date.now()) {
       events.push({ type: 'counterparty_replied', messages: newIncoming.slice(-MAX_NEW_MESSAGES).map(message => message.id) });
     } else if (newOutgoing.length) {
       events.push({ type: 'outgoing_verified', messages: newOutgoing.slice(-MAX_NEW_MESSAGES).map(message => message.id) });
+    } else if (pendingDiscordDelivery) {
+      events.push({
+        type: 'outgoing_verified',
+        messages: [pendingDiscordDelivery.id],
+        evidence: 'discord_pending_delivery',
+      });
     } else if (snapshot.agentConnected === true && session.state === 'waiting_for_transfer') {
       events.push({ type: 'agent_connected' });
     } else if (events.length === 0) {
@@ -370,6 +381,7 @@ export function advanceChatSession(value, rawSnapshot, now = Date.now()) {
   const matchedPending = session.pendingOutbound
     && (visibleOutgoingKeys.has(session.pendingOutbound.key)
       || newOutgoing.some(message => canonicalChatText(message.text) === canonicalChatText(session.pendingOutbound.text))
+      || !!pendingDiscordDelivery
       || (!session.pendingOutbound.replyAnchor
         && session.pendingOutbound.key === legacyMessageKey(snapshot.threadKey, session.pendingOutbound.text)));
   const clearUserInput = events.some(event => event.type === 'user_input_cleared');
@@ -405,6 +417,7 @@ export function advanceChatSession(value, rawSnapshot, now = Date.now()) {
   return {
     session,
     snapshot,
+    pendingDeliveryVerified: !!pendingDiscordDelivery,
     events,
     newMessages: newMessages.slice(-MAX_NEW_MESSAGES),
     newMessagesTruncated: newMessages.length > MAX_NEW_MESSAGES,
@@ -483,6 +496,29 @@ export function markChatSendPending(value, decision, now = Date.now()) {
       attemptedAt: bounded(decision.attemptedAt, 80) || new Date(now).toISOString(),
     },
   };
+}
+
+function discordPendingDeliveryMatch(pending, snapshot, newMessages) {
+  if (!pending || !snapshot.threadKey.startsWith('dom:discord:')
+      || pending.threadKey !== snapshot.threadKey
+      || snapshot.composer.available !== true || snapshot.composer.empty !== true
+      || !pending.dispatchedAt) return null;
+  const dispatchedAt = Date.parse(pending.dispatchedAt);
+  const observedAt = Date.parse(snapshot.observedAt);
+  if (!Number.isFinite(dispatchedAt) || !Number.isFinite(observedAt)
+      || observedAt < dispatchedAt - 5_000 || observedAt - dispatchedAt > 120_000) return null;
+  const matchingMessages = newMessages.filter(message => (
+    canonicalChatText(message.text) === canonicalChatText(pending.text)
+  ));
+  // Discord default avatars and server nicknames do not identify an author.
+  // Correlate delivery only after a persisted successful dispatch, with one
+  // fresh exact-text bubble and an empty composer; leave its direction unchanged.
+  if (matchingMessages.length !== 1 || matchingMessages[0].direction !== 'unknown') return null;
+  const [candidate] = matchingMessages;
+  const messageAt = Date.parse(candidate.timestamp || '');
+  if (!Number.isFinite(messageAt)
+      || messageAt < dispatchedAt - 5_000 || messageAt > observedAt + 5_000) return null;
+  return candidate;
 }
 
 export function serializeChatSession(value, now = Date.now()) {

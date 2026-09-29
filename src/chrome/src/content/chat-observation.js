@@ -267,6 +267,14 @@
     } catch { return ''; }
   };
 
+  const discordDefaultAvatar = (node) => {
+    try {
+      const url = new URL(attribute(node, 'src'), window.location.href);
+      return (url.hostname === 'cdn.discordapp.com' && /^\/embed\/avatars\/\d+\.png$/.test(url.pathname))
+        || (url.origin === window.location.origin && /^\/assets\/embed\/avatars\/\d+\.png$/.test(url.pathname));
+    } catch { return false; }
+  };
+
   const discordMessageText = (content) => {
     const read = (node) => {
       if (node?.nodeType === 3) return node.nodeValue || '';
@@ -324,10 +332,9 @@
 
   const collectDiscordMessages = (channel) => {
     const account = query(document, '[class*="accountPopoutButtonWrapper"]')[0]?.parentElement;
-    const ownAvatarId = discordAvatarUserId(query(account, 'img[src*="/avatars/"]')[0]);
-    const ownNames = new Set(query(account, '[class*="panelTitle"],[class*="hovered"]')
-      .map(node => canonicalText(node.textContent))
-      .filter(Boolean));
+    const ownAvatar = query(account, 'img[src*="/avatars/"]')[0];
+    const ownAvatarId = discordAvatarUserId(ownAvatar);
+    const ownUsesDefaultAvatar = discordDefaultAvatar(ownAvatar);
     const rows = query(channel.transcript, '[role="article"][data-list-item-id]');
     const messages = [];
     let previousAuthor = '';
@@ -354,7 +361,7 @@
       const avatarId = discordAvatarUserId(avatar);
       let direction = 'unknown';
       if (ownAvatarId && avatarId) direction = ownAvatarId === avatarId ? 'outgoing' : 'incoming';
-      else if (author && ownNames.size) direction = ownNames.has(canonicalText(author)) ? 'outgoing' : 'incoming';
+      else if (ownUsesDefaultAvatar && avatarId) direction = 'incoming';
       else if (!username) direction = previousDirection;
       previousAuthor = author;
       previousDirection = direction;

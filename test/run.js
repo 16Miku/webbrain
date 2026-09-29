@@ -6925,6 +6925,45 @@ test('chat workflow state survives worker restart and is durable before dispatch
       });
       assert.equal(sent.deliveryVerified, true, `${AgentClass.name}: durable send did not verify delivery`);
       assert.equal(sender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: pending send remained after verification`);
+
+      const discordThreadKey = 'dom:discord:123:456';
+      const discordSender = new AgentClass({});
+      discordSender.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      discordSender.conversationIds.set(tabId, `conversation-discord-${index}`);
+      discordSender._persist = () => {};
+      discordSender._persistNow = async () => true;
+      discordSender._messageRecipientGuardBlock = async () => null;
+      const discordBefore = {
+        ...baseSnapshot,
+        threadKey: discordThreadKey,
+        url: 'https://discord.com/channels/123/456',
+        observedAt: new Date().toISOString(),
+      };
+      let discordAfter;
+      const discordObservations = [discordBefore];
+      discordSender._readChatObservation = async () => discordObservations.shift() || discordAfter;
+      discordSender.executeTool = async () => {
+        const observedAt = new Date().toISOString();
+        discordAfter = {
+          ...discordBefore,
+          observedAt,
+          messages: [{
+            id: `discord:456:${index}`,
+            direction: 'unknown',
+            text: 'Send once with a default avatar.',
+            timestamp: observedAt,
+          }],
+        };
+        return { success: true, dispatched: true };
+      };
+      const discordSent = await discordSender._sendChatWorkflow(tabId, {
+        thread_key: discordThreadKey,
+        composer_ref: `composer-${index}`,
+        text: 'Send once with a default avatar.',
+      });
+      assert.equal(discordSent.deliveryVerified, true, `${AgentClass.name}: exact fresh Discord bubble and empty composer did not verify the pending send`);
+      assert.equal(discordSent.chatWorkflow.newMessages[0].direction, 'unknown', `${AgentClass.name}: delivery verification must not claim the Discord message author`);
+      assert.equal(discordSender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: default-avatar Discord send remained pending`);
     }
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
