@@ -614,7 +614,6 @@ export default {
   "st.captcha.need_key": "Masukkan kunci API CapSolver yang sah dan bermula dengan CAP-.",
   "st.captcha.balance_ok": "OK — baki: {balance}",
   "st.captcha.balance_fail": "Gagal: {error}",
-  "st.captcha.security_html": "<strong>Perhatian:</strong> kunci API disimpan <strong>sebagai teks biasa</strong> dalam storan tempatan pelayar. CapSolver mengenakan bayaran kepada akaun anda bagi setiap penyelesaian; ejen hanya akan memanggilnya apabila CAPTCHA benar-benar menyekat sesuatu langkah (maksimum sekali setiap pertemuan — ia tidak akan mencuba semula apabila gagal). Sesetengah syarat perkhidmatan laman melarang penyelesaian CAPTCHA automatik; gunakan budi bicara anda.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'Tindakan yang dicadangkan',
@@ -923,6 +922,7 @@ export default {
   "sp.memory.error": "Ralat memori: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Tidak disimpan: teks kosong selepas dibersihkan atau kelihatan mengandungi rahsia (kata laluan, kunci API, token).",
   "sp.memory.reason.not_found": "Tiada memori yang disimpan dengan ID tersebut.",
+  'sp.slash.workflow_editor': "Editor aliran kerja",
   "sp.slash.workflows": "Senarai dan urus aliran kerja tersimpan",
   "sp.slash.teach": "Rakam tindakan anda sebagai aliran kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan aliran kerja tersimpan mengikut ID",

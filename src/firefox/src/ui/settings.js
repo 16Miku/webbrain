@@ -37,10 +37,7 @@ import {
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
   normalizeUserMemoryMaxPromptChars,
 } from '../agent/user-memory.js';
-import {
-  isValidCapsolverApiKey,
-  normalizeCapsolverApiKey,
-} from '../agent/capsolver-config.js';
+import { initCaptchaSettings } from './captcha-settings.js';
 import {
   isValidTypesafeApiKey,
   normalizeSystemOneThreshold,
@@ -83,7 +80,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '36.8.0';
+const EXT_VERSION = '37.0.1';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -203,11 +200,6 @@ const btnClearUserMemory = document.getElementById('btn-clear-user-memory');
 const userMemoryImportText = document.getElementById('user-memory-import-text');
 const btnImportUserMemory = document.getElementById('btn-import-user-memory');
 const userMemoryTestResult = document.getElementById('test-user-memory');
-const captchaApiKeyInput = document.getElementById('captcha-api-key');
-const btnSaveCaptcha = document.getElementById('btn-save-captcha');
-const btnTestCaptcha = document.getElementById('btn-test-captcha');
-const btnClearCaptcha = document.getElementById('btn-clear-captcha');
-const captchaTestResult = document.getElementById('test-captcha');
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
 const systemOneEnabledToggle = document.getElementById('toggle-system-one');
 const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
@@ -709,9 +701,8 @@ async function init() {
   if (profileTextArea) profileTextArea.value = profileStored.profileText || '';
   await loadUserMemorySettings();
 
-  // A valid saved key is the CapSolver enable control.
-  const captchaStored = await browser.storage.local.get('capsolverApiKey');
-  if (captchaApiKeyInput) captchaApiKeyInput.value = captchaStored.capsolverApiKey || '';
+  // Each provider has independent key, enable state, and fallback weight.
+  await initCaptchaSettings(browser.storage.local, sendToBackground, t);
 
   await loadCustomSkills();
 
@@ -2059,71 +2050,6 @@ if (btnImportUserMemory) {
   });
 }
 
-// --- CapSolver (captcha solving) ---
-// Saving a structurally valid API key enables CapSolver automatically.
-
-function showCaptchaResult(className, text, color = '') {
-  if (!captchaTestResult) return;
-  captchaTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
-  captchaTestResult.textContent = text;
-  captchaTestResult.style.color = color || '';
-  return captchaTestResult;
-}
-
-function flashCaptchaResult(className, text) {
-  const resultEl = showCaptchaResult(className, text);
-  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 3000);
-}
-
-if (btnSaveCaptcha) {
-  btnSaveCaptcha.addEventListener('click', async () => {
-    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
-    if (!isValidCapsolverApiKey(key)) {
-      flashCaptchaResult('fail', t('st.captcha.need_key'));
-      return;
-    }
-    if (captchaApiKeyInput) captchaApiKeyInput.value = key;
-    // Saving the key is the user's explicit opt-in. Keep the legacy boolean
-    // as an internal consent bit so upgrades preserve an existing opt-out.
-    await browser.storage.local.set({
-      capsolverApiKey: key,
-      captchaSolverEnabled: true,
-    });
-    flashCaptchaResult('ok', t('st.captcha.saved'));
-  });
-}
-
-if (btnTestCaptcha) {
-  btnTestCaptcha.addEventListener('click', async () => {
-    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
-    if (!isValidCapsolverApiKey(key)) {
-      flashCaptchaResult('fail', t('st.captcha.need_key'));
-      return;
-    }
-    showCaptchaResult('', t('st.captcha.checking'), 'var(--text2)');
-    try {
-      const res = await sendToBackground('test_capsolver_balance', { apiKey: key });
-      if (res?.ok) {
-        flashCaptchaResult('ok', t('st.captcha.balance_ok', { balance: `$${Number(res.balance).toFixed(4)}` }));
-      } else {
-        flashCaptchaResult('fail', t('st.captcha.balance_fail', { error: res?.error || 'Unknown error' }));
-      }
-    } catch (e) {
-      flashCaptchaResult('fail', t('st.captcha.balance_fail', { error: e.message }));
-    }
-  });
-}
-
-if (btnClearCaptcha) {
-  btnClearCaptcha.addEventListener('click', async () => {
-    if (captchaApiKeyInput) captchaApiKeyInput.value = '';
-    // Remove the legacy flag too so old exports cannot preserve a
-    // contradictory enabled-without-a-key state.
-    await browser.storage.local.remove(['capsolverApiKey', 'captchaSolverEnabled']);
-    flashCaptchaResult('ok', t('st.captcha.cleared'));
-  });
-}
-
 // --- Provider Rendering ---
 
 // Prompt-tier selector, shown only for local + OpenRouter providers (cloud is
@@ -2611,6 +2537,16 @@ function renderProviders() {
         PROMPT_TIER_FIELD,
       ],
     },
+    ods: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:11434/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'select the running ODS model' },
+        CONTEXT_WINDOW_FIELD,
+        VISION_MODE_FIELD,
+        PROMPT_TIER_FIELD,
+      ],
+    },
     lmstudio: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:1234/v1' },
@@ -3057,7 +2993,7 @@ function renderProviders() {
           </div>
         `;
       } else {
-        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+        const localModelProviders = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
         const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';

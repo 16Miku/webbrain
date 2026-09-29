@@ -614,7 +614,6 @@ export default {
   "st.captcha.need_key": "أدخل مفتاح CapSolver API صالحًا يبدأ بـ CAP-.",
   "st.captcha.balance_ok": "موافق — الرصيد: {balance}",
   "st.captcha.balance_fail": "فشل: {error}",
-  "st.captcha.security_html": "<strong>تنبيه:</strong> يُخزَّن مفتاح API <strong>بصيغة نصية واضحة</strong> في التخزين المحلي للمتصفح. تتقاضى CapSolver رسومًا من حسابك عن كل عملية حلّ؛ ولن يستدعيها الوكيل إلا عندما يحجب اختبار CAPTCHA خطوةً فعلًا (مرّة واحدة كحدّ أقصى لكل مواجهة — لن يعيد المحاولة عند الفشل). تحظر شروط خدمة بعض المواقع حلّ اختبارات CAPTCHA آليًا؛ استخدم حسن تقديرك.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'الإجراءات المقترحة',
@@ -923,6 +922,7 @@ export default {
   "sp.memory.error": "خطأ في الذاكرة: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "لم يتم الحفظ: النص فارغ بعد التنظيف أو يبدو أنه يحتوي على سر (كلمة مرور أو مفتاح API أو رمز مميز).",
   "sp.memory.reason.not_found": "لا توجد ذاكرة محفوظة بهذا المعرّف.",
+  'sp.slash.workflow_editor': "محرر مهام سير العمل",
   "sp.slash.workflows": "عرض مهام سير العمل المحفوظة وإدارتها",
   "sp.slash.teach": "سجّل إجراءاتك كمسار عمل محفوظ",
   "sp.slash.run_workflow": "تشغيل سير عمل محفوظ حسب المعرّف",

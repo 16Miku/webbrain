@@ -78,8 +78,8 @@ import { buildTerminalRuntimeEvent, enqueueCloudRuntimeEvent, flushCloudRuntimeO
 import { buildShareGenerationItem, enqueueShareGeneration, flushShareOutbox, purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
-import { solveCaptcha, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
-import { isCapsolverEnabled, normalizeCapsolverApiKey } from './capsolver-config.js';
+import { solveCaptchaWithProviders, detectCaptcha, injectToken, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
+import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders, captchaProviderSupportsType } from './captcha-provider-config.js';
 import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
 import {
@@ -858,11 +858,12 @@ export class Agent extends LoopDetector {
     this.userMemoryEnabled = true;
     this.userMemoryRecords = [];
     this.userMemoryMaxPromptChars = USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS;
-    // CapSolver integration. A valid saved API key enables the
+    // CAPTCHA integration. An explicitly enabled provider enables the
     // "[CAPTCHA SOLVER]" system-prompt note telling the
     // model to try `solve_captcha` once before falling back to asking
     // the user. The API key is read at call time from browser.storage.
     this.captchaSolverEnabled = false;
+    this.captchaProviderIds = [];
     this._captchaGateStates = new Map(); // tabId -> { key, status, publicGate, challengeFrameId? }
     this._cloudflareManagedChallenges = new Map(); // tabId -> sanitized response-backed interstitial state
     this._cloudflareManagedChallengeTransitions = new Map(); // tabId -> serialized transition promise
@@ -9417,6 +9418,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && (
         publicGate?.solverDisabled === true
         || publicGate?.detectionFailed === true
+        || (publicGate?.providerUnsupported === true
+          && this.captchaProviderIds.some(id => captchaProviderSupportsType(id, publicGate.selectedType)))
       );
   }
 
@@ -9987,7 +9990,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && detection?.selected?.visible === true
         )
       );
+    const providerSupportsCandidate = this.captchaProviderIds.some(id =>
+      captchaProviderSupportsType(id, detection?.selected?.type));
     const supported = this.captchaSolverEnabled
+      && providerSupportsCandidate
       && !detectionFailed
       && !detection?.error
       && !!detection?.selected
@@ -10001,6 +10007,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(unsupportedVendors.length ? { unsupportedVendors } : {}),
       ...(detectionFailed ? { detectionFailed: true } : {}),
       ...(!this.captchaSolverEnabled ? { solverDisabled: true } : {}),
+      ...(detection?.selected && !providerSupportsCandidate ? { providerUnsupported: true } : {}),
       ...(detection?.error ? { selectionFailed: true } : {}),
       ...(detection?.selected && !selectedCorrelated ? { candidateNotCorrelated: true } : {}),
       ...(languageNeutralFrameTrigger ? { languageNeutralFrameTrigger: true } : {}),
@@ -14488,14 +14495,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return await this._recordClarificationAuthorization(tabId, 'timeout');
   }
 
-  async _recordClarificationAuthorization(tabId, source) {
+  async _recordClarificationAuthorization(tabId, source, safeFirst = false) {
     const normalizedSource = source === 'timeout' ? 'timeout' : (source === 'auto' ? 'auto' : 'user');
-    if (normalizedSource === 'timeout') {
-      const conversationId = this.conversationIds.get(tabId) || null;
-      const previous = this._clarificationAuthorizationGuards.get(tabId);
-      const blockedAttempts = previous?.source === 'timeout'
-        && previous?.authorized === false
-        && previous?.conversationId === conversationId
+    const conversationId = this.conversationIds.get(tabId) || null;
+    const previous = this._clarificationAuthorizationGuards.get(tabId);
+    const priorTimeoutGuard = previous?.source === 'timeout'
+      && previous?.authorized === false
+      && (!previous?.conversationId || previous.conversationId === conversationId);
+    const timedOutAffirmative = normalizedSource === 'timeout' && safeFirst === true && !priorTimeoutGuard;
+    if (normalizedSource === 'timeout' && !timedOutAffirmative) {
+      const blockedAttempts = priorTimeoutGuard
         ? Math.max(0, Number(previous.blockedAttempts) || 0)
         : 0;
       this._clarificationAuthorizationGuards.set(tabId, {
@@ -14515,7 +14524,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // the structural authorization guard. Await deletions too so an explicit
     // response cannot revive a stale guard after restart.
     if (this.conversations.has(tabId)) await this._persistNow(tabId);
-    return normalizedSource !== 'timeout';
+    return normalizedSource !== 'timeout' || timedOutAffirmative;
   }
 
   _prepareClarificationAuthorizationForRun(tabId) {
@@ -22590,7 +22599,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (memoryPrompt) prompt += `\n\n${memoryPrompt}`;
     }
     if (this.captchaSolverEnabled) {
-      prompt += `\n\n[CAPTCHA SOLVER — the user has configured CapSolver. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If no supported widget is detected, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha.]`;
+      prompt += `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. All five providers support reCAPTCHA v2/v3, Turnstile, and image CAPTCHAs; hCaptcha requires enabled CapSolver. Unsupported challenges require manual completion. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If no supported widget is detected, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha.]`;
     }
     // Ordinary turns get the one-line rendering; the full block is reserved for
     // policies that need the precise wording (translation targets, multilingual
@@ -30559,9 +30568,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!question) {
         return { success: false, error: 'clarify: `question` is required (a single sentence asking the user something specific).' };
       }
-      const options = Array.isArray(args?.options)
-        ? args.options.map(s => String(s).slice(0, 200)).filter(Boolean).slice(0, 4)
+      const rawOptions = Array.isArray(args?.options) ? args.options.slice(0, 4) : [];
+      const normalizedOptions = rawOptions.map(s => String(s).trim().slice(0, 200));
+      const hasVisibleOptionContent = option => /[\p{L}\p{N}\p{P}\p{S}]/u.test(option.replace(/[\p{Default_Ignorable_Code_Point}\u2800]/gu, ''));
+      const options = normalizedOptions.every(hasVisibleOptionContent)
+        ? normalizedOptions
         : [];
+      const safeFirst = args?.safe_first === true && options.length > 0;
       const reason = args?.reason ? String(args.reason).slice(0, 300) : null;
       const purpose = args?.purpose === 'research_escalation'
         ? 'research_escalation'
@@ -30606,6 +30619,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           deadlineTs: 0,
           restartTimeout: null,
           onUpdate,
+          safeFirst,
         };
         // Arm auto-select when Instant (0) or a positive wait; Off (-1) waits forever.
         // Instant uses source=auto (user intentionally set auto-approve, e.g. headless).
@@ -30661,10 +30675,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       const response = await responsePromise;
-      {
-        const entry = tabPending.get(clarifyId);
-        this._clearClarifyTimer(entry);
-      }
+      const settledEntry = tabPending.get(clarifyId);
+      const entrySafeFirst = settledEntry?.safeFirst === true;
+      this._clearClarifyTimer(settledEntry);
       tabPending.delete(clarifyId);
       if (tabPending.size === 0) this._pendingClarifications.delete(tabId);
 
@@ -30674,7 +30687,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const answer = String(response?.answer || '').trim();
       const source = response?.source || 'user';
-      const authorized = await this._recordClarificationAuthorization(tabId, source);
+      const authorized = await this._recordClarificationAuthorization(tabId, source, entrySafeFirst);
       // A blocked recipient guard instructs the model to ask the user who the
       // message is for. Bind a real human answer back to the guard so that
       // instruction can succeed; without this the user authorizes, the guard
@@ -30683,7 +30696,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // nothing, matching how research escalation treats those sources below.
       // Every clarification outcome (human answer, timeout, auto) must consume
       // the staged recipient consent so a later unrelated clarify does not inherit it.
-      this._bindClarifiedMessageRecipient(tabId, answer, source, { question, options, reason, purpose });
+      this._bindClarifiedMessageRecipient(tabId, answer, source, { question, options, reason, purpose, safeFirst: entrySafeFirst });
       this._recordSocialPublicationClarification(tabId, clarificationGuard, question, answer, source);
       const explicitResearchApproval = isResearchEscalation
         && source !== 'timeout'
@@ -30698,8 +30711,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : null;
       let note;
       if (source === 'timeout') {
-        // Passive wait expired — not deliberate auto-approve.
-        note = 'This answer was AUTO-SELECTED because the clarify timeout elapsed with no user reply (source=timeout). It is NOT a real user confirmation. Continue only with the safe default path; do NOT treat this as approval for irreversible, costly, or destructive actions — re-ask via clarify or stop if the next step is high-risk. Put the safe/default choice first in options next time.';
+        note = authorized
+          ? 'This answer was auto-selected because the clarify timeout elapsed with no user reply (source=timeout). The selected affirmative answer applies; continue the task without re-asking the same question.'
+          : 'This answer was AUTO-SELECTED because the clarify timeout elapsed with no user reply (source=timeout). It is NOT a real user confirmation. Continue only with the safe default path; do NOT treat this as approval for irreversible, costly, or destructive actions — re-ask via clarify or stop if the next step is high-risk. Put the safe/default choice first in options next time.';
       } else if (source === 'auto') {
         // Settings Instant auto-approve (headless / unattended). User policy — proceed.
         note = 'This answer was auto-selected because Clarify timeout is set to Instant (source=auto). The user intentionally configured unattended auto-approve; treat this answer as the chosen default and continue the task. Do not re-ask the same question. Put the intended default first in options when Instant mode may be on.';
@@ -32624,10 +32638,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         error,
       });
       try {
-        const stored = await browser.storage.local.get(['capsolverApiKey', 'captchaSolverEnabled']);
-        const apiKey = normalizeCapsolverApiKey(stored.capsolverApiKey);
-        if (!isCapsolverEnabled(apiKey, stored.captchaSolverEnabled)) {
-          return noDispatchFailure('CapSolver is not enabled with a valid API key. Ask the user to save their key in Settings → General → Advanced, or fall back to asking them to solve the captcha manually.');
+        const stored = await browser.storage.local.get(CAPTCHA_SETTINGS_KEYS);
+        const providers = getCaptchaProviders(stored);
+        if (!providers.length) {
+          return noDispatchFailure('No CAPTCHA solver is enabled with a valid API key. Save and enable a CAPTCHA provider key in Settings → General → Advanced, or ask the user to solve the CAPTCHA manually.');
         }
 
         let websiteURL = '';
@@ -32649,6 +32663,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           imageBase64,
           enterprisePayload,
           recaptchaDataSValue,
+          metadata,
         } = args || {};
         // Detection notes explain *why* a field is missing (e.g. a v3 widget
         // that never exposed its action name). Carry it into the failure so
@@ -32737,6 +32752,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             if (!pageAction && detected.pageAction) pageAction = detected.pageAction;
             if (!enterprisePayload && detected.enterprisePayload) enterprisePayload = detected.enterprisePayload;
             if (!recaptchaDataSValue && detected.recaptchaDataSValue) recaptchaDataSValue = detected.recaptchaDataSValue;
+            if (detected.metadata) {
+              for (const key of ['action', 'cdata', 'chlPageData']) {
+                if (metadata?.[key] && detected.metadata[key] && metadata[key] !== detected.metadata[key]) {
+                  return noDispatchFailure(`solve_captcha: requested Turnstile ${key} conflicts with the selected widget. Use its detected value or omit metadata.`);
+                }
+              }
+              metadata = { ...detected.metadata, ...metadata };
+            }
           }
           if (!detected && args?.inject === false && frameUrl) {
             websiteURL = captchaWebsiteUrl(frameUrl, websiteURL);
@@ -32754,6 +32777,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(enterprisePayload ? { enterprisePayload } : {}),
           ...(recaptchaDataSValue ? { recaptchaDataSValue } : {}),
           ...(imageBase64 ? { body: imageBase64 } : {}),
+          ...(type === 'turnstile' && metadata ? { metadata } : {}),
+          ...(type === 'turnstile' && globalThis.navigator?.userAgent ? { userAgent: globalThis.navigator.userAgent } : {}),
         };
 
         if (type === 'image_to_text') {
@@ -32771,15 +32796,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return noDispatchFailure(detectionNote ? `${paramError} ${detectionNote}` : paramError);
         }
 
+        if (!providers.some(provider => captchaProviderSupportsType(provider.id, type))) {
+          return {
+            ...noDispatchFailure(`No enabled CAPTCHA provider supports ${type}. Ask the user to complete it manually.`),
+            manualCompletionRequired: true,
+          };
+        }
+
         const wantInject = args?.inject !== false && type !== 'image_to_text';
         if (wantInject && !detected) {
           return noDispatchFailure(
-            'solve_captcha: token injection requires a detected CAPTCHA frame. The explicit type and websiteKey were not sent to CapSolver because no safe injection target could be verified. Retry with `inject: false` to receive the token without page injection, or ask the user to solve the challenge manually.'
+            'solve_captcha: token injection requires a detected CAPTCHA frame. The explicit type and websiteKey were not sent to a CAPTCHA solver because no safe injection target could be verified. Retry with `inject: false` to receive the token without page injection, or ask the user to solve the challenge manually.'
           );
         }
 
         dispatched = true;
-        const result = await solveCaptcha(apiKey, params);
+        const result = await solveCaptchaWithProviders(providers, params);
 
         let injection = null;
         if (wantInject && result.fieldName && result.token) {
@@ -32813,6 +32845,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           dispatched: true,
           type,
           taskId: result.taskId,
+          provider: result.provider,
           token: result.token,
           tokenPreview: result.token ? `${String(result.token).slice(0, 24)}…(${String(result.token).length} chars)` : null,
           selectedFrameId: Number.isInteger(detected?.frameId) ? detected.frameId : null,
@@ -32828,7 +32861,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               ? (injection.calledCallback
                 ? 'Token was inserted into the selected frame and its callback was invoked. Wait for the page to react, then verify whether the challenge cleared.'
                 : 'Token was inserted into the selected frame, but no unique callback was invoked. Verify page progress before submitting or taking another action; do not request another paid solve.')
-              : 'CapSolver returned a token, but targeted injection failed. The challenge is not confirmed cleared; do not request another paid solve for the same token.',
+              : 'The CAPTCHA solver returned a token, but targeted injection failed. The challenge is not confirmed cleared; do not request another paid solve for the same token.',
         };
       } catch (e) {
         const error = `solve_captcha failed: ${e.message}`;

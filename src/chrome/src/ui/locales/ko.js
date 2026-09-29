@@ -630,7 +630,6 @@ export default {
   "st.captcha.need_key": "CAP-로 시작하는 유효한 CapSolver API 키를 입력하세요.",
   "st.captcha.balance_ok": "정상 — 잔액: {balance}",
   "st.captcha.balance_fail": "실패: {error}",
-  "st.captcha.security_html": "<strong>참고:</strong> API 키는 브라우저 로컬 저장소에 <strong>평문으로</strong> 저장됩니다. CapSolver는 풀이마다 계정에 요금을 부과합니다. 에이전트는 CAPTCHA가 실제로 단계를 막을 때만 이를 호출하며(한 번 만날 때마다 최대 한 번 — 실패해도 재시도하지 않습니다), 일부 사이트의 서비스 약관은 자동 CAPTCHA 풀이를 금지하므로, 판단에 따라 사용하세요.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': '추천 작업',
@@ -951,6 +950,7 @@ export default {
   "sp.memory.error": "메모리 오류: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "저장하지 않았습니다. 정리 후 텍스트가 비어 있거나 비밀 정보(비밀번호, API 키, 토큰)가 포함된 것으로 보입니다.",
   "sp.memory.reason.not_found": "해당 ID의 저장된 메모리가 없습니다.",
+  'sp.slash.workflow_editor': "워크플로 편집기",
   "sp.slash.workflows": "저장된 워크플로 목록 및 관리",
   "sp.slash.teach": "작업을 저장된 워크플로로 기록",
   "sp.slash.run_workflow": "ID로 저장된 워크플로 실행",
@@ -1188,7 +1188,7 @@ export default {
   "st.sync.consent.legacy": "암호화된 동기화를 사용하시겠습니까? WebBrain은 추억, 프로필 자동 완성 및 API 키 제공자 설정의 엔드 투 엔드 암호화 사본을 WebBrain Compass로 전송합니다. 채팅 기록과 OAuth 로그인은 동기화되지 않습니다.",
   "st.sync.consent.denied": "암호화된 동기화 권한이 부여되지 않았습니다.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
+  'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

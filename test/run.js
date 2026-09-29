@@ -19853,6 +19853,7 @@ test('mutation batch invokes CAPTCHA preflight before dispatch when no gate exis
       const executed = [];
       let preflightCalls = 0;
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._persist = () => {};
       agent.executeTool = async (_tabId, name) => {
         executed.push(name);
@@ -23252,7 +23253,7 @@ test('version 33-and-later licensing boundary is consistent across project metad
   const rootLicense = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8');
   assert.match(rootLicense, /WebBrain 33\.0\.0 and later/);
   assert.match(rootLicense, /GNU GENERAL PUBLIC LICENSE\s+Version 3/);
-  assert.match(rootLicense, /releases before 33\.0\.0 remain available under the MIT License/i);
+  assert.doesNotMatch(rootLicense, /releases before 33\.0\.0 remain available under the MIT License/i);
   assert.match(fs.readFileSync(path.join(ROOT, 'LICENSES/MIT.txt'), 'utf8'), /^MIT License/);
 
   for (const subproject of ['mcp-server', 'lmstudio-plugin']) {
@@ -26204,10 +26205,29 @@ test('cloud run controller pauses and resumes clarify, permission, and submit in
     );
   }
 
+  emitUpdate('clarify', { clarifyId: 'clr_expired', question: 'Complete the challenge?', deadlineTs: 1790000000000 });
+  assert.equal((await controller.status({ runId: 'run_input' })).status, 'needs_user_input');
+  emitUpdate('clarify_timeout_extended', { clarifyId: 'clr_expired', deadlineTs: 1790000060000 });
+  assert.equal((await controller.status({ runId: 'run_input' })).pendingInput.deadlineTs, 1790000060000);
+  emitUpdate('clarify_timeout_extended', { clarifyId: 'clr_other', deadlineTs: 1790000120000 });
+  assert.equal((await controller.status({ runId: 'run_input' })).pendingInput.deadlineTs, 1790000060000);
+  emitUpdate('clarify_auto', { clarifyId: 'clr_expired', source: 'timeout', answer: '(no response — timed out)' });
+  const expired = await controller.status({ runId: 'run_input' });
+  assert.equal(expired.status, 'running');
+  assert.equal(expired.pendingInput, null);
+  await assert.rejects(
+    () => controller.respond({ runId: 'run_input', clarifyId: 'clr_expired', answer: 'Continue' }),
+    /not waiting for user input/,
+  );
+  emitUpdate('clarify', { clarifyId: 'clr_replacement', question: 'Continue now?' });
+  assert.equal((await controller.status({ runId: 'run_input' })).pendingInput.clarifyId, 'clr_replacement');
+  await controller.respond({ runId: 'run_input', clarifyId: 'clr_replacement', answer: 'Continue' });
+
   assert.deepEqual(submitted, [
     [20, 'clr_general', 'Work', 'cloud_api'],
     [20, 'perm_network', 'once', 'cloud_api'],
     [20, 'submit_form', 'once', 'cloud_api'],
+    [20, 'clr_replacement', 'Continue', 'cloud_api'],
   ]);
   finishRun('Done');
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -43604,6 +43624,17 @@ test('canonical slash parser handles flags, values, casing, termination, and har
     assert.ok(!chromeHelp.includes(text.split(' ')[0]), `Chrome help must omit retired syntax ${text}`);
   }
 
+  for (const [label, runtime] of [['chrome', chrome], ['firefox', firefox]]) {
+    const workflow = runtime.SLASH_COMMANDS.find((command) => command.value === '/workflow');
+    const link = '<a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">sp.slash.workflow_editor</a>';
+    const detail = runtime.buildSlashCommandDetailHtml(workflow);
+    assert.equal((detail.match(/<a href="https:\/\/webbrain\.one\/workflow-editor\/"/g) || []).length, 3, `${label}: workflow save, export, and import help should link to the editor`);
+    assert.ok(detail.includes(`sp.slash.save_workflow ${link}`), `${label}: --save help should end with the workflow editor link`);
+    assert.ok(detail.includes(`sp.slash.workflows ${link}`), `${label}: --export and --import help should end with the workflow editor link`);
+    assert.equal((runtime.buildSlashCommandHelpHtml().match(/<a href="https:\/\/webbrain\.one\/workflow-editor\/"/g) || []).length, 3, `${label}: global slash help should include the editor link for workflow file actions`);
+    assert.ok(!runtime.buildSlashCommandDetailHtml(runtime.SLASH_COMMANDS.find((command) => command.value === '/export')).includes(link), `${label}: unrelated --export command should not link to the workflow editor`);
+  }
+
   assert.equal(firefox.parseSlashInvocation('/record --full-screen --transcribe').unsupported, true, 'Firefox should reject canonical recording locally');
   assert.equal(firefox.parseSlashInvocation('/screenshot --full-page').unsupported, true, 'Firefox should reject the unsupported canonical screenshot flag locally');
   assert.equal(firefox.SLASH_COMMANDS.find((command) => command.value === '/record').unsupported, true, 'Firefox recording should be hidden from discovery');
@@ -44881,8 +44912,8 @@ test('chat history text serialization preserves rendered line structure', () => 
     );
     assert.equal(
       serialize(renderedCodeFollowedByText),
-      '```javascript\nline 1\n```\nClosing',
-      `${label}: rendered code wrappers should preserve their language and use the source <br> as the only post-fence newline`,
+      '``` javascript\nline 1\n```\nClosing',
+      `${label}: rendered code wrappers should preserve a safely separated language and use the source <br> as the only post-fence newline`,
     );
     const table = element(
       'TABLE',
@@ -45205,7 +45236,7 @@ test('sidepanel subscribe error card clears DOM without HTML reinterpretation', 
     assert.notEqual(runCompleteStart, -1, `${label}: run_complete handler missing`);
     assert.notEqual(runCompleteEnd, -1, `${label}: run_complete boundary missing`);
     const runCompleteBody = panel.slice(runCompleteStart, runCompleteEnd);
-    assert.match(runCompleteBody, /else if \(!renderCostAllowanceError\(textEl, data\.finalContent,[\s\S]*?submittedTurnDurable: data\.submittedTurnDurable,[\s\S]*?&& !renderSubscribeError\(textEl, data\.finalContent\)\) textEl\.innerHTML = formatMarkdown\(data\.finalContent\);/, `${label}: restored run finals should render durability-aware allowance cards before markdown fallback`);
+    assert.match(runCompleteBody, /else if \(!renderCostAllowanceError\(textEl, data\.finalContent,[\s\S]*?submittedTurnDurable: data\.submittedTurnDurable,[\s\S]*?&& !renderSubscribeError\(textEl, data\.finalContent\)\) textEl\.innerHTML = formatMarkdown\(data\.finalContent, \{ recoverNestedMarkdown: true \}\);/, `${label}: restored run finals should render durability-aware allowance cards before a nested-fence-safe Markdown fallback`);
     assert.match(styles, /\.subscribe-actions\s*\{[\s\S]*?flex-wrap:\s*wrap;/, `${label}: subscribe actions should wrap in narrow panels`);
     assert.match(styles, /\.subscribe-resume-btn\s*\{[\s\S]*?background:\s*transparent;[\s\S]*?border:\s*1px solid var\(--accent\);/, `${label}: resume action should use secondary styling`);
   }
@@ -45393,7 +45424,7 @@ test('sidepanel suppresses streamed raw tool-call text before rendering tool ste
     assert.match(panel, /const streamedAssistantTextByEl = new WeakMap\(\);/, `${label}: streamed final dedupe state should not be stored in serialized DOM attributes`);
     assert.match(panel, /const previousText = getStreamedAssistantText\(textEl\)\s*\|\| \(hasStreamedAssistantText\(textEl\) \? textEl\.innerText \|\| textEl\.textContent : ''\);\s*const nextText = previousText \+ String\(data\.content \|\| ''\);/, `${label}: text_delta should append to raw Markdown while legacy restored streams fall back to visible text without dropping prior output`);
     assert.match(panel, /streamedAssistantTextByEl\.set\(textEl, nextText\);\s*textEl\.dataset\.streamedAssistantActive = 'true';\s*scheduleStreamedAssistantMarkdownRender\(textEl\);/, `${label}: text_delta should retain raw Markdown, persist only an active-stream marker, and schedule incremental rendering`);
-    assert.match(panel, /const streamedAssistantRenderFrameByEl = new WeakMap\(\);[\s\S]*?function renderStreamedAssistantMarkdownNow\(textEl\)[\s\S]*?textEl\.innerHTML = formatMarkdown\(streamedText, \{ enhance: false \}\);[\s\S]*?scrollToBottom\(\);[\s\S]*?function scheduleStreamedAssistantMarkdownRender\(textEl\)[\s\S]*?requestAnimationFrame\([\s\S]*?renderStreamedAssistantMarkdownNow\(textEl\);/, `${label}: live Markdown should render at most once per animation frame before following output`);
+    assert.match(panel, /const streamedAssistantRenderFrameByEl = new WeakMap\(\);[\s\S]*?function renderStreamedAssistantMarkdownNow\(textEl\)[\s\S]*?textEl\.innerHTML = formatMarkdown\(streamedText, \{ enhance: false, recoverNestedMarkdown: true \}\);[\s\S]*?scrollToBottom\(\);[\s\S]*?function scheduleStreamedAssistantMarkdownRender\(textEl\)[\s\S]*?requestAnimationFrame\([\s\S]*?renderStreamedAssistantMarkdownNow\(textEl\);/, `${label}: live Markdown should render nested fences at most once per animation frame before following output`);
     assert.match(panel, /function clearStreamedAssistantText\(textEl\)[\s\S]*?cancelAnimationFrame\(frame\);[\s\S]*?streamedAssistantRenderFrameByEl\.delete\(textEl\);/, `${label}: terminal and tool transitions should cancel pending stream renders`);
     assert.match(panel, /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);/, `${label}: tab switches and visibility handoffs should render a queued frame before serializing its last acknowledged stream chunk`);
     assert.doesNotMatch(panel, /const nextText = textEl\.textContent \+ data\.content;/, `${label}: rendered Markdown must never become the source for later deltas`);
@@ -45403,8 +45434,8 @@ test('sidepanel suppresses streamed raw tool-call text before rendering tool ste
     assert.match(panel, /getStreamedAssistantText\(textEl\) === String\(res\.content\)[\s\S]*?renderAssistantTextUpdate\(assistantEl, res\.content\);/, `${label}: completed streams should format the visible final text in place`);
     assert.match(panel, /clearAssistantTextStreamState\(assistantEl\);/, `${label}: run completion should clear transient streamed-text state before persistence`);
     assert.match(panel, /case 'text':[\s\S]*?\(data\.content \|\| data\.replace === true\)[\s\S]*?renderAssistantTextUpdate\(currentAssistantEl, data\.content \|\| '', \{ replace: data\.replace === true \}\);/, `${label}: text updates should forward explicit replacement requests, including empty clears`);
-    assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const restoredStreamNeedsReplacement = hasStreamedText && !streamedText;[\s\S]*?if \(options\.replace === true \|\| restoredStreamNeedsReplacement\) \{[\s\S]*?if \(content\) \{[\s\S]*?textEl\.innerHTML = formatMarkdown\(content\);[\s\S]*?streamedAssistantTextByEl\.set\(textEl, String\(content\)\);[\s\S]*?\} else \{[\s\S]*?textEl\.textContent = '';[\s\S]*?clearStreamedAssistantText\(textEl\);[\s\S]*?\} else if \(verboseMode && !hasStreamedText\)/, `${label}: explicit and restored-stream replacements should overwrite or clear verbose streamed text`);
-    assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?else if \(verboseMode && !hasStreamedText\)[\s\S]*?textEl\.innerHTML = formatMarkdown\(content\);/, `${label}: every streamed final should format in place even when terminal cleanup changed the raw text`);
+    assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const restoredStreamNeedsReplacement = hasStreamedText && !streamedText;[\s\S]*?const renderedContent = formatMarkdown\(content, \{ recoverNestedMarkdown: true \}\);[\s\S]*?if \(options\.replace === true \|\| restoredStreamNeedsReplacement\) \{[\s\S]*?if \(content\) \{[\s\S]*?textEl\.innerHTML = renderedContent;[\s\S]*?streamedAssistantTextByEl\.set\(textEl, String\(content\)\);[\s\S]*?\} else \{[\s\S]*?textEl\.textContent = '';[\s\S]*?clearStreamedAssistantText\(textEl\);[\s\S]*?\} else if \(verboseMode && !hasStreamedText\)/, `${label}: explicit and restored-stream replacements should preserve nested fences while overwriting or clearing verbose streamed text`);
+    assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const renderedContent = formatMarkdown\(content, \{ recoverNestedMarkdown: true \}\);[\s\S]*?else if \(verboseMode && !hasStreamedText\)[\s\S]*?para\.innerHTML = renderedContent;[\s\S]*?else \{[\s\S]*?textEl\.innerHTML = renderedContent;/, `${label}: every streamed final should preserve nested fences in place even when terminal cleanup changed the raw text`);
     const start = panel.indexOf("case 'tool_call':");
     const end = panel.indexOf("case 'tool_result':", start);
     assert.notEqual(start, -1, `${label}: tool_call handler missing`);
@@ -45702,41 +45733,27 @@ test('saving a valid CapSolver key opts in without overriding legacy opt-outs', 
       pathToFileURL(path.join(ROOT, prefix, 'src/agent/capsolver-config.js')).href
     );
 
-    assert.doesNotMatch(html, /toggle-captcha-enabled/, `${label}: CapSolver still exposes a redundant enable switch`);
-    assert.match(
-      html,
-      /id="captcha-api-key"[^>]*pattern="CAP-\[A-Za-z0-9_-\]\{20,\}"[^>]*minlength="24"/,
-      `${label}: CapSolver key input should expose the same structural validation as the runtime`,
-    );
-    assert.doesNotMatch(settings, /captchaEnabledToggle/, `${label}: removed CapSolver toggle still has settings handlers`);
+    assert.match(html, /type="checkbox" id="captcha-enabled"/);
+    assert.match(settings, /initCaptchaSettings/);
+    assert.match(html, /id="captcha-api-key"[^>]*pattern="CAP-\[A-Za-z0-9_-\]\{20,\}"[^>]*minlength="24"/);
 
-    const saveStart = settings.indexOf("btnSaveCaptcha.addEventListener('click', async () => {");
-    const saveEnd = settings.indexOf('\n  });\n}\n\nif (btnTestCaptcha', saveStart);
-    assert.notEqual(saveStart, -1, `${label}: CapSolver save handler missing`);
-    assert.notEqual(saveEnd, -1, `${label}: CapSolver save handler boundary missing`);
-    const saveBody = settings.slice(saveStart, saveEnd + 7);
-    assert.match(saveBody, /normalizeCapsolverApiKey\(captchaApiKeyInput\?\.value\)/, `${label}: CapSolver key should be normalized before saving`);
-    assert.match(saveBody, /if \(!isValidCapsolverApiKey\(key\)\) \{[\s\S]*?return;/, `${label}: malformed CapSolver keys should not be saved`);
-    assert.match(
-      saveBody,
-      new RegExp(`await ${api}\\.storage\\.local\\.set\\(\\{[\\s\\S]*?capsolverApiKey: key,[\\s\\S]*?captchaSolverEnabled: true,[\\s\\S]*?\\}\\)`),
-      `${label}: saving a valid CapSolver key should record explicit consent`,
-    );
-
-    assert.match(
-      background,
-      new RegExp(`const stored = await ${api}\\.storage\\.local\\.get\\(\\['capsolverApiKey', 'captchaSolverEnabled'\\]\\);[\\s\\S]*?agent\\.captchaSolverEnabled = isCapsolverEnabled\\([\\s\\S]*?stored\\.capsolverApiKey,[\\s\\S]*?stored\\.captchaSolverEnabled,[\\s\\S]*?\\);`),
-      `${label}: background startup should require both a valid key and prior consent`,
+    assert.ok(
+      background.includes(`const stored = await ${api}.storage.local.get(CAPTCHA_SETTINGS_KEYS)`)
+        && background.includes('getCaptchaProviders(stored)')
+        && background.includes('agent.captchaProviderIds = providers.map(provider => provider.id)'),
+      `${label}: startup should use the shared consent-aware provider selection`,
     );
     assert.match(
       background,
-      /if \(changes\.capsolverApiKey \|\| changes\.captchaSolverEnabled\) \{[\s\S]*?loadCaptchaSolver\(\)[\s\S]*?agent\._refreshSystemPrompts\(\)/,
-      `${label}: key or consent changes should refresh CapSolver availability immediately`,
+      /if \(CAPTCHA_SETTINGS_KEYS\.some\(key => changes\[key\]\)\) \{[\s\S]*?loadCaptchaSolver\(\)[\s\S]*?agent\._refreshSystemPrompts\(\)/,
+      `${label}: key, consent, or broker changes should refresh CapSolver availability immediately`,
     );
-    assert.match(
-      agent,
-      new RegExp(`const stored = await ${api}\\.storage\\.local\\.get\\(\\['capsolverApiKey', 'captchaSolverEnabled'\\]\\);[\\s\\S]*?const apiKey = normalizeCapsolverApiKey\\(stored\\.capsolverApiKey\\);[\\s\\S]*?if \\(!isCapsolverEnabled\\(apiKey, stored\\.captchaSolverEnabled\\)\\)`),
-      `${label}: solve_captcha should revalidate the saved key and consent at dispatch time`,
+    assert.ok(
+      agent.includes(`const stored = await ${api}.storage.local.get(CAPTCHA_SETTINGS_KEYS)`)
+        && agent.includes('const providers = getCaptchaProviders(stored)')
+        && agent.includes('if (!providers.length)')
+        && agent.includes('const result = await solveCaptchaWithProviders(providers, params);'),
+      `${label}: solve_captcha should revalidate enabled providers on each call`,
     );
 
     assert.equal(capsolverConfig.normalizeCapsolverApiKey('  CAP-0123456789abcdefghij  '), 'CAP-0123456789abcdefghij');
@@ -45776,16 +45793,11 @@ test('config import preserves CapSolver consent independently from a saved key',
   }
 });
 
-test('all locales explain CapSolver auto-enablement and key validation', async () => {
+test('all locales retain CapSolver save feedback and key validation', async () => {
   for (const browser of ['chrome', 'firefox']) {
     const localeDir = path.join(ROOT, `src/${browser}/src/ui/locales`);
     for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
-      assert.match(
-        locale['st.captcha.desc_html'],
-        /CapSolver/,
-        `${browser}/${filename}: CapSolver description missing`,
-      );
       assert.match(
         locale['st.captcha.saved'],
         /CapSolver/,
@@ -47747,7 +47759,8 @@ test('settings provider save and test status updates are DOM-safe', () => {
     );
     assert.match(settings, /visionTestResult\.style\.color = color \|\| '';/, `${label}: vision results should clear stale inline colors`);
     assert.match(settings, /transcriptionTestResult\.style\.color = color \|\| '';/, `${label}: transcription results should clear stale inline colors`);
-    assert.match(settings, /captchaTestResult\.style\.color = color \|\| '';/, `${label}: captcha results should clear stale inline colors`);
+    const captchaSettings = fs.readFileSync(path.join(ROOT, settingsRel.replace('settings.js', 'captcha-settings.js')), 'utf8');
+    assert.match(captchaSettings, /result\.style\.color = '';/, `${label}: captcha results should clear stale inline colors`);
 
     const saveStart = settings.indexOf('async function saveProvider(id, { showFlash = true, markConfigured = true } = {}) {');
     assert.notEqual(saveStart, -1, `${label}: saveProvider missing`);
@@ -48236,11 +48249,9 @@ test('settings async test controls surface rejected background results', () => {
       /function showTranscriptionResult\(className, text, color = ''\) \{[\s\S]*?if \(!transcriptionTestResult\) return;[\s\S]*?transcriptionTestResult\.style\.color = color \|\| '';[\s\S]*?return transcriptionTestResult;[\s\S]*?\}/,
       `${label}: transcription status helper should clear stale inline colors and tolerate absent controls`,
     );
-    assert.match(
-      settings,
-      /function showCaptchaResult\(className, text, color = ''\) \{[\s\S]*?if \(!captchaTestResult\) return;[\s\S]*?captchaTestResult\.style\.color = color \|\| '';[\s\S]*?return captchaTestResult;[\s\S]*?\}/,
-      `${label}: captcha status helper should clear stale inline colors and tolerate absent controls`,
-    );
+    const captchaSettings = fs.readFileSync(path.join(ROOT, settingsRel.replace('settings.js', 'captcha-settings.js')), 'utf8');
+    assert.match(captchaSettings, /result\.textContent = message;/, `${label}: CAPTCHA status uses safe text`);
+    assert.match(captchaSettings, /result\.style\.color = '';/, `${label}: CAPTCHA status resets inline color`);
 
     const visionStart = settings.indexOf("btnTestVision.addEventListener('click', async () => {");
     assert.notEqual(visionStart, -1, `${label}: vision test handler missing`);
@@ -48262,16 +48273,9 @@ test('settings async test controls surface rejected background results', () => {
       `${label}: rejected transcription provider checks should replace the testing state with a failure`,
     );
 
-    const captchaStart = settings.indexOf("btnTestCaptcha.addEventListener('click', async () => {");
-    assert.notEqual(captchaStart, -1, `${label}: captcha test handler missing`);
-    const captchaEnd = settings.indexOf('\n  });\n}\n\nif (btnClearCaptcha', captchaStart);
-    assert.notEqual(captchaEnd, -1, `${label}: captcha test handler boundary missing`);
-    const captchaBody = settings.slice(captchaStart, captchaEnd + 7);
-    assert.match(
-      captchaBody,
-      /showCaptchaResult\('', t\('st\.captcha\.checking'\), 'var\(--text2\)'\);[\s\S]*?try \{[\s\S]*?const res = await sendToBackground\('test_capsolver_balance', \{ apiKey: key \}\);[\s\S]*?flashCaptchaResult\('ok'[\s\S]*?flashCaptchaResult\('fail'[\s\S]*?\} catch \(e\) \{[\s\S]*?flashCaptchaResult\('fail', t\('st\.captcha\.balance_fail', \{ error: e\.message \}\)\);[\s\S]*?\}/,
-      `${label}: rejected captcha balance checks should replace the checking state with a failure`,
-    );
+    assert.match(captchaSettings, /sendToBackground\(action, \{ apiKey: key, provider: provider.id \}\)/);
+    assert.match(captchaSettings, /catch \(error\) \{ show\('fail', t\('st\.captcha\.balance_fail', \{ error: error\.message \}\)\); \}/);
+
 
     assert.match(
       settings,
@@ -48606,13 +48610,13 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     assert.match(agent, /onUpdate\('clarify_timeout_extended'/, `${label}: renewed deadlines should be published to the UI`);
     assert.match(agent, /timeoutSec === 0 \? 'auto' : 'timeout'/, `${label}: Instant should use source=auto; waited timeout uses source=timeout`);
     assert.match(agent, /source: autoSource/, `${label}: clarify_auto / settle should pass auto or timeout via autoSource`);
-    assert.match(agent, /source === 'timeout'/, `${label}: waited timeout should keep the non-confirmation tool note`);
+    assert.match(agent, /timedOutAffirmative/, `${label}: waited affirmative timeout should be accepted`);
     assert.match(agent, /source === 'auto'/, `${label}: Instant auto-approve should get a non-warning tool note`);
     assert.match(agent, /intentionally configured unattended auto-approve/, `${label}: Instant note should treat auto-approve as intentional`);
     assert.match(agent, /onUpdate\('clarify_auto'/, `${label}: agent should emit clarify_auto for UI lock`);
     assert.match(agent, /timeoutSec >= 0/, `${label}: Instant (0) and positive waits should arm auto-select; Off (-1) waits forever`);
-    assert.match(agent, /NOT a real user confirmation/, `${label}: timeout tool note should deny user-confirmation status`);
-    assert.match(agent, /_clarificationAuthorizationBlock/, `${label}: waited timeout should arm a structural authorization guard`);
+    assert.match(agent, /NOT a real user confirmation/, `${label}: non-affirmative timeout tool note should deny user-confirmation status`);
+    assert.match(agent, /_clarificationAuthorizationBlock/, `${label}: non-affirmative waited timeout should arm a structural authorization guard`);
     assert.match(agent, /requiresExplicitConfirmation: !authorized/, `${label}: clarify results should expose machine-readable authorization state`);
     assert.match(agent, /authorizationSource: 'timeout'/, `${label}: blocked actions should identify the timeout authorization source`);
     // Permission / form confirm prompts reuse clarify plumbing but must not
@@ -48625,9 +48629,9 @@ test('clarify tool auto-timeout is configurable and mirrored across browsers', (
     assert.doesNotMatch(submitMatch[0], /timeoutSec|setTimeout/, `${label}: form-submit prompts must not auto-timeout`);
 
     assert.match(tools, /options\[0\] is auto-selected|options\[0\] is selected/, `${label}: clarify tool schema should document auto-select of first option`);
-    assert.match(tools, /source=timeout/, `${label}: system prompts should treat timeout answers as non-confirmations`);
+    assert.match(tools, /safe_first/, `${label}: system prompts should document safe_first timeout authorization`);
     assert.match(tools, /source=auto/, `${label}: system prompts should document Instant source=auto`);
-    assert.match(tools, /source=timeout is not user approval|source=timeout \(waited timeout|not source=timeout waited/, `${label}: prompts should qualify real clarify answers vs waited timeouts`);
+    assert.match(tools, /safe_first makes that selection apply|safe_first is true/, `${label}: prompts should document structured safe_first timeout authorization`);
 
     assert.match(scheduler, /pending\.timeoutSec/, `${label}: scheduled pendingClarify should persist timeoutSec`);
     assert.match(scheduler, /pending\.deadlineTs/, `${label}: scheduled pendingClarify should persist deadlineTs`);
@@ -48774,6 +48778,17 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(waitedTimeout.requiresExplicitConfirmation, true, `${AgentClass.name}: timeout did not require an explicit answer`);
     assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: timeout guard was not armed`);
 
+    const guardedSafeFirst = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue browsing?', options: ['Continue browsing', 'Stop'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Continue browsing', 'timeout');
+      },
+    );
+    assert.equal(guardedSafeFirst.authorized, false, `${AgentClass.name}: later safe_first timeout cleared an existing guard`);
+    assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: later safe_first timeout removed an existing guard`);
+
     const userReply = await agent.executeTool(
       tabId,
       'clarify',
@@ -48786,6 +48801,121 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(userReply.requiresExplicitConfirmation, false, `${AgentClass.name}: direct reply kept the timeout warning`);
     assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: direct reply did not clear the timeout guard`);
 
+    const blankOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', options: [' '], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '', 'timeout');
+      },
+    );
+    assert.equal(blankOptionTimeout.authorized, false, `${AgentClass.name}: whitespace-only safe_first option was accepted`);
+    assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: whitespace-only option did not arm a timeout guard`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
+    const invisibleOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', options: ['\u200B'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '\u200B', 'timeout');
+      },
+    );
+    assert.equal(invisibleOptionTimeout.authorized, false, `${AgentClass.name}: invisible safe_first option was accepted`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
+    const brailleBlankOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', options: ['\u2800'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '\u2800', 'timeout');
+      },
+    );
+    assert.equal(brailleBlankOptionTimeout.authorized, false, `${AgentClass.name}: braille blank safe_first option was accepted`);
+
+    for (const filler of ['\u115F', '\u1160', '\u3164', '\uFFA0']) {
+      await agent._recordClarificationAuthorization(tabId, 'user');
+      const fillerTimeout = await agent.executeTool(
+        tabId,
+        'clarify',
+        { question: 'Continue?', options: [filler], safe_first: true },
+        (type, data) => {
+          if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, filler, 'timeout');
+        },
+      );
+      assert.equal(fillerTimeout.authorized, false, `${AgentClass.name}: U+${filler.codePointAt(0).toString(16)} filler safe_first option was accepted`);
+      assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: filler timeout did not arm a guard`);
+    }
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
+    const emojiOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', options: ['👩‍💻 Continue', 'Stop'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '👩‍💻 Continue', 'timeout');
+      },
+    );
+    assert.equal(emojiOptionTimeout.authorized, true, `${AgentClass.name}: visible ZWJ emoji safe_first option was rejected`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
+    const promotedOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Delete everything?', options: [' ', 'Yes, delete them'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
+      },
+    );
+    assert.equal(promotedOptionTimeout.authorized, false, `${AgentClass.name}: safe_first authorized a later promoted option`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
+    const truncatedInvisibleOptionTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Delete everything?', options: [`${'\u200B'.repeat(200)}Yes`, 'Yes, delete them'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
+      },
+    );
+    assert.equal(truncatedInvisibleOptionTimeout.authorized, false, `${AgentClass.name}: truncated invisible option promoted a later safe_first choice`);
+
+    await agent._recordClarificationAuthorization(tabId, 'user');
+    const affirmativeTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', options: ['Yes', 'No'], safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes', 'timeout');
+      },
+    );
+    assert.equal(affirmativeTimeout.source, 'timeout', `${AgentClass.name}: safe_first timeout source was lost`);
+    assert.equal(affirmativeTimeout.authorized, true, `${AgentClass.name}: timed-out safe_first Yes was not accepted`);
+    assert.equal(affirmativeTimeout.requiresExplicitConfirmation, false, `${AgentClass.name}: timed-out safe_first Yes still required confirmation`);
+    assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: timed-out safe_first Yes left a timeout guard armed`);
+
+    const unsafeTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Delete everything?', options: ['Yes, delete them', 'No, keep them'] },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
+      },
+    );
+    assert.equal(unsafeTimeout.authorized, false, `${AgentClass.name}: timed-out destructive Yes without safe_first was accepted`);
+    assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: unsafe timeout left no guard armed`);
+
+    const emptyOptionsTimeout = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Continue?', safe_first: true },
+      (type, data) => {
+        if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '(no response - timed out)', 'timeout');
+      },
+    );
+    assert.equal(emptyOptionsTimeout.authorized, false, `${AgentClass.name}: safe_first without options was accepted`);
+
     agent.clarifyTimeoutSec = 0;
     const instant = await agent.executeTool(
       tabId,
@@ -48796,6 +48926,17 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(instant.source, 'auto', `${AgentClass.name}: Instant did not use source=auto`);
     assert.equal(instant.authorized, true, `${AgentClass.name}: configured Instant mode was not authorized`);
     assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: Instant unexpectedly armed the timeout guard`);
+
+    const unscopedTabId = tabId + 100;
+    await agent._recordClarificationAuthorization(unscopedTabId, 'timeout');
+    agent.conversationIds.set(unscopedTabId, `conv_${unscopedTabId}`);
+    assert.equal(
+      await agent._recordClarificationAuthorization(unscopedTabId, 'timeout', true),
+      false,
+      `${AgentClass.name}: safe_first cleared an unscoped timeout guard after conversation creation`,
+    );
+    assert.equal(agent._clarificationAuthorizationGuards.get(unscopedTabId)?.authorized, false,
+      `${AgentClass.name}: unscoped timeout guard was removed after conversation creation`);
   }
 });
 
@@ -54151,8 +54292,8 @@ test('/watch alert audio is background-owned, configurable, and distinct by styl
     );
     assert.match(
       panel,
-      /const watchPollEvent = \['polled', 'triggered'\]\.includes\(event\);[\s\S]*?watchPollEvent \|\| !textEl\.textContent\.trim\(\)[\s\S]*?formatMarkdown\(job\.lastResult\)/,
-      `${label}: every watch poll should replace the sticky message with its latest observation`,
+      /const watchPollEvent = \['polled', 'triggered'\]\.includes\(event\);[\s\S]*?watchPollEvent \|\| !textEl\.textContent\.trim\(\)[\s\S]*?formatMarkdown\(job\.lastResult, \{ recoverNestedMarkdown: true \}\)/,
+      `${label}: every watch poll should replace the sticky message with its latest nested-fence-safe observation`,
     );
   }
 });
@@ -55689,8 +55830,8 @@ test('sidepanel settles terminal scheduled clarification events and renders thei
     const handlerBody = panel.slice(handlerStart, handlerEnd);
     assert.match(
       settleBody,
-      /\['completed', 'clarification_required'\]\.includes\(event\)[\s\S]*?job\?\.lastResult[\s\S]*?formatMarkdown\(job\.lastResult\)/,
-      `${label}: terminal clarification result should render before settlement`,
+      /\['completed', 'clarification_required'\]\.includes\(event\)[\s\S]*?job\?\.lastResult[\s\S]*?formatMarkdown\(job\.lastResult, \{ recoverNestedMarkdown: true \}\)/,
+      `${label}: terminal clarification result should render with preserved nested fences before settlement`,
     );
     assert.match(
       handlerBody,
@@ -66905,6 +67046,66 @@ test('Osaurus requires a selected model and uses the local Chat Completions cont
   }
 });
 
+test('ODS local provider discovers its running model and uses Chat Completions', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith('/v1/models')) {
+      return new Response(JSON.stringify({ data: [{ id: 'qwen-ods' }] }), { status: 200 });
+    }
+    if (new URL(url).pathname === '/props') {
+      return new Response(JSON.stringify({ n_ctx: 16384, modalities: { vision: false } }), { status: 200 });
+    }
+    if (String(url).endsWith('/v1/chat/completions')) {
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Hello from ODS' } }] }), { status: 200 });
+    }
+    return new Response('', { status: 404 });
+  };
+  try {
+    for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().ods;
+      assert.equal(defaults.category, 'local');
+      assert.equal(defaults.baseUrl, 'http://localhost:11434/v1');
+      assert.throws(() => manager._createProvider('ods', defaults).model, /model is required/);
+      manager.providers.set('ods', manager._createProvider('ods', defaults));
+      assert.deepEqual(await manager.listProviderModels('ods', { detectServerIdentity: true }), {
+        ok: true, models: ['qwen-ods'], contextWindow: 16384,
+      });
+      assert.ok(calls.some(call => call.url === 'http://localhost:11434/props'));
+      assert.deepEqual(await manager._fetchVisionCapability('ods', { config: defaults }, {
+        baseUrl: defaults.baseUrl, model: 'qwen-ods',
+      }), { ok: true, supportsVision: false });
+
+      const provider = manager._createProvider('ods', { ...defaults, model: 'qwen-ods', apiKey: 'local-secret' });
+      assert.equal(provider.supportsVision, false);
+      const result = await provider.chat([{ role: 'user', content: 'Hello' }]);
+      assert.equal(result.content, 'Hello from ODS');
+      const call = calls.at(-1);
+      assert.equal(call.url, 'http://localhost:11434/v1/chat/completions');
+      assert.equal(call.options.headers.Authorization, 'Bearer local-secret');
+      assert.equal(JSON.parse(call.options.body).model, 'qwen-ods');
+    }
+
+    globalThis.fetch = async (url) => String(url).endsWith('/props')
+      ? new Response('', { status: 404 })
+      : new Response(JSON.stringify({ data: [{ id: 'ollama-model' }] }), { status: 200 });
+    for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().ods;
+      manager.providers.set('ods', manager._createProvider('ods', defaults));
+      assert.deepEqual(await manager.listProviderModels('ods', { detectServerIdentity: true }), {
+        ok: true, models: [],
+      }, 'automatic onboarding must not mistake Ollama for ODS on port 11434');
+      assert.deepEqual(await manager.listProviderModels('ods'), { ok: true, models: ['ollama-model'] },
+        'manual setup should allow a compatible endpoint without /props');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Osaurus discovers models and handles chat, streaming, tools, and access keys', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -67074,7 +67275,7 @@ test('Osaurus identity checks preserve manual model loading and configured provi
 
 test('categoryFor: local family', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth']) {
+    for (const id of ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth']) {
       assert.equal(PM.categoryFor(id, { type: id === 'llamacpp' ? 'llamacpp' : 'openai' }), 'local');
     }
     assert.equal(PM.categoryFor('custom_llama_cpp', { type: 'llamacpp' }), 'local');
@@ -69561,7 +69762,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 111 : 110;
+    const expectedDefaultCount = label === 'chrome' ? 112 : 111;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -121731,6 +121932,89 @@ async function detectCaptchaDetailsOnFakePage(build, nodes) {
   });
 }
 
+
+test('CAPTCHA providers: hCaptcha routes directly to manual completion with 2Captcha alone', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const nodes = [captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
+      captchaEl('h2', { textContent: 'Security verification' }),
+      captchaEl('div', { class: 'h-captcha', 'data-sitekey': 'HCAPTCHA_KEY' }),
+    ])];
+    await withCaptchaFakePage(build, nodes, async () => {
+      const agent = new AgentClass({});
+      agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['2captcha'];
+      agent._currentUrl = async () => 'https://example.test/form';
+      const observation = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
+        pageContent: 'dialog "Security verification" [ref_100]\n button "Continue" [ref_3]',
+      });
+      assert.equal(observation.gate?.status, 'manual_required', build);
+      assert.equal(observation.gate?.providerUnsupported, true, build);
+      assert.equal(observation.gate?.solveAttempted, undefined, build);
+      assert.equal(agent._captchaGateBlockResult(1, 'click_ax')?.manualCompletionRequired, true, build);
+      assert.equal(agent._shouldRetryCaptchaManualGate(agent._captchaGateStates.get(1)), false, build);
+
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({ twoCaptchaEnabled: true, twoCaptchaApiKey: 'a'.repeat(32) }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const originalFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (...args) => { calls.push(args); throw Error('must not dispatch'); };
+      try {
+        const result = await agent._executeToolImpl(1, 'solve_captcha', { inject: false });
+        assert.equal(result.dispatched, false, `${build}: ${result.error}`);
+        assert.equal(result.manualCompletionRequired, true, build);
+        assert.equal(calls.length, 0, build);
+      } finally { globalThis.fetch = originalFetch; }
+
+      agent.captchaProviderIds = ['capsolver', '2captcha'];
+      assert.equal(agent._shouldRetryCaptchaManualGate(agent._captchaGateStates.get(1)), true, build);
+      const refreshed = await agent._captchaMutationPreflight(1, 'click_ax');
+      assert.equal(refreshed?.status, 'solve_required', `${build}: enabling a capable provider should refresh the gate`);
+    });
+  }
+});
+
+test('CAPTCHA providers: real Turnstile detection reaches the 2Captcha request with widget metadata', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const nodes = [captchaEl('div', {
+      class: 'cf-turnstile', 'data-sitekey': 'TURNSTILE_KEY',
+      'data-action': 'signup', 'data-cdata': 'widget-data',
+    })];
+    await withCaptchaFakePage(build, nodes, async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({ twoCaptchaEnabled: true, twoCaptchaApiKey: 'a'.repeat(32) }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const originalFetch = globalThis.fetch;
+      const originalTimeout = globalThis.setTimeout;
+      const calls = [];
+      globalThis.setTimeout = (callback, delay, ...args) => originalTimeout(callback, delay === 5000 ? 0 : delay, ...args);
+      globalThis.fetch = async (url, options) => {
+        calls.push({ url, body: JSON.parse(options.body) });
+        return Response.json(url.endsWith('/createTask') ? { taskId: 123 } : { status: 'ready', solution: { token: 'solved-token' } });
+      };
+      try {
+        const agent = new AgentClass({});
+        const result = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, metadata: { chlPageData: 'observed-page-data' } });
+        assert.equal(result.success, true, `${build}: ${result.error}`);
+        assert.equal(result.provider, '2captcha', build);
+        assert.equal(calls[0].url, 'https://api.2captcha.com/createTask');
+        assert.deepEqual(calls[0].body.task, {
+          type: 'TurnstileTaskProxyless', websiteURL: 'https://example.test/form', websiteKey: 'TURNSTILE_KEY',
+          action: 'signup', data: 'widget-data', pagedata: 'observed-page-data',
+        }, build);
+        const beforeConflict = calls.length;
+        const conflict = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, metadata: { action: 'another-widget' } });
+        assert.equal(conflict.dispatched, false, build);
+        assert.match(conflict.error, /conflicts with the selected widget/, build);
+        assert.equal(calls.length, beforeConflict, build);
+      } finally {
+        globalThis.fetch = originalFetch;
+        globalThis.setTimeout = originalTimeout;
+      }
+    });
+  }
+});
+
 test('challenge-dialog routing detects supported widgets and diagnoses unsupported Arkose frames', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const supportedNodes = [
@@ -121749,6 +122033,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     await withCaptchaFakePage(build, supportedNodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const result = {
         pageContent: 'dialog "Security verification" [ref_100]\n button "Dismiss" [ref_101]\nbutton "Continue" [ref_3]',
@@ -121778,11 +122063,13 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(disabledObservation.gate?.status, 'manual_required', `${build}: disabled solver did not fail closed`);
       assert.equal(disabledObservation.gate?.solverDisabled, true, `${build}: disabled-solver reason missing`);
       disabledAgent.captchaSolverEnabled = true;
+      disabledAgent.captchaProviderIds = ['capsolver'];
       const enabledGate = await disabledAgent._captchaMutationPreflight(2, 'click_ax');
       assert.equal(enabledGate?.status, 'solve_required', `${build}: enabling the solver did not re-evaluate the manual gate before mutation`);
 
       const transientAgent = new AgentClass({});
       transientAgent.captchaSolverEnabled = true;
+      transientAgent.captchaProviderIds = ['capsolver'];
       transientAgent._currentUrl = async () => 'https://example.test/signup';
       transientAgent._captchaGateStates.set(3, {
         key: 'https://example.test/signup\nsecurity verification',
@@ -121845,6 +122132,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     await withCaptchaFakePage(build, invisibleV3Nodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
         pageContent: 'dialog "Verify that you\u2019re a human" [ref_150]\n button "Dismiss" [ref_151]',
@@ -121867,6 +122155,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     await withCaptchaFakePage(build, unrelatedV3Nodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
         pageContent: 'dialog "Security verification" [ref_170]\n heading "Use your passkey" [ref_171]',
@@ -121895,6 +122184,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     await withCaptchaFakePage(build, unrelatedVisibleNodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', {
         pageContent: 'dialog "Security verification" [ref_180]\n heading "Use your passkey" [ref_181]',
@@ -121930,6 +122220,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     await withCaptchaFakePage(build, arkoseNodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const result = {
         pageContent: 'dialog "Security verification" [ref_200]\n button "Dismiss" [ref_201]\nbutton "Continue" [ref_3]',
@@ -122000,6 +122291,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
       await withCaptchaFakePage(build, example.nodes, async () => {
         const agent = new AgentClass({});
         agent.captchaSolverEnabled = true;
+        agent.captchaProviderIds = ['capsolver'];
         agent._currentUrl = async () => 'https://example.test/signup';
         const observed = await agent._observeCaptchaChallenge(
           1,
@@ -122055,6 +122347,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
 
         const preflightAgent = new AgentClass({});
         preflightAgent.captchaSolverEnabled = true;
+        preflightAgent.captchaProviderIds = ['capsolver'];
         preflightAgent._currentUrl = async () => 'https://example.test/signup';
         const preflight = await preflightAgent._captchaMutationPreflight(2, 'click_ax');
         assert.equal(
@@ -122123,6 +122416,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
       ], async () => {
         const agent = new AgentClass({});
         agent.captchaSolverEnabled = true;
+        agent.captchaProviderIds = ['capsolver'];
         agent._currentUrl = async () => 'https://example.test/signup';
         const observed = await agent._observeCaptchaChallenge(
           3,
@@ -122153,6 +122447,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
     ], async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const observed = await agent._observeCaptchaChallenge(
         5,
@@ -122196,6 +122491,7 @@ test('post-solve CAPTCHA gates consume only the correlated response token and re
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const initial = await agent._observeCaptchaChallenge(
         1,
@@ -122449,6 +122745,7 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
       agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
       const gate = await agent._captchaMutationPreflight(1, 'click_ax');
       assert.equal(gate?.status, 'solve_required', `${build}: first mutation bypassed read-only dialog detection`);

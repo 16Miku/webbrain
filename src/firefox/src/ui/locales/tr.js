@@ -654,7 +654,6 @@ export default {
   "st.captcha.need_key": "CAP- ile başlayan geçerli bir CapSolver API anahtarı gir.",
   "st.captcha.balance_ok": "TAMAM — bakiye: {balance}",
   "st.captcha.balance_fail": "Başarısız: {error}",
-  "st.captcha.security_html": "<strong>Dikkat:</strong> API anahtarı tarayıcının yerel depolamasında <strong>düz metin olarak</strong> saklanır. CapSolver her çözüm için hesabından ücret alır; aracı yalnızca bir CAPTCHA gerçekten bir adımı engellediğinde onu çağırır (karşılaşma başına en fazla bir kez — başarısızlıkta yeniden denemez). Bazı sitelerin hizmet şartları otomatik CAPTCHA çözmeyi yasaklar; kendi takdirini kullan.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'Önerilen işlemler',
@@ -922,6 +921,7 @@ export default {
   "sp.memory.error": "Bellek hatası: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Kaydedilmedi: temizleme sonrasında metin boş kalıyor veya bir gizli bilgi (parola, API anahtarı, token) içeriyor gibi görünüyor.",
   "sp.memory.reason.not_found": "Bu kimliğe sahip kaydedilmiş bellek yok.",
+  'sp.slash.workflow_editor': "İş akışı düzenleyicisi",
   "sp.slash.workflows": "Kayıtlı iş akışlarını listele ve yönet",
   "sp.slash.teach": "Eylemlerinizi kayıtlı bir iş akışı olarak kaydedin",
   "sp.slash.run_workflow": "Kaydedilmiş iş akışını kimliğe göre çalıştır",

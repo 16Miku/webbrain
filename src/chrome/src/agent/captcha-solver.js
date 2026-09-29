@@ -23,6 +23,9 @@ import {
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
 import { buildCaptchaDiagnostics, captchaChallengeMatcherOptions } from './captcha-gate.js';
+import { solveWithAdditionalProvider } from './captcha-additional-providers.js';
+import { solveWithTwoCaptcha } from './two-captcha.js';
+import { captchaProviderSupportsType } from './captcha-provider-config.js';
 
 export { captchaTypesMatch, captchaWebsiteUrl, normalizeCaptchaType, selectCaptchaCandidate };
 
@@ -30,6 +33,7 @@ const API_BASE = 'https://api.capsolver.com';
 const POLL_INTERVAL_MS = 2500;
 const POLL_TIMEOUT_MS = 120_000;
 const DEFAULT_APP_ID = 'B7E57F27-0AD3-434D-A5B7-CF9EE7D093EE'; // CapSolver public affiliate id; used only to identify the integration.
+const CLOUD_BROKER_URL = 'http://127.0.0.1:17373/capsolver/solve';
 
 // ─── REST ──────────────────────────────────────────────────────────────
 
@@ -38,6 +42,7 @@ async function postJson(path, body) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -194,6 +199,7 @@ export function buildTask({ type, websiteURL, websiteKey, ...rest }) {
       websiteURL,
       websiteKey,
       ...(rest.metadata ? { metadata: rest.metadata } : {}),
+      ...(rest.userAgent ? { userAgent: rest.userAgent } : {}),
     };
   }
   if (t === 'image_to_text' || t === 'image') {
@@ -233,15 +239,65 @@ function solutionFor(type, solution) {
 
 // ─── solveCaptcha — the public entry point ────────────────────────────
 
-export async function solveCaptcha(apiKey, params) {
-  if (!apiKey) throw new Error('No CapSolver API key configured.');
+async function solveWithCloudBroker(task) {
+  const response = await fetch(CLOUD_BROKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-WebBrain-CapSolver-Broker': '1' },
+    body: JSON.stringify({ task }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Cloud CapSolver broker failed.');
+  if (!result.taskId || !result.solution || typeof result.solution !== 'object') {
+    throw new Error('Cloud CapSolver broker returned an invalid result.');
+  }
+  return result;
+}
+
+export async function solveCaptcha(apiKey, params, { useCloudBroker = false } = {}) {
+  if (!apiKey && !useCloudBroker) throw new Error('No CapSolver API key configured.');
   const paramError = captchaParamError(params);
   if (paramError) throw new Error(paramError);
   const task = buildTask(params);
-  const taskId = await createTask(apiKey, task);
-  const solution = await pollTaskResult(apiKey, taskId);
+  const { taskId, solution } = useCloudBroker
+    ? await solveWithCloudBroker(task)
+    : await (async () => {
+      const taskId = await createTask(apiKey, task);
+      return { taskId, solution: await pollTaskResult(apiKey, taskId) };
+    })();
   const meta = solutionFor(params.type, solution);
   return { taskId, solution, ...meta };
+}
+
+// One tool dispatch, at most one task per enabled provider. Fallback happens
+// before token injection; a page/injection failure must not spend another solve.
+// A timeout can leave a paid task running upstream; fallback may charge both accounts.
+export async function solveCaptchaWithProviders(providers, params) {
+  if (!providers.length) throw new Error('No CAPTCHA solver is enabled with a valid API key.');
+  const paramError = captchaParamError(params);
+  if (paramError) throw new Error(paramError);
+  const task = buildTask(params);
+  const eligibleProviders = providers.filter(provider => captchaProviderSupportsType(provider.id, params.type));
+  if (!eligibleProviders.length) throw new Error(`No enabled provider supports ${params.type}. Ask the user to complete it manually.`);
+  const failures = [];
+  for (const provider of eligibleProviders) {
+    try {
+      const result = provider.id === 'capsolver'
+        ? await solveCaptcha(provider.apiKey, params, { useCloudBroker: provider.useCloudBroker === true })
+        : await (async () => {
+          const result = provider.id === '2captcha'
+            ? await solveWithTwoCaptcha(provider.apiKey, task)
+            : await solveWithAdditionalProvider(provider.id, provider.apiKey, task);
+          return { ...result, ...solutionFor(params.type, result.solution) };
+        })();
+      if (typeof result.token !== 'string' || !result.token.trim()) {
+        throw new Error('No usable solution returned.');
+      }
+      return { ...result, provider: provider.id };
+    } catch (error) {
+      failures.push(`${provider.id}: ${error.message}`);
+    }
+  }
+  throw new Error(failures.join(' | '));
 }
 
 // ─── Page-side detection ───────────────────────────────────────────────

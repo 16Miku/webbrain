@@ -614,7 +614,6 @@ export default {
   "st.captcha.need_key": "Введіть дійсний API-ключ CapSolver, що починається з CAP-.",
   "st.captcha.balance_ok": "ОК — баланс: {balance}",
   "st.captcha.balance_fail": "Збій: {error}",
-  "st.captcha.security_html": "<strong>Зверніть увагу:</strong> API-ключ зберігається <strong>у відкритому вигляді</strong> в локальному сховищі браузера. CapSolver стягує плату з вашого акаунта за кожне розв'язання; агент викличе його лише тоді, коли CAPTCHA справді блокує крок (максимум один раз на зустріч — він не повторюватиме спробу після невдачі). Умови надання послуг деяких сайтів забороняють автоматичне розв'язання CAPTCHA; дійте на власний розсуд.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'Рекомендовані дії',
@@ -923,6 +922,7 @@ export default {
   "sp.memory.error": "Помилка пам’яті: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Не збережено: після очищення текст порожній або схожий на секрет (пароль, ключ API, токен).",
   "sp.memory.reason.not_found": "Збереженого запису з таким ID немає.",
+  'sp.slash.workflow_editor': "Редактор робочих процесів",
   "sp.slash.workflows": "Перегляд і керування збереженими сценаріями",
   "sp.slash.teach": "Записати ваші дії як збережений робочий процес",
   "sp.slash.run_workflow": "Запустити збережений сценарій за ID",

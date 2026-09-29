@@ -630,7 +630,6 @@ export default {
   "st.captcha.need_key": "أدخل مفتاح CapSolver API صالحًا يبدأ بـ CAP-.",
   "st.captcha.balance_ok": "موافق — الرصيد: {balance}",
   "st.captcha.balance_fail": "فشل: {error}",
-  "st.captcha.security_html": "<strong>تنبيه:</strong> يُخزَّن مفتاح API <strong>بصيغة نصية واضحة</strong> في التخزين المحلي للمتصفح. تتقاضى CapSolver رسومًا من حسابك عن كل عملية حلّ؛ ولن يستدعيها الوكيل إلا عندما يحجب اختبار CAPTCHA خطوةً فعلًا (مرّة واحدة كحدّ أقصى لكل مواجهة — لن يعيد المحاولة عند الفشل). تحظر شروط خدمة بعض المواقع حلّ اختبارات CAPTCHA آليًا؛ استخدم حسن تقديرك.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'الإجراءات المقترحة',
@@ -951,6 +950,7 @@ export default {
   "sp.memory.error": "خطأ في الذاكرة: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "لم يتم الحفظ: النص فارغ بعد التنظيف أو يبدو أنه يحتوي على سر (كلمة مرور أو مفتاح API أو رمز مميز).",
   "sp.memory.reason.not_found": "لا توجد ذاكرة محفوظة بهذا المعرّف.",
+  'sp.slash.workflow_editor': "محرر مهام سير العمل",
   "sp.slash.workflows": "عرض مهام سير العمل المحفوظة وإدارتها",
   "sp.slash.teach": "سجّل إجراءاتك كمسار عمل محفوظ",
   "sp.slash.run_workflow": "تشغيل سير عمل محفوظ حسب المعرّف",
@@ -1188,7 +1188,7 @@ export default {
   "st.sync.consent.legacy": "هل تريد تفعيل المزامنة المشفرة؟ سيرسل WebBrain نسخة مشفرة من طرف إلى طرف من ذكرياتك، والملء التلقائي لملفك الشخصي، وإعدادات موفر مفتاح واجهة برمجة التطبيقات (API) إلى WebBrain Compass. لا تتم مزامنة سجل الدردشة وتسجيلات الدخول عبر OAuth.",
   "st.sync.consent.denied": "لم يتم منح إذن المزامنة المشفرة.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
-'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
+  'st.providers.webgpu_note.managed_body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat. It does not replace your selected provider.',
   'st.providers.webgpu_download.title': 'WebGPU model files',
   'st.providers.webgpu_download.progress_label': 'WebGPU model download progress',
   'st.providers.webgpu_download.checking': 'Checking local model files…',

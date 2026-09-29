@@ -80,7 +80,7 @@ import {
   removeStagedScreenshots,
   saveStagedScreenshot,
 } from './staged-screenshot-store.js';
-import { installFileDropHandlers } from './attachment-drop.js';
+import { installClipboardImagePasteHandler, installFileDropHandlers } from './attachment-drop.js';
 import { isTextAttachment } from './attachment-file.js';
 
 const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
@@ -250,7 +250,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
   const localModels = document.getElementById('ob-local-models');
   const localModelList = document.getElementById('ob-local-model-list');
   const totalSteps = steps.length;
-  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
+  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'ods', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
   let current = 0;
   let localScanStarted = false;
   let localModelChoices = [];
@@ -896,6 +896,14 @@ function slashOptionIsDiscoverable(option) {
   return option?.unsupported !== true;
 }
 
+function slashOptionDescriptionHtml(command, option) {
+  const description = escapeHtml(t(option.descriptionKey));
+  if (command.value !== '/workflow' || !['--save', '--export', '--import'].includes(option.value)) {
+    return description;
+  }
+  return `${description} <a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">${escapeHtml(t('sp.slash.workflow_editor'))}</a>`;
+}
+
 function slashOptionIsAvailable(option, selectedValues, selectedGroups) {
   return slashOptionIsDiscoverable(option)
     && !selectedValues.has(option.value)
@@ -1015,7 +1023,7 @@ function buildSlashCommandHelpHtml() {
     lines.push(`<code>${escapeHtml(command.usage)}</code> — ${escapeHtml(t(command.descriptionKey))}`);
     for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
       const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
-      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${slashOptionDescriptionHtml(command, option)}`);
     }
   }
   const shortcuts = t('sp.help.shortcuts_html');
@@ -1033,7 +1041,7 @@ function buildSlashCommandDetailHtml(command) {
   ];
   for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
     const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
-    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${slashOptionDescriptionHtml(command, option)}`);
   }
   return lines.join('<br>');
 }
@@ -14243,6 +14251,10 @@ if (attachBtn && fileAttachInput) {
 }
 
 installFileDropHandlers(inputArea, (files) => {
+  handleAttachedFiles(files, renderedTabId ?? currentTabId);
+});
+
+installClipboardImagePasteHandler(inputEl, (files) => {
   handleAttachedFiles(files, renderedTabId ?? currentTabId);
 });
 

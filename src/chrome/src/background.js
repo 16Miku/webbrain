@@ -42,6 +42,9 @@ import {
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
 import { testImageGenProvider } from './agent/fal-media.js';
+import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
+import { getAdditionalCaptchaBalance } from './agent/captcha-additional-providers.js';
+import { getTwoCaptchaBalance } from './agent/two-captcha.js';
 import { createSystemOneJudge } from './agent/systemone-judge.js';
 import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
@@ -142,7 +145,7 @@ const VISION_OFFSCREEN_URL = chrome.runtime.getURL('src/offscreen/offscreen.html
 // eviction registers its in-memory state first; the Traces page can also
 // request an immediate scan via WB_TRACE_REPAIR_STALE_RUNS.
 const TRACE_REPAIR_STARTUP_DELAY_MS = 15_000;
-setTimeout(() => { void workflowTrace.repairStaleRuns().catch(() => {}); }, TRACE_REPAIR_STARTUP_DELAY_MS);
+setTimeout(() => { void workflowTrace.repairStaleRuns().catch(() => { }); }, TRACE_REPAIR_STARTUP_DELAY_MS);
 
 function normalizeVisionDownloadState(state) {
   return {
@@ -574,7 +577,7 @@ async function loadScreenshotRedaction() {
   const stored = await chrome.storage.local.get('screenshotRedaction');
   if (stored.screenshotRedaction != null) agent.screenshotRedaction = !!stored.screenshotRedaction;
 }
-const screenshotRedactionReady = loadScreenshotRedaction().catch(() => {});
+const screenshotRedactionReady = loadScreenshotRedaction().catch(() => { });
 
 // Image budget (issue #311): screenshot quality + how many screenshots the
 // agent may capture per turn, and the max image dimension. Defaults preserve
@@ -628,7 +631,7 @@ async function syncAgentUserMemoryFromStorage() {
   });
   return store;
 }
-const userMemoryReady = syncAgentUserMemoryFromStorage().catch(() => {});
+const userMemoryReady = syncAgentUserMemoryFromStorage().catch(() => { });
 
 const USER_MEMORY_EXTRACTION_MAX_QUEUE = 10;
 const USER_MEMORY_EXTRACTION_DELAY_MS = 1200;
@@ -1081,15 +1084,13 @@ async function loadCustomSkills() {
 }
 const customSkillsReady = loadCustomSkills();
 
-// A valid key plus explicit consent enables CapSolver. Requiring the existing
-// boolean preserves legacy profiles that saved a key while the old switch was
-// off; pressing Save Key in the new UI sets consent to true.
+// Local browsers require a valid key and explicit consent. Managed Cloud
+// browsers use the broker flag and never use a CapSolver key from storage.
 async function loadCaptchaSolver() {
-  const stored = await chrome.storage.local.get(['capsolverApiKey', 'captchaSolverEnabled']);
-  agent.captchaSolverEnabled = isCapsolverEnabled(
-    stored.capsolverApiKey,
-    stored.captchaSolverEnabled,
-  );
+  const stored = await chrome.storage.local.get(CAPTCHA_SETTINGS_KEYS);
+  const providers = getCaptchaProviders(stored);
+  agent.captchaProviderIds = providers.map(provider => provider.id);
+  agent.captchaSolverEnabled = providers.length > 0;
 }
 loadCaptchaSolver();
 
@@ -1309,10 +1310,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
     refreshPrompts = true;
   }
-  if (changes.capsolverApiKey || changes.captchaSolverEnabled) {
+  if (CAPTCHA_SETTINGS_KEYS.some(key => changes[key])) {
     loadCaptchaSolver()
       .then(() => agent._refreshSystemPrompts())
-      .catch((error) => console.warn('[WebBrain] CapSolver setting could not be refreshed', error));
+      .catch((error) => console.warn('[WebBrain] CAPTCHA settings could not be refreshed', error));
   }
   if (changes.planBeforeActMode || changes.planBeforeAct) {
     applyPlanBeforeActMode(normalizePlanBeforeActMode({
@@ -1650,7 +1651,7 @@ async function handleContextMenuAsk(info, tab) {
 }
 
 chrome.contextMenus?.onClicked?.addListener?.((info, tab) => {
-  handleContextMenuAsk(info, tab).catch(() => {});
+  handleContextMenuAsk(info, tab).catch(() => { });
 });
 
 // Only this instance knows which runs are live in memory, so it owns the
@@ -2128,7 +2129,7 @@ async function stopActiveRunBeforeConversationClear(tabId) {
     // first leaves the per-tab run guard active while the UI already looks like
     // a fresh chat, so the next send fails with "run already in progress".
     if (activeStart?.promise) {
-      await activeStart.promise.catch(() => {});
+      await activeStart.promise.catch(() => { });
     }
     // Direct chat/chat_stream callers do not have a detached-start promise.
     // Do not clear their conversation until processMessage's finally block has
@@ -3957,7 +3958,7 @@ async function handleMessage(msg, sender) {
         await providerManager.load();
       } catch (error) {
         if (previousEnabled !== msg.enabled) {
-          await chrome.storage.local.set({ helpImproveWebBrain: previousEnabled }).catch(() => {});
+          await chrome.storage.local.set({ helpImproveWebBrain: previousEnabled }).catch(() => { });
         }
         throw error;
       }
@@ -4091,6 +4092,22 @@ async function handleMessage(msg, sender) {
         });
         return { success: true, model: result.model };
       } catch (error) { return { success: false, error: error.message }; }
+    }
+
+    case 'test_captcha_provider_balance': {
+      try {
+        return { ok: true, ...await getAdditionalCaptchaBalance(msg.provider, String(msg.apiKey || '').trim()) };
+      } catch (error) { return { ok: false, error: error.message }; }
+    }
+
+    case 'test_two_captcha_balance': {
+      try {
+        const key = String(msg.apiKey || '').trim();
+        if (!key) return { ok: false, error: 'No API key provided' };
+        return { ok: true, ...await getTwoCaptchaBalance(key) };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
     }
 
     case 'test_capsolver_balance': {

@@ -614,7 +614,6 @@ export default {
   "st.captcha.need_key": "CAP- で始まる有効な CapSolver API キーを入力してください。",
   "st.captcha.balance_ok": "OK — 残高: {balance}",
   "st.captcha.balance_fail": "失敗: {error}",
-  "st.captcha.security_html": "<strong>ご注意:</strong> API キーはブラウザのローカルストレージに<strong>平文</strong>で保存されます。CapSolver は解くたびにあなたのアカウントに課金します。エージェントは CAPTCHA が実際にステップをブロックしたときにのみ呼び出します（1 回の遭遇につき最大 1 回 — 失敗しても再試行はしません）。一部のサイトの利用規約は自動的な CAPTCHA の解決を禁止しています。ご自身の判断でご利用ください。",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'おすすめのアクション',
@@ -923,6 +922,7 @@ export default {
   "sp.memory.error": "メモリエラー: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "保存されませんでした。整理後のテキストが空か、秘密情報（パスワード、API キー、トークン）が含まれているようです。",
   "sp.memory.reason.not_found": "その ID の保存済みメモリはありません。",
+  'sp.slash.workflow_editor': "ワークフローエディター",
   "sp.slash.workflows": "保存済みワークフローを一覧・管理",
   "sp.slash.teach": "操作を保存済みワークフローとして記録",
   "sp.slash.run_workflow": "保存済みワークフローを ID で実行",

@@ -614,7 +614,6 @@ export default {
   "st.captcha.need_key": "请输入以 CAP- 开头的有效 CapSolver API 密钥。",
   "st.captcha.balance_ok": "正常 —— 余额：{balance}",
   "st.captcha.balance_fail": "失败：{error}",
-  "st.captcha.security_html": "<strong>请注意：</strong>API 密钥以<strong>明文</strong>形式保存在浏览器的本地存储中。CapSolver 会对每次解决向你的账户计费；代理只会在 CAPTCHA 实际阻塞某一步时才调用它（每次遇到最多调用一次 —— 失败后不会重试）。某些站点的服务条款禁止自动解决 CAPTCHA；请自行判断。",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': '建议操作',
@@ -923,6 +922,7 @@ export default {
   "sp.memory.error": "记忆错误：{msg}",
   "sp.memory.reason.invalid_or_sensitive": "未保存：清理后的文本为空，或看起来包含机密信息（密码、API 密钥、令牌）。",
   "sp.memory.reason.not_found": "没有使用该 ID 的已保存记忆。",
+  'sp.slash.workflow_editor': "工作流编辑器",
   "sp.slash.workflows": "列出和管理已保存的工作流",
   "sp.slash.teach": "将您的操作记录为已保存的工作流",
   "sp.slash.run_workflow": "按 ID 运行已保存的工作流",

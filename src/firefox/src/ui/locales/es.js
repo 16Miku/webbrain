@@ -614,7 +614,6 @@ export default {
   "st.captcha.need_key": "Introduce una clave de API de CapSolver válida que empiece por CAP-.",
   "st.captcha.balance_ok": "OK — saldo: {balance}",
   "st.captcha.balance_fail": "Falló: {error}",
-  "st.captcha.security_html": "<strong>Atención:</strong> la clave de API se guarda <strong>en texto plano</strong> en el almacenamiento local del navegador. CapSolver cobra a tu cuenta por cada resolución; el agente solo la llamará cuando un CAPTCHA bloquee realmente un paso (como máximo una vez por encuentro: no reintentará tras un fallo). Los términos de servicio de algunos sitios prohíben la resolución automatizada de CAPTCHAs; usa tu criterio.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'Acciones sugeridas',
@@ -923,6 +922,7 @@ export default {
   "sp.memory.error": "Error de memoria: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "No se guardó: el texto queda vacío tras la limpieza o parece contener un secreto (contraseña, clave de API o token).",
   "sp.memory.reason.not_found": "Ninguna memoria guardada tiene ese ID.",
+  'sp.slash.workflow_editor': "Editor de flujos de trabajo",
   "sp.slash.workflows": "Listar y administrar flujos de trabajo guardados",
   "sp.slash.teach": "Graba tus acciones como un flujo de trabajo guardado",
   "sp.slash.run_workflow": "Ejecutar un flujo guardado por ID",

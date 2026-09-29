@@ -1,8 +1,9 @@
-export const AUTO_VISION_PROVIDER_IDS = new Set(['llamacpp', 'lmstudio', 'localai']);
+export const AUTO_VISION_PROVIDER_IDS = new Set(['llamacpp', 'ods', 'lmstudio', 'localai']);
 export const VISION_MODES = new Set(['auto', 'on', 'off']);
 
 const DETECTION_SOURCES = {
   llamacpp: 'llamacpp_props',
+  ods: 'llamacpp_props',
   lmstudio: 'lmstudio_models',
   localai: 'localai_capabilities',
 };

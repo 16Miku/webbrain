@@ -614,7 +614,6 @@ export default {
   "st.captcha.need_key": "Maglagay ng wastong CapSolver API key na nagsisimula sa CAP-.",
   "st.captcha.balance_ok": "OK — balanse: {balance}",
   "st.captcha.balance_fail": "Nabigo: {error}",
-  "st.captcha.security_html": "<strong>Paalala:</strong> ang API key ay iniimbak <strong>bilang plaintext</strong> sa local storage ng browser. Naniningil ang CapSolver sa iyong account sa bawat solve; tatawag lamang dito ang ahente kapag tunay na hinaharang ng CAPTCHA ang isang hakbang (pinakamarami ay isang beses bawat pagkakataon — hindi ito mag-uulit kapag nabigo). Ang mga terms of service ng ilang site ay nagbabawal sa automated na paglutas ng CAPTCHA; gamitin ang iyong pagpapasya.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'Mga iminungkahing aksyon',
@@ -923,6 +922,7 @@ export default {
   "sp.memory.error": "Error sa memory: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Hindi na-save: walang laman ang text pagkatapos linisin o mukhang may lihim (password, API key, token).",
   "sp.memory.reason.not_found": "Walang naka-save na memory na may ganoong ID.",
+  'sp.slash.workflow_editor': "Editor ng workflow",
   "sp.slash.workflows": "Ilista at pamahalaan ang mga naka-save na workflow",
   "sp.slash.teach": "I-record ang iyong mga kilos bilang naka-save na workflow",
   "sp.slash.run_workflow": "Patakbuhin ang naka-save na workflow ayon sa ID",

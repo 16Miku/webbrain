@@ -41,6 +41,9 @@ import {
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
 import { testImageGenProvider } from './agent/fal-media.js';
+import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
+import { getAdditionalCaptchaBalance } from './agent/captcha-additional-providers.js';
+import { getTwoCaptchaBalance } from './agent/two-captcha.js';
 import { createSystemOneJudge } from './agent/systemone-judge.js';
 import {
   SELECTION_CONTEXT_SOURCE_GROUNDING,
@@ -121,7 +124,7 @@ let emergencyDownloads = null;
 // eviction registers its in-memory state first; the Traces page can also
 // request an immediate scan via WB_TRACE_REPAIR_STALE_RUNS.
 const TRACE_REPAIR_STARTUP_DELAY_MS = 15_000;
-setTimeout(() => { void workflowTrace.repairStaleRuns().catch(() => {}); }, TRACE_REPAIR_STARTUP_DELAY_MS);
+setTimeout(() => { void workflowTrace.repairStaleRuns().catch(() => { }); }, TRACE_REPAIR_STARTUP_DELAY_MS);
 
 function emergencyDownloadController() {
   if (!emergencyDownloads) {
@@ -166,7 +169,7 @@ agent.setConversationScopeChangeListener((tabId, state) => {
     tabId,
     type: 'conversation_scope',
     data: state,
-  }).catch(() => {});
+  }).catch(() => { });
 });
 const userMemoryStore = createUserMemoryStore(browser.storage.local);
 const savedWorkflowStore = createSavedWorkflowStore(browser.storage.local);
@@ -199,7 +202,7 @@ const scheduler = new ScheduledJobManager({
       tabId,
       type,
       data,
-    }).catch(() => {});
+    }).catch(() => { });
     maybeFlashScheduledTerminalEvent(tabId, type, data);
   },
   showIndicator: (tabId) => sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS'),
@@ -231,7 +234,7 @@ const selectionShortcutLocaleReady = browser.storage.local.get({ wbLocale: '' })
   .then((stored) => {
     selectionShortcutLocale = resolveStoredSelectionShortcutLocale(stored?.wbLocale);
   })
-  .catch(() => {});
+  .catch(() => { });
 
 function getContextMenuApi() {
   return browser.contextMenus || browser.menus || null;
@@ -386,7 +389,7 @@ async function createContextMenus() {
   };
 
   try {
-    await Promise.resolve(api.removeAll()).catch(() => {});
+    await Promise.resolve(api.removeAll()).catch(() => { });
     create();
   } catch {
     create();
@@ -431,7 +434,7 @@ async function loadClarifyTimeout() {
       updates.clarifyTimeoutSec = CLARIFY_TIMEOUT_OFF_SLIDER;
       stored.clarifyTimeoutSec = CLARIFY_TIMEOUT_OFF_SLIDER;
     }
-    await browser.storage.local.set(updates).catch(() => {});
+    await browser.storage.local.set(updates).catch(() => { });
   }
   agent.clarifyTimeoutSec = normalizeClarifyTimeoutSec(
     stored.clarifyTimeoutSec != null ? stored.clarifyTimeoutSec : 60,
@@ -456,13 +459,13 @@ async function loadResearchEscalation() {
   agent.researchEscalationEnabled = stored.researchEscalationEnabled === true;
   agent.researchEscalationEngine = String(stored.researchEscalationEngine || 'chatgpt');
 }
-const researchEscalationReady = loadResearchEscalation().catch(() => {});
+const researchEscalationReady = loadResearchEscalation().catch(() => { });
 
 async function loadStrictSecretMode() {
   const stored = await browser.storage.local.get('strictSecretMode').catch(() => ({}));
   agent.strictSecretMode = stored?.strictSecretMode === true;
 }
-const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
+const strictSecretModeReady = loadStrictSecretMode().catch(() => { });
 
 async function loadProfile() {
   const stored = await browser.storage.local.get(['profileEnabled', 'profileText']);
@@ -478,7 +481,7 @@ async function loadScreenshotRedaction() {
   const stored = await browser.storage.local.get('screenshotRedaction');
   if (stored.screenshotRedaction != null) agent.screenshotRedaction = !!stored.screenshotRedaction;
 }
-const screenshotRedactionReady = loadScreenshotRedaction().catch(() => {});
+const screenshotRedactionReady = loadScreenshotRedaction().catch(() => { });
 
 // Image budget (issue #311): screenshot quality + how many screenshots the
 // agent may capture per turn, and the max image dimension. Defaults preserve
@@ -487,7 +490,7 @@ async function loadImageBudget() {
   const stored = await browser.storage.local.get(['imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   agent.applyImageBudgetFromStorage(stored);
 }
-const imageBudgetReady = loadImageBudget().catch(() => {});
+const imageBudgetReady = loadImageBudget().catch(() => { });
 
 async function syncAgentUserMemoryFromStorage() {
   const [store, settings] = await Promise.all([
@@ -504,7 +507,7 @@ async function syncAgentUserMemoryFromStorage() {
   });
   return store;
 }
-const userMemoryReady = syncAgentUserMemoryFromStorage().catch(() => {});
+const userMemoryReady = syncAgentUserMemoryFromStorage().catch(() => { });
 
 const USER_MEMORY_EXTRACTION_MAX_QUEUE = 10;
 const USER_MEMORY_EXTRACTION_DELAY_MS = 1200;
@@ -538,7 +541,7 @@ function recordClarificationMemoryCandidate(tabId, question, answer) {
   if (!normalizedAnswer) return;
   const normalizedQuestion = normalizeUserMemoryText(question, 500);
   if (looksLikeSensitiveMemoryText(normalizedAnswer)
-      || (normalizedQuestion && looksLikeSensitiveMemoryText(normalizedQuestion))) {
+    || (normalizedQuestion && looksLikeSensitiveMemoryText(normalizedQuestion))) {
     return;
   }
   const context = getUserMemoryTurnContext(tabId);
@@ -625,7 +628,7 @@ async function isUserMemoryFormCaptureEnabled() {
 
 async function withUserMemoryExtractionQueueLock(task) {
   const run = userMemoryExtractionQueueLock.then(task, task);
-  userMemoryExtractionQueueLock = run.catch(() => {});
+  userMemoryExtractionQueueLock = run.catch(() => { });
   return run;
 }
 
@@ -691,13 +694,13 @@ async function markUserMemoryExtractionJobFailed(jobId) {
 
 async function withUserMemoryStoreLock(task) {
   const run = userMemoryStoreLock.then(task, task);
-  userMemoryStoreLock = run.catch(() => {});
+  userMemoryStoreLock = run.catch(() => { });
   return run;
 }
 
 async function withSavedWorkflowStoreLock(task) {
   const run = savedWorkflowStoreLock.then(task, task);
-  savedWorkflowStoreLock = run.catch(() => {});
+  savedWorkflowStoreLock = run.catch(() => { });
   return run;
 }
 
@@ -746,7 +749,7 @@ function notifyUserMemoryCreated() {
   browser.runtime.sendMessage({
     target: 'sidepanel',
     action: 'user_memory_created',
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 function scheduleUserMemoryExtractionDrain(delayMs = USER_MEMORY_EXTRACTION_DELAY_MS) {
@@ -957,15 +960,13 @@ async function loadCustomSkills() {
 }
 const customSkillsReady = loadCustomSkills();
 
-// A valid key plus explicit consent enables CapSolver. Requiring the existing
-// boolean preserves legacy profiles that saved a key while the old switch was
-// off; pressing Save Key in the new UI sets consent to true.
+// Local browsers require a valid key and explicit consent. Managed Cloud
+// browsers use the broker flag and never use a CapSolver key from storage.
 async function loadCaptchaSolver() {
-  const stored = await browser.storage.local.get(['capsolverApiKey', 'captchaSolverEnabled']);
-  agent.captchaSolverEnabled = isCapsolverEnabled(
-    stored.capsolverApiKey,
-    stored.captchaSolverEnabled,
-  );
+  const stored = await browser.storage.local.get(CAPTCHA_SETTINGS_KEYS);
+  const providers = getCaptchaProviders(stored);
+  agent.captchaProviderIds = providers.map(provider => provider.id);
+  agent.captchaSolverEnabled = providers.length > 0;
 }
 loadCaptchaSolver();
 
@@ -1048,14 +1049,14 @@ browser.runtime.onInstalled.addListener(async (details) => {
   await loadMaxSteps();
   await loadClarifyTimeout();
   await loadAutoScreenshot();
-  await syncAgentUserMemoryFromStorage().catch(() => {});
+  await syncAgentUserMemoryFromStorage().catch(() => { });
   scheduleUserMemoryExtractionDrain(5000);
   console.log('[WebBrain] Extension installed, providers loaded.');
 });
 
 browser.runtime.onStartup?.addListener?.(async () => {
   await createContextMenus();
-  syncAgentUserMemoryFromStorage().catch(() => {});
+  syncAgentUserMemoryFromStorage().catch(() => { });
   scheduleUserMemoryExtractionDrain(5000);
 });
 
@@ -1063,10 +1064,10 @@ browser.runtime.onStartup?.addListener?.(async () => {
 browser.storage.onChanged.addListener((changes) => {
   if (changes.wbLocale) {
     selectionShortcutLocale = normalizeSelectionShortcutLocale(changes.wbLocale.newValue);
-    createContextMenus().catch(() => {});
+    createContextMenus().catch(() => { });
   }
-  if (PROFILE_SYNC_DATA_KEYS.some((key) => changes[key])) profileSync.noteChanges(changes).catch(() => {});
-  if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => {});
+  if (PROFILE_SYNC_DATA_KEYS.some((key) => changes[key])) profileSync.noteChanges(changes).catch(() => { });
+  if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => { });
   if (changes.maxAgentSteps) {
     agent.maxSteps = normalizeMaxAgentSteps(changes.maxAgentSteps.newValue);
   }
@@ -1154,10 +1155,10 @@ browser.storage.onChanged.addListener((changes) => {
     }
     refreshPrompts = true;
   }
-  if (changes.capsolverApiKey || changes.captchaSolverEnabled) {
+  if (CAPTCHA_SETTINGS_KEYS.some(key => changes[key])) {
     loadCaptchaSolver()
       .then(() => agent._refreshSystemPrompts())
-      .catch((error) => console.warn('[WebBrain] CapSolver setting could not be refreshed', error));
+      .catch((error) => console.warn('[WebBrain] CAPTCHA settings could not be refreshed', error));
   }
   if (changes.planBeforeActMode || changes.planBeforeAct) {
     applyPlanBeforeActMode(normalizePlanBeforeActMode({
@@ -1225,7 +1226,7 @@ async function loadWebBrainGroups() {
 function saveWebBrainGroups() {
   browser.storage.session?.set({
     [WB_GROUPS_KEY]: Array.from(webBrainGroupByWindow.entries()),
-  }).catch(() => {});
+  }).catch(() => { });
 }
 loadWebBrainGroups();
 
@@ -1296,8 +1297,8 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 
   browser.tabs.get(tabId).then((tab) => {
     if (tab?.url !== installGuideUrl) return;
-    ensureWebBrainGroup(tab).catch(() => {});
-  }).catch(() => {});
+    ensureWebBrainGroup(tab).catch(() => { });
+  }).catch(() => { });
 });
 
 // Tracks the pending 250 ms retry timer per tab so it can be cancelled if the
@@ -1313,21 +1314,21 @@ function notifySidePanelOfContextMenuPrompt(payload) {
     prompt: payload,
   };
   clearTimeout(pendingContextMenuNotifications.get(tabId));
-  browser.runtime.sendMessage(msg).catch(() => {});
+  browser.runtime.sendMessage(msg).catch(() => { });
   const timerId = setTimeout(() => {
     pendingContextMenuNotifications.delete(tabId);
-    browser.runtime.sendMessage(msg).catch(() => {});
+    browser.runtime.sendMessage(msg).catch(() => { });
   }, 250);
   pendingContextMenuNotifications.set(tabId, timerId);
 }
 
 function openSidebarForContextMenu(tab) {
   if (browser.sidebarAction?.open) {
-    browser.sidebarAction.open().catch(() => {});
+    browser.sidebarAction.open().catch(() => { });
   } else {
-    browser.sidebarAction?.toggle?.().catch(() => {});
+    browser.sidebarAction?.toggle?.().catch(() => { });
   }
-  if (tab?.id) ensureWebBrainGroup(tab).catch(() => {});
+  if (tab?.id) ensureWebBrainGroup(tab).catch(() => { });
 }
 
 async function handleContextMenuAsk(info, tab) {
@@ -1374,12 +1375,12 @@ async function handleContextMenuAsk(info, tab) {
   openSidebarForContextMenu(tab);
   try {
     await contextMenuStorage.save(tab.id, payload);
-  } catch {}
+  } catch { }
   notifySidePanelOfContextMenuPrompt(payload);
 }
 
 getContextMenuApi()?.onClicked?.addListener?.((info, tab) => {
-  handleContextMenuAsk(info, tab).catch(() => {});
+  handleContextMenuAsk(info, tab).catch(() => { });
 });
 getContextMenuApi()?.onShown?.addListener?.((info, tab) => {
   const menuApi = getContextMenuApi();
@@ -1390,7 +1391,7 @@ getContextMenuApi()?.onShown?.addListener?.((info, tab) => {
     try {
       await menuApi?.update?.(CONTEXT_MENU_OPEN_PDF_VIEWER_ID, { visible });
       await menuApi?.refresh?.();
-    } catch {}
+    } catch { }
   })();
 });
 browser.tabs.onRemoved?.addListener?.((tabId) => pdfResponseTabs.delete(tabId));
@@ -1450,7 +1451,7 @@ function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
   (async () => {
     try {
       await contextMenuStorage.save(tab.id, payload);
-    } catch {}
+    } catch { }
     notifySidePanelOfContextMenuPrompt(payload);
     return { ok: true, queued: true, requiresManualOpen: true };
   })().then(sendResponse).catch((error) => {
@@ -1514,10 +1515,10 @@ browser.tabs.onRemoved.addListener((tabId) => {
   clearTimeout(pendingContextMenuNotifications.get(tabId));
   pendingContextMenuNotifications.delete(tabId);
   contextMenuStorage.cleanup(tabId);
-  tabChatHandoff.clear(tabId).catch(() => {});
-  clearStagedScreenshots(browser.storage.local, tabId).catch(() => {});
-  scheduler.cancelForTab(tabId).catch(() => {});
-  withTeacherSessionStoreLock(() => teacherSessionStore.clear(tabId)).catch(() => {});
+  tabChatHandoff.clear(tabId).catch(() => { });
+  clearStagedScreenshots(browser.storage.local, tabId).catch(() => { });
+  scheduler.cancelForTab(tabId).catch(() => { });
+  withTeacherSessionStoreLock(() => teacherSessionStore.clear(tabId)).catch(() => { });
   try { agent._cleanupTab(tabId); } catch { /* ignore */ }
 });
 
@@ -1532,11 +1533,11 @@ function invalidateContextMenuForTab(tabId) {
     target: 'sidepanel',
     action: 'context_menu_tab_navigated',
     tabId,
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 function recordTeacherNavigation(tabId, url, options) {
-  teacherRunInterlock.navigation(tabId, url, options).catch(() => {});
+  teacherRunInterlock.navigation(tabId, url, options).catch(() => { });
 }
 
 const TEACHER_EXPLICIT_NAVIGATION_TYPES = new Set([
@@ -1546,7 +1547,7 @@ const TEACHER_EXPLICIT_NAVIGATION_TYPES = new Set([
 browser.webNavigation?.onCommitted?.addListener?.((details) => {
   if (details.frameId !== 0) return;
   agent.clearLastTypeFieldIdent(details.tabId);
-  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => { });
   recordTeacherNavigation(details.tabId, details.url, {
     force: TEACHER_EXPLICIT_NAVIGATION_TYPES.has(details.transitionType),
   });
@@ -1555,14 +1556,14 @@ browser.webNavigation?.onCommitted?.addListener?.((details) => {
 browser.webNavigation?.onHistoryStateUpdated?.addListener?.((details) => {
   if (details.frameId !== 0) return;
   agent.clearLastTypeFieldIdent(details.tabId);
-  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => { });
   recordTeacherNavigation(details.tabId, details.url);
   invalidateContextMenuForTab(details.tabId);
 });
 browser.webNavigation?.onReferenceFragmentUpdated?.addListener?.((details) => {
   if (details.frameId !== 0) return;
   agent.clearLastTypeFieldIdent(details.tabId);
-  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
+  agent.observeCloudflareManagedChallengeNavigation(details).catch(() => { });
   invalidateContextMenuForTab(details.tabId);
 });
 
@@ -1572,10 +1573,10 @@ browser.webNavigation?.onReferenceFragmentUpdated?.addListener?.((details) => {
 // detection and embedded widgets may use the same managed endpoint.
 const observeCloudflareManagedChallengeResponse = details => {
   trackPdfResponse(details);
-  agent.observeCloudflareManagedChallengeResponse(details).catch(() => {});
+  agent.observeCloudflareManagedChallengeResponse(details).catch(() => { });
 };
 const observeCloudflareChallengePlatformRequest = details => {
-  agent.observeCloudflareChallengePlatformRequest(details).catch(() => {});
+  agent.observeCloudflareChallengePlatformRequest(details).catch(() => { });
 };
 browser.webRequest?.onHeadersReceived?.addListener?.(
   observeCloudflareManagedChallengeResponse,
@@ -1634,7 +1635,7 @@ function extractApiReplayBody(requestBody) {
       const text = params.toString();
       return text.length <= API_REPLAY_BODY_LIMIT ? text : null;
     }
-  } catch (_) {}
+  } catch (_) { }
   return null;
 }
 
@@ -1760,7 +1761,7 @@ browser.tabs.onRemoved.addListener((tabId) => {
 browser.browserAction.onClicked.addListener((tab) => {
   browser.sidebarAction.toggle();
   // Async — sidebar toggle doesn't need to wait on grouping.
-  if (tab?.id) ensureWebBrainGroup(tab).catch(() => {});
+  if (tab?.id) ensureWebBrainGroup(tab).catch(() => { });
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1807,8 +1808,8 @@ function startIndicatorHeartbeat(tabId) {
             sendIndicatorMessage(tabId, 'WB_SHOW_AGENT_INDICATORS');
           }
         })
-        .catch(() => {});
-    } catch {}
+        .catch(() => { });
+    } catch { }
   }, INDICATOR_HEARTBEAT_INTERVAL_MS);
   indicatorHeartbeatTimers.set(tabId, timer);
 }
@@ -1896,7 +1897,7 @@ async function showCompletionNotification(tabId, success) {
   if (!notificationId) return;
   setTimeout(() => {
     completionNotificationFocusHandlers.delete(notificationId);
-    browser.notifications.clear(notificationId).catch(() => {});
+    browser.notifications.clear(notificationId).catch(() => { });
   }, COMPLETION_NOTIFICATION_VISIBLE_MS);
   if (Number.isInteger(tabId)) {
     completionNotificationFocusHandlers.set(notificationId, async () => {
@@ -1913,7 +1914,7 @@ browser.tabs.onActivated.addListener(({ tabId } = {}) => {
   flashedBadgeTabs.delete(tabId);
   // Clear unconditionally so badge cleanup never depends on volatile state.
   // Resetting the per-tab override is idempotent and restores any global badge.
-  browser.browserAction.setBadgeText({ tabId, text: '' }).catch(() => {});
+  browser.browserAction.setBadgeText({ tabId, text: '' }).catch(() => { });
 });
 
 // Focusing a window does not fire tabs.onActivated for its already-active
@@ -2059,7 +2060,7 @@ function persistRunUiSnapshot(tabId, snapshot) {
   runUiPersistenceQueues.set(tabId, write);
   write.finally(() => {
     if (runUiPersistenceQueues.get(tabId) === write) runUiPersistenceQueues.delete(tabId);
-  }).catch(() => {});
+  }).catch(() => { });
   return write;
 }
 
@@ -2178,7 +2179,7 @@ async function getRunUiSnapshot(tabId) {
     if (snapshot && typeof snapshot === 'object') {
       return runUiJournal.restore(tabId, snapshot);
     }
-  } catch {}
+  } catch { }
   return null;
 }
 
@@ -2187,11 +2188,11 @@ function clearRunUiSnapshot(tabId) {
   runUiJournal.clear(tabId);
   runUiPersistenceFailures.delete(tabId);
   const previous = runUiPersistenceQueues.get(tabId) || Promise.resolve();
-  const removal = previous.catch(() => {}).then(() => browser.storage.session?.remove(RUN_UI_PREFIX + tabId));
+  const removal = previous.catch(() => { }).then(() => browser.storage.session?.remove(RUN_UI_PREFIX + tabId));
   runUiPersistenceQueues.set(tabId, removal);
   removal.finally(() => {
     if (runUiPersistenceQueues.get(tabId) === removal) runUiPersistenceQueues.delete(tabId);
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 function sendAgentUpdate(tabId, requestId, type, data) {
@@ -2201,7 +2202,7 @@ function sendAgentUpdate(tabId, requestId, type, data) {
     target: 'sidepanel', action: 'agent_update', tabId, requestId,
     runId: event?.runId || agent.currentRunId.get(tabId) || null,
     seq: event?.seq || null, type, data: event?.data ?? data,
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 function assertNoActiveTabRun(tabId) {
@@ -2293,7 +2294,7 @@ async function stopActiveRunBeforeConversationClear(tabId) {
     // first leaves the per-tab run guard active while the UI already looks like
     // a fresh chat, so the next send fails with "run already in progress".
     if (activeStart?.promise) {
-      await activeStart.promise.catch(() => {});
+      await activeStart.promise.catch(() => { });
     }
     // Direct chat/chat_stream callers do not have a detached-start promise.
     // Do not clear their conversation until processMessage's finally block has
@@ -2320,8 +2321,8 @@ function acquireRunKeepalive() {
   let released = false;
   const touch = () => {
     try {
-      browser.runtime.getPlatformInfo().catch(() => {});
-    } catch {}
+      browser.runtime.getPlatformInfo().catch(() => { });
+    } catch { }
   };
   touch();
   const timer = setInterval(touch, RUN_KEEPALIVE_INTERVAL_MS);
@@ -2375,7 +2376,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
     flashTabAttention({
       tabId,
       success: liveStatus === 'completed' && snapshot.runSucceeded === true,
-    }).catch(() => {});
+    }).catch(() => { });
   }
   const submittedTurnDurable = snapshot.kind === 'continue'
     || await agent.hasDurableSubmittedTurn(
@@ -2411,7 +2412,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       submittedTurnDurable,
       attachmentDeliveryState,
     },
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 // Stop button on the page → abort the agent run for that tab. Mirrors
@@ -2670,9 +2671,9 @@ async function handleMessage(msg, sender) {
       const compiled = draft?.conversationId === conversationId
         ? finalizeSavedWorkflowDraft(draft, { name: msg.name })
         : await compileLatestSuccessfulWorkflow(workflowTrace, {
-            conversationId,
-            name: msg.name,
-          });
+          conversationId,
+          name: msg.name,
+        });
       if (!compiled.workflow) return { ok: false, ...compiled };
       const saved = await withSavedWorkflowStoreLock(() => savedWorkflowStore.put(compiled.workflow));
       return { ok: saved.changed, workflow: saved.workflow, warnings: compiled.warnings, reason: saved.reason || '' };
@@ -3058,7 +3059,7 @@ async function handleMessage(msg, sender) {
           handoffOwnerId: tabChatClearResult.handoffOwnerId,
           handoffGeneration: tabChatClearResult.handoffGeneration,
           clearedContextMenuPromptId,
-        }).catch(() => {});
+        }).catch(() => { });
       }
       return { ok: true, clearedContextMenuPromptId };
     }
@@ -3277,7 +3278,7 @@ async function handleMessage(msg, sender) {
           tabId,
           handoffOwnerId: result.handoffOwnerId,
           handoffGeneration: result.handoffGeneration,
-        }).catch(() => {});
+        }).catch(() => { });
       }
       return result;
     }
@@ -3291,7 +3292,7 @@ async function handleMessage(msg, sender) {
       const tabId = msg.tabId || sender.tab?.id || null;
       let tab = null;
       if (tabId != null) {
-        try { tab = await browser.tabs.get(tabId); } catch {}
+        try { tab = await browser.tabs.get(tabId); } catch { }
       }
       return await scheduler.createTaskJob({
         tabId,
@@ -3307,7 +3308,7 @@ async function handleMessage(msg, sender) {
       const tabId = msg.tabId || sender.tab?.id || null;
       let tab = null;
       if (tabId != null) {
-        try { tab = await browser.tabs.get(tabId); } catch {}
+        try { tab = await browser.tabs.get(tabId); } catch { }
       }
       return await scheduler.createWatchJob({
         args: msg.watch || msg.args || {},
@@ -3407,7 +3408,7 @@ async function handleMessage(msg, sender) {
         await providerManager.load();
       } catch (error) {
         if (previousEnabled !== msg.enabled) {
-          await browser.storage.local.set({ helpImproveWebBrain: previousEnabled }).catch(() => {});
+          await browser.storage.local.set({ helpImproveWebBrain: previousEnabled }).catch(() => { });
         }
         throw error;
       }
@@ -3484,6 +3485,22 @@ async function handleMessage(msg, sender) {
         });
         return { success: true, model: result.model };
       } catch (error) { return { success: false, error: error.message }; }
+    }
+
+    case 'test_captcha_provider_balance': {
+      try {
+        return { ok: true, ...await getAdditionalCaptchaBalance(msg.provider, String(msg.apiKey || '').trim()) };
+      } catch (error) { return { ok: false, error: error.message }; }
+    }
+
+    case 'test_two_captcha_balance': {
+      try {
+        const key = String(msg.apiKey || '').trim();
+        if (!key) return { ok: false, error: 'No API key provided' };
+        return { ok: true, ...await getTwoCaptchaBalance(key) };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
     }
 
     case 'test_capsolver_balance': {
