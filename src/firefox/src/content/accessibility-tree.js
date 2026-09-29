@@ -1635,7 +1635,7 @@
           '[data-overlay]',
           '.modal.show',
           '.modal-overlay',
-          '[class*="modal"][class*="open"]',
+          '.modal.open',
           '[class*="DialogContent"]',
           '[class*="ModalContent"]',
           '[data-state="open"][role="dialog"]',

@@ -340,7 +340,7 @@
         if (!targetInTopDock) top = Math.max(top, parsePadding(bodyStyle.scrollPaddingTop));
         if (!targetInBottomDock) bottom = Math.max(bottom, parsePadding(bodyStyle.scrollPaddingBottom));
       }
-      const candidates = doc.querySelectorAll('header, nav, [role="banner"], [role="navigation"], [class*="header" i], [class*="navbar" i], [class*="toolbar" i]');
+      const candidates = doc.querySelectorAll('header, nav, [role="banner"], [role="navigation"], [role="toolbar"], [class*="header" i], [class*="navbar" i], [class*="toolbar" i]');
       const vw = view.innerWidth || 800;
       const vh = view.innerHeight || 600;
       const topRects = [];

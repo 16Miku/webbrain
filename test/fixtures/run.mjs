@@ -1628,16 +1628,22 @@ function assertGmailComposeRecipientTree(tree, label) {
 
 async function assertNestedModalHoistedOnce(page, sourcePath, label) {
   await setupAccessibilityTreeHtml(page, `<!doctype html>
-    <div class="modal-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.3)">
-      <div role="dialog" aria-label="Review dialog" style="background:white;padding:20px">
-        <button>Confirm layered action</button>
+    <body class="modal-open">
+      <button>Background control</button>
+      <div class="modal-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.3)">
+        <div role="dialog" aria-label="Review dialog" style="background:white;padding:20px">
+          <button>Confirm layered action</button>
+        </div>
       </div>
-    </div>`, sourcePath);
+    </body>`, sourcePath);
   const tree = await page.evaluate(() => window.__generateAccessibilityTree('all', 10, null, null, 1));
   const content = String(tree?.pageContent || '');
   const matches = content.match(/button "Confirm layered action"/g) || [];
-  if (!content.includes('[open overlays') || matches.length !== 1) {
-    throw new Error(`${label}: nested modal should appear once in the hoisted tree: ${content}`);
+  const dialogAt = content.indexOf('dialog "Review dialog"');
+  const backgroundAt = content.indexOf('button "Background control"');
+  if (!content.includes('[open overlays') || matches.length !== 1
+    || dialogAt < 0 || backgroundAt < 0 || dialogAt > backgroundAt) {
+    throw new Error(`${label}: body.modal-open must not displace or duplicate the dialog: ${content}`);
   }
 }
 
@@ -2385,16 +2391,16 @@ async function assertStackedDockedBars(page, browserKind) {
     <style>
       body { margin: 0; height: 2000px; }
       header { position: fixed; top: 0; width: 100%; height: 64px; background: white; }
-      nav { position: fixed; top: 64px; width: 100%; height: 48px; background: white; }
+      .secondary-bar { position: fixed; top: 64px; width: 100%; height: 48px; background: white; }
       .toolbar-lower { position: fixed; bottom: 0; width: 100%; height: 50px; background: white; }
-      .toolbar-upper { position: fixed; bottom: 50px; width: 100%; height: 50px; background: white; }
+      .upper-bar { position: fixed; bottom: 50px; width: 100%; height: 50px; background: white; }
       #top-target { position: absolute; top: 376px; left: 30px; height: 30px; }
       #bottom-target { position: absolute; top: calc(300px + 100vh - 80px); left: 30px; height: 30px; }
     </style>
     <header>Primary header</header>
-    <nav><button id="secondary-control" onclick="window.__secondaryClicked = true">Secondary control</button></nav>
+    <div class="secondary-bar" role="toolbar"><button id="secondary-control" onclick="window.__secondaryClicked = true">Secondary control</button></div>
     <div class="toolbar-lower">Lower toolbar</div>
-    <div class="toolbar-upper"><button id="upper-control" onclick="window.__upperClicked = true">Upper control</button></div>
+    <div class="upper-bar" role="toolbar"><button id="upper-control" onclick="window.__upperClicked = true">Upper control</button></div>
     <button id="top-target" onclick="window.__topTargetClicked = true">Covered by secondary header</button>
     <button id="bottom-target" onclick="window.__bottomTargetClicked = true">Covered by upper toolbar</button>
   `, browserKind);
