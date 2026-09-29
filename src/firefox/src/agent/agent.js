@@ -32759,11 +32759,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const rootDocument = documents.find(d => d.frameId === 0 && d.url === websiteURL);
           if (!rootDocument) return noDispatchFailure('Could not bind this page document before the native CAPTCHA request.');
           const previous = this._nativeCaptchaSolutions.get(tabId);
-          const previousRoot = previous?.documents?.find(d => d.frameId === 0);
-          if (previousRoot?.url === rootDocument.url && previousRoot.timeOrigin === rootDocument.timeOrigin) {
+          const dispatchedTimeOrigins = previous?.dispatchedTimeOrigins || new Set(previous?.documents
+            ?.filter(d => d.frameId === 0).map(d => d.timeOrigin) || []);
+          if (dispatchedTimeOrigins.has(rootDocument.timeOrigin)) {
             return noDispatchFailure('A native solve was already dispatched for this page document. Use its result or ask for manual completion; do not spend again.');
           }
-          const record = { pageUrl: websiteURL, createdAt: Date.now(), applied: false, documents };
+          dispatchedTimeOrigins.add(rootDocument.timeOrigin);
+          const record = { pageUrl: websiteURL, createdAt: Date.now(), applied: false, documents, dispatchedTimeOrigins };
           this._nativeCaptchaSolutions.set(tabId, record);
           dispatched = true;
           const result = await solveNativeCaptchaTasks(prepared);

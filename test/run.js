@@ -122035,6 +122035,11 @@ test('CAPTCHA native methods dispatch through the real agent, preserve structure
         const reloaded = await agent._executeToolImpl(1, 'solve_captcha', args);
         assert.equal(reloaded.success, true, `${build}: new document at the same URL should be eligible: ${reloaded.error}`);
         assert.equal(calls.length, 2, build);
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { url: 'https://example.test/form', timeOrigin: 1000 } }];
+        else api.tabs.executeScript = async () => [{ url: 'https://example.test/form', timeOrigin: 1000 }];
+        const restored = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(restored.dispatched, false, `${build}: a restored document cannot incur a second charge`);
+        assert.equal(calls.length, 2, build);
       } finally { globalThis.fetch = previousFetch; }
     });
   }
