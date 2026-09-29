@@ -45,6 +45,26 @@ function matches(value, type) {
     : typeof value === t);
 }
 
+function validateDocumentedPaths(task, contract) {
+  const paths = [...Object.keys(contract.fields), ...Object.keys(contract.fixed)];
+  // NopeCHA Enterprise passes grecaptcha.render options in data; its API
+  // explicitly permits additional widget options besides the fixed flag.
+  const openData = contract.provider === 'nopecha'
+    && ['token/recaptcha2:enterprise', 'token/recaptcha3:enterprise'].includes(contract.method);
+  const visit = (value, path = '') => {
+    if (!object(value) || (openData && path === 'data')) return;
+    if (path && !paths.some(candidate => candidate.startsWith(`${path}.`))) return;
+    for (const [key, child] of Object.entries(value)) {
+      const childPath = path ? `${path}.${key}` : key;
+      if (!paths.includes(childPath) && !paths.some(candidate => candidate.startsWith(`${childPath}.`))) {
+        throw new Error(`${contract.method}: undocumented field ${childPath}.`);
+      }
+      visit(child, childPath);
+    }
+  };
+  visit(task);
+}
+
 // No keys, credentials, or account balances are exposed by discovery.
 export function getCaptchaCapabilities(providers, { provider, family, method } = {}) {
   const enabled = new Map(providers.map(p => [p.id, p]));
@@ -65,12 +85,11 @@ export function buildNativeCaptchaTask(entry) {
   validateJson(entry.parameters);
   if (JSON.stringify(entry.parameters).length > 12_000_000) throw new Error('CAPTCHA input exceeds 12 MB.');
   const task = JSON.parse(JSON.stringify(entry.parameters));
-  const roots = new Set([...Object.keys(contract.fields), ...Object.keys(contract.fixed)].map(k => k.split('.')[0]));
-  for (const key of Object.keys(task)) if (!roots.has(key)) throw new Error(`${entry.provider}/${entry.method}: undocumented field ${key}.`);
   for (const [path, value] of Object.entries(contract.fixed)) {
     if (at(task, path) !== undefined && at(task, path) !== value) throw new Error(`${entry.method}: ${path} is fixed by this method.`);
     put(task, path, value);
   }
+  validateDocumentedPaths(task, contract);
   for (const [path, field] of Object.entries(contract.fields)) {
     const value = at(task, path);
     if (value === undefined) { if (field.required) throw new Error(`${entry.method}: ${path} is required.`); continue; }

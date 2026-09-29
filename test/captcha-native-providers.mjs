@@ -76,6 +76,20 @@ for (const browser of ['chrome','firefox']) {
     assert.throws(()=>native.buildNativeCaptchaTask({provider:'nopecha',method:'token/turnstile',parameters:{sitekey:'site',url}}),/proxy/);
     assert.throws(()=>native.buildNativeCaptchaTask({provider:'capmonster',method:'ComplexImageTask:recaptcha',parameters:{metadata:{Grid:'3x3',Task:'cars'}}}),/imageUrls or imagesBase64/);
   });
+  test(`${browser}: enumerated nested task fields reject undocumented data before paid dispatch`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const entry = { provider: 'capmonster', method: 'CustomTask:alibaba', parameters: {
+      websiteURL: url, metadata: { sceneId: 'scene', prefix: 'prefix', secret: 'page-provided-secret' },
+    } };
+    assert.throws(() => native.prepareNativeCaptchaTasks(providers, [entry]), /undocumented field metadata.secret/);
+    assert.equal(calls.length, 0);
+    const allowed = { ...entry, parameters: { ...entry.parameters,
+      metadata: { sceneId: 'scene', prefix: 'prefix' } } };
+    assert.equal(native.prepareNativeCaptchaTasks(providers, [allowed]).length, 1);
+    // Provider-documented option objects remain open where their schemas say so.
+    assert.equal(native.buildNativeCaptchaTask({ provider: 'nopecha', method: 'token/recaptcha2:enterprise',
+      parameters: { url, sitekey: 'site', data: { s: 'observed' } } }).task.data.s, 'observed');
+  });
   test(`${browser}: weighted JSON fallback preserves structured answers and synchronous results`,async t=>{
     const calls=mockApi(t,c=>c.url.hostname==='api.capsolver.com'?{errorId:1,errorDescription:'failed'}:{status:'ready',solution:{captcha_id:'id',lot_number:'lot',pass_token:'pass',gen_time:'time',captcha_output:'out'}});
     const entries=[{provider:'2captcha',method:'GeeTestTaskProxyless',parameters:{websiteURL:url,version:4,initParameters:{captcha_id:'id'}}},{provider:'capsolver',method:'GeeTestTaskProxyLess',parameters:{websiteURL:url,captchaId:'id'}}];

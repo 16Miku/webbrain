@@ -139,6 +139,8 @@ Saved weights determine execution order, regardless of array order. Supply a tas
 
 Provider-specific identifiers (for example `appId`/`app_id` and `miseryKey`/`misery_key`) must agree across fallback entries before any paid request. Recognition fallbacks must use the same image/audio and selection instruction; TSPD fallbacks must use the same captured page. reCAPTCHA v2 fallbacks must agree on `data-s` and visible/invisible mode, and reCAPTCHA v3 fallbacks on action and minimum score, when supplied.
 
+The native adapter rejects undeclared nested fields in schemas with enumerated children, such as CapMonster `metadata`. Provider-documented free-form option objects, including NopeCHA Enterprise `data`, remain available.
+
 `solution` remains structured: tokens, cookie values, GeeTest objects, coordinates, arrays of booleans, text, and provider-specific response fields are not coerced into a single token string. A synchronous ready response is consumed without a redundant polling request.
 
 ## Applying answers
