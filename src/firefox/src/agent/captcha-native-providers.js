@@ -323,6 +323,13 @@ function validateFallbackIdentifiers(built) {
       }
     }
   }
+  if (family === 'lemin' && built.length > 1) {
+    const services = built.map(({ task }) => task.leminApiServerSubdomain ?? task.api_server);
+    if (services.some(usable) && (services.some(value => !usable(value))
+        || new Set(services.map(value => captchaServiceHost(value, 'Lemin'))).size > 1)) {
+      throw new Error('Fallback Lemin tasks must use the same observed service host.');
+    }
+  }
   if (built.length > 1) {
     const proxies = built.map(({ task }) => proxyIdentity(task));
     const present = proxies.filter(Boolean);

@@ -423,6 +423,28 @@ for (const browser of ['chrome', 'firefox']) {
     }]), /same observed challenge/);
     assert.equal(calls.length, 0);
   });
+  test(`${browser}: Lemin fallback compares normalized provider API hosts`, t => {
+    const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
+    const enabled = ['2captcha', 'solvecaptcha'].map(id => ({ id, apiKey: 'key' }));
+    const twoCaptcha = { provider: '2captcha', method: 'LeminTaskProxyless', parameters: {
+      websiteURL: url, captchaId: 'captcha', divId: 'container',
+      leminApiServerSubdomain: 'api.leminnow.com',
+    } };
+    const solveCaptcha = { provider: 'solvecaptcha', method: 'lemin', parameters: {
+      pageurl: url, captcha_id: 'captcha', div_id: 'container',
+      api_server: 'https://API.LEMINNOW.COM/',
+    } };
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, [twoCaptcha, solveCaptcha]).length, 2);
+    for (const api_server of ['b.example', 'https://api.leminnow.com/other']) {
+      assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [twoCaptcha, {
+        ...solveCaptcha, parameters: { ...solveCaptcha.parameters, api_server },
+      }]), /service host/);
+    }
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [twoCaptcha, {
+      ...solveCaptcha, parameters: { pageurl: url, captcha_id: 'captcha', div_id: 'container' },
+    }]), /same observed service host/);
+    assert.equal(calls.length, 0);
+  });
   const actionBoundPairs = [
     ['DataDome User-Agent', ['2captcha', 'DataDomeSliderTask', { websiteURL: url, captchaUrl: 'https://example.test/captcha', userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080 }], ['solvecaptcha', 'datadome', { pageurl: url, captcha_url: 'https://example.test/captcha', userAgent: 'browser-UA', proxy: 'proxy.test:8080', proxytype: 'http' }], 'userAgent'],
     ['DataDome proxy', ['2captcha', 'DataDomeSliderTask', { websiteURL: url, captchaUrl: 'https://example.test/captcha', userAgent: 'browser-UA', proxyType: 'http', proxyAddress: 'proxy.test', proxyPort: 8080 }], ['solvecaptcha', 'datadome', { pageurl: url, captcha_url: 'https://example.test/captcha', userAgent: 'browser-UA', proxy: 'proxy.test:8080', proxytype: 'http' }], 'proxy'],
