@@ -42,7 +42,7 @@
     if (!object(target)) return false;
     let score = 0;
     for (const [field, points] of Object.entries(targetFields)) {
-      const value = String(target[field] ?? '').trim();
+      const value = workflowCleanText(target[field]);
       if (value && !/^ref_[A-Za-z0-9_-]+$/i.test(value)) score += points;
     }
     return score >= 7;
@@ -66,13 +66,19 @@
           && (!own(args, 'clear') || typeof args.clear === 'boolean')
           && (step.tool !== 'set_field' || !own(args, 'submit') || typeof args.submit === 'boolean');
       }
-      case 'click': return only(['text']) && typeof args.text === 'string' && !!args.text.trim() && !/^ref_[A-Za-z0-9_-]+$/i.test(args.text.trim());
+      case 'click': {
+        const text = workflowCleanText(args.text);
+        return only(['text']) && typeof args.text === 'string' && !!text && !/^ref_[A-Za-z0-9_-]+$/i.test(text);
+      }
       case 'scroll': return only(['direction', 'amount'])
         && (!own(args, 'direction') || ['up', 'down', 'left', 'right'].includes(args.direction))
         && (!own(args, 'amount') || Number.isFinite(args.amount));
-      case 'wait_for_element': return only(['text', 'timeout']) && typeof args.text === 'string' && !!args.text.trim()
-        && !/^ref_[A-Za-z0-9_-]+$/i.test(args.text.trim())
-        && (!own(args, 'timeout') || Number.isFinite(args.timeout));
+      case 'wait_for_element': {
+        const text = workflowCleanText(args.text);
+        return only(['text', 'timeout']) && typeof args.text === 'string' && !!text
+          && !/^ref_[A-Za-z0-9_-]+$/i.test(text)
+          && (!own(args, 'timeout') || Number.isFinite(args.timeout));
+      }
       default: return false;
     }
   }

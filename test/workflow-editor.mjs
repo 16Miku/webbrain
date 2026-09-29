@@ -102,6 +102,33 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     assert.equal(imported.workflow.steps.length, 1);
   }));
 
+  test(`${name}: locator ref checks use importer text normalization`, () => withEditor(async page => {
+    const refWithSuffix = `ref_${'a'.repeat(236)}!`;
+    const invalidCases = [
+      {
+        label: 'target', issue: 'needs a replayable target',
+        step: { id: 'step_1', tool: 'click_ax', args: {}, target: { id: refWithSuffix } }
+      },
+      {
+        label: 'click text', issue: 'arguments that the workflow importer cannot use',
+        step: { id: 'step_1', tool: 'click', args: { text: refWithSuffix } }
+      },
+      {
+        label: 'wait text', issue: 'arguments that the workflow importer cannot use',
+        step: { id: 'step_1', tool: 'wait_for_element', args: { text: refWithSuffix } }
+      }
+    ];
+    for (const scenario of invalidCases) {
+      const workflow = {
+        schema: 'webbrain-workflow/1', id: 'workflow_1', name: 'Ref validation',
+        start: { origin: 'https://example.com', pathFamily: '/' }, parameters: [], steps: [scenario.step]
+      };
+      await page.evaluate(value => editor.load(value), workflow);
+      assert.ok((await page.evaluate(() => editor.validate())).some(issue => issue.includes(scenario.issue)), `${scenario.label}: editor should report importer rejection`);
+      assert.equal((name === 'chromium' ? importChromeWorkflow : importFirefoxWorkflow)(workflow).reason, 'invalid_workflow', `${scenario.label}: importer rejects normalized ref token`);
+    }
+  }));
+
   test(`${name}: parameter ids follow importer normalization and remain unique`, () => withEditor(async page => {
     const workflow = {
       ...fixture,
