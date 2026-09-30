@@ -593,9 +593,87 @@ for (const browser of ['chrome', 'firefox']) {
     ['Temu parts', ['2captcha', 'TemuImageTask', { image: 'background', parts: ['one', 'two', 'three'] }], ['solvecaptcha', 'temuimage', { body: 'background', part1: 'one', part2: 'two', part3: 'three' }], task => { task.part2 = 'different'; }],
     ['FunCaptcha instruction', ['2captcha', 'GridTask:funcaptcha_recognition', { body: 'image-A', comment: 'cars' }], ['nopecha', 'recognition/funcaptcha', { image_data: ['image-A'], task: 'cars' }], task => { task.task = 'bicycles'; }],
     ['reCAPTCHA recognition instruction', ['capsolver', 'ReCaptchaV2Classification', { image: 'image-A', question: 'cars' }], ['nopecha', 'recognition/recaptcha', { image_data: ['image-A'], grid: '3x3', task: 'cars' }], task => { task.task = 'bicycles'; }],
-    ['coordinate image instruction', ['2captcha', 'CoordinatesTask', { body: 'image-A', imgInstructions: 'cars' }], ['solvecaptcha', 'coordinates', { body: 'image-A', textinstructions: 'cars' }], task => { task.textinstructions = 'bicycles'; }],
+    ['coordinate text instruction', ['2captcha', 'CoordinatesTask', { body: 'image-A', comment: 'cars' }], ['solvecaptcha', 'coordinates', { body: 'image-A', textinstructions: 'cars' }], task => { task.textinstructions = 'bicycles'; }],
     ['coordinate lowercase image instruction', ['2captcha', 'CoordinatesTask', { body: 'image-A', imgInstructions: 'cars' }], ['solvecaptcha', 'coordinates', { body: 'image-A', imginstructions: 'cars' }], task => { task.imginstructions = 'bicycles'; }],
   ];
+  test(`${browser}: recognition fallback preserves both text and image instructions`, () => {
+    const entries = [
+      { provider: '2captcha', method: 'CoordinatesTask', parameters: {
+        body: 'challenge-image', comment: 'Click matching objects', imgInstructions: 'instruction-image',
+      } },
+      { provider: 'solvecaptcha', method: 'coordinates', parameters: {
+        body: 'challenge-image', textinstructions: 'Click matching objects', imginstructions: 'instruction-image',
+      } },
+    ];
+    const enabled = entries.map(entry => ({ id: entry.provider, apiKey: 'key' }));
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, entries).length, 2);
+    for (const changed of [
+      { textinstructions: 'Click different objects' }, { imginstructions: 'another-image' },
+      { textinstructions: undefined }, { imginstructions: undefined },
+    ]) {
+      const pair = structuredClone(entries);
+      Object.assign(pair[1].parameters, changed);
+      for (const [key, value] of Object.entries(changed)) if (value === undefined) delete pair[1].parameters[key];
+      assert.throws(() => native.prepareNativeCaptchaTasks(enabled, pair), /same observed challenge.*instructions/);
+    }
+    // Matching bytes do not make a text prompt equivalent to an image prompt.
+    delete entries[0].parameters.comment;
+    delete entries[1].parameters.imginstructions;
+    entries[1].parameters.textinstructions = 'instruction-image';
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, entries), /same observed challenge.*instructions/);
+  });
+  test(`${browser}: AWS fallback compares SolveCaptcha CAPTCHA script aliases`, () => {
+    const entries = [
+      { provider: '2captcha', method: 'AmazonTaskProxyless', parameters: {
+        websiteURL: url, websiteKey: 'site', iv: 'iv', context: 'context', captchaScript: 'https://challenge.test/captcha.js',
+      } },
+      { provider: 'solvecaptcha', method: 'amazon_waf', parameters: {
+        pageurl: url, sitekey: 'site', iv: 'iv', context: 'context', captcha_script: 'https://challenge.test/captcha.js',
+      } },
+    ];
+    const enabled = entries.map(entry => ({ id: entry.provider, apiKey: 'key' }));
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, entries).length, 2);
+    const changed = structuredClone(entries);
+    changed[1].parameters.captcha_script = 'https://other.test/captcha.js';
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, changed), /same observed challenge/);
+    for (const [index, key] of [[0, 'captchaScript'], [1, 'captcha_script']]) {
+      const missing = structuredClone(entries);
+      delete missing[index].parameters[key];
+      assert.throws(() => native.prepareNativeCaptchaTasks(enabled, missing), /same observed challenge/);
+    }
+  });
+  test(`${browser}: reCAPTCHA fallback compares the effective Enterprise mode`, async t => {
+    const calls = mockApi(t, () => ({ status: 'ready', solution: { token: 'paid-answer' } }));
+    const enabled = ['2captcha', 'anti-captcha', 'capmonster', 'nopecha', 'solvecaptcha'].map(id => ({ id, apiKey: 'key' }));
+    const params = { websiteURL: url, websiteKey: 'site', minScore: 0.3, pageAction: 'login' };
+    const first = { provider: '2captcha', method: 'RecaptchaV3TaskProxyless', parameters: { ...params, isEnterprise: true } };
+    for (const provider of ['anti-captcha', 'capmonster']) {
+      for (const flag of [false, undefined]) {
+        const second = { provider, method: 'RecaptchaV3TaskProxyless', parameters: { ...params } };
+        if (flag !== undefined) second.parameters.isEnterprise = flag;
+        assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [first, second]), /same CAPTCHA family/);
+        second.parameters.isEnterprise = true;
+        assert.equal(native.prepareNativeCaptchaTasks(enabled, [first, second]).length, 2);
+      }
+    }
+    const explicit = { provider: 'anti-captcha', method: 'RecaptchaV3TaskProxyless:enterprise', parameters: params };
+    const prepared = native.prepareNativeCaptchaTasks(enabled, [first, explicit]);
+    const plain = { provider: '2captcha', method: 'RecaptchaV2TaskProxyless', parameters: { websiteURL: url, websiteKey: 'site' } };
+    const nopecha = { provider: 'nopecha', method: 'token/recaptcha2', parameters: { url, sitekey: 'site', data: { enterprise: true } } };
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [plain, nopecha]), /same CAPTCHA family/);
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, [{ ...plain, method: 'RecaptchaV2EnterpriseTaskProxyless' }, nopecha]).length, 2);
+    nopecha.parameters.data.enterprise = false;
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, [plain, nopecha]).length, 2);
+    const solveCaptcha = { provider: 'solvecaptcha', method: 'recaptcha_v2_enterprise', parameters: {
+      pageurl: url, googlekey: 'site', version: 'v3', action: 'login', min_score: 0.3,
+    } };
+    assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [{ ...plain, method: 'RecaptchaV2EnterpriseTaskProxyless' }, solveCaptcha]), /same CAPTCHA family/);
+    assert.equal(native.prepareNativeCaptchaTasks(enabled, [first, solveCaptcha]).length, 2);
+    assert.equal(calls.length, 0, 'validation must not contact a provider');
+    assert.equal((await native.solveNativeCaptchaTasks(prepared)).family, 'recaptcha_v3_enterprise');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].body.task.isEnterprise, true);
+  });
   test(`${browser}: recognition fallback compares click counts, text classes, and answer lengths`, t => {
     const calls = mockApi(t, () => { throw new Error('Must not dispatch'); });
     const enabled = ['2captcha', 'solvecaptcha', 'nopecha'].map(id => ({ id, apiKey: 'key' }));

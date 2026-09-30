@@ -9526,6 +9526,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try { status = await captchaAnswerDocumentStatus(tabId, record, {}, api); } catch { return null; }
     if (status === 'root_changed' || status === 'frame_changed') {
       delete record.solution;
+      // A new root document may expose a fresh CAPTCHA. Its predecessor's
+      // pending gate must not block solving or partial completion here.
+      if (status === 'root_changed') this._captchaGateStates.delete(tabId);
       return null;
     }
     if (status !== 'current') return null;

@@ -108047,7 +108047,6 @@ const KNOWN_SAFE_TOOLS = new Set([
   // list_downloads: url + Content-Disposition filename). "Doesn't act
   // dangerously" is not the test; "does its RESULT carry page-derived bytes" is.
   'wait_for_stable',      // waits for the page to settle; returns status only
-  'get_captcha_capabilities', // reads the compiled method catalog; never account keys or page content
 ]);
 
 test('click/click_ax/type_text results keep malicious target context inside the nonce boundary', () => {
