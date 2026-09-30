@@ -67,6 +67,11 @@ export const PACKAGED_SKILL_SOURCES = Object.freeze([
     path: 'skills/turkish-deasciifier.md',
   }),
   Object.freeze({
+    id: 'wordpress-rest-api',
+    name: 'WordPress REST API',
+    path: 'skills/wordpress-rest-api.md',
+  }),
+  Object.freeze({
     id: 'phonr-calls',
     name: 'Phone calls (Phonr)',
     path: 'skills/phonr-calls.md',
@@ -77,6 +82,7 @@ export const DEFAULT_SKILL_SOURCES = Object.freeze(
     'freeskillz-xyz',
     'otp-verification-code-helper',
     'humanizer',
+    'wordpress-rest-api',
   ].includes(source.id))
 );
 
