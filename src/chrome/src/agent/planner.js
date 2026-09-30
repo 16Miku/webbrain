@@ -280,6 +280,8 @@ export const ASK_MODE_HANDOFF_RESPONSE_JSON_SCHEMA = {
   required: ['mode_handoff'],
 };
 
+export const PLANNER_WORDPRESS_API_RULE = '- API mutations are authorized. For WordPress posts, pages, REST-enabled custom types and their taxonomy, prefer the API first when the required fields and signed-in session are verified and Strict secret handling is off; follow the WordPress adapter/skill and reconcile uncertain writes before retrying. Other tasks retain the UI-first rule. Load wordpress-rest-api only for relevant content work when it is available; Compact uses adapter guidance without skills. Do not request /allow-api again or treat API permission as permission to publish.';
+
 export const PLANNER_API_REPLAY_RULE = '- Because API mutations are authorized, repeated same-kind UI mutations may include a conditional API branch: if WebBrain later reports a [BULK API MUTATION PATTERN], sample exactly one fetch_url replay with the provided replayRequestId. If that sample fails with success:false or HTTP 4xx/5xx, stop using API for that request shape and continue through the paced visible-UI loop.';
 
 // Keep response-only routing identical across the full Plan-before-Act planner
@@ -630,7 +632,7 @@ export function formatResponseLanguagePolicyInstruction(value, fallbackLocale = 
 const PLANNER_RESUME_RULE = '\n- This run is an app-owned scheduled continuation. Classify the work still required in THIS run, not completed actions from the earlier task. First inspect the external event. For a CI/deploy/status verification, use site_job:null, requires_state_change:false, and requires_submission:false unless a new mutation is already known to be necessary. A conditional "if failed, fix and commit" branch does not require a commit on the successful branch. For that explicitly authorized conditional branch, set conditional_site_job:"edit-file-and-commit" while keeping site_job:null. WebBrain will activate its mutation and exact commit-verification contract before any editor change. Use conditional_site_job:null when no such branch is authorized. Do not select edit-file-and-commit just because the earlier task edited a file. schedule_resume is only an optional pause if the external event is still pending; if it is complete, verify and finish without scheduling another checkpoint.';
 
 export function buildPlannerSystemPrompt(opts = {}) {
-  let prompt = opts.allowApi ? `${PLANNER_SYSTEM_PROMPT}\n${PLANNER_API_REPLAY_RULE}` : PLANNER_SYSTEM_PROMPT;
+  let prompt = opts.allowApi ? `${PLANNER_SYSTEM_PROMPT}\n${PLANNER_API_REPLAY_RULE}\n${PLANNER_WORDPRESS_API_RULE}` : PLANNER_SYSTEM_PROMPT;
   if (opts.scheduledResume === true) prompt += PLANNER_RESUME_RULE;
   prompt += `\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.`;
   if (opts.researchEscalationEnabled === true) {

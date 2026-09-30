@@ -9433,6 +9433,59 @@ test('matches wordpress wp-admin on any host', () => {
   assert.equal(getActiveAdapter('https://example.com/blog/wp-admin-tutorial/'), null);
 });
 
+test('WordPress API and editor guidance reaches every tier on root and subdirectory sites', async () => {
+  const savedChrome = globalThis.chrome, savedBrowser = globalThis.browser;
+  try {
+    globalThis.chrome = globalThis.browser = { tabs: {} };
+    let expectedNotes;
+    for (const [AgentClass, getAdapter, buildMessages] of [
+      [AgentCh, getActiveAdapter, buildPlannerMessages],
+      [AgentFx, getActiveAdapterFx, buildPlannerMessagesFx],
+    ]) {
+      for (const url of ['https://example.com/wp-admin/', 'https://example.com/blog/wp-admin/post-new.php?post_type=page', 'https://example.com/network/site/wp-login.php']) {
+        const notes = getAdapter(url)?.notes;
+        assert.ok(notes);
+        expectedNotes ??= notes;
+        assert.equal(notes, expectedNotes, 'browser-specific WordPress guidance drifted');
+        assert.equal(notes.trim().split('\n').filter(line => line.startsWith('- ')).length, 8);
+        for (const tier of ['compact', 'mid', 'full']) {
+          const agent = new AgentClass({ getActive: () => ({ promptTier: tier }) });
+          agent.useSiteAdapters = true;
+          agent._queueAdapterMatchTrace = () => {};
+          chrome.tabs.get = async () => ({ url });
+          const messages = [];
+          assert.equal(await agent._maybeReinjectAdapter(4974, messages), true);
+          assert.match(messages[0].content, /Without skills: use `fetch_url`/);
+          assert.match(messages[0].content, /Strict mode skips nonce fetching and uses UI/);
+          assert.match(messages[0].content, /Reconcile uncertain writes/);
+          assert.match(messages[0].content, /If API is unsuitable or declined/);
+          assert.match(messages[0].content, /post_type=page&classic-editor/);
+          assert.equal(agent._skillLoaderDefinition('act', tier), null, 'hint must work without installed skills');
+          if (tier === 'compact') {
+            for (const allowed of [false, true]) {
+              agent.setApiMutationsAllowed(4974, allowed);
+              const prompt = agent._buildSystemPrompt('act', 4974);
+              const apiRule = prompt.split('\n').find(line => line.startsWith('8.'));
+              assert.match(apiRule, /WordPress.*prefer the API/);
+              assert.match(apiRule, /mutations are authorized/);
+              assert.match(apiRule, /fields.*session.*verified/);
+              assert.match(apiRule, /Strict secret handling is off/);
+              assert.match(apiRule, /Without API authorization.*POST\/PUT\/PATCH\/DELETE/);
+              assert.doesNotMatch(prompt, /Do not call APIs directly/);
+              assert.equal(agent.isApiMutationsAllowed(4974), allowed, 'prompt construction changed API permission');
+            }
+          }
+        }
+        const plan = buildMessages({ role: 'user', content: 'Publish this WordPress page' }, url, 'WordPress', '', { allowApi: true });
+        assert.match(plan[0].content, /prefer the API first/);
+      }
+      for (const url of ['https://example.com/?next=/wp-admin/', 'https://example.com/blog/wp-admin-guide/', 'https://example.com/blog/#/wp-admin/']) {
+        assert.notEqual(getAdapter(url)?.name, 'wordpress');
+      }
+    }
+  } finally { globalThis.chrome = savedChrome; globalThis.browser = savedBrowser; }
+});
+
 test('routes AWS console tasks through the specific CloudShell adapter', () => {
   const cloudShellUrls = [
     'https://us-east-1.console.aws.amazon.com/cloudshell/home?region=us-east-1#',
@@ -22857,6 +22910,75 @@ test('non-GitHub hosts use last-3-segments backstop', () => {
   );
 });
 
+test('WordPress rest_route buckets preserve route and installation identity without cache-query bypasses', () => {
+  for (const bucket of [resourceBucket, resourceBucketFx]) {
+    const item = 'https://example.com/blog/?rest_route=/wp/v2/posts/42';
+    for (const equivalent of [
+      'https://example.com/blog/?rest_route=%2Fwp%2Fv2%2Fposts%2F42',
+      'https://example.com/blog/?rest_route=/wp/v2/posts/42/&context=edit',
+      'https://example.com/blog/?cache=2&rest_route=/wp/v2/posts/42',
+    ]) assert.equal(bucket(item), bucket(equivalent), 'same REST item must keep one loop identity');
+    for (const distinct of [
+      'https://example.com/blog/?rest_route=/wp/v2/posts/43',
+      'https://example.com/blog/?rest_route=/wp/v2/users/me',
+      'https://example.com/blog/?rest_route=/custom/v2/posts/42',
+      'https://example.com/other/?rest_route=/wp/v2/posts/42',
+      'https://example.com/blog/',
+    ]) assert.notEqual(bucket(item), bucket(distinct), 'different REST resources must not collide');
+    assert.notEqual(bucket('https://example.com/a/shared/path/site/?rest_route=/wp/v2/types'), bucket('https://example.com/b/shared/path/site/?rest_route=/wp/v2/types'), 'installation prefixes must survive');
+    assert.equal(bucket('https://example.com/?rest_route=/'), bucket('https://example.com/?cache=1&rest_route=%2F'));
+    for (const invalid of ['', 'not-a-route']) {
+      assert.equal(bucket(`https://example.com/file.txt?rest_route=${invalid}`), bucket('https://example.com/file.txt'));
+    }
+  }
+});
+
+test('WordPress query-form discovery passes the Agent loop guard while repeated resources still warn', async () => {
+  const savedFetch = globalThis.fetch;
+  const savedChrome = globalThis.chrome, savedBrowser = globalThis.browser;
+  try {
+    globalThis.chrome = globalThis.browser = { tabs: { get: async () => ({ url: 'https://example.com/blog/wp-admin/' }) } };
+    for (const [label, AgentClass, fetchUrl] of [['chrome', AgentCh, fetchUrlCh], ['firefox', AgentFx, fetchUrlFx]]) {
+      let dispatched = 0;
+      globalThis.fetch = async (url, init) => {
+        dispatched++;
+        assert.equal(init.credentials, 'include');
+        if (new URL(url).searchParams.get('action') === 'rest-nonce') return new Response('test-nonce', { headers: { 'Content-Type': 'text/html' } });
+        return new Response(JSON.stringify({ route: new URL(url).searchParams.get('rest_route') }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      const discovery = [
+        'https://example.com/blog/?rest_route=/',
+        'https://example.com/blog/wp-admin/admin-ajax.php?action=rest-nonce',
+        ...['users/me', 'types/post', 'taxonomies', 'categories', 'tags', 'posts/42'].map(route => `https://example.com/blog/?rest_route=/wp/v2/${route}&context=edit`),
+      ];
+      const repeats = [
+        'https://example.com/blog/?rest_route=/wp/v2/posts/42',
+        'https://example.com/blog/?rest_route=%2Fwp%2Fv2%2Fposts%2F42',
+        'https://example.com/blog/?cache=3&rest_route=/wp/v2/posts/42/&context=edit',
+      ];
+      for (const [urls, expectLoop] of [[discovery, false], [repeats, true]]) {
+        const agent = new AgentClass({ getVisionProvider: async () => null });
+        const tabId = 4981;
+        agent.conversationModes.set(tabId, 'act');
+        agent._ensureGateSetting = async () => {};
+        agent._skipPermissionGate = true;
+        agent.executeTool = async (_tabId, name, args) => {
+          assert.equal(name, 'fetch_url');
+          return fetchUrl(args.url, args, { tabId });
+        };
+        const messages = [];
+        for (const [step, url] of urls.entries()) {
+          await agent._executeToolBatch(tabId, [{
+            id: `wp_read_${step}`, function: { name: 'fetch_url', arguments: JSON.stringify({ url, method: 'GET' }) },
+          }], messages, () => {}, { supportsVision: false }, '', new Set(['fetch_url']), step + 1);
+        }
+        assert.equal(messages.some(message => /LOOP DETECTED/.test(message.content)), expectLoop, `${label}: model-facing loop guidance`);
+      }
+      assert.equal(dispatched, discovery.length + repeats.length, `${label}: expected reads were skipped`);
+    }
+  } finally { globalThis.fetch = savedFetch; globalThis.chrome = savedChrome; globalThis.browser = savedBrowser; }
+});
+
 test('GitHub gist + codeload also normalize to github.com', () => {
   const a = resourceBucket('https://gist.github.com/user/abc123/raw/file.txt');
   const b = resourceBucket('https://codeload.github.com/owner/repo/zip/refs/heads/main');
@@ -32000,6 +32122,7 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'temporary-file-share-litterbox': ['temporary_file_share', 'public_upload_link', 'expiring_file_upload'],
     'humanizer': ['email_reply', 'draft_message', 'compose_prose', 'rewrite_text', 'humanize_writing', 'reply_to_thread'],
     'phonr-calls': ['outbound_phone_call', 'phone_inquiry', 'phone_call_status', 'phone_call_result', 'phone_call_recording', 'stop_phone_call'],
+    'wordpress-rest-api': ['wordpress_content', 'wordpress_publish', 'wordpress_draft', 'wordpress_taxonomy'],
   };
   for (const [label, prefix, sources, normalizeSkills] of [
     ['chrome', 'src/chrome', PACKAGED_SKILL_SOURCES_CH, normalizeCustomSkillsCh],
@@ -32016,6 +32139,191 @@ test('every bundled skill declares its canonical semantic intents', () => {
       assert.deepEqual(skill.intents, expected[skill.id], `${label}: wrong semantic intents for ${skill.id}`);
     }
   }
+});
+
+test('WordPress skill loads on demand in Act/Dev Mid/Full and cannot restore itself after removal', () => {
+  const contents = [];
+  for (const [label, prefix, AgentClass, sources, defaults] of [
+    ['chrome', 'src/chrome', AgentCh, PACKAGED_SKILL_SOURCES_CH, DEFAULT_SKILL_SOURCES_CH],
+    ['firefox', 'src/firefox', AgentFx, PACKAGED_SKILL_SOURCES_FX, DEFAULT_SKILL_SOURCES_FX],
+  ]) {
+    const source = sources.find(s => s.id === 'wordpress-rest-api');
+    assert.ok(defaults.some(s => s.id === source?.id), `${label}: missing default`);
+    const content = fs.readFileSync(path.join(ROOT, prefix, source.path), 'utf8');
+    contents.push(content);
+    for (const tier of ['compact', 'mid', 'full']) {
+      for (const mode of ['ask', 'act', 'dev']) {
+        const agent = new AgentClass({ getActive: () => ({ promptTier: tier }) });
+        const tabId = 4975;
+        agent.setCustomSkills([{ ...source, content, sourceType: 'built-in', sourceUrl: source.path }]);
+        agent.conversationModes.set(tabId, mode);
+        agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt(mode, tabId) }]);
+        assert.doesNotMatch(agent.conversations.get(tabId)[0].content, /Discover the site, session/);
+        const eligible = tier !== 'compact' && mode !== 'ask';
+        const loader = agent._skillLoaderDefinition(mode, tier);
+        assert.equal(!!loader, eligible, `${label}: ${mode}/${tier} catalog eligibility`);
+        const result = agent._loadSkillForRun(tabId, { skill_id: source.id });
+        assert.equal(result.success, eligible, `${label}: ${mode}/${tier} load eligibility`);
+        const prompt = agent.conversations.get(tabId)[0].content;
+        assert.equal(prompt.includes('Discover the site, session'), eligible);
+        assert.deepEqual(agent._skillToolDefinitions(tabId, mode, tier), [], 'instruction-only skill added tools');
+        assert.equal(agent.isApiMutationsAllowed(tabId), false, 'loading a skill granted API access');
+        if (eligible) {
+          agent.strictSecretMode = true;
+          assert.match(agent._buildSystemPrompt(mode, tabId), /Strict secret handling overrides this recipe/);
+          assert.match(agent._buildSystemPrompt(mode, tabId), /without fetching a REST nonce/);
+        }
+        agent.setCustomSkills([]);
+        assert.equal(agent._loadSkillForRun(tabId, { skill_id: source.id }).success, false);
+        assert.doesNotMatch(agent._buildSystemPrompt(mode, tabId), /Discover the site, session/);
+      }
+    }
+  }
+  assert.equal(contents[0], contents[1]);
+});
+
+test('WordPress default seeding respects stored removal on startup and restart', async () => {
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const mod = await import(pathToFileURL(path.join(ROOT, prefix, 'src/agent/skills.js')).href);
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const start = background.indexOf('async function loadCustomSkills()');
+    const end = background.indexOf('const customSkillsReady =', start);
+    assert.ok(start >= 0 && end > start);
+    for (const removed of [false, true]) {
+      const state = { customSkills: [], defaultSkillsSeeded: true, defaultSkillsRemoved: removed ? ['wordpress-rest-api'] : [] };
+      let installed = [];
+      const bindings = {
+        ...mod,
+        chrome: { storage: { local: { get: async () => state, set: async update => Object.assign(state, update) } } },
+        agent: { setCustomSkills: skills => { installed = skills; } },
+        loadPackagedSkillRecords: async sources => sources.map(source => ({
+          ...source, sourceType: 'built-in', sourceUrl: source.path,
+          content: fs.readFileSync(path.join(ROOT, prefix, source.path), 'utf8'),
+        })),
+        refreshPackagedSkillRecords: async skills => ({ skills, changed: false }),
+      };
+      bindings.browser = bindings.chrome;
+      const load = Function(...Object.keys(bindings), `${background.slice(start, end)}\nreturn loadCustomSkills;`)(...Object.values(bindings));
+      await load();
+      await load();
+      assert.equal(installed.filter(skill => skill.id === 'wordpress-rest-api').length, removed ? 0 : 1, prefix);
+      if (!removed) {
+        state.customSkills = state.customSkills.filter(skill => skill.id !== 'wordpress-rest-api');
+        state.defaultSkillsRemoved = ['wordpress-rest-api'];
+        await load();
+        assert.equal(installed.some(skill => skill.id === 'wordpress-rest-api'), false, `${prefix}: removed default returned`);
+      }
+    }
+  }
+});
+
+test('WordPress mutation examples obey existing API grants and Ask-mode denial in both builds', async () => {
+  for (const [prefix, AgentClass] of [['src/chrome', AgentCh], ['src/firefox', AgentFx]]) {
+    const content = fs.readFileSync(path.join(ROOT, prefix, 'skills/wordpress-rest-api.md'), 'utf8');
+    const example = [...content.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].map(m => JSON.parse(m[1]))[1];
+    for (const approval of ['none', 'conversation', 'persistent', 'ask']) {
+      const agent = new AgentClass({ getVisionProvider: async () => null });
+      const tabId = 4976;
+      let executed = false;
+      agent.executeTool = async () => { executed = true; return { success: true, status: 201 }; };
+      agent._ensureGateSetting = async () => {};
+      agent._skipPermissionGate = true;
+      agent.conversationModes.set(tabId, approval === 'ask' ? 'ask' : 'act');
+      if (approval === 'conversation' || approval === 'ask') agent.setApiMutationsAllowed(tabId, true);
+      if (approval === 'persistent') agent.setAlwaysAllowApiMutations(true);
+      const messages = [];
+      await agent._executeToolBatch(tabId, [{
+        id: 'wp_create', function: { name: 'fetch_url', arguments: JSON.stringify({ ...example, url: 'https://example.com/blog/wp-json/wp/v2/posts' }) },
+      }], messages, () => {}, { supportsVision: false }, '', new Set(['fetch_url']), 1, { apiMutationsDenied: approval === 'ask' });
+      assert.equal(executed, ['conversation', 'persistent'].includes(approval), `${prefix}: ${approval}`);
+      if (!executed) {
+        const denied = JSON.parse(messages[0].content);
+        assert.equal(denied.denied, true);
+        assert.equal(denied.requiresApiAllow, approval === 'none');
+      }
+    }
+  }
+});
+
+test('WordPress fetch_url examples preserve cookies, type, ID and taxonomy through verified draft/publication and uncertain writes', async () => {
+  const savedFetch = globalThis.fetch;
+  const savedChrome = globalThis.chrome, savedBrowser = globalThis.browser;
+  try {
+    globalThis.chrome = globalThis.browser = { tabs: { get: async () => ({ url: 'https://example.com/blog/wp-admin/post.php?post=42&action=edit' }) } };
+    for (const [prefix, fetchUrl] of [['src/chrome', fetchUrlCh], ['src/firefox', fetchUrlFx]]) {
+      const content = fs.readFileSync(path.join(ROOT, prefix, 'skills/wordpress-rest-api.md'), 'utf8');
+      const templates = [...content.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].map(m => JSON.parse(m[1]));
+      for (const [route, queryRoot, existing, uncertain] of [
+        ['wp/v2/posts', false, false, false],
+        ['wp/v2/pages', false, true, false],
+        ['library/v1/books', false, true, true],
+        ['wp/v2/posts', true, false, true],
+      ]) {
+        const collection = queryRoot ? `https://example.com/blog/?rest_route=/${route}` : `https://example.com/blog/wp-json/${route}`;
+        const item = `${collection}/42`;
+        const readItem = `${item}${queryRoot ? '&' : '?'}context=edit`;
+        const nonce = 'test-nonce';
+        const examples = templates.map(template => JSON.parse(JSON.stringify(template)
+          .replaceAll('ADMIN_URL', 'https://example.com/blog/wp-admin')
+          .replaceAll('COLLECTION_URL', collection).replaceAll('ITEM_READ_URL', readItem)
+          .replaceAll('ITEM_URL', item).replaceAll('NONCE', nonce)));
+        const taxonomies = route === 'wp/v2/posts' ? { categories: [7], tags: [12] } : route === 'library/v1/books' ? { genres: [8] } : {};
+        let record = existing ? { id: 42, type: route, title: 'Keep title', content: '<p>Old content.</p>', status: 'draft', ...taxonomies } : null;
+        let writes = 0, creations = 0, loseResponse = uncertain;
+        const jsonResponse = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+        globalThis.fetch = async (url, init) => {
+          assert.equal(init.credentials, 'include', `${prefix}: missing current-tab session`);
+          assert.equal(init.redirect, 'manual');
+          if (url === examples[0].url) return new Response(nonce, { headers: { 'Content-Type': 'text/html' } });
+          assert.equal(init.headers['X-WP-Nonce'], nonce);
+          assert.equal(url.includes(nonce), false);
+          if (init.method === 'GET') {
+            assert.equal(url, readItem);
+            return jsonResponse(record);
+          }
+          writes++;
+          const body = JSON.parse(init.body);
+          assert.equal(init.headers['Content-Type'], 'application/json');
+          if (url === collection) {
+            assert.equal(existing, false, 'existing draft must not use the collection create route');
+            creations++;
+            assert.equal(body.status, 'draft');
+            record = { id: 42, type: route, ...body };
+          } else {
+            assert.equal(url, item);
+            assert.ok(record);
+            record = { ...record, ...body, link: 'https://example.com/blog/example-title/' };
+          }
+          if (loseResponse) { loseResponse = false; throw new Error('Response timed out after write'); }
+          return jsonResponse(record, url === collection ? 201 : 200);
+        };
+        const call = args => fetchUrl(args.url, args, { tabId: 4977 });
+        assert.equal((await call(examples[0])).text.trim(), nonce);
+        const saved = await call(existing ? examples[2] : examples[1]);
+        assert.equal(saved.success, !uncertain);
+        const verified = JSON.parse((await call(examples[3])).json);
+        assert.equal(verified.id, 42); assert.equal(verified.status, 'draft');
+        assert.equal(verified.type, route);
+        assert.equal(verified.content, existing ? '<p>Updated content.</p>' : '<p>Example content.</p>');
+        if (existing) assert.equal(verified.title, 'Keep title');
+        for (const [field, ids] of Object.entries(taxonomies)) assert.deepEqual(verified[field], ids);
+        assert.equal(writes, 1, 'transport retried an uncertain write');
+        assert.equal((await call(examples[4])).success, true);
+        const published = JSON.parse((await call(examples[3])).json);
+        assert.equal(published.id, verified.id); assert.equal(published.status, 'publish');
+        assert.equal(published.content, verified.content); assert.ok(published.link);
+        assert.equal(creations, existing ? 0 : 1);
+        for (const status of [401, 403, 404, 500]) {
+          globalThis.fetch = async () => jsonResponse({ code: status === 404 ? 'rest_no_route' : 'rest_forbidden' }, status);
+          const failed = await call(examples[3]);
+          assert.equal(failed.success, false); assert.equal(failed.status, status);
+        }
+        globalThis.fetch = async () => new Response('0', { status: 400 });
+        const loggedOut = await call(examples[0]);
+        assert.equal(loggedOut.success, false); assert.equal(loggedOut.text, '0');
+      }
+    }
+  } finally { globalThis.fetch = savedFetch; globalThis.chrome = savedChrome; globalThis.browser = savedBrowser; }
 });
 
 test('Phonr is opt-in, loads through the normal skill catalog, and adds no privileged HTTP tools', () => {
@@ -111346,6 +111654,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'frankfurter-fx',
     'humanizer',
     'turkish-deasciifier',
+    'wordpress-rest-api',
     'phonr-calls',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
@@ -111359,17 +111668,20 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'frankfurter-fx',
     'humanizer',
     'turkish-deasciifier',
+    'wordpress-rest-api',
     'phonr-calls',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
     'otp-verification-code-helper',
     'humanizer',
+    'wordpress-rest-api',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
     'otp-verification-code-helper',
     'humanizer',
+    'wordpress-rest-api',
   ]);
   assert.equal(DEFAULT_SKILL_SOURCES_CH.some((skill) => skill.id === 'turkish-deasciifier'), false, 'chrome: Turkish deasciifier must remain opt-in');
   assert.equal(DEFAULT_SKILL_SOURCES_FX.some((skill) => skill.id === 'turkish-deasciifier'), false, 'firefox: Turkish deasciifier must remain opt-in');
