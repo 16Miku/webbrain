@@ -625,6 +625,7 @@ async function main() {
     { loc: `${SITE_ORIGIN}/blog/` },
     { loc: `${SITE_ORIGIN}/docs/` },
     { loc: `${SITE_ORIGIN}/docs/settings/` },
+    { loc: `${SITE_ORIGIN}/docs/captcha/` },
     { loc: `${SITE_ORIGIN}/docs/providers/` },
     { loc: `${SITE_ORIGIN}/docs/easy-cli-proxy/`, alternates: 'easy-cli-proxy' },
     { loc: `${SITE_ORIGIN}/docs/safety/` },

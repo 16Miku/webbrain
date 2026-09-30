@@ -3048,7 +3048,7 @@ async function handleMessage(msg, sender) {
           throw new Error('Could not durably clear the tab transcript.');
         }
         clearedContextMenuPromptId = tabChatClearResult.clearedContextMenuPromptId || null;
-        agent.clearConversation(tabId);
+        await agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
         browser.runtime.sendMessage({
           target: 'sidepanel',

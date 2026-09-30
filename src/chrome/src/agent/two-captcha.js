@@ -31,6 +31,7 @@ export function buildTwoCaptchaTask(task) {
     case 'AntiTurnstileTaskProxyLess':
       return {
         type: 'TurnstileTaskProxyless', websiteURL, websiteKey,
+        ...(task.userAgent ? { userAgent: task.userAgent } : {}),
         ...(task.metadata?.action ? { action: task.metadata.action } : {}),
         ...(task.metadata?.cdata ? { data: task.metadata.cdata } : {}),
         ...(task.metadata?.chlPageData ? { pagedata: task.metadata.chlPageData } : {}),

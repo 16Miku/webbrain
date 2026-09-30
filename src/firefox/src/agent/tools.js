@@ -1071,17 +1071,138 @@ export const AGENT_TOOLS = [
     },
   },
   {
+  "type": "function",
+  "function": {
+    "name": "get_captcha_capabilities",
+    "description": "Read the documented CAPTCHA methods for enabled providers without spending or exposing API keys. Also returns an unapplied paid native answer for the same page document, if one is pending; use it after a chat clear without solving again. Filter by family/provider, then request a method to get its exact native fields, fixed values, and official documentation. Use this before solve_captcha providerTasks for any token, recognition, cookie, or structured-answer method.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "family": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  }
+},
+  {
+  "type": "function",
+  "function": {
+    "name": "apply_captcha_solution",
+    "description": "Apply the stored answer from the one native CAPTCHA solve to its original page. Bind solution paths to observed response fields, host-only cookies, image/grid clicks, or an observed named CAPTCHA callback. The frame host's Type, Click, or JavaScript permission is required for the corresponding binding. Never invent selectors/callbacks or execute returned scripts. Requires exact observed frameId and frameUrl; cookie bindings require frame 0. Match any required proxy/User-Agent first. Then verify fresh page state. This never requests a paid solve.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "clicks": {"type": "array", "maxItems": 10, "description": "Apply returned recognition coordinates or grid selections to one observed challenge image/grid. The selector must identify its exact rendered bounds. Source dimensions are those of the submitted image; points are scaled once to CSS pixels. Synthetic events may be rejected by some sites; verify afterward.", "items": {"type": "object", "properties": {"selector": {"type": "string"}, "path": {"type": "string"}, "mode": {"type": "string", "enum": ["coordinates", "grid", "boolean_grid"]}, "sourceWidth": {"type": "number", "exclusiveMinimum": 0}, "sourceHeight": {"type": "number", "exclusiveMinimum": 0}, "rows": {"type": "integer", "minimum": 1}, "columns": {"type": "integer", "minimum": 1}, "oneBased": {"type": "boolean"}, "xKey": {"type": "string"}, "yKey": {"type": "string"}}, "required": ["selector", "path", "mode"], "additionalProperties": false}},
+        "frameId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frameUrl": {
+          "type": "string"
+        },
+        "fields": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "selector": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string",
+                "description": "Dot path into the stored solution; empty string means entire solution."
+              },
+              "encoding": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "json"
+                ]
+              }
+            },
+            "required": [
+              "selector",
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "cookies": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Dot path into the stored solution; empty string means entire solution."
+              },
+              "encoding": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "json"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "callback": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "frameId",
+        "frameUrl"
+      ],
+      "additionalProperties": false
+    }
+  }
+},
+  {
     type: 'function',
     function: {
       name: 'solve_captcha',
-      description: 'Solve a CAPTCHA on the current page using an enabled provider (CapSolver, 2Captcha, CapMonster Cloud, SolveCaptcha, or Anti-Captcha) configured in Settings → General → Advanced. One tool call tries compatible enabled providers in descending weight order, moving to the next on failure or timeout; each may charge. Do not repeat the tool call. All five providers support reCAPTCHA v2/v3, Turnstile, and image CAPTCHAs; hCaptcha requires CapSolver. Unsupported challenges require manual completion before dispatch. The tool scans every frame, ranks the active visible widget above hidden/background integrations, and fills missing type/site-key parameters from the selected frame. Returns the token, selected frame/type, and targeted injection/callback status; verify page progress afterward because token injection alone does not prove the challenge cleared. On failure (no CAPTCHA solver key configured, ambiguous candidates, unknown type, API error, timeout) the tool returns `{ success: false, error: "..." }` — use only the exact frameUrl, websiteKey, frameId, or framePath discriminator offered by the ambiguity result; otherwise ask the user to solve it manually.',
+      description: "Solve a CAPTCHA using compatible providers enabled in Settings → General → Advanced, in descending weight order. A single call may charge multiple providers on fallback; never repeat a dispatched call. Omit providerTasks for automatic reCAPTCHA v2/v3, hCaptcha, Turnstile, and image handling. For ALL other documented methods, first read get_captcha_capabilities and the selected method schemas, then provide one native task per compatible enabled provider with observed parameters and inject:false. Native methods preserve tokens, cookies, coordinates, audio/text, and structured answers; apply them using apply_captcha_solution. Unknown or missing parameters fail before spending. Verify page progress; a returned answer is not proof of clearance. Missing provider/input or failed solving requires manual completion.",
       parameters: {
         type: 'object',
         properties: {
+          providerTasks: {"type": "array", "minItems": 1, "maxItems": 7, "description": "One documented native method per enabled provider, all for the SAME challenge and CAPTCHA family. Settings weights determine fallback order. Never include API keys. Use inject:false.", "items": {"type": "object", "properties": {"provider": {"type": "string", "enum": ["capsolver", "2captcha", "capmonster", "solvecaptcha", "anti-captcha", "nopecha", "nonecap"]}, "method": {"type": "string"}, "parameters": {"type": "object", "description": "Exact provider-native fields from get_captcha_capabilities. Include observed page/challenge parameters and matching proxy when required.", "additionalProperties": true}}, "required": ["provider", "method", "parameters"], "additionalProperties": false}},
           type: {
             type: 'string',
             enum: ['recaptcha_v2', 'recaptcha_v3', 'recaptcha_v2_enterprise', 'recaptcha_v3_enterprise', 'hcaptcha', 'turnstile', 'image_to_text'],
-            description: 'CAPTCHA type. Omit to auto-detect from the page DOM.',
+            description: 'CAPTCHA type. Omit to auto-detect from the page DOM. hcaptcha requires enabled NopeCHA or NoneCap.',
           },
           websiteKey: { type: 'string', description: 'Site key from the captcha widget\'s data-sitekey attribute. Auto-detected when omitted.' },
           frameUrl: { type: 'string', description: 'Exact URL of the frame containing the intended CAPTCHA. Usually omit; use a candidate URL returned by an ambiguity error to select among equally active widgets.' },
@@ -1092,12 +1213,12 @@ export const AGENT_TOOLS = [
             description: 'Exact iframe-index path from a candidate\'s framePathIndexes diagnostic. Use with frameId when inherited-origin candidates share the same URL and site key.',
           },
           isInvisible: { type: 'boolean', description: 'reCAPTCHA v2 / hCaptcha only — true when the widget uses invisible mode (no visible checkbox). Auto-detected when omitted.' },
-          isEnterprise: { type: 'boolean', description: 'reCAPTCHA v2/v3 only — true when the widget uses Google reCAPTCHA Enterprise. Auto-detected when omitted.' },
+          isEnterprise: { type: 'boolean', description: 'reCAPTCHA v2/v3 or hCaptcha — true for an Enterprise widget; include hCaptcha rqdata when the page supplies it. Auto-detected when omitted.' },
           pageAction: { type: 'string', description: 'Required for reCAPTCHA v3 — the action name the page uses (e.g. "login", "submit"). Auto-detected from data-action or the loader script when present; pass it explicitly if detection reports it missing.' },
-          minScore: { type: 'number', description: 'reCAPTCHA v3 only — minimum score requested (0.3 is the usual lower bound, 0.7+ is hard).' },
+          minScore: { type: 'number', enum: [0.3, 0.7, 0.9], description: 'reCAPTCHA v3 only — requested score for providers that expose this option. Defaults to 0.3. CapSolver does not expose this option. A returned token does not guarantee a score or acceptance.' },
           metadata: {
             type: 'object',
-            description: 'Turnstile only. Values observed in the selected widget configuration; never invent them. action and cdata are detected from widget data attributes when present. Full-page managed challenges still require manual completion.',
+            description: 'Turnstile only. Values observed in the selected widget configuration; never invent them. action and cdata are detected from widget data attributes when present. For full-page challenges use the documented native method via providerTasks.',
             properties: {
               action: { type: 'string' },
               cdata: { type: 'string', description: 'The widget cData value.' },
@@ -1105,6 +1226,7 @@ export const AGENT_TOOLS = [
             },
             additionalProperties: false,
           },
+          rqdata: { type: 'string', description: 'hCaptcha only — optional; preserve the exact rqdata when the widget exposes it. Never invent it.' },
           imageBase64: { type: 'string', description: 'image_to_text only — base64-encoded image bytes (no data: prefix).' },
           inject: { type: 'boolean', description: 'After solving, inject the token into the detected frame\'s response field (textarea[name=g-recaptcha-response] etc.) and fire the widget\'s callback. Default true and requires a detected frame target. If the widget cannot be detected but type/websiteKey are known, set false to get only the token without page injection.' },
         },
@@ -1687,7 +1809,8 @@ RULES:
 12. When the task is complete, call done({summary:"...", outcome:"success"}). Verify success first.
 13. Call \`inspect_viewport\` when rendered pixels matter. Mention \`/screenshot\` only when the user explicitly wants to capture, save, or attach a page image; never require it just so the agent can see.
 14. Recording is not supported in the Firefox build. Do not call or invent recording tools.
-15. Before filling an external email/message/post composer, formulate the exact recipient, subject, and body. For more than a one-line body, save the complete text as \`[pending draft]\` with scratchpad_write first so it can be recovered if the UI fails; never mark it sent until verified.
+15. CAPTCHA: stop and ask the user to complete verification manually. Never dismiss, close, or resubmit the challenge. Report blocked work with done({outcome:"partial"}).
+16. Before filling an external email/message/post composer, formulate the exact recipient, subject, and body. For more than a one-line body, save the complete text as \`[pending draft]\` with scratchpad_write first so it can be recovered if the UI fails; never mark it sent until verified.
 
 ${SENSITIVE_PAGE_DATA_GUIDANCE}
 
@@ -1963,7 +2086,7 @@ FORMS — read this:
 - You do NOT need verify_form for simple interactions: search boxes, single-field forms, or login forms. Use it for multi-field forms where wrong data has consequences (checkout, profile, issue creation, releases, etc.).
 - AFTER submitting a form, ALWAYS read the page/tree and inspect any injected verification/auto-screenshot context to confirm success BEFORE doing anything else. Do not resume other actions until you verify the submission result. Look for: a success message/toast, the newly created item appearing in a list, or a detail page for the new item. Check that the details (name, price, dates) match what you intended.
 - NEVER claim you created something unless you see CONFIRMATION on the page. If you see a list of items, check the creation date — if it says "2 months ago" or a past date, that is an EXISTING item, NOT something you just created. Only items with a timestamp from right now are yours.
-- If you encounter any CAPTCHA, anti-bot check, or human verification challenge, do not dismiss, close, or resubmit it. When the user has enabled a CAPTCHA provider (you will see a "[CAPTCHA SOLVER]" note), let the runtime route one \`solve_captcha\` call, then read the root accessibility tree to confirm the dialog cleared before any submit. If no supported widget is detected, the solve fails, or the dialog remains, STOP and ask the user to complete it manually — never retry the solve.
+- If you encounter any CAPTCHA, anti-bot check, or human verification challenge, do not dismiss, close, or resubmit it. When the user has enabled a CAPTCHA provider (you will see a "[CAPTCHA SOLVER]" note), let the runtime route one \`solve_captcha\` call, then read the root accessibility tree to confirm the dialog cleared before any submit. If automatic detection cannot handle the family, inspect get_captcha_capabilities and use a documented native method with observed inputs. Apply its structured answer with apply_captcha_solution. If inputs are unavailable, the solve fails, or the dialog remains, STOP and ask the user to complete it manually — never retry the solve.
 
 MODALS & DIALOGS — read this:
 - When a modal/dialog is open, treat the rest of the page as unreachable. click({text: ...}) is automatically scoped to the topmost dialog, so text queries for buttons behind the overlay will return "no match" — that's intentional.
@@ -2026,7 +2149,7 @@ export const MID_TOOL_NAMES = new Set([
   'fetch_url', 'research_url', 'list_downloads', 'read_downloaded_file',
   'download_files', 'download_resource_from_page', 'download_social_media',
   'upload_file',
-  'scratchpad_write', 'progress_update', 'progress_read', 'verify_form', 'solve_captcha',
+  'scratchpad_write', 'progress_update', 'progress_read', 'verify_form', 'solve_captcha', 'get_captcha_capabilities', 'apply_captcha_solution',
 ]);
 
 /**
@@ -2071,7 +2194,7 @@ ${BROWSER_TAB_LIMITATION}
 - fetch_url({url}) / research_url({url}): read OTHER URLs (not the active tab). list_downloads, download_files, download_resource_from_page, read_downloaded_file, upload_file({selector, attachmentId}) or upload_file({selector, downloadId}): file workflows. Use attachmentId for a current user-supplied file; use downloadId for a downloaded file. Use download_files for direct URLs and download_resource_from_page when the resource is attached to a visible page element or a blob: URL. Successful downloads auto-pin each file's downloadId to the scratchpad as an \`[auto]\` line — attach with upload_file({downloadId, selector}) and re-read with read_downloaded_file({downloadId}); no need to recall the path. Omit both ids to prompt the user to pick a new local file.
 - download_public_media (if enabled) / download_social_media: one-shot image/video download from supported public social sites; purpose-built download tools should be tried before manual DOM/resource workflows.
 - verify_form: check a form's field values before submitting. scratchpad_write({text}): pin facts that survive context summarization. progress_update/progress_read: track repeated item/action progress.
-- clarify({question, options?, safe_first?}): ask the user only when materially blocked/ambiguous (budget 1-2 per run). Unanswered clarifies auto-select options[0] after timeout; safe_first makes that selection apply, and source=auto Instant is intentional auto-approve. solve_captcha: one tool call, compatible enabled providers in descending weight order, falling back on failure or timeout; each may charge. Do not repeat the call. hCaptcha requires CapSolver; unsupported provider/type combinations require manual completion.
+- clarify({question, options?, safe_first?}): ask the user only when materially blocked/ambiguous (budget 1-2 per run). Unanswered clarifies auto-select options[0] after timeout; safe_first makes that selection apply, and source=auto Instant is intentional auto-approve. solve_captcha: one tool call, compatible enabled providers in descending weight order, falling back on failure or timeout; each may charge. Do not repeat the call. hCaptcha requires enabled NopeCHA or NoneCap; use get_captcha_capabilities for additional native methods and apply_captcha_solution for their answers; missing inputs or failed solves require manual completion.
 - done({summary, outcome}): signal completion; use outcome:"success" only after verifying success.
 
 CHAT IMAGES:

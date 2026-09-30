@@ -1,3 +1,4 @@
+import { getHcaptchaProviderBalance } from './captcha-hcaptcha-providers.js';
 import { buildTwoCaptchaTask } from './two-captcha.js';
 import { getJsonCaptchaBalance, solveJsonCaptcha } from './captcha-json-api.js';
 
@@ -7,7 +8,7 @@ export function buildAdditionalCaptchaTask(id, task) {
   const mapped = buildTwoCaptchaTask(task);
   if (id === 'anti-captcha') {
     if (task.type === 'AntiTurnstileTaskProxyLess') {
-      const { data, pagedata, ...rest } = mapped;
+      const { data, pagedata, userAgent, ...rest } = mapped;
       return { ...rest, ...(data ? { cData: data } : {}), ...(pagedata ? { chlPageData: pagedata } : {}) };
     }
     return mapped;
@@ -29,6 +30,7 @@ export function buildSolveCaptchaTask(task) {
   if (task.type === 'ImageToTextTask') return { method: 'base64', body: task.body, ...(task.case != null ? { regsense: Number(task.case) } : {}) };
   if (task.type === 'AntiTurnstileTaskProxyLess') {
     return { method: 'turnstile', sitekey: task.websiteKey, pageurl: task.websiteURL,
+      ...(task.userAgent ? { userAgent: task.userAgent } : {}),
       ...(mapped.action ? { action: mapped.action } : {}), ...(mapped.data ? { data: mapped.data } : {}),
       ...(mapped.pagedata ? { pagedata: mapped.pagedata } : {}) };
   }
@@ -41,7 +43,7 @@ export function buildSolveCaptchaTask(task) {
     ...(task.enterprisePayload?.s || task.recaptchaDataSValue ? { 'data-s': task.enterprisePayload?.s || task.recaptchaDataSValue } : {}) };
 }
 
-async function solveCaptchaRequest(apiKey, path, fields, timeout = 30_000) {
+export async function solveCaptchaRequest(apiKey, path, fields, timeout = 30_000) {
   if (!apiKey) throw new Error('No SolveCaptcha API key configured.');
   const body = new URLSearchParams({ key: apiKey, json: '1', ...fields });
   const isGet = path === 'res.php';
@@ -80,6 +82,7 @@ const JSON_PROVIDERS = {
   'anti-captcha': { base: 'https://api.anti-captcha.com', name: 'Anti-Captcha' },
 };
 export async function getAdditionalCaptchaBalance(id, apiKey) {
+  if (['nopecha', 'nonecap'].includes(id)) return getHcaptchaProviderBalance(id, apiKey);
   if (id === 'solvecaptcha') {
     const result = await solveCaptchaRequest(apiKey, 'res.php', { action: 'getbalance' });
     if (Number(result.status) !== 1 || result.request == null || result.request === '' || !Number.isFinite(Number(result.request))) throw new Error('SolveCaptcha: missing balance');
