@@ -9253,7 +9253,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // setting or /allow-api enables it. Inject only once per "allowed run" to
     // avoid bloating every subsequent turn.
     if (this.isApiMutationsAllowed(tabId) && !this.apiAllowedInjected.has(tabId)) {
-      contextLine += `[USER OVERRIDE — API MUTATIONS ALLOWED: The user has authorized API mutations (POST/PUT/PATCH/DELETE via fetch_url or research_url). The default UI-first rule still applies — reach for the API when UI has failed/is genuinely unworkable, or when WebBrain reports a [BULK API MUTATION PATTERN] for repeated successful same-kind UI actions. Before any destructive API call (anything that creates, deletes, transfers, or charges), state the URL, method, and payload in plain text in your response so the user can see what you're about to do.]\n\n`;
+      contextLine += `[USER OVERRIDE — API MUTATIONS ALLOWED: The user has authorized API mutations (POST/PUT/PATCH/DELETE via fetch_url or research_url). For WordPress posts, pages, REST-enabled custom types and their taxonomy, prefer the API first when the required fields and signed-in session are verified and Strict secret handling is off; follow the WordPress adapter/skill and reconcile uncertain writes before retrying. Other tasks retain the UI-first rule. You may also reach for the API when UI has failed/is genuinely unworkable, or when WebBrain reports a [BULK API MUTATION PATTERN] for repeated successful same-kind UI actions. Before any destructive API call (anything that creates, deletes, transfers, or charges), state the URL, method, and payload in plain text in your response so the user can see what you're about to do.]\n\n`;
       this.apiAllowedInjected.add(tabId);
     }
 

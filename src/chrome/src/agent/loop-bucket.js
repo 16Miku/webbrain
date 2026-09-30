@@ -79,6 +79,8 @@ export const URL_FAMILY_TOOLS = new Set([
  *     git/trees/, /repos/o/r/git/refs/, /o/r/blob/<ref>/, /o/r/raw/<ref>/,
  *     /o/r/edit/<ref>/, /o/r/tree/<ref>/, /o/r/commits/<ref>/,
  *     /o/r/commit/<ref>/.
+ *   - WordPress query-form REST URLs keep the installation path and decoded
+ *     rest_route. Other query parameters do not change resource identity.
  *   - For everything else we keep the lowercased hostname and the last
  *     three path segments. That's a backstop, not authoritative — it
  *     trades some over-bucketing (different files in the same /a/b/foo/
@@ -105,6 +107,15 @@ export function resourceBucket(rawUrl) {
   // path because the gist id is the resource identity.
   const ghBucket = _ghResourceBucket(rawHost, rawPath);
   if (ghBucket !== null) return `github.com::${ghBucket}`;
+
+  // Without pretty permalinks, every WordPress REST endpoint shares a path;
+  // dropping rest_route makes normal discovery look like repeated fetches.
+  // URLSearchParams decodes equivalent route encodings. Ignore trailing
+  // slashes and unrelated query variations so real repeats still collide.
+  const restRoute = u.searchParams.get('rest_route');
+  if (restRoute?.startsWith('/')) {
+    return `${rawHost}::${rawPath}|rest_route:${restRoute.replace(/\/+$/, '') || '/'}`;
+  }
 
   // Non-GitHub: keep the lowercased hostname and the last 3 path segments.
   // Loose by design — trades some over-bucketing (siblings in the same
