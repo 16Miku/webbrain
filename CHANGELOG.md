@@ -4,6 +4,76 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [38.0.1] - 2026-09-30
+
+### Changed
+- chore: bump version 37.0.1 → 38.0.0
+- Use Sanity HTTP publish identity and preserve document revision guards
+- Narrow CMS adapter injection to supported editor routes
+- Tighten CMS prompt budgets and verify per-run skill reset
+- Add conditional API-first content skills for nine CMS platforms
+- Fix Compact WordPress API guidance and REST route loop detection
+- Add API-first WordPress content skill and editor fallback guidance
+- Retire stale CAPTCHA documents consistently across recovery paths
+- Handle expired CAPTCHA answers without trapping completion
+- docs: minor wording tweak in trace-format-compatibility
+- Fix CAPTCHA answer recovery and provider fallback validation
+- build(deps): bump fast-uri
+- build(deps): bump the uv group across 1 directory with 4 updates
+- Recover paid native CAPTCHA answers after chat clear
+- Preserve DataDome and FunCaptcha sessions and GeeTest modes
+- Match Lemin API hosts before native fallback
+- Bind hCaptcha User-Agent to target frame and Tencent script
+- Preserve Yidun and reCAPTCHA endpoints in fallback
+- Match Alibaba verification metadata before fallback
+- Keep native CAPTCHA dispatch across chat clears and validate array payloads
+- Preserve hCaptcha cookies and GeeTest service identity in fallback
+- Compare reCAPTCHA session cookies before fallback
+- Guard NoneCap token injection by browser User-Agent
+- Persist native CAPTCHA dispatch locks before provider calls
+- Match recognition constraints across CAPTCHA fallbacks
+- Preserve paid CAPTCHA answers across worker restarts
+- Retire stale CAPTCHA gates and validate Cloudflare fallbacks
+- Match FunCaptcha fallback service hosts
+- Infer hCaptcha Enterprise from explicit rqdata
+- Validate CAPTCHA instruction aliases and child frame freshness
+- Reject undocumented nested CAPTCHA parameters
+- Match TSPD snapshots and reCAPTCHA v3 fallback scores
+- Match CAPTCHA fallback instructions and visibility
+- Gate CAPTCHA application and match fallback proxy identity
+- Retire stale CAPTCHA documents and validate fallback User-Agent
+- Fix CAPTCHA answer retention and v2 fallback identity
+- Retire stale CAPTCHA answers and correct Enterprise rqdata guidance
+- Require complete CAPTCHA fallback identifiers and preserve falsy answers
+- Match text challenge questions before paid CAPTCHA fallback
+- Bind native CAPTCHA fallbacks to observed media and frame URLs
+- Keep native CAPTCHA answers available until first mutation
+- Align CAPTCHA tool documentation with mode availability
+- Keep recoverable CAPTCHA application failures pending
+- fix: observe field-only Discord embeds
+- Retain native CAPTCHA dispatch history across document restores
+- fix: support transcript-bound Discord threads
+- Bind native CAPTCHA fallback and replay to observed challenges
+- fix: verify Discord sends against authored text
+- Fix CAPTCHA routing, answer application, and provider validation
+- fix: validate Discord guild transcript route
+- fix: bind Discord DM and send evidence
+- Integrate documented CAPTCHA provider catalogs and weighted solving
+- fix: capture Discord polls and bound send reconciliation
+- fix: allow new Discord DMs to bind safely
+- fix: reconcile delayed Discord observations safely
+- fix: allow Discord management on message links
+- fix: handle Discord permalinks and global avatars
+- fix: recognize Discord direct-message conversations
+- fix: restore Discord navigation and durable delivery evidence
+- fix: preserve unknown Discord identity on DM routes
+- fix: support Discord guild avatars and account settings
+- fix: recognize localized Discord settings and rail
+- fix: classify Discord avatars and dialogs structurally
+- fix: verify Discord sends without name identity
+- Address Discord observation review feedback
+- Fix Discord management guard and chat observation
+
 ## [38.0.0] - 2026-09-30
 
 ### Added
