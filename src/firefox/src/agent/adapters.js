@@ -1,3 +1,5 @@
+import { CMS_ADAPTERS } from './cms-adapters.js';
+
 import {
   ADAPTER_WORKFLOW_SCHEMA,
   cloneAdapterWorkflowJob,
@@ -17913,6 +17915,7 @@ const ADAPTERS = [
 - Label variants by version/language: "Sign in to continue", "Continue on your server", "Authorize interaction", "Proceed to follow"; Turkish: Takip et=Follow, sunucu/domain=server domain.
 - If the user's Mastodon home domain is not already known from the conversation or account UI, clarify once before entering anything.`,
   },
+  ...CMS_ADAPTERS,
 ];
 
 /**

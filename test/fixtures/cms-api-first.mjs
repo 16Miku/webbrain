@@ -1,0 +1,128 @@
+// Synthetic response fixtures, not recordings of authenticated CMS sessions.
+// Each title-only request deliberately leaves rich content and relationships out
+// except CMA, whose PUT contract requires the complete writable entry.
+const title = 'Revised title';
+const before = 'Original title';
+const stamp = '2026-09-30T10:00:00.000Z';
+
+// Shared Node/browser regressions for CMS notes on unrelated pages, with
+// positive controls for hosted editors and legacy Webflow Designer links.
+export const CMS_ADAPTER_ROUTE_CASES = [
+  ...[
+    'https://webflow.com/dashboard',
+    'https://webflow.com/dashboard/sites/site1?workspace=w1',
+    'https://www.webflow.com/dashboard/',
+    'https://webflow.com/design/site1?locale=fr',
+    'https://www.webflow.com/design/site1/',
+    'https://site1.design.webflow.com/?locale=fr',
+  ].map(url => ({ url, adapter: 'cms-webflow' })),
+  { url: 'https://project1.sanity.studio/structure/story;s1', adapter: 'cms-sanity' },
+  ...[
+    'https://internal.example.test/admin',
+    'https://internal.example.test/admin/users',
+    'https://internal.example.test/administrator/index.php',
+    'https://analytics.example.test/studio/report/1',
+    'https://support.example.test/desk/tickets/42',
+    'https://editor.example.test/studio/structure/story;drafts.s1',
+    'https://public.example.test/',
+    'https://webflow.com/',
+    'https://www.webflow.com/templates',
+    'https://webflow.com/made-in-webflow',
+    'https://webflow.com/blog/cms',
+    'https://webflow.com/dashboard-guide',
+    'https://webflow.com/design',
+    'https://webflow.com/design-system/site1',
+    'https://webflow.com.evil.test/dashboard',
+    'https://site1.design.webflow.com.evil.test/',
+    'file://webflow.com/dashboard',
+  ].map(url => ({ url, adapter: null })),
+];
+
+export const CMS_FIXTURES = [
+  {
+    cms: 'ghost', tab: 'https://editor.example.test/ghost/#/editor/page/g1',
+    url: 'https://editor.example.test/ghost/api/admin/pages/g1/', method: 'PUT',
+    headers: { 'Accept-Version': 'v6.0', 'Content-Type': 'application/json' },
+    request: { pages: [{ title, updated_at: stamp }] },
+    record: { id: 'g1', title: before, status: 'draft', updated_at: stamp, lexical: '{"root":{"children":[]}}', tags: [{ id: 't1' }], authors: [{ id: 'a1' }] },
+    response: record => ({ pages: [record] }),
+    update: (record, body) => ({ ...record, ...body.pages[0] }),
+    title: record => record.title,
+  },
+  {
+    cms: 'drupal', tab: 'https://news.example.test/fr/node/42/edit',
+    url: 'https://news.example.test/fr/jsonapi/node/page/d1', method: 'PATCH',
+    headers: { 'X-CSRF-Token': '<FIXTURE_CSRF>', 'Content-Type': 'application/vnd.api+json' },
+    request: { data: { type: 'node--page', id: 'd1', attributes: { title } } },
+    record: { type: 'node--page', id: 'd1', attributes: { title: before, langcode: 'fr', status: false, body: { value: '<p>Keep <strong>this</strong></p>', format: 'full_html', summary: 'Keep' } }, relationships: { field_tags: { data: [{ type: 'taxonomy_term--tags', id: 't1' }] } } },
+    response: record => ({ data: record }),
+    update: (record, body) => ({ ...record, attributes: { ...record.attributes, ...body.data.attributes } }),
+    title: record => record.attributes.title,
+  },
+  {
+    cms: 'joomla', tab: 'https://news.example.test/administrator/index.php?option=com_content&task=article.edit&id=42',
+    url: 'https://news.example.test/api/index.php/v1/content/articles/42', method: 'PATCH',
+    headers: { 'X-Joomla-Token': '<FIXTURE_TOKEN>', 'Content-Type': 'application/json' }, request: { title },
+    record: { id: 42, title: before, state: 0, language: 'fr-FR', catid: 9, introtext: '<p>Intro</p>', fulltext: '<p>Keep rest</p>', access: 1 },
+    response: record => ({ data: { type: 'articles', id: '42', attributes: record } }),
+    update: (record, body) => ({ ...record, ...body }), title: record => record.title,
+  },
+  {
+    cms: 'webflow', tab: 'https://webflow.com/dashboard/sites/site1',
+    url: 'https://api.webflow.com/v2/collections/c1/items/w1', method: 'PATCH',
+    readUrl: 'https://api.webflow.com/v2/collections/c1/items/w1?cmsLocaleId=fr',
+    headers: { Authorization: 'Bearer <FIXTURE_TOKEN>', 'Content-Type': 'application/json' }, request: { cmsLocaleId: 'fr', fieldData: { name: title } },
+    record: { id: 'w1', cmsLocaleId: 'fr', isDraft: true, isArchived: false, fieldData: { name: before, slug: 'keep', body: '<p>Keep</p>', category: 'c2', authors: ['a1', 'a2'] } },
+    response: record => record,
+    update: (record, body) => ({ ...record, fieldData: { ...record.fieldData, ...body.fieldData } }), title: record => record.fieldData.name,
+  },
+  {
+    cms: 'shopify', tab: 'https://admin.shopify.com/store/shop/content/pages/42',
+    url: 'https://shop.myshopify.com/admin/api/2026-07/graphql.json', method: 'POST',
+    headers: { 'X-Shopify-Access-Token': '<FIXTURE_TOKEN>', 'Content-Type': 'application/json' },
+    request: { query: 'mutation Update($id: ID!, $page: PageUpdateInput!) { pageUpdate(id: $id, page: $page) { page { id title body isPublished } userErrors { field message } } }', variables: { id: 'gid://shopify/Page/42', page: { title } } },
+    readRequest: { query: 'query { page(id: "gid://shopify/Page/42") { id title body isPublished } }' },
+    record: { id: 'gid://shopify/Page/42', title: before, isPublished: false, body: '<p>Keep media <img src="/asset.png"></p>', handle: 'keep', templateSuffix: 'story' },
+    response: record => ({ data: { page: record } }),
+    writeResponse: record => ({ data: { pageUpdate: { page: record, userErrors: [] } } }),
+    update: (record, body) => ({ ...record, ...body.variables.page }), title: record => record.title,
+  },
+  {
+    cms: 'wix', tab: 'https://manage.wix.com/dashboard/site1/blog',
+    url: 'https://www.wixapis.com/blog/v3/draft-posts/x1', method: 'PATCH',
+    readUrl: 'https://www.wixapis.com/blog/v3/draft-posts/x1?fieldsets=RICH_CONTENT',
+    headers: { Authorization: '<FIXTURE_API_KEY>', 'wix-site-id': 'site1', 'Content-Type': 'application/json' }, request: { draftPost: { title } },
+    record: { id: 'x1', title: before, status: 'UNPUBLISHED', language: 'fr', categoryIds: ['c1'], tagIds: ['t1'], memberId: 'm1', richContent: { nodes: [{ id: 'n1', type: 'PARAGRAPH' }] } },
+    response: record => ({ draftPost: record }),
+    update: (record, body) => ({ ...record, ...body.draftPost }), title: record => record.title,
+  },
+  {
+    cms: 'strapi', tab: 'https://cms.example.test/admin/content-manager/collection-types/api::story.story/s1',
+    url: 'https://cms.example.test/api/stories/s1?status=draft&locale=fr', method: 'PUT',
+    readUrl: 'https://cms.example.test/api/stories/s1?status=draft&locale=fr&populate[categories]=true&populate[blocks][populate]=*',
+    headers: { Authorization: 'Bearer <FIXTURE_TOKEN>', 'Content-Type': 'application/json' }, request: { data: { title } },
+    record: { id: 5, documentId: 's1', title: before, locale: 'fr', publishedAt: null, body: [{ type: 'paragraph', children: [{ type: 'text', text: 'Keep' }] }], categories: [{ documentId: 'c1' }], blocks: [{ id: 7, __component: 'shared.media', asset: 5 }] },
+    response: record => ({ data: record }),
+    update: (record, body) => ({ ...record, ...body.data }), title: record => record.title,
+  },
+  {
+    cms: 'contentful', tab: 'https://app.contentful.com/spaces/s1/environments/staging/entries/e1',
+    url: 'https://api.contentful.com/spaces/s1/environments/staging/entries/e1', method: 'PUT',
+    headers: { Authorization: 'Bearer <FIXTURE_TOKEN>', 'X-Contentful-Version': '7', 'Content-Type': 'application/vnd.contentful.management.v1+json' },
+    request: { fields: { title: { fr: title, en: 'Keep English' }, body: { fr: { nodeType: 'document', data: {}, content: [] } }, category: { fr: { sys: { type: 'Link', linkType: 'Entry', id: 'c1' } } } }, metadata: { tags: [{ sys: { type: 'Link', linkType: 'Tag', id: 't1' } }] } },
+    record: { sys: { id: 'e1', version: 7, contentType: { sys: { id: 'story' } } }, fields: { title: { fr: before, en: 'Keep English' }, body: { fr: { nodeType: 'document', data: {}, content: [] } }, category: { fr: { sys: { type: 'Link', linkType: 'Entry', id: 'c1' } } } }, metadata: { tags: [{ sys: { type: 'Link', linkType: 'Tag', id: 't1' } }] } },
+    response: record => record,
+    update: (record, body) => ({ sys: record.sys, ...body }), title: record => record.fields.title.fr,
+  },
+  {
+    cms: 'sanity', tab: 'https://editor.example.test/studio/structure/story;drafts.s1',
+    url: 'https://project1.api.sanity.io/v2025-02-19/data/mutate/production', method: 'POST',
+    readUrl: 'https://project1.api.sanity.io/v2025-02-19/data/doc/production/drafts.s1',
+    headers: { Authorization: 'Bearer <FIXTURE_TOKEN>', 'Content-Type': 'application/json' },
+    request: { mutations: [{ patch: { id: 'drafts.s1', ifRevisionID: 'r1', set: { title } } }] },
+    record: { _id: 'drafts.s1', _type: 'story', _rev: 'r1', title: before, language: 'fr', category: { _type: 'reference', _ref: 'c1' }, body: [{ _type: 'block', _key: 'b1', markDefs: [], children: [{ _type: 'span', _key: 's1', text: 'Keep', marks: [] }] }] },
+    response: record => ({ documents: [record] }),
+    writeResponse: record => ({ transactionId: 'fixture-transaction', results: [{ id: record._id, operation: 'update' }] }),
+    update: (record, body) => ({ ...record, ...body.mutations[0].patch.set }), title: record => record.title,
+  },
+];
