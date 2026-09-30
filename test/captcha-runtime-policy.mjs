@@ -26,6 +26,13 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(requiredHosts(Capability.EXECUTE_JS, args, 'https://main.example.test/', 'apply_captcha_solution'), ['captcha.example.test']);
     assert.deepEqual(requiredHosts(Capability.CLICK, args, 'https://main.example.test/', 'apply_captcha_solution'), ['captcha.example.test']);
     assert.deepEqual(capabilitiesFor('apply_captcha_solution', { ...args, callback: undefined }), []);
+    for (const callback of [{ name: '', path: '' }, {}, { name: ' ', path: '\t' }, { name: null, path: null }]) {
+      assert.deepEqual(capabilitiesFor('apply_captcha_solution', { callback }), []);
+      assert.deepEqual(capabilitiesFor('apply_captcha_solution', { callback, fields: [{}] }), [Capability.TYPE]);
+      assert.deepEqual(capabilitiesFor('apply_captcha_solution', { callback, clicks: [{}] }), [Capability.CLICK]);
+      assert.deepEqual(capabilitiesFor('apply_captcha_solution', { callback, cookies: [{}] }), [Capability.EXECUTE_JS]);
+    }
+    assert.deepEqual(capabilitiesFor('apply_captcha_solution', { callback: { name: '', path: 'token' } }), [Capability.EXECUTE_JS]);
     assert.deepEqual(requiredHosts(Capability.EXECUTE_JS, { ...args, frameUrl: '' }, 'https://main.example.test/', 'apply_captcha_solution'), []);
   });
   test(`${build}: hCaptcha Enterprise rqdata is optional in the model-visible tool schema`, () => {

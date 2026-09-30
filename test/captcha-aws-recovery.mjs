@@ -125,6 +125,41 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(f.requests.length, 1);
   });
 
+  test(`${build}: trace-shaped AWS cookie application ignores an empty callback without another solve`, async t => {
+    const f = fixture(t);
+    const solved = await f.agent._executeToolImpl(1, 'solve_captcha', { inject: false, providerTasks: [{
+      provider: 'capsolver', method: 'AntiAwsWafTaskProxyLess', parameters: {
+        websiteURL: f.url, awsKey: f.observed.websiteKey, awsIv: f.observed.iv,
+        awsContext: f.observed.context, awsChallengeJS: f.observed.challengeScript,
+      },
+    }] });
+    assert.equal(solved.applicationRequired, true);
+    const binding = { clicks: [], frameId: 0, frameUrl: f.url, fields: [],
+      cookies: [{ path: 'cookie', encoding: 'text', name: 'aws-waf-token' }], callback: { name: '', path: '' } };
+    const result = await f.agent._executeToolImpl(1, 'apply_captcha_solution', binding);
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.equal(result.dispatched, true); assert.equal(result.cookiesUpdated, 1);
+    assert.equal(f.cookies.length, 1); assert.equal(f.cookies[0].value, 'primary-cookie');
+    assert.equal(f.requests.length, 1);
+    assert.equal((await f.agent._executeToolImpl(1, 'apply_captcha_solution', binding)).success, false);
+    assert.equal(f.cookies.length, 1); assert.equal(f.requests.length, 1);
+  });
+
+  test(`${build}: correcting an invalid callback reuses the paid answer without a cookie write on failure`, async t => {
+    const f = fixture(t);
+    await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'aws_waf', inject: false });
+    const binding = { frameId: 0, frameUrl: f.url,
+      cookies: [{ path: 'cookie', name: 'aws-waf-token' }], callback: { name: '', path: 'cookie' } };
+    const invalid = await f.agent._executeToolImpl(1, 'apply_captcha_solution', binding);
+    assert.equal(invalid.success, false); assert.equal(invalid.dispatched, false);
+    assert.equal(invalid.applicationRetryable, true);
+    assert.match(invalid.error, /Omit callback.*reuse the stored answer/);
+    assert.equal(f.cookies.length, 0);
+    delete binding.callback;
+    assert.equal((await f.agent._executeToolImpl(1, 'apply_captcha_solution', binding)).success, true);
+    assert.equal(f.cookies.length, 1); assert.equal(f.requests.length, 1);
+  });
+
   test(`${build}: AWS token-only requests do not mutate the cookie store`, async t => {
     const f = fixture(t);
     const result = await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'aws_waf', inject: false });

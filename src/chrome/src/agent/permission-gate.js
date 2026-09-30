@@ -1,3 +1,5 @@
+import { isEmptyCaptchaCallback } from './captcha-callback-binding.js';
+
 /**
  * Deterministic capability × origin permission gate for the WebBrain agent.
  *
@@ -500,7 +502,7 @@ export function capabilitiesFor(name, args) {
   if (name === 'apply_captcha_solution') return [
     ...(args.fields?.length ? [Capability.TYPE] : []),
     ...(args.clicks?.length ? [Capability.CLICK] : []),
-    ...(args.callback || args.cookies?.length ? [Capability.EXECUTE_JS] : []),
+    ...((args.callback && !isEmptyCaptchaCallback(args.callback)) || args.cookies?.length ? [Capability.EXECUTE_JS] : []),
   ];
   if (name === 'chat_send') return [Capability.TYPE, Capability.CLICK];
   if (name === 'delegate_research') {

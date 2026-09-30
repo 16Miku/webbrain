@@ -306,6 +306,31 @@ for (const browser of ['chrome','firefox']) {
     const result=await native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers,[{provider:'solvecaptcha',method:'geetest_v4',parameters:{pageurl:url,captcha_id:'id'}}]));
     assert.equal(calls[0].body.method,'geetest_v4');assert.equal(calls[0].body.key,'secret-solvecaptcha');assert.equal(result.solution.lot_number,'lot');assert.equal(calls.length,2);
   });
+  test(`${browser}: unused callback placeholders preserve cookie, field and recognition bindings`, () => {
+    const solution = { cookie: 'clearance', token: 'answer', points: [1] };
+    const bindings = [
+      { cookies: [{ name: 'aws-waf-token', path: 'cookie' }] },
+      { fields: [{ selector: '#response', path: 'token' }] },
+      { clicks: [{ selector: '#grid', path: 'points', mode: 'grid', rows: 2, columns: 2 }] },
+    ];
+    for (const callback of [{ name: '', path: '' }, {}, { name: '  ', path: '\t' }, { name: null, path: null }, null]) {
+      for (const binding of bindings) assert.deepEqual(
+        apply.prepareCaptchaApplication(solution, { ...binding, callback }),
+        apply.prepareCaptchaApplication(solution, binding),
+      );
+      assert.throws(() => apply.prepareCaptchaApplication(solution, { callback }), /Specify response fields, cookies/);
+    }
+  });
+  test(`${browser}: nonempty or malformed callback bindings still reject before cookie application`, () => {
+    for (const callback of [
+      { name: '', path: 'cookie' }, { name: ' ', path: 'cookie' },
+      { name: 'eval', path: 'cookie' }, { name: 'captcha.constructor', path: 'cookie' },
+      { name: 'captcha.done()', path: 'cookie' }, { name: 42, path: '' },
+      { name: '', path: '', extra: 'unexpected' }, [], 'not-an-object',
+    ]) assert.throws(() => apply.prepareCaptchaApplication({ cookie: 'clearance' }, {
+      cookies: [{ name: 'aws-waf-token', path: 'cookie' }], callback,
+    }), /Omit callback.*reuse the stored answer/);
+  });
   test(`${browser}: solution binding preserves structured callback values and blocks arbitrary scripts/prototype paths`,()=>{
     const solution={token:'answer',cookie:'clearance',structured:{lot:'x'},coordinates:[{x:0,y:0}]};
     assert.deepEqual(apply.prepareCaptchaApplication(solution,{fields:[{selector:'#response',path:'token'}],cookies:[{name:'cf_clearance',path:'cookie'}],callback:{name:'captcha.done',path:'structured'}}),{fields:[{selector:'#response',value:'answer'}],cookies:[{name:'cf_clearance',value:'clearance'}],callback:{name:'captcha.done',value:{lot:'x'}}});
@@ -316,7 +341,7 @@ for (const browser of ['chrome','firefox']) {
   });
 }
 test('native CAPTCHA modules stay mirrored',async()=>{
-  for(const name of ['captcha-catalog.js','captcha-native-providers.js','captcha-solution-application.js','captcha-hcaptcha-providers.js','captcha-json-api.js']) assert.equal(await readFile(`src/chrome/src/agent/${name}`,'utf8'),await readFile(`src/firefox/src/agent/${name}`,'utf8'),name);
+  for(const name of ['captcha-catalog.js','captcha-native-providers.js','captcha-solution-application.js','captcha-callback-binding.js','captcha-hcaptcha-providers.js','captcha-json-api.js']) assert.equal(await readFile(`src/chrome/src/agent/${name}`,'utf8'),await readFile(`src/firefox/src/agent/${name}`,'utf8'),name);
 });
 
 for (const browser of ['chrome', 'firefox']) {

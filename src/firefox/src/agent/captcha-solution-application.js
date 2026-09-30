@@ -1,3 +1,5 @@
+import { isEmptyCaptchaCallback } from './captcha-callback-binding.js';
+
 // Apply only values from a completed solve. Provider responses are untrusted
 // data: never evaluate returned JavaScript or navigate to a returned URL.
 function valueAt(solution, path = '') {
@@ -30,9 +32,9 @@ export function prepareCaptchaApplication(solution, application) {
   if (fields.some(b => typeof b.selector !== 'string' || !b.selector)) throw new Error('Every response field needs an observed selector.');
   if (cookies.some(b => !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(b.name) || /[\r\n;]/.test(b.value))) throw new Error('Invalid CAPTCHA cookie binding.');
   let callback = null;
-  if (application.callback) {
+  if (application.callback && !isEmptyCaptchaCallback(application.callback)) {
     const { name, path = '' } = application.callback;
-    if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(name) || name.split('.').some(k => ['__proto__','prototype','constructor','eval','Function','location'].includes(k))) throw new Error('Use an observed named CAPTCHA callback.');
+    if (typeof name !== 'string' || !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(name) || name.split('.').some(k => ['__proto__','prototype','constructor','eval','Function','location'].includes(k))) throw new Error('Use an observed named CAPTCHA callback. Omit callback when applying only cookies, fields, or clicks. Correct the binding and reuse the stored answer; do not request another solve.');
     callback = { name, value: valueAt(solution, path) };
   }
   const clicks = (application.clicks || []).map(binding => {

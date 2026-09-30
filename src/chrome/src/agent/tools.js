@@ -1313,6 +1313,7 @@ export const AGENT_TOOLS = [
         },
         "callback": {
           "type": "object",
+          "description": "Optional. Omit when applying only cookies, response fields, or recognition clicks. An empty name and path are treated as omitted. Otherwise use only an observed named page callback; never invent one.",
           "properties": {
             "name": {
               "type": "string"

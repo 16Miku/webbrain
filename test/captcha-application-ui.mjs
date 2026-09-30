@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
-import { applyNativeCaptchaSolution, prepareCaptchaApplication } from '../src/chrome/src/agent/captcha-solution-application.js';
 const root=resolve('web');
 const output='/tmp/webbrain-captcha-review';await mkdir(output,{recursive:true});
 const server=createServer(async(req,res)=>{
@@ -18,6 +17,7 @@ await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const origin=`http://127.0.0.1:${server.address().port}`;
 try {
  for(const [name,engine] of [['chrome',chromium],['firefox',firefox]]) {
+  const { applyNativeCaptchaSolution, prepareCaptchaApplication } = await import(`../src/${name}/src/agent/captcha-solution-application.js`);
   const browser=await engine.launch();
   try {
    const page=await browser.newPage();
@@ -37,6 +37,11 @@ try {
    const points=await page.evaluate(()=>({points:clickPoints,rect:document.querySelector('#grid').getBoundingClientRect().toJSON()}));
    assert.deepEqual(points.points,[[points.rect.left+50,points.rect.top+50],[points.rect.left+250,points.rect.top+150]]);
    await assert.rejects(applyNativeCaptchaSolution(1,record,{frameId:0,frameUrl:page.url()}),/unapplied/);
+   const awsRecord={documents,pageUrl:page.url(),createdAt:Date.now(),solution:{cookie:'aws-answer'}};
+   const aws=await applyNativeCaptchaSolution(1,awsRecord,{frameId:0,frameUrl:page.url(),fields:[],clicks:[],cookies:[{name:'aws-waf-token',path:'cookie',encoding:'text'}],callback:{name:'',path:''}});
+   assert.equal(aws.success,true);assert.equal(aws.cookiesUpdated,1);assert.equal(aws.calledCallback,false);
+   assert.equal(cookies.at(-1).name,'aws-waf-token');assert.equal(cookies.at(-1).value,'aws-answer');
+   assert.deepEqual(await page.evaluate(()=>answers),[{lot_number:'lot'}]);
    const base={documents,pageUrl:page.url(),createdAt:Date.now(),solution:{token:'x'}};
    const ambiguous=await applyNativeCaptchaSolution(1,{...base},{frameId:0,frameUrl:page.url(),fields:[{selector:'input, #grid',path:'token'}]});assert.equal(ambiguous.success,false);
    const rejectedNative=await applyNativeCaptchaSolution(1,{...base},{frameId:0,frameUrl:page.url(),callback:{name:'setTimeout',path:'token'}});assert.equal(rejectedNative.success,false);
