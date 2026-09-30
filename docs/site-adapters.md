@@ -28,6 +28,13 @@ export function getActiveAdapter(url) {
 
 Only ONE adapter fires at a time, so prompt cost is fixed regardless of total adapter count.
 
+The nine CMS content adapters live in mirrored `agent/cms-adapters.js` modules,
+appended after existing site-specific matches. Their short notes reach Compact
+without a skill tool; detailed Mid/Full recipes load from the packaged catalog on
+demand. Standard self-hosted admin paths and a conditional custom-editor candidate
+support custom domains, but URL matching alone never proves CMS identity or API
+access. See [CMS content APIs](cms-api-first.md) for auth and routing limits.
+
 For federated platforms such as Mastodon, keep generic URL shapes conservative.
 Bare `/@user` and `/users/user` paths appear on many non-Mastodon sites, and the
 current adapter matcher only sees the URL string. Future work may integrate
