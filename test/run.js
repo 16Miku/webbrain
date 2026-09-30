@@ -28799,8 +28799,8 @@ test('getToolsForMode: mode/tier redesign exposes the intended normal and Dev to
     }
     const researchOptions = { researchEscalationEnabled: true };
     assert.equal(getTools('act', { tier: 'compact', ...researchOptions }).length, 25, `[${label}] Compact should expose 25 tools after tab-tool removal`);
-    assert.equal(getTools('act', { tier: 'mid', ...researchOptions }).length, 46, `[${label}] Mid should expose 46 tools after chat workflow addition`);
-    assert.equal(getTools('act', researchOptions).length, label === 'chrome' ? 52 : 51, `[${label}] Full tool count should include the chat workflow tools`);
+    assert.equal(getTools('act', { tier: 'mid', ...researchOptions }).length, 48, `[${label}] Mid should expose 48 tools including CAPTCHA discovery and answer application`);
+    assert.equal(getTools('act', researchOptions).length, label === 'chrome' ? 54 : 53, `[${label}] Full tool count should include the chat workflow tools`);
     assert.equal(compact.includes('research_url'), false, `[${label}] Compact must not gain research_url as a tab-tool replacement`);
 
     assert.equal(ask.includes('download_resource_from_page'), false, `[${label}] ask must not expose download_resource_from_page`);
@@ -108047,12 +108047,6 @@ const KNOWN_SAFE_TOOLS = new Set([
   // list_downloads: url + Content-Disposition filename). "Doesn't act
   // dangerously" is not the test; "does its RESULT carry page-derived bytes" is.
   'wait_for_stable',      // waits for the page to settle; returns status only
-  // solve_captcha is not page-content; its side effects (spends CapSolver
-  // quota + injects a token into the page) are minor and bounded, and the only
-  // consequential follow-up — the submit — is separately gated. Left ungated to
-  // avoid friction on a precursor the user wants when blocked by a CAPTCHA;
-  // revisit if quota abuse becomes a real concern.
-  'solve_captcha',
 ]);
 
 test('click/click_ax/type_text results keep malicious target context inside the nonce boundary', () => {
@@ -121938,6 +121932,7 @@ async function withCaptchaFakePage(build, nodes, callback) {
         location,
         URL,
         URLSearchParams,
+        navigator: globalThis.navigator,
         innerWidth: 1280,
         innerHeight: 720,
         getComputedStyle: globalThis.getComputedStyle,
@@ -121972,7 +121967,7 @@ async function detectCaptchaDetailsOnFakePage(build, nodes) {
 }
 
 
-test('CAPTCHA providers: hCaptcha routes directly to manual completion with 2Captcha alone', async () => {
+test('CAPTCHA providers: hCaptcha stays manual when CapSolver is also enabled', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const nodes = [captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
       captchaEl('h2', { textContent: 'Security verification' }),
@@ -122006,9 +122001,12 @@ test('CAPTCHA providers: hCaptcha routes directly to manual completion with 2Cap
       } finally { globalThis.fetch = originalFetch; }
 
       agent.captchaProviderIds = ['capsolver', '2captcha'];
-      assert.equal(agent._shouldRetryCaptchaManualGate(agent._captchaGateStates.get(1)), true, build);
-      const refreshed = await agent._captchaMutationPreflight(1, 'click_ax');
-      assert.equal(refreshed?.status, 'solve_required', `${build}: enabling a capable provider should refresh the gate`);
+      assert.equal(agent._shouldRetryCaptchaManualGate(agent._captchaGateStates.get(1)), false, build);
+      await agent._captchaMutationPreflight(1, 'click_ax');
+      assert.equal(agent._captchaGateStates.get(1)?.status, 'manual_required', `${build}: enabling CapSolver must not re-arm solving`);
+      assert.equal(agent._captchaGateBlockResult(1, 'click_ax')?.manualCompletionRequired, true, build);
+      agent.captchaProviderIds = ['nopecha'];
+      assert.equal(agent._shouldRetryCaptchaManualGate(agent._captchaGateStates.get(1)), true, `${build}: enabling a compatible hCaptcha provider can re-arm an undispatched gate`);
     });
   }
 });
@@ -122040,6 +122038,7 @@ test('CAPTCHA providers: real Turnstile detection reaches the 2Captcha request w
         assert.deepEqual(calls[0].body.task, {
           type: 'TurnstileTaskProxyless', websiteURL: 'https://example.test/form', websiteKey: 'TURNSTILE_KEY',
           action: 'signup', data: 'widget-data', pagedata: 'observed-page-data',
+          ...(globalThis.navigator?.userAgent ? { userAgent: globalThis.navigator.userAgent } : {}),
         }, build);
         const beforeConflict = calls.length;
         const conflict = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, metadata: { action: 'another-widget' } });
@@ -122051,6 +122050,291 @@ test('CAPTCHA providers: real Turnstile detection reaches the 2Captcha request w
         globalThis.setTimeout = originalTimeout;
       }
     });
+  }
+});
+
+test('CAPTCHA providers: observed hCaptcha rqdata reaches fallback and returns the NoneCap response key', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sitekey = 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8';
+    const nodes = [captchaEl('div', { class: 'h-captcha', 'data-sitekey': sitekey, 'data-rqdata': 'observed-rqdata' })];
+    await withCaptchaFakePage(build, nodes, async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({
+        captchaSolverEnabled: true, capsolverApiKey: 'CAP-0123456789abcdefghij',
+        nopechaEnabled: true, nopechaApiKey: 'nopecha_key', nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32),
+      }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const previousFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (url, options) => {
+        calls.push({ url, body: JSON.parse(options.body) });
+        return url.includes('nopecha') ? Response.json({ code: 16, message: 'Out of credit' }, { status: 403 })
+          : Response.json({ id: 'solve_test', status: 'solved', token: 'P1_token', resp_key: 'E0_key', user_agent: 'solver-agent' });
+      };
+      try {
+        const agent = new AgentClass({});
+        const flagConflict = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, isEnterprise: false });
+        assert.equal(flagConflict.dispatched, false, build);
+        assert.match(flagConflict.error, /isEnterprise=.*conflicts/, build);
+        assert.equal(calls.length, 0, build);
+        const result = await agent._executeToolImpl(1, 'solve_captcha', { inject: false });
+        assert.equal(result.success, true, `${build}: ${result.error}`);
+        assert.equal(result.provider, 'nonecap', build);
+        assert.equal(result.respKey, 'E0_key', build);
+        assert.equal(result.solverUserAgent, 'solver-agent', build);
+        assert.deepEqual(calls.map(c => c.url), ['https://api.nopecha.com/v1/token/hcaptcha', 'https://api.nonecap.com/v1/solves']);
+        assert.equal(calls[0].body.data.rqdata, 'observed-rqdata', build);
+        assert.deepEqual(calls[1].body, { type: 'hcaptcha_enterprise', sitekey, url: 'https://example.test/form', rqdata: 'observed-rqdata' });
+        const conflict = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, rqdata: 'different-widget' });
+        assert.equal(conflict.dispatched, false, build);
+        assert.match(conflict.error, /rqdata conflicts/);
+        assert.equal(calls.length, 2, build);
+      } finally { globalThis.fetch = previousFetch; }
+    });
+  }
+});
+
+test('NoneCap hCaptcha token is not injected when its User-Agent differs from the browser', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sitekey = 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8';
+    await withCaptchaFakePage(build, [captchaEl('div', { class: 'h-captcha', 'data-sitekey': sitekey })], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({ nonecapEnabled: true,
+        nonecapApiKey: 'nc_live_' + 'a'.repeat(32) }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const originalExecute = build === 'chrome' ? api.scripting.executeScript : api.tabs.executeScript;
+      let injections = 0;
+      if (build === 'chrome') api.scripting.executeScript = async options => {
+        if (options.world === 'MAIN' && options.args?.length) injections++;
+        return originalExecute(options);
+      };
+      else api.tabs.executeScript = async (tabId, options) => {
+        if (options.code.includes('injectCaptchaTokenInPage')) injections++;
+        return originalExecute(tabId, options);
+      };
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () => Response.json({ id: 'solve_test', status: 'solved',
+        token: 'paid-token', user_agent: `${globalThis.navigator?.userAgent || ''}-mismatch` });
+      try {
+        const agent = new AgentClass({});
+        const result = await agent._executeToolImpl(1, 'solve_captcha', {});
+        assert.equal(result.success, false, build);
+        assert.equal(result.dispatched, true, build);
+        assert.equal(result.manualCompletionRequired, true, build);
+        assert.equal(result.injected, false, build);
+        assert.equal(result.token, undefined, build);
+        assert.match(result.error, /different User-Agent/, build);
+        assert.equal(injections, 0, build);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+});
+
+test('hCaptcha dispatch and NoneCap validation use the selected frame User-Agent', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sitekey = 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8';
+    await withCaptchaFakePage(build, [captchaEl('div', { class: 'h-captcha', 'data-sitekey': sitekey })], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({
+        nopechaEnabled: true, nopechaApiKey: 'nopecha_key',
+        nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32),
+      }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const frameUserAgent = 'target-frame-UA';
+      const originalExecute = build === 'chrome' ? api.scripting.executeScript : api.tabs.executeScript;
+      let injections = 0;
+      if (build === 'chrome') api.scripting.executeScript = async options => {
+        if (options.func?.toString().includes('navigator.userAgent')) {
+          return [{ frameId: 0, result: frameUserAgent }];
+        }
+        if (options.world === 'MAIN' && options.args?.length) injections++;
+        return originalExecute(options);
+      };
+      else api.tabs.executeScript = async (tabId, options) => {
+        if (options.code === 'navigator.userAgent') return [frameUserAgent];
+        if (options.code.includes('injectCaptchaTokenInPage')) injections++;
+        return originalExecute(tabId, options);
+      };
+      const originalFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (requestUrl, options) => {
+        calls.push({ url: requestUrl, body: JSON.parse(options.body) });
+        return requestUrl.includes('nopecha')
+          ? Response.json({ code: 16, message: 'Out of credit' }, { status: 403 })
+          : Response.json({ id: 'solve_test', status: 'solved', token: 'paid-token',
+            user_agent: 'background-UA' });
+      };
+      try {
+        const agent = new AgentClass({});
+        const result = await agent._executeToolImpl(1, 'solve_captcha', {});
+        assert.equal(result.dispatched, true, build);
+        assert.equal(result.injected, false, build);
+        assert.equal(result.manualCompletionRequired, true, build);
+        assert.match(result.error, /different User-Agent/, build);
+        assert.equal(calls[0].body.useragent, frameUserAgent, build);
+        assert.equal(injections, 0, build);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+});
+
+test('CAPTCHA providers: explicit rqdata selects NoneCap Enterprise when frame detection is unavailable', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    await withCaptchaFakePage(build, [], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({
+        nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32),
+      }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }),
+        ...(build === 'firefox' ? { executeScript: async () => { throw new Error('frame detection unavailable'); } } : {}) };
+      if (build === 'chrome') api.scripting.executeScript = async () => { throw new Error('frame detection unavailable'); };
+      const originalFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (_url, options) => {
+        calls.push(JSON.parse(options.body));
+        return Response.json({ id: 'solve_test', status: 'solved', token: 'P1_token' });
+      };
+      try {
+        const agent = new AgentClass({});
+        const args = { type: 'hcaptcha', websiteKey: 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8', rqdata: 'observed-rqdata', inject: false };
+        const conflict = await agent._executeToolImpl(1, 'solve_captcha', { ...args, isEnterprise: false });
+        assert.equal(conflict.dispatched, false, build);
+        assert.match(conflict.error, /conflicts with observed hCaptcha rqdata/, build);
+        assert.equal(calls.length, 0, build);
+        const result = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(result.success, true, `${build}: ${result.error}`);
+        assert.equal(result.provider, 'nonecap', build);
+        assert.deepEqual(calls, [{ type: 'hcaptcha_enterprise', sitekey: args.websiteKey,
+          url: 'https://example.test/form', rqdata: 'observed-rqdata' }]);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+});
+
+test('CAPTCHA native methods dispatch through the real agent, preserve structured answers, and keep gates scoped', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    await withCaptchaFakePage(build, [], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      const persisted = [];
+      let storageUnavailable = false;
+      api.storage = { local: { get: async () => ({ twoCaptchaEnabled: true, twoCaptchaApiKey: 'a'.repeat(32) }) },
+        session: { set: async value => {
+          if (storageUnavailable) throw new Error('Session storage unavailable');
+          persisted.push(structuredClone(Object.values(value)[0]));
+        } } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      api.webNavigation = { getAllFrames: async () => [{ frameId: 0, url: 'https://example.test/form' }] };
+      if (build === 'chrome') api.scripting = { executeScript: async () => [{ frameId: 0, result: { url: 'https://example.test/form', timeOrigin: 1000 } }] };
+      else api.tabs.executeScript = async () => [{ url: 'https://example.test/form', timeOrigin: 1000 }];
+      const previousFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (url, options) => {
+        assert.ok(persisted.at(-1)?.nativeCaptchaDispatch?.dispatchedTimeOrigins.length,
+          `${build}: provider was contacted before its dispatch lock was saved`);
+        calls.push({ url, body: JSON.parse(options.body) });
+        return Response.json({ taskId: 42, status: 'ready', solution: { lot_number: 'lot', pass_token: 'pass', captcha_output: 'out' } });
+      };
+      try {
+        const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        const catalog = await agent._executeToolImpl(1, 'get_captcha_capabilities', { family: 'geetest' });
+        assert.ok(catalog.methods.some(method => method.method === 'GeeTestTaskProxyless'), build);
+        const args = { inject: false, providerTasks: [{ provider: '2captcha', method: 'GeeTestTaskProxyless', parameters: { websiteURL: 'https://example.test/form', version: 4, initParameters: { captcha_id: 'observed-id' } } }] };
+        agent._captchaGateStates.set(1, { status: 'manual_required', publicGate: { status: 'manual_required' } });
+        assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', args), null, build);
+        assert.equal(agent._captchaGateBlockResult(1, 'click', {})?.denied, true, build);
+        const wrongPage = structuredClone(args); wrongPage.providerTasks[0].parameters.websiteURL = 'https://other.test/';
+        const rejected = await agent._executeToolImpl(1, 'solve_captcha', wrongPage);
+        assert.equal(rejected.dispatched, false, build); assert.equal(calls.length, 0, build);
+        const wrongPath = structuredClone(args); wrongPath.providerTasks[0].parameters.websiteURL = 'https://example.test/admin';
+        const unobserved = await agent._executeToolImpl(1, 'solve_captcha', wrongPath);
+        assert.equal(unobserved.dispatched, false, build); assert.match(unobserved.error, /observed frames/);
+        assert.equal(calls.length, 0, build);
+        storageUnavailable = true;
+        const unpersisted = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(unpersisted.noDispatch, true, `${build}: a paid task started without a persisted lock`);
+        assert.equal(calls.length, 0, build);
+        storageUnavailable = false;
+        const result = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(result.success, true, `${build}: ${result.error}`);
+        assert.equal(result.applicationRequired, true, build); assert.equal(result.solution.lot_number, 'lot', build);
+        assert.equal(calls[0].body.task.type, 'GeeTestTaskProxyless', build);
+        assert.deepEqual(calls[0].body.task.initParameters, { captcha_id: 'observed-id' });
+        const repeated = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(repeated.dispatched, false, build); assert.equal(calls.length, 1, build);
+        agent._captchaGateStates.set(1, { status: 'verification_pending', publicGate: { status: 'verification_pending', solveAttempted: true } });
+        assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {}), null, build);
+        assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', args)?.denied, true, build);
+        assert.equal(agent._captchaGateBlockResult(1, 'click', {})?.denied, true, build);
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { success: false, error: 'Observed target is ambiguous.' } }];
+        else api.tabs.executeScript = async () => [{ success: false, error: 'Observed target is ambiguous.' }];
+        const preflightFailure = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form', callback: { name: 'captcha.done', path: '' } });
+        assert.equal(preflightFailure.applicationRetryable, true, build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).applied, false, build);
+        const pendingAfterPreflight = agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', preflightFailure);
+        assert.equal(pendingAfterPreflight.status, 'verification_pending', build);
+        assert.equal(pendingAfterPreflight.solveFailed, undefined, build);
+        assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {})?.denied, undefined, build);
+        assert.equal(calls.length, 1, build);
+        const getTab = api.tabs.get;
+        api.tabs.get = async () => { throw new Error('Temporary tab read failure'); };
+        const transientRead = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form' });
+        assert.equal(transientRead.applicationRetryable, true, build);
+        assert.equal(agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', transientRead).status, 'verification_pending', build);
+        api.tabs.get = getTab;
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { success: true } }];
+        else api.tabs.executeScript = async () => [{ success: true }];
+        const applied = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form', callback: { name: 'captcha.done', path: '' } });
+        assert.equal(applied.success, true, build);
+        assert.equal(applied.applicationRetryable, false, build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).applicationSucceeded, true, build);
+        agent._detectChallengeDialogBeforeMutation = async () => ({ inspectionComplete: true, challenge: null });
+        const cleared = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', { pageUrl: 'https://example.test/form', pageContent: 'heading "Verification complete"' });
+        assert.equal(cleared.gate.status, 'cleared', build);
+        assert.equal(agent._captchaGateBlockResult(1, 'click', {}), null, build);
+        // A paid task may time out after the solution's short application TTL.
+        // Its dispatch lock must still hold for the original document.
+        const prior = agent._nativeCaptchaSolutions.get(1);
+        prior.createdAt = Date.now() - 200_000;
+        delete prior.solution;
+        const aged = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(aged.dispatched, false, build);
+        assert.equal(calls.length, 1, build);
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { url: 'https://example.test/form', timeOrigin: 2000 } }];
+        else api.tabs.executeScript = async () => [{ url: 'https://example.test/form', timeOrigin: 2000 }];
+        const reloaded = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(reloaded.success, true, `${build}: new document at the same URL should be eligible: ${reloaded.error}`);
+        assert.equal(calls.length, 2, build);
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { url: 'https://example.test/form', timeOrigin: 1000 } }];
+        else api.tabs.executeScript = async () => [{ url: 'https://example.test/form', timeOrigin: 1000 }];
+        const restored = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(restored.dispatched, false, `${build}: a restored document cannot incur a second charge`);
+        assert.equal(calls.length, 2, build);
+        agent._nativeCaptchaSolutions.get(1).applied = true;
+        const consumed = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form' });
+        assert.equal(consumed.applicationRetryable, false, build);
+        assert.equal(agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', consumed).status, 'manual_required', build);
+      } finally { globalThis.fetch = previousFetch; }
+    });
+  }
+});
+
+test('CAPTCHA gates keep false and zero native answers available for application', () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const solution of [false, 0]) {
+      const agent = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
+      agent.conversationModes.set(1, 'act');
+      agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['2captcha'];
+      agent._nativeCaptchaSolutions = new Map([[1, { pageUrl: 'https://example.test/form', solution, applied: false }]]);
+      const gate = { status: 'verification_pending', solveAttempted: true };
+      agent._captchaGateStates.set(1, { status: 'verification_pending', publicGate: gate });
+      assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), true, `${build}: ${solution}`);
+      assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {}), null, `${build}: ${solution}`);
+      assert.match(agent._captchaRoutingMessage(1, gate), /use apply_captcha_solution/, `${build}: ${solution}`);
+      agent._nativeCaptchaSolutions.get(1).applied = true;
+      assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), false, `${build}: consumed ${solution}`);
+    }
   }
 });
 
@@ -122297,7 +122581,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
       },
       {
         label: 'hCaptcha challenge frame',
-        status: 'solve_required',
+        status: 'manual_required',
         selectedType: 'hcaptcha',
         nodes: [
           captchaEl('div', { role: 'dialog', innerText: 'Güvenlik doğrulaması' }, [
@@ -123022,6 +123306,39 @@ test('challenge dialog with no enabled supported solver stops the batch for manu
     assert.match(result.value, /complete the verification manually/i, `${label}: manual request missing`);
     assert.equal(updates.some(update => update.type === 'captcha_gate' && update.data?.status === 'manual_required'), true, `${label}: trace diagnostic update missing`);
     assert.match(String(messages[0]?.content), /TRUSTED CAPTCHA GATE/, `${label}: model-facing hard gate note missing`);
+  }
+});
+
+test('CAPTCHA batch routing offers native tools only in Act/Dev mid/full and exits compact manually', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full'], ['dev', 'mid'], ['dev', 'full']]) {
+      await withCaptchaFakePage(build, [], async () => {
+        const agent = new AgentClass({ getActive: () => ({ promptTier: tier }), getVisionProvider: async () => null });
+        agent.conversationModes.set(1, mode);
+        agent.captchaSolverEnabled = true;
+        agent.captchaProviderIds = ['capsolver'];
+        agent._skipPermissionGate = true;
+        agent._ensureGateSetting = async () => {};
+        agent._currentUrl = async () => 'https://example.test/signup';
+        agent._rememberMastodonObservation = async () => null;
+        agent._recordProgressObservation = async () => null;
+        agent._autoRecordProgressAction = () => null;
+        agent._persist = () => {};
+        agent.executeTool = async () => ({ success: true, pageContent: 'dialog "Security verification" [ref_10]' });
+        const messages = [];
+        const result = await agent._executeToolBatch(1,
+          [{ id: 'captcha_observe', function: { name: 'get_accessibility_tree', arguments: '{}' } }],
+          messages, () => {}, { supportsVision: false, promptTier: tier }, '', new Set(['get_accessibility_tree']), 1);
+        const available = mode !== 'ask' && tier !== 'compact';
+        assert.equal(result.action, available ? 'continue' : 'return', `${build}/${mode}/${tier}`);
+        if (available) assert.match(messages[0].content, /get_captcha_capabilities/);
+        else {
+          assert.equal(result.status, 'captcha_manual_required');
+          assert.doesNotMatch(messages[0].content, /get_captcha_capabilities|solve_captcha|apply_captcha_solution/);
+          assert.equal(agent._captchaGateBlockResult(1, 'done', { outcome: 'partial' }), null);
+        }
+      });
+    }
   }
 });
 
@@ -125101,20 +125418,17 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
   }
 });
 
-test('capsolver errors: demo-key refusals and task-config errors get different remedies', async () => {
+test('capsolver errors preserve provider evidence without inventing demo-key explanations', async () => {
   const cases = [
     {
-      label: 'demo key refusal',
+      label: 'unsupported service does not prove a demo key',
       body: { errorId: 1, errorCode: 'ERROR_INVALID_TASK_DATA', errorDescription: "We don't support this service." },
-      expect: /public TEST\/DEMO key/,
+      expect: /^CapSolver: We don't support this service\.$/,
     },
     {
       label: 'wrong task type for the widget',
-      // Exactly what an Enterprise sitekey returns for a plain V2 task. This
-      // must NOT be blamed on a demo key: the fix is to correct the task
-      // type, not to give up and move to another site.
       body: { errorId: 1, errorCode: 'ERROR_INVALID_TASK_DATA', errorDescription: 'Invalid input: check captcha type or parameters' },
-      expect: /rejected the task configuration/,
+      expect: /^CapSolver: Invalid input: check captcha type or parameters$/,
     },
     {
       label: 'ordinary parameter error containing the substring "test"',

@@ -21,6 +21,7 @@ import {
 } from './captcha-frame-runtime.js';
 import { buildCaptchaDiagnostics, captchaChallengeMatcherOptions } from './captcha-gate.js';
 import { solveWithAdditionalProvider } from './captcha-additional-providers.js';
+import { solveWithHcaptchaProvider } from './captcha-hcaptcha-providers.js';
 import { solveWithTwoCaptcha } from './two-captcha.js';
 import { captchaProviderSupportsType } from './captcha-provider-config.js';
 
@@ -48,28 +49,9 @@ async function postJson(path, body) {
   }
 }
 
-// Wrap a CapSolver error response in a friendlier message. See the chrome
-// build's captcha-solver.js for the full rationale — short version: CapSolver
-// reuses the same error codes for "I refuse this public TEST/DEMO sitekey"
-// and "your task configuration is wrong", so we key off the description and
-// give each its own remedy. Matching the demo phrasing loosely is a bug: a
-// bare /test/ matches the "test" inside "latest".
-const CAPSOLVER_TASK_CONFIG_RE = /invalid input|check captcha type|wrong captcha type/i;
-const CAPSOLVER_DEMO_KEY_RE = /\btest\s*(?:site\s*)?key\b|\bdemo\b|unsupported|don['’]?t[\s_]support|not[\s_]support/i;
-
+// Preserve provider errors without guessing why a service refused a task.
 function capsolverError(prefix, body) {
-  const desc = body.errorDescription || body.errorCode || 'unknown error';
-  if (CAPSOLVER_TASK_CONFIG_RE.test(desc)) {
-    return new Error(
-      `${prefix}: ${desc}. CapSolver rejected the task configuration, not the sitekey — most often the task type doesn't match the widget (a plain reCAPTCHA task against an Enterprise sitekey, or a v2 task against a v3 key). Re-check the detected type and pass \`type\` / \`isEnterprise\` explicitly.`
-    );
-  }
-  if (CAPSOLVER_DEMO_KEY_RE.test(desc)) {
-    return new Error(
-      `${prefix}: ${desc}. This usually means CapSolver refused the sitekey — most often because it is a public TEST/DEMO key (Google's recaptcha demo, hcaptcha.com/demo, etc.) that no captcha-solving service will farm. Try the same flow on a real production site.`
-    );
-  }
-  return new Error(`${prefix}: ${desc}`);
+  return new Error(`${prefix}: ${body.errorDescription || body.errorCode || 'unknown error'}`);
 }
 
 export async function getBalance(apiKey) {
@@ -88,8 +70,8 @@ async function createTask(apiKey, task) {
   });
   if (!res || typeof res !== 'object') throw new Error('CapSolver createTask returned unexpected response.');
   if (res.errorId) throw capsolverError('CapSolver createTask', res);
-  if (!res.taskId) throw new Error('CapSolver createTask returned no taskId.');
-  return res.taskId;
+  if (res.status !== 'ready' && !res.taskId) throw new Error('CapSolver createTask returned no taskId.');
+  return res;
 }
 
 async function pollTaskResult(apiKey, taskId, { timeoutMs = POLL_TIMEOUT_MS } = {}) {
@@ -125,7 +107,10 @@ export function captchaParamError(params) {
   const t = String(params?.type || '').toLowerCase();
   if (!t) return 'solve_captcha: type is required.';
   if (RECAPTCHA_V3_TYPES.has(t) && !(params.pageAction || params.action)) {
-    return `solve_captcha: ${params.type} requires a \`pageAction\` (e.g. "login", "submit"). reCAPTCHA v3 scores the action name, so CapSolver cannot mint a usable token without it — pass \`pageAction\` explicitly.`;
+    return `solve_captcha: ${params.type} requires a \`pageAction\` (e.g. "login", "submit"). reCAPTCHA v3 scores the action name, so WebBrain requires the observed action before requesting a token — pass \`pageAction\` explicitly.`;
+  }
+  if (RECAPTCHA_V3_TYPES.has(t) && params.minScore != null && ![0.3, 0.7, 0.9].includes(params.minScore)) {
+    return 'solve_captcha: minScore must be 0.3, 0.7, or 0.9 for compatible provider fallback.';
   }
   return null;
 }
@@ -156,16 +141,7 @@ export function buildTask({ type, websiteURL, websiteKey, ...rest }) {
       ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
     };
   }
-  if (t === 'hcaptcha') {
-    return {
-      type: 'HCaptchaTaskProxyLess',
-      websiteURL,
-      websiteKey,
-      ...(rest.isInvisible != null ? { isInvisible: !!rest.isInvisible } : {}),
-      ...(rest.enterprisePayload ? { enterprisePayload: rest.enterprisePayload } : {}),
-      ...(rest.userAgent ? { userAgent: rest.userAgent } : {}),
-    };
-  }
+  if (t === 'hcaptcha') throw new Error('hCaptcha requires manual completion; CapSolver does not have a verified hCaptcha integration.');
   if (t === 'turnstile' || t === 'cloudflare' || t === 'cf_turnstile') {
     return {
       type: 'AntiTurnstileTaskProxyLess',
@@ -178,7 +154,7 @@ export function buildTask({ type, websiteURL, websiteKey, ...rest }) {
   if (t === 'image_to_text' || t === 'image') {
     return {
       type: 'ImageToTextTask',
-      body: rest.body,
+      body: rest.body, // base64 png/jpg, no data: prefix
       ...(rest.module ? { module: rest.module } : {}),
       ...(rest.case != null ? { case: !!rest.case } : {}),
     };
@@ -224,11 +200,16 @@ export async function solveCaptcha(apiKey, params, { useCloudBroker = false } = 
   const paramError = captchaParamError(params);
   if (paramError) throw new Error(paramError);
   const task = buildTask(params);
+  // minScore belongs to the shared fallback input. CapSolver's current v3
+  // schema has no such parameter; requesting a score does not guarantee one.
+  delete task.minScore;
   const { taskId, solution } = useCloudBroker
     ? await solveWithCloudBroker(task)
     : await (async () => {
-      const taskId = await createTask(apiKey, task);
-      return { taskId, solution: await pollTaskResult(apiKey, taskId) };
+      const created = await createTask(apiKey, task);
+      // ImageToTextTask returns its answer in createTask; it must not be polled.
+      if (created.status === 'ready') return { taskId: created.taskId, solution: created.solution || {} };
+      return { taskId: created.taskId, solution: await pollTaskResult(apiKey, created.taskId) };
     })();
   const meta = solutionFor(params.type, solution);
   return { taskId, solution, ...meta };
@@ -241,16 +222,18 @@ export async function solveCaptchaWithProviders(providers, params) {
   if (!providers.length) throw new Error('No CAPTCHA solver is enabled with a valid API key.');
   const paramError = captchaParamError(params);
   if (paramError) throw new Error(paramError);
-  const task = buildTask(params);
   const eligibleProviders = providers.filter(provider => captchaProviderSupportsType(provider.id, params.type));
   if (!eligibleProviders.length) throw new Error(`No enabled provider supports ${params.type}. Ask the user to complete it manually.`);
+  const task = params.type === 'hcaptcha' ? null : buildTask(params);
   const failures = [];
   for (const provider of eligibleProviders) {
     try {
       const result = provider.id === 'capsolver'
         ? await solveCaptcha(provider.apiKey, params, { useCloudBroker: provider.useCloudBroker === true })
         : await (async () => {
-          const result = provider.id === '2captcha'
+          const result = ['nopecha', 'nonecap'].includes(provider.id)
+            ? await solveWithHcaptchaProvider(provider.id, provider.apiKey, params)
+            : provider.id === '2captcha'
             ? await solveWithTwoCaptcha(provider.apiKey, task)
             : await solveWithAdditionalProvider(provider.id, provider.apiKey, task);
           return { ...result, ...solutionFor(params.type, result.solution) };
@@ -411,6 +394,15 @@ export async function detectCaptcha(tabId, constraints = {}) {
       navigationFrames: frames,
     }),
   };
+}
+
+export async function readCaptchaFrameUserAgent(tabId, frameId) {
+  if (!Number.isInteger(frameId)) return null;
+  const results = await browser.tabs.executeScript(tabId, {
+    frameId, matchAboutBlank: true, code: 'navigator.userAgent',
+  });
+  const value = results?.[0];
+  return typeof value === 'string' && value.trim() ? value : null;
 }
 
 export async function injectToken(tabId, {
