@@ -158,8 +158,53 @@ function _ghResourceBucket(host, path) {
 }
 
 /**
+ * Deterministic JSON with object keys in sorted order.
+ *
+ * `JSON.stringify` preserves insertion order, so `{selector:"#a",text:"x"}`
+ * and `{text:"x",selector:"#a"}` — the same rejected call — hash to two
+ * different loop keys. A model that keeps re-emitting the same invalid
+ * argument object can then permute key order on every attempt and never
+ * reach the rejection limit. Sorting keys collapses those variants into one
+ * identity. Array order is preserved because element order is meaningful.
+ *
+ * `undefined`/function/symbol values are dropped from objects and become
+ * `null` inside arrays, exactly as `JSON.stringify` does, so an absent
+ * argument and an explicitly undefined one stay one identity.
+ */
+function canonicalJson(value, seen = new Set()) {
+  if (value === null) return 'null';
+  if (typeof value !== 'object') return _canonicalScalar(value);
+  if (seen.has(value)) return '"[circular]"';
+  seen.add(value);
+  let encoded;
+  if (Array.isArray(value)) {
+    encoded = `[${value.map(entry => canonicalJson(entry, seen)).join(',')}]`;
+  } else {
+    const members = [];
+    for (const key of Object.keys(value).sort()) {
+      if (_isOmittable(value[key])) continue;
+      members.push(`${JSON.stringify(key)}:${canonicalJson(value[key], seen)}`);
+    }
+    encoded = `{${members.join(',')}}`;
+  }
+  seen.delete(value);
+  return encoded;
+}
+
+function _isOmittable(value) {
+  return value === undefined || typeof value === 'function' || typeof value === 'symbol';
+}
+
+function _canonicalScalar(value) {
+  if (typeof value === 'bigint') return JSON.stringify(value.toString());
+  if (typeof value === 'number') return Number.isFinite(value) ? JSON.stringify(value) : 'null';
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
  * Build the loop-detector key for a tool call. URL-family tools bucket
- * by resource + method; other tools fall back to exact JSON args.
+ * by resource + method; other tools fall back to key-order-independent
+ * JSON args.
  *
  * Returns the args-portion of the loop key. Caller appends `|name|errored`.
  */
@@ -171,7 +216,7 @@ export function bucketArgsKey(name, args) {
     const fetchTextWindow = name === 'fetch_url' ? _fetchTextWindowKey(args) : '';
     return `url:${bucket}|${method}${pageSourceRange}${fetchTextWindow}`;
   }
-  return JSON.stringify(args || {});
+  return canonicalJson(args || {});
 }
 
 function _pageSourceRangeKey(args) {

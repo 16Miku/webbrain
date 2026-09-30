@@ -34,7 +34,7 @@ export class LoopDetector {
     // interleaving reads cannot evade the generic loop detector.
     this.noProgressScrolls = new Map(); // tabId -> { key, count }
     // Separate buffer for coordinate-based click attempts. The general loop
-    // detector keys on JSON.stringify(args), so when the model interleaves
+    // detector keys on the exact argument bucket, so when the model interleaves
     // execute_js with different code strings between clicks, the same
     // (x,y) click never accumulates to the threshold inside its window.
     // This buffer tracks ONLY coord clicks and survives any amount of

@@ -52,14 +52,21 @@ for (const [browser, Agent] of variants) {
           imageWidth: 1102, imageHeight: 746, cssWidth: 1102, cssHeight: 746,
         });
         // Capture churn and JSON property order must not disguise one failure.
+        // Coordinate failures carry a constant failureScope, so only the
+        // invalid-schema case can be hidden by reordering — it has to build
+        // its own key-ordered args to exercise the default scope.
         const entries = [
           ['x', 800], ['y', failure === 'out-of-bounds' ? 780 : 400],
           ['coordinate_space', 'screenshot'],
           ...(failure === 'missing capture' ? [] : [['capture_id', failure === 'stale capture' ? `old-${attempt}` : capture.captureId]]),
         ];
-        if (attempt % 2 === 0) entries.reverse();
+        const schemaEntries = [['text', '02'], ['selector', '#jj']];
+        if (attempt % 2 === 0) {
+          entries.reverse();
+          schemaEntries.reverse();
+        }
         const args = failure === 'malformed JSON' ? '{"x":'
-          : failure === 'invalid schema' ? '{"text":"02","selector":"#jj"}'
+          : failure === 'invalid schema' ? JSON.stringify(Object.fromEntries(schemaEntries))
           : JSON.stringify(Object.fromEntries(entries));
         const name = failure === 'invalid schema' ? 'set_field' : 'click';
         results.push(await agent._executeToolBatch(
