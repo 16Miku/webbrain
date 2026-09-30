@@ -1036,6 +1036,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Dimension max. d’image",
   "st.imageBudget.maxDimension.desc": "Plus grand côté (largeur ou hauteur) en pixels pour toute capture envoyée à la vision. Un plafond plus bas réduit les images avant envoi, ce qui coupe tokens et coût. Un plafond plus haut conserve la fidélité.",
   "st.imageBudget.warning": "⚠️ Ces réglages s’appliquent aux captures pour la vision (auto-capture, /screenshot, page entière, verify_form). Les images enregistrées manuellement en pleine résolution ne sont pas affectées. « Image detail » est respecté par les endpoints de type OpenAI ; d’autres fournisseurs peuvent l’ignorer.",
+  "sp.slash.export_traces_full": "Exporter toute la session de traces enregistrée en JSON, captures comprises",
+  "sp.export_traces.recording_truncated": "Tous les enregistrements sauvegardés ont été exportés en JSON. Le contenu omis lors de l’enregistrement ne peut pas être récupéré par l’export.",
   "sp.slash.export_traces": "Exporter la chaîne d'outils (traces)",
   "sp.export_traces.none": "Aucune trace pour cette conversation. Activez « Enregistrer les traces » dans les paramètres, puis relancez.",
   "sp.export_traces.error": "Impossible d'exporter les traces.",

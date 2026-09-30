@@ -312,6 +312,78 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(completed.gate.status, 'cleared');
     assert.equal(f.agent._captchaGateBlockResult(1, 'click', {}), null);
   });
+  test(`${build}: hCaptcha to AWS to resubmission to hCaptcha to secondary AWS stays automatic`, async t => {
+    const f = automaticSolveFixture(t);
+    const aws = { pageUrl: f.pageUrl, active: false, inspectionComplete: true,
+      rootDocument: { url: f.pageUrl, timeOrigin: 2000 }, websiteKey: 'aws-key', iv: 'aws-iv', context: 'aws-context',
+      challengeScript: 'https://site.token.awswaf.com/challenge.js' };
+    f.agent._readAwsWafChallenge = async () => structuredClone(aws);
+    const settings = await f.api.storage.local.get();
+    f.api.storage.local.get = async () => ({ ...settings, captchaSolverEnabled: true, capsolverApiKey: 'CAP-' + 'a'.repeat(32) });
+    f.api.cookies = { getAllCookieStores: async () => [{ id: 'store', tabIds: [1] }], set: async cookie => cookie };
+    if (build === 'chrome') {
+      const execute = f.api.scripting.executeScript;
+      f.api.scripting.executeScript = async options => options.func.name === 'applyCaptchaValuesInPage'
+        ? [{ frameId: 0, result: { success: true } }] : execute(options);
+    } else {
+      const execute = f.api.tabs.executeScript;
+      f.api.tabs.executeScript = async (tabId, options) => options.code.includes('applyCaptchaValuesInPage')
+        ? [{ success: true }] : execute(tabId, options);
+    }
+    const calls = [];
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+      const body = JSON.parse(options.body); calls.push({ url, body });
+      return Response.json(url.includes('capsolver')
+        ? { status: 'ready', taskId: 'aws-task', solution: { cookie: 'aws-cookie' } }
+        : { id: 'hcaptcha-task', status: 'solved', token: 'hcaptcha-token' });
+    });
+    const read = () => f.agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageUrl: f.pageUrl, pageContent: 'dialog "Security verification"' }, { filter: 'visible' });
+    for (let stage = 0; stage < 2; stage++) {
+      f.widget.responseTokenPresent = false; f.widget.activeChallengeFrame = true; f.widget.activeChallengeFrameVisible = true;
+      assert.equal((await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' })).success, true);
+      f.widget.responseTokenPresent = true; f.widget.activeChallengeFrame = false; f.widget.activeChallengeFrameVisible = false;
+      aws.active = true;
+      if (stage) {
+        // Some forms remove the old widget before the next server challenge.
+        f.page.candidates = [];
+        Object.assign(aws, { apiKey: 'sdk-key', jsapiScript: 'https://site.captcha-sdk.awswaf.com/jsapi.js', existingToken: 'aws-cookie' });
+      }
+      assert.equal((await read()).gate.status, 'solve_required');
+      const solved = await f.agent._executeToolImpl(1, 'solve_captcha', {});
+      assert.equal(solved.success, true, solved.error);
+      assert.equal(solved.type, 'aws_waf');
+      aws.active = false; aws.rootDocument.timeOrigin++;
+      f.page.frameContext.documentTimeOrigin = aws.rootDocument.timeOrigin;
+      f.widget.documentTimeOrigin = aws.rootDocument.timeOrigin;
+      await f.agent._observeCaptchaChallenge(1, 'get_accessibility_tree', { pageUrl: f.pageUrl, pageContent: 'heading "Complete your profile"' });
+    }
+    assert.equal(calls.filter(call => call.url.includes('nonecap')).length, 2);
+    const awsCalls = calls.filter(call => call.url.includes('capsolver'));
+    assert.equal(awsCalls.length, 2);
+    assert.equal(awsCalls[0].body.task.awsKey, 'aws-key');
+    assert.equal(awsCalls[1].body.task.awsExistingToken, 'aws-cookie');
+  });
+  test(`${build}: a new challenge after verified clearance and a successful submit can be solved in the same document`, async t => {
+    const f = automaticSolveFixture(t);
+    await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' });
+    f.widget.activeChallengeFrame = false;
+    f.widget.activeChallengeFrameVisible = false;
+    f.widget.responseTokenPresent = true;
+    const cleared = await f.agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageUrl: f.pageUrl, pageContent: 'link "Home"' }, { filter: 'visible' });
+    assert.equal(cleared.gate.status, 'cleared');
+    f.agent._noteCaptchaContinuation(1, { kind: 'submit' }, { success: true });
+    f.widget.responseTokenPresent = false;
+    f.widget.activeChallengeFrame = true;
+    f.widget.activeChallengeFrameVisible = true;
+    const next = await f.agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageUrl: f.pageUrl, pageContent: 'dialog "Security verification"' }, { filter: 'visible' });
+    assert.equal(next.gate.status, 'solve_required');
+    const result = await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' });
+    assert.equal(result.success, true, result.error);
+    assert.equal(f.requests.length, 2);
+  });
   for (const status of ['solve_required', 'verification_pending', 'manual_required']) {
     test(`${build}: ${status} allows cancellation and partial reports without a solve`, async () => {
       const agent = agentFor('act', 'full');

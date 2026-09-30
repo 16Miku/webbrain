@@ -205,6 +205,8 @@ export default {
   'sp.watch.error': 'Überwachung konnte nicht erstellt werden: {error}',
   'sp.slash.unsupported': '{usage} wird in diesem Browser nicht unterstützt.',
   'sp.slash.busy_only_oob': 'Nachrichten werden in die Warteschlange gestellt, während WebBrain beschäftigt ist. Nur /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces und /verbose können sofort als Slash-Befehle ausgeführt werden.',
+  "sp.slash.export_traces_full": "Die vollständig gespeicherte Trace-Sitzung einschließlich Screenshots als JSON exportieren",
+  "sp.export_traces.recording_truncated": "Alle gespeicherten Einträge wurden als JSON exportiert. Bei der Aufzeichnung ausgelassene Inhalte können durch den Export nicht wiederhergestellt werden.",
   'sp.slash.export_traces': 'Werkzeugkette (Traces) exportieren',
   'sp.slash.export_config': 'Alle Einstellungen exportieren, einschließlich API-Schlüssel der Anbieter',
   'sp.slash.import_config': 'WebBrain-Konfigurations-Snapshot als JSON importieren',

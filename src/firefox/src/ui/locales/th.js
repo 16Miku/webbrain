@@ -1017,6 +1017,8 @@ export default {
   "sp.upload_picker.cancelled": "ยกเลิกการอัปโหลดแล้ว",
   "sp.upload_picker.too_large": "ไฟล์ที่เลือกเกินขีดจำกัด 25MB (สูงสุด 25MB)",
   "sp.upload_picker.read_failed": "อ่านไฟล์ที่เลือกไม่สำเร็จ",
+  "sp.slash.export_traces_full": "ส่งออกเซสชันการติดตามที่บันทึกไว้ทั้งหมดเป็น JSON รวมภาพหน้าจอ",
+  "sp.export_traces.recording_truncated": "ส่งออกข้อมูลที่บันทึกไว้ทั้งหมดเป็น JSON แล้ว เนื้อหาที่ละเว้นระหว่างการบันทึกไม่สามารถกู้คืนด้วยการส่งออกได้",
   "sp.slash.export_traces": "ส่งออกลำดับการทำงานของเครื่องมือ (trace)",
   "sp.export_traces.none": "ไม่มี trace สำหรับการสนทนานี้ เปิด «บันทึก trace» ในการตั้งค่า แล้วเรียกใช้อีกครั้ง",
   "sp.export_traces.error": "ไม่สามารถส่งออก trace ได้",

@@ -725,12 +725,13 @@ const SLASH_COMMANDS = [
   },
   {
     value: '/export',
-    usage: '/export [--traces | --config]',
+    usage: '/export [--traces [--full] | --config]',
     descriptionKey: 'sp.slash.export',
     action: 'conversation',
     outOfBand: true,
     options: [
       { value: '--traces', descriptionKey: 'sp.slash.export_traces', action: 'traces', outOfBand: true, disallowPayload: true, exclusiveGroup: 'export-format' },
+      { value: '--full', descriptionKey: 'sp.slash.export_traces_full', requires: '--traces', conflicts: ['--config'], disallowPayload: true },
       { value: '--config', descriptionKey: 'sp.slash.export_config', action: 'config', outOfBand: true, disallowPayload: true, exclusiveGroup: 'export-format' },
     ],
   },
@@ -8262,7 +8263,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (command.value === '/export' && action === 'traces') {
     let res;
     try {
-      res = await sendToBackground('export_traces', { tabId });
+      res = await sendToBackground('export_traces', { tabId, full: optionValues.has('--full') });
     } catch (e) {
       addPersistentSlashMessage(`${t('sp.export_traces.error')} (${e?.message || e})`);
       return '';
@@ -8271,7 +8272,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       addPersistentSlashMessage(`${t('sp.export_traces.error')} (${res?.error || 'unknown error'})`);
       return '';
     }
-    if (!res.markdown || res.turnCount === 0) {
+    if (!(res.json || res.markdown) || res.turnCount === 0) {
       addPersistentSlashMessage(
         res.reason === 'no-conversation'
           ? t('sp.export_traces.no_conversation')
@@ -8279,11 +8280,11 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       );
       return '';
     }
-    const blob = new Blob([res.markdown], { type: 'text/markdown' });
+    const blob = new Blob([res.json || res.markdown], { type: res.json ? 'application/json' : 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `webbrain-traces-${Date.now()}.md`;
+    a.download = `webbrain-traces-${Date.now()}.${res.json ? 'json' : 'md'}`;
     document.body.appendChild(a);
     try {
       a.click();
@@ -8291,7 +8292,9 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 7000);
     }
-    if (res.partial) {
+    if (res.recordingTruncated) {
+      addPersistentSlashMessage(t('sp.export_traces.recording_truncated'));
+    } else if (res.partial) {
       addPersistentSlashMessage(t('sp.export_traces.partial'));
     } else if (res.truncated) {
       addPersistentSlashMessage(t('sp.export_traces.truncated'));

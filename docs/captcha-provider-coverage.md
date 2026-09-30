@@ -82,7 +82,7 @@ Automatic detection still validates the hCaptcha UUID site key and observed `rqd
 5. On API error, unusable answer, or timeout, try the next compatible provider.
 6. Stop at the first usable answer. Injection or later page rejection does not restart fallback.
 
-**Fallback can incur multiple charges.** A timed-out job may still finish upstream after WebBrain starts the next provider. This behavior is intentional. “Never retry” applies to issuing another paid tool call for the same challenge, not to the configured provider sequence within one call.
+**Fallback can incur multiple charges.** A timed-out job may still finish upstream after WebBrain starts the next provider. This behavior is intentional. “Never retry” prevents repurchasing the same unresolved challenge from an already attempted provider. Provider errors advance the configured sequence within one call. For automatic AWS cookie solving, a fresh read after a reload that still shows AWS blocking can advance to an untried compatible provider; the attempted-provider record survives restart.
 
 Most adapters use a 180-second job deadline and 30-second HTTP requests. The original direct CapSolver route retains its 120-second polling deadline. NopeCHA/NoneCap poll every two seconds; generic JSON providers every five seconds. SolveCaptcha waits 20 seconds initially for reCAPTCHA and five seconds for other tasks. Actual completion time is provider-dependent.
 
@@ -93,6 +93,10 @@ After manual completion navigates to another page, the next accessibility read c
 ## Automatic widgets and native methods
 
 ### Automatic route
+
+AWS WAF is also routed automatically from a visible challenge. The runtime observes initial `gokuProps` inputs or SDK/resource inputs for [CapSolver's secondary-verification contract](https://docs.capsolver.com/en/guide/captcha/awsWaf/), including the observed SDK API key and existing AWS token. Initial cookie tasks can use CapSolver, CapMonster, and Anti-Captcha; secondary SDK tasks currently use CapSolver. Enabling a recognition or voucher-returning service does not make it an applicable cookie fallback. `solve_captcha` applies the returned cookie unless `inject:false` was requested, then requires a reload and fresh inspection. A returned answer or successful cookie write alone is not clearance.
+
+Confirmed clearance permits a later challenge, including another family on the same page. A successful form submission after verified widget clearance can re-arm a newly visible challenge. Mere URL changes, incomplete reads, or an unchanged visible challenge do not unlock another paid attempt. Complete AWS disappearance also permits continuation after manual completion.
 
 The extension captures callbacks passed to `hcaptcha.render()`, `turnstile.render()`, and `grecaptcha.render()` (including Enterprise) at document start in each matching frame. This supports function closures without a global `data-callback` name. The callback is matched to the selected response field and site key, invoked at most once per widget generation, and invalidated by reset/removal. hCaptcha's [`execute(widgetID, { async: true })`](https://docs.hcaptcha.com/configuration/#asynchronous-mode-get-a-promise) continuation receives the same answer; `getResponse()` and, when supplied by the provider, `getRespKey()` agree with that answer. Page acceptance still requires a fresh inspection: invoking the callback does not clear a visible, rejected challenge.
 

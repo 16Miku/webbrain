@@ -1017,6 +1017,8 @@ export default {
   "sp.upload_picker.cancelled": "업로드가 취소되었습니다",
   "sp.upload_picker.too_large": "선택한 파일이 25MB 제한을 초과합니다 (최대 25MB)",
   "sp.upload_picker.read_failed": "선택한 파일을 읽지 못했습니다",
+  "sp.slash.export_traces_full": "스크린샷을 포함한 저장된 전체 추적 세션을 JSON으로 내보내기",
+  "sp.export_traces.recording_truncated": "저장된 모든 기록을 JSON으로 내보냈습니다. 기록 중 누락된 내용은 내보내기로 복구할 수 없습니다.",
   "sp.slash.export_traces": "도구 체인 내보내기(트레이스)",
   "sp.export_traces.none": "이 대화에 대한 트레이스가 없습니다. 설정에서 '트레이스 기록'을 켜고 다시 실행하세요.",
   "sp.export_traces.error": "트레이스를 내보낼 수 없습니다.",

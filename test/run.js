@@ -14876,7 +14876,7 @@ test('/export --traces is wired in both side panels and backgrounds', () => {
     const bg = fs.readFileSync(path.join(ROOT, bgRel), 'utf8');
     assert.match(
       panel,
-      /usage: '\/export \[--traces \| --config\]'[\s\S]*?value: '--traces'[\s\S]*?action: 'traces'[\s\S]*?outOfBand: true/,
+      /usage: '\/export \[--traces \[--full\] \| --config\]'[\s\S]*?value: '--traces'[\s\S]*?action: 'traces'[\s\S]*?outOfBand: true/,
       `${label}: slash metadata should advertise /export --traces`,
     );
     assert.match(
@@ -14886,7 +14886,7 @@ test('/export --traces is wired in both side panels and backgrounds', () => {
     );
     assert.match(
       panel,
-      /if \(command\.value === '\/export' && action === 'traces'\) \{[\s\S]*?sendToBackground\('export_traces', \{ tabId \}\)/,
+      /if \(command\.value === '\/export' && action === 'traces'\) \{[\s\S]*?sendToBackground\('export_traces', \{ tabId, full: optionValues\.has\('--full'\) \}\)/,
       `${label}: /export --traces should call export_traces on the background`,
     );
     assert.match(
@@ -14902,7 +14902,7 @@ test('/export --traces is wired in both side panels and backgrounds', () => {
     assert.match(bg, /case 'export_traces':/, `${label}: background should handle export_traces`);
     assert.match(
       bg,
-      /case 'export_traces': \{[\s\S]*?agent\.exportTraces\(tabId\)/,
+      /case 'export_traces': \{[\s\S]*?agent\.exportTraces\(tabId, \{ full: msg\.full === true \}\)/,
       `${label}: export_traces should call agent.exportTraces`,
     );
     assert.match(panel, /_Exported with WebBrain v\$\{webbrainVersion\}_/, `${label}: /export should include the current manifest version`);

@@ -1035,6 +1035,8 @@ export default {
   "st.imageBudget.maxDimension.label": "En büyük görüntü boyutu",
   "st.imageBudget.maxDimension.desc": "Görüşe gönderilen herhangi bir ekran görüntüsünün en uzun kenarı (genişlik veya yükseklik) piksel cinsinden. Daha küçük üst sınır görüntüleri göndermeden önce küçültür, token ve maliyeti düşürür. Daha büyük üst sınır sadakati korur.",
   "st.imageBudget.warning": "⚠️ Bu ayarlar görüş için yakalanan ekran görüntülerine uygulanır (otomatik görüntü, /screenshot, tam sayfa, verify_form). Elle kaydedilen tam çözünürlüklü görüntüler etkilenmez. «Image detail» OpenAI tarzı uçlar tarafından uygulanır; diğer sağlayıcılar yok sayabilir.",
+  "sp.slash.export_traces_full": "Ekran görüntüleri dahil kaydedilmiş izleme oturumunun tamamını JSON olarak dışa aktar",
+  "sp.export_traces.recording_truncated": "Kaydedilmiş tüm kayıtlar JSON olarak dışa aktarıldı. Kayıt sırasında atlanan içerikler dışa aktarılarak geri getirilemez.",
   "sp.slash.export_traces": "Araç zincirini dışa aktar (izler)",
   "sp.export_traces.none": "Bu konuşma için iz yok. Ayarlar'da İzleri kaydet seçeneğini açıp yeniden çalıştırın.",
   "sp.export_traces.error": "İzler dışa aktarılamadı.",

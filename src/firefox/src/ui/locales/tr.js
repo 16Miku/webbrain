@@ -1016,6 +1016,8 @@ export default {
   "sp.upload_picker.cancelled": "Yükleme iptal edildi",
   "sp.upload_picker.too_large": "Seçilen dosya 25MB sınırını aşıyor (maks. 25MB)",
   "sp.upload_picker.read_failed": "Seçilen dosya okunamadı",
+  "sp.slash.export_traces_full": "Ekran görüntüleri dahil kaydedilmiş izleme oturumunun tamamını JSON olarak dışa aktar",
+  "sp.export_traces.recording_truncated": "Kaydedilmiş tüm kayıtlar JSON olarak dışa aktarıldı. Kayıt sırasında atlanan içerikler dışa aktarılarak geri getirilemez.",
   "sp.slash.export_traces": "Araç zincirini dışa aktar (izler)",
   "sp.export_traces.none": "Bu konuşma için iz yok. Ayarlar'da İzleri kaydet seçeneğini açıp yeniden çalıştırın.",
   "sp.export_traces.error": "İzler dışa aktarılamadı.",

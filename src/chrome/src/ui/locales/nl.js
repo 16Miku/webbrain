@@ -990,6 +990,8 @@ export default {
   'tr.event.args': 'argumenten',
   'tr.event.result': 'resultaat',
   'tr.event.step': 'stap {step}',
+  "sp.slash.export_traces_full": "De volledige opgeslagen tracesessie inclusief screenshots als JSON exporteren",
+  "sp.export_traces.recording_truncated": "Alle opgeslagen records zijn als JSON geëxporteerd. Inhoud die tijdens de opname is weggelaten, kan niet via export worden hersteld.",
   "sp.slash.export_traces": "De toolketen (traces) exporteren",
   "sp.export_traces.none": "Geen traces voor dit gesprek...",
   "sp.export_traces.error": "Kon traces niet exporteren.",

@@ -1101,6 +1101,8 @@ export default {
   'tr.event.args': "argumentos",
   'tr.event.result': "resultado",
   'tr.event.step': "etapa {step}",
+  "sp.slash.export_traces_full": "Exportar toda a sessão de rastreamento salva como JSON, incluindo capturas de tela",
+  "sp.export_traces.recording_truncated": "Todos os registros salvos foram exportados como JSON. O conteúdo omitido durante a gravação não pode ser recuperado pela exportação.",
   "sp.slash.export_traces": "Exportar a cadeia de ferramentas (traços)",
   "sp.export_traces.none": "Não há vestígios desta conversa. Habilite Gravar rastreamentos em Configurações e execute novamente.",
   "sp.export_traces.error": "Não foi possível exportar rastreamentos.",

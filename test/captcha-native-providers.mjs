@@ -60,7 +60,9 @@ for (const browser of ['chrome','firefox']) {
     try { observed = runtime.observeAwsWafChallengeInPage(); }
     finally { Object.assign(globalThis, saved); }
     assert.deepEqual(observed, { pageUrl: 'https://site.test/join', websiteKey: 'AQIDAHjc', iv: 'CgAH', context: 'ctx',
-      challengeScript, captchaScript: null, jsapiScript: null, widgetPresent: true });
+      challengeScript, captchaScript: null, jsapiScript: null, widgetPresent: true,
+      active: false, apiKey: null, existingToken: null, problemUrl: null, inspectionComplete: false,
+      rootDocument: { url: 'https://site.test/join', timeOrigin: performance.timeOrigin } });
 
     const providers = ['capsolver', '2captcha', 'capmonster', 'solvecaptcha', 'anti-captcha', 'nopecha'].map(id => ({ id, apiKey: `key-${id}` }));
     const described = native.describeAwsWafObservation(providers, observed);

@@ -1028,6 +1028,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Maks. wymiar obrazu",
   "st.imageBudget.maxDimension.desc": "Najdłuższy bok (szerokość lub wysokość) w pikselach dla każdego zrzutu wysyłanego do vision. Niższy limit zmniejsza obrazy przed wysłaniem, tnąc tokeny i koszt. Wyższy limit zachowuje wierność.",
   "st.imageBudget.warning": "⚠️ Te ustawienia dotyczą zrzutów na vision (auto-zrzut, /screenshot, cała strona, verify_form). Ręcznie zapisane obrazy w pełnej rozdzielczości nie są objęte. «Image detail» honorują endpointy w stylu OpenAI; inni dostawcy mogą to ignorować.",
+  "sp.slash.export_traces_full": "Eksportuj całą zapisaną sesję śledzenia jako JSON, wraz ze zrzutami ekranu",
+  "sp.export_traces.recording_truncated": "Wyeksportowano wszystkie zapisane rekordy jako JSON. Treści pominiętych podczas rejestrowania nie można odzyskać przez eksport.",
   "sp.slash.export_traces": "Eksportuj łańcuch narzędzi (ślady)",
   "sp.export_traces.none": "Brak śladów dla tej rozmowy. Włącz „Rejestruj ślady\" w Ustawieniach i uruchom ponownie.",
   "sp.export_traces.error": "Nie udało się wyeksportować śladów.",

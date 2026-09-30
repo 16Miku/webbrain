@@ -1082,6 +1082,8 @@ export default {
   'tr.event.args': 'args',
   'tr.event.result': 'result',
   'tr.event.step': 'step {step}',
+  "sp.slash.export_traces_full": "Export the complete stored trace session as JSON, including screenshots",
+  "sp.export_traces.recording_truncated": "JSON exported with all stored records. Some content was omitted during recording and cannot be recovered by export.",
   "sp.slash.export_traces": "Export the tool chain (traces)",
   "sp.export_traces.none": "No traces for this conversation. Enable Record traces in Settings, then run again.",
   "sp.export_traces.error": "Couldn't export traces.",

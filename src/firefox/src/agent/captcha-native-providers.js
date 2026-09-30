@@ -2,6 +2,7 @@ import { CAPTCHA_CATALOG } from './captcha-catalog.js';
 import { solveJsonCaptcha } from './captcha-json-api.js';
 import { solveNopechaTask, solveNonecapTask } from './captcha-hcaptcha-providers.js';
 import { solveCaptchaRequest } from './captcha-additional-providers.js';
+import { prepareCaptchaApplication } from './captcha-solution-application.js';
 
 const JSON_BASES = {
   capsolver: 'https://api.capsolver.com',
@@ -175,7 +176,7 @@ const FAMILY_IDENTIFIERS = {
   vk: [['redirectUri', 'redirect_uri']],
   aws_waf: [['websiteKey', 'sitekey', 'awsKey'], ['iv', 'awsIv'], ['context', 'awsContext'],
     ['challengeScript', 'challenge_script', 'awsChallengeJS'], ['captchaScript', 'captcha_script'],
-    ['jsapiScript', 'awsApiJs']],
+    ['jsapiScript', 'awsApiJs'], ['awsProblemUrl'], ['awsApiKey'], ['awsExistingToken']],
   alibaba: [['sceneId', 'metadata.sceneId'], ['prefix', 'metadata.prefix'],
     ['userId', 'metadata.userId'], ['userUserId', 'metadata.userUserId'],
     ['userCertifyId', 'metadata.UserCertifyId'], ['verifyType', 'metadata.verifyType'],
@@ -512,9 +513,12 @@ async function solveForm(apiKey, contract, task) {
   throw new Error('SolveCaptcha: timed out waiting for solution.');
 }
 
-export async function solveNativeCaptchaTasks(prepared) {
+export async function solveNativeCaptchaTasks(prepared, { onAttempt } = {}) {
   const failures = [];
   for (const { provider, contract, task, family } of prepared) {
+    // Reserve each provider before contacting it, including after a restart.
+    // A persistence failure must stop the entire chain, not try another vendor.
+    if (onAttempt) await onAttempt(provider.id);
     try {
       const result = JSON_BASES[provider.id]
         ? await solveJsonCaptcha(JSON_BASES[provider.id], provider.id, provider.apiKey, task,
@@ -523,6 +527,8 @@ export async function solveNativeCaptchaTasks(prepared) {
         : provider.id === 'nonecap' ? await solveNonecapTask(provider.apiKey, task)
         : await solveForm(provider.apiKey, contract, task);
       if (!usable(result.solution)) throw new Error('No usable answer returned.');
+      const cookiePath = family === 'aws_waf' && AWS_WAF_COOKIE_PATHS[provider.id];
+      if (cookiePath) prepareCaptchaApplication(result.solution, { cookies: [{ name: 'aws-waf-token', path: cookiePath }] });
       return { ...result, provider: provider.id, method: contract.method, family };
     } catch (error) {
       // Some providers echo inputs in errors. Never return a saved account key.
@@ -548,14 +554,24 @@ export const AWS_WAF_COOKIE_PATHS = { capsolver: 'cookie', capmonster: 'cookies.
 export function buildAwsWafProviderTasks(providers, observed) {
   // captchaScript is omitted: CapSolver has no such field, and fallback
   // validation requires every task to carry the same challenge identifiers.
-  const { pageUrl: websiteURL, websiteKey, iv, context, challengeScript } = observed || {};
-  if (!websiteURL || !websiteKey || !iv || !context) return [];
+  const { pageUrl: websiteURL, websiteKey, iv, context, challengeScript, jsapiScript, problemUrl, apiKey, existingToken } = observed || {};
+  if (!websiteURL) return [];
+  // Secondary verification uses the previous token and SDK inputs, not the
+  // first interstitial's (possibly still present) gokuProps.
+  const secondary = apiKey && jsapiScript && existingToken;
+  const initial = websiteKey && iv && context;
+  const capsolverParameters = secondary
+    ? { websiteURL, awsApiKey: apiKey, awsApiJs: jsapiScript, awsExistingToken: existingToken }
+    : initial ? { websiteURL, awsKey: websiteKey, awsIv: iv, awsContext: context,
+      ...(challengeScript ? { awsChallengeJS: challengeScript } : {}) }
+    : !websiteKey && !iv && !context ? (jsapiScript ? { websiteURL, awsApiJs: jsapiScript }
+      : challengeScript ? { websiteURL, awsChallengeJS: challengeScript }
+      : problemUrl ? { websiteURL, awsProblemUrl: problemUrl } : null) : null;
   const builders = {
-    capsolver: () => ({ method: 'AntiAwsWafTaskProxyLess', parameters: { websiteURL, awsKey: websiteKey, awsIv: iv, awsContext: context,
-      ...(challengeScript ? { awsChallengeJS: challengeScript } : {}) } }),
-    capmonster: () => challengeScript && ({ method: 'AmazonTask:2', parameters: { websiteURL, websiteKey, iv, context, challengeScript,
+    capsolver: () => capsolverParameters && ({ method: 'AntiAwsWafTaskProxyLess', parameters: capsolverParameters }),
+    capmonster: () => !secondary && initial && challengeScript && ({ method: 'AmazonTask:2', parameters: { websiteURL, websiteKey, iv, context, challengeScript,
       cookieSolution: true } }),
-    'anti-captcha': () => ({ method: 'AmazonTaskProxyless', parameters: { websiteURL, websiteKey, iv, context,
+    'anti-captcha': () => !secondary && initial && ({ method: 'AmazonTaskProxyless', parameters: { websiteURL, websiteKey, iv, context,
       ...(challengeScript ? { challengeScript } : {}) } }),
   };
   return providers.filter(provider => !provider.useCloudBroker && builders[provider.id])
@@ -566,19 +582,19 @@ export function buildAwsWafProviderTasks(providers, observed) {
 // Summarize an observed AWS WAF challenge for get_captcha_capabilities: the
 // observed inputs, ready fallback tasks, and how to apply the cookie answer.
 export function describeAwsWafObservation(providers, observed) {
-  if (!observed || !(observed.websiteKey || observed.challengeScript || observed.widgetPresent)) return null;
+  if (!observed || !(observed.websiteKey || observed.challengeScript || observed.jsapiScript || observed.problemUrl || observed.widgetPresent)) return null;
   const { pageUrl, websiteKey, iv, context, challengeScript } = observed;
   const missing = ['websiteKey', 'iv', 'context'].filter(key => !observed[key]);
   const providerTasks = buildAwsWafProviderTasks(providers, observed);
   const base = { family: 'aws_waf', pageUrl, observed: { websiteKey, iv, context, challengeScript } };
-  if (missing.length) {
+  if (missing.length && !providerTasks.length && !(observed.jsapiScript || observed.problemUrl)) {
     return { ...base, missing, note: `AWS WAF inputs were not observed (${missing.join(', ')}). Do not guess them; ask for manual completion.` };
   }
   if (!providerTasks.length) {
     return { ...base, note: 'No enabled provider returns an applicable aws-waf-token cookie. Enable CapSolver, CapMonster Cloud, or Anti-Captcha (2Captcha and SolveCaptcha return a voucher WebBrain cannot apply), or ask for manual completion.' };
   }
   const cookiePathByProvider = Object.fromEntries(providerTasks.map(task => [task.provider, AWS_WAF_COOKIE_PATHS[task.provider]]));
-  return { ...base, providerTasks,
+  return { ...base, providerTasks, route: observed.apiKey && observed.jsapiScript && observed.existingToken ? 'secondary' : 'initial',
     application: { frameId: 0, frameUrl: pageUrl, cookieName: 'aws-waf-token', cookiePathByProvider },
     note: 'Call solve_captcha once with inject:false and these providerTasks unchanged; weighted fallback runs across them. Then call apply_captcha_solution with frameId 0, this frameUrl, and cookies:[{name:"aws-waf-token", path: cookiePathByProvider[result.provider]}]. Then navigate to pageUrl to reload and read the page. The token may be rejected if the site binds it to the solver IP; do not buy another solve for this challenge.' };
 }

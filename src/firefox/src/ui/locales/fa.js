@@ -1080,6 +1080,8 @@ export default {
   'tr.event.args': "ارگ",
   'tr.event.result': "نتیجه",
   'tr.event.step': "مرحله {step}",
+  "sp.slash.export_traces_full": "صدور تمام نشست ردگیری ذخیره‌شده به صورت JSON، شامل تصاویر صفحه",
+  "sp.export_traces.recording_truncated": "تمام رکوردهای ذخیره‌شده به صورت JSON صادر شدند. محتوای حذف‌شده هنگام ضبط با صدور قابل بازیابی نیست.",
   "sp.slash.export_traces": "صادرات زنجیره ابزار (ردیابی)",
   "sp.export_traces.none": "هیچ اثری برای این گفتگو وجود ندارد. ضبط ردیابی را در تنظیمات فعال کنید، سپس دوباره اجرا کنید.",
   "sp.export_traces.error": "ردیابی صادر نشد.",
