@@ -29230,7 +29230,7 @@ test('test/llm goldens only name tools the model is actually offered', () => {
   }
 
   const scenarioFiles = walk(path.join(llmDir, 'scenarios'));
-  assert.equal(scenarioFiles.length, 100, 'scenarios/ should hold 100 multi-turn cases');
+  assert.equal(scenarioFiles.length, 108, 'scenarios/ should hold 108 multi-turn cases, including 8 CMS recovery cases');
   for (const file of scenarioFiles) {
     const scenario = readJson(file);
     const rel = path.relative(ROOT, file);
@@ -32123,6 +32123,8 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'humanizer': ['email_reply', 'draft_message', 'compose_prose', 'rewrite_text', 'humanize_writing', 'reply_to_thread'],
     'phonr-calls': ['outbound_phone_call', 'phone_inquiry', 'phone_call_status', 'phone_call_result', 'phone_call_recording', 'stop_phone_call'],
     'wordpress-rest-api': ['wordpress_content', 'wordpress_publish', 'wordpress_draft', 'wordpress_taxonomy'],
+    ...Object.fromEntries(['ghost', 'drupal', 'joomla', 'webflow', 'shopify', 'wix', 'strapi', 'contentful', 'sanity']
+      .map(cms => [`cms-${cms}`, ['cms_content_management', `${cms}_content`]])),
   };
   for (const [label, prefix, sources, normalizeSkills] of [
     ['chrome', 'src/chrome', PACKAGED_SKILL_SOURCES_CH, normalizeCustomSkillsCh],
@@ -32135,7 +32137,9 @@ test('every bundled skill declares its canonical semantic intents', () => {
       sourceUrl: source.path,
       content: fs.readFileSync(path.join(ROOT, prefix, source.path), 'utf8'),
     }));
-    for (const skill of normalizeSkills(records)) {
+    // The packaged catalog can exceed the enabled-skill capacity. Validate each
+    // package so the tail of the catalog is not silently omitted from this test.
+    for (const skill of records.flatMap(record => normalizeSkills([record]))) {
       assert.deepEqual(skill.intents, expected[skill.id], `${label}: wrong semantic intents for ${skill.id}`);
     }
   }
@@ -111656,6 +111660,15 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'turkish-deasciifier',
     'wordpress-rest-api',
     'phonr-calls',
+    'cms-ghost',
+    'cms-drupal',
+    'cms-joomla',
+    'cms-webflow',
+    'cms-shopify',
+    'cms-wix',
+    'cms-strapi',
+    'cms-contentful',
+    'cms-sanity',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -111670,18 +111683,45 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'turkish-deasciifier',
     'wordpress-rest-api',
     'phonr-calls',
+    'cms-ghost',
+    'cms-drupal',
+    'cms-joomla',
+    'cms-webflow',
+    'cms-shopify',
+    'cms-wix',
+    'cms-strapi',
+    'cms-contentful',
+    'cms-sanity',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
     'otp-verification-code-helper',
     'humanizer',
     'wordpress-rest-api',
+    'cms-ghost',
+    'cms-drupal',
+    'cms-joomla',
+    'cms-webflow',
+    'cms-shopify',
+    'cms-wix',
+    'cms-strapi',
+    'cms-contentful',
+    'cms-sanity',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
     'otp-verification-code-helper',
     'humanizer',
     'wordpress-rest-api',
+    'cms-ghost',
+    'cms-drupal',
+    'cms-joomla',
+    'cms-webflow',
+    'cms-shopify',
+    'cms-wix',
+    'cms-strapi',
+    'cms-contentful',
+    'cms-sanity',
   ]);
   assert.equal(DEFAULT_SKILL_SOURCES_CH.some((skill) => skill.id === 'turkish-deasciifier'), false, 'chrome: Turkish deasciifier must remain opt-in');
   assert.equal(DEFAULT_SKILL_SOURCES_FX.some((skill) => skill.id === 'turkish-deasciifier'), false, 'firefox: Turkish deasciifier must remain opt-in');

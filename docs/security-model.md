@@ -175,7 +175,10 @@ go through the capability × origin gate. (`isNetworkMutation` in
 
 The system prompt adds a preamble telling the model to:
 - State the URL, method, and payload in plain text before any destructive API call
-- Default to UI-first; only reach for the API when UI has actually failed
+- For the nine supported [CMS content recipes](cms-api-first.md), prefer the
+  official API after capability/auth discovery when task scope, CMS rights and
+  WebBrain mutation permission allow it. Ask remains read-only.
+- For other tasks, default to UI-first; only reach for the API when UI has actually failed
 
 Loop-detection API shortcut hints do not bypass this policy. They can expose
 the exact method and URL the page was already calling, including POST/PATCH/etc.,
