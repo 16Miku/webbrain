@@ -270,6 +270,80 @@ for (const build of ['chrome', 'firefox']) {
       assert.deepEqual(agent._conversationStorageEntry(1).nativeCaptchaDispatch.dispatchedTimeOrigins, [1000]);
     } finally { globalThis[key] = previous; }
   });
+  for (const inspection of ['same document', 'reloaded', 'failed', 'inconclusive']) {
+    test(`${build}: expired answer recovery with ${inspection} inspection exits safely`, async () => {
+      const agent = agentFor('act', 'full');
+      const pageUrl = 'https://example.test/challenge';
+      const record = { pageUrl, createdAt: Date.now() - 180_001, applied: false,
+        solution: { token: 'expired-answer' }, documents: [{ frameId: 0, url: pageUrl, timeOrigin: 1000 }],
+        dispatchedTimeOrigins: new Set([1000]) };
+      agent._nativeCaptchaSolutions = new Map([[1, record]]);
+      agent._captchaGateStates.set(1, { key: `native:${pageUrl}`, status: 'verification_pending',
+        publicGate: { status: 'verification_pending', solveAttempted: true, nativeAnswerPending: true } });
+      const key = build === 'chrome' ? 'chrome' : 'browser';
+      const previous = globalThis[key];
+      let timeOrigin = inspection === 'reloaded' ? 2000 : 1000;
+      let inspectionState = inspection;
+      let reads = 0;
+      let saved;
+      const read = () => {
+        reads++;
+        if (inspectionState === 'failed') throw new Error('Temporary inspection failure');
+        return inspectionState === 'inconclusive' ? [] : [{ frameId: 0, result: { url: pageUrl, timeOrigin } }];
+      };
+      globalThis[key] = {
+        storage: { local: { get: async () => ({}) }, session: { get: async name => ({ [name]: saved }) } },
+        tabs: { get: async () => ({ url: pageUrl }), executeScript: async () => read().map(entry => entry.result) },
+        webNavigation: { getAllFrames: async () => [{ frameId: 0, url: pageUrl }] },
+        ...(build === 'chrome' ? { scripting: { executeScript: async () => read() } } : {}),
+      };
+      try {
+        const result = await agent._executeToolImpl(1, 'get_captcha_capabilities', {});
+        assert.equal(result.pendingNativeAnswer, undefined);
+        assert.ok(reads > 0, 'expiry must not skip checking for a new document');
+        assert.equal(record.solution, undefined);
+        assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), false);
+        assert.equal(record.dispatchedTimeOrigins.has(1000), true);
+        assert.equal(agent._captchaGateBlockResult(1, 'done', { outcome: 'partial' }), null);
+        if (inspection === 'reloaded') {
+          assert.equal(agent._captchaGateStates.has(1), false);
+        } else {
+          const gate = agent._captchaGateStates.get(1);
+          assert.equal(gate.status, 'manual_required');
+          assert.equal(gate.publicGate.nativeAnswerExpired, true);
+          assert.equal(gate.publicGate.nativeAnswerPending, false);
+          assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', { providerTasks: [{}] }).denied, true);
+          const routing = agent._captchaRoutingMessage(1, gate.publicGate);
+          assert.match(routing, /expired.*manually/);
+          assert.doesNotMatch(routing, solverInstructions);
+        }
+        saved = structuredClone(agent._conversationStorageEntry(1));
+        assert.equal(saved.nativeCaptchaAnswer, null);
+        assert.deepEqual(saved.nativeCaptchaDispatch.dispatchedTimeOrigins, [1000]);
+        const restored = agentFor('act', 'full');
+        await restored._hydrate(1);
+        assert.equal(restored._hasUnappliedNativeCaptchaSolution(1), false);
+        assert.equal(restored._captchaGateBlockResult(1, 'done', { outcome: 'partial' }), null);
+        // A later confirmed reload can release even an already-expired,
+        // restored answer's gate without resetting its paid-dispatch history.
+        inspectionState = 'same document';
+        timeOrigin = 2000;
+        await restored._executeToolImpl(1, 'get_captcha_capabilities', {});
+        assert.equal(restored._captchaGateStates.has(1), false);
+        assert.equal(restored._nativeCaptchaSolutions.get(1).dispatchedTimeOrigins.has(1000), true);
+        const newGate = { key: 'new-document-captcha', status: 'solve_required', publicGate: { status: 'solve_required' } };
+        restored._captchaGateStates.set(1, newGate);
+        await restored._executeToolImpl(1, 'get_captcha_capabilities', {});
+        assert.equal(restored._captchaGateStates.get(1), newGate, 'retiring the old record must not clear a new challenge gate');
+        saved = structuredClone(restored._conversationStorageEntry(1));
+        const fresh = agentFor('act', 'full');
+        await fresh._hydrate(1);
+        assert.equal(fresh._captchaGateStates.get(1).status, 'solve_required');
+        await fresh._executeToolImpl(1, 'get_captcha_capabilities', {});
+        assert.equal(fresh._captchaGateStates.get(1).status, 'solve_required');
+      } finally { globalThis[key] = previous; }
+    });
+  }
   test(`${build}: query and fragment navigation retire an answer and release its gate`, () => {
     for (const to of ['https://example.test/challenge?step=2', 'https://example.test/challenge?step=1#next']) {
       const agent = agentFor('act', 'full');

@@ -5997,7 +5997,7 @@ export class Agent extends LoopDetector {
         ) {
           if (!cloudflareSignal) {
             const gate = normalizeCaptchaGateState(captchaGateState);
-            if (nativeDispatchRestored && !nativeAnswerRestored && !savedDispatch.applied
+            if (nativeDispatchRestored && !nativeAnswerRestored && !savedDispatch.applied && !savedDispatch.documentRetired
                 && ['solve_required', 'verification_pending'].includes(gate.status)) {
               this._captchaGateStates.set(tabId, { ...gate, status: 'manual_required',
                 publicGate: { ...gate.publicGate, status: 'manual_required', solveAttempted: true,
@@ -6052,6 +6052,7 @@ export class Agent extends LoopDetector {
       && nativeAnswer.dispatchedTimeOrigins instanceof Set
       ? { pageUrl: nativeAnswer.pageUrl, createdAt: nativeAnswer.createdAt,
           applied: nativeAnswer.applied === true, applicationSucceeded: nativeAnswer.applicationSucceeded === true,
+          documentRetired: nativeAnswer.documentRetired === true,
           documents: nativeAnswer.documents,
           dispatchedTimeOrigins: [...nativeAnswer.dispatchedTimeOrigins] }
       : null;
@@ -9520,18 +9521,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _pendingNativeCaptchaAnswer(tabId, api = browser) {
     const record = this._nativeCaptchaSolutions?.get(tabId);
-    if (record?.solution === undefined || record.applied === true
-        || Date.now() - record.createdAt > 180_000) return null;
+    if (!record || record.applied === true || record.documentRetired === true) return null;
     let status;
-    try { status = await captchaAnswerDocumentStatus(tabId, record, {}, api); } catch { return null; }
-    if (status === 'root_changed' || status === 'frame_changed') {
+    try { status = await captchaAnswerDocumentStatus(tabId, record, {}, api); } catch { /* Expiry is still conclusive when inspection fails. */ }
+    if (status === 'root_changed') {
       delete record.solution;
-      // A new root document may expose a fresh CAPTCHA. Its predecessor's
-      // pending gate must not block solving or partial completion here.
-      if (status === 'root_changed') this._captchaGateStates.delete(tabId);
+      // Keep the paid history, but retire this document only once so later
+      // discovery cannot clear a gate belonging to the replacement document.
+      record.documentRetired = true;
+      this._captchaGateStates.delete(tabId);
       return null;
     }
-    if (status !== 'current') return null;
+    const expired = record.solution !== undefined && Date.now() - record.createdAt > 180_000;
+    if (expired || status === 'frame_changed') {
+      delete record.solution;
+      const gate = this._captchaGateStates.get(tabId);
+      if (gate && gate.status !== 'cleared') {
+        this._captchaGateStates.set(tabId, { ...gate, status: 'manual_required',
+          ...(gate.captchaToolsPreviousStatus ? { captchaToolsPreviousStatus: 'manual_required' } : {}),
+          publicGate: { ...gate.publicGate, status: 'manual_required', solveAttempted: true,
+            nativeAnswerPending: false, ...(expired ? { nativeAnswerExpired: true } : {}) } });
+      }
+      return null;
+    }
+    if (status !== 'current' || record.solution === undefined) return null;
     return { provider: record.provider || null, method: record.method || null,
       family: record.family || null, taskId: record.taskId || null,
       solution: record.solution,
@@ -9558,7 +9571,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       resultContent += '\n[TRUSTED CAPTCHA GATE: A supported verification challenge is active. Call solve_captcha once now. Do not dismiss or close the dialog, click Continue/Submit, or use another page-changing tool until solve_captcha returns.]';
       onUpdate('warning', { message: 'Supported verification challenge detected; solve_captcha is required.' });
     } else if (captchaGateDecision?.status === 'manual_required') {
-      resultContent += captchaGateDecision.nativeDispatchInterrupted === true
+      resultContent += captchaGateDecision.nativeAnswerExpired === true
+        ? '\n[TRUSTED CAPTCHA GATE: The previously paid answer has expired. Ask the user to complete verification manually and report blocked work with done({outcome:"partial"}). Do not send another paid request for this document.]'
+        : captchaGateDecision.nativeDispatchInterrupted === true
         ? '\n[TRUSTED CAPTCHA GATE: A native solve was already dispatched for this document, but its answer is unavailable after restart. Do not send another paid request or submit the page; ask the user to complete the challenge manually.]'
         : captchaGateDecision.cloudflareManagedChallenge === true
         ? '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Inspect get_captcha_capabilities for a Cloudflare native method; use one solve_captcha providerTasks dispatch only with all required observed inputs, otherwise ask for manual completion. Do not submit; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]'
