@@ -377,6 +377,12 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(record.solution, undefined);
     assert.equal(record.dispatchedTimeOrigins.has(1000), true);
     assert.equal(agent._captchaGateStates.has(1), false);
+    const newGate = { status: 'solve_required', publicGate: { status: 'solve_required' } };
+    agent._captchaGateStates.set(1, newGate);
+    assert.equal(agent._retireNativeCaptchaAnswerIfPageChanged(1, to), false,
+      'later reads must not retire the same old document again');
+    await agent._pendingNativeCaptchaAnswer(1, { tabs: { get: async () => ({ url: to }) } });
+    assert.equal(agent._captchaGateStates.get(1), newGate);
   });
   test(`${build}: an unexpired paid native answer survives background restart with its gate`, async () => {
     const agent = agentFor('act', 'full');
@@ -457,6 +463,11 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(record.solution, undefined);
       assert.equal(record.dispatchedTimeOrigins.has(1000), true);
       assert.equal(agent._captchaGateStates.has(1), false);
+      const newGate = { status: 'solve_required', publicGate: { status: 'solve_required' } };
+      agent._captchaGateStates.set(1, newGate);
+      await agent._pendingNativeCaptchaAnswer(1, api);
+      assert.equal(agent._captchaGateStates.get(1), newGate,
+        'discovery must not retire a document already retired by application');
     } finally {
       if (previous === undefined) delete globalThis[key]; else globalThis[key] = previous;
     }

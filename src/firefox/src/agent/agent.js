@@ -9557,7 +9557,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Keep dispatchedTimeOrigins to prevent a second paid solve if the old
       // document is restored, but never apply its answer to the new page.
       delete record.solution;
-      return true;
+      const newlyRetired = record.documentRetired !== true;
+      record.documentRetired = true;
+      return newlyRetired;
     }
     return false;
   }
@@ -32890,7 +32892,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             delete record.solution;
             // A new root may expose a new CAPTCHA. A reloaded child frame in
             // the same root has already used this document's paid dispatch.
-            if (documentStatus === 'root_changed') this._captchaGateStates.delete(tabId);
+            if (documentStatus === 'root_changed') {
+              record.documentRetired = true;
+              this._captchaGateStates.delete(tabId);
+            }
             return false;
           }
           return true;
