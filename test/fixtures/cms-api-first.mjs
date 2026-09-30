@@ -4,6 +4,40 @@
 const title = 'Revised title';
 const before = 'Original title';
 const stamp = '2026-09-30T10:00:00.000Z';
+
+// Shared Node/browser regressions for CMS notes on unrelated pages, with
+// positive controls for hosted editors and legacy Webflow Designer links.
+export const CMS_ADAPTER_ROUTE_CASES = [
+  ...[
+    'https://webflow.com/dashboard',
+    'https://webflow.com/dashboard/sites/site1?workspace=w1',
+    'https://www.webflow.com/dashboard/',
+    'https://webflow.com/design/site1?locale=fr',
+    'https://www.webflow.com/design/site1/',
+    'https://site1.design.webflow.com/?locale=fr',
+  ].map(url => ({ url, adapter: 'cms-webflow' })),
+  { url: 'https://project1.sanity.studio/structure/story;s1', adapter: 'cms-sanity' },
+  ...[
+    'https://internal.example.test/admin',
+    'https://internal.example.test/admin/users',
+    'https://internal.example.test/administrator/index.php',
+    'https://analytics.example.test/studio/report/1',
+    'https://support.example.test/desk/tickets/42',
+    'https://editor.example.test/studio/structure/story;drafts.s1',
+    'https://public.example.test/',
+    'https://webflow.com/',
+    'https://www.webflow.com/templates',
+    'https://webflow.com/made-in-webflow',
+    'https://webflow.com/blog/cms',
+    'https://webflow.com/dashboard-guide',
+    'https://webflow.com/design',
+    'https://webflow.com/design-system/site1',
+    'https://webflow.com.evil.test/dashboard',
+    'https://site1.design.webflow.com.evil.test/',
+    'file://webflow.com/dashboard',
+  ].map(url => ({ url, adapter: null })),
+];
+
 export const CMS_FIXTURES = [
   {
     cms: 'ghost', tab: 'https://editor.example.test/ghost/#/editor/page/g1',

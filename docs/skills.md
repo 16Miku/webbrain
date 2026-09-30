@@ -169,10 +169,11 @@ prerequisite. An otherwise usable API with permission off prompts once for
 read-only. GraphQL/query POSTs remain subject to the same method-based gate.
 
 Compact still has no skill loader or skill prompt. Short CMS adapter notes guide
-its existing tools, including conservative candidates for custom-domain admin
-and Studio routes. The shared prompt contains only the conditional CMS rule,
-not nine endpoint recipes. A URL match is not evidence of API authentication or
-authorization; confirm the observed editor/API identity before applying a recipe.
+its existing tools on supported CMS routes. Generic admin/Studio paths add no
+CMS adapter notes; custom editors require observed CMS evidence. The shared
+prompt contains only the conditional CMS rule, not nine endpoint recipes.
+A URL match is not evidence of API authentication or authorization; confirm the
+observed editor/API identity before applying a recipe.
 
 Startup uses the existing default-removal tombstones: newly introduced defaults
 are added when there is capacity, while a removed/disabled default stays removed

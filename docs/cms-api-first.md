@@ -18,21 +18,23 @@ Mid/Full receive names, short summaries and semantic intents in the catalog;
 service instructions are absent until activation. Compact's skill system is
 unchanged. `cms-adapters.js` supplies short conditional notes through the existing
 adapter injection path and makes no skill-tool call. Matching supports standard
-self-hosted paths and hosted admin domains, with a last-choice generic
-admin/Studio candidate that requires observed CMS evidence. Arbitrarily relocated
-editors are not automatically detected by this URL-only matcher: the model can
-identify them from subsequent UI/API evidence, use the narrow shared CMS rule,
-and in Mid/Full select the appropriate catalog entry. Mere branding in public
-content does not authorize an admin workflow.
+CMS-specific self-hosted paths and hosted admin domains. Generic `/admin`,
+`/administrator`, `/studio` and `/desk` paths do not inject CMS notes. Webflow's
+shared root hosts match only `/dashboard` and `/design/<site>` routes; hosted
+`*.design.webflow.com` editors also match, while marketing/template pages do not.
+Arbitrarily relocated editors are not automatically detected by this URL-only
+matcher: the model can identify them from subsequent UI/API evidence, use the
+narrow shared CMS rule, and in Mid/Full select the appropriate catalog entry.
+Mere branding in public content does not authorize an admin workflow.
 
 Loading is semantic selection by the planner/model, not a hard runtime check that
 the CMS is installed and a content task exists. A CMS URL alone does not activate
 its full recipe; URL-matched adapter notes can appear before a content task is
 selected. The normal new-run reset clears active skills. The always-visible
 catalog contains summaries, not nine recipes. Budget tests cap the nine-entry
-loader description at 2,000 characters, one loaded recipe at 12,000, a specific
-CMS adapter at 1,300 and an unconfirmed editor candidate at 450. Character budgets
-are not token counts or a guarantee about model behavior.
+loader description at 2,000 characters, one loaded recipe at 12,000, and a specific
+CMS adapter at 1,300. Character budgets are not token counts or a guarantee about
+model behavior.
 
 All nine Markdown files and the CMS adapter module are byte-identical across
 Chrome/Firefox. Browser-specific agent/tool code keeps its existing differences;

@@ -19,7 +19,10 @@ const definitions = [
     'Drupal: discover /jsonapi links, bundle UUIDs and negotiated language. Cookie writes need X-CSRF-Token from /session/token; JSON:API may be read-only. Preserve body format and taxonomy UUIDs; moderation may require a supported transition instead of status=true.'],
   ['joomla', route(u => /\/administrator(?:\/index\.php)?\/?$/.test(u.pathname) && ['com_content', 'com_categories'].includes(u.searchParams.get('option'))),
     'Joomla: /api/index.php/v1/content/articles and content/categories need an existing X-Joomla-Token and ACL rights, not just the administrator cookie. Keep catid/language, full articletext and access; use state=0 for a new unpublished article. Workflow-controlled publishing may need the editor.'],
-  ['webflow', route(u => u.hostname === 'webflow.com' || u.hostname === 'www.webflow.com' || u.hostname.endsWith('.design.webflow.com')),
+  // The shared root host also serves marketing pages, which need no CMS notes.
+  ['webflow', route(u => u.hostname.endsWith('.design.webflow.com') ||
+    (['webflow.com', 'www.webflow.com'].includes(u.hostname) &&
+      /^\/(?:dashboard(?:\/|$)|design\/[^/]+(?:\/|$))/.test(u.pathname))),
     'Webflow: Data API https://api.webflow.com/v2 needs a site/OAuth token with cms:read/write. Read collection fields and CMS locale IDs; create staged isDraft=true, update the same item, then publish only that verified item. Preserve references and rich-text components; never publish the whole site.'],
   ['shopify', route(u => (u.hostname === 'admin.shopify.com' && /^\/store\//.test(u.pathname)) || (u.hostname.endsWith('.myshopify.com') && /^\/admin(?:\/|$)/.test(u.pathname))),
     'Shopify: use the verified shop .myshopify.com Admin GraphQL endpoint with a supported dated version and X-Shopify-Access-Token. Storefront API/cookies are insufficient. Both query and mutation POSTs are gated. Articles/pages support isPublished=false; blogs have no draft flag. Check errors and userErrors.'],
@@ -39,12 +42,3 @@ export const CMS_ADAPTERS = definitions.map(([name, matches, hint]) => ({
   matches,
   notes: `${CMS_NOTES}\n- ${hint}`,
 }));
-
-// Custom installations can place their editor at a generic admin/studio route.
-// Keep this last and conditional; /admin alone is not evidence of a CMS.
-CMS_ADAPTERS.push({
-  name: 'cms-editor-candidate',
-  category: 'general',
-  matches: route(u => /\/(?:admin|administrator|studio|desk)(?:\/|$)/.test(u.pathname)),
-  notes: '- Editor candidate only. Apply CMS guidance ONLY after observing Ghost/Drupal/Joomla/Webflow/Shopify/Wix/Strapi/Contentful/Sanity and a matching content task; otherwise use ordinary UI rules. For a confirmed CMS, fetch_url needs verified fields/target/auth/rights and task/API permission. Ask stays read-only. Strict without safe auth means UI. Reconcile uncertain writes before fallback and preserve the record ID.',
-});

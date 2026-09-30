@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { CMS_FIXTURES } from './fixtures/cms-api-first.mjs';
+import { CMS_FIXTURES, CMS_ADAPTER_ROUTE_CASES } from './fixtures/cms-api-first.mjs';
 import { buildScenarioPayload } from './llm/lib/scenario-payload.mjs';
 import { scoreVerdict } from './llm/lib/score.mjs';
 
@@ -167,16 +167,25 @@ for (const v of variants) {
     assert.equal(v.tools.getToolsForMode('act', { tier: 'compact' }).some(t => t.function.name === 'load_skill'), false);
     for (const f of CMS_FIXTURES) {
       const adapter = v.adapters.getActiveAdapter(f.tab);
-      assert.ok(adapter?.name.startsWith('cms-'), `${f.cms}: missing adapter`);
+      // A custom Studio URL alone cannot identify Sanity. Its enabled skill
+      // remains loadable after the model observes the CMS and task context.
+      if (f.cms === 'sanity') {
+        assert.equal(adapter, null);
+        continue;
+      }
+      assert.equal(adapter?.name, `cms-${f.cms}`, `${f.cms}: missing adapter`);
       assert.ok(adapter.notes.includes('fetch_url'));
       assert.doesNotMatch(adapter.notes, /load_skill/);
       assert.ok(adapter.notes.length <= 1300);
     }
-    assert.equal(v.adapters.getActiveAdapter('https://news.example.test/admin')?.name, 'cms-editor-candidate');
-    assert.match(v.adapters.getActiveAdapter('https://news.example.test/admin').notes, /ONLY after observing/);
-    assert.ok(v.adapters.getActiveAdapter('https://news.example.test/admin').notes.length <= 450);
     for (const url of ['https://news.example.test/article/ghost', 'https://shopify.com.evil.test/', 'https://wix.com.evil.test/', 'file:///ghost/']) {
       assert.ok(!v.adapters.getActiveAdapter(url)?.name.startsWith('cms-'), url);
+    }
+  });
+
+  test(`${browser}: CMS routing excludes generic admin and Webflow marketing pages`, () => {
+    for (const { url, adapter } of CMS_ADAPTER_ROUTE_CASES) {
+      assert.equal(v.adapters.getActiveAdapter(url)?.name ?? null, adapter, url);
     }
   });
 
