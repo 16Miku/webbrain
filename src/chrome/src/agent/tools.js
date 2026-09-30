@@ -2328,7 +2328,7 @@ RULES:
 5. Click by ref_id: click_ax({ref_id:"ref_N"}). For native checkboxes, use set_checked({ref_id:"ref_N", checked:true|false}) instead of toggling. Fallback: click({text:"Submit"}).
 6. When done, call done({summary:"...", outcome:"success"}). Verify success first.
 7. If stuck after 2 attempts, try a different approach. Never repeat the same failing action 3 times.
-8. Interact through the visible UI. Do not call APIs directly.
+8. Use the visible UI by default. For WordPress posts, pages, REST-enabled custom types and their taxonomy, prefer the API when mutations are authorized, required fields and session are verified, and Strict secret handling is off; follow the WordPress adapter. Without API authorization, do not send POST/PUT/PATCH/DELETE. If this route is unavailable, use an existing editor.
 9. For long tasks, use scratchpad_write to remember facts between steps. For repeated item/action tasks, use progress_update/progress_read and close all pending/acted rows before done.
 10. For loop tasks, keep using tools in this run; never say "I'll continue" unless you are actually making more tool calls.
 11. You cannot schedule, sleep, set timers, or check back later in compact mode. If something must wait for an external event, call done({summary:"...", outcome:"partial"}) with the current state and ask the user to re-invoke you.

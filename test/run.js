@@ -9461,6 +9461,20 @@ test('WordPress API and editor guidance reaches every tier on root and subdirect
           assert.match(messages[0].content, /If API is unsuitable or declined/);
           assert.match(messages[0].content, /post_type=page&classic-editor/);
           assert.equal(agent._skillLoaderDefinition('act', tier), null, 'hint must work without installed skills');
+          if (tier === 'compact') {
+            for (const allowed of [false, true]) {
+              agent.setApiMutationsAllowed(4974, allowed);
+              const prompt = agent._buildSystemPrompt('act', 4974);
+              const apiRule = prompt.split('\n').find(line => line.startsWith('8.'));
+              assert.match(apiRule, /WordPress.*prefer the API/);
+              assert.match(apiRule, /mutations are authorized/);
+              assert.match(apiRule, /fields.*session.*verified/);
+              assert.match(apiRule, /Strict secret handling is off/);
+              assert.match(apiRule, /Without API authorization.*POST\/PUT\/PATCH\/DELETE/);
+              assert.doesNotMatch(prompt, /Do not call APIs directly/);
+              assert.equal(agent.isApiMutationsAllowed(4974), allowed, 'prompt construction changed API permission');
+            }
+          }
         }
         const plan = buildMessages({ role: 'user', content: 'Publish this WordPress page' }, url, 'WordPress', '', { allowApi: true });
         assert.match(plan[0].content, /prefer the API first/);
@@ -22894,6 +22908,75 @@ test('non-GitHub hosts use last-3-segments backstop', () => {
     resourceBucket('https://example.com/a/b/file.json'),
     resourceBucket('https://other.com/a/b/file.json'),
   );
+});
+
+test('WordPress rest_route buckets preserve route and installation identity without cache-query bypasses', () => {
+  for (const bucket of [resourceBucket, resourceBucketFx]) {
+    const item = 'https://example.com/blog/?rest_route=/wp/v2/posts/42';
+    for (const equivalent of [
+      'https://example.com/blog/?rest_route=%2Fwp%2Fv2%2Fposts%2F42',
+      'https://example.com/blog/?rest_route=/wp/v2/posts/42/&context=edit',
+      'https://example.com/blog/?cache=2&rest_route=/wp/v2/posts/42',
+    ]) assert.equal(bucket(item), bucket(equivalent), 'same REST item must keep one loop identity');
+    for (const distinct of [
+      'https://example.com/blog/?rest_route=/wp/v2/posts/43',
+      'https://example.com/blog/?rest_route=/wp/v2/users/me',
+      'https://example.com/blog/?rest_route=/custom/v2/posts/42',
+      'https://example.com/other/?rest_route=/wp/v2/posts/42',
+      'https://example.com/blog/',
+    ]) assert.notEqual(bucket(item), bucket(distinct), 'different REST resources must not collide');
+    assert.notEqual(bucket('https://example.com/a/shared/path/site/?rest_route=/wp/v2/types'), bucket('https://example.com/b/shared/path/site/?rest_route=/wp/v2/types'), 'installation prefixes must survive');
+    assert.equal(bucket('https://example.com/?rest_route=/'), bucket('https://example.com/?cache=1&rest_route=%2F'));
+    for (const invalid of ['', 'not-a-route']) {
+      assert.equal(bucket(`https://example.com/file.txt?rest_route=${invalid}`), bucket('https://example.com/file.txt'));
+    }
+  }
+});
+
+test('WordPress query-form discovery passes the Agent loop guard while repeated resources still warn', async () => {
+  const savedFetch = globalThis.fetch;
+  const savedChrome = globalThis.chrome, savedBrowser = globalThis.browser;
+  try {
+    globalThis.chrome = globalThis.browser = { tabs: { get: async () => ({ url: 'https://example.com/blog/wp-admin/' }) } };
+    for (const [label, AgentClass, fetchUrl] of [['chrome', AgentCh, fetchUrlCh], ['firefox', AgentFx, fetchUrlFx]]) {
+      let dispatched = 0;
+      globalThis.fetch = async (url, init) => {
+        dispatched++;
+        assert.equal(init.credentials, 'include');
+        if (new URL(url).searchParams.get('action') === 'rest-nonce') return new Response('test-nonce', { headers: { 'Content-Type': 'text/html' } });
+        return new Response(JSON.stringify({ route: new URL(url).searchParams.get('rest_route') }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      const discovery = [
+        'https://example.com/blog/?rest_route=/',
+        'https://example.com/blog/wp-admin/admin-ajax.php?action=rest-nonce',
+        ...['users/me', 'types/post', 'taxonomies', 'categories', 'tags', 'posts/42'].map(route => `https://example.com/blog/?rest_route=/wp/v2/${route}&context=edit`),
+      ];
+      const repeats = [
+        'https://example.com/blog/?rest_route=/wp/v2/posts/42',
+        'https://example.com/blog/?rest_route=%2Fwp%2Fv2%2Fposts%2F42',
+        'https://example.com/blog/?cache=3&rest_route=/wp/v2/posts/42/&context=edit',
+      ];
+      for (const [urls, expectLoop] of [[discovery, false], [repeats, true]]) {
+        const agent = new AgentClass({ getVisionProvider: async () => null });
+        const tabId = 4981;
+        agent.conversationModes.set(tabId, 'act');
+        agent._ensureGateSetting = async () => {};
+        agent._skipPermissionGate = true;
+        agent.executeTool = async (_tabId, name, args) => {
+          assert.equal(name, 'fetch_url');
+          return fetchUrl(args.url, args, { tabId });
+        };
+        const messages = [];
+        for (const [step, url] of urls.entries()) {
+          await agent._executeToolBatch(tabId, [{
+            id: `wp_read_${step}`, function: { name: 'fetch_url', arguments: JSON.stringify({ url, method: 'GET' }) },
+          }], messages, () => {}, { supportsVision: false }, '', new Set(['fetch_url']), step + 1);
+        }
+        assert.equal(messages.some(message => /LOOP DETECTED/.test(message.content)), expectLoop, `${label}: model-facing loop guidance`);
+      }
+      assert.equal(dispatched, discovery.length + repeats.length, `${label}: expected reads were skipped`);
+    }
+  } finally { globalThis.fetch = savedFetch; globalThis.chrome = savedChrome; globalThis.browser = savedBrowser; }
 });
 
 test('GitHub gist + codeload also normalize to github.com', () => {
