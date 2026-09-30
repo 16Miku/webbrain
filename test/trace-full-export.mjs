@@ -88,6 +88,133 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     for (const command of ['/export --full', '/export --config --full', '/export --traces --full extra']) assert.ok(context.parse(command).error, command);
   });
 
+  test(`${build}: full export returns a small descriptor only after pending writes settle`, async () => {
+    const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+    // Exercise the real method with a controlled recorder queue. No database
+    // payload should be read or assembled in the background full-export path.
+    let release;
+    let hydrated = false;
+    const context = vm.createContext({ trace: { flushPendingWrites: () => new Promise(resolve => { release = resolve; }) } });
+    const exportTraces = vm.runInContext(`({${Agent.prototype.exportTraces.toString()}}).exportTraces`, context);
+    const agent = { conversationIds: new Map(), async _hydrate(tabId) {
+      hydrated = true; this.conversationIds.set(tabId, 'session');
+    } };
+    let finished = false;
+    const pending = exportTraces.call(agent, 1, { full: true }).then(result => { finished = true; return result; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(hydrated, true); assert.equal(finished, false);
+    release();
+    assert.deepEqual(JSON.parse(JSON.stringify(await pending)), { ok: true, sessionId: 'session' });
+  });
+
+  test(`${build}: slash export downloads over 64 MiB from shared IndexedDB without a large message`, async () => {
+    const source = await readFile(`src/${build}/src/ui/sidepanel.js`, 'utf8');
+    const start = source.indexOf("  if (command.value === '/export' && action === 'traces') {");
+    const end = source.indexOf("  if (command.value === '/export' && action === 'conversation') {", start);
+    assert.ok(start >= 0 && end > start);
+    const harness = `export async function run(response, full = true) {
+      const tabId = 1, command = { value: '/export' }, action = 'traces', optionValues = new Set(full ? ['--full'] : []);
+      const sendToBackground = async () => response === undefined ? globalThis.backgroundExport() : response;
+      const t = key => key, addPersistentSlashMessage = message => globalThis.exportMessages.push(message);
+      ${source.slice(start, end)}
+    }`;
+    const browser = await engine.launch();
+    try {
+      const context = await browser.newContext({ acceptDownloads: true });
+      await context.route('http://trace-download.local/**', async route => {
+        const path = new URL(route.request().url()).pathname;
+        if (path === '/') return route.fulfill({ contentType: 'text/html', body: '<!doctype html>' });
+        if (path === '/src/ui/export-harness.js') return route.fulfill({ contentType: 'text/javascript', body: harness });
+        const file = resolve(`src/${build}`, '.' + path);
+        if (!file.startsWith(resolve(`src/${build}`) + '/')) return route.abort();
+        await route.fulfill({ contentType: 'text/javascript', body: await readFile(file) });
+      });
+      const writer = await context.newPage();
+      await writer.goto('http://trace-download.local/');
+      await writer.evaluate(async () => {
+        globalThis.chrome = globalThis.browser = { storage: { local: { get: async () => ({ tracingEnabled: true, losslessTrace: true }) } } };
+        const trace = await import('/src/trace/recorder.js');
+        const { Agent } = await import('/src/agent/agent.js');
+        globalThis.exportAgent = new Agent({ getActive: () => ({ promptTier: 'full' }) });
+        exportAgent._hydrate = async tabId => exportAgent.conversationIds.set(tabId, 'large-session');
+        await trace.listRuns(); // Initialize the shared database schema.
+        const runId = 'large-run';
+        // 200 stored screenshots, 256 KiB each: portable base64 JSON >64 MiB.
+        const db = await new Promise((resolve, reject) => {
+          const req = indexedDB.open('webbrain_traces', 2);
+          req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
+        });
+        const bytes = new Uint8Array(256 * 1024).fill(97); bytes[bytes.length - 1] = 122;
+        const blob = new Blob([bytes], { type: 'image/png' });
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(['runs', 'events', 'shots'], 'readwrite');
+          tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
+          tx.objectStore('runs').put({ runId, conversationId: 'large-session', lossless: true, startedAt: 1 });
+          for (let seq = 1; seq <= 200; seq++) {
+            tx.objectStore('events').put({ runId, seq, kind: 'screenshot', data: { caption: `shot-${seq}` } });
+            tx.objectStore('shots').put({ runId, seq, blob });
+          }
+        });
+        db.close();
+        // Intentionally leave this queued. The descriptor must not overtake it.
+        void trace.recordToolCall(runId, 201, { name: 'solve_captcha', result: { success: false, error: 'last recorded outcome' } });
+      });
+      const panel = await context.newPage();
+      let responseBytes = 0;
+      await panel.exposeFunction('backgroundExport', async () => {
+        const response = await writer.evaluate(() => exportAgent.exportTraces(1, { full: true }));
+        responseBytes = Buffer.byteLength(JSON.stringify(response));
+        assert.ok(responseBytes < 1024, `Only a session descriptor may cross runtime messaging; got ${responseBytes} bytes`);
+        return response;
+      });
+      await panel.goto('http://trace-download.local/');
+      await panel.evaluate(() => {
+        globalThis.chrome = globalThis.browser = { runtime: { getManifest: () => ({ version: 'test' }) } };
+        globalThis.exportMessages = [];
+      });
+      const downloadPromise = panel.waitForEvent('download');
+      await panel.evaluate(async () => (await import('/src/ui/export-harness.js')).run());
+      const download = await downloadPromise;
+      assert.match(download.suggestedFilename(), /^webbrain-traces-\d+\.json$/);
+      const bytes = await readFile(await download.path());
+      assert.ok(bytes.length > 64 * 1024 * 1024, `Fixture must exceed Chrome's message cap: ${bytes.length}`);
+      assert.ok(responseBytes < 1024);
+      const payload = JSON.parse(bytes.toString());
+      assert.equal(payload.session.sessionId, 'large-session');
+      assert.equal(payload.exportedByWebBrainVersion, 'test');
+      const events = payload.runs[0].events;
+      const shots = events.filter(event => event.kind === 'screenshot');
+      assert.equal(shots.length, 200);
+      for (const [index, event] of shots.entries()) {
+        assert.equal(event.data.caption, `shot-${index + 1}`);
+        const shot = Buffer.from(event.data.screenshot_base64.split(',')[1], 'base64');
+        assert.equal(shot.length, 256 * 1024); assert.equal(shot[0], 97); assert.equal(shot.at(-1), 122);
+      }
+      assert.equal(events.at(-1).data.outcome.error, 'last recorded outcome');
+      assert.deepEqual(await panel.evaluate(() => exportMessages), ['sp.export_traces.done']);
+
+      // Empty/error descriptors keep their messages and never initiate downloads.
+      let unexpectedDownloads = 0;
+      panel.on('download', () => unexpectedDownloads++);
+      await panel.evaluate(async () => {
+        exportMessages.length = 0;
+        const { run } = await import('/src/ui/export-harness.js');
+        await run({ ok: true, reason: 'no-conversation', turnCount: 0 });
+        await run({ ok: true, sessionId: 'missing-session' });
+        await run({ ok: false, error: 'Unreadable log' });
+      });
+      assert.equal(unexpectedDownloads, 0);
+      assert.deepEqual(await panel.evaluate(() => exportMessages), [
+        'sp.export_traces.no_conversation', 'sp.export_traces.none', 'sp.export_traces.error (Unreadable log)',
+      ]);
+      const markdownPromise = panel.waitForEvent('download');
+      await panel.evaluate(async () => (await import('/src/ui/export-harness.js')).run({ ok: true, markdown: '# Summary', turnCount: 1 }, false));
+      const markdown = await markdownPromise;
+      assert.match(markdown.suggestedFilename(), /\.md$/);
+      assert.equal(await readFile(await markdown.path(), 'utf8'), '# Summary');
+    } finally { await browser.close(); }
+  });
+
   test(`${build}: exhausted recording budget retains solver outcome and exports it as JSON`, async () => {
     const browser = await engine.launch();
     try {

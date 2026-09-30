@@ -78,7 +78,6 @@ import { buildTerminalRuntimeEvent, enqueueCloudRuntimeEvent, flushCloudRuntimeO
 import { buildShareGenerationItem, enqueueShareGeneration, flushShareOutbox, purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
-import { exportRecordedSession } from '../trace/session-export.js';
 import { hcaptchaParamError } from './captcha-hcaptcha-providers.js';
 import { AWS_WAF_COOKIE_PATHS, describeAwsWafObservation, getCaptchaCapabilities, prepareNativeCaptchaTasks, solveNativeCaptchaTasks } from './captcha-native-providers.js';
 import { applyNativeCaptchaSolution, captureCaptchaDocuments, captchaAnswerDocumentStatus } from './captcha-solution-application.js';
@@ -26085,7 +26084,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * this.conversations. Hydrates first so it works across background restarts.
    * Returns { ok, markdown|null, turnCount, reason }: reason 'no-conversation', or
    * 'no-traces' (tracing off / nothing recorded) so the UI can say so instead of
-   * downloading an empty-but-official-looking file.
+   * downloading an empty-but-official-looking file. Full exports return a small
+   * session descriptor so the UI can assemble the file directly from IndexedDB.
    */
   async exportTraces(tabId, { full = false } = {}) {
     await this._hydrate(tabId);
@@ -26093,8 +26093,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!conversationId) return { ok: true, markdown: null, turnCount: 0, reason: 'no-conversation' };
     if (full) {
       try {
-        const exported = await exportRecordedSession(trace, conversationId, browser.runtime.getManifest().version || '');
-        return { ok: true, ...exported, ...(exported.turnCount ? {} : { reason: 'no-traces' }) };
+        // Extension pages share this IndexedDB. Send only its identity: full
+        // sessions with screenshots can exceed the runtime message size limit.
+        await trace.flushPendingWrites();
+        return { ok: true, sessionId: conversationId };
       } catch (error) { return { ok: false, error: String(error?.message || error) }; }
     }
     // Cap matching runs for this conversation only (not a global newest-N).

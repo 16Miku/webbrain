@@ -1080,6 +1080,13 @@ export async function repairStaleRuns({
 
 // ----- Reader API (used by traces.html) --------------------------------------
 
+// Before another extension context reads the database, settle the writes that
+// were already queued. Snapshot the queue so an active run cannot postpone an
+// export indefinitely by continuing to record new events.
+export async function flushPendingWrites() {
+  await Promise.all([..._runWriteQueues.values()]);
+}
+
 export async function listRuns({ limit = 500, conversationId = null } = {}) {
   const db = await openDB();
   const store = tx(db, ['runs'], 'readonly').objectStore('runs');

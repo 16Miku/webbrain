@@ -1,6 +1,8 @@
 import { buildTraceExportPayload } from './export-contract.js';
 import { sanitizeTraceExport } from '../agent/trace-export.js';
 
+// Run in the downloading extension page, never send this JSON through runtime
+// messaging: screenshots can make it larger than the browser message limit.
 // Export the stored session without the Markdown preview's text/run limits.
 // This deliberately preserves recording-time omission markers: an export
 // cannot recover content that was never retained by the recorder.

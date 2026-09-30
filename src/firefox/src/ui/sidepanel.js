@@ -8264,6 +8264,13 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     let res;
     try {
       res = await sendToBackground('export_traces', { tabId, full: optionValues.has('--full') });
+      if (optionValues.has('--full') && res?.ok && res.sessionId) {
+        const [store, { exportRecordedSession }] = await Promise.all([
+          import('../trace/recorder.js'),
+          import('../trace/session-export.js'),
+        ]);
+        res = { ok: true, ...await exportRecordedSession(store, res.sessionId, browser.runtime.getManifest().version || '') };
+      }
     } catch (e) {
       addPersistentSlashMessage(`${t('sp.export_traces.error')} (${e?.message || e})`);
       return '';
