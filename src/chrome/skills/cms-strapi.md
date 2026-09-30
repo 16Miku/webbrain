@@ -1,10 +1,8 @@
 # Strapi content (API-first)
 
-Existing Strapi content types, relations and supported Draft & Publish through the Content API.
-
 ```webbrain-skill
 {
-  "summary": "Existing Strapi content types, relations and supported Draft & Publish through the Content API.",
+  "summary": "Strapi content, relations, locales and draft/publication.",
   "modes": [
     "ask",
     "act",
@@ -19,60 +17,39 @@ Existing Strapi content types, relations and supported Draft & Publish through t
 
 ## API-first decision and permission boundary
 
-Use this recipe only for the user's content task on an identified CMS, including
-custom domains confirmed by observed admin UI and official API evidence. Prefer
-`fetch_url` after read-only discovery when the API supports every required field,
-the site/account and target are known, usable authentication and CMS rights exist,
-the task authorizes the change, WebBrain API mutation permission is active, and
-the run is Act/Dev. Do not wait for the editor to fail.
+For the user's content task on this confirmed CMS, prefer the official API before
+editor failure only when target/model/fields, existing auth, CMS rights, task
+scope, WebBrain mutation permission and Act/Dev mode all permit it. Confirm custom
+domains from observed admin/API evidence. Request `/allow-api` once if it is the
+remaining blocker; reuse valid grants and respect refusal. It grants neither CMS
+credentials nor roles. Ask stays read-only, including GraphQL/query POSTs.
+Never bypass a gate through GET mutations, private endpoints or another tool.
 
-If only WebBrain mutation permission is missing, request `/allow-api` once.
-Reuse prior valid permission (conversation or persistent setting); after refusal,
-do not ask again for the same request: use the permitted editor route. Task
-authorization, `/allow-api`, and CMS credentials/roles are separate conditions.
-Ask is read-only even with prior API approval. All POST/PUT/PATCH/DELETE requests
-through `fetch_url` remain gated, including read-only GraphQL/query POSTs. Do not
-encode a mutation in GET, use private endpoints, `execute_js`, or another tool to
-bypass a denial. Describe consequential requests with secrets omitted.
-
-Manage existing content models only. No schema/model changes, plugin or theme
-installation, site design/settings, users/roles, app grants, payments, orders,
-customers, subscriber mail, bulk releases or deployments. A content task does not
-authorize enabling API writes or creating credentials. Explain missing setup and
-use an existing permitted UI surface first.
+Existing content models only: no schemas, plugins/themes, site design/settings,
+users/roles, app grants, commerce/customer data, email, bulk releases or deploys.
+A content task does not authorize credential creation or enabling API writes.
 
 ## Tools, secrets and trace limits
 
-This is an instruction-only recipe, with no new tools, OAuth flow, token signer,
-credential store or auth broker. `fetch_url` accepts `url`, `method`, string-valued
-`headers` and a serialized JSON `body`. It runs in the extension background;
-cookies attach only within the active tab's registrable domain and still obey
-browser cookie rules. That is not proof of session authorization on an API.
-Do not copy cookies or scrape localStorage/network tokens. Origin/Referer are
-browser-controlled: merely putting them in headers does not guarantee success.
+Use existing `fetch_url`: string-valued headers and serialized JSON body, with
+bounded `json`/`text` result strings. GET reads support exact `nextOffset`
+continuation; never replay a mutation to recover a truncated response. Use its
+documented read/query route. ETag/Retry-After are not exposed: use available JSON
+versions, or UI when a required precondition cannot be obtained.
 
-Use HTTPS at the verified API origin, including its site/project binding. Never
-send auth to a guessed host, user-content URL, HTTP downgrade or redirect target.
-The tool rejects redirects before following them; rediscover the canonical root
-without secrets rather than forwarding headers. Existing opaque same-origin
-`replayRequestId` material is usable only when the runtime actually offers it and
-its captured operation fits this task; it is not a general auth mechanism.
+Background cookies follow only the active tab's registrable domain; dashboard
+login does not prove API auth. Origin/Referer remain browser-controlled. Use the
+verified HTTPS API origin and site binding; rejected redirects require discovery
+without secrets. Never forward auth to guessed/user-content/redirect hosts.
+No OAuth, signer, broker, credential store or token scraping is supplied. Opaque
+`replayRequestId` is usable only if already offered for a compatible same-origin
+operation, never as a general auth route.
 
-Tokens/nonces typed in chat, placed in tool arguments, or returned by a discovery
-request can enter the configured model conversation and enabled raw traces.
-There is no guaranteed secret injection/redaction path for arbitrary CMS headers.
-Never store secrets in skill text, scratchpad, memory, URLs or summaries. With
-Strict Secret Handling, if browser-managed cookies or an already available opaque
-mechanism cannot complete the request, use UI. Do not automatically ask to disable
-that setting. All examples below contain placeholders, never usable credentials.
-
-`fetch_url` returns bounded `json`/`text` strings, not a parsed object; read all
-necessary fields using exact `nextOffset` continuation on **GET reads**. Never
-repeat a write just to paginate its response: read the returned record through
-the documented read/query route instead.
-Generic response headers such as ETag and Retry-After are not exposed (only safe
-range/length metadata). Use version fields in JSON when offered; if a required
-header-only precondition is inaccessible, use the editor instead of inventing it.
+Tokens/nonces in chat, arguments or discovery results can reach the model and raw
+traces; arbitrary CMS headers have no guaranteed opaque injection/redaction.
+Never put secrets in skills, scratchpad, memory, URLs or summaries. With
+Strict Secret Handling, use UI if existing browser/opaque auth cannot work;
+never ask to disable it. Describe requests without secrets. Examples are placeholders.
 
 ## Scope and API/auth prerequisites
 
@@ -160,46 +137,32 @@ update an API consumed by a separate front-end; do not trigger its deployment.
 
 ## Recovery, verification and UI fallback
 
-Keep a non-secret operation receipt: API origin, site/project scope, content type,
-locale, record ID (and draft/published mapping), revision, intended fields and
-whether a mutation was dispatched. Read before editing; change only requested
-fields and preserve all others and their relations. A partial/truncated read is
-not enough to replace rich content. Never silently drop unsupported fields or
-convert rich text lossily. Do not demote/unpublish a live record to simplify an
-edit. If the API has no safe draft route, use UI instead of direct public create.
+Keep a non-secret receipt: origin/site, type, locale, ID/draft mapping, revision,
+intended fields and whether a mutation was dispatched. Read complete required
+content first; preserve native rich text, media, relations and untouched fields.
+Never demote/unpublish live content to edit it. New content needs a safe draft
+path; otherwise use UI, not direct public creation.
 
-A timeout or disconnected response can follow a successful write. Do not blindly
-repeat create/publish, even with a new ID. Investigate the known ID first; otherwise
-use the service's bounded exact queries plus type, locale, parent, slug and time.
-Multiple candidates are ambiguous: ask for the target, never pick one randomly.
-Resume the existing draft/partial update. Use a documented idempotency mechanism
-only where the endpoint supports it; do not invent an Idempotency-Key header.
-Reconcile partial success **before** moving to UI. Stop repeated 401/403 requests;
-explain missing auth/rights. Re-read on revision conflicts; never force overwrite.
-For 429/temporary failures, follow service guidance with bounded backoff; when
-headers are not exposed report that limit, and do not retry an uncertain mutation
-until its outcome is reconciled. Compact cannot wait/schedule: report partial and
-let the user resume later when waiting is necessary.
+Timeout/partial success can follow a committed write. Reconcile the known ID or
+exact scoped type/locale/parent/slug/time matches before retrying or switching to
+UI. Resume the existing draft; ambiguous matches need clarification. Never invent
+idempotency headers or retry with a new ID. Stop repeated 401/403s. Re-read and
+reconcile version conflicts. Use bounded service backoff for 429/temporary errors,
+without replaying uncertain writes; do not fabricate unavailable response headers.
+Compact cannot wait/schedule: report partial progress for a later user resume.
 
-After create/update, read the same record through its supported read/query API.
-Verify type, all requested fields, language, relationships/taxonomy, rich content
-and draft status. A draft-only task
-stops here. Publish only the same verified content when the user requested it;
-account for live effects of edits and pending changes already in the draft.
-After publish, re-read the publication state and, where possible, inspect the
-actual target URL for the intended content. HTTP success alone proves neither
-content correctness nor publication. Report “published in CMS” separately from
-“visible on the website,” especially for headless sites. Never trigger a deploy,
-site-wide publish or subscriber email to make content appear.
+Read back the same record through its supported API, verifying requested fields,
+type, locale, rich content, relations and state. Draft-only tasks stop there.
+Publish only that verified content when requested, accounting for all pending
+draft changes and live effects. Re-read publication state and check the target
+URL where possible. HTTP success is insufficient; report CMS publication and
+website visibility separately. Never trigger deploy/site-wide publish/email.
 
-When the API cannot carry required fields or safe auth, open the **observed** CMS
-editor for this same record. Preserve ID/type, language, content, taxonomy and
-required URL parameters. Try an existing Code/Text or standard editor surface if
-iframe/canvas access fails; refresh AX refs after switching. Do not repeatedly
-read an inaccessible editor. A guessed URL/editor parameter is not proof that an
-alternative exists or a save/publish worked. Verify persisted content and status
-after UI actions too. If neither route is usable, report the existing partial
-record and precise blocker without claiming completion.
+For unsupported fields/auth/workflows, use the observed editor for the same record,
+preserving ID/type/locale, content/taxonomy and required URL parameters. After an
+inaccessible iframe/canvas, try an observed Code/Text/standard editor and refresh
+AX refs; do not loop or guess editor URLs. Verify UI saves too. If both routes
+fail, report the existing partial record and blocker without claiming completion.
 
 ## Official sources (reviewed 2026-09-30)
 

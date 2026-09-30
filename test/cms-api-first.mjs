@@ -129,6 +129,7 @@ for (const v of variants) {
         for (const id of ids) {
           const loaded = skills.buildCustomSkillsPrompt(all, { tier, mode, activeSkillIds: [id] });
           assert.equal((loaded.match(/<skill /g) || []).length, 1);
+          assert.ok(loaded.length <= 12000, `${id}: loaded recipe exceeds CMS prompt budget`);
           assert.ok(loaded.includes(`skills/${id}.md`));
           assert.equal(loaded.includes('<SERIALIZED_VALID_LEXICAL_JSON>'), id === 'cms-ghost');
         }
@@ -139,6 +140,8 @@ for (const v of variants) {
     assert.ok(normalized.every(s => s.tools.length === 0 && s.summary.length <= 200));
     const loader = skills.buildSkillLoaderDefinition(all, { mode: 'act', tier: 'full' });
     for (const id of ids) assert.ok(loader.function.parameters.properties.skill_id.enum.includes(id));
+    const cmsCatalog = skills.buildSkillLoaderDefinition(all.filter(s => ids.includes(s.id)), { mode: 'act', tier: 'full' });
+    assert.ok(cmsCatalog.function.description.length <= 2000, 'CMS catalog exceeds summary budget');
   });
 
   test(`${browser}: runtime load_skill activation keeps unrelated recipes out`, async () => {
@@ -150,6 +153,9 @@ for (const v of variants) {
       assert.equal(result.success, true);
       assert.ok(agent.activeSkillIds.get(18).has('cms-contentful'));
       for (const id of ids.filter(x => x !== 'cms-contentful')) assert.equal(agent.activeSkillIds.get(18).has(id), false);
+      agent._resetActiveSkillsForRun(18, { refreshPrompt: false });
+      assert.equal(agent.activeSkillIds.has(18), false, 'the next run must not retain the CMS recipe');
+      assert.equal(skills.buildCustomSkillsPrompt(records(v), { tier, activeSkillIds: agent.activeSkillIds.get(18) }), '');
     }
   });
 
@@ -164,10 +170,11 @@ for (const v of variants) {
       assert.ok(adapter?.name.startsWith('cms-'), `${f.cms}: missing adapter`);
       assert.ok(adapter.notes.includes('fetch_url'));
       assert.doesNotMatch(adapter.notes, /load_skill/);
-      assert.ok(adapter.notes.length < 3200);
+      assert.ok(adapter.notes.length <= 1300);
     }
     assert.equal(v.adapters.getActiveAdapter('https://news.example.test/admin')?.name, 'cms-editor-candidate');
     assert.match(v.adapters.getActiveAdapter('https://news.example.test/admin').notes, /ONLY after observing/);
+    assert.ok(v.adapters.getActiveAdapter('https://news.example.test/admin').notes.length <= 450);
     for (const url of ['https://news.example.test/article/ghost', 'https://shopify.com.evil.test/', 'https://wix.com.evil.test/', 'file:///ghost/']) {
       assert.ok(!v.adapters.getActiveAdapter(url)?.name.startsWith('cms-'), url);
     }

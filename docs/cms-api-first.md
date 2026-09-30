@@ -25,6 +25,15 @@ identify them from subsequent UI/API evidence, use the narrow shared CMS rule,
 and in Mid/Full select the appropriate catalog entry. Mere branding in public
 content does not authorize an admin workflow.
 
+Loading is semantic selection by the planner/model, not a hard runtime check that
+the CMS is installed and a content task exists. A CMS URL alone does not activate
+its full recipe; URL-matched adapter notes can appear before a content task is
+selected. The normal new-run reset clears active skills. The always-visible
+catalog contains summaries, not nine recipes. Budget tests cap the nine-entry
+loader description at 2,000 characters, one loaded recipe at 12,000, a specific
+CMS adapter at 1,300 and an unconfirmed editor candidate at 450. Character budgets
+are not token counts or a guarantee about model behavior.
+
 All nine Markdown files and the CMS adapter module are byte-identical across
 Chrome/Firefox. Browser-specific agent/tool code keeps its existing differences;
 only the corresponding guidance changes are mirrored.

@@ -1,11 +1,9 @@
 // Routing hints only: a URL match never establishes CMS identity, credentials,
 // content-task authorization, or API mutation permission.
 const CMS_NOTES = `
-- For a content task, confirm the CMS from the observed admin UI/API evidence, even on a custom domain. Read the official content API's target, model, required fields and access first. Prefer fetch_url before trying the editor when the requested fields, usable auth, CMS rights, task scope and API mutation permission all allow it.
-- Ask stays read-only, including with prior API permission. If an otherwise usable API needs permission, request /allow-api once; reuse valid permission and respect refusal. POST reads (including GraphQL queries) also need this gate. /allow-api is neither a CMS token nor a CMS role.
-- Cookies only follow the active tab's registrable domain; a dashboard login does not supply bearer auth. Use the verified API origin; never forward secrets to redirects. Tokens/nonces in fetch_url arguments/results can reach the model and traces. With Strict Secret Handling, use UI if no existing opaque mechanism works; never ask to disable it or scrape tokens.
-- Read before editing, keep the same ID/type/locale/relations, use available version checks, and preserve live status. Create a draft first where supported; never replace a missing draft path with public creation. After timeout or partial success, find the existing record before retrying or switching to UI. Read back fields/status and check the target URL; CMS publication and website visibility are separate. No site-wide publish, deploy or email.
-- If auth, required fields or safe drafts are unavailable, use the observed editor/Code/Text view and refresh AX refs after switching. Preserve the same record and URL parameters; do not loop on inaccessible iframes/canvases. Do not install plugins, change settings or grant scopes. Use a relevant enabled CMS recipe when available.`;
+- Only for the user's content task on an observed CMS: verify official API target/model/fields, existing auth and rights. Prefer fetch_url when task scope and API permission allow, before editor failure. Ask stays read-only, including query POSTs. Request /allow-api once only for an otherwise usable API; reuse grants/respect refusal.
+- Dashboard cookies are not tokens. Use verified origins; never forward auth across redirects. Arguments/results may expose tokens to model/traces. Strict Secret Handling without safe existing auth means UI; no token scraping, new grants or setup.
+- Preserve ID/type/locale/native content/relations and live state. Draft first; reconcile uncertain writes before retry/UI. Read back fields/state and distinguish CMS publication from website visibility. No site-wide publish/deploy/email. Use an observed editor/Code/Text fallback, refresh refs and avoid iframe loops.`;
 
 function route(test) {
   return (url) => {
@@ -48,5 +46,5 @@ CMS_ADAPTERS.push({
   name: 'cms-editor-candidate',
   category: 'general',
   matches: route(u => /\/(?:admin|administrator|studio|desk)(?:\/|$)/.test(u.pathname)),
-  notes: `- This URL is only an editor candidate. Apply the following guidance ONLY after observing Ghost, Drupal, Joomla, Webflow, Shopify, Wix, Strapi, Contentful or Sanity; otherwise use the site's ordinary UI rules.${CMS_NOTES}`,
+  notes: '- Editor candidate only. Apply CMS guidance ONLY after observing Ghost/Drupal/Joomla/Webflow/Shopify/Wix/Strapi/Contentful/Sanity and a matching content task; otherwise use ordinary UI rules. For a confirmed CMS, fetch_url needs verified fields/target/auth/rights and task/API permission. Ask stays read-only. Strict without safe auth means UI. Reconcile uncertain writes before fallback and preserve the record ID.',
 });
