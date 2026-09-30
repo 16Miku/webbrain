@@ -217,7 +217,7 @@ export async function applyNativeCaptchaSolution(tabId, record, application, api
     // Keep a field/callback/click answer available when that second check fails.
     if (!applied.success) return applied;
     record.applied = true;
-    return { ...applied, cookiesUpdated: cookies.length, note: 'Solution applied; verify fresh page state. Do not request another paid solve.' };
+    return { ...applied, cookiesUpdated: cookies.length, note: 'Solution applied; verify fresh page state. Do not request another paid solve for this challenge.' };
   } finally {
     record.applying = false;
   }

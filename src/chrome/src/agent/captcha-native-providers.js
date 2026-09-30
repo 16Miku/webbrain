@@ -580,5 +580,5 @@ export function describeAwsWafObservation(providers, observed) {
   const cookiePathByProvider = Object.fromEntries(providerTasks.map(task => [task.provider, AWS_WAF_COOKIE_PATHS[task.provider]]));
   return { ...base, providerTasks,
     application: { frameId: 0, frameUrl: pageUrl, cookieName: 'aws-waf-token', cookiePathByProvider },
-    note: 'Call solve_captcha once with inject:false and these providerTasks unchanged; weighted fallback runs across them. Then call apply_captcha_solution with frameId 0, this frameUrl, and cookies:[{name:"aws-waf-token", path: cookiePathByProvider[result.provider]}]. Then navigate to pageUrl to reload and read the page. The token may be rejected if the site binds it to the solver IP; do not buy another solve.' };
+    note: 'Call solve_captcha once with inject:false and these providerTasks unchanged; weighted fallback runs across them. Then call apply_captcha_solution with frameId 0, this frameUrl, and cookies:[{name:"aws-waf-token", path: cookiePathByProvider[result.provider]}]. Then navigate to pageUrl to reload and read the page. The token may be rejected if the site binds it to the solver IP; do not buy another solve for this challenge.' };
 }
