@@ -4,6 +4,43 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [38.0.0] - 2026-09-30
+
+### Added
+
+- Added API-first content skills for nine CMS platforms: Contentful, Drupal, Ghost, Joomla, Sanity, Shopify, Strapi, Webflow, and Wix. On Mid and Full they load through the skill catalog only when the task needs them, then prefer the platform's own API for existing content and fall back to the editor when authentication, permissions, or Secret Handling rule the API out. All nine files and the adapter module are byte-identical across Chrome and Firefox.
+- Added a WordPress REST API skill covering posts, pages, REST-enabled custom types, and taxonomy. It reuses existing record IDs, creates content as a draft, and publishes that same record only when asked; a missing `/allow-api` grant is requested once, and Ask mode cannot write.
+- Added NopeCHA and NoneCap as CAPTCHA fallback providers, bringing the catalog to seven. Each has its own key, enable toggle, weight, balance check, and localized Settings controls, and both serve the hCaptcha families.
+- Added a documented native CAPTCHA method catalog audited against each provider's official API reference, with per-provider coverage and documentation links in Settings.
+- Added a Discord management guard so Discord sends verify the active recipient the way other messaging sites already do.
+- Added the `cookies` permission to the Chrome and Firefox manifests, used to match a native CAPTCHA challenge against the session that created it.
+
+### Changed
+
+- Narrowed CMS adapter injection to supported editor routes. Site adapters now supply short conditional notes instead of loading a skill, and a generic admin or Studio path needs observed CMS evidence before a recipe is offered.
+- Tightened the CMS prompt budgets and verified that each run resets its skill state, so a CMS recipe cannot leak into a later task.
+- Sanity publishing now uses the HTTP publish identity and keeps document revision guards, so a stale draft is not silently overwritten.
+- Corrected the Compact WordPress API guidance and added REST route loop detection, so a repeating request is reported instead of retried.
+- Refreshed the CAPTCHA tool documentation to match what each tier actually has: `get_captcha_capabilities`, `solve_captcha`, and `apply_captcha_solution` are Act/Dev Mid and Full tools, while Ask and Compact request manual completion.
+- Documented the CAPTCHA data flow in the privacy guide, including all seven providers, what a fallback sends, and that the browser cookie jar is not exported automatically.
+- Corrected the trace-format compatibility wording and updated the skills documentation, including the French and Simplified Chinese translations.
+
+### Fixed
+
+- Paid CAPTCHA answers now survive chat clears, document restores, and worker restarts. Dispatch locks persist before the provider call, dispatch history is retained, and an answer stays available until the first mutation.
+- Stale CAPTCHA documents and gates are retired consistently across every recovery path, and an expired answer no longer traps completion: the gate flips to manual-required instead of hanging the run.
+- A recoverable CAPTCHA application failure stays pending for a retry rather than ending the run, and falsy answers are no longer dropped.
+- Hardened native CAPTCHA fallback matching. A fallback now requires complete identifiers, binds to the observed frame, media, and proxy identity, checks instruction aliases, challenge visibility, child-frame freshness, reCAPTCHA session cookies, and the browser User-Agent, and rejects undocumented nested parameters. DataDome, FunCaptcha, GeeTest, Yidun, Alibaba, Lemin, TSPD snapshots, reCAPTCHA v3 scores, and text challenges are recognized before a paid solve, and hCaptcha Enterprise is inferred from an explicit `rqdata`.
+- Fixed a full pass of Discord observation and delivery evidence: direct messages, permalinks, message links, new DM binds, polls, field-only embeds, transcript-bound threads, guild avatars, localized settings and rail, and structurally classified avatars and dialogs are all recognized. Sends are verified against the authored text rather than a display name, the guild transcript route is validated, unknown identities are preserved instead of overwritten, and delayed observations reconcile safely.
+- Restored Discord navigation and durable delivery evidence.
+
+### Tests
+
+- Added CAPTCHA coverage for the hCaptcha providers, native providers, application UI, runtime policy, and weighted fallback, and registered the new files in `npm test`.
+- Added a Discord guard suite covering the observation and delivery paths, registered in the main test run.
+- Added CMS API-first coverage with browser smoke fixtures and nine CMS LLM scenarios.
+- Kept every mirrored Chrome and Firefox change paired on both sides.
+
 ## [37.0.1] - 2026-09-29
 
 ### Changed
