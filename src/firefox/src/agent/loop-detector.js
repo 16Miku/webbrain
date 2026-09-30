@@ -34,7 +34,7 @@ export class LoopDetector {
     // interleaving reads cannot evade the generic loop detector.
     this.noProgressScrolls = new Map(); // tabId -> { key, count }
     // Separate buffer for coordinate-based click attempts. The general loop
-    // detector keys on JSON.stringify(args), so when the model interleaves
+    // detector keys on the exact argument bucket, so when the model interleaves
     // execute_js with different code strings between clicks, the same
     // (x,y) click never accumulates to the threshold inside its window.
     // This buffer tracks ONLY coord clicks and survives any amount of
@@ -646,6 +646,20 @@ export class LoopDetector {
           };
         }
       } else if (toolResult?.success === true && toolResult?.verified !== false) {
+        // A verified click can recover via coordinates, a selector, or an AX
+        // target. Its success must retire the shared preparation failures;
+        // reads, fresh captures, and dispatch-only success are not progress.
+        if (
+          ['click', 'click_ax', 'iframe_click'].includes(toolName)
+          && toolResult.verified === true
+          && toolResult.noDispatch !== true
+          && toolResult.dispatched !== false
+          && toolResult.outcomeUnknown !== true
+          && toolResult.inconclusive !== true
+        ) {
+          failures.delete('screenshot-coordinate-capture');
+          failures.delete('coordinate-provenance');
+        }
         for (const scope of equivalentFailureScopes) failures.delete(scope);
         if (failures.size) this.failedActionLoops.set(tabId, failures);
         else this.failedActionLoops.delete(tabId);

@@ -818,6 +818,11 @@ class ConfiguredLoopDetector extends LoopDetectorCh {
     return MUTATION_TOOLS_CH.has(toolName);
   }
 }
+class ConfiguredLoopDetectorFx extends LoopDetectorFx {
+  _isBrowserMutationTool(toolName) {
+    return MUTATION_TOOLS_FX.has(toolName);
+  }
+}
 const {
   detectProgressAction,
   isValidLedgerStatus,
@@ -23028,7 +23033,7 @@ test('fetch_url loop buckets allow semantic pages/searches but collapse guessed 
   assert.equal(rangeA, bucketArgsKeyFx('fetch_url', { url, headers: { Range: 'bytes=0-9999' } }), 'firefox Range bucket drift');
 });
 
-test('bucketArgsKey: non-URL tools fall back to exact JSON args', () => {
+test('bucketArgsKey: non-URL tools fall back to key-order-independent JSON args', () => {
   // click_ax with the same ref_id should match itself
   assert.equal(
     bucketArgsKey('click_ax', { ref_id: 'ref_42' }),
@@ -23039,6 +23044,58 @@ test('bucketArgsKey: non-URL tools fall back to exact JSON args', () => {
     bucketArgsKey('click_ax', { ref_id: 'ref_42' }),
     bucketArgsKey('click_ax', { ref_id: 'ref_43' }),
   );
+});
+
+test('bucketArgsKey: reordered object keys cannot disguise one rejected call', () => {
+  // JSON.stringify keeps insertion order, so a model that re-emits the same
+  // invalid argument object with its keys permuted would hash to a fresh key
+  // every attempt and never hit the rejection limit.
+  for (const key of [bucketArgsKey, bucketArgsKeyFx]) {
+    assert.equal(
+      key('set_field', { text: '02', selector: '#jj' }),
+      key('set_field', { selector: '#jj', text: '02' }),
+      'top-level key order must not change the loop identity',
+    );
+    assert.equal(
+      key('click', { x: 10, y: 20, meta: { a: 1, b: 2 } }),
+      key('click', { meta: { b: 2, a: 1 }, y: 20, x: 10 }),
+      'nested key order must not change the loop identity',
+    );
+    assert.notEqual(
+      key('click', { steps: [1, 2] }),
+      key('click', { steps: [2, 1] }),
+      'array order is semantic and must stay distinct',
+    );
+    assert.notEqual(
+      key('set_field', { text: '02', selector: '#jj' }),
+      key('set_field', { text: '03', selector: '#jj' }),
+      'different values are different calls',
+    );
+  }
+  // Degenerate values must not throw or collapse into one identity.
+  const cyclic = { text: '02' };
+  cyclic.self = cyclic;
+  assert.equal(bucketArgsKey('set_field', cyclic), bucketArgsKey('set_field', cyclic));
+  assert.equal(bucketArgsKey('set_field'), bucketArgsKey('set_field', null));
+  assert.equal(
+    bucketArgsKey('set_field', { text: undefined, extra: 1 }),
+    bucketArgsKey('set_field', { extra: 1 }),
+    'undefined values must not split an identity',
+  );
+});
+
+test('rejected invalid-schema calls share one failure scope across key orders', () => {
+  for (const [label, Detector] of [['chrome', ConfiguredLoopDetector], ['firefox', ConfiguredLoopDetectorFx]]) {
+    const detector = new Detector();
+    const tabId = 1;
+    const rejection = { success: false, invalidArguments: true, noDispatch: true, dispatched: false };
+    const outcomes = [
+      { text: '02', selector: '#jj' },
+      { selector: '#jj', text: '02' },
+      { selector: '#jj', text: '02' },
+    ].map(args => detector._checkLoop(tabId, 'set_field', args, rejection).kind);
+    assert.deepEqual(outcomes, ['none', 'nudge', 'stop'], `${label}: key order must not dodge the limit`);
+  }
 });
 
 test('URL_FAMILY_TOOLS contains the expected tool names', () => {
@@ -23079,6 +23136,8 @@ test('firefox loop-bucket matches chrome', () => {
     ['fetch_url', { url: 'https://api.github.com/repos/o/r/contents/foo.json', method: 'POST' }],
     ['click_ax', { ref_id: 'ref_42' }],
     ['fetch_url', { url: 'not a url' }],
+    ['set_field', { selector: '#jj', nested: { b: 2, a: [1, 2] }, text: '02' }],
+    ['set_field', { text: undefined, extra: 1 }],
   ];
   for (const [name, args] of samples) {
     assert.equal(bucketArgsKeyFx(name, args), bucketArgsKey(name, args), `mismatch on ${name} ${JSON.stringify(args)}`);
