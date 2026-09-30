@@ -118,6 +118,23 @@ for (let n = 201; n <= 208; n++) {
 
 for (const v of variants) {
   const { browser, skills } = v;
+  test(`${browser}: Sanity publish example keeps HTTP identity and document revision guards`, () => {
+    // Contract: https://www.sanity.io/docs/http-reference/actions#documentpublishaction
+    // Sanity's PublishAction retains ifDraftRevisionId; ifVersionRevisionId
+    // belongs to PublishVariantAction, a different operation.
+    const recipe = read(`src/${browser}/skills/cms-sanity.md`);
+    const examples = [...recipe.matchAll(/```json\s+([\s\S]*?)```/g)].map(match => JSON.parse(match[1]));
+    const publishes = examples.flatMap(example => example.actions || [])
+      .filter(action => action.actionType === 'sanity.action.document.publish');
+    assert.equal(publishes.length, 1, 'validate the actual packaged publish example');
+    const publish = publishes[0];
+    assert.equal(publish.versionId, `drafts.${publish.publishedId}`, 'publish the same draft/published pair');
+    assert.equal(publish.ifDraftRevisionId, '<DRAFT_REV>', 'keep the draft optimistic lock');
+    assert.equal(publish.ifPublishedRevisionId, '<PUBLISHED_REV>', 'keep the existing-publication optimistic lock');
+    assert.equal('draftId' in publish, false, 'use the current HTTP identity field');
+    assert.equal('ifVersionRevisionId' in publish, false, 'do not mix variant and document action guards');
+  });
+
   test(`${browser}: default catalog exposes all nine; only selected recipe loads in Mid/Full`, () => {
     const all = records(v);
     assert.ok(all.length <= skills.MAX_CUSTOM_SKILLS);

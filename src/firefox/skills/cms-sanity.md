@@ -126,8 +126,12 @@ Publish only the same verified draft through
 `POST /data/actions/<DATASET>` with this JSON body:
 
 ```json
-{"actions":[{"actionType":"sanity.action.document.publish","draftId":"drafts.<ID>","publishedId":"<ID>","ifDraftRevisionId":"<DRAFT_REV>","ifPublishedRevisionId":"<PUBLISHED_REV>"}]}
+{"actions":[{"actionType":"sanity.action.document.publish","versionId":"drafts.<ID>","publishedId":"<ID>","ifDraftRevisionId":"<DRAFT_REV>","ifPublishedRevisionId":"<PUBLISHED_REV>"}]}
 ```
+
+`versionId` replaces the deprecated HTTP `draftId` alias. This document action
+uses `ifDraftRevisionId`; do not substitute the variant-publish guard
+`ifVersionRevisionId`.
 
 Include the published revision guard when a published document exists; omit it
 for a genuinely new item after verifying absence. Re-read both immediately before
