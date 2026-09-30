@@ -11828,6 +11828,46 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       )
     );
 
+    // Rejections before dispatch still consume attempts. Returning the error
+    // without loop accounting lets invalid coordinates/arguments retry forever.
+    const recordPreparationFailure = async (toolIndex, fnName, fnArgs, result, warning = '') => {
+      let loopCheck = { kind: 'none' };
+      const loopKey = this._loopCallKey(fnName, fnArgs, result);
+      const failedApiMutation = this._isFailedApiMutationForLoop(fnName, fnArgs, result);
+      if (!failedApiMutation || !failedApiMutationLoopKeysThisBatch.has(loopKey)) {
+        if (failedApiMutation) failedApiMutationLoopKeysThisBatch.add(loopKey);
+        loopCheck = this._checkLoop(tabId, fnName, fnArgs, result);
+      }
+      const tc = toolCalls[toolIndex];
+      onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
+      onUpdate('tool_result', { name: fnName, result });
+      messages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        content: JSON.stringify(result)
+          + (loopCheck.kind === 'nudge' ? `\n${loopCheck.warning}` : ''),
+      });
+      const runId = this.currentRunId.get(tabId);
+      if (runId) {
+        try {
+          await trace.recordToolCall(runId, step, { name: fnName, args: fnArgs, result, latencyMs: 0 });
+        } catch {}
+      }
+      if (warning) onUpdate('warning', { message: warning });
+      if (loopCheck.kind === 'nudge') {
+        onUpdate('warning', { message: 'Loop detected — nudging the agent.' });
+      }
+      if (loopCheck.kind !== 'stop') return null;
+      this._appendSyntheticToolResults(
+        tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
+        () => ({ success: false, skipped: true, error: 'skipped: run stopped by loop detector' }),
+      );
+      if (runId) trace.recordError(runId, step, 'loop', loopCheck.message);
+      this._clearLoopState(tabId);
+      this._persist(tabId);
+      return { action: 'recover', value: loopCheck.message, status: 'loop_stopped' };
+    };
+
     for (let toolIndex = 0; toolIndex < toolCalls.length; toolIndex++) {
       const tc = toolCalls[toolIndex];
       const callState = { index: toolIndex, invoked: false, consequential: false, result: null, dispatchState: null };
@@ -11865,21 +11905,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const parsedArgs = this._parseToolCallArgs(tc);
       if (parsedArgs.error) {
         const result = this._invalidToolArgumentsResult(fnName, parsedArgs);
-        messages.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: JSON.stringify(result),
-        });
-        onUpdate('warning', { message: result.error });
-        const runId = this.currentRunId.get(tabId);
-        if (runId) {
-          trace.recordToolCall(runId, step, {
-            name: fnName,
-            args: {},
-            result,
-            latencyMs: 0,
-          });
-        }
+        const recovery = await recordPreparationFailure(toolIndex, fnName, {}, result, result.error);
+        if (recovery) return recovery;
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
@@ -11911,12 +11938,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : null;
       const preparationFailure = argumentValidation.ok ? coordinates.block : argumentValidation.result;
       if (preparationFailure) {
-        const result = preparationFailure;
-        onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
-        onUpdate('tool_result', { name: fnName, result });
-        messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
-        const runId = this.currentRunId.get(tabId);
-        if (runId) trace.recordToolCall(runId, step, { name: fnName, args: fnArgs, result, latencyMs: 0 });
+        const recovery = await recordPreparationFailure(toolIndex, fnName, fnArgs, preparationFailure);
+        if (recovery) return recovery;
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
@@ -11938,50 +11961,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       const recordPagePreparationTimeout = async (error, stage) => {
         const timeoutResult = this._contentActionPreparationTimeoutResult(fnName, error, stage);
-        let loopCheck = { kind: 'none' };
-        const loopKey = this._loopCallKey(fnName, fnArgs, timeoutResult);
-        const failedApiMutation = this._isFailedApiMutationForLoop(fnName, fnArgs, timeoutResult);
-        if (!failedApiMutation || !failedApiMutationLoopKeysThisBatch.has(loopKey)) {
-          if (failedApiMutation) failedApiMutationLoopKeysThisBatch.add(loopKey);
-          loopCheck = this._checkLoop(tabId, fnName, fnArgs, timeoutResult);
-        }
-        onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
-        onUpdate('tool_result', { name: fnName, result: timeoutResult });
-        messages.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: JSON.stringify(timeoutResult)
-            + (loopCheck.kind === 'nudge' ? `\n${loopCheck.warning}` : ''),
-        });
-        const runId = this.currentRunId.get(tabId);
-        if (runId) {
-          try {
-            await trace.recordToolCall(runId, step, {
-              name: fnName,
-              args: fnArgs,
-              result: timeoutResult,
-              latencyMs: 0,
-            });
-          } catch {}
-        }
-        onUpdate('warning', { message: 'Page action preparation timed out before dispatch.' });
-        if (loopCheck.kind === 'nudge') {
-          onUpdate('warning', { message: 'Loop detected — nudging the agent.' });
-        }
-        if (loopCheck.kind !== 'stop') return null;
-        this._appendSyntheticToolResults(
-          tabId,
-          toolCalls,
-          toolIndex + 1,
-          messages,
-          onUpdate,
-          step,
-          () => ({ success: false, skipped: true, error: 'skipped: run stopped by loop detector' }),
+        return recordPreparationFailure(
+          toolIndex, fnName, fnArgs, timeoutResult,
+          'Page action preparation timed out before dispatch.',
         );
-        if (runId) trace.recordError(runId, step, 'loop', loopCheck.message);
-        this._clearLoopState(tabId);
-        this._persist(tabId);
-        return { action: 'recover', value: loopCheck.message, status: 'loop_stopped' };
       };
       const detectSubmitWithDeadline = () => this._withContentActionDeadline(
         async abortSignal => {

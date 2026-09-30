@@ -646,6 +646,20 @@ export class LoopDetector {
           };
         }
       } else if (toolResult?.success === true && toolResult?.verified !== false) {
+        // A verified click can recover via coordinates, a selector, or an AX
+        // target. Its success must retire the shared preparation failures;
+        // reads, fresh captures, and dispatch-only success are not progress.
+        if (
+          ['click', 'click_ax', 'iframe_click'].includes(toolName)
+          && toolResult.verified === true
+          && toolResult.noDispatch !== true
+          && toolResult.dispatched !== false
+          && toolResult.outcomeUnknown !== true
+          && toolResult.inconclusive !== true
+        ) {
+          failures.delete('screenshot-coordinate-capture');
+          failures.delete('coordinate-provenance');
+        }
         for (const scope of equivalentFailureScopes) failures.delete(scope);
         if (failures.size) this.failedActionLoops.set(tabId, failures);
         else this.failedActionLoops.delete(tabId);
