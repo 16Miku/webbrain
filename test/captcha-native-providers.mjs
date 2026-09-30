@@ -46,6 +46,41 @@ for (const browser of ['chrome','firefox']) {
   for (const [provider,method,parameters,expected] of fixtures) test(`${browser}: native ${provider}/${method} matches its wire contract`,()=>{
     assert.deepEqual(native.buildNativeCaptchaTask({provider,method,parameters}).task,expected);
   });
+  test(`${browser}: observed AWS WAF challenge yields fallback tasks only for cookie-returning providers`, async () => {
+    const runtime = await import(`../src/${browser}/src/agent/captcha-frame-runtime.js`);
+    const saved = { window: globalThis.window, document: globalThis.document, location: globalThis.location };
+    const challengeScript = 'https://abc.edge.token.awswaf.com/abc/def/challenge.js';
+    globalThis.window = { gokuProps: { key: 'AQIDAHjc', iv: 'CgAH', context: 'ctx' } };
+    globalThis.document = {
+      scripts: [{ src: challengeScript }, { src: 'https://evil.test/awswaf.com/challenge.js' }],
+      querySelector: selector => selector.includes('amzn-captcha') ? {} : null,
+    };
+    globalThis.location = { href: 'https://site.test/join' };
+    let observed;
+    try { observed = runtime.observeAwsWafChallengeInPage(); }
+    finally { Object.assign(globalThis, saved); }
+    assert.deepEqual(observed, { pageUrl: 'https://site.test/join', websiteKey: 'AQIDAHjc', iv: 'CgAH', context: 'ctx',
+      challengeScript, captchaScript: null, jsapiScript: null, widgetPresent: true });
+
+    const providers = ['capsolver', '2captcha', 'capmonster', 'solvecaptcha', 'anti-captcha', 'nopecha'].map(id => ({ id, apiKey: `key-${id}` }));
+    const described = native.describeAwsWafObservation(providers, observed);
+    // 2Captcha and SolveCaptcha return a voucher, not an applicable cookie.
+    assert.deepEqual(described.providerTasks.map(task => task.provider), ['capsolver', 'capmonster', 'anti-captcha']);
+    assert.deepEqual(described.application.cookiePathByProvider, { capsolver: 'cookie', capmonster: 'cookies.aws-waf-token', 'anti-captcha': 'token' });
+    const prepared = native.prepareNativeCaptchaTasks(providers, described.providerTasks);
+    assert.equal(prepared.length, 3);
+    assert.equal(prepared.find(entry => entry.provider.id === 'capmonster').task.cookieSolution, true);
+    for (const [provider, path, solution] of [['capsolver', 'cookie', { cookie: 'tok' }],
+      ['capmonster', 'cookies.aws-waf-token', { cookies: { 'aws-waf-token': 'tok' } }], ['anti-captcha', 'token', { token: 'tok' }]]) {
+      const application = apply.prepareCaptchaApplication(solution, { frameId: 0, frameUrl: observed.pageUrl, cookies: [{ name: 'aws-waf-token', path }] });
+      assert.deepEqual(application.cookies, [{ name: 'aws-waf-token', value: 'tok' }], provider);
+    }
+
+    assert.deepEqual(native.describeAwsWafObservation(providers, { ...observed, iv: null }).missing, ['iv']);
+    assert.equal(native.describeAwsWafObservation(providers.filter(p => ['2captcha', 'solvecaptcha'].includes(p.id)), observed).providerTasks, undefined);
+    assert.equal(native.describeAwsWafObservation(providers, { pageUrl: observed.pageUrl }), null);
+  });
+
   test(`${browser}: every CapMonster recognition model uses the documented wire discriminator`,()=>{
     const names={bills_audio:'bills_audio',shein:'shein',bls:'bls_3x3',baidu:'baidu',betpunch_3x3_rotate:'betpunch_3x3_rotate',oocl_rotate_double_new:'oocl_rotate_double_new',oocl_rotate_new:'oocl_rotate_new',dli_ensemble:'dli',mathsum:'MathSum',portugal_text_find_icon:'portugal_text_find_icon'};
     for(const [id,Task] of Object.entries(names)) {

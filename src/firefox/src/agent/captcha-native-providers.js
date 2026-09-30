@@ -531,3 +531,54 @@ export async function solveNativeCaptchaTasks(prepared) {
   }
   throw new Error(failures.join(' | '));
 }
+
+// Solution paths holding the aws-waf-token cookie value. 2Captcha and
+// SolveCaptcha return a captcha_voucher/existing_token pair instead, with no
+// documented exchange, so they are not offered for automatic AWS WAF tasks:
+// a winning voucher would be charged but could not be applied.
+// https://docs.capsolver.com/en/guide/captcha/awsWaf/
+// https://docs.capmonster.cloud/docs/captchas/amazon-task/ (cookieSolution)
+// https://anti-captcha.com/apidoc/task-types/AmazonTaskProxyless
+export const AWS_WAF_COOKIE_PATHS = { capsolver: 'cookie', capmonster: 'cookies.aws-waf-token', 'anti-captcha': 'token' };
+
+// Build one proxyless AWS WAF task per enabled cookie-returning provider from
+// observed page values, so weighted fallback has an entry for each of them.
+// Only values read from the page are used; a provider whose required inputs
+// were not observed is omitted rather than guessed.
+export function buildAwsWafProviderTasks(providers, observed) {
+  // captchaScript is omitted: CapSolver has no such field, and fallback
+  // validation requires every task to carry the same challenge identifiers.
+  const { pageUrl: websiteURL, websiteKey, iv, context, challengeScript } = observed || {};
+  if (!websiteURL || !websiteKey || !iv || !context) return [];
+  const builders = {
+    capsolver: () => ({ method: 'AntiAwsWafTaskProxyLess', parameters: { websiteURL, awsKey: websiteKey, awsIv: iv, awsContext: context,
+      ...(challengeScript ? { awsChallengeJS: challengeScript } : {}) } }),
+    capmonster: () => challengeScript && ({ method: 'AmazonTask:2', parameters: { websiteURL, websiteKey, iv, context, challengeScript,
+      cookieSolution: true } }),
+    'anti-captcha': () => ({ method: 'AmazonTaskProxyless', parameters: { websiteURL, websiteKey, iv, context,
+      ...(challengeScript ? { challengeScript } : {}) } }),
+  };
+  return providers.filter(provider => !provider.useCloudBroker && builders[provider.id])
+    .map(provider => { const task = builders[provider.id](); return task && { provider: provider.id, ...task }; })
+    .filter(Boolean);
+}
+
+// Summarize an observed AWS WAF challenge for get_captcha_capabilities: the
+// observed inputs, ready fallback tasks, and how to apply the cookie answer.
+export function describeAwsWafObservation(providers, observed) {
+  if (!observed || !(observed.websiteKey || observed.challengeScript || observed.widgetPresent)) return null;
+  const { pageUrl, websiteKey, iv, context, challengeScript } = observed;
+  const missing = ['websiteKey', 'iv', 'context'].filter(key => !observed[key]);
+  const providerTasks = buildAwsWafProviderTasks(providers, observed);
+  const base = { family: 'aws_waf', pageUrl, observed: { websiteKey, iv, context, challengeScript } };
+  if (missing.length) {
+    return { ...base, missing, note: `AWS WAF inputs were not observed (${missing.join(', ')}). Do not guess them; ask for manual completion.` };
+  }
+  if (!providerTasks.length) {
+    return { ...base, note: 'No enabled provider returns an applicable aws-waf-token cookie. Enable CapSolver, CapMonster Cloud, or Anti-Captcha (2Captcha and SolveCaptcha return a voucher WebBrain cannot apply), or ask for manual completion.' };
+  }
+  const cookiePathByProvider = Object.fromEntries(providerTasks.map(task => [task.provider, AWS_WAF_COOKIE_PATHS[task.provider]]));
+  return { ...base, providerTasks,
+    application: { frameId: 0, frameUrl: pageUrl, cookieName: 'aws-waf-token', cookiePathByProvider },
+    note: 'Call solve_captcha once with inject:false and these providerTasks unchanged; weighted fallback runs across them. Then call apply_captcha_solution with frameId 0, this frameUrl, and cookies:[{name:"aws-waf-token", path: cookiePathByProvider[result.provider]}]. Then navigate to pageUrl to reload and read the page. The token may be rejected if the site binds it to the solver IP; do not buy another solve.' };
+}

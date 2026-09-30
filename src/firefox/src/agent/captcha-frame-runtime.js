@@ -1433,3 +1433,36 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     frameUrl,
   };
 }
+
+// AWS WAF challenge pages publish their integration inputs as a page global
+// (gokuProps: key, iv, context) and awswaf.com script URLs. Nothing reads
+// these from the accessibility tree, so native solves had no observable
+// inputs. Self-contained: Firefox serializes it into a code string.
+export function observeAwsWafChallengeInPage() {
+  const pageWindow = window.wrappedJSObject || window;
+  const text = value => typeof value === 'string' && value.length > 0 && value.length <= 16_384 ? value : null;
+  let goku = null;
+  try { goku = pageWindow.gokuProps; } catch (_) { goku = null; }
+  const scripts = Array.from(document.scripts || []).map(script => String(script.src || '')).filter(Boolean);
+  const awsScript = name => scripts.find(src => {
+    try {
+      const url = new URL(src);
+      return url.protocol === 'https:' && /(^|\.)awswaf\.com$/i.test(url.hostname)
+        && url.pathname.endsWith(`/${name}.js`);
+    } catch (_) { return false; }
+  }) || null;
+  let widgetPresent = false;
+  try {
+    widgetPresent = !!document.querySelector('[id^="amzn-captcha"], [id^="amzn-btn-verify"], awswaf-captcha');
+  } catch (_) { widgetPresent = false; }
+  return {
+    pageUrl: String(location.href),
+    websiteKey: text(goku?.key),
+    iv: text(goku?.iv),
+    context: text(goku?.context),
+    challengeScript: awsScript('challenge'),
+    captchaScript: awsScript('captcha'),
+    jsapiScript: awsScript('jsapi'),
+    widgetPresent,
+  };
+}

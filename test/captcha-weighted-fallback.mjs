@@ -63,7 +63,10 @@ for (const build of ['chrome', 'firefox']) {
     const anti = extra.buildAdditionalCaptchaTask('anti-captcha', normalized);
     assert.deepEqual(anti, { type: 'TurnstileTaskProxyless', websiteURL: params.websiteURL, websiteKey: 'widget', action: 'managed', cData: 'data', chlPageData: 'page-data' });
     const monster = extra.buildAdditionalCaptchaTask('capmonster', normalized);
-    assert.deepEqual(monster, { type: 'TurnstileTask', websiteURL: params.websiteURL, websiteKey: 'widget', data: 'data', pageAction: 'managed', pageData: 'page-data', cloudflareTaskType: 'token' });
+    // Challenge mode requires userAgent; without it CapMonster gets the plain task.
+    assert.deepEqual(monster, { type: 'TurnstileTask', websiteURL: params.websiteURL, websiteKey: 'widget', data: 'data', pageAction: 'managed' });
+    const monsterChallenge = extra.buildAdditionalCaptchaTask('capmonster', { ...normalized, userAgent: 'UA' });
+    assert.deepEqual(monsterChallenge, { type: 'TurnstileTask', websiteURL: params.websiteURL, websiteKey: 'widget', data: 'data', pageAction: 'managed', userAgent: 'UA', pageData: 'page-data', cloudflareTaskType: 'token' });
     const solve = extra.buildSolveCaptchaTask(normalized);
     assert.deepEqual(solve, { method: 'turnstile', sitekey: 'widget', pageurl: params.websiteURL, action: 'managed', data: 'data', pagedata: 'page-data' });
     for (const type of ['recaptcha_v2', 'recaptcha_v2_enterprise', 'recaptcha_v3', 'recaptcha_v3_enterprise']) {

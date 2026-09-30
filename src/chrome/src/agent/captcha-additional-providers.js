@@ -11,14 +11,19 @@ export function buildAdditionalCaptchaTask(id, task) {
       const { data, pagedata, userAgent, ...rest } = mapped;
       return { ...rest, ...(data ? { cData: data } : {}), ...(pagedata ? { chlPageData: pagedata } : {}) };
     }
+    // Anti-Captcha's reCAPTCHA v2 schemas define no userAgent input.
+    if (mapped.type?.startsWith('RecaptchaV2')) delete mapped.userAgent;
     return mapped;
   }
   if (id !== 'capmonster') throw new Error(`Unknown CAPTCHA provider: ${id}`);
   if (task.type === 'AntiTurnstileTaskProxyLess') {
     const { action, pagedata, ...rest } = mapped;
+    // Challenge (token) mode requires pageAction, data, userAgent and pageData
+    // together. Without all of them, send the plain Turnstile task instead.
+    const challenge = pagedata && action && mapped.data && task.userAgent;
     return { ...rest, type: 'TurnstileTask', ...(action ? { pageAction: action } : {}),
       ...(task.userAgent ? { userAgent: task.userAgent } : {}),
-      ...(pagedata ? { pageData: pagedata, cloudflareTaskType: 'token' } : {}) };
+      ...(challenge ? { pageData: pagedata, cloudflareTaskType: 'token' } : {}) };
   }
   if (mapped.type === 'RecaptchaV2TaskProxyless') mapped.type = 'RecaptchaV2Task';
   if (mapped.type === 'RecaptchaV2EnterpriseTaskProxyless') mapped.type = 'RecaptchaV2EnterpriseTask';

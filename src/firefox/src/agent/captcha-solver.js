@@ -203,6 +203,9 @@ export async function solveCaptcha(apiKey, params, { useCloudBroker = false } = 
   // minScore belongs to the shared fallback input. CapSolver's current v3
   // schema has no such parameter; requesting a score does not guarantee one.
   delete task.minScore;
+  // Shared fallback inputs that CapSolver's current schemas do not define.
+  delete task.case;
+  delete task.userAgent;
   const { taskId, solution } = useCloudBroker
     ? await solveWithCloudBroker(task)
     : await (async () => {
@@ -243,7 +246,9 @@ export async function solveCaptchaWithProviders(providers, params) {
       }
       return { ...result, provider: provider.id };
     } catch (error) {
-      failures.push(`${provider.id}: ${error.message}`);
+      // Some providers echo inputs in errors. Never return a saved account key.
+      const message = String(error.message);
+      failures.push(`${provider.id}: ${provider.apiKey ? message.split(provider.apiKey).join('[redacted]') : message}`);
     }
   }
   throw new Error(failures.join(' | '));

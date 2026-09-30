@@ -79,12 +79,12 @@ import { buildShareGenerationItem, enqueueShareGeneration, flushShareOutbox, pur
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { hcaptchaParamError } from './captcha-hcaptcha-providers.js';
-import { getCaptchaCapabilities, prepareNativeCaptchaTasks, solveNativeCaptchaTasks } from './captcha-native-providers.js';
+import { describeAwsWafObservation, getCaptchaCapabilities, prepareNativeCaptchaTasks, solveNativeCaptchaTasks } from './captcha-native-providers.js';
 import { applyNativeCaptchaSolution, captureCaptchaDocuments, captchaAnswerDocumentStatus } from './captcha-solution-application.js';
 import { solveCaptchaWithProviders, detectCaptcha, injectToken, readCaptchaFrameUserAgent, captchaParamError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders, captchaProviderSupportsType } from './captcha-provider-config.js';
 import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
-import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
+import { applyCaptchaFrameVisibility, observeAwsWafChallengeInPage } from './captcha-frame-runtime.js';
 import {
   cloudflareChallengeNavigationTransition,
   cloudflareChallengePlatformTransition,
@@ -32959,9 +32959,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // rotating or clearing the key takes effect without a restart.
     if (name === 'get_captcha_capabilities') {
       const stored = await browser.storage.local.get(CAPTCHA_SETTINGS_KEYS);
-      const capabilities = getCaptchaCapabilities(getCaptchaProviders(stored), args || {});
+      const providers = getCaptchaProviders(stored);
+      const capabilities = getCaptchaCapabilities(providers, args || {});
       const pendingNativeAnswer = await this._pendingNativeCaptchaAnswer(tabId);
-      return pendingNativeAnswer ? { ...capabilities, pendingNativeAnswer } : capabilities;
+      // AWS WAF inputs live in page globals and script URLs that no page
+      // read exposes. Observe them so the model can dispatch one native
+      // solve with a task for every compatible enabled provider.
+      let observedChallenge = null;
+      if (!pendingNativeAnswer && !args?.provider && !args?.method && (!args?.family || args.family === 'aws_waf')) {
+        const observed = await (async () => {
+          const [result] = await browser.tabs.executeScript(tabId, {
+            frameId: 0, code: `(${observeAwsWafChallengeInPage.toString()})()`,
+          });
+          return result || null;
+        })().catch(() => null);
+        observedChallenge = describeAwsWafObservation(providers, observed);
+      }
+      return { ...capabilities, ...(pendingNativeAnswer ? { pendingNativeAnswer } : {}),
+        ...(observedChallenge ? { observedChallenge } : {}) };
     }
     if (name === 'apply_captcha_solution') {
       const record = this._nativeCaptchaSolutions?.get(tabId);
