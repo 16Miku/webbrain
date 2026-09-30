@@ -1090,6 +1090,7 @@ export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = nul
     frameContext: {
       frameUrl,
       frameName,
+      documentTimeOrigin,
       childFrames,
     },
   };
@@ -1309,11 +1310,6 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     }
     return element;
   };
-  for (const field of injectableFields) {
-    setOn(field.name, field.element);
-  }
-  const fieldsTouched = injectableFields.length;
-
   const pageWindow = frameWindow.wrappedJSObject || frameWindow;
   const callbacks = [];
   const addCallback = (fn, source) => {
@@ -1329,8 +1325,20 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
       return null;
     }
   };
+  // The bridge remembers closure callbacks supplied to render(), including
+  // widget-bound execute({async:true}) continuations. Query before dispatching
+  // field events, which may remove or replace the selected widget.
+  let callbackBridgeAvailable = false;
+  try {
+    const bridge = pageWindow.__webbrainCaptchaCallbacks;
+    callbackBridgeAvailable = typeof bridge?.callbacks === 'function';
+    const registered = bridge?.callbacks(
+      target.type, target.websiteKey, fieldName, target.responseFieldId, target.responseFieldIndex,
+    );
+    for (const entry of registered || []) addCallback(entry.fn, entry.source);
+  } catch (_) { /* Older tabs still use observed names and vendor discovery. */ }
   const callbackHint = payload?.callbackHint || null;
-  if (callbackHint) {
+  if (!callbacks.length && callbackHint) {
     addCallback(resolveNamedCallback(callbackHint), `data-callback:${callbackHint}`);
   }
   if (!callbacks.length) {
@@ -1381,12 +1389,17 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
   };
   if (!callbacks.length) collectGoogleCallbacks();
 
+  for (const field of injectableFields) {
+    setOn(field.name, field.element);
+  }
+  const fieldsTouched = injectableFields.length;
+
   let calledCallback = false;
   let callbackSource = null;
   let callbackError = null;
   if (callbacks.length === 1) {
     try {
-      callbacks[0].fn.call(pageWindow, token);
+      callbacks[0].fn.call(pageWindow, token, payload?.respKey);
       calledCallback = true;
       callbackSource = callbacks[0].source;
     } catch (error) {
@@ -1413,6 +1426,7 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     callbackSource,
     callbackAmbiguous: callbacks.length > 1,
     callbackCandidates: callbacks.length,
+    callbackBridgeAvailable,
     callbackError,
     siteKeyMatched,
     challengeMarkerMatched,

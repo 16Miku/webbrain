@@ -285,7 +285,7 @@ export async function detectCaptcha(tabId, constraints = {}) {
     }),
     frameTreePromise,
   ]);
-  const navigationFrames = frameTreeAttempt.status === 'fulfilled'
+  const navigationFrames = frameTreeAttempt.status === 'fulfilled' && Array.isArray(frameTreeAttempt.value)
     ? frameTreeAttempt.value
     : [];
   if (scriptAttempt.status === 'rejected') {
@@ -321,8 +321,14 @@ export async function detectCaptcha(tabId, constraints = {}) {
     }
   }
   const visibleCandidates = applyCaptchaFrameVisibility(candidates, frameContexts, navigationFrames);
+  const root = frameContexts.find(frame => frame.frameId === 0);
   return {
     ...selectCaptchaCandidate(visibleCandidates, constraints),
+    rootDocument: root && Number.isFinite(root.documentTimeOrigin) && root.documentTimeOrigin > 0
+      ? { url: root.frameUrl, timeOrigin: root.documentTimeOrigin } : null,
+    inspectionComplete: frameTreeAttempt.status === 'fulfilled' && !!root
+      && navigationFrames.some(frame => frame.frameId === 0)
+      && navigationFrames.every(frame => frameContexts.some(context => context.frameId === frame.frameId)),
     diagnostics: buildCaptchaDiagnostics({
       candidates: visibleCandidates,
       frameContexts,
@@ -348,6 +354,7 @@ export async function injectToken(tabId, {
   fieldName,
   alsoSet,
   token,
+  respKey,
   callbackHint,
   target = null,
 }) {
@@ -364,6 +371,7 @@ export async function injectToken(tabId, {
     fieldName,
     alsoSet,
     token,
+    respKey,
     callbackHint,
     target: target || {},
   };

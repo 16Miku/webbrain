@@ -253,8 +253,10 @@ export async function solveCaptchaWithProviders(providers, params) {
 
 export async function detectCaptcha(tabId, constraints = {}) {
   let frames;
+  let navigationInspectionComplete = false;
   try {
     frames = await browser.webNavigation.getAllFrames({ tabId });
+    navigationInspectionComplete = Array.isArray(frames) && frames.some(frame => frame.frameId === 0);
   } catch (_) {
     frames = [{ frameId: 0, url: '' }];
   }
@@ -386,8 +388,13 @@ export async function detectCaptcha(tabId, constraints = {}) {
   const candidates = [...directCandidates, ...inheritedCandidates];
   const frameContexts = batches.map(batch => batch.frameContext).filter(Boolean);
   const visibleCandidates = applyCaptchaFrameVisibility(candidates, frameContexts, frames);
+  const root = frameContexts.find(frame => frame.frameId === 0);
   return {
     ...selectCaptchaCandidate(visibleCandidates, constraints),
+    rootDocument: root && Number.isFinite(root.documentTimeOrigin) && root.documentTimeOrigin > 0
+      ? { url: root.frameUrl, timeOrigin: root.documentTimeOrigin } : null,
+    inspectionComplete: navigationInspectionComplete && !!root
+      && frames.every(frame => frameContexts.some(context => context.frameId === frame.frameId)),
     diagnostics: buildCaptchaDiagnostics({
       candidates: visibleCandidates,
       frameContexts,
@@ -409,6 +416,7 @@ export async function injectToken(tabId, {
   fieldName,
   alsoSet,
   token,
+  respKey,
   callbackHint,
   target = null,
 }) {
@@ -425,6 +433,7 @@ export async function injectToken(tabId, {
     fieldName,
     alsoSet,
     token,
+    respKey,
     callbackHint,
     target: target || {},
   };

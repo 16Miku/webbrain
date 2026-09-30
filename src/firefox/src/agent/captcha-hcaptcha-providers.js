@@ -15,11 +15,21 @@ async function request(id, apiKey, path, { body, timeoutMs = 30_000, allowPendin
   });
   const result = await response.json().catch(() => null);
   if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error(`${NAMES[id]}: invalid response.`);
-  // NopeCHA v1 reports an unfinished job as HTTP 409 / code 14. Only polls
-  // may treat this as pending; a rejected creation must never be re-submitted.
-  if (allowPending && id === 'nopecha' && response.status === 409 && result.code === 14) return null;
+  // v1 uses code:14 / HTTP 409; older responses use error:14 with HTTP 200.
+  // Accept numeric strings and nested error codes as well, but only while
+  // polling an existing job. Auth, quota, rate-limit and server errors are
+  // terminal even if their body happens to contain a pending code.
+  const code = result.code ?? result.error?.code ?? result.error;
+  const incomplete = code === 14 || code === '14';
+  if (allowPending && !body && id === 'nopecha' && incomplete
+      && (response.ok || response.status === 409)) return null;
   if (!response.ok || result.error || result.code) {
-    throw new Error(`${NAMES[id]}: ${result.error?.message || result.message || result.error?.code || `HTTP ${response.status}`}`);
+    const message = String(result.error?.message || result.message || result.error?.code || 'Request failed')
+      .split(apiKey).join('[redacted]');
+    const numericCode = typeof code === 'number' || (typeof code === 'string' && /^\d+$/.test(code))
+      ? `; code ${code}` : '';
+    // Keep phase/status in traces without including keys, task IDs or payloads.
+    throw new Error(`${NAMES[id]}: ${message} (${body ? 'POST' : 'GET'} ${path.split('?')[0]}; HTTP ${response.status}${numericCode})`);
   }
   return result;
 }

@@ -19,7 +19,7 @@ export async function getJsonCaptchaBalance(apiBase, name, apiKey) {
   return { balance: Number(result.balance) };
 }
 
-export async function solveJsonCaptcha(apiBase, name, apiKey, task) {
+export async function solveJsonCaptcha(apiBase, name, apiKey, task, { pendingStatuses = ['processing'] } = {}) {
   if (!apiKey) throw new Error(`No ${name} API key configured.`);
   const created = await postJson(apiBase, name, 'createTask', { clientKey: apiKey, task });
   if (created.status === 'ready') return { taskId: created.taskId, solution: created.solution ?? {} };
@@ -31,7 +31,7 @@ export async function solveJsonCaptcha(apiBase, name, apiKey, task) {
     if (remaining <= 0) break;
     const result = await postJson(apiBase, name, 'getTaskResult', { clientKey: apiKey, taskId: created.taskId }, Math.min(30_000, remaining));
     if (result.status === 'ready') return { taskId: created.taskId, solution: result.solution ?? {} };
-    if (result.status !== 'processing') throw new Error(`${name} getTaskResult: unexpected status`);
+    if (!pendingStatuses.includes(result.status)) throw new Error(`${name} getTaskResult: unexpected status`);
   }
   throw new Error(`${name}: timed out waiting for solution.`);
 }

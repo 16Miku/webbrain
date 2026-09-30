@@ -237,6 +237,27 @@ for (const browser of ['chrome','firefox']) {
     assert.deepEqual(calls.map(c=>c.url.hostname),['api.capsolver.com','api.2captcha.com']);
     assert.equal(calls[0].body.task.captchaId,'id');assert.equal(calls[1].body.task.initParameters.captcha_id,'id');
   });
+  for (const id of ['capsolver', '2captcha', 'capmonster', 'anti-captcha']) {
+    test(`${browser}: native ${id} waits for its pending job before considering fallback`, async t => {
+      const [, method, parameters] = fixtures.find(([provider]) => provider === id);
+      const calls = mockApi(t, (call, n) => n === 1 ? { errorId: 0, taskId: 'one-job' }
+        : n < 4 ? { errorId: 0, status: id === 'capsolver' && n === 2 ? 'idle' : 'processing' }
+        : { errorId: 0, status: 'ready', solution: { token: 'answer' } });
+      const result = await native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers,
+        [{ provider: id, method, parameters }]));
+      assert.equal(result.provider, id);
+      assert.equal(result.solution.token, 'answer');
+      assert.equal(calls.filter(c => c.url.pathname === '/createTask').length, 1);
+      assert.deepEqual(calls.slice(1).map(c => c.body.taskId), ['one-job', 'one-job', 'one-job']);
+    });
+  }
+  test(`${browser}: native JSON pending compatibility does not swallow terminal errors`, async t => {
+    const calls = mockApi(t, (call, n) => n === 1 ? { taskId: 'one-job' }
+      : { errorId: 1, errorCode: 'ERROR_ZERO_BALANCE', status: 'idle' });
+    await assert.rejects(native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers,
+      [{ provider: 'capsolver', method: 'GeeTestTaskProxyLess', parameters: { websiteURL: url, captchaId: 'id' } }])), /ERROR_ZERO_BALANCE/);
+    assert.equal(calls.length, 2);
+  });
   test(`${browser}: recognition keeps false selections and zero coordinates`,async t=>{
     const calls=mockApi(t,c=>c.options.method==='POST'?{data:'job'}:{data:[false,false,false]});
     const result=await native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers,[{provider:'nopecha',method:'recognition/recaptcha',parameters:{task:'cars',grid:'3x3',image_data:['base64']}}]));

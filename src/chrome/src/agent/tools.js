@@ -1243,7 +1243,7 @@ export const AGENT_TOOLS = [
   "type": "function",
   "function": {
     "name": "apply_captcha_solution",
-    "description": "Apply the stored answer from the one native CAPTCHA solve to its original page. Bind solution paths to observed response fields, host-only cookies, image/grid clicks, or an observed named CAPTCHA callback. The frame host's Type, Click, or JavaScript permission is required for the corresponding binding. Never invent selectors/callbacks or execute returned scripts. Requires exact observed frameId and frameUrl; cookie bindings require frame 0. Match any required proxy/User-Agent first. Then verify fresh page state. This never requests a paid solve.",
+    "description": "Apply the stored answer from a native or token-only CAPTCHA solve to its original page. Bind solution paths to observed response fields, host-only cookies, image/grid clicks, or an observed named CAPTCHA callback. The frame host's Type, Click, or JavaScript permission is required for the corresponding binding. Never invent selectors/callbacks or execute returned scripts. Requires exact observed frameId and frameUrl; cookie bindings require frame 0. Match any required proxy/User-Agent first. Then verify fresh page state. This never requests a paid solve.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -1374,7 +1374,7 @@ export const AGENT_TOOLS = [
           },
           rqdata: { type: 'string', description: 'hCaptcha only — optional; preserve the exact rqdata when the widget exposes it. Never invent it.' },
           imageBase64: { type: 'string', description: 'image_to_text only — base64-encoded image bytes (no data: prefix).' },
-          inject: { type: 'boolean', description: 'After solving, inject the token into the detected frame\'s response field (textarea[name=g-recaptcha-response] etc.) and fire the widget\'s callback. Default true and requires a detected frame target. If the widget cannot be detected but type/websiteKey are known, set false to get only the token without page injection.' },
+          inject: { type: 'boolean', description: 'After solving, inject the token into the detected frame\'s response field (textarea[name=g-recaptcha-response] etc.) and fire the widget\'s callback. Default true and requires a detected frame target. If the widget cannot be detected but type/websiteKey are known, set false to save a token-only answer. Apply it using apply_captcha_solution with observed frame and field/callback bindings and path: token; get_captcha_capabilities can retrieve the saved answer without another solve.' },
         },
         required: [],
       },

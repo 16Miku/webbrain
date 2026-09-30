@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 const captchaNames = ['get_captcha_capabilities', 'solve_captcha', 'apply_captcha_solution'];
 const solverInstructions = /get_captcha_capabilities|solve_captcha|apply_captcha_solution|\[CAPTCHA SOLVER/;
 test('CAPTCHA tool matrix matches Ask, Compact, Mid, Full and Dev availability', async () => {
@@ -39,6 +40,472 @@ for (const build of ['chrome', 'firefox']) {
     agent.captchaProviderIds = enabled ? ['nonecap'] : [];
     return agent;
   }
+  function mockCaptchaPage(t, { url, timeOrigin = 2000, candidates = [], missingChild = false, navigationFails = false }) {
+    const apiName = build === 'chrome' ? 'chrome' : 'browser';
+    const previous = globalThis[apiName];
+    const payload = { candidates, frameContext: { frameUrl: url, documentTimeOrigin: timeOrigin, childFrames: [] },
+      challenge: candidates.some(candidate => candidate.activeChallengeFrameVisible)
+        ? { label: 'Security verification', normalizedLabel: 'security verification' } : null };
+    globalThis[apiName] = {
+      tabs: { get: async () => ({ url }), executeScript: async (tabId, options) => {
+        if (options.frameId === 5) throw new Error('Frame inspection failed');
+        return [payload];
+      } },
+      scripting: { executeScript: async () => [{ frameId: 0, result: payload }] },
+      webNavigation: { getAllFrames: async () => {
+        if (navigationFails) throw new Error('Navigation inspection failed');
+        return [{ frameId: 0, parentFrameId: -1, url }, ...(missingChild ? [{ frameId: 5, parentFrameId: 0, url: 'https://captcha.test/frame' }] : [])];
+      } },
+    };
+    t.after(() => { if (previous === undefined) delete globalThis[apiName]; else globalThis[apiName] = previous; });
+    return payload;
+  }
+  function automaticSolveFixture(t, { type = 'hcaptcha', injectionSucceeds = true, providerFails = false } = {}) {
+    const pageUrl = 'https://example.test/join';
+    const widget = { type, frameUrl: pageUrl, websiteKey: '5bd005a4-6ac8-4a86-8e60-53083832ed22',
+      visible: true, activeChallengeFrame: true, activeChallengeFrameVisible: true,
+      responseFieldId: 'captcha-response', responseFieldIndex: 0, documentTimeOrigin: 2000 };
+    const page = mockCaptchaPage(t, { url: pageUrl, candidates: [widget] });
+    const api = globalThis[build === 'chrome' ? 'chrome' : 'browser'];
+    api.tabs.get = async () => ({ url: page.frameContext.frameUrl });
+    api.webNavigation.getAllFrames = async () => [{ frameId: 0, parentFrameId: -1, url: page.frameContext.frameUrl }];
+    const agent = agentFor('act', 'full');
+    agent.captchaProviderIds = type === 'hcaptcha' ? ['nonecap'] : ['2captcha'];
+    agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+    const stored = {};
+    api.storage = {
+      local: { get: async () => type === 'hcaptcha'
+        ? { nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32) }
+        : { twoCaptchaEnabled: true, twoCaptchaApiKey: 'a'.repeat(32) } },
+      session: { get: async key => ({ [key]: stored[key] }), set: async value => Object.assign(stored, structuredClone(value)) },
+    };
+    const injection = { success: injectionSucceeds, fieldUpdated: injectionSucceeds, calledCallback: false };
+    if (build === 'chrome') {
+      const execute = api.scripting.executeScript;
+      api.scripting.executeScript = async options => options.func.name === 'read'
+        ? [{ frameId: 0, result: { url: page.frameContext.frameUrl, timeOrigin: page.frameContext.documentTimeOrigin } }]
+        : options.world === 'MAIN'
+        ? [{ frameId: 0, result: options.args?.[0]?.token ? injection : 'test-browser' }]
+        : execute(options);
+    } else {
+      delete api.scripting;
+      const execute = api.tabs.executeScript;
+      api.tabs.executeScript = async (tabId, options) => options.code === 'navigator.userAgent' ? ['test-browser']
+        : options.code.includes('injectCaptchaTokenInPage') ? [injection]
+          : options.code.includes('const read') || options.code.startsWith('(() => ({ url: location.href')
+            ? [{ url: page.frameContext.frameUrl, timeOrigin: page.frameContext.documentTimeOrigin }] : execute(tabId, options);
+    }
+    const requests = [];
+    const savedAtDispatch = [];
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+      requests.push({ url, options });
+      savedAtDispatch.push(structuredClone(stored[agent._convKey(1)]?.captchaGateState));
+      if (providerFails) throw new Error('Provider connection lost after dispatch');
+      return Response.json(type === 'hcaptcha' ? { id: 'paid-task', status: 'solved', token: 'paid-token' }
+        : url.endsWith('/createTask') ? { taskId: 123 }
+          : { status: 'ready', solution: { gRecaptchaResponse: 'paid-token', token: 'paid-token' } });
+    });
+    const timeout = globalThis.setTimeout;
+    t.mock.method(globalThis, 'setTimeout', (fn, delay, ...args) => timeout(fn, delay === 5000 ? 0 : delay, ...args));
+    return { agent, api, widget, page, pageUrl, stored, requests, savedAtDispatch };
+  }
+  for (const type of ['hcaptcha', 'recaptcha_v2', 'turnstile']) {
+    test(`${build}: ${type} solve before any tree gate is saved before dispatch and cannot be bought twice`, async t => {
+      const f = automaticSolveFixture(t, { type });
+      const result = await f.agent._executeToolImpl(1, 'solve_captcha', { type });
+      assert.equal(result.success, true, result.error);
+      assert.equal(result.injected, true);
+      assert.ok(JSON.stringify(result).indexOf('"injection":') < JSON.stringify(result).indexOf('"token":'),
+        'long tokens must not hide application diagnostics in exported traces');
+      assert.equal(f.savedAtDispatch[0]?.publicGate.solveAttempted, true);
+      assert.equal(f.savedAtDispatch[0]?.pageUrl, f.pageUrl);
+      assert.equal(f.savedAtDispatch[0]?.captchaCandidateIdentity.websiteKey, f.widget.websiteKey);
+      assert.deepEqual(f.savedAtDispatch[0]?.rootDocument, { url: f.pageUrl, timeOrigin: 2000 });
+      const beforeRetry = f.requests.length;
+      const repeated = await f.agent._executeToolImpl(1, 'solve_captcha', { type });
+      assert.equal(repeated.noDispatch, true);
+      assert.equal(f.requests.length, beforeRetry);
+      const observed = await f.agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+        { pageUrl: f.pageUrl, pageContent: 'dialog "Security verification"' }, { filter: 'visible' });
+      assert.equal(observed.gate.status, 'manual_required');
+      assert.equal(observed.gate.solveAttempted, true);
+      assert.equal(f.agent._captchaGateBlockResult(1, 'solve_captcha', {}).denied, true);
+      const restored = agentFor('act', 'full');
+      await restored._hydrate(1);
+      assert.equal(restored._captchaGateBlockResult(1, 'solve_captcha', {}).denied, true);
+    });
+  }
+  for (const scenario of ['provider fails', 'injection fails', 'token only']) {
+    test(`${build}: ungated ${scenario} retains the paid solve lock`, async t => {
+      const f = automaticSolveFixture(t, { injectionSucceeds: scenario !== 'injection fails', providerFails: scenario === 'provider fails' });
+      const args = { type: 'hcaptcha', ...(scenario === 'token only' ? { inject: false } : {}) };
+      const result = await f.agent._executeToolImpl(1, 'solve_captcha', args);
+      assert.equal(result.dispatched, true);
+      assert.equal(f.agent._captchaGateStates.get(1)?.publicGate.solveAttempted, true);
+      const repeated = await f.agent._executeToolImpl(1, 'solve_captcha', args);
+      assert.equal(repeated.noDispatch, true);
+      assert.equal(f.requests.length, 1);
+      assert.equal(f.agent._captchaGateBlockResult(1, 'solve_captcha', { providerTasks: [{}] }).denied, true);
+    });
+  }
+  test(`${build}: an unpersisted automatic solve never reaches a provider and can be retried`, async t => {
+    const f = automaticSolveFixture(t);
+    const save = f.api.storage.session.set;
+    f.api.storage.session.set = async () => { throw new Error('Storage unavailable'); };
+    const result = await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' });
+    assert.equal(result.noDispatch, true);
+    assert.equal(f.requests.length, 0);
+    assert.equal(f.agent._captchaGateStates.has(1), false);
+    f.api.storage.session.set = save;
+    assert.equal((await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' })).success, true);
+  });
+  test(`${build}: invalid automatic solve arguments do not consume the solve`, async t => {
+    const f = automaticSolveFixture(t);
+    const result = await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha', frameId: 999 });
+    assert.equal(result.noDispatch, true);
+    assert.equal(f.requests.length, 0);
+    assert.equal(f.agent._captchaGateStates.has(1), false);
+  });
+  for (const type of ['hcaptcha', 'recaptcha_v2', 'turnstile']) {
+    test(`${build}: ${type} token-only answers can be applied once after restoration without another solve`, async t => {
+      const f = automaticSolveFixture(t, { type });
+      f.page.candidates.length = 0; // The advertised fallback for undetectable widgets.
+      const result = await f.agent._executeToolImpl(1, 'solve_captcha', { type,
+        websiteKey: f.widget.websiteKey, inject: false });
+      assert.equal(result.success, true, result.error);
+      assert.equal(result.applicationRequired, true);
+      assert.equal(result.injected, false);
+      assert.equal(f.agent._captchaGateStates.get(1).status, 'verification_pending');
+      assert.equal(f.agent._captchaGateBlockResult(1, 'apply_captcha_solution', {}), null);
+      assert.equal(f.agent._captchaGateBlockResult(1, 'click', {}).denied, true);
+      const paidRequests = f.requests.length;
+      const restored = agentFor('act', 'full');
+      await restored._hydrate(1);
+      const discovery = await restored._executeToolImpl(1, 'get_captcha_capabilities', {});
+      assert.equal(discovery.pendingNativeAnswer.solution.token, 'paid-token');
+      assert.equal(discovery.pendingNativeAnswer.method, 'automatic');
+      const bad = await restored._executeToolImpl(1, 'apply_captcha_solution', {
+        frameId: 0, frameUrl: f.pageUrl, fields: [{ selector: '#response', path: 'missing' }] });
+      assert.equal(bad.success, false);
+      assert.equal(bad.applicationRetryable, true);
+      const values = [], callbacks = [];
+      class TextArea { set value(value) { values.push(value); } }
+      const field = new TextArea();
+      field.tagName = 'TEXTAREA';
+      field.dispatchEvent = () => {};
+      const sandbox = { location: { href: f.pageUrl }, performance: { timeOrigin: 2000 },
+        document: { querySelectorAll: selector => selector === '#response' ? [field] : [] },
+        window: { onCaptchaComplete: value => callbacks.push(value) },
+        HTMLTextAreaElement: TextArea, Event: class {} };
+      if (build === 'chrome') {
+        const execute = f.api.scripting.executeScript;
+        f.api.scripting.executeScript = async options => options.func.name === 'applyCaptchaValuesInPage'
+          ? [{ frameId: 0, result: vm.runInNewContext(`(${options.func.toString()})(...args)`, { ...sandbox, args: options.args }) }]
+          : execute(options);
+      } else {
+        const execute = f.api.tabs.executeScript;
+        f.api.tabs.executeScript = async (tabId, options) => options.code.includes('applyCaptchaValuesInPage')
+          ? [vm.runInNewContext(options.code, sandbox)] : execute(tabId, options);
+      }
+      const application = { frameId: 0, frameUrl: f.pageUrl,
+        fields: [{ selector: '#response', path: 'token' }], callback: { name: 'onCaptchaComplete', path: 'token' } };
+      const applied = await restored._executeToolImpl(1, 'apply_captcha_solution', application);
+      assert.equal(applied.success, true, applied.error);
+      assert.deepEqual(values, ['paid-token']);
+      assert.deepEqual(callbacks, ['paid-token']);
+      assert.equal((await restored._executeToolImpl(1, 'apply_captcha_solution', application)).success, false);
+      assert.equal(f.requests.length, paidRequests);
+      assert.deepEqual(values, ['paid-token']);
+      f.page.challenge = null;
+      const verified = await restored._observeCaptchaChallenge(1, 'get_accessibility_tree',
+        { pageUrl: f.pageUrl, pageContent: 'heading "Verified"' });
+      assert.equal(verified.gate.status, 'cleared');
+      assert.equal(restored._captchaGateBlockResult(1, 'click', {}), null);
+    });
+  }
+  for (const via of ['tree read', 'solve preflight', 'direct solve']) {
+    test(`${build}: a same-URL replacement document releases the paid lock through ${via}`, async t => {
+      const f = automaticSolveFixture(t);
+      await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' });
+      f.page.frameContext.documentTimeOrigin = 3000;
+      f.widget.documentTimeOrigin = 3000;
+      if (via === 'tree read') {
+        const observed = await f.agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+          { pageUrl: f.pageUrl, pageContent: 'dialog "Security verification"' }, { filter: 'visible' });
+        assert.equal(observed.gate.status, 'solve_required');
+      } else if (via === 'solve preflight') {
+        await f.agent._captchaMutationPreflight(1, 'solve_captcha', { type: 'hcaptcha' });
+        assert.equal(f.agent._captchaGateBlockResult(1, 'solve_captcha', {}), null);
+      }
+      const result = await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' });
+      assert.equal(result.success, true, result.error);
+      assert.equal(f.requests.length, 2);
+      assert.equal(f.agent._captchaGateStates.get(1).rootDocument.timeOrigin, 3000);
+      assert.equal((await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' })).noDispatch, true);
+      assert.equal(f.requests.length, 2);
+    });
+  }
+  for (const scenario of ['same document', 'unknown document']) {
+    test(`${build}: ${scenario} retains the paid lock during same-URL recovery`, async t => {
+      const f = automaticSolveFixture(t);
+      await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' });
+      if (scenario === 'unknown document') f.page.frameContext.documentTimeOrigin = 0;
+      await f.agent._captchaMutationPreflight(1, 'solve_captcha', {});
+      assert.equal(f.agent._captchaGateBlockResult(1, 'solve_captcha', {}).denied, true);
+      assert.equal((await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' })).noDispatch, true);
+      assert.equal(f.requests.length, 1);
+    });
+  }
+  test(`${build}: a token-only answer cannot cross a reload but the new document can solve once`, async t => {
+    const f = automaticSolveFixture(t);
+    await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha', inject: false });
+    f.page.frameContext.documentTimeOrigin = 3000;
+    const discovery = await f.agent._executeToolImpl(1, 'get_captcha_capabilities', {});
+    assert.equal(discovery.pendingNativeAnswer, undefined);
+    assert.equal(f.agent._hasUnappliedNativeCaptchaSolution(1), false);
+    assert.equal(f.agent._captchaGateStates.has(1), false);
+    const fresh = await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha', inject: false });
+    assert.equal(fresh.success, true, fresh.error);
+    assert.equal(fresh.applicationRequired, true);
+    assert.equal(f.requests.length, 2);
+    assert.equal((await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha', inject: false })).noDispatch, true);
+  });
+  test(`${build}: routing a token-only page within the same document cannot retire its paid lock`, async t => {
+    const f = automaticSolveFixture(t);
+    await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha', inject: false });
+    const to = `${f.pageUrl}/verification`;
+    f.page.frameContext.frameUrl = to;
+    f.widget.frameUrl = to;
+    const discovery = await f.agent._executeToolImpl(1, 'get_captcha_capabilities', {});
+    assert.equal(discovery.pendingNativeAnswer, undefined);
+    assert.equal(f.agent._captchaGateStates.get(1).publicGate.solveAttempted, true);
+    const observation = await f.agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageUrl: to, pageContent: 'dialog "Security verification"' }, { filter: 'visible' });
+    assert.equal(observation.gate.status, 'manual_required');
+    assert.equal((await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'hcaptcha' })).noDispatch, true);
+    assert.equal(f.requests.length, 1);
+  });
+  test(`${build}: the first automatic solve is remembered through the real tool batch`, async t => {
+    const f = automaticSolveFixture(t);
+    f.agent._persist = () => {};
+    f.agent._ensureGateSetting = async () => {};
+    f.agent._skipPermissionGate = true;
+    f.agent.executeTool = f.agent._executeToolImpl.bind(f.agent);
+    const messages = [];
+    await f.agent._executeToolBatch(1, [
+      { id: 'first-solve', function: { name: 'solve_captcha', arguments: '{"type":"hcaptcha"}' } },
+    ], messages, () => {}, { supportsVision: false }, '', new Set(['solve_captcha']), 1);
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.agent._captchaGateStates.get(1).status, 'verification_pending');
+    assert.match(messages[0].content, /do not.*solve_captcha again/i);
+    const observed = await f.agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageUrl: f.pageUrl, pageContent: 'link "Home"', truncated: true }, { filter: 'interactive' });
+    assert.equal(observed.gate.status, 'manual_required');
+    assert.equal(observed.gate.activeChallengeAfterSolve, true);
+    assert.equal(f.agent._captchaGateBlockResult(1, 'solve_captcha', {}).denied, true);
+    // Once the user completes this exact widget, continuation is still allowed.
+    f.widget.activeChallengeFrame = false;
+    f.widget.activeChallengeFrameVisible = false;
+    f.widget.responseTokenPresent = true;
+    const completed = await f.agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageUrl: f.pageUrl, pageContent: 'link "Home"' }, { filter: 'visible' });
+    assert.equal(completed.gate.status, 'cleared');
+    assert.equal(f.agent._captchaGateBlockResult(1, 'click', {}), null);
+  });
+  for (const status of ['solve_required', 'verification_pending', 'manual_required']) {
+    test(`${build}: ${status} allows cancellation and partial reports without a solve`, async () => {
+      const agent = agentFor('act', 'full');
+      agent._captchaGateStates.set(1, { key: 'challenge', status, publicGate: { status } });
+      agent._detectChallengeDialogBeforeMutation = async () => { throw new Error('Non-success completion must not inspect CAPTCHA'); };
+      for (const outcome of ['failed', 'partial']) {
+        assert.equal(await agent._captchaMutationPreflight(1, 'done', { outcome }), null);
+        assert.equal(agent._captchaGateBlockResult(1, 'done', { outcome }), null);
+      }
+      if (status !== 'manual_required') {
+        assert.equal(agent._captchaGateBlockResult(1, 'done', { outcome: 'success' }).denied, true);
+        assert.equal(agent._captchaGateBlockResult(1, 'done_json', { outcome: 'failed' }).denied, true);
+      }
+      assert.equal(agent._captchaGateBlockResult(1, 'click', {}).denied, true);
+    });
+  }
+  test(`${build}: cancelling with an unsolved CAPTCHA ends the batch before another solve`, async () => {
+    const agent = agentFor('act', 'full');
+    agent._persist = () => {};
+    agent._ensureGateSetting = async () => {};
+    agent._skipPermissionGate = true;
+    agent._captchaGateStates.set(1, { key: 'challenge', status: 'solve_required', publicGate: { status: 'solve_required' } });
+    const executed = [];
+    agent.executeTool = async (tabId, name, args) => {
+      executed.push(name);
+      return { success: false, done: true, outcome: args.outcome, summary: args.summary };
+    };
+    const summary = 'Cancelled at your request.';
+    const result = await agent._executeToolBatch(1, [
+      { id: 'cancel', function: { name: 'done', arguments: JSON.stringify({ outcome: 'failed', summary }) } },
+      { id: 'never-solve', function: { name: 'solve_captcha', arguments: '{}' } },
+    ], [], () => {}, { supportsVision: false }, '', new Set(['done', 'solve_captcha']), 1);
+    assert.equal(result.action, 'return');
+    assert.equal(result.value, summary);
+    assert.deepEqual(executed, ['done']);
+  });
+  for (const type of ['hcaptcha', 'recaptcha_v2', 'turnstile']) {
+    test(`${build}: manual ${type} completion can advance to a new page before a partial continuation read`, async t => {
+      const agent = agentFor('act', 'full');
+      agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+      const from = 'https://example.test/join';
+      const to = 'https://example.test/email-confirmation';
+      mockCaptchaPage(t, { url: to });
+      agent._activeCloudflareManagedChallengeGate = () => null;
+      agent._checkVerificationChallengeLoop = () => ({ kind: 'none' });
+      agent._currentUrl = async () => to;
+      // This is also the legacy persisted shape, before gates stored pageUrl.
+      agent._captchaGateStates.set(1, { key: `${from}\nsecurity verification`, status: 'manual_required',
+        captchaCandidateIdentity: { frameId: 0, framePathIndexes: [], type, websiteKey: 'site', responseFieldIndex: 0 },
+        publicGate: { status: 'manual_required', solveFailed: true } });
+      const result = { pageUrl: to, pageContent: 'link "Home"', truncated: true, hasMore: true };
+      const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', result,
+        { filter: 'interactive', maxDepth: 10, maxChars: 3500 });
+      assert.equal(observed.gate?.status, 'cleared');
+      assert.equal(observed.gate?.clearedByNavigation, true);
+      assert.equal(agent._captchaGateStates.has(1), false);
+      assert.equal(agent._captchaGateBlockResult(1, 'click_ax', {}), null);
+      assert.equal(agent._conversationStorageEntry(1).captchaGateState, null);
+      assert.match(agent._captchaRoutingMessage(1, observed.gate), /navigat/i);
+      assert.doesNotMatch(agent._captchaRoutingMessage(1, observed.gate), /unrecognized challenge/);
+    });
+  }
+  for (const scenario of ['same page', 'query only', 'unverified URL', 'URL read failed']) {
+    test(`${build}: manual CAPTCHA gate survives ${scenario} without token evidence`, async () => {
+      const agent = agentFor('act', 'full');
+      const from = 'https://example.test/join';
+      const to = scenario === 'same page' ? from : scenario === 'query only' ? `${from}?step=2` : 'https://example.test/next';
+      agent._activeCloudflareManagedChallengeGate = () => null;
+      agent._checkVerificationChallengeLoop = () => ({ kind: 'none' });
+      agent._currentUrl = async () => {
+        if (scenario === 'URL read failed') throw new Error('Tab unavailable');
+        return scenario === 'unverified URL' ? from : to;
+      };
+      agent._captchaGateStates.set(1, { key: `${from}\nchallenge`, status: 'manual_required',
+        captchaCandidateIdentity: { frameId: 0, framePathIndexes: [], type: 'hcaptcha', websiteKey: 'site', responseFieldIndex: 0 },
+        publicGate: { status: 'manual_required', solveFailed: true } });
+      const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+        { pageUrl: to, pageContent: 'heading "Verify Your Email"' }, { filter: 'interactive', maxDepth: 10 });
+      assert.equal(observed.gate?.status, 'manual_required');
+      assert.equal(agent._captchaGateBlockResult(1, 'click', {}).denied, true);
+    });
+  }
+  test(`${build}: a replaced document with a new challenge gets a fresh CAPTCHA gate`, async t => {
+    const agent = agentFor('act', 'full');
+    const to = 'https://example.test/new-challenge';
+    mockCaptchaPage(t, { url: to });
+    agent._activeCloudflareManagedChallengeGate = () => null;
+    agent._checkVerificationChallengeLoop = () => ({ kind: 'none' });
+    agent._currentUrl = async () => to;
+    agent._captchaGateStates.set(1, { key: 'https://example.test/old\nchallenge', status: 'manual_required',
+      rootDocument: { url: 'https://example.test/old', timeOrigin: 1000 },
+      publicGate: { status: 'manual_required', solveFailed: true } });
+    const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageUrl: to, pageContent: 'dialog "Security verification"' }, { filter: 'visible' });
+    assert.equal(observed.gate?.status, 'manual_required');
+    assert.equal(observed.gate?.solveFailed, undefined, 'the old failed solve must not be attributed to the new page');
+    assert.equal(agent._captchaGateStates.get(1).pageUrl, to);
+    assert.equal(agent._captchaGateBlockResult(1, 'click', {}).denied, true);
+  });
+  test(`${build}: continuation batch leaves a stale manual gate and gives the model a fresh turn`, async t => {
+    const agent = agentFor('act', 'full');
+    const to = 'https://example.test/email-confirmation';
+    mockCaptchaPage(t, { url: to });
+    agent._persist = () => {};
+    agent._ensureGateSetting = async () => {};
+    agent._skipPermissionGate = true;
+    agent._currentUrl = async () => to;
+    agent._captchaGateStates.set(1, { key: 'https://example.test/join\nsecurity verification', status: 'manual_required',
+      captchaCandidateIdentity: { frameId: 0, type: 'hcaptcha', websiteKey: 'site', responseFieldIndex: 0 },
+      publicGate: { status: 'manual_required', solveFailed: true } });
+    const executed = [];
+    agent.executeTool = async (tabId, name) => {
+      executed.push(name);
+      return { pageUrl: to, pageContent: 'link "Home"', truncated: true, hasMore: true };
+    };
+    const messages = [];
+    const result = await agent._executeToolBatch(1, [
+      { id: 'read-current', function: { name: 'get_accessibility_tree', arguments: JSON.stringify({ filter: 'interactive', maxDepth: 10, maxChars: 3500 }) } },
+      { id: 'stale-click', function: { name: 'click', arguments: '{}' } },
+    ], messages, () => {}, { supportsVision: false }, '', new Set(['get_accessibility_tree', 'click']), 1);
+    assert.deepEqual(result, { action: 'continue' });
+    assert.deepEqual(executed, ['get_accessibility_tree']);
+    assert.equal(agent._captchaGateStates.has(1), false);
+    assert.match(messages.find(m => m.tool_call_id === 'stale-click')?.content || '', /fresh verification turn/);
+  });
+  test(`${build}: a confirmed replacement document may solve a new instance of the same widget`, async t => {
+    const agent = agentFor('act', 'full');
+    const from = 'https://example.test/join';
+    const to = 'https://example.test/new-challenge';
+    const widget = { type: 'hcaptcha', websiteKey: '5bd005a4-6ac8-4a86-8e60-53083832ed22',
+      visible: true, dialogAssociated: true, activeChallengeFrame: true, activeChallengeFrameVisible: true,
+      framePathIndexes: [], responseFieldId: 'h-captcha-response', responseFieldIndex: 0 };
+    mockCaptchaPage(t, { url: to, timeOrigin: 2000, candidates: [widget] });
+    agent._captchaGateStates.set(1, { key: `${from}\nchallenge`, pageUrl: from, status: 'manual_required',
+      rootDocument: { url: from, timeOrigin: 1000 }, captchaCandidateIdentity: { ...widget, frameId: 0 },
+      publicGate: { status: 'manual_required', solveFailed: true } });
+    const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageUrl: to, pageContent: 'dialog "Security verification"' }, { filter: 'visible' });
+    assert.equal(observed.gate.status, 'solve_required');
+    assert.equal(observed.gate.solveFailed, undefined);
+    assert.deepEqual(agent._captchaGateStates.get(1).rootDocument, { url: to, timeOrigin: 2000 });
+    assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', {}), null);
+  });
+  for (const legacy of [false, true]) for (const partial of [false, true]) {
+    test(`${build}: same-document route changes preserve ${legacy ? 'legacy' : 'current'} failed solves on ${partial ? 'partial' : 'dialog'} reads`, async t => {
+      const agent = agentFor('act', 'full');
+      const from = 'https://example.test/join';
+      const to = 'https://example.test/join/verification';
+      const widget = { type: 'hcaptcha', websiteKey: '5bd005a4-6ac8-4a86-8e60-53083832ed22',
+        visible: true, dialogAssociated: true, activeChallengeFrame: true, activeChallengeFrameVisible: true,
+        framePathIndexes: [], responseFieldId: 'h-captcha-response', responseFieldIndex: 0 };
+      mockCaptchaPage(t, { url: to, timeOrigin: 1000, candidates: [widget] });
+      agent._captchaGateStates.set(1, { key: `${from}\nsecurity verification`, pageUrl: from, status: 'manual_required',
+        ...(!legacy ? { rootDocument: { url: from, timeOrigin: 1000 } } : {}),
+        captchaCandidateIdentity: { ...widget, frameId: 0 },
+        publicGate: { status: 'manual_required', solveFailed: true } });
+      const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+        { pageUrl: to, pageContent: partial ? 'link "Home"' : 'dialog "Security verification"', truncated: partial },
+        { filter: partial ? 'interactive' : 'visible', maxDepth: 10 });
+      assert.equal(observed.gate.status, 'manual_required');
+      assert.equal(observed.gate.solveFailed, true);
+      assert.equal(agent._captchaGateStates.get(1).pageUrl, from);
+      assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', {}).denied, true);
+    });
+  }
+  for (const scenario of ['missing child', 'navigation failed']) {
+    test(`${build}: ${scenario} cannot prove a legacy widget disappeared after a route change`, async t => {
+      const agent = agentFor('act', 'full');
+      const to = 'https://example.test/next';
+      mockCaptchaPage(t, { url: to, missingChild: scenario === 'missing child', navigationFails: scenario === 'navigation failed' });
+      agent._captchaGateStates.set(1, { key: 'https://example.test/join\nchallenge', status: 'manual_required',
+        captchaCandidateIdentity: { frameId: 0, type: 'hcaptcha', websiteKey: 'site', responseFieldIndex: 0 },
+        publicGate: { status: 'manual_required', solveFailed: true } });
+      const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+        { pageUrl: to, pageContent: 'link "Home"', truncated: true }, { filter: 'interactive' });
+      assert.equal(observed.gate.status, 'manual_required');
+      assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', {}).denied, true);
+    });
+  }
+  test(`${build}: a native gate key is not mistaken for a departed page URL`, async () => {
+    const agent = agentFor('act', 'full');
+    const pageUrl = 'https://example.test/challenge';
+    agent._activeCloudflareManagedChallengeGate = () => null;
+    agent._checkVerificationChallengeLoop = () => ({ kind: 'none' });
+    agent._currentUrl = async () => pageUrl;
+    agent._captchaGateStates.set(1, { key: `native:${pageUrl}`, status: 'verification_pending',
+      publicGate: { status: 'verification_pending', solveAttempted: true, nativeAnswerPending: true } });
+    agent._nativeCaptchaSolutions = new Map([[1, { pageUrl, solution: { token: 'paid-answer' }, applied: false }]]);
+    const observed = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageUrl, pageContent: 'heading "Challenge"', truncated: true }, { filter: 'interactive' });
+    assert.equal(observed.gate?.status, 'verification_pending');
+    assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), true);
+    assert.equal(agent._captchaGateBlockResult(1, 'click', {}).denied, true);
+  });
   for (const mode of ['ask', 'act', 'dev']) for (const tier of ['compact', 'mid', 'full']) {
     test(`${build}: CAPTCHA tools, prompts and runtime gates agree in ${mode}/${tier}`, () => {
       const available = mode !== 'ask' && tier !== 'compact';

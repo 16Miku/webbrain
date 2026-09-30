@@ -517,7 +517,8 @@ export async function solveNativeCaptchaTasks(prepared) {
   for (const { provider, contract, task, family } of prepared) {
     try {
       const result = JSON_BASES[provider.id]
-        ? await solveJsonCaptcha(JSON_BASES[provider.id], provider.id, provider.apiKey, task)
+        ? await solveJsonCaptcha(JSON_BASES[provider.id], provider.id, provider.apiKey, task,
+          provider.id === 'capsolver' ? { pendingStatuses: ['idle', 'processing'] } : {})
         : provider.id === 'nopecha' ? await solveNopechaTask(provider.apiKey, contract.path, task)
         : provider.id === 'nonecap' ? await solveNonecapTask(provider.apiKey, task)
         : await solveForm(provider.apiKey, contract, task);

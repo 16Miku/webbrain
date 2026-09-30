@@ -86,9 +86,17 @@ Automatic detection still validates the hCaptcha UUID site key and observed `rqd
 
 Most adapters use a 180-second job deadline and 30-second HTTP requests. The original direct CapSolver route retains its 120-second polling deadline. NopeCHA/NoneCap poll every two seconds; generic JSON providers every five seconds. SolveCaptcha waits 20 seconds initially for reCAPTCHA and five seconds for other tasks. Actual completion time is provider-dependent.
 
+Pending responses keep polling the existing job. NopeCHA accepts both the [v1 `code: 14`](https://nopecha.com/api-reference/) and [legacy `error: 14`](https://developers.nopecha.com/recognition/hcaptcha/) forms, including numeric strings, on successful HTTP responses or HTTP 409. This applies only to result retrieval; a rejected submission is never recreated. CapSolver's native route accepts its documented [`idle` and `processing`](https://docs.capsolver.com/en/guide/api-gettaskresult/) states. Authentication, balance, rate-limit and server failures remain errors.
+
+After manual completion navigates to another page, the next accessibility read confirms the current URL and checks document identity or completely inspects the old widget and challenge before retiring the previous page's CAPTCHA gate. A confirmed replacement document also retires the gate on a same-URL reload, during a page read or before another solve; unchanged or unreadable document identity keeps the paid lock. This also works with partial or interactive-only reads and with gates restored after a restart. A pathname change within the same document retains the failed-solve lock while the original widget remains. Unverified URLs, incomplete frame inspection, query-only changes, and missing dialog text alone do not clear an unresolved widget.
+
 ## Automatic widgets and native methods
 
 ### Automatic route
+
+The extension captures callbacks passed to `hcaptcha.render()`, `turnstile.render()`, and `grecaptcha.render()` (including Enterprise) at document start in each matching frame. This supports function closures without a global `data-callback` name. The callback is matched to the selected response field and site key, invoked at most once per widget generation, and invalidated by reset/removal. hCaptcha's [`execute(widgetID, { async: true })`](https://docs.hcaptcha.com/configuration/#asynchronous-mode-get-a-promise) continuation receives the same answer; `getResponse()` and, when supplied by the provider, `getRespKey()` agree with that answer. Page acceptance still requires a fresh inspection: invoking the callback does not clear a visible, rejected challenge.
+
+After updating/reloading the extension, refresh an already-open CAPTCHA page before solving. Existing page closures cannot be recovered retroactively. Named callbacks and the existing reCAPTCHA client discovery remain available for older tabs. The bridge records page registrations only; it does not make provider requests or change the site's submission flow by itself.
 
 `solve_captcha` without `providerTasks` retains frame-aware detection for reCAPTCHA, hCaptcha, and standalone Turnstile. Image-to-text takes explicit image bytes. It checks the selected frame, site key, Enterprise flags, action, and available metadata before spending. Ambiguous frames require a discriminator from the returned candidates.
 
@@ -196,6 +204,10 @@ Solving transmits the supplied challenge information to each attempted provider:
 
 A local preflight failure reports `dispatched: false`. Once a create request may have been sent, a failure reports dispatch rather than implying that nothing happened. Applying a solution has its own page-change boundary. Page rejection never triggers a second fallback cycle.
 
+Automatic widget solves save the selected widget and a paid-attempt gate before contacting a provider, including when the model calls `solve_captcha` directly from a screenshot before any accessibility read. The saved gate prevents another paid attempt after a provider failure, failed application, or worker restart. With `inject: false`, the provider answer is saved against the observed page/frame document identities and returned with `applicationRequired: true`. Use `apply_captcha_solution` with observed field/callback bindings and `path: "token"`; `get_captcha_capabilities` retrieves the pending answer after restart. The same answer is applied at most once, and expiry or document replacement makes it unusable without authorizing another solve for the old document. If the gate cannot be saved, no request is sent. Injection and callback diagnostics precede the full token in tool results so long tokens do not hide them in shortened trace exports.
+
+The CAPTCHA gate permits `done` with `outcome: "failed"` or `"partial"` in every gate state. Cancelling or reporting blocked work must not require a solve. This exception does not authorize page mutations or bypass verification for successful completion.
+
 **Managed Cloud is separate.** Managed browsers continue using the server-side CapSolver broker and ignore personal keys and weights. Native catalog discovery/submission is excluded for that route. This change does not expand or deploy the server-side broker's allowlist, quotas, or billing.
 
 ## Troubleshooting
@@ -206,6 +218,7 @@ A local preflight failure reports `dispatched: false`. Once a create request may
 | hCaptcha says no provider | Enable NopeCHA or NoneCap. A CapSolver/2Captcha/CapMonster/SolveCaptcha/Anti-Captcha key does not enable hCaptcha in this catalog. |
 | Required-field error | Read that exact method's schema; obtain fresh page values. It has not spent a solve. |
 | Token returned but page stays blocked | Correct target frame/callback, freshness, Enterprise metadata, IP/User-Agent requirements, and site acceptance. Do not buy another solve automatically. |
+| NopeCHA reports “Incomplete job” as an error | Check the request stage, HTTP status and numeric code now included in the error. Known pending responses are polled; submission errors and terminal HTTP failures are not retried. |
 | Native result has coordinates/cookies/object fields | Use suitable answer bindings or a site-specific handler, not a token textarea by assumption. |
 | Balance is credits instead of currency | Expected for NopeCHA and NoneCap; their pricing units differ from dollar-balance providers. |
 | More than one provider charged | Expected when earlier jobs failed/timed out and fallback ran. A timeout does not cancel an accepted upstream job. |
