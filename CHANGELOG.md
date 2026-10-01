@@ -4,6 +4,26 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [38.0.13] - 2026-10-01
+
+### Changed
+- version up
+- fix(captcha): align provider contracts and recover interrupted signup
+- Share opt-in provider diagnostic traces
+- fix(captcha): ignore empty callback placeholders when applying solutions
+- up
+- fix(traces): assemble full exports outside runtime messaging
+- fix(captcha): recover successive challenges and export full traces
+- Canonicalize tool-arg loop keys so key order cannot dodge the limit
+- up
+- bugfix
+- up
+- bugfixes
+- version up
+- fix(captcha): deliver callbacks and recover solve state
+- Document CMS API-first coverage in the French and Chinese skills guides
+- Stop rejected actions from looping forever before dispatch
+
 ## [38.0.1] - 2026-09-30
 
 ### Changed
