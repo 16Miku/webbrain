@@ -51,7 +51,7 @@
     "test:social-contract:dom": "node test/social-publish-contract-dom.mjs",
     "test:runtime-lifecycle": "node --test test/agent-lifecycle.mjs test/runtime-lifecycle.mjs test/network-lifecycle.mjs test/text-write-cancellation.mjs && node test/ui-content-lifecycle.mjs",
     "test:rich-text-dom": "node test/ui-content-lifecycle.mjs --dom",
-    "test:firefox-bidi": "node --test test/firefox-bidi.mjs",
+    "test:firefox-bidi": "node --test test/firefox-bidi.mjs test/firefox-full-page-screenshot.mjs",
     "test:firefox-bidi:e2e": "node test/firefox-bidi-e2e.mjs",
     "test:systemone": "node --test test/systemone.mjs",
     "test:systemone:ui": "node test/systemone-ui.mjs",

@@ -109,6 +109,44 @@ export class BidiSession {
     await this.call(match, '(el) => { el.removeAttribute("data-webbrain-bidi"); return true; }');
     return { connected: true };
   }
+  async captureFullPage(token, url) {
+    // A user capture has its own document binding. It never takes over an
+    // automation run, dismisses its dialogs, or releases its pressed keys.
+    const match = await this.locate(token, url);
+    const readDocument = async () => {
+      const result = await this.call(match, `(el) => {
+        if (!el.isConnected || el !== document.documentElement || window !== window.top) return null;
+        return JSON.stringify({ url: location.href, timeOrigin: performance.timeOrigin,
+          width: Math.max(el.scrollWidth, innerWidth), height: Math.max(el.scrollHeight, innerHeight),
+          dpr: devicePixelRatio, scrollX, scrollY });
+      }`);
+      if (result.type === 'exception' || typeof result.result?.value !== 'string') throw new Error('Screenshot document changed; capture again');
+      return JSON.parse(result.result.value);
+    };
+    try {
+      const before = await readDocument();
+      if (before.url !== url) throw new Error('Screenshot document changed; capture again');
+      const { width, height, dpr } = before;
+      if (![width, height, dpr].every(value => Number.isFinite(value) && value > 0)
+          || width * dpr > 32767 || height * dpr > 32767 || width * height * dpr * dpr > 50_000_000) {
+        throw new Error('This page is too large for a full-page screenshot; use /screenshot for the visible area');
+      }
+      const result = await this.send('browsingContext.captureScreenshot', {
+        context: match.context, origin: 'document', format: { type: 'image/png' },
+      });
+      if (JSON.stringify(before) !== JSON.stringify(await readDocument())) throw new Error('Page changed during screenshot capture; capture again');
+      if (typeof result.data !== 'string' || result.data.length > 30 * 1024 * 1024) throw new Error('Screenshot is empty or exceeds the transfer limit');
+      const png = Buffer.from(result.data, 'base64');
+      if (png.length < 24 || !png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('Firefox returned an invalid screenshot');
+      const imageWidth = png.readUInt32BE(16), imageHeight = png.readUInt32BE(20);
+      if (Math.abs(imageWidth - width * dpr) > 1 || Math.abs(imageHeight - height * dpr) > 1) {
+        throw new Error('Firefox could not capture the whole document; use /screenshot for the visible area');
+      }
+      return { dataUrl: `data:image/png;base64,${result.data}`, captureBounds: { x: 0, y: 0, width, height } };
+    } finally {
+      await this.call(match, '(el, token) => { if (el.getAttribute("data-webbrain-bidi") === token) el.removeAttribute("data-webbrain-bidi"); }', [{ type: 'string', value: token }]).catch(() => {});
+    }
+  }
   call(match, functionDeclaration, args = []) {
     return this.send('script.callFunction', { target: { context: match.context }, functionDeclaration,
       arguments: [{ sharedId: match.node.sharedId }, ...args], awaitPromise: true });

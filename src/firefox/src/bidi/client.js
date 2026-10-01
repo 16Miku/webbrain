@@ -1,12 +1,32 @@
 /** Optional native-messaging transport. No raw BiDi commands are exposed to pages. */
 export class FirefoxBidiClient {
-  constructor(api) { this.apiOverride = api; this.pending = new Map(); this.runs = new Map(); this.sequence = 0; }
+  constructor(api) { this.apiOverride = api; this.pending = new Map(); this.runs = new Map(); this.captures = new Map(); this.sequence = 0; this.connectionEpoch = 0; }
   get api() { return this.apiOverride || globalThis.browser; }
   request(command, args = {}) {
     if (!this.port) {
       this.port = this.api.runtime.connectNative('one.webbrain.bidi');
       this.port.onMessage.addListener(message => {
         const entry = this.pending.get(message.id); if (!entry) return;
+        if (typeof message.chunk === 'string') {
+          entry.chunks ||= [];
+          entry.chunkLength = (entry.chunkLength || 0) + message.chunk.length;
+          if (message.index !== entry.chunks.length || entry.chunkLength > 32 * 1024 * 1024) {
+            this.pending.delete(message.id);
+            entry.reject(new Error('Invalid screenshot transfer; capture again'));
+            return;
+          }
+          entry.chunks.push(message.chunk);
+          if (!message.last) return;
+          try {
+            const parsed = JSON.parse(entry.chunks.join(''));
+            if (parsed?.id !== message.id) throw new Error('Invalid screenshot reply');
+            message = parsed;
+          } catch (error) {
+            this.pending.delete(message.id);
+            entry.reject(error);
+            return;
+          }
+        }
         this.pending.delete(message.id);
         if (message.error) {
           const error = new Error(message.error);
@@ -20,6 +40,7 @@ export class FirefoxBidiClient {
       this.port.onDisconnect.addListener(() => {
         if (this.port !== port) return;
         this.port = null; this.connection = null;
+        this.connectionEpoch++;
         for (const entry of this.pending.values()) entry.reject(new Error('Firefox companion disconnected; do not retry an uncertain action'));
         this.pending.clear();
         for (const owner of this.runs.values()) owner.disconnected = true;
@@ -76,11 +97,42 @@ export class FirefoxBidiClient {
     if (this.port) void this.request('closeRun', { runId: owner.runId }).catch(() => {});
   }
   disconnect() {
+    this.connectionEpoch++;
     // Retain failed owners until their task ends; never switch a live task to synthetic input.
     for (const owner of this.runs.values()) owner.disconnected = true;
     const port = this.port; this.port = null; this.connection = null;
     for (const entry of this.pending.values()) entry.reject(new Error('Firefox companion disconnected'));
     this.pending.clear(); port?.disconnect();
+  }
+  async captureFullPage(tabId, beforeCapture = async () => {}) {
+    const epoch = this.connectionEpoch;
+    const settings = await this.api.storage.local.get('firefoxBidiEnabled');
+    if (!settings.firefoxBidiEnabled) throw new Error('Full-page screenshots require Firefox trusted automation. Install the local companion and enable it in Settings → General → Advanced.');
+    if (this.captures.has(tabId)) throw new Error('A full-page screenshot is already in progress for this tab');
+    const owner = {};
+    this.captures.set(tabId, owner);
+    const assertCurrent = () => {
+      if (this.connectionEpoch !== epoch || this.captures.get(tabId) !== owner) throw new Error('Firefox connection changed during screenshot capture; capture again');
+    };
+    try {
+      assertCurrent();
+      await this.connect();
+      assertCurrent();
+      const tab = await this.api.tabs.get(tabId);
+      if (!/^https?:\/\//.test(tab.url || '')) throw new Error('Full-page screenshots require a regular web page');
+      const [binding] = await this.api.tabs.executeScript(tabId, { frameId: 0, file: '/src/bidi/bind.js' });
+      assertCurrent();
+      if (binding?.url !== tab.url) throw new Error('Page changed before screenshot capture; capture again');
+      await beforeCapture();
+      assertCurrent();
+      const result = await this.request('captureFullPage', binding);
+      assertCurrent();
+      if ((await this.api.tabs.get(tabId)).url !== binding.url) throw new Error('Page changed during screenshot capture; capture again');
+      assertCurrent();
+      return result;
+    } finally {
+      if (this.captures.get(tabId) === owner) this.captures.delete(tabId);
+    }
   }
   async perform(tabId, action, payload) {
     const owner = this.runs.get(tabId);

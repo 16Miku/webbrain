@@ -13,7 +13,7 @@ Chrome: https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfn
 Displayed version: 36.1.0; updated September 15, 2026.
 Firefox: https://addons.mozilla.org/en-US/firefox/addon/webbrain/
 Displayed version: 36.8.0; updated September 20, 2026.
-Local source: a34843d22; both manifests report 38.0.1.
+Source for the initial copy audit: a34843d22; both manifests reported 38.0.1. The Firefox implementation follow-up started from 38.0.13.
 
 The public descriptions are nearly identical. They omit scheduling, workflows, explicit PDF analysis, bulk downloads, screenshots, article/transcript reading, CAPTCHA integration and Dev mode. The Firefox opening incorrectly says Chrome. Both descriptions say MIT; Firefox's separate license metadata also says MIT. LICENSE specifies GPL-3.0-or-later for 33.0.0 onward.
 
@@ -41,14 +41,14 @@ Source evidence and claim boundaries
 • New York Times reading and YouTube transcripts: src/{chrome,firefox}/skills/freeskillz-xyz.md, agent/skills.js, docs/skills.md, docs/privacy-and-data-flow.md. The service-backed skill is enabled by default and removable. NYTimes support entered history in July 2026 (834e4c524, 0b68a52bf). Do not imply publisher affiliation, universal article access or a universal paywall bypass. Source/service availability is explicit in the draft.
 • Scheduling/watches: schedule_task in both agent/tools.js files, agent/scheduler.js, docs/slash-commands.md. One-shot and fixed-interval recurrence exist; calendar/cron recurrence does not. Browser alarms require the browser to run. Do not promise execution with the browser/computer shut down.
 • Workflows/teaching: agent/workflows.js, agent/teacher-mode.js, content/teacher-capture.js, docs/export-and-workflow-formats.md. Teacher mode is documented in 27.1.0. Avoid claiming every demonstrated action can be captured/replayed.
-• Chrome full-page screenshots: agent/agent.js captureFullPageScreenshotForUser and background.js capture_full_page_screenshot. Firefox ui/sidepanel.js:712 still marks --full-page unsupported; its background only routes viewport capture. Shared retired tool names and rendering helpers do not prove a working capture path.
-• Firefox BiDi: firefox-companion/session.mjs:179 allows navigate, click, hover, type, field, key and upload, with no screenshot operation. src/firefox/src/bidi/client.js does not route screenshot capture. The protocol supports full-document screenshots, but this checkout has not wired that capability into WebBrain. Keep viewport wording until the feature is implemented and verified. This is an implementation gap, not an inherent Firefox limitation.
+• Chrome full-page screenshots: agent/agent.js captureFullPageScreenshotForUser and background.js capture_full_page_screenshot. The Firefox follow-up now routes --full-page through the local companion, with preview/save and capture-time privacy geometry.
+• Firefox BiDi: firefox-companion/session.mjs now provides a document-bound full-page capture command; src/firefox/src/bidi/client.js transfers large PNGs in chunks. The updated Firefox draft states the optional companion requirement. This feature is implemented locally and must accompany a containing extension release before it is advertised on the live store.
 • CAPTCHA: agent/captcha-solver.js, ui/captcha-settings.js, docs/captcha-provider-coverage.md. Opt-in integration dates to 7.3.0. The expanded seven-service catalog is newer than the displayed store releases. Advertise generic optional assistance, not that new catalog, particular challenge families or guaranteed acceptance. Disclose separate setup/account/charges.
 • Offline mode: docs/apocalypse-mode.md and the live listings. Keep prior-download and WebGPU qualifications attached to on-device inference, not all local model servers.
 • Model setup: README.md and docs/providers-and-models.md. The built-in default requires no API key. Compatibility depends on the selected model and setup; avoid any-LLM guarantees and rapidly aging model-version lists.
 • Privacy: docs/privacy-and-data-flow.md. Relevant context goes to the selected AI service; local inference and online skill calls are distinct. Help Improve WebBrain is on by default for the built-in model and can be disabled. Avoid all-data-stays-local and API-keys-never-leave claims.
 
-This was a source and listing review, not a live end-to-end test of paid solvers or reading services. Store versions lag the checkout. The draft avoids newly expanded solver counts. Verify package-specific behavior when preparing a submission; source presence alone is not proof of a published feature.
+The initial work was a source and listing review. The Firefox follow-up also includes a real-browser test of full-page pixels, large image transfer, below-fold privacy geometry and PNG saving. Paid solvers and reading services were not tested end to end. Store versions lag the checkout. The draft avoids newly expanded solver counts. Verify package-specific behavior when preparing a submission; source presence alone is not proof of a published feature.
 
 Search and conversion
 

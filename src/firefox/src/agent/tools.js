@@ -1808,7 +1808,7 @@ RULES:
 10. For loop tasks, keep using tools in this run; never say "I'll continue" unless you are actually making more tool calls.
 11. You cannot schedule, sleep, set timers, or check back later in compact mode. If something must wait for an external event, call done({summary:"...", outcome:"partial"}) with the current state and ask the user to re-invoke you.
 12. When the task is complete, call done({summary:"...", outcome:"success"}). Verify success first.
-13. Call \`inspect_viewport\` when rendered pixels matter. Mention \`/screenshot\` only when the user explicitly wants to capture, save, or attach a page image; never require it just so the agent can see.
+13. Call \`inspect_viewport\` when rendered pixels matter. Mention \`/screenshot\` only when the user explicitly wants to capture, save, or attach a page image; never require it just so the agent can see. Full-page image requests can use \`/screenshot --full-page\` with Firefox trusted automation enabled and the local companion installed.
 14. Recording is not supported in the Firefox build. Do not call or invent recording tools.
 15. CAPTCHA: stop and ask the user to complete verification manually. Never dismiss, close, or resubmit the challenge. Report blocked work with done({outcome:"partial"}).
 16. Before filling an external email/message/post composer, formulate the exact recipient, subject, and body. For more than a one-line body, save the complete text as \`[pending draft]\` with scratchpad_write first so it can be recovered if the UI fails; never mark it sent until verified.
@@ -1869,7 +1869,7 @@ ${BROWSER_TAB_LIMITATION_ASK}
 
 CHAT IMAGES:
 - When the answer depends on appearance, an advertisement, an image/canvas/chart, visual layout, or visually rendered text that page reads miss, call \`inspect_viewport\` yourself. It is read-only and works in Ask mode; never ask the user to type \`/screenshot\` merely so you can see the page.
-- If the user explicitly wants to capture, save, or attach a page image in the chat UI, tell them to type \`/screenshot\` for the visible viewport. The captured image is staged for their next message.
+- If the user explicitly wants to capture, save, or attach a page image in the chat UI, tell them to type \`/screenshot\` for the visible viewport. The captured image is staged for their next message. Full-page image requests can use \`/screenshot --full-page\` with Firefox trusted automation enabled and the local companion installed.
 
 RECORDING:
 - Recording is not supported in the Firefox build. Do not call or invent recording tools.
@@ -1972,7 +1972,7 @@ ${BROWSER_TAB_LIMITATION}
 
 CHAT IMAGES:
 - Call \`inspect_viewport\` yourself when appearance, an ad, image/canvas/chart, visual layout, or rendered pixels matter. Do not ask the user for \`/screenshot\` just to give the agent vision.
-- Reserve \`/screenshot\` for an explicit user request to capture, save, or attach a page image; the slash command stages the capture for their next message.
+- Reserve \`/screenshot\` for an explicit user request to capture, save, or attach a page image; the slash command stages the capture for their next message. Full-page image requests can use \`/screenshot --full-page\` with Firefox trusted automation enabled and the local companion installed.
 
 RECORDING:
 - Recording is not supported in the Firefox build. Do not call or invent recording tools.
@@ -2200,7 +2200,7 @@ ${BROWSER_TAB_LIMITATION}
 - done({summary, outcome}): signal completion; use outcome:"success" only after verifying success.
 
 CHAT IMAGES:
-- Call \`inspect_viewport\` yourself when appearance, an ad, image/canvas/chart, visual layout, or rendered pixels matter. Do not ask the user for \`/screenshot\` just to give the agent vision; mention it only when they explicitly want to capture, save, or attach a page image. The slash command stages it for their next message.
+- Call \`inspect_viewport\` yourself when appearance, an ad, image/canvas/chart, visual layout, or rendered pixels matter. Do not ask the user for \`/screenshot\` just to give the agent vision; mention it only when they explicitly want to capture, save, or attach a page image. The slash command stages it for their next message. Full-page image requests can use \`/screenshot --full-page\` with Firefox trusted automation enabled and the local companion installed.
 
 RECORDING:
 - Recording is not supported in the Firefox build. Do not call or invent recording tools.

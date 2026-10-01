@@ -40,13 +40,17 @@ for its available flags.
 | `/verbose` | Toggle verbose/compact tool display |
 | `/reset` | Clear the conversation and all per-conversation flags |
 | `/print` | Open the current page's native print dialog |
-| `/screenshot [--full-page]` | Capture the visible tab, or the full scrollable page with `--full-page` (Chrome only) |
+| `/screenshot [--full-page]` | Capture the visible tab, or the full scrollable page with `--full-page` (Firefox requires the optional trusted-automation companion) |
 | `/record [--full-screen] [--hide-recording-indicator] [--transcribe]` | Record the current tab, or a selected screen/window with `--full-screen` (Chrome only); add `--hide-recording-indicator` to hide the banner or `--transcribe` to save a transcript after stop |
 | `/export [--traces [--full] \| --config]` | Download version-stamped conversation Markdown, export the version-stamped tool chain with `--traces`, add `--full` for the complete stored session JSON including screenshots, or export a Settings snapshot with `--config` |
 | `/import <json>` | Import a Settings snapshot pasted inline |
 | `/import --file` | Choose and import a Settings snapshot JSON file |
 | `/profile` | Toggle profile auto-fill on/off without opening Settings |
 | `/vision` | Toggle vision mode (screenshot understanding) on the active provider |
+
+## Full-page screenshots on Firefox
+
+Install the [local companion](../firefox-companion/README.md) and enable Firefox trusted automation in Settings before using `/screenshot --full-page`. The capture stays local until you attach it to a message, and Save as exports a PNG. It captures the currently loaded document, including content outside the viewport; it does not scroll to load an infinite feed. Very large pages return an explicit size error. If the privacy scan cannot verify stable sensitive-field geometry, the preview remains saveable but is not attached to the composer. Ordinary `/screenshot` needs no companion.
 
 ## `/watch`
 

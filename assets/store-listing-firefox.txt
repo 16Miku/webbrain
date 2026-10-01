@@ -19,7 +19,7 @@ READ, RESEARCH AND GET THINGS DONE
 
 PRACTICAL TOOLS IN THE SAME SIDEBAR
 
-• Page screenshots: capture the visible part of a tab and save the image.
+• Full-page screenshots: capture complete web pages with the optional Firefox trusted automation companion. Visible-tab screenshots work without it.
 • Bulk file downloads: download multiple linked files in one task, including documents and images.
 • Article and video summaries: read New York Times articles and summarize YouTube transcripts through the included reading tools. Availability depends on the source and connected service.
 • CAPTCHA assistance: connect a supported solving service to help continue tasks blocked by supported challenges. Optional setup and a separate service account are required; charges may apply.
@@ -49,4 +49,4 @@ Source and support: https://github.com/webbrain-one/webbrain
 END DESCRIPTION
 
 EDITORIAL NOTE - not part of the store description:
-This is proposed copy, not a published store update. The title and summary are separate metadata; Chrome also requires manifest changes in a future package. See store-listing-review.txt for evidence and publication notes. Full-page capture is not yet wired through the Firefox BiDi companion in this checkout. Correct the separate AMO license field to GPL-3.0-or-later as well.
+This is proposed copy, not a published store update. The title and summary are separate metadata; Chrome also requires manifest changes in a future package. See store-listing-review.txt for evidence and publication notes. Full-page capture requires the local Firefox trusted automation companion. Publish this feature claim with a release containing the implementation. Correct the separate AMO license field to GPL-3.0-or-later as well.

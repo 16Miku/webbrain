@@ -3575,6 +3575,10 @@ async function handleMessage(msg, sender) {
     case 'get_recording_state':
       return { ok: true, state: { recording: false, supported: false } };
 
+    case 'capture_full_page_screenshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureFullPageScreenshotForUser(tabId);
+    }
     case 'capture_viewport_screenshot': {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureViewportScreenshotForUser(tabId);

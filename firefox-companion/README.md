@@ -15,12 +15,13 @@ Requires Node.js 22 or newer with the built-in WebSocket API, and a current Fire
    Use a separate profile if desired. An already running Firefox process may ignore startup flags. Keep the debugging endpoint on loopback; it grants browser control to local clients.
 3. Load this branch's `src/firefox/manifest.json` from `about:debugging` → This Firefox → Load Temporary Add-on (or install a build containing these changes).
 4. In WebBrain Settings → General → Advanced, enable **Firefox trusted automation**, keep the port at 9222 (or match your startup port), and select **Test connection**.
-5. Start a new Act or Dev task. Connection failures fail the task rather than silently falling back. Ask mode does not open an automation run. Tasks can start on blank/internal tabs; document binding is deferred until authorized navigation reaches a web page.
+5. Use `/screenshot --full-page` to capture a complete web page, or start a new Act or Dev task. Connection failures fail the task rather than silently falling back. Ask mode does not open an automation run. Tasks can start on blank/internal tabs; document binding is deferred until authorized navigation reaches a web page.
 
 The connection test checks the real BiDi session. It does not submit forms or send input. Disabling the setting or changing the port disconnects the helper; restart any active task afterward.
 
 ## First supported scope
 
+- User-driven full-page PNG capture through `/screenshot --full-page`, including English/Turkish screenshot-only requests. It binds the current document independently of agent runs and does not change their ownership or handle dialogs. Navigation, layout/scroll changes, oversized pages and truncated captures fail explicitly. The capture covers the loaded document without scrolling to load more content. Large images use chunked native replies below Firefox's per-message limit. Capture-time privacy scans gate model attachment; an unscannable page can still be previewed/saved locally.
 - Session connection through Firefox native messaging to loopback BiDi; no arbitrary protocol or script tool exposed to the model.
 - Coordinate clicks preserve the validated CSS viewport point and recheck that point against the bound element before dispatch. Pre-dispatch validation failures retain `noDispatch:true`; transport failures and failures after input remain uncertain and unsafe to replay.
 - Trusted clicks (`click`, `click_ax`), hover, text (`type_text`, `type_ax`, `set_field`), and existing supported `press_keys` keys/repeats. Native selects retain their existing semantic selection path. Drag/drop and dedicated iframe tools retain their existing implementations.
@@ -35,8 +36,8 @@ The host stores temporary upload files only for its connection lifetime and dele
 
 ## Testing
 
-- `npm run test:firefox-bidi`: deterministic cancellation, disconnection, dialog policy and binding regressions (also in `npm test`).
-- `npm run test:firefox-bidi:e2e`: starts an isolated headless Firefox profile and local fixture, exercises the production BiDi session, verifies `isTrusted`, dialog dismissal, exact typing, and uploaded bytes, then removes the profile. Set `FIREFOX_BINARY` if Firefox is not in the macOS default location. It also temporarily installs the packaged extension and exercises its content-script target preparation. The isolated test enables system access solely to inspect its extension Settings page; normal companion use does not need that flag. It does not install the native host in your normal browser profile.
+- `npm run test:firefox-bidi`: deterministic screenshot transfer, document binding, privacy gating, cancellation, disconnection and dialog regressions (also in `npm test`).
+- `npm run test:firefox-bidi:e2e`: starts an isolated headless Firefox profile and local fixture, exercises the production BiDi session, verifies full-page pixels, large image transfers, below-fold privacy geometry, PNG saving, `isTrusted`, dialog dismissal, exact typing, and uploaded bytes, then removes the profile. Set `FIREFOX_BINARY` if Firefox is not in the macOS default location. It also temporarily installs the packaged extension and exercises its content-script target preparation. The isolated test enables system access solely to inspect its extension Settings page; normal companion use does not need that flag. It does not install the native host in your normal browser profile.
 
 ## Uninstall
 
