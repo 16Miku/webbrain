@@ -1036,6 +1036,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Max na sukat ng imahe",
   "st.imageBudget.maxDimension.desc": "Pinakamahabang gilid (lapad o taas) sa pixels para sa anumang screenshot na ipinapadala sa vision. Mas mababang cap ay nagpapaliit ng imahe bago ipadala, binabawasan ang token at gastos. Mas mataas na cap ay nagpapanatili ng fidelity.",
   "st.imageBudget.warning": "⚠️ Naaangkop ang mga setting na ito sa screenshot para sa vision (auto-screenshot, /screenshot, buong page, verify_form). Hindi apektado ang manu-manong naka-save na full-resolution na imahe. Iginagalang ang «Image detail» ng OpenAI-style endpoints; maaaring balewalain ng ibang provider.",
+  "sp.slash.export_traces_full": "I-export ang buong naka-save na trace session bilang JSON, kasama ang mga screenshot",
+  "sp.export_traces.recording_truncated": "Na-export bilang JSON ang lahat ng naka-save na tala. Hindi maibabalik sa pag-export ang nilalamang hindi naisama habang nagre-record.",
   "sp.slash.export_traces": "I-export ang tool chain (mga trace)",
   "sp.export_traces.none": "Walang trace para sa usapang ito. I-on ang Record traces sa Settings, pagkatapos ay patakbuhin muli.",
   "sp.export_traces.error": "Hindi ma-export ang mga trace.",

@@ -14,6 +14,10 @@ WebBrain's trace data has three independent version layers:
 
 ## Reader obligations
 
+Tool events may include an optional `data.outcome` summary containing bounded dispatch, application, provider, error, and CAPTCHA-gate diagnostics. In lossless recordings, this summary survives the content-budget marker, while answer tokens, cookies, provider keys, and form inputs are excluded from the summary. Readers should still honor `_truncated` and `losslessBudgetOmitted`; the summary does not reconstruct discarded content.
+
+`/export --traces --full` exports the stored conversation through the existing `webbrain-trace/1` session envelope, including stored screenshots. It adds no Markdown preview or turn-count truncation. Recording-time omissions and privacy projections remain explicit. The side panel reads the shared trace database and assembles the download locally; only the session identity crosses runtime messaging, so screenshot-heavy exports do not hit the browser message-size limit.
+
 Treat a missing or malformed `traceFormatVersion` as the legacy baseline. Keep
 missing optional fields harmless. Reject a numeric `traceFormatVersion` newer
 than the latest version the reader supports instead of interpreting `seq` and

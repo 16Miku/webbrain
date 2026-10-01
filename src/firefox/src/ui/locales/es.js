@@ -1017,6 +1017,8 @@ export default {
   "sp.upload_picker.cancelled": "Subida cancelada",
   "sp.upload_picker.too_large": "El archivo seleccionado supera el límite de 25 MB (máx. 25 MB)",
   "sp.upload_picker.read_failed": "No se pudo leer el archivo seleccionado",
+  "sp.slash.export_traces_full": "Exportar toda la sesión de trazas guardada como JSON, incluidas las capturas",
+  "sp.export_traces.recording_truncated": "Se exportaron todos los registros guardados como JSON. El contenido omitido durante la grabación no puede recuperarse mediante la exportación.",
   "sp.slash.export_traces": "Exportar la cadena de herramientas (trazas)",
   "sp.export_traces.none": "No hay trazas para esta conversación. Activa «Registrar trazas» en Ajustes y vuelve a ejecutar.",
   "sp.export_traces.error": "No se pudieron exportar las trazas.",

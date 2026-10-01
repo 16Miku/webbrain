@@ -5,10 +5,15 @@ async function postJson(apiBase, name, path, body, timeoutMs = 30_000) {
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!response.ok) throw new Error(`${name} ${path}: HTTP ${response.status}`);
+  // Read the body even on HTTP errors: providers put errorCode there.
   const result = await response.json().catch(() => null);
-  if (!result || typeof result !== 'object') throw new Error(`${name} ${path}: invalid response`);
-  if (result.errorId) throw new Error(`${name} ${path}: ${result.errorDescription || result.errorCode || 'unknown error'}`);
+  const redact = value => String(value).split(body.clientKey).join('[redacted]');
+  const code = result?.errorCode ? ` [${redact(result.errorCode)}]` : '';
+  if (!response.ok || result?.errorId) {
+    const message = result?.errorDescription || result?.errorCode || 'request failed';
+    throw new Error(`${name} ${path}: ${redact(message)}${code} (HTTP ${response.status})`);
+  }
+  if (!result || typeof result !== 'object') throw new Error(`${name} ${path}: invalid response (HTTP ${response.status})`);
   return result;
 }
 
@@ -19,7 +24,7 @@ export async function getJsonCaptchaBalance(apiBase, name, apiKey) {
   return { balance: Number(result.balance) };
 }
 
-export async function solveJsonCaptcha(apiBase, name, apiKey, task) {
+export async function solveJsonCaptcha(apiBase, name, apiKey, task, { pendingStatuses = ['processing'] } = {}) {
   if (!apiKey) throw new Error(`No ${name} API key configured.`);
   const created = await postJson(apiBase, name, 'createTask', { clientKey: apiKey, task });
   if (created.status === 'ready') return { taskId: created.taskId, solution: created.solution ?? {} };
@@ -31,7 +36,9 @@ export async function solveJsonCaptcha(apiBase, name, apiKey, task) {
     if (remaining <= 0) break;
     const result = await postJson(apiBase, name, 'getTaskResult', { clientKey: apiKey, taskId: created.taskId }, Math.min(30_000, remaining));
     if (result.status === 'ready') return { taskId: created.taskId, solution: result.solution ?? {} };
-    if (result.status !== 'processing') throw new Error(`${name} getTaskResult: unexpected status`);
+    if (!pendingStatuses.includes(result.status)) {
+      throw new Error(`${name} getTaskResult: unexpected status ${JSON.stringify(String(result.status ?? 'missing')).slice(0, 40)}`);
+    }
   }
   throw new Error(`${name}: timed out waiting for solution.`);
 }

@@ -15904,6 +15904,10 @@ const ADAPTERS = [
     category: 'general',
     matches: (url) => /^https?:\/\/(?:www\.)?huggingface\.co(?:[/?#]|$)/i.test(url),
     notes: `
+- Signup at /join follows the observed credentials, profile, and email-verification stages. CAPTCHA challenges are conditional; never assume one from a person's name, country, IP, or geography, and never trigger solving or reload on a challenge-free path.
+- Only when an actual CAPTCHA interrupts signup, follow the runtime CAPTCHA gate. A solved widget or applied AWS cookie is not account-creation evidence. Reload only when the runtime explicitly requests it, then inspect the current root form before choosing the next action.
+- If the runtime signup checkpoint reports a reset, resume the visible stage with the original user-provided values and fresh refs. Preserve populated fields; restore only missing requested profile details and the original avatar, reusing its saved download/attachment handle when available. If the form survived, continue it without restarting.
+- Before repeating Create Account after an interruption, reconcile signed-in state, verification-pending notices, and already-registered messages. Continue verification or sign-in for the same account when established; stop if creation remains uncertain. Never create another identity or blindly replay a submission. Verify account creation, email verification, profile saving, and any requested access-token creation each from its own observed success evidence.
 - Repository upload routes expose two file inputs. Use \`input[type="file"]:not([accept])\` for repository files; \`input[type="file"][accept*="image"]\` belongs to the extended-description editor and does not stage a repository file.
 - When the repository input already exists, call \`upload_file\` directly; do not click "Upload file(s)" or the drop zone first.
 - A filename chip, generated commit summary, and enabled "Commit changes" button mean the file is staged only. Click "Commit changes", wait, and verify the file under "Files and versions" before reporting upload success.

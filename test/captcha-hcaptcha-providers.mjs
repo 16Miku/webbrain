@@ -61,12 +61,63 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(calls[1].query.get('id'),'job/id'); assert.equal(calls[1].options.method,'GET');
     for (const c of calls) { assert.equal(c.host,'api.nopecha.com'); assert.equal(c.path,'/v1/token/hcaptcha'); assert.equal(c.options.headers.Authorization,`Basic ${keys.nopecha}`); assert.equal(c.url.includes(keys.nopecha),false); }
   });
+  for (const [label, status, pending] of [
+    ['legacy error', 200, { error: 14, message: 'Incomplete job' }],
+    ['string code', 409, { code: '14', message: 'Incomplete job' }],
+    ['nested code', 200, { error: { code: 14, message: 'Incomplete job' } }],
+  ]) for (const route of ['token/hcaptcha', 'recognition/hcaptcha']) {
+    test(`${build}: NopeCHA ${route} keeps polling ${label} on the same job`, async t => {
+      const solution = route.startsWith('token/') ? 'token' : [true, false];
+      const calls = api(t, (call, n) => n === 1 ? { data: 'one-job' }
+        : n < 4 ? Response.json(pending, { status }) : { data: solution });
+      const result = await h.solveNopechaTask(keys.nopecha, `/v1/${route}`, { sitekey: params.websiteKey });
+      assert.deepEqual(result, { taskId: 'one-job', solution });
+      assert.equal(calls.filter(c => c.options.method === 'POST').length, 1);
+      assert.deepEqual(calls.slice(1).map(c => c.query.get('id')), ['one-job', 'one-job', 'one-job']);
+    });
+  }
+  test(`${build}: NopeCHA pending compatibility retains the deadline without resubmitting`, async t => {
+    const calls = api(t, call => call.options.method === 'POST' ? { data: 'one-job' }
+      : { error: '14', message: 'Incomplete job' });
+    await assert.rejects(h.solveWithHcaptchaProvider('nopecha', keys.nopecha, params), /timed out/);
+    assert.equal(calls.filter(c => c.options.method === 'POST').length, 1);
+    assert.ok(calls.length > 2 && calls.length < 100);
+  });
+  for (const [status, body] of [
+    [403, { code: 16, message: 'Out of credit' }],
+    [401, { code: 14, message: 'Incomplete job' }],
+    [429, { code: 14, message: 'Incomplete job' }],
+    [500, { code: 14, message: 'Incomplete job' }],
+    [409, { message: 'Incomplete job' }],
+    [200, { error: 15, message: 'Incomplete job' }],
+  ]) test(`${build}: NopeCHA does not mistake HTTP ${status} ${JSON.stringify(body)} for pending`, async t => {
+    const calls = api(t, (call, n) => n === 1 ? { data: 'one-job' } : Response.json(body, { status }));
+    await assert.rejects(h.solveWithHcaptchaProvider('nopecha', keys.nopecha, params), /GET.*HTTP/);
+    assert.equal(calls.length, 2);
+  });
+  test(`${build}: NopeCHA creation errors include safe phase diagnostics and never retry`, async t => {
+    const calls = api(t, () => Response.json({ error: 14, message: `Incomplete job ${keys.nopecha}` }, { status: 409 }));
+    await assert.rejects(h.solveWithHcaptchaProvider('nopecha', keys.nopecha, params), error => {
+      assert.match(error.message, /POST \/v1\/token\/hcaptcha.*HTTP 409.*code 14/);
+      assert.equal(error.message.includes(keys.nopecha), false);
+      return true;
+    });
+    assert.equal(calls.length, 1);
+  });
   test(`${build}: hCaptcha fallback skips the original five services and accepts NoneCap metadata`, async t => {
     const calls=api(t,call=>call.host==='api.nopecha.com' ? Response.json({code:16,message:'Out of credit'},{status:403}) : call.options.method==='POST' ? {id:'solve_1',status:'pending'} : {id:'solve_1',status:'solved',token:'P1_token',resp_key:'E0_key',user_agent:'solver-agent'});
     const result=await solver.solveCaptchaWithProviders(config.getCaptchaProviders(stored),params);
     assert.equal(result.provider,'nonecap'); assert.equal(result.token,'P1_token'); assert.equal(result.solution.respKey,'E0_key'); assert.equal(result.solution.userAgent,'solver-agent');
     assert.deepEqual(calls.map(c=>c.host),['api.nopecha.com','api.nonecap.com','api.nonecap.com']);
     assert.equal(calls[1].options.headers.Authorization,`Bearer ${keys.nonecap}`); assert.equal(calls[1].path,'/v1/solves'); assert.equal(calls[2].path,'/v1/solves/solve_1');
+  });
+  test(`${build}: NoneCap pending and solving states poll the original job until solved`, async t => {
+    const calls = api(t, (call, n) => ({ id: 'one-job', status: n === 1 ? 'pending' : n === 2 ? 'solving' : 'solved',
+      ...(n === 3 ? { token: 'answer' } : {}) }));
+    const result = await h.solveWithHcaptchaProvider('nonecap', keys.nonecap, params);
+    assert.equal(result.solution.gRecaptchaResponse, 'answer');
+    assert.equal(calls.filter(c => c.options.method === 'POST').length, 1);
+    assert.deepEqual(calls.slice(1).map(c => c.path), ['/v1/solves/one-job', '/v1/solves/one-job']);
   });
   for (const id of ['nopecha','nonecap']) {
     test(`${build}: ${id} reports credits and validates balance responses`,async t=>{

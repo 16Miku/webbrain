@@ -1017,6 +1017,8 @@ export default {
   "sp.upload_picker.cancelled": "Kinansela ang upload",
   "sp.upload_picker.too_large": "Ang napiling file ay lampas sa 25MB limit (max 25MB)",
   "sp.upload_picker.read_failed": "Hindi mabasa ang napiling file",
+  "sp.slash.export_traces_full": "I-export ang buong naka-save na trace session bilang JSON, kasama ang mga screenshot",
+  "sp.export_traces.recording_truncated": "Na-export bilang JSON ang lahat ng naka-save na tala. Hindi maibabalik sa pag-export ang nilalamang hindi naisama habang nagre-record.",
   "sp.slash.export_traces": "I-export ang tool chain (mga trace)",
   "sp.export_traces.none": "Walang trace para sa usapang ito. I-on ang Record traces sa Settings, pagkatapos ay patakbuhin muli.",
   "sp.export_traces.error": "Hindi ma-export ang mga trace.",

@@ -1017,6 +1017,8 @@ export default {
   "sp.upload_picker.cancelled": "Unggahan dibatalkan",
   "sp.upload_picker.too_large": "File yang dipilih melebihi batas 25MB (maks 25MB)",
   "sp.upload_picker.read_failed": "Gagal membaca file yang dipilih",
+  "sp.slash.export_traces_full": "Ekspor seluruh sesi jejak tersimpan sebagai JSON, termasuk tangkapan layar",
+  "sp.export_traces.recording_truncated": "Semua catatan tersimpan telah diekspor sebagai JSON. Konten yang dihilangkan saat perekaman tidak dapat dipulihkan melalui ekspor.",
   "sp.slash.export_traces": "Ekspor rantai alat (jejak)",
   "sp.export_traces.none": "Tidak ada jejak untuk percakapan ini. Aktifkan Rekam jejak di Pengaturan, lalu jalankan lagi.",
   "sp.export_traces.error": "Tidak dapat mengekspor jejak.",

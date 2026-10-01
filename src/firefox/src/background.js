@@ -3139,7 +3139,7 @@ async function handleMessage(msg, sender) {
     case 'export_traces': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) return { ok: false, error: 'No tab ID' };
-      return { ok: true, ...(await agent.exportTraces(tabId)) };
+      return { ok: true, ...(await agent.exportTraces(tabId, { full: msg.full === true })) };
     }
 
     case 'export_config': {

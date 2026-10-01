@@ -1036,6 +1036,8 @@ export default {
   "st.imageBudget.maxDimension.label": "最大画像寸法",
   "st.imageBudget.maxDimension.desc": "ビジョンに送るスクリーンショットの長辺（幅または高さ）のピクセル上限。上限を下げると送信前に縮小しトークンとコストを削減。上げると忠実度を保ちます。",
   "st.imageBudget.warning": "⚠️ これらの設定はビジョン用のスクリーンショット（自動撮影、/screenshot、全ページ、verify_form）に適用されます。手動で保存したフル解像度画像には影響しません。「Image detail」は OpenAI 系エンドポイントで尊重され、他のプロバイダでは無視されることがあります。",
+  "sp.slash.export_traces_full": "スクリーンショットを含む保存済みトレースセッション全体をJSONでエクスポート",
+  "sp.export_traces.recording_truncated": "保存済みの全記録をJSONでエクスポートしました。記録時に省略された内容はエクスポートでは復元できません。",
   "sp.slash.export_traces": "ツールチェーンをエクスポート（トレース）",
   "sp.export_traces.none": "この会話のトレースがありません。設定で「トレースを記録」をオンにして、もう一度実行してください。",
   "sp.export_traces.error": "トレースをエクスポートできませんでした。",

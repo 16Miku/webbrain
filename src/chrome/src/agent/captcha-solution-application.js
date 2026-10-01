@@ -1,3 +1,13 @@
+import { isEmptyCaptchaCallback } from './captcha-callback-binding.js';
+
+// These contracts explicitly require the returned browser identity. Other
+// providers can return a diagnostic UA without requiring an exact match.
+// https://nonecap.com/api-reference/
+// https://docs.capmonster.cloud/docs/captchas/recaptcha-v3-task/
+export function requiresCaptchaUserAgent(provider, family) {
+  return provider === 'nonecap' || (provider === 'capmonster' && /^recaptcha_v3(?:_enterprise)?$/.test(family));
+}
+
 // Apply only values from a completed solve. Provider responses are untrusted
 // data: never evaluate returned JavaScript or navigate to a returned URL.
 function valueAt(solution, path = '') {
@@ -30,9 +40,9 @@ export function prepareCaptchaApplication(solution, application) {
   if (fields.some(b => typeof b.selector !== 'string' || !b.selector)) throw new Error('Every response field needs an observed selector.');
   if (cookies.some(b => !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(b.name) || /[\r\n;]/.test(b.value))) throw new Error('Invalid CAPTCHA cookie binding.');
   let callback = null;
-  if (application.callback) {
+  if (application.callback && !isEmptyCaptchaCallback(application.callback)) {
     const { name, path = '' } = application.callback;
-    if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(name) || name.split('.').some(k => ['__proto__','prototype','constructor','eval','Function','location'].includes(k))) throw new Error('Use an observed named CAPTCHA callback.');
+    if (typeof name !== 'string' || !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(name) || name.split('.').some(k => ['__proto__','prototype','constructor','eval','Function','location'].includes(k))) throw new Error('Use an observed named CAPTCHA callback. Omit callback when applying only cookies, fields, or clicks. Correct the binding and reuse the stored answer; do not request another solve.');
     callback = { name, value: valueAt(solution, path) };
   }
   const clicks = (application.clicks || []).map(binding => {
@@ -105,8 +115,12 @@ export async function captchaAnswerDocumentStatus(tabId, record, application, ap
 }
 
 // Self-contained for MAIN-world execution in one explicitly selected frame.
-export function applyCaptchaValuesInPage(expectedUrl, fields, callback, clicks = [], expectedTimeOrigin, validateOnly = false) {
+export function applyCaptchaValuesInPage(expectedUrl, fields, callback, clicks = [], expectedTimeOrigin, validateOnly = false, requiredUserAgent = null) {
   if (location.href !== expectedUrl || performance.timeOrigin !== expectedTimeOrigin) return { success: false, error: 'CAPTCHA frame navigated before application.' };
+  if (requiredUserAgent && navigator.userAgent !== requiredUserAgent) return {
+    success: false, manualCompletionRequired: true, solverUserAgent: requiredUserAgent,
+    error: 'The provider requires its returned User-Agent, which differs from this browser. The paid answer was retained and no values were applied. Complete the challenge manually; do not request another solve.',
+  };
   const targets = [];
   for (const { selector, value } of fields) {
     let matches;
@@ -174,7 +188,8 @@ export async function applyNativeCaptchaSolution(tabId, record, application, api
   // Cookies are host-only and scoped to the active page. Returned Domain,
   // URLs, SameSite overrides, scripts, and storage dumps are never applied.
   const execute = async validateOnly => {
-    const args = [application.frameUrl, fields, callback, clicks, documentIdentity.timeOrigin, validateOnly];
+    const requiredUserAgent = requiresCaptchaUserAgent(record.provider, record.family) ? record.solution?.userAgent : null;
+    const args = [application.frameUrl, fields, callback, clicks, documentIdentity.timeOrigin, validateOnly, requiredUserAgent];
     if (typeof api.scripting?.executeScript === 'function') {
       const results = await api.scripting.executeScript({ target: { tabId, frameIds: [application.frameId] }, world: 'MAIN', func: applyCaptchaValuesInPage, args });
       return results?.find(r => r.frameId === application.frameId)?.result;
@@ -217,7 +232,7 @@ export async function applyNativeCaptchaSolution(tabId, record, application, api
     // Keep a field/callback/click answer available when that second check fails.
     if (!applied.success) return applied;
     record.applied = true;
-    return { ...applied, cookiesUpdated: cookies.length, note: 'Solution applied; verify fresh page state. Do not request another paid solve.' };
+    return { ...applied, cookiesUpdated: cookies.length, note: 'Solution applied; verify fresh page state. Do not request another paid solve for this challenge.' };
   } finally {
     record.applying = false;
   }

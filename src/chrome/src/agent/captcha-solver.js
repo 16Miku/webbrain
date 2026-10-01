@@ -20,7 +20,7 @@ import {
   selectCaptchaCandidate,
 } from './captcha-frame-runtime.js';
 import { buildCaptchaDiagnostics, captchaChallengeMatcherOptions } from './captcha-gate.js';
-import { solveWithAdditionalProvider } from './captcha-additional-providers.js';
+import { buildAdditionalCaptchaTask, solveWithAdditionalProvider } from './captcha-additional-providers.js';
 import { solveWithHcaptchaProvider } from './captcha-hcaptcha-providers.js';
 import { solveWithTwoCaptcha } from './two-captcha.js';
 import { captchaProviderSupportsType } from './captcha-provider-config.js';
@@ -62,7 +62,8 @@ export async function getBalance(apiKey) {
   const res = await postJson('/getBalance', { clientKey: apiKey });
   if (!res || typeof res !== 'object') throw new Error('CapSolver getBalance returned unexpected response.');
   if (res.errorId) throw capsolverError('CapSolver', res);
-  return { balance: res.balance ?? 0, packages: res.packages || [] };
+  if (res.balance == null || res.balance === '' || !Number.isFinite(Number(res.balance))) throw new Error('CapSolver getBalance: missing balance');
+  return { balance: Number(res.balance), packages: res.packages || [] };
 }
 
 async function createTask(apiKey, task) {
@@ -85,6 +86,7 @@ async function pollTaskResult(apiKey, taskId, { timeoutMs = POLL_TIMEOUT_MS } = 
     if (!res || typeof res !== 'object') throw new Error('CapSolver getTaskResult returned unexpected response.');
     if (res.errorId) throw capsolverError('CapSolver getTaskResult', res);
     if (res.status === 'ready') return res.solution || {};
+    if (!['idle', 'processing'].includes(res.status)) throw new Error('CapSolver getTaskResult returned an unexpected status.');
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
   }
   throw new Error(`CapSolver: timed out after ${Math.round(timeoutMs / 1000)}s waiting for solution.`);
@@ -173,6 +175,26 @@ export function buildTask({ type, websiteURL, websiteKey, ...rest }) {
   throw new Error(`solve_captcha: unsupported type "${type}".`);
 }
 
+function capsolverTaskError(task) {
+  return task?.type === 'AntiTurnstileTaskProxyLess' && task.metadata?.chlPageData
+    ? 'CapSolver automatic Turnstile does not support Cloudflare Challenge pageData; use a compatible provider or the documented native Cloudflare Challenge task.' : null;
+}
+
+// Distinguish an entirely local schema rejection from a paid dispatch. The
+// agent calls this before persisting its attempted-solve lock.
+export function captchaAutomaticDispatchError(providers, params) {
+  const task = params.type === 'hcaptcha' ? null : buildTask(params);
+  const failures = [];
+  for (const provider of providers.filter(p => captchaProviderSupportsType(p.id, params.type))) {
+    try {
+      if (provider.id === 'capsolver' && capsolverTaskError(task)) throw new Error(capsolverTaskError(task));
+      if (provider.id === 'capmonster') buildAdditionalCaptchaTask(provider.id, task);
+      return null;
+    } catch (error) { failures.push(`${provider.id}: ${error.message}`); }
+  }
+  return failures.join(' | ') || `No enabled provider supports ${params.type}.`;
+}
+
 // Pick the right token-field name + injection strategy for each captcha
 // type. The DOM convention is well-documented for the ones we auto-handle.
 function solutionFor(type, solution) {
@@ -218,9 +240,16 @@ export async function solveCaptcha(apiKey, params, { useCloudBroker = false } = 
   const paramError = captchaParamError(params);
   if (paramError) throw new Error(paramError);
   const task = buildTask(params);
+  // CapSolver's standalone Turnstile schema has action/cdata, but no
+  // chlPageData. Its Cloudflare Challenge API is a different, proxied task.
+  // Let a compatible provider receive the complete Challenge parameters.
+  if (capsolverTaskError(task)) throw new Error(capsolverTaskError(task));
   // minScore belongs to the shared fallback input. CapSolver's current v3
   // schema has no such parameter; requesting a score does not guarantee one.
   delete task.minScore;
+  // Shared fallback inputs that CapSolver's current schemas do not define.
+  delete task.case;
+  delete task.userAgent;
   const { taskId, solution } = useCloudBroker
     ? await solveWithCloudBroker(task)
     : await (async () => {
@@ -242,6 +271,8 @@ export async function solveCaptchaWithProviders(providers, params) {
   if (paramError) throw new Error(paramError);
   const eligibleProviders = providers.filter(provider => captchaProviderSupportsType(provider.id, params.type));
   if (!eligibleProviders.length) throw new Error(`No enabled provider supports ${params.type}. Ask the user to complete it manually.`);
+  const dispatchError = captchaAutomaticDispatchError(eligibleProviders, params);
+  if (dispatchError) throw new Error(dispatchError);
   const task = params.type === 'hcaptcha' ? null : buildTask(params);
   const failures = [];
   for (const provider of eligibleProviders) {
@@ -261,7 +292,9 @@ export async function solveCaptchaWithProviders(providers, params) {
       }
       return { ...result, provider: provider.id };
     } catch (error) {
-      failures.push(`${provider.id}: ${error.message}`);
+      // Some providers echo inputs in errors. Never return a saved account key.
+      const message = String(error.message);
+      failures.push(`${provider.id}: ${provider.apiKey ? message.split(provider.apiKey).join('[redacted]') : message}`);
     }
   }
   throw new Error(failures.join(' | '));
@@ -285,7 +318,7 @@ export async function detectCaptcha(tabId, constraints = {}) {
     }),
     frameTreePromise,
   ]);
-  const navigationFrames = frameTreeAttempt.status === 'fulfilled'
+  const navigationFrames = frameTreeAttempt.status === 'fulfilled' && Array.isArray(frameTreeAttempt.value)
     ? frameTreeAttempt.value
     : [];
   if (scriptAttempt.status === 'rejected') {
@@ -321,8 +354,14 @@ export async function detectCaptcha(tabId, constraints = {}) {
     }
   }
   const visibleCandidates = applyCaptchaFrameVisibility(candidates, frameContexts, navigationFrames);
+  const root = frameContexts.find(frame => frame.frameId === 0);
   return {
     ...selectCaptchaCandidate(visibleCandidates, constraints),
+    rootDocument: root && Number.isFinite(root.documentTimeOrigin) && root.documentTimeOrigin > 0
+      ? { url: root.frameUrl, timeOrigin: root.documentTimeOrigin } : null,
+    inspectionComplete: frameTreeAttempt.status === 'fulfilled' && !!root
+      && navigationFrames.some(frame => frame.frameId === 0)
+      && navigationFrames.every(frame => frameContexts.some(context => context.frameId === frame.frameId)),
     diagnostics: buildCaptchaDiagnostics({
       candidates: visibleCandidates,
       frameContexts,
@@ -348,6 +387,7 @@ export async function injectToken(tabId, {
   fieldName,
   alsoSet,
   token,
+  respKey,
   callbackHint,
   target = null,
 }) {
@@ -364,6 +404,7 @@ export async function injectToken(tabId, {
     fieldName,
     alsoSet,
     token,
+    respKey,
     callbackHint,
     target: target || {},
   };

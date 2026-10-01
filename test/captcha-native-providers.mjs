@@ -46,6 +46,43 @@ for (const browser of ['chrome','firefox']) {
   for (const [provider,method,parameters,expected] of fixtures) test(`${browser}: native ${provider}/${method} matches its wire contract`,()=>{
     assert.deepEqual(native.buildNativeCaptchaTask({provider,method,parameters}).task,expected);
   });
+  test(`${browser}: observed AWS WAF challenge yields fallback tasks only for cookie-returning providers`, async () => {
+    const runtime = await import(`../src/${browser}/src/agent/captcha-frame-runtime.js`);
+    const saved = { window: globalThis.window, document: globalThis.document, location: globalThis.location };
+    const challengeScript = 'https://abc.edge.token.awswaf.com/abc/def/challenge.js';
+    globalThis.window = { gokuProps: { key: 'AQIDAHjc', iv: 'CgAH', context: 'ctx' } };
+    globalThis.document = {
+      scripts: [{ src: challengeScript }, { src: 'https://evil.test/awswaf.com/challenge.js' }],
+      querySelector: selector => selector.includes('amzn-captcha') ? {} : null,
+    };
+    globalThis.location = { href: 'https://site.test/join' };
+    let observed;
+    try { observed = runtime.observeAwsWafChallengeInPage(); }
+    finally { Object.assign(globalThis, saved); }
+    assert.deepEqual(observed, { pageUrl: 'https://site.test/join', websiteKey: 'AQIDAHjc', iv: 'CgAH', context: 'ctx',
+      challengeScript, captchaScript: null, jsapiScript: null, widgetPresent: true,
+      active: false, apiKey: null, existingToken: null, problemUrl: null, inspectionComplete: false,
+      rootDocument: { url: 'https://site.test/join', timeOrigin: performance.timeOrigin } });
+
+    const providers = ['capsolver', '2captcha', 'capmonster', 'solvecaptcha', 'anti-captcha', 'nopecha'].map(id => ({ id, apiKey: `key-${id}` }));
+    const described = native.describeAwsWafObservation(providers, observed);
+    // 2Captcha and SolveCaptcha return a voucher, not an applicable cookie.
+    assert.deepEqual(described.providerTasks.map(task => task.provider), ['capsolver', 'capmonster', 'anti-captcha']);
+    assert.deepEqual(described.application.cookiePathByProvider, { capsolver: 'cookie', capmonster: 'cookies.aws-waf-token', 'anti-captcha': 'token' });
+    const prepared = native.prepareNativeCaptchaTasks(providers, described.providerTasks);
+    assert.equal(prepared.length, 3);
+    assert.equal(prepared.find(entry => entry.provider.id === 'capmonster').task.cookieSolution, true);
+    for (const [provider, path, solution] of [['capsolver', 'cookie', { cookie: 'tok' }],
+      ['capmonster', 'cookies.aws-waf-token', { cookies: { 'aws-waf-token': 'tok' } }], ['anti-captcha', 'token', { token: 'tok' }]]) {
+      const application = apply.prepareCaptchaApplication(solution, { frameId: 0, frameUrl: observed.pageUrl, cookies: [{ name: 'aws-waf-token', path }] });
+      assert.deepEqual(application.cookies, [{ name: 'aws-waf-token', value: 'tok' }], provider);
+    }
+
+    assert.deepEqual(native.describeAwsWafObservation(providers, { ...observed, iv: null }).missing, ['iv']);
+    assert.equal(native.describeAwsWafObservation(providers.filter(p => ['2captcha', 'solvecaptcha'].includes(p.id)), observed).providerTasks, undefined);
+    assert.equal(native.describeAwsWafObservation(providers, { pageUrl: observed.pageUrl }), null);
+  });
+
   test(`${browser}: every CapMonster recognition model uses the documented wire discriminator`,()=>{
     const names={bills_audio:'bills_audio',shein:'shein',bls:'bls_3x3',baidu:'baidu',betpunch_3x3_rotate:'betpunch_3x3_rotate',oocl_rotate_double_new:'oocl_rotate_double_new',oocl_rotate_new:'oocl_rotate_new',dli_ensemble:'dli',mathsum:'MathSum',portugal_text_find_icon:'portugal_text_find_icon'};
     for(const [id,Task] of Object.entries(names)) {
@@ -56,7 +93,7 @@ for (const browser of ['chrome','firefox']) {
     }
   });
   test(`${browser}: catalogs cover seven vendors without resurrecting draft hCaptcha methods`,()=>{
-    assert.equal(catalog.length,197);
+    assert.equal(catalog.length,198);
     for(const provider of providers) assert.ok(catalog.some(c=>c.provider===provider.id));
     assert.deepEqual([...new Set(catalog.filter(c=>c.family==='hcaptcha').map(c=>c.provider))].sort(),['nonecap','nopecha']);
     const cm=new Set(catalog.filter(c=>c.provider==='capmonster').map(c=>c.family));
@@ -237,6 +274,27 @@ for (const browser of ['chrome','firefox']) {
     assert.deepEqual(calls.map(c=>c.url.hostname),['api.capsolver.com','api.2captcha.com']);
     assert.equal(calls[0].body.task.captchaId,'id');assert.equal(calls[1].body.task.initParameters.captcha_id,'id');
   });
+  for (const id of ['capsolver', '2captcha', 'capmonster', 'anti-captcha']) {
+    test(`${browser}: native ${id} waits for its pending job before considering fallback`, async t => {
+      const [, method, parameters] = fixtures.find(([provider]) => provider === id);
+      const calls = mockApi(t, (call, n) => n === 1 ? { errorId: 0, taskId: 'one-job' }
+        : n < 4 ? { errorId: 0, status: id === 'capsolver' && n === 2 ? 'idle' : 'processing' }
+        : { errorId: 0, status: 'ready', solution: { token: 'answer' } });
+      const result = await native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers,
+        [{ provider: id, method, parameters }]));
+      assert.equal(result.provider, id);
+      assert.equal(result.solution.token, 'answer');
+      assert.equal(calls.filter(c => c.url.pathname === '/createTask').length, 1);
+      assert.deepEqual(calls.slice(1).map(c => c.body.taskId), ['one-job', 'one-job', 'one-job']);
+    });
+  }
+  test(`${browser}: native JSON pending compatibility does not swallow terminal errors`, async t => {
+    const calls = mockApi(t, (call, n) => n === 1 ? { taskId: 'one-job' }
+      : { errorId: 1, errorCode: 'ERROR_ZERO_BALANCE', status: 'idle' });
+    await assert.rejects(native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers,
+      [{ provider: 'capsolver', method: 'GeeTestTaskProxyLess', parameters: { websiteURL: url, captchaId: 'id' } }])), /ERROR_ZERO_BALANCE/);
+    assert.equal(calls.length, 2);
+  });
   test(`${browser}: recognition keeps false selections and zero coordinates`,async t=>{
     const calls=mockApi(t,c=>c.options.method==='POST'?{data:'job'}:{data:[false,false,false]});
     const result=await native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers,[{provider:'nopecha',method:'recognition/recaptcha',parameters:{task:'cars',grid:'3x3',image_data:['base64']}}]));
@@ -248,6 +306,31 @@ for (const browser of ['chrome','firefox']) {
     const result=await native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers,[{provider:'solvecaptcha',method:'geetest_v4',parameters:{pageurl:url,captcha_id:'id'}}]));
     assert.equal(calls[0].body.method,'geetest_v4');assert.equal(calls[0].body.key,'secret-solvecaptcha');assert.equal(result.solution.lot_number,'lot');assert.equal(calls.length,2);
   });
+  test(`${browser}: unused callback placeholders preserve cookie, field and recognition bindings`, () => {
+    const solution = { cookie: 'clearance', token: 'answer', points: [1] };
+    const bindings = [
+      { cookies: [{ name: 'aws-waf-token', path: 'cookie' }] },
+      { fields: [{ selector: '#response', path: 'token' }] },
+      { clicks: [{ selector: '#grid', path: 'points', mode: 'grid', rows: 2, columns: 2 }] },
+    ];
+    for (const callback of [{ name: '', path: '' }, {}, { name: '  ', path: '\t' }, { name: null, path: null }, null]) {
+      for (const binding of bindings) assert.deepEqual(
+        apply.prepareCaptchaApplication(solution, { ...binding, callback }),
+        apply.prepareCaptchaApplication(solution, binding),
+      );
+      assert.throws(() => apply.prepareCaptchaApplication(solution, { callback }), /Specify response fields, cookies/);
+    }
+  });
+  test(`${browser}: nonempty or malformed callback bindings still reject before cookie application`, () => {
+    for (const callback of [
+      { name: '', path: 'cookie' }, { name: ' ', path: 'cookie' },
+      { name: 'eval', path: 'cookie' }, { name: 'captcha.constructor', path: 'cookie' },
+      { name: 'captcha.done()', path: 'cookie' }, { name: 42, path: '' },
+      { name: '', path: '', extra: 'unexpected' }, [], 'not-an-object',
+    ]) assert.throws(() => apply.prepareCaptchaApplication({ cookie: 'clearance' }, {
+      cookies: [{ name: 'aws-waf-token', path: 'cookie' }], callback,
+    }), /Omit callback.*reuse the stored answer/);
+  });
   test(`${browser}: solution binding preserves structured callback values and blocks arbitrary scripts/prototype paths`,()=>{
     const solution={token:'answer',cookie:'clearance',structured:{lot:'x'},coordinates:[{x:0,y:0}]};
     assert.deepEqual(apply.prepareCaptchaApplication(solution,{fields:[{selector:'#response',path:'token'}],cookies:[{name:'cf_clearance',path:'cookie'}],callback:{name:'captcha.done',path:'structured'}}),{fields:[{selector:'#response',value:'answer'}],cookies:[{name:'cf_clearance',value:'clearance'}],callback:{name:'captcha.done',value:{lot:'x'}}});
@@ -258,7 +341,7 @@ for (const browser of ['chrome','firefox']) {
   });
 }
 test('native CAPTCHA modules stay mirrored',async()=>{
-  for(const name of ['captcha-catalog.js','captcha-native-providers.js','captcha-solution-application.js','captcha-hcaptcha-providers.js','captcha-json-api.js']) assert.equal(await readFile(`src/chrome/src/agent/${name}`,'utf8'),await readFile(`src/firefox/src/agent/${name}`,'utf8'),name);
+  for(const name of ['captcha-catalog.js','captcha-native-providers.js','captcha-solution-application.js','captcha-callback-binding.js','captcha-hcaptcha-providers.js','captcha-json-api.js']) assert.equal(await readFile(`src/chrome/src/agent/${name}`,'utf8'),await readFile(`src/firefox/src/agent/${name}`,'utf8'),name);
 });
 
 for (const browser of ['chrome', 'firefox']) {
@@ -285,12 +368,12 @@ for (const browser of ['chrome', 'firefox']) {
             return { url };
           },
           executeScript: async (_tabId, options) => {
-            if (/false\]\)$/.test(options.code)) pageMutations++;
+            if (/false,null\]\)$/.test(options.code)) pageMutations++;
             return [{ success: true }];
           },
         },
         scripting: browser === 'chrome' ? { executeScript: async options => {
-          if (options.args.at(-1) === false) pageMutations++;
+          if (options.args[5] === false) pageMutations++;
           return [{ frameId: 0, result: { success: true } }];
         } } : undefined,
         webNavigation: { getAllFrames: async () => [{ frameId: 0, url }] },
@@ -480,11 +563,11 @@ for (const browser of ['chrome', 'firefox']) {
       websiteURL: url, captchaId: 'captcha', riskType: 'slide',
     } };
     const twoCaptcha = { provider: '2captcha', method: 'GeeTestTaskProxyless', parameters: {
-      websiteURL: url, version: 4, initParameters: { captcha_id: 'captcha' }, risk_type: 'slide',
+      websiteURL: url, version: 4, initParameters: { captcha_id: 'captcha' }, riskType: 'slide',
     } };
     assert.equal(native.prepareNativeCaptchaTasks(enabled, [capsolver, twoCaptcha]).length, 2);
     assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [capsolver, {
-      ...twoCaptcha, parameters: { ...twoCaptcha.parameters, risk_type: 'match' },
+      ...twoCaptcha, parameters: { ...twoCaptcha.parameters, riskType: 'match' },
     }]), /same observed challenge/);
     assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [capsolver, {
       ...twoCaptcha, parameters: { websiteURL: url, version: 4, initParameters: { captcha_id: 'captcha' } },

@@ -1036,6 +1036,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Dimensi gambar maksimum",
   "st.imageBudget.maxDimension.desc": "Sisi terpanjang (lebar atau tinggi) dalam piksel untuk setiap tangkapan yang dikirim ke visi. Batas lebih kecil mengecilkan gambar sebelum dikirim, mengurangi token dan biaya. Batas lebih besar menjaga fidelitas.",
   "st.imageBudget.warning": "⚠️ Pengaturan ini berlaku untuk tangkapan untuk visi (tangkapan otomatis, /screenshot, halaman penuh, verify_form). Gambar resolusi penuh yang disimpan manual tidak terpengaruh. «Image detail» dihormati endpoint bergaya OpenAI; penyedia lain mungkin mengabaikannya.",
+  "sp.slash.export_traces_full": "Ekspor seluruh sesi jejak tersimpan sebagai JSON, termasuk tangkapan layar",
+  "sp.export_traces.recording_truncated": "Semua catatan tersimpan telah diekspor sebagai JSON. Konten yang dihilangkan saat perekaman tidak dapat dipulihkan melalui ekspor.",
   "sp.slash.export_traces": "Ekspor rantai alat (jejak)",
   "sp.export_traces.none": "Tidak ada jejak untuk percakapan ini. Aktifkan Rekam jejak di Pengaturan, lalu jalankan lagi.",
   "sp.export_traces.error": "Tidak dapat mengekspor jejak.",

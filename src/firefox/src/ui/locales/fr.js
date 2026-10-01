@@ -1017,6 +1017,8 @@ export default {
   "sp.upload_picker.cancelled": "Téléversement annulé",
   "sp.upload_picker.too_large": "Le fichier sélectionné dépasse la limite de 25 Mo (max 25 Mo)",
   "sp.upload_picker.read_failed": "Échec de la lecture du fichier sélectionné",
+  "sp.slash.export_traces_full": "Exporter toute la session de traces enregistrée en JSON, captures comprises",
+  "sp.export_traces.recording_truncated": "Tous les enregistrements sauvegardés ont été exportés en JSON. Le contenu omis lors de l’enregistrement ne peut pas être récupéré par l’export.",
   "sp.slash.export_traces": "Exporter la chaîne d'outils (traces)",
   "sp.export_traces.none": "Aucune trace pour cette conversation. Activez « Enregistrer les traces » dans les paramètres, puis relancez.",
   "sp.export_traces.error": "Impossible d'exporter les traces.",

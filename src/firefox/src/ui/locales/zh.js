@@ -1017,6 +1017,8 @@ export default {
   "sp.upload_picker.cancelled": "上传已取消",
   "sp.upload_picker.too_large": "所选文件超过 25MB 限制（最大 25MB）",
   "sp.upload_picker.read_failed": "读取所选文件失败",
+  "sp.slash.export_traces_full": "将完整的已保存跟踪会话导出为 JSON，包括截图",
+  "sp.export_traces.recording_truncated": "已将所有保存的记录导出为 JSON。录制时省略的内容无法通过导出恢复。",
   "sp.slash.export_traces": "导出工具链（跟踪）",
   "sp.export_traces.none": "此对话没有跟踪记录。请在设置中开启「记录跟踪」，然后重新运行。",
   "sp.export_traces.error": "无法导出跟踪。",

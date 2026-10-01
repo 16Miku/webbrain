@@ -1090,6 +1090,7 @@ export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = nul
     frameContext: {
       frameUrl,
       frameName,
+      documentTimeOrigin,
       childFrames,
     },
   };
@@ -1309,11 +1310,6 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     }
     return element;
   };
-  for (const field of injectableFields) {
-    setOn(field.name, field.element);
-  }
-  const fieldsTouched = injectableFields.length;
-
   const pageWindow = frameWindow.wrappedJSObject || frameWindow;
   const callbacks = [];
   const addCallback = (fn, source) => {
@@ -1329,8 +1325,20 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
       return null;
     }
   };
+  // The bridge remembers closure callbacks supplied to render(), including
+  // widget-bound execute({async:true}) continuations. Query before dispatching
+  // field events, which may remove or replace the selected widget.
+  let callbackBridgeAvailable = false;
+  try {
+    const bridge = pageWindow.__webbrainCaptchaCallbacks;
+    callbackBridgeAvailable = typeof bridge?.callbacks === 'function';
+    const registered = bridge?.callbacks(
+      target.type, target.websiteKey, fieldName, target.responseFieldId, target.responseFieldIndex,
+    );
+    for (const entry of registered || []) addCallback(entry.fn, entry.source);
+  } catch (_) { /* Older tabs still use observed names and vendor discovery. */ }
   const callbackHint = payload?.callbackHint || null;
-  if (callbackHint) {
+  if (!callbacks.length && callbackHint) {
     addCallback(resolveNamedCallback(callbackHint), `data-callback:${callbackHint}`);
   }
   if (!callbacks.length) {
@@ -1381,12 +1389,17 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
   };
   if (!callbacks.length) collectGoogleCallbacks();
 
+  for (const field of injectableFields) {
+    setOn(field.name, field.element);
+  }
+  const fieldsTouched = injectableFields.length;
+
   let calledCallback = false;
   let callbackSource = null;
   let callbackError = null;
   if (callbacks.length === 1) {
     try {
-      callbacks[0].fn.call(pageWindow, token);
+      callbacks[0].fn.call(pageWindow, token, payload?.respKey);
       calledCallback = true;
       callbackSource = callbacks[0].source;
     } catch (error) {
@@ -1413,9 +1426,91 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
     callbackSource,
     callbackAmbiguous: callbacks.length > 1,
     callbackCandidates: callbacks.length,
+    callbackBridgeAvailable,
     callbackError,
     siteKeyMatched,
     challengeMarkerMatched,
     frameUrl,
+  };
+}
+
+// AWS WAF challenge pages publish their integration inputs as a page global
+// (gokuProps: key, iv, context) and awswaf.com script URLs. Nothing reads
+// these from the accessibility tree, so native solves had no observable
+// inputs. Self-contained: Firefox serializes it into a code string.
+export function observeAwsWafChallengeInPage() {
+  const pageWindow = window.wrappedJSObject || window;
+  const text = value => typeof value === 'string' && value.length > 0 && value.length <= 16_384 ? value : null;
+  let goku = null;
+  try { goku = pageWindow.gokuProps; } catch (_) { goku = null; }
+  const scripts = Array.from(document.scripts || []).map(script => String(script.src || '')).filter(Boolean);
+  let resources = [];
+  try { resources = performance.getEntriesByType('resource').map(entry => entry.name); } catch (_) {}
+  const awsUrl = value => {
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' && /(^|\.)awswaf\.com$/i.test(url.hostname) ? url : null;
+    } catch (_) { return null; }
+  };
+  const awsScript = name => [...scripts, ...resources].reverse().find(src => {
+    try {
+      const url = new URL(src);
+      return url.protocol === 'https:' && /(^|\.)awswaf\.com$/i.test(url.hostname)
+        && url.pathname.endsWith(`/${name}.js`);
+    } catch (_) { return false; }
+  }) || null;
+  let widgetPresent = false;
+  let widgetVisible = false;
+  let inspectionComplete = true;
+  try {
+    const selector = '[id^="amzn-captcha"], [id^="amzn-btn-verify"], awswaf-captcha, iframe[src*="awswaf.com"]';
+    // Avoid walking every shadow host on ordinary pages without AWS evidence.
+    const roots = goku || [...scripts, ...resources].some(awsUrl) || document.querySelector(selector) ? [document] : [];
+    const widgets = [];
+    for (let index = 0; index < roots.length; index++) {
+      if (index >= 200) { inspectionComplete = false; break; }
+      const root = roots[index];
+      widgets.push(...(root.querySelectorAll ? root.querySelectorAll(selector) : [root.querySelector(selector)].filter(Boolean)));
+      for (const element of root.querySelectorAll?.('*') || []) if (element.shadowRoot) roots.push(element.shadowRoot);
+    }
+    widgetPresent = widgets.length > 0;
+    for (const widget of widgets) {
+      if (widget.tagName === 'IFRAME' && !awsUrl(widget.src)) continue;
+      const style = getComputedStyle(widget);
+      const rect = widget.getBoundingClientRect();
+      let visible = rect.width > 0 && rect.height > 0 && style.display !== 'none'
+        && style.visibility !== 'hidden' && style.opacity !== '0';
+      const parentOf = element => element.parentElement || element.getRootNode?.()?.host;
+      for (let parent = parentOf(widget); visible && parent; parent = parentOf(parent)) {
+        const parentStyle = getComputedStyle(parent);
+        if (parentStyle.display === 'none' || parentStyle.visibility === 'hidden' || parentStyle.opacity === '0') visible = false;
+      }
+      widgetVisible ||= visible;
+    }
+  } catch (_) { inspectionComplete = false; }
+  const problem = resources.slice().reverse().map(awsUrl).find(url => url && /\/problem(?:\/|$)/.test(url.pathname));
+  let existingToken = null;
+  try { existingToken = text(document.cookie.split(';').map(part => part.trim()).find(part => part.startsWith('aws-waf-token='))?.slice(14)); } catch (_) {}
+  const apiKey = text(problem?.searchParams.get('api_key'));
+  const jsapiScript = awsScript('jsapi');
+  const challengeScript = awsScript('challenge');
+  const captchaScript = awsScript('captcha');
+  const fullPage = !!(goku?.key && (challengeScript || captchaScript)
+    && /let['’]s confirm you are human/i.test(document.body?.innerText || ''));
+  return {
+    pageUrl: String(location.href),
+    websiteKey: text(goku?.key),
+    iv: text(goku?.iv),
+    context: text(goku?.context),
+    challengeScript,
+    captchaScript,
+    jsapiScript,
+    problemUrl: problem?.href || null,
+    apiKey,
+    existingToken,
+    widgetPresent,
+    active: widgetVisible || fullPage,
+    inspectionComplete,
+    rootDocument: { url: String(location.href), timeOrigin: performance.timeOrigin },
   };
 }

@@ -1080,6 +1080,8 @@ export default {
   'tr.event.args': "तर्क",
   'tr.event.result': "परिणाम",
   'tr.event.step': "चरण {step}",
+  "sp.slash.export_traces_full": "स्क्रीनशॉट सहित पूरा सहेजा गया ट्रेस सत्र JSON के रूप में निर्यात करें",
+  "sp.export_traces.recording_truncated": "सभी सहेजे गए रिकॉर्ड JSON में निर्यात हो गए। रिकॉर्डिंग के दौरान छोड़ी गई सामग्री निर्यात से वापस नहीं मिल सकती।",
   "sp.slash.export_traces": "उपकरण श्रृंखला (निशान) निर्यात करें",
   "sp.export_traces.none": "इस बातचीत का कोई निशान नहीं. सेटिंग्स में रिकॉर्ड ट्रेस सक्षम करें, फिर से चलाएँ।",
   "sp.export_traces.error": "निशान निर्यात नहीं किए जा सके.",

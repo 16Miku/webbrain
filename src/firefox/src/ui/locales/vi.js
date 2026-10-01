@@ -1080,6 +1080,8 @@ export default {
   'tr.event.args': "lập luận",
   'tr.event.result': "kết quả",
   'tr.event.step': "bước {step}",
+  "sp.slash.export_traces_full": "Xuất toàn bộ phiên theo dõi đã lưu dưới dạng JSON, gồm cả ảnh chụp màn hình",
+  "sp.export_traces.recording_truncated": "Đã xuất mọi bản ghi đã lưu dưới dạng JSON. Nội dung bị bỏ qua trong lúc ghi không thể khôi phục bằng cách xuất.",
   "sp.slash.export_traces": "Xuất chuỗi công cụ (dấu vết)",
   "sp.export_traces.none": "Không có dấu vết cho cuộc trò chuyện này. Bật Ghi dấu vết trong Cài đặt rồi chạy lại.",
   "sp.export_traces.error": "Không thể xuất dấu vết.",

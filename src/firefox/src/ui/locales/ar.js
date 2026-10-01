@@ -1017,6 +1017,8 @@ export default {
   "sp.upload_picker.cancelled": "تم إلغاء الرفع",
   "sp.upload_picker.too_large": "الملف المحدد يتجاوز حد 25 ميجابايت (الحد الأقصى 25 ميجابايت)",
   "sp.upload_picker.read_failed": "فشل قراءة الملف المحدد",
+  "sp.slash.export_traces_full": "تصدير جلسة التتبع المحفوظة كاملة بصيغة JSON، بما فيها لقطات الشاشة",
+  "sp.export_traces.recording_truncated": "تم تصدير جميع السجلات المحفوظة بصيغة JSON. حُذف بعض المحتوى أثناء التسجيل ولا يمكن استعادته بالتصدير.",
   "sp.slash.export_traces": "تصدير سلسلة الأدوات (التتبعات)",
   "sp.export_traces.none": "لا توجد تتبعات لهذه المحادثة. فعّل «تسجيل التتبعات» في الإعدادات ثم أعد التشغيل.",
   "sp.export_traces.error": "تعذّر تصدير التتبعات.",

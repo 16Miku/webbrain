@@ -1017,6 +1017,8 @@ export default {
   "sp.upload_picker.cancelled": "アップロードをキャンセルしました",
   "sp.upload_picker.too_large": "選択したファイルが 25MB の上限を超えています（最大 25MB）",
   "sp.upload_picker.read_failed": "選択したファイルの読み取りに失敗しました",
+  "sp.slash.export_traces_full": "スクリーンショットを含む保存済みトレースセッション全体をJSONでエクスポート",
+  "sp.export_traces.recording_truncated": "保存済みの全記録をJSONでエクスポートしました。記録時に省略された内容はエクスポートでは復元できません。",
   "sp.slash.export_traces": "ツールチェーンをエクスポート（トレース）",
   "sp.export_traces.none": "この会話のトレースがありません。設定で「トレースを記録」をオンにして、もう一度実行してください。",
   "sp.export_traces.error": "トレースをエクスポートできませんでした。",

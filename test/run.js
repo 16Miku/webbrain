@@ -14990,7 +14990,7 @@ test('/export --traces is wired in both side panels and backgrounds', () => {
     const bg = fs.readFileSync(path.join(ROOT, bgRel), 'utf8');
     assert.match(
       panel,
-      /usage: '\/export \[--traces \| --config\]'[\s\S]*?value: '--traces'[\s\S]*?action: 'traces'[\s\S]*?outOfBand: true/,
+      /usage: '\/export \[--traces \[--full\] \| --config\]'[\s\S]*?value: '--traces'[\s\S]*?action: 'traces'[\s\S]*?outOfBand: true/,
       `${label}: slash metadata should advertise /export --traces`,
     );
     assert.match(
@@ -15000,7 +15000,7 @@ test('/export --traces is wired in both side panels and backgrounds', () => {
     );
     assert.match(
       panel,
-      /if \(command\.value === '\/export' && action === 'traces'\) \{[\s\S]*?sendToBackground\('export_traces', \{ tabId \}\)/,
+      /if \(command\.value === '\/export' && action === 'traces'\) \{[\s\S]*?sendToBackground\('export_traces', \{ tabId, full: optionValues\.has\('--full'\) \}\)/,
       `${label}: /export --traces should call export_traces on the background`,
     );
     assert.match(
@@ -15016,7 +15016,7 @@ test('/export --traces is wired in both side panels and backgrounds', () => {
     assert.match(bg, /case 'export_traces':/, `${label}: background should handle export_traces`);
     assert.match(
       bg,
-      /case 'export_traces': \{[\s\S]*?agent\.exportTraces\(tabId\)/,
+      /case 'export_traces': \{[\s\S]*?agent\.exportTraces\(tabId, \{ full: msg\.full === true \}\)/,
       `${label}: export_traces should call agent.exportTraces`,
     );
     assert.match(panel, /_Exported with WebBrain v\$\{webbrainVersion\}_/, `${label}: /export should include the current manifest version`);
@@ -122453,6 +122453,7 @@ async function withCaptchaFakePage(build, nodes, callback) {
         URL,
         URLSearchParams,
         navigator: globalThis.navigator,
+        performance: globalThis.performance,
         innerWidth: 1280,
         innerHeight: 720,
         getComputedStyle: globalThis.getComputedStyle,
@@ -122551,6 +122552,8 @@ test('CAPTCHA providers: real Turnstile detection reaches the 2Captcha request w
       };
       try {
         const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        api.storage.session = { set: async () => {} };
         const result = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, metadata: { chlPageData: 'observed-page-data' } });
         assert.equal(result.success, true, `${build}: ${result.error}`);
         assert.equal(result.provider, '2captcha', build);
@@ -122593,6 +122596,8 @@ test('CAPTCHA providers: observed hCaptcha rqdata reaches fallback and returns t
       };
       try {
         const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        api.storage.session = { set: async () => {} };
         const flagConflict = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, isEnterprise: false });
         assert.equal(flagConflict.dispatched, false, build);
         assert.match(flagConflict.error, /isEnterprise=.*conflicts/, build);
@@ -122637,12 +122642,16 @@ test('NoneCap hCaptcha token is not injected when its User-Agent differs from th
         token: 'paid-token', user_agent: `${globalThis.navigator?.userAgent || ''}-mismatch` });
       try {
         const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        api.storage.session = { set: async () => {} };
         const result = await agent._executeToolImpl(1, 'solve_captcha', {});
         assert.equal(result.success, false, build);
         assert.equal(result.dispatched, true, build);
         assert.equal(result.manualCompletionRequired, true, build);
         assert.equal(result.injected, false, build);
-        assert.equal(result.token, undefined, build);
+        assert.equal(result.token, 'paid-token', build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).solution.token, 'paid-token', build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).applied, false, build);
         assert.match(result.error, /different User-Agent/, build);
         assert.equal(injections, 0, build);
       } finally { globalThis.fetch = originalFetch; }
@@ -122686,6 +122695,8 @@ test('hCaptcha dispatch and NoneCap validation use the selected frame User-Agent
       };
       try {
         const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        api.storage.session = { set: async () => {} };
         const result = await agent._executeToolImpl(1, 'solve_captcha', {});
         assert.equal(result.dispatched, true, build);
         assert.equal(result.injected, false, build);
@@ -122705,9 +122716,16 @@ test('CAPTCHA providers: explicit rqdata selects NoneCap Enterprise when frame d
       api.storage = { local: { get: async () => ({
         nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32),
       }) } };
-      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }),
-        ...(build === 'firefox' ? { executeScript: async () => { throw new Error('frame detection unavailable'); } } : {}) };
-      if (build === 'chrome') api.scripting.executeScript = async () => { throw new Error('frame detection unavailable'); };
+      const rootDocument = { url: 'https://example.test/form', timeOrigin: 1000 };
+      api.tabs = { ...api.tabs, get: async () => ({ url: rootDocument.url }),
+        ...(build === 'firefox' ? { executeScript: async (_id, { code }) => {
+          if (code.startsWith('(() => ({ url: location.href')) return [rootDocument];
+          throw new Error('frame detection unavailable');
+        } } : {}) };
+      if (build === 'chrome') api.scripting.executeScript = async ({ func }) => {
+        if (func.name === 'read') return [{ frameId: 0, result: rootDocument }];
+        throw new Error('frame detection unavailable');
+      };
       const originalFetch = globalThis.fetch;
       const calls = [];
       globalThis.fetch = async (_url, options) => {
@@ -122716,6 +122734,8 @@ test('CAPTCHA providers: explicit rqdata selects NoneCap Enterprise when frame d
       };
       try {
         const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        api.storage.session = { set: async () => {} };
         const args = { type: 'hcaptcha', websiteKey: 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8', rqdata: 'observed-rqdata', inject: false };
         const conflict = await agent._executeToolImpl(1, 'solve_captcha', { ...args, isEnterprise: false });
         assert.equal(conflict.dispatched, false, build);

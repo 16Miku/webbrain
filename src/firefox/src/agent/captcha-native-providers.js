@@ -2,6 +2,7 @@ import { CAPTCHA_CATALOG } from './captcha-catalog.js';
 import { solveJsonCaptcha } from './captcha-json-api.js';
 import { solveNopechaTask, solveNonecapTask } from './captcha-hcaptcha-providers.js';
 import { solveCaptchaRequest } from './captcha-additional-providers.js';
+import { prepareCaptchaApplication } from './captcha-solution-application.js';
 
 const JSON_BASES = {
   capsolver: 'https://api.capsolver.com',
@@ -142,7 +143,7 @@ export function buildNativeCaptchaTask(entry) {
     const value = at(task, path);
     if (value === undefined) { if (field.required) throw new Error(`${entry.method}: ${path} is required.`); continue; }
     if (!matches(value, field.type)) throw new Error(`${entry.method}: ${path} must be ${field.type}.`);
-    if (field.required && value !== null && !usable(value)) throw new Error(`${entry.method}: ${path} cannot be empty.`);
+    if (field.required && value !== null && !usable(value) && !field.allowEmpty) throw new Error(`${entry.method}: ${path} cannot be empty.`);
   }
   for (const alternatives of contract.requireOneOf || []) {
     if (!alternatives.some(path => usable(at(task, path)))) throw new Error(`${entry.method}: provide ${alternatives.join(' or ')}.`);
@@ -175,7 +176,7 @@ const FAMILY_IDENTIFIERS = {
   vk: [['redirectUri', 'redirect_uri']],
   aws_waf: [['websiteKey', 'sitekey', 'awsKey'], ['iv', 'awsIv'], ['context', 'awsContext'],
     ['challengeScript', 'challenge_script', 'awsChallengeJS'], ['captchaScript', 'captcha_script'],
-    ['jsapiScript', 'awsApiJs']],
+    ['jsapiScript', 'awsApiJs'], ['awsProblemUrl'], ['awsApiKey'], ['awsExistingToken']],
   alibaba: [['sceneId', 'metadata.sceneId'], ['prefix', 'metadata.prefix'],
     ['userId', 'metadata.userId'], ['userUserId', 'metadata.userUserId'],
     ['userCertifyId', 'metadata.UserCertifyId'], ['verifyType', 'metadata.verifyType'],
@@ -420,11 +421,26 @@ function validateFallbackIdentifiers(built) {
       }
     }
   }
+  const awsWidget = family === 'aws_waf' && built.some(({ contract, task }) =>
+    contract.method === 'AmazonTask:1' || task.wafType === 'widget' || task.awsApiKey);
+  if (awsWidget && built.some(({ contract, task }) => !(contract.method === 'AmazonTask:1'
+      || task.wafType === 'widget' || (contract.provider === 'capsolver' && task.awsApiJs
+        && !['awsKey', 'awsIv', 'awsContext', 'awsChallengeJS', 'awsProblemUrl'].some(key => usable(task[key])))))) {
+    throw new Error('Fallback AWS tasks must reference the same observed challenge mode (widget or interstitial).');
+  }
   const groups = [
     { aliases: ['websiteURL', 'pageurl', 'url'], requireAll: false },
     { aliases: ['websiteKey', 'sitekey', 'googlekey', 'websitePublicKey', 'publickey'], requireAll: false },
     { aliases: ['userAgent', 'useragent', 'user_agent'], requireAll: true },
-    ...(FAMILY_IDENTIFIERS[family] || []).map(aliases => ({ aliases, requireAll: true })),
+    ...(awsWidget ? [
+      // For SDK widgets websiteKey means renderCaptcha's apiKey, while the
+      // interstitial mode uses gokuProps.key. Never equate those two values.
+      // CapSolver also documents a script-only mode without an API key.
+      { aliases: ['websiteKey', 'awsApiKey'], requireAll: false },
+      { aliases: ['captchaScript', 'jsapiScript', 'awsApiJs'], requireAll: true },
+      // Only CapSolver accepts the existing token for secondary verification.
+      { aliases: ['awsExistingToken'], requireAll: false },
+    ] : (FAMILY_IDENTIFIERS[family] || []).map(aliases => ({ aliases, requireAll: true }))),
   ];
   if (family === 'geetest') {
     const versions = built.map(({contract, task}) => task.version === 4 || task.captchaId
@@ -512,16 +528,29 @@ async function solveForm(apiKey, contract, task) {
   throw new Error('SolveCaptcha: timed out waiting for solution.');
 }
 
-export async function solveNativeCaptchaTasks(prepared) {
+export async function solveNativeCaptchaTasks(prepared, { onAttempt } = {}) {
   const failures = [];
   for (const { provider, contract, task, family } of prepared) {
+    // Reserve each provider before contacting it, including after a restart.
+    // A persistence failure must stop the entire chain, not try another vendor.
+    if (onAttempt) await onAttempt(provider.id);
     try {
       const result = JSON_BASES[provider.id]
-        ? await solveJsonCaptcha(JSON_BASES[provider.id], provider.id, provider.apiKey, task)
+        ? await solveJsonCaptcha(JSON_BASES[provider.id], provider.id, provider.apiKey, task,
+          provider.id === 'capsolver' ? { pendingStatuses: ['idle', 'processing'] } : {})
         : provider.id === 'nopecha' ? await solveNopechaTask(provider.apiKey, contract.path, task)
         : provider.id === 'nonecap' ? await solveNonecapTask(provider.apiKey, task)
         : await solveForm(provider.apiKey, contract, task);
       if (!usable(result.solution)) throw new Error('No usable answer returned.');
+      // CapMonster defaults to a voucher pair. Only cookieSolution:true asks
+      // for cookies; a valid native voucher must not trigger another charge.
+      const cookiePath = family === 'aws_waf' && (provider.id !== 'capmonster' || task.cookieSolution === true)
+        && AWS_WAF_COOKIE_PATHS[provider.id];
+      if (cookiePath) {
+        if (typeof at(result.solution, cookiePath) !== 'string') throw new Error('Missing AWS cookie answer.');
+        const application = prepareCaptchaApplication(result.solution, { cookies: [{ name: 'aws-waf-token', path: cookiePath }] });
+        if (!application.cookies[0].value.trim()) throw new Error('Empty AWS cookie answer.');
+      }
       return { ...result, provider: provider.id, method: contract.method, family };
     } catch (error) {
       // Some providers echo inputs in errors. Never return a saved account key.
@@ -529,4 +558,78 @@ export async function solveNativeCaptchaTasks(prepared) {
     }
   }
   throw new Error(failures.join(' | '));
+}
+
+// Solution paths holding the aws-waf-token cookie value. 2Captcha and
+// SolveCaptcha return a captcha_voucher/existing_token pair instead, with no
+// documented exchange, so they are not offered for automatic AWS WAF tasks:
+// a winning voucher would be charged but could not be applied.
+// https://docs.capsolver.com/en/guide/captcha/awsWaf/
+// https://docs.capmonster.cloud/docs/captchas/amazon-task/ (cookieSolution)
+// https://anti-captcha.com/apidoc/task-types/AmazonTaskProxyless
+export const AWS_WAF_COOKIE_PATHS = { capsolver: 'cookie', capmonster: 'cookies.aws-waf-token', 'anti-captcha': 'token' };
+
+export function awsWafTaskRoute({ contract, task }) {
+  return contract.method === 'AmazonTask:1' || task.wafType === 'widget' || (task.awsApiJs && !task.awsKey) ? 'secondary' : 'initial';
+}
+
+// Build one proxyless AWS WAF task per enabled cookie-returning provider from
+// observed page values, so weighted fallback has an entry for each of them.
+// Only values read from the page are used; a provider whose required inputs
+// were not observed is omitted rather than guessed.
+export function buildAwsWafProviderTasks(providers, observed) {
+  // captchaScript is omitted: CapSolver has no such field, and fallback
+  // validation requires every task to carry the same challenge identifiers.
+  const { pageUrl: websiteURL, websiteKey, iv, context, challengeScript, jsapiScript, problemUrl, apiKey, existingToken } = observed || {};
+  if (!websiteURL) return [];
+  // Secondary verification uses the previous token and SDK inputs, not the
+  // first interstitial's (possibly still present) gokuProps.
+  const widget = apiKey && jsapiScript;
+  const secondary = widget && existingToken;
+  const initial = websiteKey && iv && context;
+  const capsolverParameters = secondary
+    ? { websiteURL, awsApiKey: apiKey, awsApiJs: jsapiScript, awsExistingToken: existingToken }
+    : widget ? { websiteURL, awsApiJs: jsapiScript } : initial ? { websiteURL, awsKey: websiteKey, awsIv: iv, awsContext: context,
+      ...(challengeScript ? { awsChallengeJS: challengeScript } : {}) }
+    : !websiteKey && !iv && !context ? (jsapiScript ? { websiteURL, awsApiJs: jsapiScript }
+      : challengeScript ? { websiteURL, awsChallengeJS: challengeScript }
+      : problemUrl ? { websiteURL, awsProblemUrl: problemUrl } : null) : null;
+  const builders = {
+    capsolver: () => capsolverParameters && ({ method: 'AntiAwsWafTaskProxyLess', parameters: capsolverParameters }),
+    capmonster: () => widget ? { method: 'AmazonTask:1', parameters: {
+      websiteURL, websiteKey: apiKey, captchaScript: jsapiScript, cookieSolution: true,
+    } } : challengeScript && (initial
+      ? { method: 'AmazonTask:2', parameters: { websiteURL, websiteKey, iv, context, challengeScript, cookieSolution: true } }
+      // Documented invisible challenge mode requires empty iv/context. Do
+      // not erase partial gokuProps or select it when a CAPTCHA SDK is present.
+      : !websiteKey && !iv && !context && !jsapiScript && !observed.captchaScript
+        ? { method: 'AmazonTask:3', parameters: { websiteURL, challengeScript, iv: '', context: '', cookieSolution: true } } : null),
+    'anti-captcha': () => widget ? { method: 'AmazonTaskProxyless:widget', parameters: {
+      websiteURL, websiteKey: apiKey, jsapiScript,
+    } } : initial && ({ method: 'AmazonTaskProxyless', parameters: { websiteURL, websiteKey, iv, context,
+      ...(challengeScript ? { challengeScript } : {}) } }),
+  };
+  return providers.filter(provider => !provider.useCloudBroker && builders[provider.id])
+    .map(provider => { const task = builders[provider.id](); return task && { provider: provider.id, ...task }; })
+    .filter(Boolean);
+}
+
+// Summarize an observed AWS WAF challenge for get_captcha_capabilities: the
+// observed inputs, ready fallback tasks, and how to apply the cookie answer.
+export function describeAwsWafObservation(providers, observed) {
+  if (!observed || !(observed.websiteKey || observed.challengeScript || observed.jsapiScript || observed.problemUrl || observed.widgetPresent)) return null;
+  const { pageUrl, websiteKey, iv, context, challengeScript } = observed;
+  const missing = ['websiteKey', 'iv', 'context'].filter(key => !observed[key]);
+  const providerTasks = buildAwsWafProviderTasks(providers, observed);
+  const base = { family: 'aws_waf', pageUrl, observed: { websiteKey, iv, context, challengeScript } };
+  if (missing.length && !providerTasks.length && !(observed.jsapiScript || observed.problemUrl)) {
+    return { ...base, missing, note: `AWS WAF inputs were not observed (${missing.join(', ')}). Do not guess them; ask for manual completion.` };
+  }
+  if (!providerTasks.length) {
+    return { ...base, note: 'No enabled provider returns an applicable aws-waf-token cookie. Enable CapSolver, CapMonster Cloud, or Anti-Captcha (2Captcha and SolveCaptcha return a voucher WebBrain cannot apply), or ask for manual completion.' };
+  }
+  const cookiePathByProvider = Object.fromEntries(providerTasks.map(task => [task.provider, AWS_WAF_COOKIE_PATHS[task.provider]]));
+  return { ...base, providerTasks, route: awsWafTaskRoute(buildNativeCaptchaTask(providerTasks[0])),
+    application: { frameId: 0, frameUrl: pageUrl, cookieName: 'aws-waf-token', cookiePathByProvider },
+    note: 'Call solve_captcha once with inject:false and these providerTasks unchanged; weighted fallback runs across them. Then call apply_captcha_solution with frameId 0, this frameUrl, and cookies:[{name:"aws-waf-token", path: cookiePathByProvider[result.provider]}]. Then navigate to pageUrl to reload and read the page. The token may be rejected if the site binds it to the solver IP; do not buy another solve for this challenge.' };
 }
