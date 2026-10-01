@@ -75,7 +75,7 @@ import {
 import { normalizePdfOcrResult, PDF_OCR_SYSTEM_PROMPT } from './pdf-ocr.js';
 import * as trace from '../trace/recorder.js';
 import { buildTerminalRuntimeEvent, enqueueCloudRuntimeEvent, flushCloudRuntimeOutbox } from '../trace/cloud-runtime-outbox.js';
-import { buildShareGenerationItem, enqueueShareGeneration, flushShareOutbox, purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
+import { buildShareGenerationItem, buildShareDiagnosticItem, enqueueShareGeneration, enqueueShareDiagnostic, flushShareOutbox, purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { tracesToMarkdown } from './trace-export.js';
 import { hcaptchaParamError } from './captcha-hcaptcha-providers.js';
@@ -17306,7 +17306,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // passes the origin ids so the trace can attribute the derived run.
         parentRunId: runOptions?.parentRunId || null,
         parentSessionId: runOptions?.parentSessionId || null,
-        force: runOptions?.cloudRun === true,
+        // Research consent also records a local run when Tracing is off. The
+        // share builder projects metadata before upload even if a separate
+        // local lossless-trace preference is enabled.
+        force: runOptions?.cloudRun === true || (provider?.config?.shareQueriesForResearch === true
+          && String(provider?.config?.providerName || '').toLowerCase() !== 'webbrain-cloud'),
       });
     } catch {
       this.pendingAdapterMatchTraces.delete(tabId);
@@ -17400,11 +17404,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       } catch {}
     }
-    // Retry delivery of previously queued voluntary shares on every run end,
-    // mirroring the Compass runtime outbox pattern. Revoked entries are
-    // purged first so opt-out is honored immediately before delivery.
-    try { await this._purgeRevokedShareGenerations(); } catch {}
-    void flushShareOutbox(shareTransport, (entry) => this._shareEntryConsented(entry));
     if (runId) {
       await this._flushAdapterMatchTraceRun(runId);
       try {
@@ -17413,9 +17412,35 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await this._persistNow(tabId);
         }
       } catch {}
+      if (shareTransport && provider?.config?.shareQueriesForResearch === true
+          && String(provider?.config?.providerName || '').toLowerCase() !== 'webbrain-cloud') {
+        try {
+          const sessionId = this._shareSessionId(this.conversationIds.get(tabId) || null);
+          if (sessionId) {
+            const item = buildShareDiagnosticItem({
+              runId,
+              events: await trace.getRunEvents(runId),
+              status,
+              model: provider?.model,
+              mode,
+              browserTarget: 'firefox',
+              extensionVersion: browser.runtime.getManifest().version || '',
+              provider: String(provider?.config?.providerName || '').toLowerCase(),
+              provider_name: String(provider?.config?.label || provider?.name || ''),
+              provider_id: String(provider?.config?._providerId || ''),
+              messages: Array.isArray(shareRequest) ? shareRequest : null,
+              finalContent,
+            });
+            if (item) await enqueueShareDiagnostic({ session_id: sessionId, ...item });
+          }
+        } catch {}
+      }
       this.currentRunId.delete(tabId);
       this.adapterMatchTraceKeys.delete(runId);
     }
+    // Both generation and diagnostic records use the same revocable outbox.
+    try { await this._purgeRevokedShareGenerations(); } catch {}
+    void flushShareOutbox(shareTransport, (entry) => this._shareEntryConsented(entry));
     // Stash before deleting so an app-owned trusted continuation (Continue
     // after max_steps) can reuse the same task's proofs. Independent tasks
     // mint fresh at the next _startTraceRun and discard the stash there, so

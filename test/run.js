@@ -13550,6 +13550,90 @@ test('Share-for-research caps count wrapper messages and serialized overhead', (
   assert.match(item.request.at(-1).content, /^cap249-/, 'tail lost to cap accounting');
 });
 
+test('research sharing includes a bounded content-free diagnostic timeline for failed model runs', () => {
+  for (const outbox of [SHARE_OUTBOX_CH, SHARE_OUTBOX_FX]) {
+    const events = [
+      { seq: 1, kind: 'llm_request', data: { step: 1, phase: 'main', messages: [{ role: 'user', content: 'private prompt' }] } },
+      { seq: 2, kind: 'tool', data: { step: 1, name: 'click', args: { password: 'secret' }, result: { success: false, error: 'private result', code: 'not_found' }, latencyMs: 12 } },
+      { seq: 3, kind: 'screenshot', data: { step: 1, imageData: 'data:image/png;base64,secret' } },
+    ];
+    const item = outbox.buildShareDiagnosticItem({
+      runId: 'run_123', events, status: 'failed', model: 'outside-model', mode: 'act',
+      browserTarget: 'chrome', provider: 'local-openai-proxy', provider_id: 'instance_1',
+    });
+    assert.equal(item.kind, 'diagnostic');
+    assert.equal(item.diagnostic.event.data.status, 'failed');
+    assert.equal(item.diagnostic.event.data.events[1].resultStatus, 'error');
+    assert.equal(item.diagnostic.event.data.events[1].resultErrorCode, 'not_found');
+    const projectedTool = outbox.buildShareDiagnosticItem({
+      runId: 'already-projected', status: 'failed', events: [events[0], {
+        seq: 2, kind: 'tool', data: { step: 1, name: 'click', resultStatus: 'error', resultErrorCode: 'timeout' },
+      }],
+    });
+    assert.equal(projectedTool.diagnostic.event.data.events[1].resultStatus, 'error');
+    assert.equal(projectedTool.diagnostic.event.data.events[1].resultErrorCode, 'timeout');
+    for (const secret of ['private prompt', 'password', 'private result', 'imageData', 'data:image']) {
+      assert.equal(JSON.stringify(item).includes(secret), false, `diagnostic leaked ${secret}`);
+    }
+    assert.equal(outbox.buildShareDiagnosticItem({ runId: 'local', events: [events[1]], status: 'done' }), null, 'local-only paths must not be uploaded');
+    const failedWithContext = outbox.buildShareDiagnosticItem({
+      runId: 'failed-context', events, status: 'failed',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Please finish this' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,secret' } }] }],
+      finalContent: 'The provider timed out.',
+    });
+    assert.equal(failedWithContext.diagnostic.event.data.request_messages[0].content.length, 1);
+    assert.equal(failedWithContext.diagnostic.event.data.final_content, 'The provider timed out.');
+    assert.equal(JSON.stringify(failedWithContext).includes('data:image'), false);
+    const largeFailure = outbox.buildShareDiagnosticItem({
+      runId: 'large-failed-context', events, status: 'failed',
+      messages: Array.from({ length: 140 }, (_, index) => ({ role: 'user', content: `Turn ${index}: ${'detail '.repeat(200)}` })),
+    });
+    assert.ok(JSON.stringify(largeFailure.diagnostic.event.data.request_messages).length <= 80_000,
+      'failed diagnostic requests must remain parseable under the Cloud intake limit');
+    assert.match(largeFailure.diagnostic.event.data.request_messages.at(-1).content, /^Turn 139:/,
+      'diagnostic request budget must preserve the most recent task context');
+    const many = Array.from({ length: 200 }, (_, index) => ({ seq: index + 1, kind: 'llm_request', data: { step: index + 1, phase: 'main' } }));
+    const capped = outbox.buildShareDiagnosticItem({ runId: 'long', events: many, status: 'done' });
+    assert.equal(capped.diagnostic.event.data.events.length, 80);
+    assert.equal(capped.diagnostic.event.data.dropped_events, 120);
+    assert.equal(capped.diagnostic.event.data.events[0].seq, 1);
+    assert.equal(capped.diagnostic.event.data.events.at(-1).seq, 200);
+  }
+});
+
+test('research diagnostic outbox retries and honors provider consent revocation', async () => {
+  const originalChrome = globalThis.chrome;
+  const storage = {};
+  globalThis.chrome = { storage: { local: {
+    async get(keys) { return { [keys[0]]: storage[keys[0]] }; },
+    async set(values) { Object.assign(storage, values); },
+  } } };
+  try {
+    const entry = SHARE_OUTBOX_CH.buildShareDiagnosticItem({
+      runId: 'outbox-run', events: [{ seq: 1, kind: 'llm_request', data: { step: 1 } }],
+      status: 'failed', provider_id: 'external-instance',
+    });
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareDiagnostic({ ...entry, session_id: 'share_test' }), true);
+    let sent = 0;
+    const transport = { sendShareGeneration: async () => { throw new Error('wrong endpoint'); }, async sendShareDiagnostic(sessionId, payload) {
+      sent++;
+      assert.equal(sessionId, 'share_test');
+      assert.equal(payload.event.kind, 'diagnostic_trace');
+      return sent === 1 ? { ok: false, retryable: true } : { ok: true };
+    } };
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(transport, () => true), 0);
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(transport, () => true), 1);
+    assert.equal(sent, 2);
+    await SHARE_OUTBOX_CH.enqueueShareDiagnostic({ ...entry, session_id: 'share_test' });
+    assert.equal(await SHARE_OUTBOX_CH.purgeShareGenerations(item => item.provider_id === 'external-instance'), 1);
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(transport, () => true), 0);
+    assert.equal(sent, 2);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('Share-for-research outbox persists retryable failures and removes acknowledged or rejected entries', async () => {
   const originalChrome = globalThis.chrome;
   const storage = {};
@@ -13863,12 +13947,34 @@ test('Firefox research transport blocks native permission revocation before uplo
       } } };
       globalThis.fetch = async (url, options) => { requests.push({ url, options }); return new Response('', { status: 202 }); };
       const result = await provider.sendShareGeneration('share_test', { request: [], response: { content: 'ok' } });
-      assert.equal(requests.length, consent === true ? 1 : 0, `${consent}: native consent was bypassed`);
+      const diagnostic = await provider.sendShareDiagnostic('share_test', { event_id: 'diag_test', event: { kind: 'diagnostic_trace' } });
+      assert.equal(requests.length, consent === true ? 2 : 0, `${consent}: native consent was bypassed`);
       assert.equal(result.ok, consent === true);
+      assert.equal(diagnostic.ok, consent === true);
       assert.equal(result.retryable, false);
+      assert.equal(diagnostic.retryable, false);
+      if (consent === true) {
+        assert.match(requests[1].url, /\/improvement\/diagnostic-traces$/);
+        assert.equal(JSON.parse(requests[1].options.body).session_id, 'share_test');
+      }
     }
   } finally {
     globalThis.browser = originalBrowser;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Chrome research diagnostic transport retains 404s for Cloud rollout ordering', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    const provider = new OpenAIProviderCh({ providerName: 'webbrain-cloud', baseUrl: 'https://share.example.test/v1' });
+    const requests = [];
+    globalThis.fetch = async (url, options) => { requests.push({ url, options }); return new Response('', { status: 404 }); };
+    const result = await provider.sendShareDiagnostic('share_test', { event_id: 'diag_test', event: { kind: 'diagnostic_trace' } });
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].url, /\/improvement\/diagnostic-traces$/);
+    assert.equal(result.retryable, true);
+  } finally {
     globalThis.fetch = originalFetch;
   }
 });
@@ -13882,6 +13988,8 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     const settings = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/settings.js`), 'utf8');
     const provider = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/openai.js`), 'utf8');
     assert.match(agent, /status === 'done'[\s\S]*hadProviderCompletion === true[\s\S]*shareQueriesForResearch === true[\s\S]*enqueueShareGeneration/, `${browser}: capture must require a provider completion and the per-provider toggle`);
+    assert.match(agent, /force: runOptions\?\.cloudRun === true \|\| \(provider\?\.config\?\.shareQueriesForResearch === true/, `${browser}: opted-in external runs must record diagnostics even when local tracing is off`);
+    assert.match(agent, /trace\.getRunEvents\(runId\)[\s\S]*enqueueShareDiagnostic/, `${browser}: completed recorder events must be queued with the same share consent`);
     assert.match(agent, /shareRequest/, `${browser}: capture must prefer the model-facing source-grounded request`);
     assert.match(agent, /shareRawResponse/, `${browser}: shared response must be the raw provider completion`);
     assert.match(agent, /rawSummary/, `${browser}: done-tool summaries must exclude appended presentation`);
@@ -13909,6 +14017,7 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     assert.match(settings, /shareQueriesForResearch/, `${browser}: share toggle field missing from settings`);
     assert.match(settings, /!input\.checked[\s\S]*?confirm\(/, `${browser}: consent confirmation must guard turning the share toggle on`);
     assert.match(provider, /\/improvement\/generations/, `${browser}: share endpoint missing from the Compass provider transport`);
+    assert.match(provider, /\/improvement\/diagnostic-traces/, `${browser}: diagnostic endpoint missing from the Compass provider transport`);
   }
 });
 
