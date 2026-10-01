@@ -194,7 +194,10 @@ persistent setting, which remains active until the user turns it off.
 ## Trace Data Isolation
 
 The trace recorder (`trace/recorder.js`) writes to IndexedDB on the user's
-machine only when explicitly enabled (Settings → Display → "Record traces").
+machine when explicitly enabled (Settings → Display → "Record traces") or
+when a local/bring-your-own provider's separate **Share queries for research**
+switch is enabled for that run. The latter forces a local record so a bounded,
+content-free diagnostic timeline can be uploaded under that explicit consent.
 The default tier is metadata-only: run records omit user and final assistant
 text; event records keep allowlisted counts, timings, usage, status/error codes,
 tool names/outcome status, and screenshot markers while omitting raw model

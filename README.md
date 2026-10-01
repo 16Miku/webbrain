@@ -117,6 +117,16 @@ including an endpoint-free local WebGPU option with the tested LFM2.5 2.6B
 preset and an experimental custom Hugging Face ONNX repository option —
 see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
 
+For a local or bring-your-own provider, the per-provider **Share queries for
+research** switch remains off by default. When enabled, it now shares a
+bounded, content-free diagnostic timeline for that provider's model attempts
+(including failed runs) alongside the existing scrubbed prompt/response share.
+The timeline includes tool names, outcomes, error codes, and timings, but not
+tool arguments, page content, or screenshots. If a run fails before a normal
+generation share, its bounded model-facing request and final blocker accompany
+the diagnostic record. No second sharing switch is
+required; turning the existing switch off also purges queued diagnostics.
+
 ## Features
 
 - **Reads any page** — text, links, forms, tables, PDFs, and interactive

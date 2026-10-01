@@ -6,11 +6,15 @@
 // provider instance (its base URL hosts the backend), independent of which
 // provider produced the run.
 
+import { projectTraceEventData } from './privacy.js';
+
 const STORAGE_KEY = 'webbrainShareOutboxV1';
 const MAX_OUTBOX_ITEMS = 100;
 const MAX_MESSAGE_CHARS = 10_000;
 const MAX_REQUEST_BUDGET = 150_000;
+const MAX_DIAGNOSTIC_REQUEST_BUDGET = 80_000;
 const MAX_RESPONSE_CHARS = 40_000;
+const MAX_DIAGNOSTIC_EVENTS = 80;
 const BINARY_DATA_URL = /data:(image|audio|video|application|font|model)\/[^\s;,]+(?:\s*;[^,]*)?\s*,/i;
 let storageQueue = Promise.resolve();
 let flushQueue = Promise.resolve();
@@ -200,7 +204,7 @@ function scrubMessage(message) {
   return copy;
 }
 
-function scrubMessages(messages) {
+function scrubMessages(messages, maxBudget = MAX_REQUEST_BUDGET) {
   if (!Array.isArray(messages)) return null;
   // Scrub every message first (per-message work is order-independent).
   const scrubbedAll = [];
@@ -216,7 +220,7 @@ function scrubMessages(messages) {
   const hasSystemPrompt = scrubbedAll[0].copy.role === 'system';
   // A single clamped message always fits in practice; guard anyway so one
   // pathological turn cannot blow the whole-request budget on its own.
-  if (hasSystemPrompt && scrubbedAll[0].size > MAX_REQUEST_BUDGET) {
+  if (hasSystemPrompt && scrubbedAll[0].size > maxBudget) {
     return [{ role: 'system', content: '[earlier shared messages omitted]' }];
   }
   // Preserve the tail: the newest user/tool turns directly produced the
@@ -227,7 +231,7 @@ function scrubMessages(messages) {
   // context.
   const MAX_SCRUBBED_MESSAGES = 200;
   const kept = [];
-  let budget = MAX_REQUEST_BUDGET;
+  let budget = maxBudget;
   if (hasSystemPrompt) budget = Math.max(0, budget - scrubbedAll[0].size);
   let startIndex = scrubbedAll.length;
   const reserve = (entry) => {
@@ -255,7 +259,7 @@ function scrubMessages(messages) {
   let outJson = '';
   try { outJson = JSON.stringify(out); } catch { outJson = ''; }
   let trimmed = false;
-  while ((out.length > MAX_SCRUBBED_MESSAGES || (outJson && outJson.length > MAX_REQUEST_BUDGET))
+  while ((out.length > MAX_SCRUBBED_MESSAGES || (outJson && outJson.length > maxBudget))
     && out.length > wrapperFloor) {
     out.splice(wrapperFloor, 1);
     trimmed = true;
@@ -265,7 +269,7 @@ function scrubMessages(messages) {
     out.splice(hasSystemPrompt ? 1 : 0, 0, omissionMarker);
     if (out.length > MAX_SCRUBBED_MESSAGES) out.splice(hasSystemPrompt ? 2 : 1, 1);
     try { outJson = JSON.stringify(out); } catch { /* keep best effort */ }
-    while (outJson && outJson.length > MAX_REQUEST_BUDGET && out.length > (hasSystemPrompt ? 2 : 1)) {
+    while (outJson && outJson.length > maxBudget && out.length > (hasSystemPrompt ? 2 : 1)) {
       out.splice(hasSystemPrompt ? 2 : 1, 1);
       try { outJson = JSON.stringify(out); } catch { break; }
     }
@@ -311,6 +315,99 @@ export function buildShareGenerationItem({
   };
 }
 
+// Share the metadata tier of the local trace, never its lossless payloads.
+// This record adds the execution timeline needed to diagnose failures and
+// tool routing; failed runs also carry their scrubbed model request.
+export function buildShareDiagnosticItem({
+  runId, events, status, model, mode, browserTarget, extensionVersion,
+  provider, provider_name, provider_id, messages = null, finalContent = null,
+}) {
+  if (!runId || !Array.isArray(events) || !events.some(event =>
+    event?.kind === 'llm_request' || event?.kind === 'llm_response')) return null;
+  const allowedKinds = new Set([
+    'llm_request', 'llm_response', 'tool', 'error', 'streaming', 'note',
+    'terminal_runtime', 'turn_start', 'turn_end', 'step_start', 'step_end',
+    'vision_route', 'vision_sub_call', 'screenshot',
+  ]);
+  const projected = events.filter(event => allowedKinds.has(event?.kind)).map(event => {
+    // The default recorder tier already projects tool results. Projecting a
+    // second time would turn its resultStatus into "unknown" because the raw
+    // result field is intentionally absent. Lossless events still need the
+    // projection here so their args/results can never leave the browser.
+    const data = event.kind === 'tool' && !Object.hasOwn(event.data || {}, 'result')
+      && ['success', 'error', 'unknown'].includes(event.data?.resultStatus)
+      ? event.data
+      : projectTraceEventData(event.kind, event.data, { includeContent: false });
+    const fields = {
+      llm_request: ['step', 'phase', 'attempt', 'repair'],
+      llm_response: ['step', 'phase', 'latencyMs', 'finishReason', 'toolCallCount', 'contentChars'],
+      tool: ['step', 'name', 'latencyMs', 'resultStatus', 'resultErrorCode'],
+      error: ['step', 'phase', 'code'],
+      streaming: ['step', 'status', 'protocol', 'reason', 'errorCode', 'durationMs', 'toolCallCount'],
+      note: ['step', 'note'],
+      terminal_runtime: ['step', 'status', 'toolName', 'errorCode', 'durationMs', 'success'],
+      screenshot: ['step'],
+      vision_route: ['step', 'visionRoute', 'fallbackReason'],
+      vision_sub_call: ['step', 'visionRoute', 'latencyMs', 'errorCode', 'recoveryOutcome'],
+    }[event.kind] || ['step', 'ok', 'status', 'code', 'durationMs'];
+    const safe = {};
+    for (const field of fields) {
+      const value = data?.[field];
+      if (typeof value === 'boolean') safe[field] = value;
+      else if (typeof value === 'number' && Number.isFinite(value)) safe[field] = Math.max(0, Math.min(120_000, Math.floor(value)));
+      else if (typeof value === 'string' && /^[a-zA-Z0-9_.:-]{1,100}$/.test(value)) safe[field] = value;
+    }
+    if (event.kind === 'note' && data?.note === 'adapter_match') {
+      for (const field of ['adapter', 'revision', 'notesInjected']) {
+        const value = data.extra?.[field];
+        if (typeof value === 'boolean') safe[field] = value;
+        else if (typeof value === 'string' && /^[a-zA-Z0-9_.:-]{1,100}$/.test(value)) safe[field] = value;
+      }
+    }
+    return { seq: Number.isSafeInteger(event.seq) ? event.seq : 0, kind: event.kind, ...safe };
+  });
+  const selected = projected.length > MAX_DIAGNOSTIC_EVENTS
+    ? [...projected.slice(0, 16), ...projected.slice(-(MAX_DIAGNOSTIC_EVENTS - 16))]
+    : projected;
+  const eventId = `diag_${String(runId).replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 180)}`;
+  return {
+    id: eventId,
+    kind: 'diagnostic',
+    provider_id: String(provider_id || ''),
+    provider: String(provider || '').slice(0, 64),
+    provider_name: String(provider_name || '').slice(0, 128),
+    model: String(model || '').slice(0, 255),
+    mode: String(mode || '').slice(0, 32),
+    diagnostic: {
+      event_id: eventId,
+      event: {
+        kind: 'diagnostic_trace',
+        runId: String(runId).slice(0, 200),
+        seq: 1,
+        ts: Date.now(),
+        data: {
+          status: String(status || 'unknown').slice(0, 32),
+          model: String(model || '').slice(0, 255),
+          mode: String(mode || '').slice(0, 32),
+          browser_target: String(browserTarget || '').slice(0, 32),
+          extension_version: String(extensionVersion || '').slice(0, 64),
+          provider: String(provider || '').slice(0, 64),
+          provider_name: String(provider_name || '').slice(0, 128),
+          dropped_events: projected.length - selected.length,
+          events: selected,
+          // Successful runs already have a generation share. Failed runs may
+          // have no completion, so retain only their actual model-facing
+          // request and bounded final blocker for useful diagnosis.
+          ...(status !== 'done' && Array.isArray(messages) && messages.length
+            ? { request_messages: scrubMessages(requestMessages(messages, finalContent), MAX_DIAGNOSTIC_REQUEST_BUDGET) } : {}),
+          ...(status !== 'done' && typeof finalContent === 'string' && finalContent.trim()
+            ? { final_content: scrubText(finalContent, 10_000) } : {}),
+        },
+      },
+    },
+  };
+}
+
 function localStorageArea() {
   const api = (typeof browser !== 'undefined' && browser?.storage)
     ? browser
@@ -339,6 +436,15 @@ function updateOutbox(update) {
 
 export async function enqueueShareGeneration(item) {
   if (!item?.id || item.request === undefined || item.response === undefined) return false;
+  await updateOutbox(current => {
+    if (current.some(entry => entry?.id === item.id)) return current;
+    return [...current, { ...item, queued_at: Date.now() }];
+  });
+  return true;
+}
+
+export async function enqueueShareDiagnostic(item) {
+  if (!item?.id || item.kind !== 'diagnostic' || !item.diagnostic?.event) return false;
   await updateOutbox(current => {
     if (current.some(entry => entry?.id === item.id)) return current;
     return [...current, { ...item, queued_at: Date.now() }];
@@ -395,18 +501,19 @@ async function flushShareOutboxNow(transportProvider, shouldSend) {
     }
     let result;
     try {
-      result = await transportProvider.sendShareGeneration(entry.session_id, {
-        client_share_id: entry.id,
-        provider: entry.provider,
-        provider_name: entry.provider_name,
-        model: entry.model,
-        mode: entry.mode,
-        // The Compass intake contract reserves request for an object; persist
-        // the compact message array in the existing outbox shape, then wrap it
-        // only at delivery so queued entries stay backward-compatible.
-        request: { messages: entry.request },
-        response: entry.response,
-      });
+      result = entry.kind === 'diagnostic'
+        ? await transportProvider.sendShareDiagnostic(entry.session_id, entry.diagnostic)
+        : await transportProvider.sendShareGeneration(entry.session_id, {
+          client_share_id: entry.id,
+          provider: entry.provider,
+          provider_name: entry.provider_name,
+          model: entry.model,
+          mode: entry.mode,
+          // The Compass intake contract reserves request for an object;
+          // retain the compact array in old queued entries until delivery.
+          request: { messages: entry.request },
+          response: entry.response,
+        });
     } catch {
       result = { ok: false, retryable: true };
     }

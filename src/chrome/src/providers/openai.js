@@ -274,6 +274,31 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     }
   }
 
+  async sendShareDiagnostic(sessionId, diagnostic, { timeoutMs = 4000 } = {}) {
+    if (String(this.config.providerName || '').toLowerCase() !== 'webbrain-cloud') {
+      return { ok: false, retryable: false, status: 0 };
+    }
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), Math.max(250, timeoutMs)) : null;
+    try {
+      const response = await fetchWithFallback(`${this.baseUrl}/improvement/diagnostic-traces`, {
+        method: 'POST',
+        headers: this._headers({ helpImprove: '1' }),
+        body: JSON.stringify({ session_id: String(sessionId || ''), diagnostic }),
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (response.ok) return { ok: true, retryable: false, status: response.status };
+      try { await response.text(); } catch {}
+      // Keep the durable outbox entry while an older Cloud deployment lacks
+      // this newer endpoint; it will be retried after the server rolls out.
+      return { ok: false, retryable: response.status === 404 || response.status === 408 || response.status === 429 || response.status >= 500, status: response.status };
+    } catch {
+      return { ok: false, retryable: true, status: 0 };
+    } finally {
+      if (timer != null) clearTimeout(timer);
+    }
+  }
+
   /**
    * Newer OpenAI models (gpt-5 and the o-series) reject `max_tokens` and any
    * non-default `temperature`, requiring `max_completion_tokens`. Detected by
