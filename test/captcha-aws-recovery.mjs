@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
-  const { describeAwsWafObservation, prepareNativeCaptchaTasks } = await import(`../src/${build}/src/agent/captcha-native-providers.js`);
+  const { describeAwsWafObservation, prepareNativeCaptchaTasks, awsWafTaskRoute } = await import(`../src/${build}/src/agent/captcha-native-providers.js`);
   function fixture(t, { fallback = false } = {}) {
     const url = 'https://site.test/join';
     const observed = { pageUrl: url, websiteKey: 'observed-key', iv: 'iv', context: 'context',
@@ -30,7 +30,7 @@ for (const build of ['chrome', 'firefox']) {
     t.after(() => { globalThis[apiName] = previous; });
     t.mock.method(globalThis, 'fetch', async (url, options) => {
       const request = { url, ...JSON.parse(options.body) }; requests.push(request);
-      assert.ok(stored[agent._convKey(1)].nativeCaptchaDispatch.awsAttempts.includes(`${request.task.awsExistingToken ? 'secondary' : 'initial'}:${url.includes('capmonster') ? 'capmonster' : 'capsolver'}`),
+      assert.ok(stored[agent._convKey(1)].nativeCaptchaDispatch.awsAttempts.includes(`${request.task.awsApiKey || request.task.captchaScript || request.task.wafType === 'widget' ? 'secondary' : 'initial'}:${url.includes('capmonster') ? 'capmonster' : 'capsolver'}`),
         'provider reservations must be durable before network dispatch');
       return Response.json({ status: 'ready', taskId: `task-${requests.length}`,
         solution: url.includes('capmonster') ? { cookies: { 'aws-waf-token': 'fallback-cookie' } } : { cookie: 'primary-cookie' } });
@@ -49,10 +49,31 @@ for (const build of ['chrome', 'firefox']) {
     const providers = ['capsolver', 'capmonster', 'anti-captcha'].map(id => ({ id, apiKey: 'provider-key' }));
     const result = describeAwsWafObservation(providers, observed);
     assert.equal(result.route, 'secondary');
-    assert.deepEqual(result.providerTasks, [{ provider: 'capsolver', method: 'AntiAwsWafTaskProxyLess', parameters: {
+    assert.deepEqual(result.providerTasks[0], { provider: 'capsolver', method: 'AntiAwsWafTaskProxyLess', parameters: {
       websiteURL: observed.pageUrl, awsApiKey: observed.apiKey, awsApiJs: observed.jsapiScript, awsExistingToken: observed.existingToken,
-    } }]);
-    assert.equal(prepareNativeCaptchaTasks(providers, result.providerTasks).length, 1);
+    } });
+    assert.deepEqual(result.providerTasks.map(task => task.provider), ['capsolver', 'capmonster', 'anti-captcha']);
+    const prepared = prepareNativeCaptchaTasks(providers, result.providerTasks);
+    assert.equal(prepared.length, 3);
+    assert.ok(prepared.every(task => awsWafTaskRoute(task) === 'secondary'));
+  });
+
+  test(`${build}: AWS SDK fallback and its reservation work when CapMonster is first`, async t => {
+    const f = fixture(t, { fallback: true });
+    Object.assign(f.observed, { apiKey: 'sdk-key', jsapiScript: 'https://site.captcha-sdk.awswaf.com/jsapi.js', existingToken: 'old-cookie' });
+    const get = f.api.storage.local.get;
+    f.api.storage.local.get = async () => ({ ...await get(), capmonsterWeight: 200 });
+    const result = await f.agent._executeToolImpl(1, 'solve_captcha', {});
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.provider, 'capmonster');
+    assert.equal(f.requests[0].task.websiteKey, 'sdk-key');
+    assert.equal(f.requests[0].task.captchaScript, f.observed.jsapiScript);
+    assert.equal(f.requests[0].task.iv, undefined);
+    assert.deepEqual(f.agent._conversationStorageEntry(1).nativeCaptchaDispatch.awsAttempts, ['secondary:capmonster']);
+    const restored = new Agent({ getActive: () => ({ promptTier: 'full' }) });
+    await restored._hydrate(1);
+    assert.equal((await restored._executeToolImpl(1, 'solve_captcha', {})).noDispatch, true);
+    assert.equal(f.requests.length, 1);
   });
 
   test(`${build}: AWS auto route applies a cookie once and survives a reload without recharging the same provider`, async t => {

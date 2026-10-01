@@ -122481,7 +122481,9 @@ test('NoneCap hCaptcha token is not injected when its User-Agent differs from th
         assert.equal(result.dispatched, true, build);
         assert.equal(result.manualCompletionRequired, true, build);
         assert.equal(result.injected, false, build);
-        assert.equal(result.token, undefined, build);
+        assert.equal(result.token, 'paid-token', build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).solution.token, 'paid-token', build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).applied, false, build);
         assert.match(result.error, /different User-Agent/, build);
         assert.equal(injections, 0, build);
       } finally { globalThis.fetch = originalFetch; }

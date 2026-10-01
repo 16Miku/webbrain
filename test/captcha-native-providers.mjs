@@ -93,7 +93,7 @@ for (const browser of ['chrome','firefox']) {
     }
   });
   test(`${browser}: catalogs cover seven vendors without resurrecting draft hCaptcha methods`,()=>{
-    assert.equal(catalog.length,197);
+    assert.equal(catalog.length,198);
     for(const provider of providers) assert.ok(catalog.some(c=>c.provider===provider.id));
     assert.deepEqual([...new Set(catalog.filter(c=>c.family==='hcaptcha').map(c=>c.provider))].sort(),['nonecap','nopecha']);
     const cm=new Set(catalog.filter(c=>c.provider==='capmonster').map(c=>c.family));
@@ -368,12 +368,12 @@ for (const browser of ['chrome', 'firefox']) {
             return { url };
           },
           executeScript: async (_tabId, options) => {
-            if (/false\]\)$/.test(options.code)) pageMutations++;
+            if (/false,null\]\)$/.test(options.code)) pageMutations++;
             return [{ success: true }];
           },
         },
         scripting: browser === 'chrome' ? { executeScript: async options => {
-          if (options.args.at(-1) === false) pageMutations++;
+          if (options.args[5] === false) pageMutations++;
           return [{ frameId: 0, result: { success: true } }];
         } } : undefined,
         webNavigation: { getAllFrames: async () => [{ frameId: 0, url }] },
@@ -563,11 +563,11 @@ for (const browser of ['chrome', 'firefox']) {
       websiteURL: url, captchaId: 'captcha', riskType: 'slide',
     } };
     const twoCaptcha = { provider: '2captcha', method: 'GeeTestTaskProxyless', parameters: {
-      websiteURL: url, version: 4, initParameters: { captcha_id: 'captcha' }, risk_type: 'slide',
+      websiteURL: url, version: 4, initParameters: { captcha_id: 'captcha' }, riskType: 'slide',
     } };
     assert.equal(native.prepareNativeCaptchaTasks(enabled, [capsolver, twoCaptcha]).length, 2);
     assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [capsolver, {
-      ...twoCaptcha, parameters: { ...twoCaptcha.parameters, risk_type: 'match' },
+      ...twoCaptcha, parameters: { ...twoCaptcha.parameters, riskType: 'match' },
     }]), /same observed challenge/);
     assert.throws(() => native.prepareNativeCaptchaTasks(enabled, [capsolver, {
       ...twoCaptcha, parameters: { websiteURL: url, version: 4, initParameters: { captcha_id: 'captcha' } },

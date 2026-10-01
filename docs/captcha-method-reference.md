@@ -1,6 +1,6 @@
 # CAPTCHA native method reference
 
-Companion to [CAPTCHA provider coverage](captcha-provider-coverage.md). Audited 2026-09-29. Generated from the executable catalog; 197 method variants across seven providers. Method IDs select an adapter contract, not an arbitrary upstream task type. Fixed values are added automatically. Fields use dot paths for nested objects; pass nested JSON, not literal dotted keys.
+Companion to [CAPTCHA provider coverage](captcha-provider-coverage.md). Contracts rechecked 2026-10-01. Generated from the executable catalog; 198 method variants across seven providers. Method IDs select an adapter contract, not an arbitrary upstream task type. Fixed values are added automatically. Fields use dot paths for nested objects; pass nested JSON, not literal dotted keys.
 
 Required fields below are unconditional. GeeTest v3 additionally needs `gt` and a fresh `challenge`; v4 needs its provider-specific CAPTCHA ID. AWS WAF variants, proxy authentication, alternate image inputs, and VisionEngine module-specific fields have conditional requirements described in the guide and official documentation. Every submitted value must come from the selected challenge.
 
@@ -472,7 +472,7 @@ Family: `funcaptcha_recognition`. [Official contract](https://2captcha.com/api-d
 Family: `geetest`. [Official contract](https://2captcha.com/api-docs/geetest).
 
 - Required: `websiteURL` (string).
-- Optional: `gt` (string), `challenge` (string), `geetestApiServerSubdomain` (string), `userAgent` (string), `version` (integer), `initParameters` (object), `risk_type` (string).
+- Optional: `gt` (string), `challenge` (string), `geetestApiServerSubdomain` (string), `userAgent` (string), `version` (integer), `initParameters` (object), `riskType` (string).
 - Fixed wire values: `{"type":"GeeTestTaskProxyless"}`.
 
 ### GeeTestTask
@@ -480,7 +480,7 @@ Family: `geetest`. [Official contract](https://2captcha.com/api-docs/geetest).
 Family: `geetest`. [Official contract](https://2captcha.com/api-docs/geetest).
 
 - Required: `websiteURL` (string), `proxyType` (string), `proxyAddress` (string), `proxyPort` (integer).
-- Optional: `gt` (string), `challenge` (string), `geetestApiServerSubdomain` (string), `userAgent` (string), `version` (integer), `initParameters` (object), `risk_type` (string), `proxyLogin` (string), `proxyPassword` (string).
+- Optional: `gt` (string), `challenge` (string), `geetestApiServerSubdomain` (string), `userAgent` (string), `version` (integer), `initParameters` (object), `riskType` (string), `proxyLogin` (string), `proxyPassword` (string).
 - Fixed wire values: `{"type":"GeeTestTask"}`.
 
 ### GridTask
@@ -804,6 +804,8 @@ Family: `aws_waf`. [Official contract](https://docs.capmonster.cloud/docs/captch
 - Required: `websiteURL` (string), `challengeScript` (string), `context` (string), `iv` (string).
 - Optional: `cookieSolution` (boolean), `proxyType` (string), `proxyAddress` (string), `proxyPort` (integer), `proxyLogin` (string), `proxyPassword` (string).
 - Fixed wire values: `{"type":"AmazonTask"}`.
+
+`context` and `iv` must be supplied as empty strings in this invisible-challenge mode (CapMonster Option 3).
 
 ### BinanceTask
 
@@ -1281,7 +1283,7 @@ Family: `recaptcha_v3_enterprise`. [Official contract](https://solvecaptcha.com/
 - Optional: `domain` (string), `action` (string), `min_score` (number), `proxy` (string), `proxytype` (string), `cookies` (string), `userAgent` (string).
 - Fixed wire values: `{"method":"userrecaptcha","version":"v3","enterprise":1}`.
 
-## anti-captcha (23 variants)
+## anti-captcha (24 variants)
 
 ### AltchaTask
 
@@ -1316,6 +1318,14 @@ Family: `aws_waf`. [Official contract](https://anti-captcha.com/apidoc/task-type
 - Required: `websiteURL` (string), `websiteKey` (string), `iv` (string), `context` (string).
 - Optional: `captchaScript` (string), `challengeScript` (string).
 - Fixed wire values: `{"type":"AmazonTaskProxyless"}`.
+
+### AmazonTaskProxyless:widget
+
+Family: `aws_waf`. [Official contract — select Widget](https://anti-captcha.com/apidoc/task-types/AmazonTaskProxyless).
+
+- Required: `websiteURL` (string), `websiteKey` (string), `jsapiScript` (string).
+- Fixed wire values: `{"type":"AmazonTaskProxyless","wafType":"widget"}`.
+- `websiteKey` is the observed `AwsWafCaptcha.renderCaptcha` API key; `jsapiScript` is the observed SDK URL. It is not the interstitial `gokuProps.key`.
 
 ### AntiGateTask
 

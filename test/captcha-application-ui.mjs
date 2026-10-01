@@ -42,6 +42,18 @@ try {
    assert.equal(aws.success,true);assert.equal(aws.cookiesUpdated,1);assert.equal(aws.calledCallback,false);
    assert.equal(cookies.at(-1).name,'aws-waf-token');assert.equal(cookies.at(-1).value,'aws-answer');
    assert.deepEqual(await page.evaluate(()=>answers),[{lot_number:'lot'}]);
+   for(const [provider,family] of [['nonecap','hcaptcha'],['capmonster','recaptcha_v3']]) {
+    const identityRecord={documents,pageUrl:page.url(),createdAt:Date.now(),provider,family,solution:{token:'identity-answer',userAgent:'different-browser'}};
+    const binding={frameId:0,frameUrl:page.url(),fields:[{selector:'#response',path:'token'}],cookies:[{name:'identity-test',path:'token'}],callback:{name:'captcha.done',path:'token'}};
+    const cookieCount=cookies.length;
+    const refused=await applyNativeCaptchaSolution(1,identityRecord,binding);
+    assert.equal(refused.success,false);assert.equal(refused.manualCompletionRequired,true);
+    assert.equal(cookies.length,cookieCount);assert.equal(identityRecord.applied,undefined);
+    assert.equal(await page.locator('#response').inputValue(),provider==='nonecap'?'solved':'identity-answer');
+    identityRecord.solution.userAgent=await page.evaluate(()=>navigator.userAgent);
+    assert.equal((await applyNativeCaptchaSolution(1,identityRecord,binding)).success,true);
+    assert.equal(await page.locator('#response').inputValue(),'identity-answer');
+   }
    const base={documents,pageUrl:page.url(),createdAt:Date.now(),solution:{token:'x'}};
    const ambiguous=await applyNativeCaptchaSolution(1,{...base},{frameId:0,frameUrl:page.url(),fields:[{selector:'input, #grid',path:'token'}]});assert.equal(ambiguous.success,false);
    const rejectedNative=await applyNativeCaptchaSolution(1,{...base},{frameId:0,frameUrl:page.url(),callback:{name:'setTimeout',path:'token'}});assert.equal(rejectedNative.success,false);

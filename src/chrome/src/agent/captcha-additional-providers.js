@@ -18,9 +18,10 @@ export function buildAdditionalCaptchaTask(id, task) {
   if (id !== 'capmonster') throw new Error(`Unknown CAPTCHA provider: ${id}`);
   if (task.type === 'AntiTurnstileTaskProxyLess') {
     const { action, pagedata, ...rest } = mapped;
-    // Challenge (token) mode requires pageAction, data, userAgent and pageData
-    // together. Without all of them, send the plain Turnstile task instead.
+    // A Challenge page is not an ordinary standalone Turnstile widget. Never
+    // discard its pageData to make an incomplete paid request look valid.
     const challenge = pagedata && action && mapped.data && task.userAgent;
+    if (pagedata && !challenge) throw new Error('CapMonster Cloud: Challenge token mode requires action, data, pageData and the browser User-Agent.');
     return { ...rest, type: 'TurnstileTask', ...(action ? { pageAction: action } : {}),
       ...(task.userAgent ? { userAgent: task.userAgent } : {}),
       ...(challenge ? { pageData: pagedata, cloudflareTaskType: 'token' } : {}) };
@@ -56,7 +57,14 @@ export async function solveCaptchaRequest(apiKey, path, fields, timeout = 30_000
     method: isGet ? 'GET' : 'POST', ...(isGet ? {} : { body }), signal: AbortSignal.timeout(timeout),
   });
   if (!response.ok) throw new Error(`SolveCaptcha ${path}: HTTP ${response.status}`);
-  const result = await response.json().catch(() => null);
+  let result = await response.json().catch(() => null);
+  // The Temu/VK reference also documents structured ready/solution responses
+  // on res.php. Keep those answers intact alongside the legacy status/request
+  // envelope used by the other methods.
+  if (path === 'res.php' && fields.action === 'get' && result?.errorId === 0 && result.status === 'ready'
+      && result.solution != null) {
+    result = { ...result, status: 1, request: result.solution };
+  }
   if (!result || ![0, 1].includes(Number(result.status))) throw new Error(`SolveCaptcha ${path}: invalid response`);
   if (Number(result.status) !== 1 && result.request !== 'CAPCHA_NOT_READY') throw new Error(`SolveCaptcha ${path}: ${result.request || 'unknown error'}`);
   return result;

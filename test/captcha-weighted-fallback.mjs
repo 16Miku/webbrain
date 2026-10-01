@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const key = '0123456789abcdef0123456789abcdef';
-const params = { type: 'turnstile', websiteURL: 'https://example.com/form', websiteKey: 'widget', metadata: { action: 'managed', cdata: 'data', chlPageData: 'page-data' } };
+const params = { type: 'turnstile', websiteURL: 'https://example.com/form', websiteKey: 'widget', metadata: { action: 'managed', cdata: 'data' } };
 function api(t, respond) {
   let now = 0;
   const calls = [];
@@ -59,11 +59,11 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   test(`${build}: provider-specific mappings preserve enterprise and Turnstile metadata`, () => {
-    const normalized = solver.buildTask(params);
+    const normalized = solver.buildTask({ ...params, metadata: { ...params.metadata, chlPageData: 'page-data' } });
     const anti = extra.buildAdditionalCaptchaTask('anti-captcha', normalized);
     assert.deepEqual(anti, { type: 'TurnstileTaskProxyless', websiteURL: params.websiteURL, websiteKey: 'widget', action: 'managed', cData: 'data', chlPageData: 'page-data' });
-    const monster = extra.buildAdditionalCaptchaTask('capmonster', normalized);
-    // Challenge mode requires userAgent; without it CapMonster gets the plain task.
+    assert.throws(() => extra.buildAdditionalCaptchaTask('capmonster', normalized), /requires action, data, pageData/);
+    const monster = extra.buildAdditionalCaptchaTask('capmonster', solver.buildTask(params));
     assert.deepEqual(monster, { type: 'TurnstileTask', websiteURL: params.websiteURL, websiteKey: 'widget', data: 'data', pageAction: 'managed' });
     const monsterChallenge = extra.buildAdditionalCaptchaTask('capmonster', { ...normalized, userAgent: 'UA' });
     assert.deepEqual(monsterChallenge, { type: 'TurnstileTask', websiteURL: params.websiteURL, websiteKey: 'widget', data: 'data', pageAction: 'managed', userAgent: 'UA', pageData: 'page-data', cloudflareTaskType: 'token' });

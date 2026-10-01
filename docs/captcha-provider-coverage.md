@@ -1,8 +1,8 @@
 # CAPTCHA providers: setup, coverage, fallback, and API contracts
 
-Audited against first-party documentation on **2026-09-29**. Chrome and Firefox share the provider catalog, request validation, transports, and result handling; their browser execution adapters remain platform-specific.
+Initial catalog audit: **2026-09-29**. Integration contracts rechecked against first-party documentation on **2026-10-01**. Chrome and Firefox share the provider catalog, request validation, transports, and result handling; their browser execution adapters remain platform-specific.
 
-This integration exposes **seven providers and 197 documented method variants**. A method variant can be a proxy/proxyless route, an Enterprise option, a recognition model, or a separate response mode. It is not a claim that there are 197 CAPTCHA products.
+This integration exposes **seven providers and 198 catalog method variants**. A method variant can be a proxy/proxyless route, an Enterprise option, a recognition model, or a separate response mode. It is not a claim that there are 198 CAPTCHA products.
 
 “Integrated” means WebBrain can validate the method's input, submit its documented request, poll when needed, and preserve its answer. It does **not** mean every website exposes the required parameters, that a token is accepted, or that authenticated live success rates have been measured. This implementation was checked with provider-contract fixtures and browser tests; no paid live solves were performed.
 
@@ -11,6 +11,7 @@ This integration exposes **seven providers and 197 documented method variants**.
 - [Setup and consent](#setup-and-consent)
 - [Coverage by provider](#coverage-by-provider)
 - [hCaptcha](#hcaptcha)
+- [Integration contract audit](#integration-contract-audit--2026-10-01)
 - [Fallback and charging](#fallback-and-charging)
 - [Automatic widgets and native methods](#automatic-widgets-and-native-methods)
 - [Applying answers](#applying-answers)
@@ -58,20 +59,36 @@ All families below have a callable native route. The [complete method reference]
 
 CapMonster's ten ComplexImage models are `bills_audio`, `shein`, `bls`, `baidu`, `betpunch_3x3_rotate`, `oocl_rotate_double_new`, `oocl_rotate_new`, `dli_ensemble`, `mathsum`, and `portugal_text_find_icon`. Their `metadata.Task` values and recognition class are assigned by the adapter. The DLI, MathSum, and BLS methods send `dli`, `MathSum`, and `bls_3x3` respectively; audio sends `PayloadType: "Audio"`. CapSolver VisionEngine accepts the provider's documented module field, including slider, rotation, BotDeflector, Shein, and GIF OCR modes. Modules requiring a second image must receive it.
 
-Public request examples sometimes disagree with their property tables. The catalog uses documented task names and the working request-example names for 2Captcha's `TemuImageTask` and `VKCaptchaImageTask`; it preserves `BinanceTaskproxyless` casing. CapSolver GeeTest uses the task-table/SDK spelling `GeeTestTaskProxyLess`. These contracts need a real account/site trial before any measured acceptance claim.
+Public request examples sometimes disagree with their property tables. The catalog uses documented task names and the request-example names for 2Captcha's `TemuImageTask` and `VKCaptchaImageTask`; it preserves `BinanceTaskproxyless` casing. CapSolver GeeTest uses the task-table/SDK spelling `GeeTestTaskProxyLess`. These contracts need a real account/site trial before any measured acceptance claim.
 
 ## hCaptcha
 
 **NopeCHA and NoneCap provide this integration's hCaptcha routes.** The original five providers are not advertised as hCaptcha solvers and are skipped for automatic hCaptcha fallback.
 
-This is grounded in their current public catalogs, not a claim that every private or historical endpoint is unavailable. In particular:
+Support is based on the linked catalogs and retained integration evidence; an absent catalog entry alone does not prove a historical endpoint is unavailable. In particular:
 
 - The current [2Captcha API catalog](https://2captcha.com/api-docs) omits hCaptcha. Its [sandbox guide](https://2captcha.com/h/how-to-use-sandbox-mode) mentions hCaptcha for manually solving your own submissions; that does not establish production worker availability.
 - CapMonster's source repository contains an hCaptcha document marked `draft: true`; the published catalog does not expose it. Draft/withdrawn methods are not enabled by this integration.
-- NopeCHA's current `/v1/token/hcaptcha` route and its separate `/v1/recognition/hcaptcha` route are different products. Recognition returns puzzle answers, not a completed token.
+- NopeCHA's retained `/v1/token/hcaptcha` and `/v1/recognition/hcaptcha` routes are separate products. Recognition returns puzzle answers, not a completed token. The public reference fetched on 2026-10-01 omits hCaptcha; the token route is retained because the supplied September 30 trace contains a successful provider answer. That trace proves an answer was returned, not current availability or target-site acceptance.
 - NoneCap's `hcaptcha_enterprise` type accepts optional `rqdata`; include it whenever the site supplies it. Observed `data-rqdata` marks an automatically detected widget as Enterprise. Caller-supplied User-Agent is not sent because its API documents that input as ignored/deprecated. The returned `resp_key` and `user_agent` are retained.
 
 Automatic detection still validates the hCaptcha UUID site key and observed `rqdata`. An explicit value that conflicts with the selected widget fails before dispatch. Enabling a compatible provider can re-evaluate a previously unsupported gate; a failed paid solve does not authorize another one.
+
+## Integration contract audit — 2026-10-01
+
+The seven adapters were checked against official request, authentication, polling, and response documentation. Regression fixtures cover dispatch and fallback without contacting paid services; local Chromium and Firefox fixtures cover application. This is not a live acceptance benchmark of every catalog method.
+
+| Provider | Contract checked and resulting correction |
+| --- | --- |
+| [CapSolver](https://docs.capsolver.com/en/guide/captcha/cloudflare_turnstile/) | Standalone Turnstile accepts `action`/`cdata`, not Challenge `chlPageData`. Such requests skip its automatic adapter and retain the complete data for compatible providers. Unknown poll statuses fail promptly; missing balances are errors. The separate native Cloudflare Challenge route remains available. |
+| [2Captcha](https://2captcha.com/api-docs/geetest) | GeeTest uses `riskType`, not `risk_type`. Requests and same-challenge comparisons now use the documented spelling. |
+| [CapMonster](https://docs.capmonster.cloud/docs/captchas/amazon-task/) | Added automatic AWS SDK and invisible-challenge modes. Native voucher answers remain usable; cookie mode rejects missing/empty cookies. Incomplete Cloudflare Challenge metadata is never downgraded to an ordinary Turnstile request. |
+| [SolveCaptcha](https://solvecaptcha.com/captcha-solver-api) | `res.php` accepts the documented Temu/VK `status: ready` / `solution` result as well as legacy numeric `status` / `request`. Structured recognition answers remain intact. The VK request table and example disagree; the adapter continues to follow the established form API/table, without claiming a live VK trial. |
+| [Anti-Captcha](https://anti-captcha.com/apidoc/task-types/AmazonTaskProxyless) | The documentation's **Widget** tab defines `wafType: widget`, `websiteKey` (the SDK API key), and `jsapiScript`. This cookie-returning path now participates in AWS SDK fallback. The gokuProps mode remains separate. |
+| [NopeCHA](https://nopecha.com/api-reference/) | Rechecked Basic-key authorization, v1 job IDs, polling and incomplete-job responses. Existing transport regressions cover them. The hCaptcha documentation discrepancy is recorded above; no new endpoint was guessed. |
+| [NoneCap](https://nonecap.com/api-reference/) | Rechecked Bearer authorization, solve states, token, response key and returned User-Agent. Required identity checks now also apply to stored/native answers, so manual bindings cannot bypass them. |
+
+NoneCap and [CapMonster reCAPTCHA v3](https://docs.capmonster.cloud/docs/captchas/recaptcha-v3-task/) explicitly require the returned User-Agent. Automatic and native application check it before writing fields, cookies or invoking callbacks. A mismatched answer is retained, including after worker restart, and requires manual completion; WebBrain does not silently change the browser identity or purchase another answer. Matching answers proceed normally. Other providers' optional User-Agent metadata remains available in their structured results and AWS diagnostics.
 
 ## Fallback and charging
 
@@ -94,7 +111,7 @@ After manual completion navigates to another page, the next accessibility read c
 
 ### Automatic route
 
-AWS WAF is also routed automatically from a visible challenge. The runtime observes initial `gokuProps` inputs or SDK/resource inputs for [CapSolver's secondary-verification contract](https://docs.capsolver.com/en/guide/captcha/awsWaf/), including the observed SDK API key and existing AWS token. Initial cookie tasks can use CapSolver, CapMonster, and Anti-Captcha; secondary SDK tasks currently use CapSolver. Enabling a recognition or voucher-returning service does not make it an applicable cookie fallback. `solve_captcha` applies the returned cookie unless `inject:false` was requested, then requires a reload and fresh inspection. A returned answer or successful cookie write alone is not clearance.
+AWS WAF is also routed automatically from a visible challenge. The runtime observes initial `gokuProps` inputs or SDK/resource inputs for [CapSolver's secondary-verification contract](https://docs.capsolver.com/en/guide/captcha/awsWaf/), including the observed SDK API key and existing AWS token. Initial cookie tasks can use CapSolver, CapMonster, and Anti-Captcha. SDK widget tasks now use CapMonster Option 1 and Anti-Captcha's Widget mode as well as CapSolver secondary verification when an existing token is available (otherwise its documented script-only mode). All use the observed SDK API key and script URL; stale interstitial inputs are excluded. Invisible challenge-only pages also support CapMonster Option 3, with its documented empty `iv` and `context`. Enabling a recognition or voucher-returning service does not make it an applicable cookie fallback. `solve_captcha` applies the returned cookie unless `inject:false` was requested, then requires a reload and fresh inspection. A returned answer or successful cookie write alone is not clearance.
 
 Confirmed clearance permits a later challenge, including another family on the same page. A successful form submission after verified widget clearance can re-arm a newly visible challenge. Mere URL changes, incomplete reads, or an unchanged visible challenge do not unlock another paid attempt. Complete AWS disappearance also permits continuation after manual completion.
 
@@ -147,7 +164,7 @@ Use observed page parameters to prepare fallback tasks. Method IDs are WebBrain 
 }
 ```
 
-AWS WAF pages keep their inputs out of the page text: `key`, `iv`, and `context` sit in the `window.gokuProps` global, and the challenge script loads from an `awswaf.com` host. When `get_captcha_capabilities` is called without a provider or method on such a page, it reads those values from the top frame and returns `observedChallenge`. That object includes one ready task per enabled CapSolver, CapMonster Cloud, or Anti-Captcha provider, plus the `aws-waf-token` cookie path for each provider's answer (`cookie`, `cookies.aws-waf-token`, and `token`). CapMonster tasks set `cookieSolution: true`. 2Captcha and SolveCaptcha are left out because they return a `captcha_voucher`/`existing_token` pair that WebBrain can't turn into the cookie, so a win by either would be charged and unusable. If an input is missing, the result names it and nothing is guessed. After `apply_captcha_solution` sets the cookie, reload the page and read it again. A site can still reject a proxyless token.
+AWS WAF pages keep their inputs out of the page text: `key`, `iv`, and `context` sit in the `window.gokuProps` global, and the challenge script loads from an `awswaf.com` host. When `get_captcha_capabilities` is called without a provider or method on such a page, it reads those values from the top frame and returns `observedChallenge`. That object includes one ready task per enabled CapSolver, CapMonster Cloud, or Anti-Captcha provider, plus the `aws-waf-token` cookie path for each provider's answer (`cookie`, `cookies.aws-waf-token`, and `token`). Automatic CapMonster tasks set `cookieSolution: true`. Explicit native tasks may instead request the default voucher answer; that valid response is retained without falling through to another paid provider. 2Captcha and SolveCaptcha are left out because they return a `captcha_voucher`/`existing_token` pair that WebBrain can't turn into the cookie, so a win by either would be charged and unusable. If an input is missing, the result names it and nothing is guessed. After `apply_captcha_solution` sets the cookie, reload the page and read it again. A site can still reject a proxyless token.
 
 Saved weights determine execution order, regardless of array order. Supply a task for each enabled provider that can solve that family and for which the required inputs are available. The tool does not invent another provider's parameters. Page URLs must belong to the active tab or an observed frame. Native methods do not automatically scrape every site's internal configuration.
 
@@ -236,7 +253,7 @@ The CAPTCHA gate permits `done` with `outcome: "failed"` or `"partial"` in every
 Both browser trees contain:
 
 - `src/agent/captcha-provider-config.js`: key formats, consent, default weights, automatic and native coverage.
-- `src/agent/captcha-catalog.js`: the 197 method contracts and primary documentation links.
+- `src/agent/captcha-catalog.js`: the 198 method contracts and primary documentation links.
 - `src/agent/captcha-native-providers.js`: discovery, preflight, fixed-value mapping, native fallback, and structured results.
 - `src/agent/captcha-hcaptcha-providers.js`: NopeCHA/NoneCap v1 transports and automatic hCaptcha mapping.
 - `src/agent/captcha-solver.js`, `captcha-additional-providers.js`, `two-captcha.js`, `captcha-json-api.js`: automatic routes and shared request/poll lifecycles.

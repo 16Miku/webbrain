@@ -67,7 +67,7 @@ for (const build of ['chrome', 'firefox']) {
     t.after(() => { if (previous === undefined) delete globalThis[apiName]; else globalThis[apiName] = previous; });
     return payload;
   }
-  function automaticSolveFixture(t, { type = 'hcaptcha', injectionSucceeds = true, providerFails = false } = {}) {
+  function automaticSolveFixture(t, { type = 'hcaptcha', injectionSucceeds = true, providerFails = false, provider = type === 'hcaptcha' ? 'nonecap' : '2captcha', solverUserAgent } = {}) {
     const pageUrl = 'https://example.test/join';
     const widget = { type, frameUrl: pageUrl, websiteKey: '5bd005a4-6ac8-4a86-8e60-53083832ed22',
       visible: true, activeChallengeFrame: true, activeChallengeFrameVisible: true,
@@ -77,11 +77,11 @@ for (const build of ['chrome', 'firefox']) {
     api.tabs.get = async () => ({ url: page.frameContext.frameUrl });
     api.webNavigation.getAllFrames = async () => [{ frameId: 0, parentFrameId: -1, url: page.frameContext.frameUrl }];
     const agent = agentFor('act', 'full');
-    agent.captchaProviderIds = type === 'hcaptcha' ? ['nonecap'] : ['2captcha'];
+    agent.captchaProviderIds = [provider];
     agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
     const stored = {};
     api.storage = {
-      local: { get: async () => type === 'hcaptcha'
+      local: { get: async () => provider === 'capmonster' ? { capmonsterEnabled: true, capmonsterApiKey: 'a'.repeat(32) } : type === 'hcaptcha'
         ? { nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32) }
         : { twoCaptchaEnabled: true, twoCaptchaApiKey: 'a'.repeat(32) } },
       session: { get: async key => ({ [key]: stored[key] }), set: async value => Object.assign(stored, structuredClone(value)) },
@@ -108,13 +108,52 @@ for (const build of ['chrome', 'firefox']) {
       requests.push({ url, options });
       savedAtDispatch.push(structuredClone(stored[agent._convKey(1)]?.captchaGateState));
       if (providerFails) throw new Error('Provider connection lost after dispatch');
-      return Response.json(type === 'hcaptcha' ? { id: 'paid-task', status: 'solved', token: 'paid-token' }
+      return Response.json(type === 'hcaptcha' ? { id: 'paid-task', status: 'solved', token: 'paid-token', ...(solverUserAgent ? { user_agent: solverUserAgent } : {}) }
         : url.endsWith('/createTask') ? { taskId: 123 }
-          : { status: 'ready', solution: { gRecaptchaResponse: 'paid-token', token: 'paid-token' } });
+          : { status: 'ready', solution: { gRecaptchaResponse: 'paid-token', token: 'paid-token', ...(solverUserAgent ? { userAgent: solverUserAgent } : {}) } });
     });
     const timeout = globalThis.setTimeout;
     t.mock.method(globalThis, 'setTimeout', (fn, delay, ...args) => timeout(fn, delay === 5000 ? 0 : delay, ...args));
     return { agent, api, widget, page, pageUrl, stored, requests, savedAtDispatch };
+  }
+  test(`${build}: local Challenge schema rejection does not consume a paid attempt`, async t => {
+    const f = automaticSolveFixture(t, { type: 'turnstile' });
+    f.widget.metadata = { chlPageData: 'observed-page-data' };
+    f.api.storage.local.get = async () => ({ captchaSolverEnabled: true, capsolverApiKey: 'CAP-' + 'a'.repeat(32),
+      capmonsterEnabled: true, capmonsterApiKey: 'b'.repeat(32) });
+    const rejected = await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'turnstile' });
+    assert.equal(rejected.noDispatch, true, rejected.error);
+    assert.equal(rejected.dispatched, false);
+    assert.equal(f.requests.length, 0);
+    assert.equal(f.agent._captchaGateStates.get(1)?.publicGate.solveAttempted, undefined);
+    f.widget.metadata = { action: 'managed', cdata: 'observed-cdata', chlPageData: 'observed-page-data' };
+    const solved = await f.agent._executeToolImpl(1, 'solve_captcha', { type: 'turnstile' });
+    assert.equal(solved.provider, 'capmonster', solved.error);
+    assert.equal(solved.injected, true);
+  });
+
+  for (const [provider, type] of [['nonecap', 'hcaptcha'], ['capmonster', 'recaptcha_v3']]) {
+    for (const solverUserAgent of ['different-browser', 'test-browser']) {
+      test(`${build}: ${provider} enforces the returned User-Agent and retains a mismatched paid answer`, async t => {
+        const f = automaticSolveFixture(t, { provider, type, solverUserAgent });
+        const result = await f.agent._executeToolImpl(1, 'solve_captcha', { type, ...(type === 'recaptcha_v3' ? { pageAction: 'login' } : {}) });
+        assert.equal(result.injected, solverUserAgent === 'test-browser', result.error);
+        const record = f.agent._nativeCaptchaSolutions.get(1);
+        assert.equal(record.applied, solverUserAgent === 'test-browser');
+        if (solverUserAgent !== 'test-browser') {
+          assert.equal(result.manualCompletionRequired, true);
+          assert.equal(result.token, 'paid-token');
+          assert.equal(record.solution.userAgent, solverUserAgent);
+          const restored = agentFor('act', 'full');
+          await restored._hydrate(1);
+          const discovery = await restored._executeToolImpl(1, 'get_captcha_capabilities', {});
+          assert.equal(discovery.pendingNativeAnswer.solution.userAgent, solverUserAgent);
+        } else assert.equal(result.applicationRequired, undefined);
+        const count = f.requests.length;
+        assert.equal((await f.agent._executeToolImpl(1, 'solve_captcha', { type })).noDispatch, true);
+        assert.equal(f.requests.length, count);
+      });
+    }
   }
   for (const type of ['hcaptcha', 'recaptcha_v2', 'turnstile']) {
     test(`${build}: ${type} solve before any tree gate is saved before dispatch and cannot be bought twice`, async t => {
