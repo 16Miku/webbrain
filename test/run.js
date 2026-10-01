@@ -29506,7 +29506,7 @@ test('getToolsForMode: retired tools are not model-callable', () => {
         assert.match(prompt, /\/record\b/, `[${label}] ${promptLabel} prompt should direct recording requests to the /record slash command`);
         assert.match(prompt, /\/record --full-screen\b/, `[${label}] ${promptLabel} prompt should direct screen recording requests to /record --full-screen`);
       } else {
-        assert.doesNotMatch(prompt, /\/screenshot --full-page\b/, `[${label}] ${promptLabel} prompt must not mention the Chrome-only full-page screenshot flag`);
+        assert.match(prompt, /\/screenshot --full-page\b/, `[${label}] ${promptLabel} prompt should explain full-page capture with the Firefox companion`);
         assert.doesNotMatch(prompt, /\/record --full-screen\b/, `[${label}] ${promptLabel} prompt must not mention the Chrome-only full-screen recording flag`);
       }
     }
@@ -44231,11 +44231,11 @@ test('canonical slash parser handles flags, values, casing, termination, and har
   }
 
   assert.equal(firefox.parseSlashInvocation('/record --full-screen --transcribe').unsupported, true, 'Firefox should reject canonical recording locally');
-  assert.equal(firefox.parseSlashInvocation('/screenshot --full-page').unsupported, true, 'Firefox should reject the unsupported canonical screenshot flag locally');
+  assert.equal(firefox.parseSlashInvocation('/screenshot --full-page').action, 'full-page', 'Firefox should route full-page captures through the companion');
   assert.equal(firefox.SLASH_COMMANDS.find((command) => command.value === '/record').unsupported, true, 'Firefox recording should be hidden from discovery');
   const firefoxHelp = firefox.buildSlashCommandHelpHtml();
   assert.doesNotMatch(firefoxHelp, /\/record/, 'Firefox help should omit unsupported recording');
-  assert.doesNotMatch(firefoxHelp, /--full-page/, 'Firefox help should omit the unsupported full-page flag');
+  assert.match(firefoxHelp, /--full-page/, 'Firefox help should expose the full-page flag');
   const firefoxEnglish = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/locales/en.js'), 'utf8');
   assert.doesNotMatch(firefoxEnglish, /Stop an active recording/, 'Firefox help shortcuts should not advertise unsupported recording');
 
@@ -44702,7 +44702,7 @@ test('slash autocomplete progressively suggests only available unused flags', ()
   assert.equal(firefox.getMatches(firefox.getContext('/scratchpad '))[0]?.kind, 'base-action', 'Firefox should mirror the base-action row');
   assert.equal(firefox.getMatches(firefox.getContext('/scratchpad --clear '))[0]?.kind, 'base-action', 'Firefox should mirror Enter after a selected flag');
   assert.equal(firefox.getMatches(firefox.getContext('/schedule --help '))[0]?.descriptionKey, 'sp.slash.help', 'Firefox should describe the completed help action accurately');
-  assert.deepEqual(optionMatches(firefox, firefox.getContext('/screenshot ')), ['--help'], 'Firefox should omit unsupported flags but still offer command help');
+  assert.deepEqual(optionMatches(firefox, firefox.getContext('/screenshot ')), ['--full-page', '--help'], 'Firefox should offer full-page capture and command help');
   assert.deepEqual(optionMatches(firefox, firefox.getContext('/scratchpad --clear ')), [], 'Firefox should not suggest conflicting scratchpad actions');
 });
 
@@ -50342,7 +50342,11 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     assert.match(screenshotBody, /if \(currentTabId !== tabId \|\| !tab\?\.active\) return '';[\s\S]*?sendToBackground\('capture_viewport_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?pageUrl: tab\.url,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?modelRedactionReady: res\.modelRedactionReady === true,[\s\S]*?modelDataUrl: res\.modelDataUrl,[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\);/, `${label}: /screenshot should retain the background-created model copy, reject stale-tab completions, and keep the raw URL for local preview`);
     assert.doesNotMatch(screenshotBody, /Promise\.all|captureVisibleTab|capture_screenshot_redaction_snapshot/, `${label}: the side panel must not race viewport pixels against privacy geometry`);
     assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?screenshot-save-btn[\s\S]*?sp\.screenshot\.save_as/, `${label}: screenshot messages should render a visible Save As action`);
-    assert.match(panel, /function bindScreenshotSaveButton\(btn\)[\s\S]*?downloads\.download\(\{[\s\S]*?url: dataUrl,[\s\S]*?saveAs: true,[\s\S]*?conflictAction: 'uniquify'/, `${label}: screenshot Save As should use the browser Downloads API and native picker`);
+    if (label === 'chrome') {
+      assert.match(panel, /function bindScreenshotSaveButton\(btn\)[\s\S]*?downloads\.download\(\{[\s\S]*?url: dataUrl,[\s\S]*?saveAs: true,[\s\S]*?conflictAction: 'uniquify'/, `${label}: screenshot Save As should use the browser Downloads API and native picker`);
+    } else {
+      assert.match(panel, /saveScreenshot\(dataUrl, btn\.dataset\.filename/, 'Firefox Save As should use the blob-backed screenshot downloader');
+    }
     assert.match(panel, /function rebindRestoredMessageControls\(\)[\s\S]*?rebindScreenshotSaveButtons\(\);/, `${label}: restored screenshot messages should regain their Save As behavior`);
     assert.match(style, /\.screenshot-save-btn \{[\s\S]*?cursor: pointer;[\s\S]*?\}[\s\S]*?\.screenshot-save-btn:hover,[\s\S]*?\.screenshot-save-btn:focus-visible/, `${label}: screenshot Save As should be styled for pointer and keyboard interaction`);
     assert.match(locale, /'sp\.screenshot\.save_as': 'Save as…'/, `${label}: screenshot Save As should have an English label`);
@@ -50350,19 +50354,12 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     const fullPageIdx = panel.indexOf("if (command.value === '/screenshot' && action === 'full-page')");
     assert.match(panel, /function normalizeScreenshotRequestText\(text\) \{[\s\S]*?\.normalize\('NFKD'\)[\s\S]*?\.replace\(\/\[\\u0300-\\u036f\]\/g, ''\)[\s\S]*?\.replace\(\/\\u0131\/g, 'i'\)/, `${label}: plain screenshot request normalization should handle accented Turkish text`);
     assert.match(panel, /function isPlainScreenshotRequest\(text\) \{[\s\S]*?const s = normalizeScreenshotRequestText\(text\);[\s\S]*?s\.startsWith\('\/'\)[\s\S]*?ekran goruntusu[\s\S]*?ekran goruntusunu/, `${label}: plain screenshot request routing should cover English and Turkish screenshot-only requests`);
-    if (label === 'chrome') {
-      assert.notEqual(fullPageIdx, -1, `${label}: /screenshot --full-page parser missing`);
-      const fullPageBody = panel.slice(fullPageIdx, panel.indexOf("if (command.value === '/record'", fullPageIdx));
-      assert.match(fullPageBody, /tabs\.get\(tabId\)[\s\S]*?sendToBackground\('capture_full_page_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?pageUrl,[\s\S]*?captureBounds: res\.captureBounds,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?redactionSnapshot: res\.redactionSnapshot,[\s\S]*?\}\);[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?warning: res\.warning,[\s\S]*?pageUrl,[\s\S]*?stagedAttachment,[\s\S]*?\}\);/, `${label}: /screenshot --full-page should stage capture-time privacy geometry and render only in the initiating tab with URL-aware Save As`);
-      assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?warningHtml = warning[\s\S]*?escapeHtml\(warning\)/, `${label}: fallback full-page images should display their escaped assembly warning`);
-      assert.match(panel, /function isPlainFullPageScreenshotRequest\(text\) \{[\s\S]*?full\|whole\|entire\|complete[\s\S]*?tam sayfa[\s\S]*?ekran goruntusu/, `${label}: plain full-page screenshot request routing should cover English and Turkish requests`);
-      assert.match(panel, /function normalizeScreenshotCommandText\(text\) \{[\s\S]*?isPlainFullPageScreenshotRequest\(text\)[\s\S]*?return '\/screenshot --full-page';[\s\S]*?isPlainScreenshotRequest\(text\)[\s\S]*?return '\/screenshot';/, `${label}: screenshot normalization should route full-page requests before viewport screenshots`);
-    } else {
-      assert.equal(fullPageIdx, -1, `${label}: /screenshot --full-page action should stay Chrome-only`);
-      assert.doesNotMatch(panel, /capture_full_page_screenshot/, `${label}: should not call the Chrome-only full-page screenshot route`);
-      assert.doesNotMatch(panel, /isPlainFullPageScreenshotRequest/, `${label}: should not normalize full-page screenshot text into an unsupported slash command`);
-      assert.match(panel, /function normalizeScreenshotCommandText\(text\) \{[\s\S]*?if \(isPlainScreenshotRequest\(text\)\) return '\/screenshot';[\s\S]*?return text;[\s\S]*?\}/, `${label}: screenshot normalization should only route viewport screenshots`);
-    }
+    assert.notEqual(fullPageIdx, -1, `${label}: /screenshot --full-page parser missing`);
+    const fullPageBody = panel.slice(fullPageIdx, panel.indexOf("if (command.value === '/record'", fullPageIdx));
+    assert.match(fullPageBody, /tabs\.get\(tabId\)[\s\S]*?sendToBackground\('capture_full_page_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?pageUrl,[\s\S]*?captureBounds: res\.captureBounds,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?redactionSnapshot: res\.redactionSnapshot,[\s\S]*?\}\);[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?warning: res\.warning,[\s\S]*?pageUrl,[\s\S]*?stagedAttachment,[\s\S]*?\}\);/, `${label}: /screenshot --full-page should stage capture-time privacy geometry and render only in the initiating tab with URL-aware Save As`);
+    assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?warningHtml = warning[\s\S]*?escapeHtml\(warning\)/, `${label}: fallback full-page images should display their escaped assembly warning`);
+    assert.match(panel, /function isPlainFullPageScreenshotRequest\(text\) \{[\s\S]*?full\|whole\|entire\|complete[\s\S]*?tam sayfa[\s\S]*?ekran goruntusu/, `${label}: plain full-page screenshot request routing should cover English and Turkish requests`);
+    assert.match(panel, /function normalizeScreenshotCommandText\(text\) \{[\s\S]*?isPlainFullPageScreenshotRequest\(text\)[\s\S]*?return '\/screenshot --full-page';[\s\S]*?isPlainScreenshotRequest\(text\)[\s\S]*?return '\/screenshot';/, `${label}: screenshot normalization should route full-page requests before viewport screenshots`);
     const sendIdx = panel.search(/async function sendMessage\(extraChatParams(?: = \{\})?\)/);
     assert.notEqual(sendIdx, -1, `${label}: sendMessage missing`);
     const sendBody = panel.slice(sendIdx, panel.indexOf('let assistantEl = null;', sendIdx));
@@ -50657,8 +50654,8 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     for (const command of ['/schedule task', '/scratchpad --append note', '/scratchpad --clear', '/memory --add note', '/memory --forget id']) {
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation(command)), false, `${label}: ${command} should stay gated while busy`);
     }
+    assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/screenshot --full-page')), false, `${label}: full-page capture should stay gated while busy`);
     if (label === 'chrome') {
-      assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/screenshot --full-page')), false, `${label}: full-page capture should stay gated while busy`);
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/record --full-screen')), false, `${label}: recording should stay gated while busy`);
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/record --stop')), true, `${label}: recording Stop should stay available while busy`);
     }

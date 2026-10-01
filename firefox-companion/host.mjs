@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { BidiSession } from './session.mjs';
+import { nativeReplyMessages } from './native-messages.mjs';
 const session = new BidiSession();
 let buffer = Buffer.alloc(0);
 function reply(value) {
-  const data = Buffer.from(JSON.stringify(value));
-  const header = Buffer.alloc(4); header.writeUInt32LE(data.length);
-  process.stdout.write(Buffer.concat([header, data]));
+  for (const message of nativeReplyMessages(value)) {
+    const data = Buffer.from(JSON.stringify(message));
+    const header = Buffer.alloc(4); header.writeUInt32LE(data.length);
+    process.stdout.write(Buffer.concat([header, data]));
+  }
 }
 async function dispatch(message) {
   const { id, command, ...args } = message;
@@ -16,6 +19,7 @@ async function dispatch(message) {
       case 'openRun': result = await session.openRun(args.runId, args.token, args.url); break;
       case 'closeRun': result = await session.closeRun(args.runId); break;
       case 'perform': result = await session.perform(args.runId, args.action, args.payload || {}); break;
+      case 'captureFullPage': result = await session.captureFullPage(args.token, args.url); break;
       default: throw new Error('Unknown companion command');
     }
     reply({ id, result });

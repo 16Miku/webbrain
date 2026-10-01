@@ -697,6 +697,7 @@ are present and identical to Chrome (`src/firefox/src/trace/recorder.js`). All
 data-flow patterns are otherwise the same, except:
 
 - No dedicated vision sub-call (screenshots go directly to the main provider if vision is supported)
+- Full-page screenshots use the optional local Firefox trusted-automation companion over native messaging and loopback BiDi. The PNG stays local until the user attaches it to a model request. Capture-time page-coordinate redaction scans must agree before a privacy-enabled capture can be staged; otherwise only local preview/save is offered.
 - No slash-driven tab/screen recording
 - Conversation, rendered chat, and detached-run UI journals use
   `browser.storage.session`, matching Chrome's session-scoped persistence.

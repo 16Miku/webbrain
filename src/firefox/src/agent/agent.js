@@ -13597,6 +13597,39 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  async captureFullPageScreenshotForUser(tabId) {
+    if (!tabId) return { ok: false, error: 'No tab ID' };
+    try {
+      return await this._withIndicatorsHidden(tabId, async () => {
+        let before;
+        const capture = await firefoxBidi.captureFullPage(tabId, async () => {
+          before = await this.captureScreenshotRedactionSnapshotForUser(tabId, { coordinateSpace: 'page' });
+        });
+        if (!capture?.dataUrl) return { ok: false, error: 'Full-page screenshot returned no image data' };
+        const after = await this.captureScreenshotRedactionSnapshotForUser(tabId, { coordinateSpace: 'page' });
+        const stableSnapshot = before?.ok === true && after?.ok === true
+          && JSON.stringify(before.snapshot) === JSON.stringify(after.snapshot)
+          && before.snapshot.viewport.width === capture.captureBounds?.width
+          && before.snapshot.viewport.height === capture.captureBounds?.height;
+        // Retain the local preview/save path if redaction cannot be prepared,
+        // but never stage an unscanned or moving document for a model request.
+        const redactionUnavailable = this.screenshotRedaction === true && !stableSnapshot;
+        return {
+          ok: true,
+          dataUrl: capture.dataUrl,
+          captureBounds: capture.captureBounds,
+          ...(stableSnapshot ? { redactionSnapshotReady: true, redactionSnapshot: before.snapshot } : {}),
+          ...(redactionUnavailable ? {
+            redactionUnavailable: true,
+            warning: 'Screenshot redaction could not verify a stable page. You can save this image locally, but it cannot be attached to a message. Capture again after the page settles.',
+          } : {}),
+        };
+      });
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
+    }
+  }
+
   async captureViewportScreenshotForUser(tabId) {
     if (!tabId) return { ok: false, error: 'No tab ID' };
     try {

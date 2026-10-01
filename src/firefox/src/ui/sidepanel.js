@@ -1,3 +1,4 @@
+import { saveScreenshot } from './screenshot-download.js';
 /**
  * WebBrain Side Panel — Chat UI logic.
  * Default: compact history in chat plus the live label; click for status-only mode.
@@ -704,12 +705,12 @@ const SLASH_COMMANDS = [
   { value: '/print', usage: '/print', descriptionKey: 'sp.slash.print', action: 'print' },
   {
     value: '/screenshot',
-    usage: '/screenshot',
+    usage: '/screenshot [--full-page]',
     descriptionKey: 'sp.slash.screenshot',
     action: 'viewport',
     outOfBand: true,
     options: [
-      { value: '--full-page', descriptionKey: 'sp.slash.full_page_screenshot', action: 'full-page', unsupported: true, unsupportedUsage: '/screenshot --full-page', disallowPayload: true },
+      { value: '--full-page', descriptionKey: 'sp.slash.full_page_screenshot', action: 'full-page', outOfBand: false, disallowPayload: true },
     ],
   },
   {
@@ -1022,7 +1023,17 @@ function isPlainScreenshotRequest(text) {
     || /^(?:lutfen )?(?:bu |mevcut |aktif )?(?:sekmenin|sayfanin|ekranin) ekran goruntusunu (?:al|cek|goster|at)$/.test(s);
 }
 
+function isPlainFullPageScreenshotRequest(text) {
+  const s = normalizeScreenshotRequestText(text);
+  if (!s || s.startsWith('/')) return false;
+  return /^(?:please |pls )?(?:(?:full|whole|entire|complete) page|fullpage|long) (?:screenshot|screen ?shot)(?: (?:please|pls))?$/.test(s)
+    || /^(?:please |pls |can you |could you |would you )?(?:take|capture|grab|show|get) (?:a |the |this )?(?:(?:full|whole|entire|complete) page|fullpage|long) (?:screenshot|screen ?shot)(?: (?:of|for) (?:the |this |current )?(?:page|tab|screen|window))?$/.test(s)
+    || /^(?:lutfen )?(?:tam sayfa|butun sayfa|tum sayfa|uzun) ekran goruntusu(?: (?:al|cek|goster|at))?$/.test(s)
+    || /^(?:lutfen )?(?:bu |mevcut |aktif )?(?:sayfanin|sekmenin) (?:tam|butun|tum) ekran goruntusunu (?:al|cek|goster|at)$/.test(s);
+}
+
 function normalizeScreenshotCommandText(text) {
+  if (isPlainFullPageScreenshotRequest(text)) return '/screenshot --full-page';
   if (isPlainScreenshotRequest(text)) return '/screenshot';
   return text;
 }
@@ -7827,15 +7838,10 @@ function bindScreenshotSaveButton(btn) {
     btn.setAttribute('aria-busy', 'true');
     if (label) label.textContent = t('sp.screenshot.saving');
     try {
-      await browser.downloads.download({
-        url: dataUrl,
-        filename: btn.dataset.filename || screenshotDownloadFilename(
-          '',
-          result?.querySelector('.screenshot-result-image-full-page') != null,
-        ),
-        saveAs: true,
-        conflictAction: 'uniquify',
-      });
+      await saveScreenshot(dataUrl, btn.dataset.filename || screenshotDownloadFilename(
+        '',
+        result?.querySelector('.screenshot-result-image-full-page') != null,
+      ));
     } catch (error) {
       const message = error?.message || String(error);
       // Closing the native Save As dialog is an ordinary user choice.
@@ -8220,6 +8226,44 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       });
       if (currentTabId !== tabId) return '';
       addScreenshotResultMessage(res.dataUrl, { pageUrl: tab.url, stagedAttachment });
+    } catch (e) {
+      if (currentTabId !== tabId) return '';
+      addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: e.message })));
+    }
+    return '';
+  }
+
+  if (command.value === '/screenshot' && action === 'full-page') {
+    try {
+      const pageUrl = tabId == null
+        ? ''
+        : await browser.tabs.get(tabId).then(tab => tab?.url || '').catch(() => '');
+      const res = await sendToBackground('capture_full_page_screenshot', { tabId });
+      if (currentTabId !== tabId) return '';
+      if (!res?.ok || !res.dataUrl) {
+        addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: res?.error || 'unknown error' })));
+        return '';
+      }
+      // An enabled privacy pass that could not prepare this capture makes it
+      // undeliverable: _applyAttachments rejects a full-page screenshot with no
+      // capture-time snapshot. Keep the preview and save button, but do not
+      // stage a chip the user would have to remove before sending anything.
+      const stagedAttachment = res.redactionUnavailable === true
+        ? null
+        : await stageScreenshotAttachment(tabId, res.dataUrl, {
+          fullPage: true,
+          pageUrl,
+          captureBounds: res.captureBounds,
+          redactionSnapshotReady: res.redactionSnapshotReady === true,
+          redactionSnapshot: res.redactionSnapshot,
+        });
+      if (currentTabId !== tabId) return '';
+      addScreenshotResultMessage(res.dataUrl, {
+        fullPage: true,
+        warning: res.warning,
+        pageUrl,
+        stagedAttachment,
+      });
     } catch (e) {
       if (currentTabId !== tabId) return '';
       addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: e.message })));
