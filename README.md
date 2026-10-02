@@ -211,6 +211,7 @@ Chrome side panel shortcuts work when the WebBrain side panel has focus.
 | [Providers and models](docs/providers-and-models.md)                                                                     | All provider cards, local setup, tiers                   |
 | [Skills](docs/skills.md)                                                                                                 | Bundled skills, importing, skill tools                   |
 | [Security model](docs/security-model.md)                                                                                 | Permissions, credentials, trust boundaries               |
+| [Cloud Bridge approval](docs/cloud-bridge-browser-approval.md)                                                           | Opt-in browser registration and approval for backends    |
 | [Prompt-injection defense](docs/prompt-injection-defense.md)                                                             | Defense layers and known gaps                            |
 | [Privacy and data flow](docs/privacy-and-data-flow.md)                                                                   | What leaves the browser, and what doesn't                |
 | [Accessibility tree and refs](docs/accessibility-tree-and-refs.md)                                                       | How pages are read and targeted                          |
@@ -293,8 +294,12 @@ npx -y @webbrain/mcp-server
 
 Once the server is running, open **WebBrain → Settings → General → Advanced →
 MCP**, set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
-**Chromium only** — the control and bridge runtime use the extension's off-screen
-document, which the Firefox build does not have.
+On Chromium browsers the bridge runs from the extension's off-screen document.
+Firefox hosts it in the background page and is configured under **Settings →
+Cloud Bridge** instead (not yet verified against the MCP server on a real Firefox
+install). A backend that needs to approve each browser before it can send
+commands can use the opt-in token handshake described in
+[Cloud Bridge browser approval](docs/cloud-bridge-browser-approval.md).
 
 If Settings reports **Connection error: WebSocket error**, nothing is normally
 listening at the configured URL. Start the MCP server, confirm that the URL uses

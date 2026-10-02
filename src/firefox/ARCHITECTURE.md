@@ -9,6 +9,7 @@ Firefox uses Manifest V2 (background page, not service worker) and has **no acce
 - **Optional trusted events** — standard mode uses synthetic events. The experimental [BiDi companion](../../firefox-companion/README.md) adds trusted click, hover, text, supported keys, file-input attachment, and native JavaScript-dialog handling. It requires a local helper and Firefox remote automation; other tools retain their existing implementations. This is a Firefox-specific transport, not a Chrome CDP adapter.
 - **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureTab()` instead of CDP `Page.captureScreenshot`; it can capture the run tab while that tab is inactive. Firefox has exposed `tabs.captureTab()` since Firefox 59, before WebBrain's current minimum, and the manifest declares the required `<all_urls>` permission.
 - **No shadow DOM piercing** — content script can read open shadow roots via `element.shadowRoot`, but cannot pierce closed roots.
+- **Cloud Bridge lives in the background page** — with no offscreen document, `src/cloud-bridge.js` holds the outbound WebSocket and hands `cloud_*` commands straight to `handleMessage`; `src/cloud-runs.js` mirrors the Chrome controller and receives the bridge as an injected dependency. The protocol and optional browser approval are identical to Chrome ([docs/cloud-bridge-browser-approval.md](../../docs/cloud-bridge-browser-approval.md)).
 - **No offscreen document** — no HTTP fetch proxy for localhost LLM servers with Private Network Access / CORS issues. User must ensure their local LLM server sends permissive CORS headers.
 - **Some Chrome-only tools/features remain absent** — no CDP full-page screenshot, CDP upload automation, tab recording, offscreen fetch proxy, Chrome-only `shadow_dom_query`, or closed-shadow-root traversal.
 
@@ -103,7 +104,7 @@ src/firefox/
 └── icons/
 ```
 
-Notable absences vs Chrome: no `cdp/`, no `offscreen/`, no `recorder/`, no `providers/fetch-with-fallback.js`.
+Notable absences vs Chrome: no `cdp/`, no `offscreen/`, no `recorder/`, no `providers/fetch-with-fallback.js`. The Cloud Bridge (`cloud-bridge.js`, `cloud-runs.js`) sits next to `background.js` instead of under `offscreen/`.
 
 ## Permissions
 
