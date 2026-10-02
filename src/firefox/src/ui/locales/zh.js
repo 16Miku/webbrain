@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Simplified Chinese (zh).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '插件界面缩放',
   'sp.ui_scale.decrease': '缩小插件界面',
   'sp.ui_scale.increase': '放大插件界面',

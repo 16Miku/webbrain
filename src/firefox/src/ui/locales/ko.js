@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Korean (ko).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '확장 프로그램 UI 확대/축소',
   'sp.ui_scale.decrease': '확장 프로그램 UI 축소',
   'sp.ui_scale.increase': '확장 프로그램 UI 확대',

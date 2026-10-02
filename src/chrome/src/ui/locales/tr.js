@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Turkish (tr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Uzantı arayüzü yakınlaştırması',
   'sp.ui_scale.decrease': 'Uzantı arayüzünü uzaklaştır',
   'sp.ui_scale.increase': 'Uzantı arayüzünü yakınlaştır',

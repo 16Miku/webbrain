@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // French (fr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom de l’interface de l’extension',
   'sp.ui_scale.decrease': 'Réduire le zoom de l’interface',
   'sp.ui_scale.increase': 'Augmenter le zoom de l’interface',

@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Portuguese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom da interface da extensão',
   'sp.ui_scale.decrease': 'Reduzir o zoom da interface',
   'sp.ui_scale.increase': 'Aumentar o zoom da interface',

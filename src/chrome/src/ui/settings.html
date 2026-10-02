@@ -1429,6 +1429,7 @@
     <button class="tab-btn" type="button" role="tab" data-tab="memory" data-i18n="st.tab.memory"></button>
     <button class="tab-btn" type="button" role="tab" data-tab="skills" data-i18n="st.tab.skills"></button>
     <button class="tab-btn" type="button" role="tab" data-tab="permissions" data-i18n="st.tab.permissions"></button>
+    <button class="tab-btn" type="button" role="tab" data-tab="cloudbridge" data-i18n="st.tab.cloudbridge"></button>
   </nav>
 
   <section class="tab-panel" data-panel="display" role="tabpanel">
@@ -1719,7 +1720,7 @@
             </label>
             <div class="cloud-bridge-status" id="cloud-bridge-status" data-state="disabled" role="status" aria-live="polite">
               <span class="cloud-bridge-status-dot" aria-hidden="true"></span>
-              <span id="cloud-bridge-status-text" data-i18n="st.display.cloud_bridge.status_disabled"></span>
+              <span id="cloud-bridge-status-text" data-i18n="st.cb.status_disabled"></span>
             </div>
           </div>
           <div class="setting-row">
@@ -2497,12 +2498,50 @@
     </div>
   </section>
 
+  <section class="tab-panel" data-panel="cloudbridge" role="tabpanel">
+    <div class="provider-card" id="cb-card">
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label" id="cb-enabled-label" data-i18n="st.cb.enabled"></div>
+          <div class="setting-desc" data-i18n="st.cb.desc"></div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="cb-enabled" aria-labelledby="cb-enabled-label">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <label class="cloud-bridge-url-field" for="cb-url">
+        <span class="cloud-bridge-url-label" data-i18n="st.cb.url"></span>
+        <input class="setting-input" type="text" id="cb-url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="ws://127.0.0.1:17374/extension">
+      </label>
+      <label class="cloud-bridge-url-field" for="cb-token" style="margin-top:12px;">
+        <span class="cloud-bridge-url-label" data-i18n="st.cb.token"></span>
+        <input class="setting-input" type="password" id="cb-token" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="setting-desc" style="margin-top:4px;" data-i18n="st.cb.token_hint"></div>
+      <label class="cloud-bridge-url-field" for="cb-browser-id" style="margin-top:12px;">
+        <span class="cloud-bridge-url-label" data-i18n="st.cb.browser_name"></span>
+        <input class="setting-input" type="text" id="cb-browser-id" autocomplete="off" spellcheck="false" maxlength="64">
+      </label>
+      <div class="setting-desc" style="margin-top:12px;"><span data-i18n="st.cb.installation_id"></span> <code id="cb-installation-id">—</code></div>
+      <div class="btn-row" style="margin-top:14px;">
+        <button class="btn-secondary" id="cb-test" data-i18n="st.cb.test"></button>
+      </div>
+      <div class="cloud-bridge-status" id="cb-status" data-state="disabled" role="status" aria-live="polite" style="margin-top:12px;">
+        <span class="cloud-bridge-status-dot" aria-hidden="true"></span>
+        <span id="cb-status-text" data-i18n="st.cb.status_disabled"></span>
+      </div>
+      <div class="info-box" style="margin-top:16px;" data-i18n-html="st.cb.howto_html"></div>
+    </div>
+  </section>
+
   <!-- Tab switcher must be an external script — Manifest V3's default
        CSP (`script-src 'self'`) blocks inline <script> execution. -->
   <script src="settings-tabs.js"></script>
   <script type="module" src="apocalypse-comm.js"></script>
   <script type="module" src="download-tracker.js"></script>
   <script src="settings.js" type="module"></script>
+  <script src="settings-cloud-bridge.js" type="module"></script>
   <script src="safesocial-settings.js" type="module"></script>
 </body>
 </html>

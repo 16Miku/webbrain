@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Hebrew (he).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'הגדלת ממשק התוסף',
   'sp.ui_scale.decrease': 'הקטנת תצוגת ממשק התוסף',
   'sp.ui_scale.increase': 'הגדלת תצוגת ממשק התוסף',

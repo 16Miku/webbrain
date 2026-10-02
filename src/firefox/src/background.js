@@ -16,6 +16,8 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
+import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
+import { createCloudBridge } from './cloud-bridge.js';
 import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController, sweepOpfsSwapFiles } from './agent/apocalypse-mode.js';
 import { createEmergencyDownloadController } from './agent/emergency-download-controller.js';
 import { createHostedOfflineRagIndexClient } from './agent/offline-rag-index-host.js';
@@ -175,7 +177,8 @@ const teacherSessionStore = createTeacherSessionStore(browser.storage.session);
 const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
   automationOwnsTab: (tabId) => agent.isRunning(tabId)
     || detachedRunStarts.has(tabId)
-    || scheduler.isRunning(tabId),
+    || scheduler.isRunning(tabId)
+    || cloudRunController.isRunning(tabId),
 });
 agent.setRunStartGuard((tabId) => teacherRunInterlock.guardRunStart(tabId));
 const profileSync = new ProfileSyncManager(browser.storage.local);
@@ -209,6 +212,20 @@ const scheduler = new ScheduledJobManager({
 });
 agent.setScheduler(scheduler);
 scheduler.start();
+
+// Firefox has no offscreen document, so the Cloud Bridge socket lives in this
+// background page and hands commands straight to handleMessage.
+const cloudBridge = createCloudBridge({ dispatch: (msg) => handleMessage(msg, null) });
+const cloudRunController = createCloudRunController({
+  chromeApi: browser,
+  agent,
+  bridge: cloudBridge,
+  sendIndicator: (tabId, type) => sendIndicatorMessage(tabId, type),
+  workflowTrace,
+});
+alwaysAllowApiMutationsReady
+  .then(() => cloudRunController.syncBridge())
+  .catch(() => {});
 
 const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
@@ -1048,6 +1065,7 @@ browser.runtime.onInstalled.addListener(async (details) => {
   await loadClarifyTimeout();
   await loadAutoScreenshot();
   await syncAgentUserMemoryFromStorage().catch(() => {});
+  await cloudRunController.syncBridge().catch(() => {});
   scheduleUserMemoryExtractionDrain(5000);
   console.log('[WebBrain] Extension installed, providers loaded.');
 });
@@ -1055,6 +1073,7 @@ browser.runtime.onInstalled.addListener(async (details) => {
 browser.runtime.onStartup?.addListener?.(async () => {
   await createContextMenus();
   syncAgentUserMemoryFromStorage().catch(() => {});
+  cloudRunController.syncBridge().catch(() => {});
   scheduleUserMemoryExtractionDrain(5000);
 });
 
@@ -1097,6 +1116,10 @@ browser.storage.onChanged.addListener((changes) => {
   if (changes[API_MUTATION_OBSERVER_KEY]) {
     const value = changes[API_MUTATION_OBSERVER_KEY].newValue;
     setApiMutationObserverEnabled(value === undefined || value === true);
+  }
+  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
+    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
+    cloudRunController.syncBridge().catch(() => {});
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = changes.strictSecretMode.newValue === true;
@@ -3413,6 +3436,40 @@ async function handleMessage(msg, sender) {
       return { ok: true, enabled: msg.enabled };
     }
 
+    case 'cloud_run':
+      return await cloudRunController.startRun(msg);
+    case 'cloud_workflow_compile':
+      return await cloudRunController.compileWorkflow(msg);
+    case 'cloud_workflow_run':
+      return await cloudRunController.startWorkflowRun(msg);
+    case 'cloud_status':
+      return await cloudRunController.status(msg);
+    case 'cloud_scheduled_jobs': {
+      const jobIds = [...new Set((msg.jobIds || msg.job_ids || [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean))].slice(0, 100);
+      if (!jobIds.length) {
+        return { error: 'cloud_scheduled_jobs requires expected job IDs.', status: 400 };
+      }
+      const expected = new Set(jobIds);
+      const jobs = await scheduler.listJobs({ tabId: null });
+      return {
+        ok: true,
+        jobs: jobs
+          .filter(job => expected.has(String(job?.id || '')))
+          .map(job => cloudSafeScheduledJob(job, { strictSecretMode: agent.strictSecretMode === true })),
+      };
+    }
+    case 'cloud_respond':
+      return await cloudRunController.respond(msg);
+    case 'cloud_abort':
+      return await cloudRunController.abort(msg);
+    case 'cloud_bridge_start':
+      return await cloudRunController.startBridge(msg.url);
+    case 'cloud_bridge_stop':
+      return await cloudRunController.stopBridge();
+    case 'cloud_bridge_status':
+      return await cloudRunController.bridgeStatus();
     case 'get_providers': {
       return { providers: providerManager.getAll(), active: providerManager.activeProviderId };
     }

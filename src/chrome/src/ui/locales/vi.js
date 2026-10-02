@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Vietnamese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Thu phóng giao diện tiện ích',
   'sp.ui_scale.decrease': 'Thu nhỏ giao diện tiện ích',
   'sp.ui_scale.increase': 'Phóng to giao diện tiện ích',

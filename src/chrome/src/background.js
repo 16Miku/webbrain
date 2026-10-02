@@ -1212,7 +1212,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
   if (PROFILE_SYNC_DATA_KEYS.some((key) => changes[key])) profileSync.noteChanges(changes).catch(() => {});
   if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => {});
-  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl) {
+  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
+    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
     cloudRunController.syncBridge().catch(() => {});
   }
   if (changes.maxAgentSteps) {

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Polski — translated from en.js. Keys mirror the English canonical file.
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Powiększenie interfejsu rozszerzenia',
   'sp.ui_scale.decrease': 'Pomniejsz interfejs rozszerzenia',
   'sp.ui_scale.increase': 'Powiększ interfejs rozszerzenia',

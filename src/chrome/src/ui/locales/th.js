@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Thai (th).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'ซูม UI ของส่วนขยาย',
   'sp.ui_scale.decrease': 'ย่อ UI ของส่วนขยาย',
   'sp.ui_scale.increase': 'ขยาย UI ของส่วนขยาย',

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Filipino / Tagalog (tl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Pag-zoom ng UI ng extension',
   'sp.ui_scale.decrease': 'Bawasan ang zoom ng UI ng extension',
   'sp.ui_scale.increase': 'Dagdagan ang zoom ng UI ng extension',

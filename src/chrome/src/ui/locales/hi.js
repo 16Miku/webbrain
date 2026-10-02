@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Hindi — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'एक्सटेंशन UI ज़ूम',
   'sp.ui_scale.decrease': 'एक्सटेंशन UI को छोटा करें',
   'sp.ui_scale.increase': 'एक्सटेंशन UI को बड़ा करें',

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Ukrainian (uk).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Масштаб інтерфейсу розширення',
   'sp.ui_scale.decrease': 'Зменшити інтерфейс розширення',
   'sp.ui_scale.increase': 'Збільшити інтерфейс розширення',

@@ -686,7 +686,9 @@ function isUsableCloudTab(tab) {
 export function createCloudRunController({
   chromeApi,
   agent,
-  ensureOffscreen,
+  // Firefox MV2 has no offscreen document: the bridge runs in the background
+  // page (see cloud-bridge.js) and is injected here.
+  bridge,
   sendIndicator = () => {},
   startRecording = null,
   stopRecording = null,
@@ -1426,21 +1428,18 @@ export function createCloudRunController({
   }
 
   async function startBridge(url = DEFAULT_CLOUD_BRIDGE_URL) {
-    await ensureOffscreen();
-    return api.runtime.sendMessage({
-      type: 'cloud-bridge-start',
+    return bridge.start({
       url: normalizeCloudBridgeUrl(url),
       ...(await bridgeIdentity()),
     });
   }
 
   async function stopBridge() {
-    return api.runtime.sendMessage({ type: 'cloud-bridge-stop' });
+    return bridge.stop();
   }
 
   async function bridgeStatus() {
-    await ensureOffscreen();
-    return api.runtime.sendMessage({ type: 'cloud-bridge-status' });
+    return bridge.status();
   }
 
   async function syncBridge() {
