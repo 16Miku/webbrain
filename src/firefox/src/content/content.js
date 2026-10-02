@@ -1558,6 +1558,29 @@
     }
   }
 
+  function _primaryClickText(el) {
+    const tag = String(el.tagName || '').toLowerCase();
+    if (tag === 'textarea') return '';
+    if (tag === 'input') {
+      const type = String(el.getAttribute?.('type') || 'text').toLowerCase();
+      return /^(button|submit|reset)$/.test(type) ? String(el.value || '').trim().toLowerCase() : '';
+    }
+    return String(el.innerText || '').trim().toLowerCase();
+  }
+
+  // A painted passive label is not a competing control. Collapse primary
+  // labels to their actionable owner before dispatch and preflight choose it.
+  function _preferredPrimaryTextClickMatch(matches) {
+    const controls = new Map();
+    for (const match of matches) {
+      if (match.primary !== true) continue;
+      const actionable = _resolveInteractiveAncestor(match.e) || match.e;
+      if (!_isInteractive(actionable) || !_isEligibleTextClickTarget(actionable)) continue;
+      if (!controls.has(actionable)) controls.set(actionable, match);
+    }
+    return controls.size === 1 ? [...controls.values()][0] : null;
+  }
+
   const _textCandidateCache = new WeakMap();
   function _clickTextCandidates(scope) {
     _observeDomRevisionRoot(document);
@@ -1626,7 +1649,9 @@
     const list = [];
     for (const e of all) {
       const text = _normTxt(e);
-      if (text) list.push({ e, txt: text, primary: true });
+      const primaryText = _primaryClickText(e);
+      if (text) list.push({ e, txt: text, primary: !!primaryText && text === primaryText });
+      if (primaryText && primaryText !== text) list.push({ e, txt: primaryText, primary: true });
       // Secondary needles (primary: false): in ambiguity resolution a
       // visible-text match on a different control must not lose to them.
       for (const attr of ['aria-label', 'title', 'placeholder', 'data-tooltip']) {
@@ -2131,7 +2156,10 @@
         const collapsedByAncestor = new Map();
         for (const match of matches) {
           const actionable = _resolveInteractiveAncestor(match.e) || match.e;
-          if (!collapsedByAncestor.has(actionable)) collapsedByAncestor.set(actionable, match);
+          if (!collapsedByAncestor.has(actionable)
+              || (match.primary === true && collapsedByAncestor.get(actionable).primary !== true)) {
+            collapsedByAncestor.set(actionable, match);
+          }
         }
         if (collapsedByAncestor.size < matches.length) matches = [...collapsedByAncestor.values()];
         if (matches.length === 1) {
@@ -2140,27 +2168,14 @@
         }
       }
       if (!el && matches.length > 1) {
-        // A control's own visible text outranks an attribute-derived needle
-        // (aria-label, title, placeholder, data-tooltip) on a DIFFERENT
-        // control. An input's competing aria-label must not turn a genuinely
-        // labeled submit button into a false ambiguity — the submit probe in
-        // agent.js ranks aria-label below innerText/value/placeholder for
-        // exactly this reason. Icon-only controls are unaffected: with no
-        // visible glyphs their aria-label is their primary text.
-        const eligibleMatches = matches.filter(m => _isEligibleTextClickTarget(m.e));
-        const primaryMatches = eligibleMatches.filter(m => m.primary === true);
-        if (primaryMatches.length > 0 && primaryMatches.length < matches.length) {
-          const primaryCollapsed = new Map();
-          for (const m of primaryMatches) {
-            const actionable = _resolveInteractiveAncestor(m.e) || m.e;
-            if (!primaryCollapsed.has(actionable)) primaryCollapsed.set(actionable, m);
-          }
-          if (primaryCollapsed.size === 1) {
-            const [entry] = primaryCollapsed.values();
-            el = _resolveInteractiveAncestor(entry.e) || entry.e;
-            textResolvedExact = (usedMode === 'exact');
-            matches = [entry];
-          }
+        // Prefer a unique visible caption only when its actionable owner can
+        // receive the click. Passive text and attribute-only names retain the
+        // existing interactive-target and ambiguity rules.
+        const entry = _preferredPrimaryTextClickMatch(matches);
+        if (entry) {
+          el = _resolveInteractiveAncestor(entry.e) || entry.e;
+          textResolvedExact = (usedMode === 'exact');
+          matches = [entry];
         }
       }
       if (!el && matches.length > 1) {
@@ -4783,10 +4798,8 @@
             if (matches.length > 1) {
               const eligibleMatches = matches.filter(({ e }) => _isEligibleTextClickTarget(e));
               if (eligibleMatches.length) matches = eligibleMatches;
-              const primaryMatches = eligibleMatches.filter(({ primary }) => primary === true);
-              if (primaryMatches.length > 0 && primaryMatches.length < matches.length) {
-                matches = primaryMatches;
-              }
+              const primaryMatch = _preferredPrimaryTextClickMatch(matches);
+              if (primaryMatch) matches = [primaryMatch];
               const interactiveMatches = matches.filter(({ e }) => _isInteractive(e));
               if (interactiveMatches.length === 1) matches = interactiveMatches;
             }
@@ -5173,12 +5186,19 @@
       // exposes a send control or a verified LinkedIn public-post control.
       const dialogSelector = 'dialog,[role="dialog"],[role="alertdialog"],[aria-modal="true"]';
       const layoutDialog = layoutCandidate?.closest?.(dialogSelector);
+      // Empty Gmail drafts can have a disabled Send button. Their dedicated
+      // body editor is compose evidence; a generic filter textarea is not.
+      const verifiedGmailBody = params.adapterName === 'gmail'
+        && layoutCandidate?.matches?.('[contenteditable="true"][role="textbox"]')
+        && (layoutCandidate.getAttribute('g_editable') === 'true'
+          || !!layoutDialog?.querySelector?.('input[name="subjectbox"]'));
       const layoutInComposeDialog = !!layoutDialog
         && !verifiedNavigationEditable(layoutCandidate)
         && layoutCandidate.matches?.('textarea,[contenteditable="true"],[role="textbox"]:not(input)')
         && Array.from(layoutDialog.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],[data-action]'))
           .some(control => visible(control) && control.closest(dialogSelector) === layoutDialog
-            && (_hasMessageCommitName(control.getAttribute('aria-label') || control.value || control.innerText || control.textContent)
+            && ((_hasMessageCommitName(control.getAttribute('aria-label') || control.value || control.innerText || control.textContent)
+                && (_isEligibleTextClickTarget(control) || verifiedGmailBody))
               || verifiedLinkedInPublicPostControl(control)));
       const layoutComposer = layoutCandidate
         && (layoutInComposeDialog
@@ -5299,14 +5319,17 @@
               return !!control.closest?.('[class*="msg-"],[class*="messaging"],[id*="messaging"],[data-messaging],[data-test-messaging],[role="log"]');
             } catch { return false; }
           })();
-          // LinkedIn is the strictest contract: every control that may act
-          // without a composer has a verified classifier above (post entry,
-          // public Post, navigation). A control that matched none of them is
-          // unverified, so it is NOT proven non-message. A button-like
-          // control or a link the classifier saw but declined to verify
-          // (fragment, script:, mailto:, profile, unknown route) fails closed
-          // instead of being approved.
-          const linkedInUnverified = params.adapterName === 'linkedin' && (
+          // Known compose surfaces and unverified composer openers stay protected.
+          // Ordinary feed/profile controls do not become message actions merely
+          // because LinkedIn's navigation classifier has no matching route.
+          const composeDialog = _composedClosestElement(control, 'dialog,[role="dialog"],[role="alertdialog"]');
+          const linkedInComposeSurface = params.adapterName === 'linkedin' && (
+            /^start a post$/i.test(actionLabel)
+            || /^\/(?:messaging(?:\/|$)|sharing\/compose(?:\/|$))/.test(location.pathname)
+            || !!_composedClosestElement(control, '.share-box,[class*="msg-"],[class*="messaging"],[id*="messaging"],[data-messaging],[data-test-messaging],[role="log"]')
+            || (composeDialog && Array.from(composeDialog.querySelectorAll('[contenteditable="true"],textarea')).some(visible))
+          );
+          const linkedInUnverified = linkedInComposeSurface && (
             control.matches?.('button,[role="button"],input[type="submit"],input[type="button"],[data-action]') === true
             || (control.matches?.('a[href]') === true && linkedInNavigation === 'none')
           );
