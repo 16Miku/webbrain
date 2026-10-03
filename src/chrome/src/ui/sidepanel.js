@@ -11349,6 +11349,8 @@ function clearTransientAssistantTextForToolCall() {
 // WebBrain Compass returns a 402 with one trailing billing action. Keep the
 // matcher narrow so ordinary subscription text is not converted into billing UI.
 const SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain Plus|Update payment method):\s*(https?:\/\/\S+)/i;
+const SUBSCRIBE_ACTION_LABELS = { upgrade: 'sp.subscribe.upgrade', payment: 'st.account.update_payment', subscribe: 'sp.subscribe.btn' };
+const SUBSCRIBE_RESUME_LABELS = { upgrade: 'sp.subscribe.resume_upgrade', payment: 'sp.subscribe.resume_payment', subscribe: 'sp.subscribe.resume' };
 const COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
 const COST_ALLOWANCE_BUMP_USD = 10;
 
@@ -11459,8 +11461,7 @@ function renderSubscribeError(textEl, content, resumeMode = '') {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'subscribe-btn';
-  btn.textContent = t(parsed.action === 'upgrade' ? 'sp.subscribe.upgrade' : 'sp.subscribe.btn');
-  if (parsed.action === 'payment') btn.textContent = t('st.account.update_payment');
+  btn.textContent = t(SUBSCRIBE_ACTION_LABELS[parsed.action] || SUBSCRIBE_ACTION_LABELS.subscribe);
   if (parsed.action === 'upgrade') btn.classList.add('subscribe-upgrade-btn');
   btn.dataset.subscribeUrl = parsed.url;
   btn.dataset.bound = 'true';
@@ -11470,8 +11471,7 @@ function renderSubscribeError(textEl, content, resumeMode = '') {
   const resumeBtn = document.createElement('button');
   resumeBtn.type = 'button';
   resumeBtn.className = 'subscribe-resume-btn';
-  resumeBtn.textContent = t(parsed.action === 'upgrade' ? 'sp.subscribe.resume_upgrade' : 'sp.subscribe.resume');
-  if (parsed.action === 'payment') resumeBtn.textContent = t('sp.subscribe.resume_payment');
+  resumeBtn.textContent = t(SUBSCRIBE_RESUME_LABELS[parsed.action] || SUBSCRIBE_RESUME_LABELS.subscribe);
   resumeBtn.dataset.resumeMode = ['ask', 'act', 'dev'].includes(resumeMode)
     ? resumeMode
     : (textEl.closest('.message.assistant')?.dataset.runMode || agentMode);

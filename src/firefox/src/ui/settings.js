@@ -435,6 +435,7 @@ if (globalThis.browser?.storage?.onChanged) {
 
 const WEBBRAIN_SUBSCRIBE_URL = 'https://webbrain.one/subscribe';
 const WEBBRAIN_ACCOUNT_URL = 'https://api.webbrain.one/account';
+const WEBBRAIN_BILLING_STATUS_URL = 'https://api.webbrain.one/v1/billing/status';
 
 const DEFAULT_COST_ALLOWANCE_USD = 10;
 const MAX_AGENT_STEPS_DEFAULT = 130;
@@ -2420,16 +2421,11 @@ async function refreshWebbrainPaymentNotice() {
   const notice = providersContainer.querySelector('.webbrain-payment-notice');
   const deviceGuid = providersData.webbrain_cloud?.deviceGuid;
   if (!notice || !deviceGuid) return;
-  try {
-    const response = await fetch('https://api.webbrain.one/v1/billing/status', {
-      headers: { 'X-WebBrain-Device-Id': deviceGuid },
-      cache: 'no-store',
-      credentials: 'omit',
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) return;
-    const status = await response.json();
-    if (!notice.isConnected || !['past_due', 'unpaid'].includes(status.subscription_status)) return;
+  const billingStatusUrl = typeof WEBBRAIN_BILLING_STATUS_URL === 'string'
+    ? WEBBRAIN_BILLING_STATUS_URL
+    : 'https://api.webbrain.one/v1/billing/status';
+  const renderNotice = (subscriptionStatus) => {
+    if (!notice.isConnected || !['past_due', 'unpaid'].includes(subscriptionStatus)) return;
     const message = document.createElement('p');
     message.textContent = t('st.account.payment_failed');
     const link = document.createElement('a');
@@ -2440,7 +2436,45 @@ async function refreshWebbrainPaymentNotice() {
     notice.replaceChildren(message, link);
     notice.style.cssText = 'margin-top:10px;padding:12px;border-radius:6px;border:1px solid var(--warning,#b7791f);';
     notice.hidden = false;
-  } catch { /* An unavailable billing check must not interrupt settings. */ }
+  };
+  // Per-session cache: renderProviders() runs on every search keystroke and the
+  // status only changes after a Stripe redirect, so reuse the last lookup.
+  const cached = refreshWebbrainPaymentNotice._cache;
+  if (cached?.deviceGuid === deviceGuid) {
+    renderNotice(cached.subscriptionStatus);
+    return;
+  }
+  try {
+    let statusPromise = refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid
+      ? refreshWebbrainPaymentNotice._inflight.promise
+      : null;
+    if (!statusPromise) {
+      statusPromise = (async () => {
+        const response = await fetch(billingStatusUrl, {
+          headers: { 'X-WebBrain-Device-Id': deviceGuid },
+          cache: 'no-store',
+          credentials: 'omit',
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) return null;
+        const status = await response.json();
+        return status.subscription_status;
+      })();
+      refreshWebbrainPaymentNotice._inflight = { deviceGuid, promise: statusPromise };
+    }
+    const subscriptionStatus = await statusPromise;
+    if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
+      refreshWebbrainPaymentNotice._inflight = null;
+    }
+    if (subscriptionStatus == null) return;
+    refreshWebbrainPaymentNotice._cache = { deviceGuid, subscriptionStatus };
+    renderNotice(subscriptionStatus);
+  } catch {
+    if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
+      refreshWebbrainPaymentNotice._inflight = null;
+    }
+    /* An unavailable billing check must not interrupt settings. */
+  }
 }
 
 function renderProviders() {
