@@ -22,7 +22,9 @@ cd mcp-server && npm install && npm run build
 
 ## Connect the browser
 
-> **Chromium only.** Chrome, Edge, Brave, Opera, Vivaldi. The bridge runs from the extension's **offscreen document**, and the Firefox build has none — `cloud-bridge.js` and `cloud-runs.js` live only under `src/chrome/`. See [`src/firefox/ARCHITECTURE.md`](../src/firefox/ARCHITECTURE.md).
+> **Chromium first.** Chrome, Edge, Brave, Opera, Vivaldi run the bridge from the extension's **offscreen document** (`src/chrome/src/offscreen/cloud-bridge.js`). Firefox has no offscreen document, so `src/firefox/src/cloud-bridge.js` runs it in the background page, configured under **Settings → Cloud Bridge**; it has not yet been verified against this MCP server on a real Firefox install.
+>
+> This server does not use the optional browser-approval handshake (token, `connection_pending` / `connection_approved`). Without a token the extension behaves exactly as before. See [Cloud Bridge browser approval](../docs/cloud-bridge-browser-approval.md) for backends that want it.
 
 The MCP server hosts the listener; the extension dials out to it. A Manifest V3 extension cannot listen on a socket, so the direction is fixed.
 

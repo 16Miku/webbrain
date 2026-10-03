@@ -122,6 +122,19 @@ Users can store a short profile (name, email, throwaway password) in Settings â†
 
 ---
 
+### Cloud Bridge Browser Approval
+
+The Cloud Bridge lets a controller send `cloud_*` run commands to the browser. By default (no token) it behaves as before. When a Cloud Bridge token is configured the bridge adds an opt-in approval step:
+
+- Each socket sends a `hello` with the token, `browserId`, `installationId` and browser/extension/platform info, then is *pending*; the backend must answer `connection_approved` before any command runs. Earlier commands get `connection_not_approved` (403) and never reach the background.
+- Approval is **per socket**: a reconnect, URL change or identity change starts pending again. `connection_rejected` closes the socket and stops auto-reconnect, and cancels any pending reconnect timer.
+- The token is a Cloud Bridge credential, distinct from provider API keys. It is stored in `chrome.storage.local` and is never included in the bridge `status`.
+- The URL stays restricted to `ws://` on localhost, and the allowed actions stay limited to the `cloud_*` run operations rather than general browser APIs. The bridge sends connection metadata (such as the configured URL) and run data (`tabId`, `finalUrl`, `content` and `result`), which may contain sensitive page data.
+
+**Where it stops.** The permission prompts raised during a cloud run (navigate, click, â€¦) are answered by the backend through `cloud_respond`, including "always". An approved backend is therefore effectively an operator of that browser. Approval is per socket and is not persisted. The backend can revoke it with `connection_rejected`, which closes the socket and stops auto-reconnect. Disabling the bridge or changing its URL or identity also closes the active socket; a replacement needs fresh approval if a token remains configured. Details: [cloud-bridge-browser-approval.md](cloud-bridge-browser-approval.md).
+
+---
+
 ## Prompt Injection Defenses
 
 The primary threat: a malicious page crafts content that, when read by the agent and fed to the LLM, causes the model to execute unintended actions.
