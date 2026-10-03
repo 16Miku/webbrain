@@ -324,6 +324,7 @@ export default {
   'sp.subscribe.allowance_used': "Đã sử dụng hạn mức WebBrain Compass miễn phí hàng ngày.",
   'sp.subscribe.btn': "Đăng ký",
   'sp.subscribe.upgrade': 'Nâng cấp lên Plus',
+  "sp.subscribe.resume_payment": "Đã cập nhật phương thức thanh toán — thử lại",
   'sp.subscribe.resume_upgrade': 'Gói đã được cập nhật — thử lại',
   'sp.subscribe.resume': "Tôi đã đăng ký - thử lại",
   'sp.stopped_by_user': "[Người dùng đã dừng]",
@@ -602,6 +603,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "Việc thanh toán, chi tiết thẻ, email và việc hủy do Stripe quản lý cho cấu hình trình duyệt này.",
   'st.account.billing_preparing': "Đang chuẩn bị liên kết thanh toán Stripe cho cấu hình trình duyệt này.",
+  "st.account.payment_failed": "Không thể hoàn tất thanh toán gói đăng ký. Hãy cập nhật phương thức thanh toán để khôi phục gói trả phí.",
+  "st.account.update_payment": "Cập nhật phương thức thanh toán",
   'st.account.manage_billing': "Quản lý thanh toán",
 
   'st.display.language.label': "Ngôn ngữ",

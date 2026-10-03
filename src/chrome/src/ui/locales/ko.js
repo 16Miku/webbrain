@@ -228,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'WebBrain Compass의 무료 일일 사용량을 모두 사용했습니다.',
   'sp.subscribe.btn': '구독하기',
   'sp.subscribe.upgrade': 'Plus로 업그레이드',
+  "sp.subscribe.resume_payment": "결제 수단 업데이트 완료 — 다시 시도",
   'sp.subscribe.resume_upgrade': '요금제가 업데이트되었습니다 — 다시 시도',
   'sp.subscribe.resume': '구독했습니다 — 다시 시도',
   'sp.stopped_by_user': '[사용자가 중지함]',
@@ -328,6 +329,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': '이 브라우저 프로필의 청구, 카드 정보, 이메일 및 해지는 Stripe에서 관리합니다.',
   'st.account.billing_preparing': '이 브라우저 프로필의 Stripe 청구 링크를 준비하는 중입니다.',
+  "st.account.payment_failed": "구독 결제를 완료하지 못했습니다. 유료 요금제를 다시 사용하려면 결제 수단을 업데이트하세요.",
+  "st.account.update_payment": "결제 수단 업데이트",
   'st.account.manage_billing': '청구 관리',
 
   'st.display.language.label': '언어',

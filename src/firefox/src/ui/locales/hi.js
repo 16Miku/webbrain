@@ -323,6 +323,7 @@ export default {
   'sp.subscribe.allowance_used': "दैनिक निःशुल्क WebBrain Compass भत्ता उपयोग किया गया।",
   'sp.subscribe.btn': "सदस्यता लें",
   'sp.subscribe.upgrade': 'Plus में अपग्रेड करें',
+  "sp.subscribe.resume_payment": "भुगतान विधि अपडेट हो गई — फिर कोशिश करें",
   'sp.subscribe.resume_upgrade': 'प्लान अपडेट हो गया — फिर कोशिश करें',
   'sp.subscribe.resume': "मैंने सदस्यता ले ली है - पुनः प्रयास करें",
   'sp.stopped_by_user': "[उपयोगकर्ता द्वारा रोका गया]",
@@ -599,6 +600,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "इस ब्राउज़र प्रोफ़ाइल के लिए बिलिंग, कार्ड विवरण, ईमेल और रद्दीकरण Stripe द्वारा प्रबंधित किया जाता है।",
   'st.account.billing_preparing': "इस ब्राउज़र प्रोफ़ाइल के लिए Stripe बिलिंग लिंक तैयार किया जा रहा है।",
+  "st.account.payment_failed": "आपकी सदस्यता का भुगतान पूरा नहीं हो सका। अपना सशुल्क प्लान बहाल करने के लिए भुगतान विधि अपडेट करें।",
+  "st.account.update_payment": "भुगतान विधि अपडेट करें",
   'st.account.manage_billing': "बिलिंग प्रबंधित करें",
 
   'st.display.language.label': "भाषा",

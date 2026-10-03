@@ -228,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Peruntukan harian percuma WebBrain Compass telah digunakan.',
   'sp.subscribe.btn': 'Langgan',
   'sp.subscribe.upgrade': 'Naik taraf kepada Plus',
+  "sp.subscribe.resume_payment": "Kaedah pembayaran dikemas kini — cuba lagi",
   'sp.subscribe.resume_upgrade': 'Pelan dikemas kini — cuba lagi',
   'sp.subscribe.resume': 'Saya sudah melanggan — cuba lagi',
   'sp.stopped_by_user': '[Dihentikan oleh pengguna]',
@@ -320,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Pengebilan, butiran kad, e-mel dan pembatalan diuruskan oleh Stripe untuk profil pelayar ini.',
   'st.account.billing_preparing': 'Menyediakan pautan pengebilan Stripe untuk profil pelayar ini.',
+  "st.account.payment_failed": "Pembayaran langganan anda tidak dapat diselesaikan. Kemas kini kaedah pembayaran untuk memulihkan pelan berbayar anda.",
+  "st.account.update_payment": "Kemas kini kaedah pembayaran",
   'st.account.manage_billing': 'Urus pengebilan',
 
   'st.display.language.label': 'Bahasa',

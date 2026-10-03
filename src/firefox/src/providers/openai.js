@@ -357,6 +357,14 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     return url.toString();
   }
 
+  _webbrainAccountUrl() {
+    const url = new URL('https://api.webbrain.one/account');
+    if (this.config.deviceGuid) {
+      url.searchParams.set('client_reference_id', this.config.deviceGuid);
+    }
+    return url.toString();
+  }
+
   _formatHttpError(status, body) {
     const providerName = (this.config.providerName || '').toLowerCase();
     if (status === 402 && providerName === 'webbrain-cloud') {
@@ -365,7 +373,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       let message = 'Daily free WebBrain Compass allowance used.';
       try {
         const parsed = JSON.parse(body || '{}');
-        if (parsed.upgrade_url) {
+        if (parsed.error?.code === 'webbrain_cloud_payment_failed') {
+          actionUrl = parsed.manage_billing_url || this._webbrainAccountUrl();
+          actionLabel = 'Update payment method';
+        } else if (parsed.upgrade_url) {
           actionUrl = parsed.upgrade_url;
           actionLabel = 'Upgrade to WebBrain Plus';
         } else if (parsed.subscribe_url) {
