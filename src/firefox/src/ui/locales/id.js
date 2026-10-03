@@ -226,6 +226,7 @@ export default {
   'sp.subscribe.allowance_used': 'Kuota harian gratis WebBrain Compass telah habis.',
   'sp.subscribe.btn': 'Berlangganan',
   'sp.subscribe.upgrade': 'Upgrade ke Plus',
+  "sp.subscribe.resume_payment": "Metode pembayaran diperbarui — coba lagi",
   'sp.subscribe.resume_upgrade': 'Paket diperbarui — coba lagi',
   'sp.subscribe.resume': 'Sudah berlangganan — coba lagi',
   'sp.stopped_by_user': '[Dihentikan oleh pengguna]',
@@ -318,6 +319,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Penagihan, detail kartu, email, dan pembatalan dikelola oleh Stripe untuk profil browser ini.',
   'st.account.billing_preparing': 'Menyiapkan tautan penagihan Stripe untuk profil browser ini.',
+  "st.account.payment_failed": "Pembayaran langganan Anda belum berhasil. Perbarui metode pembayaran untuk memulihkan paket berbayar Anda.",
+  "st.account.update_payment": "Perbarui metode pembayaran",
   'st.account.manage_billing': 'Kelola penagihan',
 
   'st.display.language.label': 'Bahasa',

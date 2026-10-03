@@ -226,6 +226,7 @@ export default {
   'sp.subscribe.allowance_used': 'WebBrain Compass の無料の1日あたりの利用枠を使い切りました。',
   'sp.subscribe.btn': '購読する',
   'sp.subscribe.upgrade': 'Plus にアップグレード',
+  "sp.subscribe.resume_payment": "支払い方法を更新しました — 再試行",
   'sp.subscribe.resume_upgrade': 'プランを更新しました — 再試行',
   'sp.subscribe.resume': '購読しました — 再試行',
   'sp.stopped_by_user': '[ユーザーが停止]',
@@ -326,6 +327,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'このブラウザープロファイルの請求、カード情報、メール、解約は Stripe が管理します。',
   'st.account.billing_preparing': 'このブラウザープロファイルの Stripe 請求リンクを準備しています。',
+  "st.account.payment_failed": "サブスクリプションの支払いを完了できませんでした。有料プランを再開するには、支払い方法を更新してください。",
+  "st.account.update_payment": "支払い方法を更新",
   'st.account.manage_billing': '請求を管理',
 
   'st.display.language.label': '言語',

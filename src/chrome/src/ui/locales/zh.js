@@ -226,6 +226,7 @@ export default {
   'sp.subscribe.allowance_used': '今日免费的 WebBrain Compass 额度已用完。',
   'sp.subscribe.btn': '订阅',
   'sp.subscribe.upgrade': '升级到 Plus',
+  "sp.subscribe.resume_payment": "付款方式已更新 — 重试",
   'sp.subscribe.resume_upgrade': '套餐已更新 — 重试',
   'sp.subscribe.resume': '已订阅 — 重试',
   'sp.stopped_by_user': '[用户已停止]',
@@ -326,6 +327,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': '此浏览器配置文件的账单、卡片信息、电子邮件和取消均由 Stripe 管理。',
   'st.account.billing_preparing': '正在为此浏览器配置文件准备 Stripe 账单链接。',
+  "st.account.payment_failed": "未能完成订阅付款。请更新付款方式以恢复付费套餐。",
+  "st.account.update_payment": "更新付款方式",
   'st.account.manage_billing': '管理账单',
 
   'st.display.language.label': '语言',

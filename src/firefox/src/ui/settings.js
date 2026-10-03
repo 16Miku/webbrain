@@ -2416,6 +2416,33 @@ function providerSubscriptionGuideHtml(definitionId) {
   </aside>`;
 }
 
+async function refreshWebbrainPaymentNotice() {
+  const notice = providersContainer.querySelector('.webbrain-payment-notice');
+  const deviceGuid = providersData.webbrain_cloud?.deviceGuid;
+  if (!notice || !deviceGuid) return;
+  try {
+    const response = await fetch('https://api.webbrain.one/v1/billing/status', {
+      headers: { 'X-WebBrain-Device-Id': deviceGuid },
+      cache: 'no-store',
+      credentials: 'omit',
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return;
+    const status = await response.json();
+    if (!notice.isConnected || !['past_due', 'unpaid'].includes(status.subscription_status)) return;
+    const message = document.createElement('p');
+    message.textContent = t('st.account.payment_failed');
+    const link = document.createElement('a');
+    link.href = webbrainAccountUrl(deviceGuid);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = t('st.account.update_payment');
+    notice.replaceChildren(message, link);
+    notice.style.cssText = 'margin-top:10px;padding:12px;border-radius:6px;border:1px solid var(--warning,#b7791f);';
+    notice.hidden = false;
+  } catch { /* An unavailable billing check must not interrupt settings. */ }
+}
+
 function renderProviders() {
   providersContainer.innerHTML = '';
 
@@ -2996,6 +3023,7 @@ function renderProviders() {
       ${subscriptionGuide}
       ${fieldsHTML}
       ${providerNote}
+      ${id === 'webbrain_cloud' ? '<div class="webbrain-payment-notice" role="status" hidden></div>' : ''}
       ${ollamaWarning}
       ${compatibilitySettings}
       <div class="btn-row">
@@ -3022,6 +3050,7 @@ function renderProviders() {
     providersContainer.appendChild(empty);
   }
 
+  refreshWebbrainPaymentNotice();
   restoreProviderApiKeyWarnings();
 
   document.querySelectorAll('.btn-save').forEach(btn => {

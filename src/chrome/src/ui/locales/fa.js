@@ -321,6 +321,7 @@ export default {
   'sp.subscribe.allowance_used': "سهمیه رایگان روزانه WebBrain Compass استفاده شد.",
   'sp.subscribe.btn': "مشترک شوید",
   'sp.subscribe.upgrade': 'ارتقا به Plus',
+  "sp.subscribe.resume_payment": "روش پرداخت به‌روز شد — تلاش دوباره",
   'sp.subscribe.resume_upgrade': 'طرح به‌روزرسانی شد — تلاش دوباره',
   'sp.subscribe.resume': "مشترک شدم - دوباره امتحان کنید",
   'sp.stopped_by_user': "[توقف کاربر]",
@@ -599,6 +600,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "صورت‌حساب، جزئیات کارت، ایمیل، و لغو توسط Stripe برای نمایه این مرورگر مدیریت می‌شود.",
   'st.account.billing_preparing': "در حال آماده سازی پیوند صورتحساب Stripe برای این نمایه مرورگر.",
+  "st.account.payment_failed": "پرداخت اشتراک شما انجام نشد. برای بازگرداندن طرح پولی، روش پرداخت خود را به‌روز کنید.",
+  "st.account.update_payment": "به‌روزرسانی روش پرداخت",
   'st.account.manage_billing': "مدیریت صورتحساب",
 
   'st.display.language.label': "زبان",

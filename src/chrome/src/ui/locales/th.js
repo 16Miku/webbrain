@@ -226,6 +226,7 @@ export default {
   'sp.subscribe.allowance_used': 'ใช้โควตารายวันฟรีของ WebBrain Compass หมดแล้ว',
   'sp.subscribe.btn': 'สมัครสมาชิก',
   'sp.subscribe.upgrade': 'อัปเกรดเป็น Plus',
+  "sp.subscribe.resume_payment": "อัปเดตวิธีชำระเงินแล้ว — ลองอีกครั้ง",
   'sp.subscribe.resume_upgrade': 'อัปเดตแพ็กเกจแล้ว — ลองอีกครั้ง',
   'sp.subscribe.resume': 'สมัครแล้ว — ลองอีกครั้ง',
   'sp.stopped_by_user': '[ผู้ใช้หยุด]',
@@ -326,6 +327,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'การเรียกเก็บเงิน รายละเอียดบัตร อีเมล และการยกเลิก จัดการโดย Stripe สำหรับโปรไฟล์เบราว์เซอร์นี้',
   'st.account.billing_preparing': 'กำลังเตรียมลิงก์การเรียกเก็บเงินของ Stripe สำหรับโปรไฟล์เบราว์เซอร์นี้',
+  "st.account.payment_failed": "ไม่สามารถชำระค่าสมัครสมาชิกได้ โปรดอัปเดตวิธีชำระเงินเพื่อกลับมาใช้แพ็กเกจแบบชำระเงิน",
+  "st.account.update_payment": "อัปเดตวิธีชำระเงิน",
   'st.account.manage_billing': 'จัดการการเรียกเก็บเงิน',
 
   'st.display.language.label': 'ภาษา',

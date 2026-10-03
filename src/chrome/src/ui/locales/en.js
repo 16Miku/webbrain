@@ -321,6 +321,7 @@ export default {
   'sp.subscribe.allowance_used': 'Daily free WebBrain Compass allowance used.',
   'sp.subscribe.btn': 'Subscribe',
   'sp.subscribe.upgrade': 'Upgrade to Plus',
+  'sp.subscribe.resume_payment': 'Payment method updated — retry',
   'sp.subscribe.resume_upgrade': 'Plan updated — retry',
   'sp.subscribe.resume': 'I’ve subscribed — retry',
   'sp.stopped_by_user': '[Stopped by user]',
@@ -599,6 +600,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Billing, card details, email, and cancellation are managed by Stripe for this browser profile.',
   'st.account.billing_preparing': 'Preparing the Stripe billing link for this browser profile.',
+  'st.account.payment_failed': 'Your subscription payment could not be completed. Update your payment method to restore your paid plan.',
+  'st.account.update_payment': 'Update payment method',
   'st.account.manage_billing': 'Manage billing',
 
   'st.display.language.label': 'Language',

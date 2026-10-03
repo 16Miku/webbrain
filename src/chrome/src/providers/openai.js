@@ -323,7 +323,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       let message = 'Daily free WebBrain Compass allowance used.';
       try {
         const parsed = JSON.parse(body || '{}');
-        if (parsed.upgrade_url) {
+        if (parsed.error?.code === 'webbrain_cloud_payment_failed' && parsed.manage_billing_url) {
+          actionUrl = parsed.manage_billing_url;
+          actionLabel = 'Update payment method';
+        } else if (parsed.upgrade_url) {
           actionUrl = parsed.upgrade_url;
           actionLabel = 'Upgrade to WebBrain Plus';
         } else if (parsed.subscribe_url) {

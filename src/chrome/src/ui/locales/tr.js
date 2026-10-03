@@ -263,6 +263,7 @@ export default {
   'sp.subscribe.allowance_used': 'Ücretsiz günlük WebBrain Compass kullanım hakkınız doldu.',
   'sp.subscribe.btn': 'Abone ol',
   'sp.subscribe.upgrade': 'Plus\'a yükselt',
+  'sp.subscribe.resume_payment': 'Ödeme yöntemi güncellendi — yeniden dene',
   'sp.subscribe.resume_upgrade': 'Plan güncellendi — yeniden dene',
   'sp.subscribe.resume': 'Abone oldum — yeniden dene',
   'sp.stopped_by_user': '[Kullanıcı durdurdu]',
@@ -363,6 +364,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Faturalandırma, kart bilgileri, e-posta ve iptal işlemleri bu tarayıcı profili için Stripe tarafından yönetilir.',
   'st.account.billing_preparing': 'Bu tarayıcı profili için Stripe faturalandırma bağlantısı hazırlanıyor.',
+  'st.account.payment_failed': 'Abonelik ödemeniz tamamlanamadı. Ücretli planınızı yeniden kullanmak için ödeme yönteminizi güncelleyin.',
+  'st.account.update_payment': 'Ödeme yöntemini güncelle',
   'st.account.manage_billing': 'Faturalandırmayı yönet',
 
   'st.display.language.label': 'Dil',

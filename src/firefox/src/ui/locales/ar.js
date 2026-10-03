@@ -226,6 +226,7 @@ export default {
   'sp.subscribe.allowance_used': 'تم استخدام الحصة اليومية المجانية من WebBrain Compass.',
   'sp.subscribe.btn': 'اشترك',
   'sp.subscribe.upgrade': 'الترقية إلى Plus',
+  "sp.subscribe.resume_payment": "تم تحديث طريقة الدفع — أعد المحاولة",
   'sp.subscribe.resume_upgrade': 'تم تحديث الخطة — أعد المحاولة',
   'sp.subscribe.resume': 'اشتركت — أعد المحاولة',
   'sp.stopped_by_user': '[أوقفه المستخدم]',
@@ -318,6 +319,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'تتم إدارة الفوترة وبيانات البطاقة والبريد الإلكتروني والإلغاء بواسطة Stripe لملف المتصفح هذا.',
   'st.account.billing_preparing': 'يتم تجهيز رابط الفوترة عبر Stripe لملف المتصفح هذا.',
+  "st.account.payment_failed": "تعذر إتمام دفعة اشتراكك. حدّث طريقة الدفع لاستعادة خطتك المدفوعة.",
+  "st.account.update_payment": "تحديث طريقة الدفع",
   'st.account.manage_billing': 'إدارة الفوترة',
 
   'st.display.language.label': 'اللغة',

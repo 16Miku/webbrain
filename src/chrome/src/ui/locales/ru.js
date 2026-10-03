@@ -226,6 +226,7 @@ export default {
   'sp.subscribe.allowance_used': 'Бесплатный дневной лимит WebBrain Compass исчерпан.',
   'sp.subscribe.btn': 'Оформить подписку',
   'sp.subscribe.upgrade': 'Перейти на Plus',
+  "sp.subscribe.resume_payment": "Способ оплаты обновлён — повторить",
   'sp.subscribe.resume_upgrade': 'План обновлён — повторить',
   'sp.subscribe.resume': 'Подписка оформлена — повторить',
   'sp.stopped_by_user': '[Остановлено пользователем]',
@@ -326,6 +327,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Оплата, данные карты, электронная почта и отмена управляются Stripe для этого профиля браузера.',
   'st.account.billing_preparing': 'Подготовка ссылки на оплату Stripe для этого профиля браузера.',
+  "st.account.payment_failed": "Не удалось провести оплату подписки. Обновите способ оплаты, чтобы восстановить платный тариф.",
+  "st.account.update_payment": "Обновить способ оплаты",
   'st.account.manage_billing': 'Управление оплатой',
 
   'st.display.language.label': 'Язык',

@@ -226,6 +226,7 @@ export default {
   'sp.subscribe.allowance_used': 'Naubos na ang libreng pang-araw-araw na alokasyon ng WebBrain Compass.',
   'sp.subscribe.btn': 'Mag-subscribe',
   'sp.subscribe.upgrade': 'Mag-upgrade sa Plus',
+  "sp.subscribe.resume_payment": "Na-update ang paraan ng pagbabayad — subukan muli",
   'sp.subscribe.resume_upgrade': 'Na-update ang plan — subukan muli',
   'sp.subscribe.resume': 'Naka-subscribe na — subukan muli',
   'sp.stopped_by_user': '[Itinigil ng user]',
@@ -326,6 +327,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Ang pagsingil, mga detalye ng card, email, at pagkansela ay pinamamahalaan ng Stripe para sa profile ng browser na ito.',
   'st.account.billing_preparing': 'Inihahanda ang link ng pagsingil ng Stripe para sa profile ng browser na ito.',
+  "st.account.payment_failed": "Hindi nakumpleto ang bayad sa iyong subscription. I-update ang paraan ng pagbabayad para maibalik ang iyong bayad na plan.",
+  "st.account.update_payment": "I-update ang paraan ng pagbabayad",
   'st.account.manage_billing': 'Pamahalaan ang pagsingil',
 
   'st.display.language.label': 'Wika',

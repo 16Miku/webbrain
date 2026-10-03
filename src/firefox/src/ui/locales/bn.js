@@ -320,6 +320,7 @@ export default {
   'sp.subscribe.allowance_used': "দৈনিক বিনামূল্যের WebBrain Compass ভাতা ব্যবহার করা হয়েছে।",
   'sp.subscribe.btn': "সদস্যতা",
   'sp.subscribe.upgrade': 'Plus-এ আপগ্রেড করুন',
+  "sp.subscribe.resume_payment": "পেমেন্ট পদ্ধতি আপডেট হয়েছে — আবার চেষ্টা করুন",
   'sp.subscribe.resume_upgrade': 'প্ল্যান আপডেট হয়েছে — আবার চেষ্টা করুন',
   'sp.subscribe.resume': "আমি সাবস্ক্রাইব করেছি — আবার চেষ্টা করুন",
   'sp.stopped_by_user': "[ব্যবহারকারীর দ্বারা থামানো]",
@@ -596,6 +597,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "এই ব্রাউজার প্রোফাইলের জন্য বিলিং, কার্ডের বিবরণ, ইমেল এবং বাতিলকরণ Stripe দ্বারা পরিচালিত হয়।",
   'st.account.billing_preparing': "এই ব্রাউজার প্রোফাইলের জন্য Stripe বিলিং লিঙ্ক প্রস্তুত করা হচ্ছে।",
+  "st.account.payment_failed": "আপনার সদস্যতার পেমেন্ট সম্পন্ন হয়নি। পেইড প্ল্যান ফিরে পেতে পেমেন্ট পদ্ধতি আপডেট করুন।",
+  "st.account.update_payment": "পেমেন্ট পদ্ধতি আপডেট করুন",
   'st.account.manage_billing': "বিলিং পরিচালনা করুন",
 
   'st.display.language.label': "ভাষা",
