@@ -11,6 +11,7 @@ import {
   shouldUseOpenAIResponsesApi,
   supportsOpenAIAskStreaming,
   applyOpenRouterRoutingVariant,
+  openRouterMuseToolOptions,
 } from './provider-compatibility.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { canonicalizeOllamaBaseUrl } from './context-windows.js';
@@ -578,6 +579,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
    * compatibility presets, and safe extraBody merge.
    */
   _buildChatCompletionsBody(messages, options = {}, stream = false) {
+    options = openRouterMuseToolOptions({ ...this.config, baseUrl: this.baseUrl, model: this.model }, options);
     let body = {
       messages: this._chatMessages(messages, options),
       stream,
@@ -702,6 +704,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   _responsesBody(messages, options, stream) {
+    options = openRouterMuseToolOptions({ ...this.config, baseUrl: this.baseUrl, model: this.model }, options);
     let body = {
       input: this._responsesInput(messages),
       stream,
