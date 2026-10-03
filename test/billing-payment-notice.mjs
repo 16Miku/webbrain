@@ -62,8 +62,13 @@ for (const browser of ['chrome', 'firefox']) {
 
   {
     let fetchCount = 0;
+    let backendStatus = 'past_due';
+    let now = 0;
+    const listeners = {};
     let currentNotice = { hidden: true, isConnected: true, style: {}, children: [], replaceChildren(...children) { this.children = children; } };
     const cacheContext = vm.createContext({
+      Date: { now: () => now },
+      window: { addEventListener: (type, callback) => { listeners[type] = callback; } },
       providersContainer: { querySelector: () => currentNotice },
       providersData: { webbrain_cloud: { deviceGuid: 'test-browser', baseUrl: 'https://untrusted.example/v1' } },
       AbortSignal,
@@ -74,7 +79,7 @@ for (const browser of ['chrome', 'firefox']) {
       fetch: async (url) => {
         fetchCount += 1;
         assert.equal(url, 'https://api.webbrain.one/v1/billing/status');
-        return { ok: true, json: async () => ({ subscription_status: 'past_due' }) };
+        return { ok: true, json: async () => ({ subscription_status: backendStatus }) };
       },
     });
     vm.runInContext(source, cacheContext, { filename: fileURLToPath(new URL(`../src/${browser}/src/ui/settings.js`, import.meta.url)) });
@@ -85,6 +90,18 @@ for (const browser of ['chrome', 'firefox']) {
     await vm.runInContext('refreshWebbrainPaymentNotice()', cacheContext);
     assert.equal(currentNotice.hidden, false, `${browser}: cached second render must still show a payment warning`);
     assert.equal(fetchCount, 1, `${browser}: second renderProviders() must reuse the per-session billing cache`);
+    backendStatus = 'active';
+    listeners.focus();
+    await vm.runInContext('refreshWebbrainPaymentNotice()', cacheContext);
+    assert.equal(fetchCount, 2, `${browser}: billing return must refetch with inflight dedupe`);
+    assert.equal(currentNotice.hidden, true, `${browser}: recovery must hide the existing warning`);
+    assert.equal(currentNotice.children.length, 0, `${browser}: recovery must clear the old payment link`);
+    backendStatus = 'past_due';
+    now = 30001;
+    await vm.runInContext('refreshWebbrainPaymentNotice()', cacheContext);
+    assert.equal(fetchCount, 3, `${browser}: expired active cache must detect payment failures`);
+    assert.equal(currentNotice.hidden, false, `${browser}: new payment failure must show the warning`);
+
   }
 
   const { OpenAICompatibleProvider: OpenAIProvider } = await import(new URL(`../src/${browser}/src/providers/openai.js`, import.meta.url));
@@ -126,6 +143,15 @@ for (const browser of ['chrome', 'firefox']) {
   const renderCard = vm.runInNewContext(`${declaration}\n${actionLabelsSrc}\n${resumeLabelsSrc}\n${cardSource}\nrenderSubscribeError`, {
     parseSubscribeError: parse, document: { createElement: element }, t: key => en[key],
   });
+  for (const [action, prefix, actionKey, resumeKey] of [
+    ['subscribe', 'Subscribe for more usage', 'sp.subscribe.btn', 'sp.subscribe.resume'],
+    ['upgrade', 'Upgrade to WebBrain Plus', 'sp.subscribe.upgrade', 'sp.subscribe.resume_upgrade'],
+  ]) {
+    const actionCard = element();
+    assert.equal(renderCard(actionCard, `Allowance used.\n${prefix}: https://api.webbrain.one/account`, 'act'), true);
+    assert.equal(actionCard.children[1].children[0].textContent, en[actionKey], `${browser}: ${action} action label`);
+    assert.equal(actionCard.children[1].children[1].textContent, en[resumeKey], `${browser}: ${action} resume label`);
+  }
   const card = element();
   assert.equal(renderCard(card, error, 'ask'), true);
   assert.equal(card.children[1].children[0].textContent, en['st.account.update_payment']);

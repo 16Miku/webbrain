@@ -3016,6 +3016,13 @@ async function handleWebgpuDownloadButton(btn) {
 }
 
 async function refreshWebbrainPaymentNotice() {
+  if (!refreshWebbrainPaymentNotice._focusBound && typeof window !== 'undefined') {
+    window.addEventListener('focus', () => {
+      refreshWebbrainPaymentNotice._cache = null;
+      void refreshWebbrainPaymentNotice();
+    });
+    refreshWebbrainPaymentNotice._focusBound = true;
+  }
   const notice = providersContainer.querySelector('.webbrain-payment-notice');
   const deviceGuid = providersData.webbrain_cloud?.deviceGuid;
   if (!notice || !deviceGuid) return;
@@ -3023,7 +3030,12 @@ async function refreshWebbrainPaymentNotice() {
     ? WEBBRAIN_BILLING_STATUS_URL
     : 'https://api.webbrain.one/v1/billing/status';
   const renderNotice = (subscriptionStatus) => {
-    if (!notice.isConnected || !['past_due', 'unpaid'].includes(subscriptionStatus)) return;
+    if (!notice.isConnected) return;
+    if (!['past_due', 'unpaid'].includes(subscriptionStatus)) {
+      notice.hidden = true;
+      notice.replaceChildren();
+      return;
+    }
     const message = document.createElement('p');
     message.textContent = t('st.account.payment_failed');
     const link = document.createElement('a');
@@ -3035,10 +3047,9 @@ async function refreshWebbrainPaymentNotice() {
     notice.style.cssText = 'margin-top:10px;padding:12px;border-radius:6px;border:1px solid var(--warning,#b7791f);';
     notice.hidden = false;
   };
-  // Per-session cache: renderProviders() runs on every search keystroke and the
-  // status only changes after a Stripe redirect, so reuse the last lookup.
+  // Reuse recent results during search, but refresh on focus or after 30 seconds.
   const cached = refreshWebbrainPaymentNotice._cache;
-  if (cached?.deviceGuid === deviceGuid) {
+  if (cached?.deviceGuid === deviceGuid && Date.now() - cached.fetchedAt < 30000) {
     renderNotice(cached.subscriptionStatus);
     return;
   }
@@ -3065,7 +3076,7 @@ async function refreshWebbrainPaymentNotice() {
       refreshWebbrainPaymentNotice._inflight = null;
     }
     if (subscriptionStatus == null) return;
-    refreshWebbrainPaymentNotice._cache = { deviceGuid, subscriptionStatus };
+    refreshWebbrainPaymentNotice._cache = { deviceGuid, subscriptionStatus, fetchedAt: Date.now() };
     renderNotice(subscriptionStatus);
   } catch {
     if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
