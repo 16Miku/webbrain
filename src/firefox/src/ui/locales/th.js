@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Thai (th).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'ซูม UI ของส่วนขยาย',
   'sp.ui_scale.decrease': 'ย่อ UI ของส่วนขยาย',
   'sp.ui_scale.increase': 'ขยาย UI ของส่วนขยาย',
@@ -914,6 +916,7 @@ export default {
   "sp.memory.error": "ข้อผิดพลาดของหน่วยความจำ: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "ไม่ได้บันทึก: ข้อความว่างหลังการล้างหรือดูเหมือนมีข้อมูลลับ (รหัสผ่าน คีย์ API โทเค็น)",
   "sp.memory.reason.not_found": "ไม่มีหน่วยความจำที่บันทึกไว้ด้วย ID นี้",
+  'sp.slash.workflow_editor': "ตัวแก้ไขเวิร์กโฟลว์",
   "sp.slash.workflows": "แสดงและจัดการเวิร์กโฟลว์ที่บันทึกไว้",
   "sp.slash.teach": "บันทึกการทำงานของคุณเป็นเวิร์กโฟลว์ที่บันทึกไว้",
   "sp.slash.run_workflow": "เรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ด้วย ID",
@@ -1019,6 +1022,8 @@ export default {
   "sp.upload_picker.cancelled": "ยกเลิกการอัปโหลดแล้ว",
   "sp.upload_picker.too_large": "ไฟล์ที่เลือกเกินขีดจำกัด 25MB (สูงสุด 25MB)",
   "sp.upload_picker.read_failed": "อ่านไฟล์ที่เลือกไม่สำเร็จ",
+  "sp.slash.export_traces_full": "ส่งออกเซสชันการติดตามที่บันทึกไว้ทั้งหมดเป็น JSON รวมภาพหน้าจอ",
+  "sp.export_traces.recording_truncated": "ส่งออกข้อมูลที่บันทึกไว้ทั้งหมดเป็น JSON แล้ว เนื้อหาที่ละเว้นระหว่างการบันทึกไม่สามารถกู้คืนด้วยการส่งออกได้",
   "sp.slash.export_traces": "ส่งออกลำดับการทำงานของเครื่องมือ (trace)",
   "sp.export_traces.none": "ไม่มี trace สำหรับการสนทนานี้ เปิด «บันทึก trace» ในการตั้งค่า แล้วเรียกใช้อีกครั้ง",
   "sp.export_traces.error": "ไม่สามารถส่งออก trace ได้",

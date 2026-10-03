@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Filipino / Tagalog (tl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Pag-zoom ng UI ng extension',
   'sp.ui_scale.decrease': 'Bawasan ang zoom ng UI ng extension',
   'sp.ui_scale.increase': 'Dagdagan ang zoom ng UI ng extension',
@@ -942,6 +944,7 @@ export default {
   "sp.memory.error": "Error sa memory: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Hindi na-save: walang laman ang text pagkatapos linisin o mukhang may lihim (password, API key, token).",
   "sp.memory.reason.not_found": "Walang naka-save na memory na may ganoong ID.",
+  'sp.slash.workflow_editor': "Editor ng workflow",
   "sp.slash.workflows": "Ilista at pamahalaan ang mga naka-save na workflow",
   "sp.slash.teach": "I-record ang iyong mga kilos bilang naka-save na workflow",
   "sp.slash.run_workflow": "Patakbuhin ang naka-save na workflow ayon sa ID",
@@ -1038,6 +1041,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Max na sukat ng imahe",
   "st.imageBudget.maxDimension.desc": "Pinakamahabang gilid (lapad o taas) sa pixels para sa anumang screenshot na ipinapadala sa vision. Mas mababang cap ay nagpapaliit ng imahe bago ipadala, binabawasan ang token at gastos. Mas mataas na cap ay nagpapanatili ng fidelity.",
   "st.imageBudget.warning": "⚠️ Naaangkop ang mga setting na ito sa screenshot para sa vision (auto-screenshot, /screenshot, buong page, verify_form). Hindi apektado ang manu-manong naka-save na full-resolution na imahe. Iginagalang ang «Image detail» ng OpenAI-style endpoints; maaaring balewalain ng ibang provider.",
+  "sp.slash.export_traces_full": "I-export ang buong naka-save na trace session bilang JSON, kasama ang mga screenshot",
+  "sp.export_traces.recording_truncated": "Na-export bilang JSON ang lahat ng naka-save na tala. Hindi maibabalik sa pag-export ang nilalamang hindi naisama habang nagre-record.",
   "sp.slash.export_traces": "I-export ang tool chain (mga trace)",
   "sp.export_traces.none": "Walang trace para sa usapang ito. I-on ang Record traces sa Settings, pagkatapos ay patakbuhin muli.",
   "sp.export_traces.error": "Hindi ma-export ang mga trace.",

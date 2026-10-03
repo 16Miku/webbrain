@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Japanese (ja).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '拡張機能 UI のズーム',
   'sp.ui_scale.decrease': '拡張機能 UI を縮小',
   'sp.ui_scale.increase': '拡張機能 UI を拡大',
@@ -942,6 +944,7 @@ export default {
   "sp.memory.error": "メモリエラー: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "保存されませんでした。整理後のテキストが空か、秘密情報（パスワード、API キー、トークン）が含まれているようです。",
   "sp.memory.reason.not_found": "その ID の保存済みメモリはありません。",
+  'sp.slash.workflow_editor': "ワークフローエディター",
   "sp.slash.workflows": "保存済みワークフローを一覧・管理",
   "sp.slash.teach": "操作を保存済みワークフローとして記録",
   "sp.slash.run_workflow": "保存済みワークフローを ID で実行",
@@ -1038,6 +1041,8 @@ export default {
   "st.imageBudget.maxDimension.label": "最大画像寸法",
   "st.imageBudget.maxDimension.desc": "ビジョンに送るスクリーンショットの長辺（幅または高さ）のピクセル上限。上限を下げると送信前に縮小しトークンとコストを削減。上げると忠実度を保ちます。",
   "st.imageBudget.warning": "⚠️ これらの設定はビジョン用のスクリーンショット（自動撮影、/screenshot、全ページ、verify_form）に適用されます。手動で保存したフル解像度画像には影響しません。「Image detail」は OpenAI 系エンドポイントで尊重され、他のプロバイダでは無視されることがあります。",
+  "sp.slash.export_traces_full": "スクリーンショットを含む保存済みトレースセッション全体をJSONでエクスポート",
+  "sp.export_traces.recording_truncated": "保存済みの全記録をJSONでエクスポートしました。記録時に省略された内容はエクスポートでは復元できません。",
   "sp.slash.export_traces": "ツールチェーンをエクスポート（トレース）",
   "sp.export_traces.none": "この会話のトレースがありません。設定で「トレースを記録」をオンにして、もう一度実行してください。",
   "sp.export_traces.error": "トレースをエクスポートできませんでした。",

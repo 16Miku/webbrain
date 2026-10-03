@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Persian — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'بزرگ‌نمایی رابط کاربری افزونه',
   'sp.ui_scale.decrease': 'کاهش بزرگ‌نمایی رابط افزونه',
   'sp.ui_scale.increase': 'افزایش بزرگ‌نمایی رابط افزونه',
@@ -172,6 +174,7 @@ export default {
   'sp.slash.remember': "یک اولویت کاربر را به خاطر بسپارید",
   'sp.slash.show_memory': "نمایش حافظه کاربر ذخیره شده",
   'sp.slash.forget_memory': "یک حافظه ذخیره شده توسط ID را فراموش کنید",
+  'sp.slash.workflow_editor': "ویرایشگر گردش کار",
   'sp.slash.workflows': "گردش کار ذخیره شده را فهرست و مدیریت کنید",
   "sp.slash.teach": "اقدامات خود را به‌صورت گردش‌کار ذخیره‌شده ضبط کنید",
   'sp.slash.run_workflow': "یک گردش کار ذخیره شده توسط ID را اجرا کنید",
@@ -1103,6 +1106,8 @@ export default {
   'tr.event.args': "ارگ",
   'tr.event.result': "نتیجه",
   'tr.event.step': "مرحله {step}",
+  "sp.slash.export_traces_full": "صدور تمام نشست ردگیری ذخیره‌شده به صورت JSON، شامل تصاویر صفحه",
+  "sp.export_traces.recording_truncated": "تمام رکوردهای ذخیره‌شده به صورت JSON صادر شدند. محتوای حذف‌شده هنگام ضبط با صدور قابل بازیابی نیست.",
   "sp.slash.export_traces": "صادرات زنجیره ابزار (ردیابی)",
   "sp.export_traces.none": "هیچ اثری برای این گفتگو وجود ندارد. ضبط ردیابی را در تنظیمات فعال کنید، سپس دوباره اجرا کنید.",
   "sp.export_traces.error": "ردیابی صادر نشد.",

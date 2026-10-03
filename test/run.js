@@ -818,6 +818,11 @@ class ConfiguredLoopDetector extends LoopDetectorCh {
     return MUTATION_TOOLS_CH.has(toolName);
   }
 }
+class ConfiguredLoopDetectorFx extends LoopDetectorFx {
+  _isBrowserMutationTool(toolName) {
+    return MUTATION_TOOLS_FX.has(toolName);
+  }
+}
 const {
   detectProgressAction,
   isValidLedgerStatus,
@@ -6925,6 +6930,124 @@ test('chat workflow state survives worker restart and is durable before dispatch
       });
       assert.equal(sent.deliveryVerified, true, `${AgentClass.name}: durable send did not verify delivery`);
       assert.equal(sender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: pending send remained after verification`);
+
+      const discordThreadKey = 'dom:discord:123:456';
+      const discordSender = new AgentClass({});
+      discordSender.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      discordSender.conversationIds.set(tabId, `conversation-discord-${index}`);
+      discordSender._persist = () => {};
+      discordSender._persistNow = async () => true;
+      discordSender._messageRecipientGuardBlock = async () => null;
+      const discordBefore = {
+        ...baseSnapshot,
+        threadKey: discordThreadKey,
+        url: 'https://discord.com/channels/123/456',
+        observedAt: new Date().toISOString(),
+      };
+      let discordAfter;
+      const discordObservations = [discordBefore];
+      discordSender._readChatObservation = async () => discordObservations.shift() || discordAfter;
+      discordSender.executeTool = async () => {
+        const observedAt = new Date().toISOString();
+        discordAfter = {
+          ...discordBefore,
+          observedAt,
+          messages: [{
+            id: `discord:456:${index}`,
+            direction: 'unknown',
+            text: 'Send once with a default avatar.',
+            timestamp: observedAt,
+          }],
+        };
+        return { success: true, dispatched: true };
+      };
+      const discordSent = await discordSender._sendChatWorkflow(tabId, {
+        thread_key: discordThreadKey,
+        composer_ref: `composer-${index}`,
+        text: 'Send once with a default avatar.',
+      });
+      assert.equal(discordSent.deliveryVerified, true, `${AgentClass.name}: exact fresh Discord bubble and empty composer did not verify the pending send`);
+      assert.equal(discordSent.chatWorkflow.newMessages[0].direction, 'unknown', `${AgentClass.name}: delivery verification must not claim the Discord message author`);
+      assert.equal(discordSender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: default-avatar Discord send remained pending`);
+
+      const discordPreviewSender = new AgentClass({});
+      discordPreviewSender.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      discordPreviewSender.conversationIds.set(tabId, `conversation-discord-preview-${index}`);
+      discordPreviewSender._persist = () => {};
+      discordPreviewSender._persistNow = async () => true;
+      discordPreviewSender._messageRecipientGuardBlock = async () => null;
+      const discordPreviewThreadKey = 'dom:discord:123:789';
+      const discordPreviewBefore = {
+        ...baseSnapshot,
+        threadKey: discordPreviewThreadKey,
+        url: 'https://discord.com/channels/123/789',
+        observedAt: new Date().toISOString(),
+        composer: { ...baseSnapshot.composer, ref: `composer-preview-${index}` },
+      };
+      let discordPreviewAfter;
+      const discordPreviewObservations = [discordPreviewBefore];
+      discordPreviewSender._readChatObservation = async () => discordPreviewObservations.shift() || discordPreviewAfter;
+      discordPreviewSender.executeTool = async () => {
+        const observedAt = new Date().toISOString();
+        discordPreviewAfter = {
+          ...discordPreviewBefore,
+          observedAt,
+          messages: [{
+            id: `discord:789:preview-${index}`,
+            direction: 'outgoing',
+            text: 'https://example.com/release\nAttachment: Release notes\nAttachment: Preview description',
+            authoredText: 'https://example.com/release',
+            timestamp: observedAt,
+          }],
+        };
+        return { success: true, dispatched: true };
+      };
+      const discordPreviewSent = await discordPreviewSender._sendChatWorkflow(tabId, {
+        thread_key: discordPreviewThreadKey,
+        composer_ref: `composer-preview-${index}`,
+        text: 'https://example.com/release',
+      });
+      assert.equal(discordPreviewSent.success, true, `${AgentClass.name}: outgoing URL bubble with preview did not report send success`);
+      assert.equal(discordPreviewSent.sent, true, `${AgentClass.name}: outgoing URL bubble with preview was not reported as sent`);
+      assert.equal(discordPreviewSent.deliveryVerified, true, `${AgentClass.name}: authored URL was not used for final delivery verification`);
+      assert.equal(discordPreviewSender.chatSessions.get(tabId)?.pendingOutbound, null, `${AgentClass.name}: previewed URL send remained pending`);
+
+      const nondurableMarkerSender = new AgentClass({});
+      nondurableMarkerSender.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+      nondurableMarkerSender.conversationIds.set(tabId, `conversation-discord-nondurable-${index}`);
+      nondurableMarkerSender._persist = () => {};
+      let dispatchPersistenceAttempts = 0;
+      nondurableMarkerSender._persistNow = async () => {
+        dispatchPersistenceAttempts += 1;
+        return dispatchPersistenceAttempts === 1 ? { ok: true } : { ok: false, degraded: true };
+      };
+      nondurableMarkerSender._messageRecipientGuardBlock = async () => null;
+      let nondurableAfter;
+      const nondurableObservations = [discordBefore];
+      nondurableMarkerSender._readChatObservation = async () => nondurableObservations.shift() || nondurableAfter;
+      nondurableMarkerSender.executeTool = async () => {
+        const observedAt = new Date().toISOString();
+        nondurableAfter = {
+          ...discordBefore,
+          observedAt,
+          messages: [{
+            id: `discord:nondurable:${index}`,
+            direction: 'unknown',
+            text: 'Send once with a default avatar.',
+            timestamp: observedAt,
+          }],
+        };
+        return { success: true, dispatched: true };
+      };
+      const nondurableSent = await nondurableMarkerSender._sendChatWorkflow(tabId, {
+        thread_key: discordThreadKey,
+        composer_ref: `composer-${index}`,
+        text: 'Send once with a default avatar.',
+      });
+      assert.equal(dispatchPersistenceAttempts, 2, `${AgentClass.name}: dispatch marker persistence was not attempted after the send`);
+      assert.equal(nondurableSent.deliveryVerified, false, `${AgentClass.name}: an unknown-direction Discord bubble was verified without a durable dispatch marker`);
+      assert.ok(nondurableMarkerSender.chatSessions.get(tabId)?.pendingOutbound, `${AgentClass.name}: uncertain send was cleared after marker persistence failed`);
+      assert.equal(nondurableMarkerSender.chatSessions.get(tabId)?.pendingOutbound?.dispatchedAt, undefined, `${AgentClass.name}: failed dispatch marker remained in memory`);
     }
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
@@ -9313,6 +9436,59 @@ test('matches wordpress wp-admin on any host', () => {
   assert.equal(getActiveAdapter('https://example.com/some-post/'), null);
   // /wp-admin must be a path segment, not a substring elsewhere in URL.
   assert.equal(getActiveAdapter('https://example.com/blog/wp-admin-tutorial/'), null);
+});
+
+test('WordPress API and editor guidance reaches every tier on root and subdirectory sites', async () => {
+  const savedChrome = globalThis.chrome, savedBrowser = globalThis.browser;
+  try {
+    globalThis.chrome = globalThis.browser = { tabs: {} };
+    let expectedNotes;
+    for (const [AgentClass, getAdapter, buildMessages] of [
+      [AgentCh, getActiveAdapter, buildPlannerMessages],
+      [AgentFx, getActiveAdapterFx, buildPlannerMessagesFx],
+    ]) {
+      for (const url of ['https://example.com/wp-admin/', 'https://example.com/blog/wp-admin/post-new.php?post_type=page', 'https://example.com/network/site/wp-login.php']) {
+        const notes = getAdapter(url)?.notes;
+        assert.ok(notes);
+        expectedNotes ??= notes;
+        assert.equal(notes, expectedNotes, 'browser-specific WordPress guidance drifted');
+        assert.equal(notes.trim().split('\n').filter(line => line.startsWith('- ')).length, 8);
+        for (const tier of ['compact', 'mid', 'full']) {
+          const agent = new AgentClass({ getActive: () => ({ promptTier: tier }) });
+          agent.useSiteAdapters = true;
+          agent._queueAdapterMatchTrace = () => {};
+          chrome.tabs.get = async () => ({ url });
+          const messages = [];
+          assert.equal(await agent._maybeReinjectAdapter(4974, messages), true);
+          assert.match(messages[0].content, /Without skills: use `fetch_url`/);
+          assert.match(messages[0].content, /Strict mode skips nonce fetching and uses UI/);
+          assert.match(messages[0].content, /Reconcile uncertain writes/);
+          assert.match(messages[0].content, /If API is unsuitable or declined/);
+          assert.match(messages[0].content, /post_type=page&classic-editor/);
+          assert.equal(agent._skillLoaderDefinition('act', tier), null, 'hint must work without installed skills');
+          if (tier === 'compact') {
+            for (const allowed of [false, true]) {
+              agent.setApiMutationsAllowed(4974, allowed);
+              const prompt = agent._buildSystemPrompt('act', 4974);
+              const apiRule = prompt.split('\n').find(line => line.startsWith('8.'));
+              assert.match(apiRule, /WordPress.*prefer the API/);
+              assert.match(apiRule, /mutations are authorized/);
+              assert.match(apiRule, /fields.*session.*verified/);
+              assert.match(apiRule, /Strict secret handling is off/);
+              assert.match(apiRule, /Without API authorization.*POST\/PUT\/PATCH\/DELETE/);
+              assert.doesNotMatch(prompt, /Do not call APIs directly/);
+              assert.equal(agent.isApiMutationsAllowed(4974), allowed, 'prompt construction changed API permission');
+            }
+          }
+        }
+        const plan = buildMessages({ role: 'user', content: 'Publish this WordPress page' }, url, 'WordPress', '', { allowApi: true });
+        assert.match(plan[0].content, /prefer the API first/);
+      }
+      for (const url of ['https://example.com/?next=/wp-admin/', 'https://example.com/blog/wp-admin-guide/', 'https://example.com/blog/#/wp-admin/']) {
+        assert.notEqual(getAdapter(url)?.name, 'wordpress');
+      }
+    }
+  } finally { globalThis.chrome = savedChrome; globalThis.browser = savedBrowser; }
 });
 
 test('routes AWS console tasks through the specific CloudShell adapter', () => {
@@ -13374,6 +13550,90 @@ test('Share-for-research caps count wrapper messages and serialized overhead', (
   assert.match(item.request.at(-1).content, /^cap249-/, 'tail lost to cap accounting');
 });
 
+test('research sharing includes a bounded content-free diagnostic timeline for failed model runs', () => {
+  for (const outbox of [SHARE_OUTBOX_CH, SHARE_OUTBOX_FX]) {
+    const events = [
+      { seq: 1, kind: 'llm_request', data: { step: 1, phase: 'main', messages: [{ role: 'user', content: 'private prompt' }] } },
+      { seq: 2, kind: 'tool', data: { step: 1, name: 'click', args: { password: 'secret' }, result: { success: false, error: 'private result', code: 'not_found' }, latencyMs: 12 } },
+      { seq: 3, kind: 'screenshot', data: { step: 1, imageData: 'data:image/png;base64,secret' } },
+    ];
+    const item = outbox.buildShareDiagnosticItem({
+      runId: 'run_123', events, status: 'failed', model: 'outside-model', mode: 'act',
+      browserTarget: 'chrome', provider: 'local-openai-proxy', provider_id: 'instance_1',
+    });
+    assert.equal(item.kind, 'diagnostic');
+    assert.equal(item.diagnostic.event.data.status, 'failed');
+    assert.equal(item.diagnostic.event.data.events[1].resultStatus, 'error');
+    assert.equal(item.diagnostic.event.data.events[1].resultErrorCode, 'not_found');
+    const projectedTool = outbox.buildShareDiagnosticItem({
+      runId: 'already-projected', status: 'failed', events: [events[0], {
+        seq: 2, kind: 'tool', data: { step: 1, name: 'click', resultStatus: 'error', resultErrorCode: 'timeout' },
+      }],
+    });
+    assert.equal(projectedTool.diagnostic.event.data.events[1].resultStatus, 'error');
+    assert.equal(projectedTool.diagnostic.event.data.events[1].resultErrorCode, 'timeout');
+    for (const secret of ['private prompt', 'password', 'private result', 'imageData', 'data:image']) {
+      assert.equal(JSON.stringify(item).includes(secret), false, `diagnostic leaked ${secret}`);
+    }
+    assert.equal(outbox.buildShareDiagnosticItem({ runId: 'local', events: [events[1]], status: 'done' }), null, 'local-only paths must not be uploaded');
+    const failedWithContext = outbox.buildShareDiagnosticItem({
+      runId: 'failed-context', events, status: 'failed',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Please finish this' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,secret' } }] }],
+      finalContent: 'The provider timed out.',
+    });
+    assert.equal(failedWithContext.diagnostic.event.data.request_messages[0].content.length, 1);
+    assert.equal(failedWithContext.diagnostic.event.data.final_content, 'The provider timed out.');
+    assert.equal(JSON.stringify(failedWithContext).includes('data:image'), false);
+    const largeFailure = outbox.buildShareDiagnosticItem({
+      runId: 'large-failed-context', events, status: 'failed',
+      messages: Array.from({ length: 140 }, (_, index) => ({ role: 'user', content: `Turn ${index}: ${'detail '.repeat(200)}` })),
+    });
+    assert.ok(JSON.stringify(largeFailure.diagnostic.event.data.request_messages).length <= 80_000,
+      'failed diagnostic requests must remain parseable under the Cloud intake limit');
+    assert.match(largeFailure.diagnostic.event.data.request_messages.at(-1).content, /^Turn 139:/,
+      'diagnostic request budget must preserve the most recent task context');
+    const many = Array.from({ length: 200 }, (_, index) => ({ seq: index + 1, kind: 'llm_request', data: { step: index + 1, phase: 'main' } }));
+    const capped = outbox.buildShareDiagnosticItem({ runId: 'long', events: many, status: 'done' });
+    assert.equal(capped.diagnostic.event.data.events.length, 80);
+    assert.equal(capped.diagnostic.event.data.dropped_events, 120);
+    assert.equal(capped.diagnostic.event.data.events[0].seq, 1);
+    assert.equal(capped.diagnostic.event.data.events.at(-1).seq, 200);
+  }
+});
+
+test('research diagnostic outbox retries and honors provider consent revocation', async () => {
+  const originalChrome = globalThis.chrome;
+  const storage = {};
+  globalThis.chrome = { storage: { local: {
+    async get(keys) { return { [keys[0]]: storage[keys[0]] }; },
+    async set(values) { Object.assign(storage, values); },
+  } } };
+  try {
+    const entry = SHARE_OUTBOX_CH.buildShareDiagnosticItem({
+      runId: 'outbox-run', events: [{ seq: 1, kind: 'llm_request', data: { step: 1 } }],
+      status: 'failed', provider_id: 'external-instance',
+    });
+    assert.equal(await SHARE_OUTBOX_CH.enqueueShareDiagnostic({ ...entry, session_id: 'share_test' }), true);
+    let sent = 0;
+    const transport = { sendShareGeneration: async () => { throw new Error('wrong endpoint'); }, async sendShareDiagnostic(sessionId, payload) {
+      sent++;
+      assert.equal(sessionId, 'share_test');
+      assert.equal(payload.event.kind, 'diagnostic_trace');
+      return sent === 1 ? { ok: false, retryable: true } : { ok: true };
+    } };
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(transport, () => true), 0);
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(transport, () => true), 1);
+    assert.equal(sent, 2);
+    await SHARE_OUTBOX_CH.enqueueShareDiagnostic({ ...entry, session_id: 'share_test' });
+    assert.equal(await SHARE_OUTBOX_CH.purgeShareGenerations(item => item.provider_id === 'external-instance'), 1);
+    assert.equal(await SHARE_OUTBOX_CH.flushShareOutbox(transport, () => true), 0);
+    assert.equal(sent, 2);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('Share-for-research outbox persists retryable failures and removes acknowledged or rejected entries', async () => {
   const originalChrome = globalThis.chrome;
   const storage = {};
@@ -13687,12 +13947,34 @@ test('Firefox research transport blocks native permission revocation before uplo
       } } };
       globalThis.fetch = async (url, options) => { requests.push({ url, options }); return new Response('', { status: 202 }); };
       const result = await provider.sendShareGeneration('share_test', { request: [], response: { content: 'ok' } });
-      assert.equal(requests.length, consent === true ? 1 : 0, `${consent}: native consent was bypassed`);
+      const diagnostic = await provider.sendShareDiagnostic('share_test', { event_id: 'diag_test', event: { kind: 'diagnostic_trace' } });
+      assert.equal(requests.length, consent === true ? 2 : 0, `${consent}: native consent was bypassed`);
       assert.equal(result.ok, consent === true);
+      assert.equal(diagnostic.ok, consent === true);
       assert.equal(result.retryable, false);
+      assert.equal(diagnostic.retryable, false);
+      if (consent === true) {
+        assert.match(requests[1].url, /\/improvement\/diagnostic-traces$/);
+        assert.equal(JSON.parse(requests[1].options.body).session_id, 'share_test');
+      }
     }
   } finally {
     globalThis.browser = originalBrowser;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Chrome research diagnostic transport retains 404s for Cloud rollout ordering', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    const provider = new OpenAIProviderCh({ providerName: 'webbrain-cloud', baseUrl: 'https://share.example.test/v1' });
+    const requests = [];
+    globalThis.fetch = async (url, options) => { requests.push({ url, options }); return new Response('', { status: 404 }); };
+    const result = await provider.sendShareDiagnostic('share_test', { event_id: 'diag_test', event: { kind: 'diagnostic_trace' } });
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].url, /\/improvement\/diagnostic-traces$/);
+    assert.equal(result.retryable, true);
+  } finally {
     globalThis.fetch = originalFetch;
   }
 });
@@ -13706,6 +13988,8 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     const settings = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/settings.js`), 'utf8');
     const provider = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/openai.js`), 'utf8');
     assert.match(agent, /status === 'done'[\s\S]*hadProviderCompletion === true[\s\S]*shareQueriesForResearch === true[\s\S]*enqueueShareGeneration/, `${browser}: capture must require a provider completion and the per-provider toggle`);
+    assert.match(agent, /force: runOptions\?\.cloudRun === true \|\| \(provider\?\.config\?\.shareQueriesForResearch === true/, `${browser}: opted-in external runs must record diagnostics even when local tracing is off`);
+    assert.match(agent, /trace\.getRunEvents\(runId\)[\s\S]*enqueueShareDiagnostic/, `${browser}: completed recorder events must be queued with the same share consent`);
     assert.match(agent, /shareRequest/, `${browser}: capture must prefer the model-facing source-grounded request`);
     assert.match(agent, /shareRawResponse/, `${browser}: shared response must be the raw provider completion`);
     assert.match(agent, /rawSummary/, `${browser}: done-tool summaries must exclude appended presentation`);
@@ -13733,6 +14017,7 @@ test('Share-for-research delivery stays opt-in and mirrored across both builds',
     assert.match(settings, /shareQueriesForResearch/, `${browser}: share toggle field missing from settings`);
     assert.match(settings, /!input\.checked[\s\S]*?confirm\(/, `${browser}: consent confirmation must guard turning the share toggle on`);
     assert.match(provider, /\/improvement\/generations/, `${browser}: share endpoint missing from the Compass provider transport`);
+    assert.match(provider, /\/improvement\/diagnostic-traces/, `${browser}: diagnostic endpoint missing from the Compass provider transport`);
   }
 });
 
@@ -14705,7 +14990,7 @@ test('/export --traces is wired in both side panels and backgrounds', () => {
     const bg = fs.readFileSync(path.join(ROOT, bgRel), 'utf8');
     assert.match(
       panel,
-      /usage: '\/export \[--traces \| --config\]'[\s\S]*?value: '--traces'[\s\S]*?action: 'traces'[\s\S]*?outOfBand: true/,
+      /usage: '\/export \[--traces \[--full\] \| --config\]'[\s\S]*?value: '--traces'[\s\S]*?action: 'traces'[\s\S]*?outOfBand: true/,
       `${label}: slash metadata should advertise /export --traces`,
     );
     assert.match(
@@ -14715,7 +15000,7 @@ test('/export --traces is wired in both side panels and backgrounds', () => {
     );
     assert.match(
       panel,
-      /if \(command\.value === '\/export' && action === 'traces'\) \{[\s\S]*?sendToBackground\('export_traces', \{ tabId \}\)/,
+      /if \(command\.value === '\/export' && action === 'traces'\) \{[\s\S]*?sendToBackground\('export_traces', \{ tabId, full: optionValues\.has\('--full'\) \}\)/,
       `${label}: /export --traces should call export_traces on the background`,
     );
     assert.match(
@@ -14731,7 +15016,7 @@ test('/export --traces is wired in both side panels and backgrounds', () => {
     assert.match(bg, /case 'export_traces':/, `${label}: background should handle export_traces`);
     assert.match(
       bg,
-      /case 'export_traces': \{[\s\S]*?agent\.exportTraces\(tabId\)/,
+      /case 'export_traces': \{[\s\S]*?agent\.exportTraces\(tabId, \{ full: msg\.full === true \}\)/,
       `${label}: export_traces should call agent.exportTraces`,
     );
     assert.match(panel, /_Exported with WebBrain v\$\{webbrainVersion\}_/, `${label}: /export should include the current manifest version`);
@@ -22739,6 +23024,75 @@ test('non-GitHub hosts use last-3-segments backstop', () => {
   );
 });
 
+test('WordPress rest_route buckets preserve route and installation identity without cache-query bypasses', () => {
+  for (const bucket of [resourceBucket, resourceBucketFx]) {
+    const item = 'https://example.com/blog/?rest_route=/wp/v2/posts/42';
+    for (const equivalent of [
+      'https://example.com/blog/?rest_route=%2Fwp%2Fv2%2Fposts%2F42',
+      'https://example.com/blog/?rest_route=/wp/v2/posts/42/&context=edit',
+      'https://example.com/blog/?cache=2&rest_route=/wp/v2/posts/42',
+    ]) assert.equal(bucket(item), bucket(equivalent), 'same REST item must keep one loop identity');
+    for (const distinct of [
+      'https://example.com/blog/?rest_route=/wp/v2/posts/43',
+      'https://example.com/blog/?rest_route=/wp/v2/users/me',
+      'https://example.com/blog/?rest_route=/custom/v2/posts/42',
+      'https://example.com/other/?rest_route=/wp/v2/posts/42',
+      'https://example.com/blog/',
+    ]) assert.notEqual(bucket(item), bucket(distinct), 'different REST resources must not collide');
+    assert.notEqual(bucket('https://example.com/a/shared/path/site/?rest_route=/wp/v2/types'), bucket('https://example.com/b/shared/path/site/?rest_route=/wp/v2/types'), 'installation prefixes must survive');
+    assert.equal(bucket('https://example.com/?rest_route=/'), bucket('https://example.com/?cache=1&rest_route=%2F'));
+    for (const invalid of ['', 'not-a-route']) {
+      assert.equal(bucket(`https://example.com/file.txt?rest_route=${invalid}`), bucket('https://example.com/file.txt'));
+    }
+  }
+});
+
+test('WordPress query-form discovery passes the Agent loop guard while repeated resources still warn', async () => {
+  const savedFetch = globalThis.fetch;
+  const savedChrome = globalThis.chrome, savedBrowser = globalThis.browser;
+  try {
+    globalThis.chrome = globalThis.browser = { tabs: { get: async () => ({ url: 'https://example.com/blog/wp-admin/' }) } };
+    for (const [label, AgentClass, fetchUrl] of [['chrome', AgentCh, fetchUrlCh], ['firefox', AgentFx, fetchUrlFx]]) {
+      let dispatched = 0;
+      globalThis.fetch = async (url, init) => {
+        dispatched++;
+        assert.equal(init.credentials, 'include');
+        if (new URL(url).searchParams.get('action') === 'rest-nonce') return new Response('test-nonce', { headers: { 'Content-Type': 'text/html' } });
+        return new Response(JSON.stringify({ route: new URL(url).searchParams.get('rest_route') }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      const discovery = [
+        'https://example.com/blog/?rest_route=/',
+        'https://example.com/blog/wp-admin/admin-ajax.php?action=rest-nonce',
+        ...['users/me', 'types/post', 'taxonomies', 'categories', 'tags', 'posts/42'].map(route => `https://example.com/blog/?rest_route=/wp/v2/${route}&context=edit`),
+      ];
+      const repeats = [
+        'https://example.com/blog/?rest_route=/wp/v2/posts/42',
+        'https://example.com/blog/?rest_route=%2Fwp%2Fv2%2Fposts%2F42',
+        'https://example.com/blog/?cache=3&rest_route=/wp/v2/posts/42/&context=edit',
+      ];
+      for (const [urls, expectLoop] of [[discovery, false], [repeats, true]]) {
+        const agent = new AgentClass({ getVisionProvider: async () => null });
+        const tabId = 4981;
+        agent.conversationModes.set(tabId, 'act');
+        agent._ensureGateSetting = async () => {};
+        agent._skipPermissionGate = true;
+        agent.executeTool = async (_tabId, name, args) => {
+          assert.equal(name, 'fetch_url');
+          return fetchUrl(args.url, args, { tabId });
+        };
+        const messages = [];
+        for (const [step, url] of urls.entries()) {
+          await agent._executeToolBatch(tabId, [{
+            id: `wp_read_${step}`, function: { name: 'fetch_url', arguments: JSON.stringify({ url, method: 'GET' }) },
+          }], messages, () => {}, { supportsVision: false }, '', new Set(['fetch_url']), step + 1);
+        }
+        assert.equal(messages.some(message => /LOOP DETECTED/.test(message.content)), expectLoop, `${label}: model-facing loop guidance`);
+      }
+      assert.equal(dispatched, discovery.length + repeats.length, `${label}: expected reads were skipped`);
+    }
+  } finally { globalThis.fetch = savedFetch; globalThis.chrome = savedChrome; globalThis.browser = savedBrowser; }
+});
+
 test('GitHub gist + codeload also normalize to github.com', () => {
   const a = resourceBucket('https://gist.github.com/user/abc123/raw/file.txt');
   const b = resourceBucket('https://codeload.github.com/owner/repo/zip/refs/heads/main');
@@ -22788,7 +23142,7 @@ test('fetch_url loop buckets allow semantic pages/searches but collapse guessed 
   assert.equal(rangeA, bucketArgsKeyFx('fetch_url', { url, headers: { Range: 'bytes=0-9999' } }), 'firefox Range bucket drift');
 });
 
-test('bucketArgsKey: non-URL tools fall back to exact JSON args', () => {
+test('bucketArgsKey: non-URL tools fall back to key-order-independent JSON args', () => {
   // click_ax with the same ref_id should match itself
   assert.equal(
     bucketArgsKey('click_ax', { ref_id: 'ref_42' }),
@@ -22799,6 +23153,58 @@ test('bucketArgsKey: non-URL tools fall back to exact JSON args', () => {
     bucketArgsKey('click_ax', { ref_id: 'ref_42' }),
     bucketArgsKey('click_ax', { ref_id: 'ref_43' }),
   );
+});
+
+test('bucketArgsKey: reordered object keys cannot disguise one rejected call', () => {
+  // JSON.stringify keeps insertion order, so a model that re-emits the same
+  // invalid argument object with its keys permuted would hash to a fresh key
+  // every attempt and never hit the rejection limit.
+  for (const key of [bucketArgsKey, bucketArgsKeyFx]) {
+    assert.equal(
+      key('set_field', { text: '02', selector: '#jj' }),
+      key('set_field', { selector: '#jj', text: '02' }),
+      'top-level key order must not change the loop identity',
+    );
+    assert.equal(
+      key('click', { x: 10, y: 20, meta: { a: 1, b: 2 } }),
+      key('click', { meta: { b: 2, a: 1 }, y: 20, x: 10 }),
+      'nested key order must not change the loop identity',
+    );
+    assert.notEqual(
+      key('click', { steps: [1, 2] }),
+      key('click', { steps: [2, 1] }),
+      'array order is semantic and must stay distinct',
+    );
+    assert.notEqual(
+      key('set_field', { text: '02', selector: '#jj' }),
+      key('set_field', { text: '03', selector: '#jj' }),
+      'different values are different calls',
+    );
+  }
+  // Degenerate values must not throw or collapse into one identity.
+  const cyclic = { text: '02' };
+  cyclic.self = cyclic;
+  assert.equal(bucketArgsKey('set_field', cyclic), bucketArgsKey('set_field', cyclic));
+  assert.equal(bucketArgsKey('set_field'), bucketArgsKey('set_field', null));
+  assert.equal(
+    bucketArgsKey('set_field', { text: undefined, extra: 1 }),
+    bucketArgsKey('set_field', { extra: 1 }),
+    'undefined values must not split an identity',
+  );
+});
+
+test('rejected invalid-schema calls share one failure scope across key orders', () => {
+  for (const [label, Detector] of [['chrome', ConfiguredLoopDetector], ['firefox', ConfiguredLoopDetectorFx]]) {
+    const detector = new Detector();
+    const tabId = 1;
+    const rejection = { success: false, invalidArguments: true, noDispatch: true, dispatched: false };
+    const outcomes = [
+      { text: '02', selector: '#jj' },
+      { selector: '#jj', text: '02' },
+      { selector: '#jj', text: '02' },
+    ].map(args => detector._checkLoop(tabId, 'set_field', args, rejection).kind);
+    assert.deepEqual(outcomes, ['none', 'nudge', 'stop'], `${label}: key order must not dodge the limit`);
+  }
 });
 
 test('URL_FAMILY_TOOLS contains the expected tool names', () => {
@@ -22839,6 +23245,8 @@ test('firefox loop-bucket matches chrome', () => {
     ['fetch_url', { url: 'https://api.github.com/repos/o/r/contents/foo.json', method: 'POST' }],
     ['click_ax', { ref_id: 'ref_42' }],
     ['fetch_url', { url: 'not a url' }],
+    ['set_field', { selector: '#jj', nested: { b: 2, a: [1, 2] }, text: '02' }],
+    ['set_field', { text: undefined, extra: 1 }],
   ];
   for (const [name, args] of samples) {
     assert.equal(bucketArgsKeyFx(name, args), bucketArgsKey(name, args), `mismatch on ${name} ${JSON.stringify(args)}`);
@@ -25639,7 +26047,24 @@ test('trace lineage: _startTraceRun and replay plumb parent ids in both builds',
   assert.match(chromeCloudRuns, /const parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'cloud-runs does not use the completed parent trace');
   assert.match(chromeCloudRuns, /workflowTrace\.getRun\(parentTraceRunId\)/, 'cloud-runs does not resolve the parent trace session');
   assert.match(chromeCloudRuns, /parentRunId: parentTraceRunId,[\s\S]*?parentSessionId: parentTraceSessionId,/, 'cloud-runs does not thread resolved parent lineage');
-  assert.ok(!fs.existsSync(path.join(ROOT, 'src/firefox/src/cloud-runs.js')), 'Firefox has no cloud-runs module — lineage threading is Chrome-only by platform boundary');
+  const firefoxCloudRuns = fs.readFileSync(path.join(ROOT, 'src/firefox/src/cloud-runs.js'), 'utf8');
+  assert.match(firefoxCloudRuns, /const parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'Firefox cloud-runs does not use the completed parent trace');
+  assert.match(firefoxCloudRuns, /parentRunId: parentTraceRunId,[\s\S]*?parentSessionId: parentTraceSessionId,/, 'Firefox cloud-runs does not thread resolved parent lineage');
+});
+
+test('firefox: revoking the global API setting keeps a temporary cloud-run grant', () => {
+  const agent = new AgentFx({ getActive: () => ({ model: 'test-model' }) });
+  const tabId = 17855;
+  agent.conversations.set(tabId, []);
+  agent.setTemporaryApiMutationsAllowed(tabId, true);
+  agent.apiAllowedInjected.add(tabId);
+  agent.setAlwaysAllowApiMutations(true);
+  agent.setAlwaysAllowApiMutations(false);
+  assert.equal(agent.isApiMutationsAllowed(tabId), true);
+  assert.equal(agent.conversations.get(tabId).length, 0, 'no NOT ALLOWED note while the temporary grant is active');
+  assert.equal(agent.apiAllowedInjected.has(tabId), true);
+  agent.setTemporaryApiMutationsAllowed(tabId, false);
+  assert.equal(agent.conversations.get(tabId).length, 1, 'the note is appended once the last grant ends');
 });
 
 test('saved workflow replay captures its source lineage before claiming the tab', async () => {
@@ -26202,10 +26627,29 @@ test('cloud run controller pauses and resumes clarify, permission, and submit in
     );
   }
 
+  emitUpdate('clarify', { clarifyId: 'clr_expired', question: 'Complete the challenge?', deadlineTs: 1790000000000 });
+  assert.equal((await controller.status({ runId: 'run_input' })).status, 'needs_user_input');
+  emitUpdate('clarify_timeout_extended', { clarifyId: 'clr_expired', deadlineTs: 1790000060000 });
+  assert.equal((await controller.status({ runId: 'run_input' })).pendingInput.deadlineTs, 1790000060000);
+  emitUpdate('clarify_timeout_extended', { clarifyId: 'clr_other', deadlineTs: 1790000120000 });
+  assert.equal((await controller.status({ runId: 'run_input' })).pendingInput.deadlineTs, 1790000060000);
+  emitUpdate('clarify_auto', { clarifyId: 'clr_expired', source: 'timeout', answer: '(no response — timed out)' });
+  const expired = await controller.status({ runId: 'run_input' });
+  assert.equal(expired.status, 'running');
+  assert.equal(expired.pendingInput, null);
+  await assert.rejects(
+    () => controller.respond({ runId: 'run_input', clarifyId: 'clr_expired', answer: 'Continue' }),
+    /not waiting for user input/,
+  );
+  emitUpdate('clarify', { clarifyId: 'clr_replacement', question: 'Continue now?' });
+  assert.equal((await controller.status({ runId: 'run_input' })).pendingInput.clarifyId, 'clr_replacement');
+  await controller.respond({ runId: 'run_input', clarifyId: 'clr_replacement', answer: 'Continue' });
+
   assert.deepEqual(submitted, [
     [20, 'clr_general', 'Work', 'cloud_api'],
     [20, 'perm_network', 'once', 'cloud_api'],
     [20, 'submit_form', 'once', 'cloud_api'],
+    [20, 'clr_replacement', 'Continue', 'cloud_api'],
   ]);
   finishRun('Done');
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -28662,8 +29106,8 @@ test('getToolsForMode: mode/tier redesign exposes the intended normal and Dev to
     }
     const researchOptions = { researchEscalationEnabled: true };
     assert.equal(getTools('act', { tier: 'compact', ...researchOptions }).length, 25, `[${label}] Compact should expose 25 tools after tab-tool removal`);
-    assert.equal(getTools('act', { tier: 'mid', ...researchOptions }).length, 46, `[${label}] Mid should expose 46 tools after chat workflow addition`);
-    assert.equal(getTools('act', researchOptions).length, label === 'chrome' ? 52 : 51, `[${label}] Full tool count should include the chat workflow tools`);
+    assert.equal(getTools('act', { tier: 'mid', ...researchOptions }).length, 48, `[${label}] Mid should expose 48 tools including CAPTCHA discovery and answer application`);
+    assert.equal(getTools('act', researchOptions).length, label === 'chrome' ? 54 : 53, `[${label}] Full tool count should include the chat workflow tools`);
     assert.equal(compact.includes('research_url'), false, `[${label}] Compact must not gain research_url as a tab-tool replacement`);
 
     assert.equal(ask.includes('download_resource_from_page'), false, `[${label}] ask must not expose download_resource_from_page`);
@@ -28971,7 +29415,7 @@ test('test/llm goldens only name tools the model is actually offered', () => {
   }
 
   const scenarioFiles = walk(path.join(llmDir, 'scenarios'));
-  assert.equal(scenarioFiles.length, 100, 'scenarios/ should hold 100 multi-turn cases');
+  assert.equal(scenarioFiles.length, 108, 'scenarios/ should hold 108 multi-turn cases, including 8 CMS recovery cases');
   for (const file of scenarioFiles) {
     const scenario = readJson(file);
     const rel = path.relative(ROOT, file);
@@ -29079,7 +29523,7 @@ test('getToolsForMode: retired tools are not model-callable', () => {
         assert.match(prompt, /\/record\b/, `[${label}] ${promptLabel} prompt should direct recording requests to the /record slash command`);
         assert.match(prompt, /\/record --full-screen\b/, `[${label}] ${promptLabel} prompt should direct screen recording requests to /record --full-screen`);
       } else {
-        assert.doesNotMatch(prompt, /\/screenshot --full-page\b/, `[${label}] ${promptLabel} prompt must not mention the Chrome-only full-page screenshot flag`);
+        assert.match(prompt, /\/screenshot --full-page\b/, `[${label}] ${promptLabel} prompt should explain full-page capture with the Firefox companion`);
         assert.doesNotMatch(prompt, /\/record --full-screen\b/, `[${label}] ${promptLabel} prompt must not mention the Chrome-only full-screen recording flag`);
       }
     }
@@ -31863,6 +32307,9 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'temporary-file-share-litterbox': ['temporary_file_share', 'public_upload_link', 'expiring_file_upload'],
     'humanizer': ['email_reply', 'draft_message', 'compose_prose', 'rewrite_text', 'humanize_writing', 'reply_to_thread'],
     'phonr-calls': ['outbound_phone_call', 'phone_inquiry', 'phone_call_status', 'phone_call_result', 'phone_call_recording', 'stop_phone_call'],
+    'wordpress-rest-api': ['wordpress_content', 'wordpress_publish', 'wordpress_draft', 'wordpress_taxonomy'],
+    ...Object.fromEntries(['ghost', 'drupal', 'joomla', 'webflow', 'shopify', 'wix', 'strapi', 'contentful', 'sanity']
+      .map(cms => [`cms-${cms}`, ['cms_content_management', `${cms}_content`]])),
   };
   for (const [label, prefix, sources, normalizeSkills] of [
     ['chrome', 'src/chrome', PACKAGED_SKILL_SOURCES_CH, normalizeCustomSkillsCh],
@@ -31875,10 +32322,197 @@ test('every bundled skill declares its canonical semantic intents', () => {
       sourceUrl: source.path,
       content: fs.readFileSync(path.join(ROOT, prefix, source.path), 'utf8'),
     }));
-    for (const skill of normalizeSkills(records)) {
+    // The packaged catalog can exceed the enabled-skill capacity. Validate each
+    // package so the tail of the catalog is not silently omitted from this test.
+    for (const skill of records.flatMap(record => normalizeSkills([record]))) {
       assert.deepEqual(skill.intents, expected[skill.id], `${label}: wrong semantic intents for ${skill.id}`);
     }
   }
+});
+
+test('WordPress skill loads on demand in Act/Dev Mid/Full and cannot restore itself after removal', () => {
+  const contents = [];
+  for (const [label, prefix, AgentClass, sources, defaults] of [
+    ['chrome', 'src/chrome', AgentCh, PACKAGED_SKILL_SOURCES_CH, DEFAULT_SKILL_SOURCES_CH],
+    ['firefox', 'src/firefox', AgentFx, PACKAGED_SKILL_SOURCES_FX, DEFAULT_SKILL_SOURCES_FX],
+  ]) {
+    const source = sources.find(s => s.id === 'wordpress-rest-api');
+    assert.ok(defaults.some(s => s.id === source?.id), `${label}: missing default`);
+    const content = fs.readFileSync(path.join(ROOT, prefix, source.path), 'utf8');
+    contents.push(content);
+    for (const tier of ['compact', 'mid', 'full']) {
+      for (const mode of ['ask', 'act', 'dev']) {
+        const agent = new AgentClass({ getActive: () => ({ promptTier: tier }) });
+        const tabId = 4975;
+        agent.setCustomSkills([{ ...source, content, sourceType: 'built-in', sourceUrl: source.path }]);
+        agent.conversationModes.set(tabId, mode);
+        agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt(mode, tabId) }]);
+        assert.doesNotMatch(agent.conversations.get(tabId)[0].content, /Discover the site, session/);
+        const eligible = tier !== 'compact' && mode !== 'ask';
+        const loader = agent._skillLoaderDefinition(mode, tier);
+        assert.equal(!!loader, eligible, `${label}: ${mode}/${tier} catalog eligibility`);
+        const result = agent._loadSkillForRun(tabId, { skill_id: source.id });
+        assert.equal(result.success, eligible, `${label}: ${mode}/${tier} load eligibility`);
+        const prompt = agent.conversations.get(tabId)[0].content;
+        assert.equal(prompt.includes('Discover the site, session'), eligible);
+        assert.deepEqual(agent._skillToolDefinitions(tabId, mode, tier), [], 'instruction-only skill added tools');
+        assert.equal(agent.isApiMutationsAllowed(tabId), false, 'loading a skill granted API access');
+        if (eligible) {
+          agent.strictSecretMode = true;
+          assert.match(agent._buildSystemPrompt(mode, tabId), /Strict secret handling overrides this recipe/);
+          assert.match(agent._buildSystemPrompt(mode, tabId), /without fetching a REST nonce/);
+        }
+        agent.setCustomSkills([]);
+        assert.equal(agent._loadSkillForRun(tabId, { skill_id: source.id }).success, false);
+        assert.doesNotMatch(agent._buildSystemPrompt(mode, tabId), /Discover the site, session/);
+      }
+    }
+  }
+  assert.equal(contents[0], contents[1]);
+});
+
+test('WordPress default seeding respects stored removal on startup and restart', async () => {
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const mod = await import(pathToFileURL(path.join(ROOT, prefix, 'src/agent/skills.js')).href);
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const start = background.indexOf('async function loadCustomSkills()');
+    const end = background.indexOf('const customSkillsReady =', start);
+    assert.ok(start >= 0 && end > start);
+    for (const removed of [false, true]) {
+      const state = { customSkills: [], defaultSkillsSeeded: true, defaultSkillsRemoved: removed ? ['wordpress-rest-api'] : [] };
+      let installed = [];
+      const bindings = {
+        ...mod,
+        chrome: { storage: { local: { get: async () => state, set: async update => Object.assign(state, update) } } },
+        agent: { setCustomSkills: skills => { installed = skills; } },
+        loadPackagedSkillRecords: async sources => sources.map(source => ({
+          ...source, sourceType: 'built-in', sourceUrl: source.path,
+          content: fs.readFileSync(path.join(ROOT, prefix, source.path), 'utf8'),
+        })),
+        refreshPackagedSkillRecords: async skills => ({ skills, changed: false }),
+      };
+      bindings.browser = bindings.chrome;
+      const load = Function(...Object.keys(bindings), `${background.slice(start, end)}\nreturn loadCustomSkills;`)(...Object.values(bindings));
+      await load();
+      await load();
+      assert.equal(installed.filter(skill => skill.id === 'wordpress-rest-api').length, removed ? 0 : 1, prefix);
+      if (!removed) {
+        state.customSkills = state.customSkills.filter(skill => skill.id !== 'wordpress-rest-api');
+        state.defaultSkillsRemoved = ['wordpress-rest-api'];
+        await load();
+        assert.equal(installed.some(skill => skill.id === 'wordpress-rest-api'), false, `${prefix}: removed default returned`);
+      }
+    }
+  }
+});
+
+test('WordPress mutation examples obey existing API grants and Ask-mode denial in both builds', async () => {
+  for (const [prefix, AgentClass] of [['src/chrome', AgentCh], ['src/firefox', AgentFx]]) {
+    const content = fs.readFileSync(path.join(ROOT, prefix, 'skills/wordpress-rest-api.md'), 'utf8');
+    const example = [...content.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].map(m => JSON.parse(m[1]))[1];
+    for (const approval of ['none', 'conversation', 'persistent', 'ask']) {
+      const agent = new AgentClass({ getVisionProvider: async () => null });
+      const tabId = 4976;
+      let executed = false;
+      agent.executeTool = async () => { executed = true; return { success: true, status: 201 }; };
+      agent._ensureGateSetting = async () => {};
+      agent._skipPermissionGate = true;
+      agent.conversationModes.set(tabId, approval === 'ask' ? 'ask' : 'act');
+      if (approval === 'conversation' || approval === 'ask') agent.setApiMutationsAllowed(tabId, true);
+      if (approval === 'persistent') agent.setAlwaysAllowApiMutations(true);
+      const messages = [];
+      await agent._executeToolBatch(tabId, [{
+        id: 'wp_create', function: { name: 'fetch_url', arguments: JSON.stringify({ ...example, url: 'https://example.com/blog/wp-json/wp/v2/posts' }) },
+      }], messages, () => {}, { supportsVision: false }, '', new Set(['fetch_url']), 1, { apiMutationsDenied: approval === 'ask' });
+      assert.equal(executed, ['conversation', 'persistent'].includes(approval), `${prefix}: ${approval}`);
+      if (!executed) {
+        const denied = JSON.parse(messages[0].content);
+        assert.equal(denied.denied, true);
+        assert.equal(denied.requiresApiAllow, approval === 'none');
+      }
+    }
+  }
+});
+
+test('WordPress fetch_url examples preserve cookies, type, ID and taxonomy through verified draft/publication and uncertain writes', async () => {
+  const savedFetch = globalThis.fetch;
+  const savedChrome = globalThis.chrome, savedBrowser = globalThis.browser;
+  try {
+    globalThis.chrome = globalThis.browser = { tabs: { get: async () => ({ url: 'https://example.com/blog/wp-admin/post.php?post=42&action=edit' }) } };
+    for (const [prefix, fetchUrl] of [['src/chrome', fetchUrlCh], ['src/firefox', fetchUrlFx]]) {
+      const content = fs.readFileSync(path.join(ROOT, prefix, 'skills/wordpress-rest-api.md'), 'utf8');
+      const templates = [...content.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].map(m => JSON.parse(m[1]));
+      for (const [route, queryRoot, existing, uncertain] of [
+        ['wp/v2/posts', false, false, false],
+        ['wp/v2/pages', false, true, false],
+        ['library/v1/books', false, true, true],
+        ['wp/v2/posts', true, false, true],
+      ]) {
+        const collection = queryRoot ? `https://example.com/blog/?rest_route=/${route}` : `https://example.com/blog/wp-json/${route}`;
+        const item = `${collection}/42`;
+        const readItem = `${item}${queryRoot ? '&' : '?'}context=edit`;
+        const nonce = 'test-nonce';
+        const examples = templates.map(template => JSON.parse(JSON.stringify(template)
+          .replaceAll('ADMIN_URL', 'https://example.com/blog/wp-admin')
+          .replaceAll('COLLECTION_URL', collection).replaceAll('ITEM_READ_URL', readItem)
+          .replaceAll('ITEM_URL', item).replaceAll('NONCE', nonce)));
+        const taxonomies = route === 'wp/v2/posts' ? { categories: [7], tags: [12] } : route === 'library/v1/books' ? { genres: [8] } : {};
+        let record = existing ? { id: 42, type: route, title: 'Keep title', content: '<p>Old content.</p>', status: 'draft', ...taxonomies } : null;
+        let writes = 0, creations = 0, loseResponse = uncertain;
+        const jsonResponse = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+        globalThis.fetch = async (url, init) => {
+          assert.equal(init.credentials, 'include', `${prefix}: missing current-tab session`);
+          assert.equal(init.redirect, 'manual');
+          if (url === examples[0].url) return new Response(nonce, { headers: { 'Content-Type': 'text/html' } });
+          assert.equal(init.headers['X-WP-Nonce'], nonce);
+          assert.equal(url.includes(nonce), false);
+          if (init.method === 'GET') {
+            assert.equal(url, readItem);
+            return jsonResponse(record);
+          }
+          writes++;
+          const body = JSON.parse(init.body);
+          assert.equal(init.headers['Content-Type'], 'application/json');
+          if (url === collection) {
+            assert.equal(existing, false, 'existing draft must not use the collection create route');
+            creations++;
+            assert.equal(body.status, 'draft');
+            record = { id: 42, type: route, ...body };
+          } else {
+            assert.equal(url, item);
+            assert.ok(record);
+            record = { ...record, ...body, link: 'https://example.com/blog/example-title/' };
+          }
+          if (loseResponse) { loseResponse = false; throw new Error('Response timed out after write'); }
+          return jsonResponse(record, url === collection ? 201 : 200);
+        };
+        const call = args => fetchUrl(args.url, args, { tabId: 4977 });
+        assert.equal((await call(examples[0])).text.trim(), nonce);
+        const saved = await call(existing ? examples[2] : examples[1]);
+        assert.equal(saved.success, !uncertain);
+        const verified = JSON.parse((await call(examples[3])).json);
+        assert.equal(verified.id, 42); assert.equal(verified.status, 'draft');
+        assert.equal(verified.type, route);
+        assert.equal(verified.content, existing ? '<p>Updated content.</p>' : '<p>Example content.</p>');
+        if (existing) assert.equal(verified.title, 'Keep title');
+        for (const [field, ids] of Object.entries(taxonomies)) assert.deepEqual(verified[field], ids);
+        assert.equal(writes, 1, 'transport retried an uncertain write');
+        assert.equal((await call(examples[4])).success, true);
+        const published = JSON.parse((await call(examples[3])).json);
+        assert.equal(published.id, verified.id); assert.equal(published.status, 'publish');
+        assert.equal(published.content, verified.content); assert.ok(published.link);
+        assert.equal(creations, existing ? 0 : 1);
+        for (const status of [401, 403, 404, 500]) {
+          globalThis.fetch = async () => jsonResponse({ code: status === 404 ? 'rest_no_route' : 'rest_forbidden' }, status);
+          const failed = await call(examples[3]);
+          assert.equal(failed.success, false); assert.equal(failed.status, status);
+        }
+        globalThis.fetch = async () => new Response('0', { status: 400 });
+        const loggedOut = await call(examples[0]);
+        assert.equal(loggedOut.success, false); assert.equal(loggedOut.text, '0');
+      }
+    }
+  } finally { globalThis.fetch = savedFetch; globalThis.chrome = savedChrome; globalThis.browser = savedBrowser; }
 });
 
 test('Phonr is opt-in, loads through the normal skill catalog, and adds no privileged HTTP tools', () => {
@@ -43602,12 +44236,23 @@ test('canonical slash parser handles flags, values, casing, termination, and har
     assert.ok(!chromeHelp.includes(text.split(' ')[0]), `Chrome help must omit retired syntax ${text}`);
   }
 
+  for (const [label, runtime] of [['chrome', chrome], ['firefox', firefox]]) {
+    const workflow = runtime.SLASH_COMMANDS.find((command) => command.value === '/workflow');
+    const link = '<a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">sp.slash.workflow_editor</a>';
+    const detail = runtime.buildSlashCommandDetailHtml(workflow);
+    assert.equal((detail.match(/<a href="https:\/\/webbrain\.one\/workflow-editor\/"/g) || []).length, 3, `${label}: workflow save, export, and import help should link to the editor`);
+    assert.ok(detail.includes(`sp.slash.save_workflow ${link}`), `${label}: --save help should end with the workflow editor link`);
+    assert.ok(detail.includes(`sp.slash.workflows ${link}`), `${label}: --export and --import help should end with the workflow editor link`);
+    assert.equal((runtime.buildSlashCommandHelpHtml().match(/<a href="https:\/\/webbrain\.one\/workflow-editor\/"/g) || []).length, 3, `${label}: global slash help should include the editor link for workflow file actions`);
+    assert.ok(!runtime.buildSlashCommandDetailHtml(runtime.SLASH_COMMANDS.find((command) => command.value === '/export')).includes(link), `${label}: unrelated --export command should not link to the workflow editor`);
+  }
+
   assert.equal(firefox.parseSlashInvocation('/record --full-screen --transcribe').unsupported, true, 'Firefox should reject canonical recording locally');
-  assert.equal(firefox.parseSlashInvocation('/screenshot --full-page').unsupported, true, 'Firefox should reject the unsupported canonical screenshot flag locally');
+  assert.equal(firefox.parseSlashInvocation('/screenshot --full-page').action, 'full-page', 'Firefox should route full-page captures through the companion');
   assert.equal(firefox.SLASH_COMMANDS.find((command) => command.value === '/record').unsupported, true, 'Firefox recording should be hidden from discovery');
   const firefoxHelp = firefox.buildSlashCommandHelpHtml();
   assert.doesNotMatch(firefoxHelp, /\/record/, 'Firefox help should omit unsupported recording');
-  assert.doesNotMatch(firefoxHelp, /--full-page/, 'Firefox help should omit the unsupported full-page flag');
+  assert.match(firefoxHelp, /--full-page/, 'Firefox help should expose the full-page flag');
   const firefoxEnglish = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/locales/en.js'), 'utf8');
   assert.doesNotMatch(firefoxEnglish, /Stop an active recording/, 'Firefox help shortcuts should not advertise unsupported recording');
 
@@ -44074,7 +44719,7 @@ test('slash autocomplete progressively suggests only available unused flags', ()
   assert.equal(firefox.getMatches(firefox.getContext('/scratchpad '))[0]?.kind, 'base-action', 'Firefox should mirror the base-action row');
   assert.equal(firefox.getMatches(firefox.getContext('/scratchpad --clear '))[0]?.kind, 'base-action', 'Firefox should mirror Enter after a selected flag');
   assert.equal(firefox.getMatches(firefox.getContext('/schedule --help '))[0]?.descriptionKey, 'sp.slash.help', 'Firefox should describe the completed help action accurately');
-  assert.deepEqual(optionMatches(firefox, firefox.getContext('/screenshot ')), ['--help'], 'Firefox should omit unsupported flags but still offer command help');
+  assert.deepEqual(optionMatches(firefox, firefox.getContext('/screenshot ')), ['--full-page', '--help'], 'Firefox should offer full-page capture and command help');
   assert.deepEqual(optionMatches(firefox, firefox.getContext('/scratchpad --clear ')), [], 'Firefox should not suggest conflicting scratchpad actions');
 });
 
@@ -49714,7 +50359,11 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     assert.match(screenshotBody, /if \(currentTabId !== tabId \|\| !tab\?\.active\) return '';[\s\S]*?sendToBackground\('capture_viewport_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?pageUrl: tab\.url,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?modelRedactionReady: res\.modelRedactionReady === true,[\s\S]*?modelDataUrl: res\.modelDataUrl,[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{ pageUrl: tab\.url, stagedAttachment \}\);/, `${label}: /screenshot should retain the background-created model copy, reject stale-tab completions, and keep the raw URL for local preview`);
     assert.doesNotMatch(screenshotBody, /Promise\.all|captureVisibleTab|capture_screenshot_redaction_snapshot/, `${label}: the side panel must not race viewport pixels against privacy geometry`);
     assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?screenshot-save-btn[\s\S]*?sp\.screenshot\.save_as/, `${label}: screenshot messages should render a visible Save As action`);
-    assert.match(panel, /function bindScreenshotSaveButton\(btn\)[\s\S]*?downloads\.download\(\{[\s\S]*?url: dataUrl,[\s\S]*?saveAs: true,[\s\S]*?conflictAction: 'uniquify'/, `${label}: screenshot Save As should use the browser Downloads API and native picker`);
+    if (label === 'chrome') {
+      assert.match(panel, /function bindScreenshotSaveButton\(btn\)[\s\S]*?downloads\.download\(\{[\s\S]*?url: dataUrl,[\s\S]*?saveAs: true,[\s\S]*?conflictAction: 'uniquify'/, `${label}: screenshot Save As should use the browser Downloads API and native picker`);
+    } else {
+      assert.match(panel, /saveScreenshot\(dataUrl, btn\.dataset\.filename/, 'Firefox Save As should use the blob-backed screenshot downloader');
+    }
     assert.match(panel, /function rebindRestoredMessageControls\(\)[\s\S]*?rebindScreenshotSaveButtons\(\);/, `${label}: restored screenshot messages should regain their Save As behavior`);
     assert.match(style, /\.screenshot-save-btn \{[\s\S]*?cursor: pointer;[\s\S]*?\}[\s\S]*?\.screenshot-save-btn:hover,[\s\S]*?\.screenshot-save-btn:focus-visible/, `${label}: screenshot Save As should be styled for pointer and keyboard interaction`);
     assert.match(locale, /'sp\.screenshot\.save_as': 'Save as…'/, `${label}: screenshot Save As should have an English label`);
@@ -49722,19 +50371,12 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     const fullPageIdx = panel.indexOf("if (command.value === '/screenshot' && action === 'full-page')");
     assert.match(panel, /function normalizeScreenshotRequestText\(text\) \{[\s\S]*?\.normalize\('NFKD'\)[\s\S]*?\.replace\(\/\[\\u0300-\\u036f\]\/g, ''\)[\s\S]*?\.replace\(\/\\u0131\/g, 'i'\)/, `${label}: plain screenshot request normalization should handle accented Turkish text`);
     assert.match(panel, /function isPlainScreenshotRequest\(text\) \{[\s\S]*?const s = normalizeScreenshotRequestText\(text\);[\s\S]*?s\.startsWith\('\/'\)[\s\S]*?ekran goruntusu[\s\S]*?ekran goruntusunu/, `${label}: plain screenshot request routing should cover English and Turkish screenshot-only requests`);
-    if (label === 'chrome') {
-      assert.notEqual(fullPageIdx, -1, `${label}: /screenshot --full-page parser missing`);
-      const fullPageBody = panel.slice(fullPageIdx, panel.indexOf("if (command.value === '/record'", fullPageIdx));
-      assert.match(fullPageBody, /tabs\.get\(tabId\)[\s\S]*?sendToBackground\('capture_full_page_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?pageUrl,[\s\S]*?captureBounds: res\.captureBounds,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?redactionSnapshot: res\.redactionSnapshot,[\s\S]*?\}\);[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?warning: res\.warning,[\s\S]*?pageUrl,[\s\S]*?stagedAttachment,[\s\S]*?\}\);/, `${label}: /screenshot --full-page should stage capture-time privacy geometry and render only in the initiating tab with URL-aware Save As`);
-      assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?warningHtml = warning[\s\S]*?escapeHtml\(warning\)/, `${label}: fallback full-page images should display their escaped assembly warning`);
-      assert.match(panel, /function isPlainFullPageScreenshotRequest\(text\) \{[\s\S]*?full\|whole\|entire\|complete[\s\S]*?tam sayfa[\s\S]*?ekran goruntusu/, `${label}: plain full-page screenshot request routing should cover English and Turkish requests`);
-      assert.match(panel, /function normalizeScreenshotCommandText\(text\) \{[\s\S]*?isPlainFullPageScreenshotRequest\(text\)[\s\S]*?return '\/screenshot --full-page';[\s\S]*?isPlainScreenshotRequest\(text\)[\s\S]*?return '\/screenshot';/, `${label}: screenshot normalization should route full-page requests before viewport screenshots`);
-    } else {
-      assert.equal(fullPageIdx, -1, `${label}: /screenshot --full-page action should stay Chrome-only`);
-      assert.doesNotMatch(panel, /capture_full_page_screenshot/, `${label}: should not call the Chrome-only full-page screenshot route`);
-      assert.doesNotMatch(panel, /isPlainFullPageScreenshotRequest/, `${label}: should not normalize full-page screenshot text into an unsupported slash command`);
-      assert.match(panel, /function normalizeScreenshotCommandText\(text\) \{[\s\S]*?if \(isPlainScreenshotRequest\(text\)\) return '\/screenshot';[\s\S]*?return text;[\s\S]*?\}/, `${label}: screenshot normalization should only route viewport screenshots`);
-    }
+    assert.notEqual(fullPageIdx, -1, `${label}: /screenshot --full-page parser missing`);
+    const fullPageBody = panel.slice(fullPageIdx, panel.indexOf("if (command.value === '/record'", fullPageIdx));
+    assert.match(fullPageBody, /tabs\.get\(tabId\)[\s\S]*?sendToBackground\('capture_full_page_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?pageUrl,[\s\S]*?captureBounds: res\.captureBounds,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?redactionSnapshot: res\.redactionSnapshot,[\s\S]*?\}\);[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?warning: res\.warning,[\s\S]*?pageUrl,[\s\S]*?stagedAttachment,[\s\S]*?\}\);/, `${label}: /screenshot --full-page should stage capture-time privacy geometry and render only in the initiating tab with URL-aware Save As`);
+    assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?warningHtml = warning[\s\S]*?escapeHtml\(warning\)/, `${label}: fallback full-page images should display their escaped assembly warning`);
+    assert.match(panel, /function isPlainFullPageScreenshotRequest\(text\) \{[\s\S]*?full\|whole\|entire\|complete[\s\S]*?tam sayfa[\s\S]*?ekran goruntusu/, `${label}: plain full-page screenshot request routing should cover English and Turkish requests`);
+    assert.match(panel, /function normalizeScreenshotCommandText\(text\) \{[\s\S]*?isPlainFullPageScreenshotRequest\(text\)[\s\S]*?return '\/screenshot --full-page';[\s\S]*?isPlainScreenshotRequest\(text\)[\s\S]*?return '\/screenshot';/, `${label}: screenshot normalization should route full-page requests before viewport screenshots`);
     const sendIdx = panel.search(/async function sendMessage\(extraChatParams(?: = \{\})?\)/);
     assert.notEqual(sendIdx, -1, `${label}: sendMessage missing`);
     const sendBody = panel.slice(sendIdx, panel.indexOf('let assistantEl = null;', sendIdx));
@@ -50029,8 +50671,8 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     for (const command of ['/schedule task', '/scratchpad --append note', '/scratchpad --clear', '/memory --add note', '/memory --forget id']) {
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation(command)), false, `${label}: ${command} should stay gated while busy`);
     }
+    assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/screenshot --full-page')), false, `${label}: full-page capture should stay gated while busy`);
     if (label === 'chrome') {
-      assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/screenshot --full-page')), false, `${label}: full-page capture should stay gated while busy`);
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/record --full-screen')), false, `${label}: recording should stay gated while busy`);
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation('/record --stop')), true, `${label}: recording Stop should stay available while busy`);
     }
@@ -67013,6 +67655,66 @@ test('Osaurus requires a selected model and uses the local Chat Completions cont
   }
 });
 
+test('ODS local provider discovers its running model and uses Chat Completions', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith('/v1/models')) {
+      return new Response(JSON.stringify({ data: [{ id: 'qwen-ods' }] }), { status: 200 });
+    }
+    if (new URL(url).pathname === '/props') {
+      return new Response(JSON.stringify({ n_ctx: 16384, modalities: { vision: false } }), { status: 200 });
+    }
+    if (String(url).endsWith('/v1/chat/completions')) {
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Hello from ODS' } }] }), { status: 200 });
+    }
+    return new Response('', { status: 404 });
+  };
+  try {
+    for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().ods;
+      assert.equal(defaults.category, 'local');
+      assert.equal(defaults.baseUrl, 'http://localhost:11434/v1');
+      assert.throws(() => manager._createProvider('ods', defaults).model, /model is required/);
+      manager.providers.set('ods', manager._createProvider('ods', defaults));
+      assert.deepEqual(await manager.listProviderModels('ods', { detectServerIdentity: true }), {
+        ok: true, models: ['qwen-ods'], contextWindow: 16384,
+      });
+      assert.ok(calls.some(call => call.url === 'http://localhost:11434/props'));
+      assert.deepEqual(await manager._fetchVisionCapability('ods', { config: defaults }, {
+        baseUrl: defaults.baseUrl, model: 'qwen-ods',
+      }), { ok: true, supportsVision: false });
+
+      const provider = manager._createProvider('ods', { ...defaults, model: 'qwen-ods', apiKey: 'local-secret' });
+      assert.equal(provider.supportsVision, false);
+      const result = await provider.chat([{ role: 'user', content: 'Hello' }]);
+      assert.equal(result.content, 'Hello from ODS');
+      const call = calls.at(-1);
+      assert.equal(call.url, 'http://localhost:11434/v1/chat/completions');
+      assert.equal(call.options.headers.Authorization, 'Bearer local-secret');
+      assert.equal(JSON.parse(call.options.body).model, 'qwen-ods');
+    }
+
+    globalThis.fetch = async (url) => String(url).endsWith('/props')
+      ? new Response('', { status: 404 })
+      : new Response(JSON.stringify({ data: [{ id: 'ollama-model' }] }), { status: 200 });
+    for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().ods;
+      manager.providers.set('ods', manager._createProvider('ods', defaults));
+      assert.deepEqual(await manager.listProviderModels('ods', { detectServerIdentity: true }), {
+        ok: true, models: [],
+      }, 'automatic onboarding must not mistake Ollama for ODS on port 11434');
+      assert.deepEqual(await manager.listProviderModels('ods'), { ok: true, models: ['ollama-model'] },
+        'manual setup should allow a compatible endpoint without /props');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Osaurus discovers models and handles chat, streaming, tools, and access keys', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -67182,7 +67884,7 @@ test('Osaurus identity checks preserve manual model loading and configured provi
 
 test('categoryFor: local family', () => {
   for (const PM of [ProviderManagerCh, ProviderManagerFx]) {
-    for (const id of ['llamacpp', 'ollama', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth']) {
+    for (const id of ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth']) {
       assert.equal(PM.categoryFor(id, { type: id === 'llamacpp' ? 'llamacpp' : 'openai' }), 'local');
     }
     assert.equal(PM.categoryFor('custom_llama_cpp', { type: 'llamacpp' }), 'local');
@@ -69669,7 +70371,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 111 : 110;
+    const expectedDefaultCount = label === 'chrome' ? 112 : 111;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -107839,12 +108541,6 @@ const KNOWN_SAFE_TOOLS = new Set([
   // list_downloads: url + Content-Disposition filename). "Doesn't act
   // dangerously" is not the test; "does its RESULT carry page-derived bytes" is.
   'wait_for_stable',      // waits for the page to settle; returns status only
-  // solve_captcha is not page-content; its side effects (spends CapSolver
-  // quota + injects a token into the page) are minor and bounded, and the only
-  // consequential follow-up — the submit — is separately gated. Left ungated to
-  // avoid friction on a precursor the user wants when blocked by a CAPTCHA;
-  // revisit if quota abuse becomes a real concern.
-  'solve_captcha',
 ]);
 
 test('click/click_ax/type_text results keep malicious target context inside the nonce boundary', () => {
@@ -111144,7 +111840,17 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'frankfurter-fx',
     'humanizer',
     'turkish-deasciifier',
+    'wordpress-rest-api',
     'phonr-calls',
+    'cms-ghost',
+    'cms-drupal',
+    'cms-joomla',
+    'cms-webflow',
+    'cms-shopify',
+    'cms-wix',
+    'cms-strapi',
+    'cms-contentful',
+    'cms-sanity',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -111157,17 +111863,47 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'frankfurter-fx',
     'humanizer',
     'turkish-deasciifier',
+    'wordpress-rest-api',
     'phonr-calls',
+    'cms-ghost',
+    'cms-drupal',
+    'cms-joomla',
+    'cms-webflow',
+    'cms-shopify',
+    'cms-wix',
+    'cms-strapi',
+    'cms-contentful',
+    'cms-sanity',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
     'otp-verification-code-helper',
     'humanizer',
+    'wordpress-rest-api',
+    'cms-ghost',
+    'cms-drupal',
+    'cms-joomla',
+    'cms-webflow',
+    'cms-shopify',
+    'cms-wix',
+    'cms-strapi',
+    'cms-contentful',
+    'cms-sanity',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
     'otp-verification-code-helper',
     'humanizer',
+    'wordpress-rest-api',
+    'cms-ghost',
+    'cms-drupal',
+    'cms-joomla',
+    'cms-webflow',
+    'cms-shopify',
+    'cms-wix',
+    'cms-strapi',
+    'cms-contentful',
+    'cms-sanity',
   ]);
   assert.equal(DEFAULT_SKILL_SOURCES_CH.some((skill) => skill.id === 'turkish-deasciifier'), false, 'chrome: Turkish deasciifier must remain opt-in');
   assert.equal(DEFAULT_SKILL_SOURCES_FX.some((skill) => skill.id === 'turkish-deasciifier'), false, 'firefox: Turkish deasciifier must remain opt-in');
@@ -121730,6 +122466,8 @@ async function withCaptchaFakePage(build, nodes, callback) {
         location,
         URL,
         URLSearchParams,
+        navigator: globalThis.navigator,
+        performance: globalThis.performance,
         innerWidth: 1280,
         innerHeight: 720,
         getComputedStyle: globalThis.getComputedStyle,
@@ -121764,7 +122502,7 @@ async function detectCaptchaDetailsOnFakePage(build, nodes) {
 }
 
 
-test('CAPTCHA providers: hCaptcha routes directly to manual completion with 2Captcha alone', async () => {
+test('CAPTCHA providers: hCaptcha stays manual when CapSolver is also enabled', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const nodes = [captchaEl('div', { role: 'dialog', innerText: 'Security verification' }, [
       captchaEl('h2', { textContent: 'Security verification' }),
@@ -121798,9 +122536,12 @@ test('CAPTCHA providers: hCaptcha routes directly to manual completion with 2Cap
       } finally { globalThis.fetch = originalFetch; }
 
       agent.captchaProviderIds = ['capsolver', '2captcha'];
-      assert.equal(agent._shouldRetryCaptchaManualGate(agent._captchaGateStates.get(1)), true, build);
-      const refreshed = await agent._captchaMutationPreflight(1, 'click_ax');
-      assert.equal(refreshed?.status, 'solve_required', `${build}: enabling a capable provider should refresh the gate`);
+      assert.equal(agent._shouldRetryCaptchaManualGate(agent._captchaGateStates.get(1)), false, build);
+      await agent._captchaMutationPreflight(1, 'click_ax');
+      assert.equal(agent._captchaGateStates.get(1)?.status, 'manual_required', `${build}: enabling CapSolver must not re-arm solving`);
+      assert.equal(agent._captchaGateBlockResult(1, 'click_ax')?.manualCompletionRequired, true, build);
+      agent.captchaProviderIds = ['nopecha'];
+      assert.equal(agent._shouldRetryCaptchaManualGate(agent._captchaGateStates.get(1)), true, `${build}: enabling a compatible hCaptcha provider can re-arm an undispatched gate`);
     });
   }
 });
@@ -121825,6 +122566,8 @@ test('CAPTCHA providers: real Turnstile detection reaches the 2Captcha request w
       };
       try {
         const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        api.storage.session = { set: async () => {} };
         const result = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, metadata: { chlPageData: 'observed-page-data' } });
         assert.equal(result.success, true, `${build}: ${result.error}`);
         assert.equal(result.provider, '2captcha', build);
@@ -121832,6 +122575,7 @@ test('CAPTCHA providers: real Turnstile detection reaches the 2Captcha request w
         assert.deepEqual(calls[0].body.task, {
           type: 'TurnstileTaskProxyless', websiteURL: 'https://example.test/form', websiteKey: 'TURNSTILE_KEY',
           action: 'signup', data: 'widget-data', pagedata: 'observed-page-data',
+          ...(globalThis.navigator?.userAgent ? { userAgent: globalThis.navigator.userAgent } : {}),
         }, build);
         const beforeConflict = calls.length;
         const conflict = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, metadata: { action: 'another-widget' } });
@@ -121843,6 +122587,308 @@ test('CAPTCHA providers: real Turnstile detection reaches the 2Captcha request w
         globalThis.setTimeout = originalTimeout;
       }
     });
+  }
+});
+
+test('CAPTCHA providers: observed hCaptcha rqdata reaches fallback and returns the NoneCap response key', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sitekey = 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8';
+    const nodes = [captchaEl('div', { class: 'h-captcha', 'data-sitekey': sitekey, 'data-rqdata': 'observed-rqdata' })];
+    await withCaptchaFakePage(build, nodes, async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({
+        captchaSolverEnabled: true, capsolverApiKey: 'CAP-0123456789abcdefghij',
+        nopechaEnabled: true, nopechaApiKey: 'nopecha_key', nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32),
+      }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const previousFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (url, options) => {
+        calls.push({ url, body: JSON.parse(options.body) });
+        return url.includes('nopecha') ? Response.json({ code: 16, message: 'Out of credit' }, { status: 403 })
+          : Response.json({ id: 'solve_test', status: 'solved', token: 'P1_token', resp_key: 'E0_key', user_agent: 'solver-agent' });
+      };
+      try {
+        const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        api.storage.session = { set: async () => {} };
+        const flagConflict = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, isEnterprise: false });
+        assert.equal(flagConflict.dispatched, false, build);
+        assert.match(flagConflict.error, /isEnterprise=.*conflicts/, build);
+        assert.equal(calls.length, 0, build);
+        const result = await agent._executeToolImpl(1, 'solve_captcha', { inject: false });
+        assert.equal(result.success, true, `${build}: ${result.error}`);
+        assert.equal(result.provider, 'nonecap', build);
+        assert.equal(result.respKey, 'E0_key', build);
+        assert.equal(result.solverUserAgent, 'solver-agent', build);
+        assert.deepEqual(calls.map(c => c.url), ['https://api.nopecha.com/v1/token/hcaptcha', 'https://api.nonecap.com/v1/solves']);
+        assert.equal(calls[0].body.data.rqdata, 'observed-rqdata', build);
+        assert.deepEqual(calls[1].body, { type: 'hcaptcha_enterprise', sitekey, url: 'https://example.test/form', rqdata: 'observed-rqdata' });
+        const conflict = await agent._executeToolImpl(1, 'solve_captcha', { inject: false, rqdata: 'different-widget' });
+        assert.equal(conflict.dispatched, false, build);
+        assert.match(conflict.error, /rqdata conflicts/);
+        assert.equal(calls.length, 2, build);
+      } finally { globalThis.fetch = previousFetch; }
+    });
+  }
+});
+
+test('NoneCap hCaptcha token is not injected when its User-Agent differs from the browser', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sitekey = 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8';
+    await withCaptchaFakePage(build, [captchaEl('div', { class: 'h-captcha', 'data-sitekey': sitekey })], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({ nonecapEnabled: true,
+        nonecapApiKey: 'nc_live_' + 'a'.repeat(32) }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const originalExecute = build === 'chrome' ? api.scripting.executeScript : api.tabs.executeScript;
+      let injections = 0;
+      if (build === 'chrome') api.scripting.executeScript = async options => {
+        if (options.world === 'MAIN' && options.args?.length) injections++;
+        return originalExecute(options);
+      };
+      else api.tabs.executeScript = async (tabId, options) => {
+        if (options.code.includes('injectCaptchaTokenInPage')) injections++;
+        return originalExecute(tabId, options);
+      };
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () => Response.json({ id: 'solve_test', status: 'solved',
+        token: 'paid-token', user_agent: `${globalThis.navigator?.userAgent || ''}-mismatch` });
+      try {
+        const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        api.storage.session = { set: async () => {} };
+        const result = await agent._executeToolImpl(1, 'solve_captcha', {});
+        assert.equal(result.success, false, build);
+        assert.equal(result.dispatched, true, build);
+        assert.equal(result.manualCompletionRequired, true, build);
+        assert.equal(result.injected, false, build);
+        assert.equal(result.token, 'paid-token', build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).solution.token, 'paid-token', build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).applied, false, build);
+        assert.match(result.error, /different User-Agent/, build);
+        assert.equal(injections, 0, build);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+});
+
+test('hCaptcha dispatch and NoneCap validation use the selected frame User-Agent', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const sitekey = 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8';
+    await withCaptchaFakePage(build, [captchaEl('div', { class: 'h-captcha', 'data-sitekey': sitekey })], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({
+        nopechaEnabled: true, nopechaApiKey: 'nopecha_key',
+        nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32),
+      }) } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      const frameUserAgent = 'target-frame-UA';
+      const originalExecute = build === 'chrome' ? api.scripting.executeScript : api.tabs.executeScript;
+      let injections = 0;
+      if (build === 'chrome') api.scripting.executeScript = async options => {
+        if (options.func?.toString().includes('navigator.userAgent')) {
+          return [{ frameId: 0, result: frameUserAgent }];
+        }
+        if (options.world === 'MAIN' && options.args?.length) injections++;
+        return originalExecute(options);
+      };
+      else api.tabs.executeScript = async (tabId, options) => {
+        if (options.code === 'navigator.userAgent') return [frameUserAgent];
+        if (options.code.includes('injectCaptchaTokenInPage')) injections++;
+        return originalExecute(tabId, options);
+      };
+      const originalFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (requestUrl, options) => {
+        calls.push({ url: requestUrl, body: JSON.parse(options.body) });
+        return requestUrl.includes('nopecha')
+          ? Response.json({ code: 16, message: 'Out of credit' }, { status: 403 })
+          : Response.json({ id: 'solve_test', status: 'solved', token: 'paid-token',
+            user_agent: 'background-UA' });
+      };
+      try {
+        const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        api.storage.session = { set: async () => {} };
+        const result = await agent._executeToolImpl(1, 'solve_captcha', {});
+        assert.equal(result.dispatched, true, build);
+        assert.equal(result.injected, false, build);
+        assert.equal(result.manualCompletionRequired, true, build);
+        assert.match(result.error, /different User-Agent/, build);
+        assert.equal(calls[0].body.useragent, frameUserAgent, build);
+        assert.equal(injections, 0, build);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+});
+
+test('CAPTCHA providers: explicit rqdata selects NoneCap Enterprise when frame detection is unavailable', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    await withCaptchaFakePage(build, [], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      api.storage = { local: { get: async () => ({
+        nonecapEnabled: true, nonecapApiKey: 'nc_live_' + 'a'.repeat(32),
+      }) } };
+      const rootDocument = { url: 'https://example.test/form', timeOrigin: 1000 };
+      api.tabs = { ...api.tabs, get: async () => ({ url: rootDocument.url }),
+        ...(build === 'firefox' ? { executeScript: async (_id, { code }) => {
+          if (code.startsWith('(() => ({ url: location.href')) return [rootDocument];
+          throw new Error('frame detection unavailable');
+        } } : {}) };
+      if (build === 'chrome') api.scripting.executeScript = async ({ func }) => {
+        if (func.name === 'read') return [{ frameId: 0, result: rootDocument }];
+        throw new Error('frame detection unavailable');
+      };
+      const originalFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (_url, options) => {
+        calls.push(JSON.parse(options.body));
+        return Response.json({ id: 'solve_test', status: 'solved', token: 'P1_token' });
+      };
+      try {
+        const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        api.storage.session = { set: async () => {} };
+        const args = { type: 'hcaptcha', websiteKey: 'f5ab1c2d-7e8f-4a9b-b1c2-d3e4f5a6b7c8', rqdata: 'observed-rqdata', inject: false };
+        const conflict = await agent._executeToolImpl(1, 'solve_captcha', { ...args, isEnterprise: false });
+        assert.equal(conflict.dispatched, false, build);
+        assert.match(conflict.error, /conflicts with observed hCaptcha rqdata/, build);
+        assert.equal(calls.length, 0, build);
+        const result = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(result.success, true, `${build}: ${result.error}`);
+        assert.equal(result.provider, 'nonecap', build);
+        assert.deepEqual(calls, [{ type: 'hcaptcha_enterprise', sitekey: args.websiteKey,
+          url: 'https://example.test/form', rqdata: 'observed-rqdata' }]);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+});
+
+test('CAPTCHA native methods dispatch through the real agent, preserve structured answers, and keep gates scoped', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    await withCaptchaFakePage(build, [], async () => {
+      const api = build === 'chrome' ? globalThis.chrome : globalThis.browser;
+      const persisted = [];
+      let storageUnavailable = false;
+      api.storage = { local: { get: async () => ({ twoCaptchaEnabled: true, twoCaptchaApiKey: 'a'.repeat(32) }) },
+        session: { set: async value => {
+          if (storageUnavailable) throw new Error('Session storage unavailable');
+          persisted.push(structuredClone(Object.values(value)[0]));
+        } } };
+      api.tabs = { ...api.tabs, get: async () => ({ url: 'https://example.test/form' }) };
+      api.webNavigation = { getAllFrames: async () => [{ frameId: 0, url: 'https://example.test/form' }] };
+      if (build === 'chrome') api.scripting = { executeScript: async () => [{ frameId: 0, result: { url: 'https://example.test/form', timeOrigin: 1000 } }] };
+      else api.tabs.executeScript = async () => [{ url: 'https://example.test/form', timeOrigin: 1000 }];
+      const previousFetch = globalThis.fetch;
+      const calls = [];
+      globalThis.fetch = async (url, options) => {
+        assert.ok(persisted.at(-1)?.nativeCaptchaDispatch?.dispatchedTimeOrigins.length,
+          `${build}: provider was contacted before its dispatch lock was saved`);
+        calls.push({ url, body: JSON.parse(options.body) });
+        return Response.json({ taskId: 42, status: 'ready', solution: { lot_number: 'lot', pass_token: 'pass', captcha_output: 'out' } });
+      };
+      try {
+        const agent = new AgentClass({});
+        agent.conversations.set(1, [{ role: 'system', content: 'test' }]);
+        const catalog = await agent._executeToolImpl(1, 'get_captcha_capabilities', { family: 'geetest' });
+        assert.ok(catalog.methods.some(method => method.method === 'GeeTestTaskProxyless'), build);
+        const args = { inject: false, providerTasks: [{ provider: '2captcha', method: 'GeeTestTaskProxyless', parameters: { websiteURL: 'https://example.test/form', version: 4, initParameters: { captcha_id: 'observed-id' } } }] };
+        agent._captchaGateStates.set(1, { status: 'manual_required', publicGate: { status: 'manual_required' } });
+        assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', args), null, build);
+        assert.equal(agent._captchaGateBlockResult(1, 'click', {})?.denied, true, build);
+        const wrongPage = structuredClone(args); wrongPage.providerTasks[0].parameters.websiteURL = 'https://other.test/';
+        const rejected = await agent._executeToolImpl(1, 'solve_captcha', wrongPage);
+        assert.equal(rejected.dispatched, false, build); assert.equal(calls.length, 0, build);
+        const wrongPath = structuredClone(args); wrongPath.providerTasks[0].parameters.websiteURL = 'https://example.test/admin';
+        const unobserved = await agent._executeToolImpl(1, 'solve_captcha', wrongPath);
+        assert.equal(unobserved.dispatched, false, build); assert.match(unobserved.error, /observed frames/);
+        assert.equal(calls.length, 0, build);
+        storageUnavailable = true;
+        const unpersisted = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(unpersisted.noDispatch, true, `${build}: a paid task started without a persisted lock`);
+        assert.equal(calls.length, 0, build);
+        storageUnavailable = false;
+        const result = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(result.success, true, `${build}: ${result.error}`);
+        assert.equal(result.applicationRequired, true, build); assert.equal(result.solution.lot_number, 'lot', build);
+        assert.equal(calls[0].body.task.type, 'GeeTestTaskProxyless', build);
+        assert.deepEqual(calls[0].body.task.initParameters, { captcha_id: 'observed-id' });
+        const repeated = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(repeated.dispatched, false, build); assert.equal(calls.length, 1, build);
+        agent._captchaGateStates.set(1, { status: 'verification_pending', publicGate: { status: 'verification_pending', solveAttempted: true } });
+        assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {}), null, build);
+        assert.equal(agent._captchaGateBlockResult(1, 'solve_captcha', args)?.denied, true, build);
+        assert.equal(agent._captchaGateBlockResult(1, 'click', {})?.denied, true, build);
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { success: false, error: 'Observed target is ambiguous.' } }];
+        else api.tabs.executeScript = async () => [{ success: false, error: 'Observed target is ambiguous.' }];
+        const preflightFailure = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form', callback: { name: 'captcha.done', path: '' } });
+        assert.equal(preflightFailure.applicationRetryable, true, build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).applied, false, build);
+        const pendingAfterPreflight = agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', preflightFailure);
+        assert.equal(pendingAfterPreflight.status, 'verification_pending', build);
+        assert.equal(pendingAfterPreflight.solveFailed, undefined, build);
+        assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {})?.denied, undefined, build);
+        assert.equal(calls.length, 1, build);
+        const getTab = api.tabs.get;
+        api.tabs.get = async () => { throw new Error('Temporary tab read failure'); };
+        const transientRead = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form' });
+        assert.equal(transientRead.applicationRetryable, true, build);
+        assert.equal(agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', transientRead).status, 'verification_pending', build);
+        api.tabs.get = getTab;
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { success: true } }];
+        else api.tabs.executeScript = async () => [{ success: true }];
+        const applied = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form', callback: { name: 'captcha.done', path: '' } });
+        assert.equal(applied.success, true, build);
+        assert.equal(applied.applicationRetryable, false, build);
+        assert.equal(agent._nativeCaptchaSolutions.get(1).applicationSucceeded, true, build);
+        agent._detectChallengeDialogBeforeMutation = async () => ({ inspectionComplete: true, challenge: null });
+        const cleared = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree', { pageUrl: 'https://example.test/form', pageContent: 'heading "Verification complete"' });
+        assert.equal(cleared.gate.status, 'cleared', build);
+        assert.equal(agent._captchaGateBlockResult(1, 'click', {}), null, build);
+        // A paid task may time out after the solution's short application TTL.
+        // Its dispatch lock must still hold for the original document.
+        const prior = agent._nativeCaptchaSolutions.get(1);
+        prior.createdAt = Date.now() - 200_000;
+        delete prior.solution;
+        const aged = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(aged.dispatched, false, build);
+        assert.equal(calls.length, 1, build);
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { url: 'https://example.test/form', timeOrigin: 2000 } }];
+        else api.tabs.executeScript = async () => [{ url: 'https://example.test/form', timeOrigin: 2000 }];
+        const reloaded = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(reloaded.success, true, `${build}: new document at the same URL should be eligible: ${reloaded.error}`);
+        assert.equal(calls.length, 2, build);
+        if (build === 'chrome') api.scripting.executeScript = async () => [{ frameId: 0, result: { url: 'https://example.test/form', timeOrigin: 1000 } }];
+        else api.tabs.executeScript = async () => [{ url: 'https://example.test/form', timeOrigin: 1000 }];
+        const restored = await agent._executeToolImpl(1, 'solve_captcha', args);
+        assert.equal(restored.dispatched, false, `${build}: a restored document cannot incur a second charge`);
+        assert.equal(calls.length, 2, build);
+        agent._nativeCaptchaSolutions.get(1).applied = true;
+        const consumed = await agent._executeToolImpl(1, 'apply_captcha_solution', { frameId: 0, frameUrl: 'https://example.test/form' });
+        assert.equal(consumed.applicationRetryable, false, build);
+        assert.equal(agent._captchaSolveGateAfterTool(1, 'apply_captcha_solution', consumed).status, 'manual_required', build);
+      } finally { globalThis.fetch = previousFetch; }
+    });
+  }
+});
+
+test('CAPTCHA gates keep false and zero native answers available for application', () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const solution of [false, 0]) {
+      const agent = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
+      agent.conversationModes.set(1, 'act');
+      agent.captchaSolverEnabled = true;
+      agent.captchaProviderIds = ['2captcha'];
+      agent._nativeCaptchaSolutions = new Map([[1, { pageUrl: 'https://example.test/form', solution, applied: false }]]);
+      const gate = { status: 'verification_pending', solveAttempted: true };
+      agent._captchaGateStates.set(1, { status: 'verification_pending', publicGate: gate });
+      assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), true, `${build}: ${solution}`);
+      assert.equal(agent._captchaGateBlockResult(1, 'apply_captcha_solution', {}), null, `${build}: ${solution}`);
+      assert.match(agent._captchaRoutingMessage(1, gate), /use apply_captcha_solution/, `${build}: ${solution}`);
+      agent._nativeCaptchaSolutions.get(1).applied = true;
+      assert.equal(agent._hasUnappliedNativeCaptchaSolution(1), false, `${build}: consumed ${solution}`);
+    }
   }
 });
 
@@ -122089,7 +123135,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
       },
       {
         label: 'hCaptcha challenge frame',
-        status: 'solve_required',
+        status: 'manual_required',
         selectedType: 'hcaptcha',
         nodes: [
           captchaEl('div', { role: 'dialog', innerText: 'Güvenlik doğrulaması' }, [
@@ -122814,6 +123860,39 @@ test('challenge dialog with no enabled supported solver stops the batch for manu
     assert.match(result.value, /complete the verification manually/i, `${label}: manual request missing`);
     assert.equal(updates.some(update => update.type === 'captcha_gate' && update.data?.status === 'manual_required'), true, `${label}: trace diagnostic update missing`);
     assert.match(String(messages[0]?.content), /TRUSTED CAPTCHA GATE/, `${label}: model-facing hard gate note missing`);
+  }
+});
+
+test('CAPTCHA batch routing offers native tools only in Act/Dev mid/full and exits compact manually', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full'], ['dev', 'mid'], ['dev', 'full']]) {
+      await withCaptchaFakePage(build, [], async () => {
+        const agent = new AgentClass({ getActive: () => ({ promptTier: tier }), getVisionProvider: async () => null });
+        agent.conversationModes.set(1, mode);
+        agent.captchaSolverEnabled = true;
+        agent.captchaProviderIds = ['capsolver'];
+        agent._skipPermissionGate = true;
+        agent._ensureGateSetting = async () => {};
+        agent._currentUrl = async () => 'https://example.test/signup';
+        agent._rememberMastodonObservation = async () => null;
+        agent._recordProgressObservation = async () => null;
+        agent._autoRecordProgressAction = () => null;
+        agent._persist = () => {};
+        agent.executeTool = async () => ({ success: true, pageContent: 'dialog "Security verification" [ref_10]' });
+        const messages = [];
+        const result = await agent._executeToolBatch(1,
+          [{ id: 'captcha_observe', function: { name: 'get_accessibility_tree', arguments: '{}' } }],
+          messages, () => {}, { supportsVision: false, promptTier: tier }, '', new Set(['get_accessibility_tree']), 1);
+        const available = mode !== 'ask' && tier !== 'compact';
+        assert.equal(result.action, available ? 'continue' : 'return', `${build}/${mode}/${tier}`);
+        if (available) assert.match(messages[0].content, /get_captcha_capabilities/);
+        else {
+          assert.equal(result.status, 'captcha_manual_required');
+          assert.doesNotMatch(messages[0].content, /get_captcha_capabilities|solve_captcha|apply_captcha_solution/);
+          assert.equal(agent._captchaGateBlockResult(1, 'done', { outcome: 'partial' }), null);
+        }
+      });
+    }
   }
 });
 
@@ -124893,20 +125972,17 @@ test('solve_captcha runtime always detects missing fields and rejects type confl
   }
 });
 
-test('capsolver errors: demo-key refusals and task-config errors get different remedies', async () => {
+test('capsolver errors preserve provider evidence without inventing demo-key explanations', async () => {
   const cases = [
     {
-      label: 'demo key refusal',
+      label: 'unsupported service does not prove a demo key',
       body: { errorId: 1, errorCode: 'ERROR_INVALID_TASK_DATA', errorDescription: "We don't support this service." },
-      expect: /public TEST\/DEMO key/,
+      expect: /^CapSolver: We don't support this service\.$/,
     },
     {
       label: 'wrong task type for the widget',
-      // Exactly what an Enterprise sitekey returns for a plain V2 task. This
-      // must NOT be blamed on a demo key: the fix is to correct the task
-      // type, not to give up and move to another site.
       body: { errorId: 1, errorCode: 'ERROR_INVALID_TASK_DATA', errorDescription: 'Invalid input: check captcha type or parameters' },
-      expect: /rejected the task configuration/,
+      expect: /^CapSolver: Invalid input: check captcha type or parameters$/,
     },
     {
       label: 'ordinary parameter error containing the substring "test"',

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Ukrainian (uk).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Масштаб інтерфейсу розширення',
   'sp.ui_scale.decrease': 'Зменшити інтерфейс розширення',
   'sp.ui_scale.increase': 'Збільшити інтерфейс розширення',
@@ -942,6 +944,7 @@ export default {
   "sp.memory.error": "Помилка пам’яті: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Не збережено: після очищення текст порожній або схожий на секрет (пароль, ключ API, токен).",
   "sp.memory.reason.not_found": "Збереженого запису з таким ID немає.",
+  'sp.slash.workflow_editor': "Редактор робочих процесів",
   "sp.slash.workflows": "Перегляд і керування збереженими сценаріями",
   "sp.slash.teach": "Записати ваші дії як збережений робочий процес",
   "sp.slash.run_workflow": "Запустити збережений сценарій за ID",
@@ -1038,6 +1041,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Макс. розмір зображення",
   "st.imageBudget.maxDimension.desc": "Найбільша сторона (ширина або висота) у пікселях для будь-якого знімка, надісланого у vision. Менша межа стискає зображення до надсилання, зменшуючи токени й вартість. Більша межа зберігає точність.",
   "st.imageBudget.warning": "⚠️ Ці налаштування застосовуються до знімків для vision (авто-знімок, /screenshot, вся сторінка, verify_form). Вручну збережені зображення в повній роздільності не зачіпаються. «Image detail» враховують endpoint’и в стилі OpenAI; інші провайдери можуть ігнорувати.",
+  "sp.slash.export_traces_full": "Експортувати весь збережений сеанс трасування у JSON, включно зі знімками екрана",
+  "sp.export_traces.recording_truncated": "Усі збережені записи експортовано у JSON. Вміст, пропущений під час запису, неможливо відновити експортом.",
   "sp.slash.export_traces": "Експортувати ланцюг інструментів (трасування)",
   "sp.export_traces.none": "Немає трасувань для цієї розмови. Увімкніть «Записувати трасування» в налаштуваннях і запустіть знову.",
   "sp.export_traces.error": "Не вдалося експортувати трасування.",

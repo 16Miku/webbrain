@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Bengali — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'এক্সটেনশনের UI জুম',
   'sp.ui_scale.decrease': 'এক্সটেনশনের UI ছোট করুন',
   'sp.ui_scale.increase': 'এক্সটেনশনের UI বড় করুন',
@@ -172,6 +174,7 @@ export default {
   'sp.slash.remember': "একটি ব্যবহারকারী পছন্দ মনে রাখবেন",
   'sp.slash.show_memory': "সংরক্ষিত ব্যবহারকারী মেমরি দেখান",
   'sp.slash.forget_memory': "আইডি দ্বারা একটি সংরক্ষিত মেমরি ভুলে যান",
+  'sp.slash.workflow_editor': "ওয়ার্কফ্লো এডিটর",
   'sp.slash.workflows': "সংরক্ষিত ওয়ার্কফ্লো তালিকাভুক্ত করুন এবং পরিচালনা করুন",
   "sp.slash.teach": "আপনার কাজগুলো সংরক্ষিত ওয়ার্কফ্লো হিসেবে রেকর্ড করুন",
   'sp.slash.run_workflow': "আইডি দ্বারা একটি সংরক্ষিত ওয়ার্কফ্লো চালান",
@@ -1103,6 +1106,8 @@ export default {
   'tr.event.args': "args",
   'tr.event.result': "ফলাফল",
   'tr.event.step': "ধাপ {step}",
+  "sp.slash.export_traces_full": "স্ক্রিনশটসহ সম্পূর্ণ সংরক্ষিত ট্রেস সেশন JSON হিসেবে রপ্তানি করুন",
+  "sp.export_traces.recording_truncated": "সব সংরক্ষিত রেকর্ড JSON হিসেবে রপ্তানি করা হয়েছে। রেকর্ডিংয়ের সময় বাদ পড়া কিছু তথ্য রপ্তানির মাধ্যমে ফেরত পাওয়া যাবে না।",
   "sp.slash.export_traces": "টুল চেইন (ট্রেস) রপ্তানি করুন",
   "sp.export_traces.none": "এই কথোপকথনের জন্য কোন চিহ্ন নেই. সেটিংসে রেকর্ড ট্রেস সক্ষম করুন, তারপর আবার চালান।",
   "sp.export_traces.error": "ট্রেস এক্সপোর্ট করা যায়নি।",

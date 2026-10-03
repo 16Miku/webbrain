@@ -1,3 +1,4 @@
+import { saveScreenshot } from './screenshot-download.js';
 /**
  * WebBrain Side Panel — Chat UI logic.
  * Default: compact history in chat plus the live label; click for status-only mode.
@@ -132,7 +133,7 @@ if (globalThis.browser?.storage?.onChanged) {
   const localModels = document.getElementById('ob-local-models');
   const localModelList = document.getElementById('ob-local-model-list');
   const totalSteps = steps.length;
-  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
+  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'ods', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
   let current = 0;
   let localScanStarted = false;
   let localModelChoices = [];
@@ -704,12 +705,12 @@ const SLASH_COMMANDS = [
   { value: '/print', usage: '/print', descriptionKey: 'sp.slash.print', action: 'print' },
   {
     value: '/screenshot',
-    usage: '/screenshot',
+    usage: '/screenshot [--full-page]',
     descriptionKey: 'sp.slash.screenshot',
     action: 'viewport',
     outOfBand: true,
     options: [
-      { value: '--full-page', descriptionKey: 'sp.slash.full_page_screenshot', action: 'full-page', unsupported: true, unsupportedUsage: '/screenshot --full-page', disallowPayload: true },
+      { value: '--full-page', descriptionKey: 'sp.slash.full_page_screenshot', action: 'full-page', outOfBand: false, disallowPayload: true },
     ],
   },
   {
@@ -725,12 +726,13 @@ const SLASH_COMMANDS = [
   },
   {
     value: '/export',
-    usage: '/export [--traces | --config]',
+    usage: '/export [--traces [--full] | --config]',
     descriptionKey: 'sp.slash.export',
     action: 'conversation',
     outOfBand: true,
     options: [
       { value: '--traces', descriptionKey: 'sp.slash.export_traces', action: 'traces', outOfBand: true, disallowPayload: true, exclusiveGroup: 'export-format' },
+      { value: '--full', descriptionKey: 'sp.slash.export_traces_full', requires: '--traces', conflicts: ['--config'], disallowPayload: true },
       { value: '--config', descriptionKey: 'sp.slash.export_config', action: 'config', outOfBand: true, disallowPayload: true, exclusiveGroup: 'export-format' },
     ],
   },
@@ -769,6 +771,14 @@ function slashCommandIsDiscoverable(command) {
 
 function slashOptionIsDiscoverable(option) {
   return option?.unsupported !== true;
+}
+
+function slashOptionDescriptionHtml(command, option) {
+  const description = escapeHtml(t(option.descriptionKey));
+  if (command.value !== '/workflow' || !['--save', '--export', '--import'].includes(option.value)) {
+    return description;
+  }
+  return `${description} <a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">${escapeHtml(t('sp.slash.workflow_editor'))}</a>`;
 }
 
 function slashOptionIsAvailable(option, selectedValues, selectedGroups) {
@@ -890,7 +900,7 @@ function buildSlashCommandHelpHtml() {
     lines.push(`<code>${escapeHtml(command.usage)}</code> — ${escapeHtml(t(command.descriptionKey))}`);
     for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
       const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
-      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${slashOptionDescriptionHtml(command, option)}`);
     }
   }
   const shortcuts = t('sp.help.shortcuts_html');
@@ -908,7 +918,7 @@ function buildSlashCommandDetailHtml(command) {
   ];
   for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
     const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
-    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${slashOptionDescriptionHtml(command, option)}`);
   }
   return lines.join('<br>');
 }
@@ -1013,7 +1023,17 @@ function isPlainScreenshotRequest(text) {
     || /^(?:lutfen )?(?:bu |mevcut |aktif )?(?:sekmenin|sayfanin|ekranin) ekran goruntusunu (?:al|cek|goster|at)$/.test(s);
 }
 
+function isPlainFullPageScreenshotRequest(text) {
+  const s = normalizeScreenshotRequestText(text);
+  if (!s || s.startsWith('/')) return false;
+  return /^(?:please |pls )?(?:(?:full|whole|entire|complete) page|fullpage|long) (?:screenshot|screen ?shot)(?: (?:please|pls))?$/.test(s)
+    || /^(?:please |pls |can you |could you |would you )?(?:take|capture|grab|show|get) (?:a |the |this )?(?:(?:full|whole|entire|complete) page|fullpage|long) (?:screenshot|screen ?shot)(?: (?:of|for) (?:the |this |current )?(?:page|tab|screen|window))?$/.test(s)
+    || /^(?:lutfen )?(?:tam sayfa|butun sayfa|tum sayfa|uzun) ekran goruntusu(?: (?:al|cek|goster|at))?$/.test(s)
+    || /^(?:lutfen )?(?:bu |mevcut |aktif )?(?:sayfanin|sekmenin) (?:tam|butun|tum) ekran goruntusunu (?:al|cek|goster|at)$/.test(s);
+}
+
 function normalizeScreenshotCommandText(text) {
+  if (isPlainFullPageScreenshotRequest(text)) return '/screenshot --full-page';
   if (isPlainScreenshotRequest(text)) return '/screenshot';
   return text;
 }
@@ -7818,15 +7838,10 @@ function bindScreenshotSaveButton(btn) {
     btn.setAttribute('aria-busy', 'true');
     if (label) label.textContent = t('sp.screenshot.saving');
     try {
-      await browser.downloads.download({
-        url: dataUrl,
-        filename: btn.dataset.filename || screenshotDownloadFilename(
-          '',
-          result?.querySelector('.screenshot-result-image-full-page') != null,
-        ),
-        saveAs: true,
-        conflictAction: 'uniquify',
-      });
+      await saveScreenshot(dataUrl, btn.dataset.filename || screenshotDownloadFilename(
+        '',
+        result?.querySelector('.screenshot-result-image-full-page') != null,
+      ));
     } catch (error) {
       const message = error?.message || String(error);
       // Closing the native Save As dialog is an ordinary user choice.
@@ -8218,6 +8233,44 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return '';
   }
 
+  if (command.value === '/screenshot' && action === 'full-page') {
+    try {
+      const pageUrl = tabId == null
+        ? ''
+        : await browser.tabs.get(tabId).then(tab => tab?.url || '').catch(() => '');
+      const res = await sendToBackground('capture_full_page_screenshot', { tabId });
+      if (currentTabId !== tabId) return '';
+      if (!res?.ok || !res.dataUrl) {
+        addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: res?.error || 'unknown error' })));
+        return '';
+      }
+      // An enabled privacy pass that could not prepare this capture makes it
+      // undeliverable: _applyAttachments rejects a full-page screenshot with no
+      // capture-time snapshot. Keep the preview and save button, but do not
+      // stage a chip the user would have to remove before sending anything.
+      const stagedAttachment = res.redactionUnavailable === true
+        ? null
+        : await stageScreenshotAttachment(tabId, res.dataUrl, {
+          fullPage: true,
+          pageUrl,
+          captureBounds: res.captureBounds,
+          redactionSnapshotReady: res.redactionSnapshotReady === true,
+          redactionSnapshot: res.redactionSnapshot,
+        });
+      if (currentTabId !== tabId) return '';
+      addScreenshotResultMessage(res.dataUrl, {
+        fullPage: true,
+        warning: res.warning,
+        pageUrl,
+        stagedAttachment,
+      });
+    } catch (e) {
+      if (currentTabId !== tabId) return '';
+      addPersistentSlashMessage(systemHtml(tSystemHtml('sp.screenshot.error', { msg: e.message })));
+    }
+    return '';
+  }
+
   if (command.value === '/import' && action === 'file') {
     requestConfigurationFile(tabId);
     return '';
@@ -8254,7 +8307,14 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (command.value === '/export' && action === 'traces') {
     let res;
     try {
-      res = await sendToBackground('export_traces', { tabId });
+      res = await sendToBackground('export_traces', { tabId, full: optionValues.has('--full') });
+      if (optionValues.has('--full') && res?.ok && res.sessionId) {
+        const [store, { exportRecordedSession }] = await Promise.all([
+          import('../trace/recorder.js'),
+          import('../trace/session-export.js'),
+        ]);
+        res = { ok: true, ...await exportRecordedSession(store, res.sessionId, browser.runtime.getManifest().version || '') };
+      }
     } catch (e) {
       addPersistentSlashMessage(`${t('sp.export_traces.error')} (${e?.message || e})`);
       return '';
@@ -8263,7 +8323,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       addPersistentSlashMessage(`${t('sp.export_traces.error')} (${res?.error || 'unknown error'})`);
       return '';
     }
-    if (!res.markdown || res.turnCount === 0) {
+    if (!(res.json || res.markdown) || res.turnCount === 0) {
       addPersistentSlashMessage(
         res.reason === 'no-conversation'
           ? t('sp.export_traces.no_conversation')
@@ -8271,11 +8331,11 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       );
       return '';
     }
-    const blob = new Blob([res.markdown], { type: 'text/markdown' });
+    const blob = new Blob([res.json || res.markdown], { type: res.json ? 'application/json' : 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `webbrain-traces-${Date.now()}.md`;
+    a.download = `webbrain-traces-${Date.now()}.${res.json ? 'json' : 'md'}`;
     document.body.appendChild(a);
     try {
       a.click();
@@ -8283,7 +8343,9 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 7000);
     }
-    if (res.partial) {
+    if (res.recordingTruncated) {
+      addPersistentSlashMessage(t('sp.export_traces.recording_truncated'));
+    } else if (res.partial) {
       addPersistentSlashMessage(t('sp.export_traces.partial'));
     } else if (res.truncated) {
       addPersistentSlashMessage(t('sp.export_traces.truncated'));

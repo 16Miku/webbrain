@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const key = '0123456789abcdef0123456789abcdef';
-const params = { type: 'turnstile', websiteURL: 'https://example.com/form', websiteKey: 'widget', metadata: { action: 'managed', cdata: 'data', chlPageData: 'page-data' } };
+const params = { type: 'turnstile', websiteURL: 'https://example.com/form', websiteKey: 'widget', metadata: { action: 'managed', cdata: 'data' } };
 function api(t, respond) {
   let now = 0;
   const calls = [];
@@ -26,7 +26,8 @@ for (const build of ['chrome', 'firefox']) {
   const solver = await import(`../src/${build}/src/agent/captcha-solver.js`);
   const extra = await import(`../src/${build}/src/agent/captcha-additional-providers.js`);
   const transfer = await import(`../src/${build}/src/config-transfer.js`);
-  const all = Object.fromEntries(config.CAPTCHA_PROVIDERS.flatMap(p => [[p.key, p.id === 'capsolver' ? 'CAP-0123456789abcdefghij' : key], [p.enabled, true]]));
+  const originalProviders = config.CAPTCHA_PROVIDERS.filter(p => !['nopecha', 'nonecap'].includes(p.id));
+  const all = Object.fromEntries(originalProviders.flatMap(p => [[p.key, p.id === 'capsolver' ? 'CAP-0123456789abcdefghij' : key], [p.enabled, true]]));
   const ids = value => config.getCaptchaProviders(value).map(p => p.id);
 
   test(`${build}: weights order all five, ties remain deterministic, disabled keys stay unused`, () => {
@@ -36,7 +37,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(ids({ ...all, capmonsterWeight: NaN, antiCaptchaWeight: Infinity, solveCaptchaWeight: '200' }), ids(all));
     assert.equal(ids({ ...all, capsolverWeight: -1 }).at(-1), 'capsolver');
     assert.equal(config.getCaptchaProviders({ ...all, antiCaptchaWeight: 0 }).at(-1).weight, 0);
-    for (const p of config.CAPTCHA_PROVIDERS) {
+    for (const p of originalProviders) {
       assert.deepEqual(ids({ [p.key]: all[p.key] }), []);
       assert.deepEqual(ids({ [p.key]: 'bad-key', [p.enabled]: true }), []);
     }
@@ -47,7 +48,7 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: keys, checkbox states, and custom weights survive config round trip`, () => {
     const values = { ...all, antiCaptchaWeight: 120.5, capmonsterEnabled: false, solveCaptchaWeight: 0 };
     const imported = transfer.parseConfigImport(JSON.stringify(transfer.createConfigExport(values))).settings;
-    for (const p of config.CAPTCHA_PROVIDERS) {
+    for (const p of originalProviders) {
       assert.equal(imported[p.key], values[p.key]);
       assert.equal(imported[p.enabled], values[p.enabled]);
       assert.equal(imported[p.weight], values[p.weight] ?? p.defaultWeight);
@@ -58,11 +59,14 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   test(`${build}: provider-specific mappings preserve enterprise and Turnstile metadata`, () => {
-    const normalized = solver.buildTask(params);
+    const normalized = solver.buildTask({ ...params, metadata: { ...params.metadata, chlPageData: 'page-data' } });
     const anti = extra.buildAdditionalCaptchaTask('anti-captcha', normalized);
     assert.deepEqual(anti, { type: 'TurnstileTaskProxyless', websiteURL: params.websiteURL, websiteKey: 'widget', action: 'managed', cData: 'data', chlPageData: 'page-data' });
-    const monster = extra.buildAdditionalCaptchaTask('capmonster', normalized);
-    assert.deepEqual(monster, { type: 'TurnstileTask', websiteURL: params.websiteURL, websiteKey: 'widget', data: 'data', pageAction: 'managed', pageData: 'page-data', cloudflareTaskType: 'token' });
+    assert.throws(() => extra.buildAdditionalCaptchaTask('capmonster', normalized), /requires action, data, pageData/);
+    const monster = extra.buildAdditionalCaptchaTask('capmonster', solver.buildTask(params));
+    assert.deepEqual(monster, { type: 'TurnstileTask', websiteURL: params.websiteURL, websiteKey: 'widget', data: 'data', pageAction: 'managed' });
+    const monsterChallenge = extra.buildAdditionalCaptchaTask('capmonster', { ...normalized, userAgent: 'UA' });
+    assert.deepEqual(monsterChallenge, { type: 'TurnstileTask', websiteURL: params.websiteURL, websiteKey: 'widget', data: 'data', pageAction: 'managed', userAgent: 'UA', pageData: 'page-data', cloudflareTaskType: 'token' });
     const solve = extra.buildSolveCaptchaTask(normalized);
     assert.deepEqual(solve, { method: 'turnstile', sitekey: 'widget', pageurl: params.websiteURL, action: 'managed', data: 'data', pagedata: 'page-data' });
     for (const type of ['recaptcha_v2', 'recaptcha_v2_enterprise', 'recaptcha_v3', 'recaptcha_v3_enterprise']) {
@@ -83,6 +87,59 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(antiTask.type, type.includes('enterprise') ? 'RecaptchaV2EnterpriseTaskProxyless' : 'RecaptchaV2TaskProxyless');
       }
     }
+  });
+
+  // API-contract fixtures, not evidence of a successful paid solve on a live site.
+  const taskTypes = {
+    capsolver: ['ReCaptchaV2TaskProxyLess', 'ReCaptchaV2EnterpriseTaskProxyLess', 'ReCaptchaV3TaskProxyLess', 'ReCaptchaV3EnterpriseTaskProxyLess', 'AntiTurnstileTaskProxyLess', 'ImageToTextTask'],
+    '2captcha': ['RecaptchaV2TaskProxyless', 'RecaptchaV2EnterpriseTaskProxyless', 'RecaptchaV3TaskProxyless', 'RecaptchaV3TaskProxyless', 'TurnstileTaskProxyless', 'ImageToTextTask'],
+    capmonster: ['RecaptchaV2Task', 'RecaptchaV2EnterpriseTask', 'RecaptchaV3TaskProxyless', 'RecaptchaV3TaskProxyless', 'TurnstileTask', 'ImageToTextTask'],
+    solvecaptcha: ['userrecaptcha', 'userrecaptcha', 'userrecaptcha', 'userrecaptcha', 'turnstile', 'base64'],
+    'anti-captcha': ['RecaptchaV2TaskProxyless', 'RecaptchaV2EnterpriseTaskProxyless', 'RecaptchaV3TaskProxyless', 'RecaptchaV3TaskProxyless', 'TurnstileTaskProxyless', 'ImageToTextTask'],
+  };
+  for (const provider of originalProviders) {
+    for (const [index, type] of ['recaptcha_v2', 'recaptcha_v2_enterprise', 'recaptcha_v3', 'recaptcha_v3_enterprise', 'turnstile', 'image_to_text'].entries()) {
+      test(`${build}: ${provider.id} ${type} request and response contract`, async t => {
+        const image = type === 'image_to_text';
+        const field = image ? 'text' : type === 'turnstile' ? 'token' : 'gRecaptchaResponse';
+        const calls = api(t, call => {
+          if (call.host === 'api.solvecaptcha.com') return { status: 1, request: call.path === '/in.php' ? 'task-id' : 'answer' };
+          if (call.path === '/createTask' && !(provider.id === 'capsolver' && image)) return { errorId: 0, taskId: 'task-id' };
+          return { errorId: 0, taskId: 'task-id', status: 'ready', solution: { [field]: 'answer' } };
+        });
+        assert.equal(config.captchaProviderSupportsType(provider.id, type), true);
+        const result = await solver.solveCaptchaWithProviders(config.getCaptchaProviders({ [provider.key]: all[provider.key], [provider.enabled]: true }), {
+          ...params, type, pageAction: 'login', minScore: 0.7, body: 'base64-image', userAgent: 'browser-agent', enterprisePayload: { s: 'enterprise-s' },
+        });
+        assert.equal(result.provider, provider.id);
+        assert.equal(result.token, 'answer');
+        assert.equal(result.fieldName, image ? null : type === 'turnstile' ? 'cf-turnstile-response' : 'g-recaptcha-response');
+        assert.equal(calls.length, provider.id === 'capsolver' && image ? 1 : 2);
+        const sent = calls[0].body.task || calls[0].body;
+        assert.equal(sent.type || sent.method, taskTypes[provider.id][index]);
+        if (provider.id === 'capsolver') assert.equal(sent.minScore, undefined, 'CapSolver has no documented minScore option');
+        if (type === 'turnstile' && ['2captcha', 'capmonster', 'solvecaptcha'].includes(provider.id)) assert.equal(sent.userAgent, 'browser-agent');
+        if (type === 'turnstile' && provider.id === 'anti-captcha') assert.equal(sent.userAgent, undefined);
+      });
+    }
+  }
+
+  test(`${build}: synchronous CapSolver OCR without task ID does not poll or fall back`, async t => {
+    const calls = api(t, () => ({ errorId: 0, status: 'ready', solution: { text: 'AbC123' } }));
+    const result = await solver.solveCaptchaWithProviders(config.getCaptchaProviders(all), { type: 'image_to_text', body: 'base64-image' });
+    assert.equal(result.provider, 'capsolver');
+    assert.equal(result.token, 'AbC123');
+    assert.equal(calls.length, 1);
+  });
+
+  test(`${build}: invalid v3 scores fail locally before any provider or broker dispatch`, async t => {
+    const calls = api(t, () => { throw new Error('unexpected dispatch'); });
+    for (const minScore of [0, 0.5, 1, '0.7', NaN]) {
+      const invalid = { ...params, type: 'recaptcha_v3', pageAction: 'login', minScore };
+      await assert.rejects(solver.solveCaptchaWithProviders(config.getCaptchaProviders(all), invalid), /minScore/);
+      await assert.rejects(solver.solveCaptcha('', invalid, { useCloudBroker: true }), /minScore/);
+    }
+    assert.equal(calls.length, 0);
   });
 
   test(`${build}: one attempt per service follows weights and stops on last-provider success`, async t => {

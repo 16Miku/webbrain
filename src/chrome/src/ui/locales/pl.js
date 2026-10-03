@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Polski — translated from en.js. Keys mirror the English canonical file.
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Powiększenie interfejsu rozszerzenia',
   'sp.ui_scale.decrease': 'Pomniejsz interfejs rozszerzenia',
   'sp.ui_scale.increase': 'Powiększ interfejs rozszerzenia',
@@ -934,6 +936,7 @@ export default {
   "sp.memory.error": "Błąd pamięci: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Nie zapisano: po oczyszczeniu tekst jest pusty lub wygląda na zawierający sekret (hasło, klucz API, token).",
   "sp.memory.reason.not_found": "Nie ma zapisanego wpisu o tym ID.",
+  'sp.slash.workflow_editor': "Edytor przepływów pracy",
   "sp.slash.workflows": "Wyświetlaj i zarządzaj zapisanymi przepływami pracy",
   "sp.slash.teach": "Nagraj działania jako zapisany przepływ pracy",
   "sp.slash.run_workflow": "Uruchom zapisany przepływ pracy według ID",
@@ -1030,6 +1033,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Maks. wymiar obrazu",
   "st.imageBudget.maxDimension.desc": "Najdłuższy bok (szerokość lub wysokość) w pikselach dla każdego zrzutu wysyłanego do vision. Niższy limit zmniejsza obrazy przed wysłaniem, tnąc tokeny i koszt. Wyższy limit zachowuje wierność.",
   "st.imageBudget.warning": "⚠️ Te ustawienia dotyczą zrzutów na vision (auto-zrzut, /screenshot, cała strona, verify_form). Ręcznie zapisane obrazy w pełnej rozdzielczości nie są objęte. «Image detail» honorują endpointy w stylu OpenAI; inni dostawcy mogą to ignorować.",
+  "sp.slash.export_traces_full": "Eksportuj całą zapisaną sesję śledzenia jako JSON, wraz ze zrzutami ekranu",
+  "sp.export_traces.recording_truncated": "Wyeksportowano wszystkie zapisane rekordy jako JSON. Treści pominiętych podczas rejestrowania nie można odzyskać przez eksport.",
   "sp.slash.export_traces": "Eksportuj łańcuch narzędzi (ślady)",
   "sp.export_traces.none": "Brak śladów dla tej rozmowy. Włącz „Rejestruj ślady\" w Ustawieniach i uruchom ponownie.",
   "sp.export_traces.error": "Nie udało się wyeksportować śladów.",

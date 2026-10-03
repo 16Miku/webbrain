@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Russian (ru).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Масштаб интерфейса расширения',
   'sp.ui_scale.decrease': 'Уменьшить интерфейс расширения',
   'sp.ui_scale.increase': 'Увеличить интерфейс расширения',
@@ -942,6 +944,7 @@ export default {
   "sp.memory.error": "Ошибка памяти: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Не сохранено: после очистки текст пуст или похож на секрет (пароль, API-ключ, токен).",
   "sp.memory.reason.not_found": "Сохранённой записи с таким ID нет.",
+  'sp.slash.workflow_editor': "Редактор рабочих процессов",
   "sp.slash.workflows": "Просмотр и управление сохранёнными сценариями",
   "sp.slash.teach": "Записать ваши действия как сохранённый рабочий процесс",
   "sp.slash.run_workflow": "Запустить сохранённый сценарий по ID",
@@ -1038,6 +1041,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Макс. размер изображения",
   "st.imageBudget.maxDimension.desc": "Наибольшая сторона (ширина или высота) в пикселях для любого скриншота, отправляемого в vision. Меньший предел сжимает изображения до отправки, снижая токены и стоимость. Больший предел сохраняет точность.",
   "st.imageBudget.warning": "⚠️ Эти настройки применяются к скриншотам для vision (авто-скриншот, /screenshot, вся страница, verify_form). Вручную сохранённые изображения в полном разрешении не затрагиваются. «Image detail» учитывается endpoint’ами в стиле OpenAI; другие провайдеры могут игнорировать.",
+  "sp.slash.export_traces_full": "Экспортировать всю сохранённую сессию трассировки в JSON, включая снимки экрана",
+  "sp.export_traces.recording_truncated": "Все сохранённые записи экспортированы в JSON. Содержимое, пропущенное при записи, невозможно восстановить экспортом.",
   "sp.slash.export_traces": "Экспорт цепочки инструментов (трассировки)",
   "sp.export_traces.none": "Нет трассировок для этого разговора. Включите «Записывать трассировки» в настройках и запустите снова.",
   "sp.export_traces.error": "Не удалось экспортировать трассировки.",

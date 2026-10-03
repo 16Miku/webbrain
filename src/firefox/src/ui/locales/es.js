@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Spanish (es).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom de la interfaz de la extensión',
   'sp.ui_scale.decrease': 'Reducir el zoom de la interfaz',
   'sp.ui_scale.increase': 'Aumentar el zoom de la interfaz',
@@ -914,6 +916,7 @@ export default {
   "sp.memory.error": "Error de memoria: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "No se guardó: el texto queda vacío tras la limpieza o parece contener un secreto (contraseña, clave de API o token).",
   "sp.memory.reason.not_found": "Ninguna memoria guardada tiene ese ID.",
+  'sp.slash.workflow_editor': "Editor de flujos de trabajo",
   "sp.slash.workflows": "Listar y administrar flujos de trabajo guardados",
   "sp.slash.teach": "Graba tus acciones como un flujo de trabajo guardado",
   "sp.slash.run_workflow": "Ejecutar un flujo guardado por ID",
@@ -1019,6 +1022,8 @@ export default {
   "sp.upload_picker.cancelled": "Subida cancelada",
   "sp.upload_picker.too_large": "El archivo seleccionado supera el límite de 25 MB (máx. 25 MB)",
   "sp.upload_picker.read_failed": "No se pudo leer el archivo seleccionado",
+  "sp.slash.export_traces_full": "Exportar toda la sesión de trazas guardada como JSON, incluidas las capturas",
+  "sp.export_traces.recording_truncated": "Se exportaron todos los registros guardados como JSON. El contenido omitido durante la grabación no puede recuperarse mediante la exportación.",
   "sp.slash.export_traces": "Exportar la cadena de herramientas (trazas)",
   "sp.export_traces.none": "No hay trazas para esta conversación. Activa «Registrar trazas» en Ajustes y vuelve a ejecutar.",
   "sp.export_traces.error": "No se pudieron exportar las trazas.",

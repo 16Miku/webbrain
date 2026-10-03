@@ -12,6 +12,10 @@
 //   { role: "assistant", content: "..."|null, tool_calls: [{id, type:"function", function:{name, arguments}}] }
 //   { role: "tool", tool_call_id, name, content: "..." }
 
+import { readFileSync } from 'node:fs';
+import * as chromeSkills from '../../../src/chrome/src/agent/skills.js';
+import * as firefoxSkills from '../../../src/firefox/src/agent/skills.js';
+
 import {
   SYSTEM_PROMPT_ACT as CHROME_SYSTEM_PROMPT_ACT,
   SYSTEM_PROMPT_ACT_MID as CHROME_SYSTEM_PROMPT_ACT_MID,
@@ -107,7 +111,7 @@ export function buildScenarioPayload(scenario, opts = {}) {
   const mode = normalizeMode(scenario.mode);
   const tier = normalizeTier(opts.tier);
   const useSiteAdapters = opts.useSiteAdapters !== false;
-  const strictSecretMode = !!opts.strictSecretMode;
+  const strictSecretMode = opts.strictSecretMode ?? (scenario.strictSecretMode === true);
   const unprotected = !!opts.unprotected;
 
   // FREEZE MODE: snapshot wins. Site adapters / tier are ignored — whatever
@@ -125,11 +129,29 @@ export function buildScenarioPayload(scenario, opts = {}) {
     }
   }
 
+  // Fixture-owned enabled/active IDs reproduce on-demand package loading. Never
+  // infer activation from seed/tool text; Compact uses the production exclusion.
+  let skillLoaderTool;
+  if (!FROZEN && scenario.packagedSkillIds?.length) {
+    const skills = scenario.browser === 'firefox' ? firefoxSkills : chromeSkills;
+    const enabled = scenario.packagedSkillIds.map(id => {
+      const source = skills.PACKAGED_SKILL_SOURCES.find(s => s.id === id);
+      if (!source) throw new Error(`Unknown packaged scenario skill: ${id}`);
+      return { id, name: source.name, sourceType: 'built-in', sourceUrl: source.path,
+        content: readFileSync(new URL(`../../../src/${scenario.browser || 'chrome'}/${source.path}`, import.meta.url), 'utf8') };
+    });
+    const context = { mode, tier, activeSkillIds: scenario.activeSkillIds || [] };
+    skillLoaderTool = skills.buildSkillLoaderDefinition(enabled, context);
+    const loaded = skills.buildCustomSkillsPrompt(enabled, context);
+    if (loaded) systemContent += `\n\n${loaded}`;
+  }
+
   const tools = FROZEN
     ? FROZEN.tools
     : browser.getToolsForMode(mode, {
       strictSecretMode,
       tier,
+      skillLoaderTool,
       researchEscalationEnabled: opts.researchEscalationEnabled === true,
     });
 

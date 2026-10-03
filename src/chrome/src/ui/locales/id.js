@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Indonesian (id).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom UI ekstensi',
   'sp.ui_scale.decrease': 'Perkecil UI ekstensi',
   'sp.ui_scale.increase': 'Perbesar UI ekstensi',
@@ -942,6 +944,7 @@ export default {
   "sp.memory.error": "Kesalahan memori: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Tidak disimpan: teks kosong setelah dibersihkan atau tampaknya berisi rahasia (kata sandi, kunci API, token).",
   "sp.memory.reason.not_found": "Tidak ada memori tersimpan dengan ID tersebut.",
+  'sp.slash.workflow_editor': "Editor alur kerja",
   "sp.slash.workflows": "Lihat dan kelola alur kerja tersimpan",
   "sp.slash.teach": "Rekam tindakan Anda sebagai alur kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan alur kerja tersimpan berdasarkan ID",
@@ -1038,6 +1041,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Dimensi gambar maksimum",
   "st.imageBudget.maxDimension.desc": "Sisi terpanjang (lebar atau tinggi) dalam piksel untuk setiap tangkapan yang dikirim ke visi. Batas lebih kecil mengecilkan gambar sebelum dikirim, mengurangi token dan biaya. Batas lebih besar menjaga fidelitas.",
   "st.imageBudget.warning": "⚠️ Pengaturan ini berlaku untuk tangkapan untuk visi (tangkapan otomatis, /screenshot, halaman penuh, verify_form). Gambar resolusi penuh yang disimpan manual tidak terpengaruh. «Image detail» dihormati endpoint bergaya OpenAI; penyedia lain mungkin mengabaikannya.",
+  "sp.slash.export_traces_full": "Ekspor seluruh sesi jejak tersimpan sebagai JSON, termasuk tangkapan layar",
+  "sp.export_traces.recording_truncated": "Semua catatan tersimpan telah diekspor sebagai JSON. Konten yang dihilangkan saat perekaman tidak dapat dipulihkan melalui ekspor.",
   "sp.slash.export_traces": "Ekspor rantai alat (jejak)",
   "sp.export_traces.none": "Tidak ada jejak untuk percakapan ini. Aktifkan Rekam jejak di Pengaturan, lalu jalankan lagi.",
   "sp.export_traces.error": "Tidak dapat mengekspor jejak.",

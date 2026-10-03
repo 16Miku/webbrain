@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Hindi — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'एक्सटेंशन UI ज़ूम',
   'sp.ui_scale.decrease': 'एक्सटेंशन UI को छोटा करें',
   'sp.ui_scale.increase': 'एक्सटेंशन UI को बड़ा करें',
@@ -172,6 +174,7 @@ export default {
   'sp.slash.remember': "उपयोगकर्ता प्राथमिकता याद रखें",
   'sp.slash.show_memory': "सहेजी गई उपयोगकर्ता मेमोरी दिखाएँ",
   'sp.slash.forget_memory': "आईडी द्वारा सहेजी गई मेमोरी को भूल जाएं",
+  'sp.slash.workflow_editor': "वर्कफ़्लो एडिटर",
   'sp.slash.workflows': "सहेजे गए वर्कफ़्लो को सूचीबद्ध करें और प्रबंधित करें",
   "sp.slash.teach": "अपने कार्यों को सहेजे गए वर्कफ़्लो के रूप में रिकॉर्ड करें",
   'sp.slash.run_workflow': "आईडी द्वारा सहेजा गया वर्कफ़्लो चलाएँ",
@@ -1103,6 +1106,8 @@ export default {
   'tr.event.args': "तर्क",
   'tr.event.result': "परिणाम",
   'tr.event.step': "चरण {step}",
+  "sp.slash.export_traces_full": "स्क्रीनशॉट सहित पूरा सहेजा गया ट्रेस सत्र JSON के रूप में निर्यात करें",
+  "sp.export_traces.recording_truncated": "सभी सहेजे गए रिकॉर्ड JSON में निर्यात हो गए। रिकॉर्डिंग के दौरान छोड़ी गई सामग्री निर्यात से वापस नहीं मिल सकती।",
   "sp.slash.export_traces": "उपकरण श्रृंखला (निशान) निर्यात करें",
   "sp.export_traces.none": "इस बातचीत का कोई निशान नहीं. सेटिंग्स में रिकॉर्ड ट्रेस सक्षम करें, फिर से चलाएँ।",
   "sp.export_traces.error": "निशान निर्यात नहीं किए जा सके.",

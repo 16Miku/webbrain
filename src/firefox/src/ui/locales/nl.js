@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Dutch (nl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom van extensie-interface',
   'sp.ui_scale.decrease': 'Extensie-interface uitzoomen',
   'sp.ui_scale.increase': 'Extensie-interface inzoomen',
@@ -168,6 +170,7 @@ export default {
   'sp.slash.remember': 'Een gebruikersvoorkeur onthouden',
   'sp.slash.show_memory': 'Toon opgeslagen gebruikersgeheugen',
   'sp.slash.forget_memory': 'Een opgeslagen geheugen vergeten op ID',
+  'sp.slash.workflow_editor': "Workfloweditor",
   'sp.slash.workflows': 'Lijst en beheer opgeslagen workflows',
   "sp.slash.teach": "Acties opnemen als opgeslagen workflow",
   'sp.slash.run_workflow': 'Voer een opgeslagen workflow uit op ID',
@@ -971,6 +974,8 @@ export default {
   'tr.event.args': 'argumenten',
   'tr.event.result': 'resultaat',
   'tr.event.step': 'stap {step}',
+  "sp.slash.export_traces_full": "De volledige opgeslagen tracesessie inclusief screenshots als JSON exporteren",
+  "sp.export_traces.recording_truncated": "Alle opgeslagen records zijn als JSON geëxporteerd. Inhoud die tijdens de opname is weggelaten, kan niet via export worden hersteld.",
   "sp.slash.export_traces": "De toolketen (traces) exporteren",
   "sp.export_traces.none": "Geen traces voor dit gesprek...",
   "sp.export_traces.error": "Kon traces niet exporteren.",

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Hebrew (he).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'הגדלת ממשק התוסף',
   'sp.ui_scale.decrease': 'הקטנת תצוגת ממשק התוסף',
   'sp.ui_scale.increase': 'הגדלת תצוגת ממשק התוסף',
@@ -535,6 +537,7 @@ export default {
   "st.tab.skills": "מיומנויות",
   "st.tab.vision": "ראייה",
   "st.tab.multimodal": "מודלים מסייעים",
+  'sp.slash.workflow_editor': "עורך תהליכי עבודה",
   "sp.slash.workflows": "הצגה וניהול של תהליכי עבודה שמורים",
   "sp.slash.teach": "הקלטת הפעולות שלך כתהליך עבודה שמור",
   "sp.slash.run_workflow": "הפעלת תהליך עבודה שמור לפי מזהה",
@@ -991,6 +994,8 @@ export default {
   "st.imageBudget.maxDimension.label": "ממד תמונה מרבי",
   "st.imageBudget.maxDimension.desc": "הצלע הארוכה (רוחב או גובה) בפיקסלים לכל צילום שנשלח לראייה. תקרה נמוכה יותר מקטינה תמונות לפני השליחה ומורידה טוקנים ועלות. תקרה גבוהה יותר שומרת נאמנות.",
   "st.imageBudget.warning": "⚠️ ההגדרות האלה חלות על צילומים לראייה (צילום אוטומטי, /screenshot, עמוד מלא, verify_form). תמונות שנשמרו ידנית ברזולוציה מלאה אינן מושפעות. «Image detail» מכובד על ידי נקודות קצה בסגנון OpenAI; ספקים אחרים עשויים להתעלם.",
+  "sp.slash.export_traces_full": "ייצוא כל סשן המעקב השמור כ־JSON, כולל צילומי מסך",
+  "sp.export_traces.recording_truncated": "כל הרשומות השמורות יוצאו כ־JSON. תוכן שהושמט בזמן ההקלטה אינו ניתן לשחזור באמצעות ייצוא.",
   "sp.slash.export_traces": "ייצוא שרשרת הכלים (מעקבים)",
   "sp.export_traces.none": "אין מעקבים לשיחה זו. הפעילו את «הקלטת מעקבים» בהגדרות והריצו שוב.",
   "sp.export_traces.error": "לא ניתן לייצא מעקבים.",

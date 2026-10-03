@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Polski — translated from en.js. Keys mirror the English canonical file.
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Powiększenie interfejsu rozszerzenia',
   'sp.ui_scale.decrease': 'Pomniejsz interfejs rozszerzenia',
   'sp.ui_scale.increase': 'Powiększ interfejs rozszerzenia',
@@ -906,6 +908,7 @@ export default {
   "sp.memory.error": "Błąd pamięci: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Nie zapisano: po oczyszczeniu tekst jest pusty lub wygląda na zawierający sekret (hasło, klucz API, token).",
   "sp.memory.reason.not_found": "Nie ma zapisanego wpisu o tym ID.",
+  'sp.slash.workflow_editor': "Edytor przepływów pracy",
   "sp.slash.workflows": "Wyświetlaj i zarządzaj zapisanymi przepływami pracy",
   "sp.slash.teach": "Nagraj działania jako zapisany przepływ pracy",
   "sp.slash.run_workflow": "Uruchom zapisany przepływ pracy według ID",
@@ -1011,6 +1014,8 @@ export default {
   "sp.upload_picker.cancelled": "Przesyłanie anulowane",
   "sp.upload_picker.too_large": "Wybrany plik przekracza limit 25 MB (maks. 25 MB)",
   "sp.upload_picker.read_failed": "Nie udało się odczytać wybranego pliku",
+  "sp.slash.export_traces_full": "Eksportuj całą zapisaną sesję śledzenia jako JSON, wraz ze zrzutami ekranu",
+  "sp.export_traces.recording_truncated": "Wyeksportowano wszystkie zapisane rekordy jako JSON. Treści pominiętych podczas rejestrowania nie można odzyskać przez eksport.",
   "sp.slash.export_traces": "Eksportuj łańcuch narzędzi (ślady)",
   "sp.export_traces.none": "Brak śladów dla tej rozmowy. Włącz „Rejestruj ślady\" w Ustawieniach i uruchom ponownie.",
   "sp.export_traces.error": "Nie udało się wyeksportować śladów.",

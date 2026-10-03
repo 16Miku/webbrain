@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Japanese (ja).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '拡張機能 UI のズーム',
   'sp.ui_scale.decrease': '拡張機能 UI を縮小',
   'sp.ui_scale.increase': '拡張機能 UI を拡大',
@@ -914,6 +916,7 @@ export default {
   "sp.memory.error": "メモリエラー: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "保存されませんでした。整理後のテキストが空か、秘密情報（パスワード、API キー、トークン）が含まれているようです。",
   "sp.memory.reason.not_found": "その ID の保存済みメモリはありません。",
+  'sp.slash.workflow_editor': "ワークフローエディター",
   "sp.slash.workflows": "保存済みワークフローを一覧・管理",
   "sp.slash.teach": "操作を保存済みワークフローとして記録",
   "sp.slash.run_workflow": "保存済みワークフローを ID で実行",
@@ -1019,6 +1022,8 @@ export default {
   "sp.upload_picker.cancelled": "アップロードをキャンセルしました",
   "sp.upload_picker.too_large": "選択したファイルが 25MB の上限を超えています（最大 25MB）",
   "sp.upload_picker.read_failed": "選択したファイルの読み取りに失敗しました",
+  "sp.slash.export_traces_full": "スクリーンショットを含む保存済みトレースセッション全体をJSONでエクスポート",
+  "sp.export_traces.recording_truncated": "保存済みの全記録をJSONでエクスポートしました。記録時に省略された内容はエクスポートでは復元できません。",
   "sp.slash.export_traces": "ツールチェーンをエクスポート（トレース）",
   "sp.export_traces.none": "この会話のトレースがありません。設定で「トレースを記録」をオンにして、もう一度実行してください。",
   "sp.export_traces.error": "トレースをエクスポートできませんでした。",

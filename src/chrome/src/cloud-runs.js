@@ -955,6 +955,17 @@ export function createCloudRunController({
       run.status = 'needs_user_input';
       run.pendingInput = scrubbedData;
     }
+    if (type === 'clarify_timeout_extended' && scrubbedData?.clarifyId
+        && (run.pendingInput?.clarifyId || run.pendingInput?.clarify_id) === scrubbedData.clarifyId
+        && run.status === 'needs_user_input' && Number(scrubbedData.deadlineTs) > 0) {
+      run.pendingInput = { ...run.pendingInput, deadlineTs: Number(scrubbedData.deadlineTs) };
+    }
+    if (type === 'clarify_auto' && scrubbedData?.clarifyId
+        && (run.pendingInput?.clarifyId || run.pendingInput?.clarify_id) === scrubbedData.clarifyId
+        && run.status === 'needs_user_input') {
+      run.status = 'running';
+      run.pendingInput = null;
+    }
     if (type === 'run_status'
         && ['clarification_required', 'captcha_manual_required'].includes(scrubbedData?.status)
         && run.status !== 'aborting'
@@ -1380,9 +1391,47 @@ export function createCloudRunController({
     return cloudSnapshot(run);
   }
 
+  // Persistent bridge identity (chrome.storage.local). The token is the Cloud
+  // Bridge credential only; it is unrelated to provider API keys.
+  //
+  // Concurrent starts (a settings save triggers syncBridge while the page also
+  // sends cloud_bridge_start) must not each mint an installation id, so the
+  // read-or-create step is single-flight.
+  let installationIdInit = null;
+  function ensureInstallationId() {
+    if (!installationIdInit) {
+      installationIdInit = (async () => {
+        const stored = await api.storage.local.get('webbrainCloudBridgeInstallationId');
+        if (stored.webbrainCloudBridgeInstallationId) return stored.webbrainCloudBridgeInstallationId;
+        const created = crypto.randomUUID();
+        await api.storage.local.set({ webbrainCloudBridgeInstallationId: created });
+        return created;
+      })().finally(() => { installationIdInit = null; });
+    }
+    return installationIdInit;
+  }
+
+  async function bridgeIdentity() {
+    const installationId = await ensureInstallationId();
+    const stored = await api.storage.local.get([
+      'webbrainCloudBridgeToken',
+      'webbrainCloudBridgeBrowserId',
+    ]);
+    return {
+      token: stored.webbrainCloudBridgeToken || '',
+      browserId: stored.webbrainCloudBridgeBrowserId || installationId,
+      installationId,
+      extensionVersion: api.runtime.getManifest?.().version || '',
+    };
+  }
+
   async function startBridge(url = DEFAULT_CLOUD_BRIDGE_URL) {
     await ensureOffscreen();
-    return api.runtime.sendMessage({ type: 'cloud-bridge-start', url: normalizeCloudBridgeUrl(url) });
+    return api.runtime.sendMessage({
+      type: 'cloud-bridge-start',
+      url: normalizeCloudBridgeUrl(url),
+      ...(await bridgeIdentity()),
+    });
   }
 
   async function stopBridge() {

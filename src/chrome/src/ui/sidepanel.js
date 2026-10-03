@@ -250,7 +250,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
   const localModels = document.getElementById('ob-local-models');
   const localModelList = document.getElementById('ob-local-model-list');
   const totalSteps = steps.length;
-  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
+  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'ods', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
   let current = 0;
   let localScanStarted = false;
   let localModelChoices = [];
@@ -850,12 +850,13 @@ const SLASH_COMMANDS = [
   },
   {
     value: '/export',
-    usage: '/export [--traces | --config]',
+    usage: '/export [--traces [--full] | --config]',
     descriptionKey: 'sp.slash.export',
     action: 'conversation',
     outOfBand: true,
     options: [
       { value: '--traces', descriptionKey: 'sp.slash.export_traces', action: 'traces', outOfBand: true, disallowPayload: true, exclusiveGroup: 'export-format' },
+      { value: '--full', descriptionKey: 'sp.slash.export_traces_full', requires: '--traces', conflicts: ['--config'], disallowPayload: true },
       { value: '--config', descriptionKey: 'sp.slash.export_config', action: 'config', outOfBand: true, disallowPayload: true, exclusiveGroup: 'export-format' },
     ],
   },
@@ -894,6 +895,14 @@ function slashCommandIsDiscoverable(command) {
 
 function slashOptionIsDiscoverable(option) {
   return option?.unsupported !== true;
+}
+
+function slashOptionDescriptionHtml(command, option) {
+  const description = escapeHtml(t(option.descriptionKey));
+  if (command.value !== '/workflow' || !['--save', '--export', '--import'].includes(option.value)) {
+    return description;
+  }
+  return `${description} <a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">${escapeHtml(t('sp.slash.workflow_editor'))}</a>`;
 }
 
 function slashOptionIsAvailable(option, selectedValues, selectedGroups) {
@@ -1015,7 +1024,7 @@ function buildSlashCommandHelpHtml() {
     lines.push(`<code>${escapeHtml(command.usage)}</code> — ${escapeHtml(t(command.descriptionKey))}`);
     for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
       const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
-      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${slashOptionDescriptionHtml(command, option)}`);
     }
   }
   const shortcuts = t('sp.help.shortcuts_html');
@@ -1033,7 +1042,7 @@ function buildSlashCommandDetailHtml(command) {
   ];
   for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
     const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
-    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${slashOptionDescriptionHtml(command, option)}`);
   }
   return lines.join('<br>');
 }
@@ -8558,7 +8567,14 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (command.value === '/export' && action === 'traces') {
     let res;
     try {
-      res = await sendToBackground('export_traces', { tabId });
+      res = await sendToBackground('export_traces', { tabId, full: optionValues.has('--full') });
+      if (optionValues.has('--full') && res?.ok && res.sessionId) {
+        const [store, { exportRecordedSession }] = await Promise.all([
+          import('../trace/recorder.js'),
+          import('../trace/session-export.js'),
+        ]);
+        res = { ok: true, ...await exportRecordedSession(store, res.sessionId, chrome.runtime.getManifest().version || '') };
+      }
     } catch (e) {
       addPersistentSlashMessage(`${t('sp.export_traces.error')} (${e?.message || e})`);
       return '';
@@ -8567,7 +8583,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       addPersistentSlashMessage(`${t('sp.export_traces.error')} (${res?.error || 'unknown error'})`);
       return '';
     }
-    if (!res.markdown || res.turnCount === 0) {
+    if (!(res.json || res.markdown) || res.turnCount === 0) {
       addPersistentSlashMessage(
         res.reason === 'no-conversation'
           ? t('sp.export_traces.no_conversation')
@@ -8575,11 +8591,11 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       );
       return '';
     }
-    const blob = new Blob([res.markdown], { type: 'text/markdown' });
+    const blob = new Blob([res.json || res.markdown], { type: res.json ? 'application/json' : 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `webbrain-traces-${Date.now()}.md`;
+    a.download = `webbrain-traces-${Date.now()}.${res.json ? 'json' : 'md'}`;
     document.body.appendChild(a);
     try {
       a.click();
@@ -8587,7 +8603,9 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 7000);
     }
-    if (res.partial) {
+    if (res.recordingTruncated) {
+      addPersistentSlashMessage(t('sp.export_traces.recording_truncated'));
+    } else if (res.partial) {
       addPersistentSlashMessage(t('sp.export_traces.partial'));
     } else if (res.truncated) {
       addPersistentSlashMessage(t('sp.export_traces.truncated'));

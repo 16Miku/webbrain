@@ -1,0 +1,22 @@
+// English fallback for the Cloud Bridge settings tab; shared to keep locale keys aligned.
+export default {
+  "st.cb.invalid_url": "Use a local ws:// URL with 127.0.0.1, localhost, or ::1.",
+  "st.cb.status_disabled": "Bridge disabled",
+  "st.cb.status_error": "Connection error: {error}",
+  "st.tab.cloudbridge": 'Cloud Bridge',
+  "st.cb.enabled": 'Let a backend control this browser',
+  "st.cb.desc": 'WebBrain connects out to the backend below and waits for cloud_* commands. With a token set, the backend must approve this browser before any command runs.',
+  "st.cb.url": 'Backend WebSocket URL (local ws:// only)',
+  "st.cb.token": 'Cloud Bridge token',
+  "st.cb.token_hint": 'Leave empty for a plain local controller (no approval step). This is not a provider API key.',
+  "st.cb.browser_name": 'Browser name',
+  "st.cb.installation_id": 'Installation ID:',
+  "st.cb.test": 'Save & test connection',
+  "st.cb.testing": 'Testing…',
+  "st.cb.connected": 'Connected (no approval required).',
+  "st.cb.pending": 'Connected — waiting for the backend to approve this browser.',
+  "st.cb.approved": 'Connected and approved.',
+  "st.cb.rejected": 'Rejected by the backend: {reason}',
+  "st.cb.unreachable": 'Backend unreachable at {url}.',
+  "st.cb.howto_html": 'To try it locally, run <code>node examples/cloud-bridge-approval-server.mjs --token YOUR_TOKEN</code> from the WebBrain checkout, enter the same token here, then press “Save &amp; test connection”. Type <code>approve</code> in that terminal. <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/cloud-bridge-browser-approval.md" target="_blank" rel="noopener noreferrer">Documentation</a>',
+};

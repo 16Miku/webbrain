@@ -40,7 +40,7 @@ try {
             runtime: { getURL: path => `${location.origin}/src/${build}/${path}`, getManifest: () => ({ version: '36.7.5' }), onMessage: { addListener() {} }, sendMessage(msg, callback) {
               testRequests.push(msg);
               const result = msg.action === 'get_providers' ? { providers: {}, active: '' }
-                : msg.action === 'test_captcha_provider_balance' || msg.action === 'test_two_captcha_balance' || msg.action === 'test_capsolver_balance' ? { ok: !window.failBalance, balance: 2.5, error: window.failBalance ? 'Synthetic balance failure' : undefined }
+                : msg.action === 'test_captcha_provider_balance' || msg.action === 'test_two_captcha_balance' || msg.action === 'test_capsolver_balance' ? { ok: !window.failBalance, balance: ['nopecha', 'nonecap'].includes(msg.provider) ? 250 : 2.5, unit: ['nopecha', 'nonecap'].includes(msg.provider) ? 'credits' : undefined, error: window.failBalance ? 'Synthetic balance failure' : undefined }
                 : {};
               callback?.(result); return Promise.resolve(result);
             } }, commands: { getAll: async () => [] }, tabs: { create: async () => ({}) },
@@ -56,10 +56,19 @@ try {
         await openSettings();
         const card = page.locator('#captcha-card');
         await card.scrollIntoViewIfNeeded();
-        assert.equal(await card.locator('section').count(), 5);
+        assert.equal(await card.locator('section').count(), 7);
         assert.equal(await card.evaluate(el => el.textContent.includes('st.captcha.') || el.textContent.includes('{provider}')), false);
         assert.equal(await card.locator('.captcha-advanced[open]').count(), 0);
-        for (const [id, defaultWeight] of [['captcha', 100], ['two-captcha', 99], ['capmonster', 98], ['solve-captcha', 97], ['anti-captcha', 96]]) {
+        for (const id of ['captcha','two-captcha','capmonster','solve-captcha','anti-captcha']) {
+          const coverage = await page.locator(`#${id}-coverage`).textContent();
+          assert.ok(coverage.includes('reCAPTCHA v2 Enterprise') && coverage.includes('reCAPTCHA v3 Enterprise'));
+          assert.equal(coverage.includes('hCaptcha'), false);
+          assert.ok((await page.locator(`#${id}-docs`).getAttribute('href')).startsWith('https://'));
+        }
+        assert.ok((await page.locator('#nopecha-coverage').textContent()).includes('hCaptcha'));
+        assert.ok((await page.locator('#nopecha-coverage').textContent()).includes('reCAPTCHA v2'));
+        assert.equal(await page.locator('#nonecap-coverage').textContent(), 'hCaptcha');
+        for (const [id, defaultWeight] of [['captcha', 100], ['two-captcha', 99], ['capmonster', 98], ['solve-captcha', 97], ['anti-captcha', 96], ['nopecha', 95], ['nonecap', 94]]) {
           assert.equal(await page.locator(`#${id}-weight`).isVisible(), false);
           assert.equal(await page.locator(`#${id}-weight`).locator('xpath=ancestor::details[1]/summary').evaluate(el => getComputedStyle(el, '::after').content), '"+"');
           assert.equal(await page.locator(`#${id}-weight`).inputValue(), String(defaultWeight));
@@ -104,13 +113,16 @@ try {
           ['capmonster', 'capmonsterApiKey', 'capmonsterEnabled', 'capmonsterWeight'],
           ['solve-captcha', 'solveCaptchaApiKey', 'solveCaptchaEnabled', 'solveCaptchaWeight'],
           ['anti-captcha', 'antiCaptchaApiKey', 'antiCaptchaEnabled', 'antiCaptchaWeight'],
+          ['nopecha', 'nopechaApiKey', 'nopechaEnabled', 'nopechaWeight'],
+          ['nonecap', 'nonecapApiKey', 'nonecapEnabled', 'nonecapWeight'],
         ]) {
-          await page.locator(`#${id}-api-key`).fill(key);
+          await page.locator(`#${id}-api-key`).fill(id === 'nonecap' ? 'nc_live_' + key : key);
           assert.equal(await page.locator(`#${id}-enabled`).isChecked(), true);
           await page.locator(`#btn-save-${id}`).click();
           assert.equal(await page.evaluate(name => testStore[name], enabledName), true);
           await page.locator(`#${id}-enabled`).uncheck();
-          await page.locator(`#${id}-api-key`).fill('f'.repeat(32));
+          const editedKey = (id === 'nonecap' ? 'nc_live_' : '') + 'f'.repeat(32);
+          await page.locator(`#${id}-api-key`).fill(editedKey);
           assert.equal(await page.locator(`#${id}-enabled`).isChecked(), false, 'manual opt-out survives further typing');
           await page.locator(`#btn-save-${id}`).click();
           assert.equal(await page.evaluate(name => testStore[name], enabledName), false);
@@ -120,12 +132,13 @@ try {
           await page.waitForFunction(name => testStore[name] === 110, weightName);
           await openSettings();
           assert.equal(await page.locator(`#${id}-enabled`).isChecked(), false);
-          assert.equal(await page.locator(`#${id}-api-key`).inputValue(), 'f'.repeat(32));
+          assert.equal(await page.locator(`#${id}-api-key`).inputValue(), editedKey);
           assert.equal(await page.locator(`#${id}-weight`).inputValue(), '110');
           assert.equal(await page.locator(`#${id}-weight`).isVisible(), false);
           await page.locator(`#${id}-enabled`).check();
           await page.locator(`#btn-test-${id}`).click();
-          await page.waitForFunction(dom => document.querySelector(`#test-${dom}`).textContent.includes('2.5000'), id);
+          await page.waitForFunction(({dom, expected}) => document.querySelector(`#test-${dom}`).textContent.includes(expected), {dom: id, expected: ['nopecha', 'nonecap'].includes(id) ? '250' : '2.5000'});
+          if (['nopecha', 'nonecap'].includes(id)) assert.equal((await page.locator(`#test-${id}`).textContent()).includes('$'), false);
           assert.equal(await page.evaluate(name => testStore[name], enabledName), true);
         }
         await page.evaluate(() => chrome.storage.local.set({ webbrainCloudManaged: true }));

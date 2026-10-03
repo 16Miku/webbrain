@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Malay (ms).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zum UI sambungan',
   'sp.ui_scale.decrease': 'Kecilkan UI sambungan',
   'sp.ui_scale.increase': 'Besarkan UI sambungan',
@@ -914,6 +916,7 @@ export default {
   "sp.memory.error": "Ralat memori: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Tidak disimpan: teks kosong selepas dibersihkan atau kelihatan mengandungi rahsia (kata laluan, kunci API, token).",
   "sp.memory.reason.not_found": "Tiada memori yang disimpan dengan ID tersebut.",
+  'sp.slash.workflow_editor': "Editor aliran kerja",
   "sp.slash.workflows": "Senarai dan urus aliran kerja tersimpan",
   "sp.slash.teach": "Rakam tindakan anda sebagai aliran kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan aliran kerja tersimpan mengikut ID",
@@ -1019,6 +1022,8 @@ export default {
   "sp.upload_picker.cancelled": "Muat naik dibatalkan",
   "sp.upload_picker.too_large": "Fail yang dipilih melebihi had 25MB (maks 25MB)",
   "sp.upload_picker.read_failed": "Gagal membaca fail yang dipilih",
+  "sp.slash.export_traces_full": "Eksport seluruh sesi jejak tersimpan sebagai JSON, termasuk tangkapan skrin",
+  "sp.export_traces.recording_truncated": "Semua rekod tersimpan telah dieksport sebagai JSON. Kandungan yang ditinggalkan semasa rakaman tidak dapat dipulihkan melalui eksport.",
   "sp.slash.export_traces": "Eksport rantaian alat (jejak)",
   "sp.export_traces.none": "Tiada jejak untuk perbualan ini. Hidupkan Rakam jejak dalam Tetapan, kemudian jalankan semula.",
   "sp.export_traces.error": "Tidak dapat mengeksport jejak.",

@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Portuguese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom da interface da extensão',
   'sp.ui_scale.decrease': 'Reduzir o zoom da interface',
   'sp.ui_scale.increase': 'Aumentar o zoom da interface',
@@ -172,6 +174,7 @@ export default {
   'sp.slash.remember': "Lembre-se de uma preferência do usuário",
   'sp.slash.show_memory': "Mostrar memória salva do usuário",
   'sp.slash.forget_memory': "Esqueça uma memória salva por ID",
+  'sp.slash.workflow_editor': "Editor de fluxos de trabalho",
   'sp.slash.workflows': "Liste e gerencie fluxos de trabalho salvos",
   "sp.slash.teach": "Grave suas ações como um fluxo de trabalho salvo",
   'sp.slash.run_workflow': "Execute um fluxo de trabalho salvo por ID",
@@ -1082,6 +1085,8 @@ export default {
   'tr.event.args': "argumentos",
   'tr.event.result': "resultado",
   'tr.event.step': "etapa {step}",
+  "sp.slash.export_traces_full": "Exportar toda a sessão de rastreamento salva como JSON, incluindo capturas de tela",
+  "sp.export_traces.recording_truncated": "Todos os registros salvos foram exportados como JSON. O conteúdo omitido durante a gravação não pode ser recuperado pela exportação.",
   "sp.slash.export_traces": "Exportar a cadeia de ferramentas (traços)",
   "sp.export_traces.none": "Não há vestígios desta conversa. Habilite Gravar rastreamentos em Configurações e execute novamente.",
   "sp.export_traces.error": "Não foi possível exportar rastreamentos.",

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Indonesian (id).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom UI ekstensi',
   'sp.ui_scale.decrease': 'Perkecil UI ekstensi',
   'sp.ui_scale.increase': 'Perbesar UI ekstensi',
@@ -914,6 +916,7 @@ export default {
   "sp.memory.error": "Kesalahan memori: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Tidak disimpan: teks kosong setelah dibersihkan atau tampaknya berisi rahasia (kata sandi, kunci API, token).",
   "sp.memory.reason.not_found": "Tidak ada memori tersimpan dengan ID tersebut.",
+  'sp.slash.workflow_editor': "Editor alur kerja",
   "sp.slash.workflows": "Lihat dan kelola alur kerja tersimpan",
   "sp.slash.teach": "Rekam tindakan Anda sebagai alur kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan alur kerja tersimpan berdasarkan ID",
@@ -1019,6 +1022,8 @@ export default {
   "sp.upload_picker.cancelled": "Unggahan dibatalkan",
   "sp.upload_picker.too_large": "File yang dipilih melebihi batas 25MB (maks 25MB)",
   "sp.upload_picker.read_failed": "Gagal membaca file yang dipilih",
+  "sp.slash.export_traces_full": "Ekspor seluruh sesi jejak tersimpan sebagai JSON, termasuk tangkapan layar",
+  "sp.export_traces.recording_truncated": "Semua catatan tersimpan telah diekspor sebagai JSON. Konten yang dihilangkan saat perekaman tidak dapat dipulihkan melalui ekspor.",
   "sp.slash.export_traces": "Ekspor rantai alat (jejak)",
   "sp.export_traces.none": "Tidak ada jejak untuk percakapan ini. Aktifkan Rekam jejak di Pengaturan, lalu jalankan lagi.",
   "sp.export_traces.error": "Tidak dapat mengekspor jejak.",

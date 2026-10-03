@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Malay (ms).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zum UI sambungan',
   'sp.ui_scale.decrease': 'Kecilkan UI sambungan',
   'sp.ui_scale.increase': 'Besarkan UI sambungan',
@@ -942,6 +944,7 @@ export default {
   "sp.memory.error": "Ralat memori: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Tidak disimpan: teks kosong selepas dibersihkan atau kelihatan mengandungi rahsia (kata laluan, kunci API, token).",
   "sp.memory.reason.not_found": "Tiada memori yang disimpan dengan ID tersebut.",
+  'sp.slash.workflow_editor': "Editor aliran kerja",
   "sp.slash.workflows": "Senarai dan urus aliran kerja tersimpan",
   "sp.slash.teach": "Rakam tindakan anda sebagai aliran kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan aliran kerja tersimpan mengikut ID",
@@ -1038,6 +1041,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Dimensi imej maksimum",
   "st.imageBudget.maxDimension.desc": "Sisi terpanjang (lebar atau tinggi) dalam piksel untuk mana-mana tangkapan yang dihantar ke visi. Had lebih kecil mengecilkan imej sebelum dihantar, mengurangkan token dan kos. Had lebih besar mengekalkan ketepatan.",
   "st.imageBudget.warning": "⚠️ Tetapan ini digunakan pada tangkapan untuk visi (tangkapan auto, /screenshot, halaman penuh, verify_form). Imej resolusi penuh yang disimpan secara manual tidak terjejas. «Image detail» dihormati oleh endpoint gaya OpenAI; pembekal lain mungkin mengabaikannya.",
+  "sp.slash.export_traces_full": "Eksport seluruh sesi jejak tersimpan sebagai JSON, termasuk tangkapan skrin",
+  "sp.export_traces.recording_truncated": "Semua rekod tersimpan telah dieksport sebagai JSON. Kandungan yang ditinggalkan semasa rakaman tidak dapat dipulihkan melalui eksport.",
   "sp.slash.export_traces": "Eksport rantaian alat (jejak)",
   "sp.export_traces.none": "Tiada jejak untuk perbualan ini. Hidupkan Rakam jejak dalam Tetapan, kemudian jalankan semula.",
   "sp.export_traces.error": "Tidak dapat mengeksport jejak.",

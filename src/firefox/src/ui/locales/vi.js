@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Vietnamese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Thu phóng giao diện tiện ích',
   'sp.ui_scale.decrease': 'Thu nhỏ giao diện tiện ích',
   'sp.ui_scale.increase': 'Phóng to giao diện tiện ích',
@@ -172,6 +174,7 @@ export default {
   'sp.slash.remember': "Ghi nhớ sở thích của người dùng",
   'sp.slash.show_memory': "Hiển thị bộ nhớ người dùng đã lưu",
   'sp.slash.forget_memory': "Quên bộ nhớ đã lưu bằng ID",
+  'sp.slash.workflow_editor': "Trình chỉnh sửa quy trình làm việc",
   'sp.slash.workflows': "Liệt kê và quản lý quy trình công việc đã lưu",
   "sp.slash.teach": "Ghi lại thao tác của bạn thành quy trình đã lưu",
   'sp.slash.run_workflow': "Chạy quy trình công việc đã lưu theo ID",
@@ -1082,6 +1085,8 @@ export default {
   'tr.event.args': "lập luận",
   'tr.event.result': "kết quả",
   'tr.event.step': "bước {step}",
+  "sp.slash.export_traces_full": "Xuất toàn bộ phiên theo dõi đã lưu dưới dạng JSON, gồm cả ảnh chụp màn hình",
+  "sp.export_traces.recording_truncated": "Đã xuất mọi bản ghi đã lưu dưới dạng JSON. Nội dung bị bỏ qua trong lúc ghi không thể khôi phục bằng cách xuất.",
   "sp.slash.export_traces": "Xuất chuỗi công cụ (dấu vết)",
   "sp.export_traces.none": "Không có dấu vết cho cuộc trò chuyện này. Bật Ghi dấu vết trong Cài đặt rồi chạy lại.",
   "sp.export_traces.error": "Không thể xuất dấu vết.",

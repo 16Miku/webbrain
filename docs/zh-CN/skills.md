@@ -60,7 +60,7 @@ Markdown 正文前会移除 frontmatter。在设置中输入的名称及 `webbra
 
 ### 默认启用
 
-三者都可以在设置 → 技能中移除。已移除的默认技能不会被静默恢复，预激活也不会恢复它。
+四者都可以在设置 → 技能中移除。已移除的默认技能不会被静默恢复，预激活也不会恢复它。
 
 #### FreeSkillz.xyz
 
@@ -103,6 +103,34 @@ Explain、Quiz me、Proofread、Translate——以及在选区输入框中输入
 它只改写面向真人读者的正文。引用内容、地址、验证码、价格、表单字段值，以及你逐字提供
 的措辞都保持不变。
 
+#### WordPress REST API
+
+仅在 Mid/Full 的相关 Act/Dev 内容任务中按需加载，不新增工具或身份验证机制。
+Compact 仍禁用技能，只使用适配器中的简短指引。对于文章、页面、支持 REST 的自定义
+内容类型及分类，确认所需字段、登录会话和 API 修改权限可用后，优先使用 API。
+若仅缺少权限，只请求一次 `/allow-api`；已有授权无需重复请求。Ask 模式不执行修改。
+
+保留已有记录 ID，新内容先创建为草稿，核实内容及分类 ID 后，仅按用户要求发布同一
+记录。写入结果不确定时，先核实再重试。`fetch_url` 返回的 nonce 和后续 `X-WP-Nonce`
+请求头可能进入模型对话及已启用的跟踪记录。因此，严格秘密处理开启时使用界面路径，
+不主动要求关闭该设置。API 不适用时，先尝试现有的代码、文本或 Classic 编辑器；
+安装插件仍需明确授权。详见[技能配方](../../src/chrome/skills/wordpress-rest-api.md)。
+
+#### CMS 内容配方（API 优先）
+
+九项彼此独立、仅含指令的技能覆盖 **Ghost、Drupal、Joomla、Webflow、Shopify、
+Wix、Strapi、Contentful 和 Sanity**。它们在 Mid/Full 的 Ask/Act/Dev 中都出现在
+默认目录里，但只有当前内容任务选中的那一项会被加载。这些技能不新增 HTTP 工具
+清单、凭据存储或 OAuth 集成。各服务的对照矩阵与测试覆盖见
+[CMS API-first 边界与验证](../cms-api-first.md)（英文）。
+
+在这类内容任务中，若目标站点、所需字段、任务范围、服务端权限和 WebBrain 的
+API 修改授权都满足条件，WebBrain 会在只读的能力与身份探测之后优先使用官方 API，
+无需先在编辑器中失败。API 本可用但缺少授权时，只请求一次 `/allow-api`；已有授权
+直接复用，拒绝也会被尊重。Ask 保持只读，GraphQL 查询的 POST 同样受按方法的
+权限校验约束。Compact 没有技能加载器，仅在受支持的 CMS 路由上获得简短的适配器
+指引。
+
 ### 可选打包技能
 
 这些技能随扩展一起提供，并在设置 → 技能中显示为可启用；默认不会预先打开。
@@ -118,8 +146,16 @@ Explain、Quiz me、Proofread、Translate——以及在选区输入框中输入
 
 仅在你希望其工具与指令可用于符合条件的运行的 `load_skill` 时再启用。
 
+## 按服务编写 API 配方
+
+将具体操作留在各服务的技能中，例如 WordPress、Mail.tm 的临时邮箱及 API 回退流程、
+Phonr 的通话授权和中断恢复。配方应说明端点发现、字段支持、身份验证、权限、凭据暴露、
+结果核实、写入不确定时的处理，以及界面回退。加载技能不授予 API 修改权限；WordPress
+例外也不会改变 Mail.tm 或 Phonr 自身的规则。这样无需始终将完整流程放进公共提示。
+
 ## 另请参阅
 
 - [智能体工具](agent-tools.md) — 层级、模式和完整工具矩阵
 - [隐私与数据流](privacy-and-data-flow.md)
+- [CMS API-first](../cms-api-first.md) — 支持的服务、身份验证与界面回退（英文）
 - [架构](architecture.md) — 轮次流程中的技能与动态工具暴露

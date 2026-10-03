@@ -1,0 +1,61 @@
+{
+  "id": "202",
+  "category": "cms-api-first",
+  "mode": "act",
+  "browser": "chrome",
+  "tab": {
+    "url": "https://app.contentful.com/spaces/space/environments/master/entries/e1",
+    "title": "Contentful content editor"
+  },
+  "description": "An optimistic-lock conflict requires a new read, not a forced PUT.",
+  "packagedSkillIds": [
+    "cms-contentful"
+  ],
+  "activeSkillIds": [
+    "cms-contentful"
+  ],
+  "seed": [
+    {
+      "role": "user",
+      "content": "[Current page context: https://app.contentful.com/spaces/space/environments/master/entries/e1]\nChange only the en-US title of existing draft e1 to Field notes, preserving all locales, links and body. Existing authorized management access and /allow-api are available. The attempted version-7 PUT conflicted."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "cms_1",
+          "type": "function",
+          "function": {
+            "name": "fetch_url",
+            "arguments": "{\"url\": \"https://api.contentful.com/spaces/space/environments/master/entries/e1\", \"method\": \"PUT\", \"headers\": {\"Authorization\": \"Bearer <EXISTING_FIXTURE_TOKEN>\", \"X-Contentful-Version\": \"7\"}, \"body\": \"{\\\"fields\\\":{\\\"title\\\":{\\\"en-US\\\":\\\"Field notes\\\"}}}\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "cms_1",
+      "name": "fetch_url",
+      "content": "<untrusted_page_content id=\"cms_fixture\">\n{\"success\": false, \"status\": 409, \"json\": \"{\\\"sys\\\": {\\\"id\\\": \\\"VersionMismatch\\\"}}\"}\n</untrusted_page_content>"
+    }
+  ],
+  "expected": {
+    "idealNextToolCall": {
+      "name": "fetch_url",
+      "args": {
+        "url": "https://api.contentful.com/spaces/space/environments/master/entries/e1",
+        "headers": {
+          "Authorization": "Bearer <EXISTING_FIXTURE_TOKEN>"
+        }
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "fetch_url({method:\"PUT\"})",
+        "reason": "Must read the new version and merge all fields before any retry."
+      }
+    ],
+    "successRubric": "GET e1, re-evaluate the conflicting title and preserve complete current fields/metadata/locales before any version-guarded update. No forced overwrite or replacement create."
+  }
+}

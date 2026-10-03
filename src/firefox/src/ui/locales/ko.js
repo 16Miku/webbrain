@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Korean (ko).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '확장 프로그램 UI 확대/축소',
   'sp.ui_scale.decrease': '확장 프로그램 UI 축소',
   'sp.ui_scale.increase': '확장 프로그램 UI 확대',
@@ -914,6 +916,7 @@ export default {
   "sp.memory.error": "메모리 오류: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "저장하지 않았습니다. 정리 후 텍스트가 비어 있거나 비밀 정보(비밀번호, API 키, 토큰)가 포함된 것으로 보입니다.",
   "sp.memory.reason.not_found": "해당 ID의 저장된 메모리가 없습니다.",
+  'sp.slash.workflow_editor': "워크플로 편집기",
   "sp.slash.workflows": "저장된 워크플로 목록 및 관리",
   "sp.slash.teach": "작업을 저장된 워크플로로 기록",
   "sp.slash.run_workflow": "ID로 저장된 워크플로 실행",
@@ -1019,6 +1022,8 @@ export default {
   "sp.upload_picker.cancelled": "업로드가 취소되었습니다",
   "sp.upload_picker.too_large": "선택한 파일이 25MB 제한을 초과합니다 (최대 25MB)",
   "sp.upload_picker.read_failed": "선택한 파일을 읽지 못했습니다",
+  "sp.slash.export_traces_full": "스크린샷을 포함한 저장된 전체 추적 세션을 JSON으로 내보내기",
+  "sp.export_traces.recording_truncated": "저장된 모든 기록을 JSON으로 내보냈습니다. 기록 중 누락된 내용은 내보내기로 복구할 수 없습니다.",
   "sp.slash.export_traces": "도구 체인 내보내기(트레이스)",
   "sp.export_traces.none": "이 대화에 대한 트레이스가 없습니다. 설정에서 '트레이스 기록'을 켜고 다시 실행하세요.",
   "sp.export_traces.error": "트레이스를 내보낼 수 없습니다.",

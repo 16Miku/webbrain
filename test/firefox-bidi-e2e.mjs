@@ -6,8 +6,24 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { BidiSession } from '../firefox-companion/session.mjs';
+import { nativeReplyMessages } from '../firefox-companion/native-messages.mjs';
 const profile = await mkdtemp(join(tmpdir(), 'webbrain-firefox-test-'));
-const server = createServer((_req, res) => {
+await writeFile(join(profile, 'user.js'), `user_pref("browser.download.folderList", 2); user_pref("browser.download.dir", ${JSON.stringify(profile)}); user_pref("browser.download.useDownloadDir", true);`);
+if (process.env.FIREFOX_TEST_DPR) await writeFile(join(profile, 'user.js'), `user_pref("layout.css.devPixelsPerPx", ${JSON.stringify(process.env.FIREFOX_TEST_DPR)});\n`, { flag: 'a' });
+const server = createServer(async (_req, res) => {
+  if (_req.url === '/native-capture' && _req.method === 'POST') {
+    let body = '';
+    for await (const chunk of _req) body += chunk;
+    const message = JSON.parse(body);
+    try {
+      const result = message.command === 'connect' ? { connected: true }
+        : message.command === 'captureFullPage' ? await session.captureFullPage(message.token, message.url)
+          : (() => { throw new Error('Unexpected test command'); })();
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify([...nativeReplyMessages({ id: message.id, result })]));
+    } catch (error) { res.end(JSON.stringify([{ id: message.id, error: error.message }])); }
+    return;
+  }
   res.setHeader('Content-Type', 'text/html');
   res.end(`<button id="click">Click</button><input id="text"><input id="file" type="file"><script>
     window.events=[]; document.addEventListener('click',e=>events.push(['click',e.isTrusted]));
@@ -65,7 +81,7 @@ try {
   const extensionOrigin = new URL(extensionContext.url).origin === 'null' ? extensionContext.url.split('/').slice(0, 3).join('/') : new URL(extensionContext.url).origin;
   const extensionEval = async expression => {
     const result = await session.send('script.evaluate', { target: { context: extensionContext.context }, expression, awaitPromise: true });
-    if (result.type === 'exception') throw new Error(result.exceptionDetails.text);
+    if (result.type === 'exception') throw new Error(result.exceptionDetails.text.replace(/data:image[^\s)]+/g, '[image omitted]').slice(0, 600));
     return result.result;
   };
   const tabId = (await extensionEval(`browser.tabs.query({}).then(tabs => tabs.find(tab => tab.url === ${JSON.stringify(url)}).id)`)).value;
@@ -106,10 +122,61 @@ try {
   assert.equal(JSON.parse(belowFoldPrepared.value).bidiPrepared, true);
   assert.equal((await session.perform(runId, 'click', { token: belowFoldToken, url })).success, true);
   assert.equal((await evaluate('window.belowFoldTrusted')).value, true);
+  // Capture the complete document from a scrolled viewport. A noisy canvas
+  // makes the PNG exceed the native messaging limit so the chunk path runs.
+  await evaluate(`(() => {
+    const canvas=document.createElement('canvas'); canvas.id='capture-noise'; canvas.width=1000; canvas.height=450;
+    const ctx=canvas.getContext('2d'), pixels=ctx.createImageData(canvas.width,canvas.height);
+    let seed=123; for(let i=0;i<pixels.data.length;i+=4){seed=(Math.imul(seed,1664525)+1013904223)>>>0;pixels.data[i]=seed&255;pixels.data[i+1]=(seed>>>8)&255;pixels.data[i+2]=(seed>>>16)&255;pixels.data[i+3]=255;}
+    ctx.putImageData(pixels,0,0); document.body.append(canvas);
+    document.body.insertAdjacentHTML('beforeend','<input id="capture-private" value="private fixture value" style="position:absolute;top:2750px;left:20px;width:200px"><div id="capture-footer" style="position:absolute;top:2900px;left:20px;width:200px;height:50px;background:rgb(17,119,51)">FULL PAGE FOOTER</div>');
+  })()`);
+  const fullPage = JSON.parse((await extensionEval(`(async () => {
+    const {firefoxBidi} = await import(${JSON.stringify(extensionOrigin + '/src/bidi/client.js')});
+    const {Agent} = await import(${JSON.stringify(extensionOrigin + '/src/agent/agent.js')});
+    let transferredChunks=0;
+    firefoxBidi.apiOverride = { tabs:browser.tabs, storage:browser.storage, runtime:{ connectNative() {
+      let receive;
+      return { onMessage:{addListener(fn){receive=fn}}, onDisconnect:{addListener(){}}, disconnect(){},
+        postMessage(message) { fetch(${JSON.stringify(url + 'native-capture')},{method:'POST',body:JSON.stringify(message)}).then(r=>r.json()).then(messages=>{transferredChunks+=messages.filter(m=>typeof m.chunk==='string').length;messages.forEach(receive)}); }
+      };
+    }}};
+    await browser.storage.local.set({firefoxBidiEnabled:true});
+    const agent=Object.create(Agent.prototype); agent.screenshotRedaction=true;
+    const capture=await agent.captureFullPageScreenshotForUser(${tabId});
+    if(!capture.ok) throw new Error(capture.error);
+    const image=await createImageBitmap(await (await fetch(capture.dataUrl)).blob());
+    const canvas=new OffscreenCanvas(image.width,image.height); const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);
+    const scale=image.width/capture.captureBounds.width;
+    const footerPixel=[...ctx.getImageData(Math.round(30*scale),Math.round(2940*scale),1,1).data];
+    const redacted=await agent._redactScreenshotDataUrl(${tabId},capture.dataUrl,{coordinateSpace:'page',redactionSnapshot:capture.redactionSnapshot,capturedCssBounds:capture.captureBounds});
+    const {saveScreenshot}=await import(${JSON.stringify(extensionOrigin + '/src/ui/screenshot-download.js')});
+    const downloadId=await saveScreenshot(capture.dataUrl,'webbrain-bidi-test.png',{saveAs:false});
+    let download; for(let attempt=0;attempt<100;attempt++){[download]=await browser.downloads.search({id:downloadId});if(download.state==='complete')break;await new Promise(resolve=>setTimeout(resolve,20));}
+    if(download.state!=='complete')throw new Error('Screenshot download did not complete');
+    await browser.downloads.removeFile(downloadId); await browser.downloads.erase({id:downloadId});
+    const result={...capture,width:image.width,height:image.height,footerPixel,transferredChunks,redacted:redacted!==capture.dataUrl,saved:download.filename.endsWith('webbrain-bidi-test.png')};
+    image.close(); firefoxBidi.disconnect(); firefoxBidi.apiOverride=undefined;
+    await browser.storage.local.set({firefoxBidiEnabled:false});
+    return JSON.stringify(result);
+  })()`)).value);
+  assert.equal(fullPage.redactionSnapshotReady, true, 'full-page privacy scan should be available');
+  assert.equal(fullPage.redactionUnavailable, undefined);
+  assert.ok(fullPage.redactionSnapshot.regions.some(region => region.rect.y > 2700), 'privacy scan covers fields below the viewport');
+  assert.ok(fullPage.height >= 3000);
+  if (process.env.FIREFOX_TEST_DPR) assert.ok(Math.abs(fullPage.width / fullPage.captureBounds.width - Number(process.env.FIREFOX_TEST_DPR)) < 0.01, 'full-page bounds use CSS pixels at high DPI');
+  assert.ok(fullPage.transferredChunks > 1, 'large PNG uses chunked native replies');
+  assert.deepEqual(fullPage.footerPixel, [17,119,51,255], 'image contains the document footer');
+  assert.equal(fullPage.redacted, true, 'model-facing image redacts sensitive regions');
+  assert.equal(fullPage.saved, true, 'captured PNG can be saved through Firefox downloads');
+  assert.equal(session.runs.has(runId), true, 'standalone capture preserves active automation');
+  console.log(`PASS: full-page PNG ${fullPage.width}x${fullPage.height}, ${fullPage.transferredChunks} native chunks, footer pixels, below-fold privacy and local save`);
+  await writeFile('/tmp/webbrain3-firefox-full-page.png', Buffer.from(fullPage.dataUrl.split(',')[1], 'base64'));
+  await evaluate(`document.querySelector('#capture-noise').remove();document.querySelector('#capture-private').remove();document.querySelector('#capture-footer').remove();`);
   await evaluate(`document.activeElement.blur()`);
   assert.equal((await session.perform(runId, 'key', { ...await mark('body'), key: 'Escape' })).success, true);
   const shadowToken = crypto.randomUUID();
-  await evaluate(`const host=document.createElement('div'); host.id='shadow-host'; host.style.cssText='position:fixed;left:20px;top:300px'; host.attachShadow({mode:'open'}).innerHTML='<button id="shadow-button">Shadow button</button>'; host.shadowRoot.querySelector('button').setAttribute('data-webbrain-bidi', ${JSON.stringify(shadowToken)}); host.shadowRoot.querySelector('button').onclick=e=>window.shadowTrusted=e.isTrusted; document.body.append(host);`);
+  await evaluate(`const host=document.createElement('div'); host.id='shadow-host'; host.style.cssText='position:fixed;left:20px;top:100px'; host.attachShadow({mode:'open'}).innerHTML='<button id="shadow-button">Shadow button</button>'; host.shadowRoot.querySelector('button').setAttribute('data-webbrain-bidi', ${JSON.stringify(shadowToken)}); host.shadowRoot.querySelector('button').onclick=e=>window.shadowTrusted=e.isTrusted; document.body.append(host);`);
   const shadowNode = await session.send('script.evaluate', { target: { context }, expression: "document.querySelector('#shadow-host').shadowRoot.querySelector('#shadow-button')", awaitPromise: true });
   const locate = session.locate;
   session.locate = async () => ({ context, node: { sharedId: shadowNode.result.sharedId } });
@@ -206,7 +273,7 @@ try {
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal((await evaluate('document.querySelector("#text").value')).value, afterStop);
   await assert.rejects(session.perform(resumed, 'click', await mark('#click')), /stopped|disconnected/);
-  console.log(`PASS: Firefox connection, dialogs, uploads, literal newlines, focus guards, interrupted typing, deferred blank-tab binding, and packaged extension integration; checkable state event woke in ${delayedChecked._checkableObservationMs}ms (80ms cap)`);
+  console.log(`PASS: Firefox full-page screenshots, chunked PNG transfer, below-fold privacy, local PNG save, connection, dialogs, uploads, literal newlines, focus guards, interrupted typing, deferred blank-tab binding, and packaged extension integration; checkable state event woke in ${delayedChecked._checkableObservationMs}ms (80ms cap)`);
 } finally {
   await session?.close().catch(() => {});
   firefox.kill('SIGTERM');

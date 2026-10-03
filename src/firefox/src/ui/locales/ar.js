@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Arabic (ar).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'تكبير واجهة الإضافة',
   'sp.ui_scale.decrease': 'تصغير واجهة الإضافة',
   'sp.ui_scale.increase': 'تكبير واجهة الإضافة',
@@ -914,6 +916,7 @@ export default {
   "sp.memory.error": "خطأ في الذاكرة: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "لم يتم الحفظ: النص فارغ بعد التنظيف أو يبدو أنه يحتوي على سر (كلمة مرور أو مفتاح API أو رمز مميز).",
   "sp.memory.reason.not_found": "لا توجد ذاكرة محفوظة بهذا المعرّف.",
+  'sp.slash.workflow_editor': "محرر مهام سير العمل",
   "sp.slash.workflows": "عرض مهام سير العمل المحفوظة وإدارتها",
   "sp.slash.teach": "سجّل إجراءاتك كمسار عمل محفوظ",
   "sp.slash.run_workflow": "تشغيل سير عمل محفوظ حسب المعرّف",
@@ -1019,6 +1022,8 @@ export default {
   "sp.upload_picker.cancelled": "تم إلغاء الرفع",
   "sp.upload_picker.too_large": "الملف المحدد يتجاوز حد 25 ميجابايت (الحد الأقصى 25 ميجابايت)",
   "sp.upload_picker.read_failed": "فشل قراءة الملف المحدد",
+  "sp.slash.export_traces_full": "تصدير جلسة التتبع المحفوظة كاملة بصيغة JSON، بما فيها لقطات الشاشة",
+  "sp.export_traces.recording_truncated": "تم تصدير جميع السجلات المحفوظة بصيغة JSON. حُذف بعض المحتوى أثناء التسجيل ولا يمكن استعادته بالتصدير.",
   "sp.slash.export_traces": "تصدير سلسلة الأدوات (التتبعات)",
   "sp.export_traces.none": "لا توجد تتبعات لهذه المحادثة. فعّل «تسجيل التتبعات» في الإعدادات ثم أعد التشغيل.",
   "sp.export_traces.error": "تعذّر تصدير التتبعات.",

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // French (fr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom de l’interface de l’extension',
   'sp.ui_scale.decrease': 'Réduire le zoom de l’interface',
   'sp.ui_scale.increase': 'Augmenter le zoom de l’interface',
@@ -914,6 +916,7 @@ export default {
   "sp.memory.error": "Erreur de mémoire : {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Non enregistré : le texte est vide après nettoyage ou semble contenir un secret (mot de passe, clé API, jeton).",
   "sp.memory.reason.not_found": "Aucune mémoire enregistrée ne possède cet identifiant.",
+  'sp.slash.workflow_editor': "Éditeur de workflows",
   "sp.slash.workflows": "Lister et gérer les workflows enregistrés",
   "sp.slash.teach": "Enregistrer vos actions comme workflow sauvegardé",
   "sp.slash.run_workflow": "Exécuter un workflow enregistré par ID",
@@ -1019,6 +1022,8 @@ export default {
   "sp.upload_picker.cancelled": "Téléversement annulé",
   "sp.upload_picker.too_large": "Le fichier sélectionné dépasse la limite de 25 Mo (max 25 Mo)",
   "sp.upload_picker.read_failed": "Échec de la lecture du fichier sélectionné",
+  "sp.slash.export_traces_full": "Exporter toute la session de traces enregistrée en JSON, captures comprises",
+  "sp.export_traces.recording_truncated": "Tous les enregistrements sauvegardés ont été exportés en JSON. Le contenu omis lors de l’enregistrement ne peut pas être récupéré par l’export.",
   "sp.slash.export_traces": "Exporter la chaîne d'outils (traces)",
   "sp.export_traces.none": "Aucune trace pour cette conversation. Activez « Enregistrer les traces » dans les paramètres, puis relancez.",
   "sp.export_traces.error": "Impossible d'exporter les traces.",

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Ukrainian (uk).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Масштаб інтерфейсу розширення',
   'sp.ui_scale.decrease': 'Зменшити інтерфейс розширення',
   'sp.ui_scale.increase': 'Збільшити інтерфейс розширення',
@@ -914,6 +916,7 @@ export default {
   "sp.memory.error": "Помилка пам’яті: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Не збережено: після очищення текст порожній або схожий на секрет (пароль, ключ API, токен).",
   "sp.memory.reason.not_found": "Збереженого запису з таким ID немає.",
+  'sp.slash.workflow_editor': "Редактор робочих процесів",
   "sp.slash.workflows": "Перегляд і керування збереженими сценаріями",
   "sp.slash.teach": "Записати ваші дії як збережений робочий процес",
   "sp.slash.run_workflow": "Запустити збережений сценарій за ID",
@@ -1019,6 +1022,8 @@ export default {
   "sp.upload_picker.cancelled": "Завантаження скасовано",
   "sp.upload_picker.too_large": "Вибраний файл перевищує ліміт 25 МБ (макс. 25 МБ)",
   "sp.upload_picker.read_failed": "Не вдалося прочитати вибраний файл",
+  "sp.slash.export_traces_full": "Експортувати весь збережений сеанс трасування у JSON, включно зі знімками екрана",
+  "sp.export_traces.recording_truncated": "Усі збережені записи експортовано у JSON. Вміст, пропущений під час запису, неможливо відновити експортом.",
   "sp.slash.export_traces": "Експортувати ланцюг інструментів (трасування)",
   "sp.export_traces.none": "Немає трасувань для цієї розмови. Увімкніть «Записувати трасування» в налаштуваннях і запустіть знову.",
   "sp.export_traces.error": "Не вдалося експортувати трасування.",

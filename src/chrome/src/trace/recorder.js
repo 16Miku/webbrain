@@ -13,6 +13,7 @@ import {
 } from './repair.js';
 import { createTraceStats, addTraceEvent, aggregateTraceRuns } from './stats.js';
 import { projectTraceEventData, projectTraceRun } from './privacy.js';
+import { toolOutcome } from './tool-outcome.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
@@ -311,7 +312,8 @@ function losslessBudgetMarker(kind, data) {
     step: data?.step ?? null,
     name: String(data?.name || '').slice(0, 120),
     args: null,
-    result: { _truncated: true, length, head: budgetHead },
+    result: { ...data?.outcome, _truncated: true, length, head: budgetHead },
+    outcome: data?.outcome || {},
     latencyMs: data?.latencyMs ?? null,
     losslessBudgetOmitted: true,
   };
@@ -780,17 +782,18 @@ export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
   // 20KB verbatim by default — plenty for debugging flow — and 200KB in the
   // opt-in lossless tier; note the truncation either way.
   return _appendEvent(runId, 'tool', (state) => {
+    const outcome = toolOutcome(name, args, result);
     if (state?.lossless === true && (state.losslessBytes || 0) >= LOSSILESS_RUN_CAP) {
       let length = null;
       try { const s = JSON.stringify(result); length = s ? utf8ByteLength(s) : 0; } catch {}
-      return { step, name, args: args || null, result: { _truncated: true, length, head: '(per-run lossless budget reached)' }, latencyMs: latencyMs || null };
+      return { step, name, args: args || null, outcome, result: { ...outcome, _truncated: true, length, head: '(per-run lossless budget reached)' }, latencyMs: latencyMs || null };
     }
     const remainingBytes = Math.max(0, LOSSILESS_RUN_CAP - (state?.losslessBytes || 0));
     const cap = state?.lossless === true
       ? Math.min(LOSSILESS_RESULT_CAP, remainingBytes)
       : 20_000;
     const shortResult = clampUtf8Value(result, cap);
-    return { step, name, args: args || null, result: shortResult, latencyMs: latencyMs || null };
+    return { step, name, args: args || null, outcome, result: shortResult, latencyMs: latencyMs || null };
   });
 }
 
@@ -1076,6 +1079,13 @@ export async function repairStaleRuns({
 }
 
 // ----- Reader API (used by traces.html) --------------------------------------
+
+// Before another extension context reads the database, settle the writes that
+// were already queued. Snapshot the queue so an active run cannot postpone an
+// export indefinitely by continuing to record new events.
+export async function flushPendingWrites() {
+  await Promise.all([..._runWriteQueues.values()]);
+}
 
 export async function listRuns({ limit = 500, conversationId = null } = {}) {
   const db = await openDB();

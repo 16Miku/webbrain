@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Simplified Chinese (zh).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '插件界面缩放',
   'sp.ui_scale.decrease': '缩小插件界面',
   'sp.ui_scale.increase': '放大插件界面',
@@ -942,6 +944,7 @@ export default {
   "sp.memory.error": "记忆错误：{msg}",
   "sp.memory.reason.invalid_or_sensitive": "未保存：清理后的文本为空，或看起来包含机密信息（密码、API 密钥、令牌）。",
   "sp.memory.reason.not_found": "没有使用该 ID 的已保存记忆。",
+  'sp.slash.workflow_editor': "工作流编辑器",
   "sp.slash.workflows": "列出和管理已保存的工作流",
   "sp.slash.teach": "将您的操作记录为已保存的工作流",
   "sp.slash.run_workflow": "按 ID 运行已保存的工作流",
@@ -1038,6 +1041,8 @@ export default {
   "st.imageBudget.maxDimension.label": "最大图像尺寸",
   "st.imageBudget.maxDimension.desc": "发送给视觉的任何截图的最长边（宽或高），单位为像素。更小的上限会在发送前缩小图像，降低 token 与成本；更大的上限保留保真度。",
   "st.imageBudget.warning": "⚠️ 这些设置适用于为视觉捕获的截图（自动截图、/screenshot、整页、verify_form）。手动保存的全分辨率图像不受影响。「Image detail」由 OpenAI 风格端点遵循；其他提供商可能忽略。",
+  "sp.slash.export_traces_full": "将完整的已保存跟踪会话导出为 JSON，包括截图",
+  "sp.export_traces.recording_truncated": "已将所有保存的记录导出为 JSON。录制时省略的内容无法通过导出恢复。",
   "sp.slash.export_traces": "导出工具链（跟踪）",
   "sp.export_traces.none": "此对话没有跟踪记录。请在设置中开启「记录跟踪」，然后重新运行。",
   "sp.export_traces.error": "无法导出跟踪。",
