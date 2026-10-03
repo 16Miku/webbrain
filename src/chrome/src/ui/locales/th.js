@@ -399,7 +399,7 @@ export default {
   'st.provider.field.model': 'โมเดล',
   'st.provider.field.model_optional': 'โมเดล (ไม่บังคับ)',
   'st.provider.field.supports_vision': 'โมเดลรองรับการมองเห็น (มัลติโมดัล)',
-  'st.provider.field.tools_mode': 'Native tool use',
+  'st.provider.field.tools_mode': 'การใช้เครื่องมือเนทีฟ',
   'st.provider.field.vision_auto': 'อัตโนมัติ',
   'st.provider.field.vision_force_on': 'บังคับเปิด',
   'st.provider.field.vision_detected_vision': 'ตรวจพบอัตโนมัติ: รองรับภาพ',

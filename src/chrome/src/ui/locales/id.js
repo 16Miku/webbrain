@@ -399,7 +399,7 @@ export default {
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (opsional)',
   'st.provider.field.supports_vision': 'Model mendukung visi (multimodal)',
-  'st.provider.field.tools_mode': 'Native tool use',
+  'st.provider.field.tools_mode': 'Penggunaan alat bawaan',
   'st.provider.field.vision_auto': 'Otomatis',
   'st.provider.field.vision_force_on': 'Paksa aktif',
   'st.provider.field.vision_detected_vision': 'Terdeteksi otomatis: Vision',

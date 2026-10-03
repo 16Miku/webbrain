@@ -852,7 +852,7 @@ export default {
   'st.provider.field.context_window': "Cửa sổ ngữ cảnh (mã thông báo)",
   'st.provider.field.max_output_tokens': "Đầu ra tối đa (mã thông báo)",
   'st.provider.field.supports_vision': "Mô hình hỗ trợ tầm nhìn (đa phương thức)",
-  'st.provider.field.tools_mode': 'Native tool use',
+  'st.provider.field.tools_mode': 'Sử dụng công cụ gốc',
   'st.provider.field.vision_auto': 'Tự động',
   'st.provider.field.vision_force_on': 'Buộc bật',
   'st.provider.field.vision_detected_vision': 'Tự động phát hiện: Thị giác',

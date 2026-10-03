@@ -852,7 +852,7 @@ export default {
   'st.provider.field.context_window': "संदर्भ विंडो (टोकन)",
   'st.provider.field.max_output_tokens': "अधिकतम आउटपुट (टोकन)",
   'st.provider.field.supports_vision': "मॉडल दृष्टि का समर्थन करता है (मल्टीमॉडल)",
-  'st.provider.field.tools_mode': 'Native tool use',
+  'st.provider.field.tools_mode': 'नेटिव टूल का उपयोग',
   'st.provider.field.vision_auto': 'स्वचालित',
   'st.provider.field.vision_force_on': 'बलपूर्वक चालू',
   'st.provider.field.vision_detected_vision': 'स्वतः पहचाना गया: विज़न',
