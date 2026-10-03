@@ -790,6 +790,7 @@ export default {
   'st.provider.field.context_window': 'Kontextfenster (Tokens)',
   'st.provider.field.max_output_tokens': 'Maximale Ausgabe (Tokens)',
   'st.provider.field.supports_vision': 'Modell unterstützt Vision (multimodal)',
+  'st.provider.field.tools_mode': 'Native Tool-Nutzung',
   'st.provider.field.vision_auto': 'Automatisch',
   'st.provider.field.vision_force_on': 'Erzwingen',
   'st.provider.field.vision_detected_vision': 'Automatisch erkannt: Bildverarbeitung',

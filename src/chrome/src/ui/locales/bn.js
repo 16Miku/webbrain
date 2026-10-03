@@ -852,6 +852,7 @@ export default {
   'st.provider.field.context_window': "প্রসঙ্গ উইন্ডো (টোকেন)",
   'st.provider.field.max_output_tokens': "সর্বোচ্চ আউটপুট (টোকেন)",
   'st.provider.field.supports_vision': "মডেল দৃষ্টি সমর্থন করে (মাল্টিমোডাল)",
+  'st.provider.field.tools_mode': 'নেটিভ টুল ব্যবহার',
   'st.provider.field.vision_auto': 'স্বয়ংক্রিয়',
   'st.provider.field.vision_force_on': 'জোর করে চালু',
   'st.provider.field.vision_detected_vision': 'স্বয়ংক্রিয়ভাবে শনাক্ত: ভিশন',

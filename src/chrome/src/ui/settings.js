@@ -2388,6 +2388,18 @@ const VISION_MODE_FIELD = {
     { value: 'off', labelKey: 'st.providers.compat.value.off' },
   ],
 };
+const TOOL_MODE_FIELD = {
+  key: 'toolsMode',
+  labelKey: 'st.provider.field.tools_mode',
+  type: 'select',
+  collapsed: true,
+  options: [
+    { value: 'auto', labelKey: 'st.provider.field.vision_auto' },
+    { value: 'on', labelKey: 'st.provider.field.vision_force_on' },
+    { value: 'off', labelKey: 'st.providers.compat.value.off' },
+  ],
+};
+const OPENROUTER_VISION_MODE_FIELD = { ...VISION_MODE_FIELD, collapsed: true };
 const OLLAMA_VISION_MODE_FIELD = VISION_MODE_FIELD;
 const OPTIONAL_LOCAL_API_KEY_FIELD = {
   key: 'apiKey',
@@ -3284,6 +3296,8 @@ function renderProviders() {
           suggestions: ['openrouter/free', 'anthropic/claude-opus-5.5', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k3', 'z-ai/glm-5.3', 'minimax/minimax-m3'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://openrouter.ai/api/v1' },
         PROMPT_TIER_FIELD,
+        TOOL_MODE_FIELD,
+        OPENROUTER_VISION_MODE_FIELD,
       ],
     },
     huggingface: {

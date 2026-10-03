@@ -399,6 +399,7 @@ export default {
   'st.provider.field.model': '모델',
   'st.provider.field.model_optional': '모델 (선택)',
   'st.provider.field.supports_vision': '모델이 비전(멀티모달)을 지원합니다',
+  'st.provider.field.tools_mode': '네이티브 도구 사용',
   'st.provider.field.vision_auto': '자동',
   'st.provider.field.vision_force_on': '강제로 켜기',
   'st.provider.field.vision_detected_vision': '자동 감지: 비전',

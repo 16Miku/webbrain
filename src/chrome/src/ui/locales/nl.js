@@ -762,6 +762,7 @@ export default {
   'st.provider.field.context_window': 'Contextvenster (tokens)',
   'st.provider.field.max_output_tokens': 'Maximale uitvoer (tokens)',
   'st.provider.field.supports_vision': 'Model ondersteunt visie (multimodaal)',
+  'st.provider.field.tools_mode': 'Native toolgebruik',
   'st.provider.field.vision_auto': 'Automatisch',
   'st.provider.field.vision_force_on': 'Geforceerd aan',
   'st.provider.field.vision_detected_vision': 'Automatisch gedetecteerd: Visie',
