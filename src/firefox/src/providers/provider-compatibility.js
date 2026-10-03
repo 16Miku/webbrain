@@ -81,6 +81,18 @@ export function openRouterMuseToolOptions(config = {}, options = {}) {
   try { openRouter = new URL(config.baseUrl || '').hostname.toLowerCase() === 'openrouter.ai'; } catch { /* not an OpenRouter endpoint */ }
   const model = String(config.model || '').trim().toLowerCase().replace(OPENROUTER_MODEL_VARIANT_SUFFIXES, '');
   if (!openRouter || model !== 'meta/muse-spark-1.3-contributor') return options;
+  // Muse cannot disable reasoning. Small classifier budgets otherwise end in
+  // hidden reasoning with no JSON output, even after the portable retry.
+  const disabledReasoning = options.extraBody?.reasoning?.enabled === false;
+  const smallTextCall = (options.toolChoice === 'none' || !options.tools?.length)
+    && Number(options.maxTokens) > 0 && Number(options.maxTokens) <= 2048;
+  if (disabledReasoning || smallTextCall) {
+    options = {
+      ...options,
+      maxTokens: Math.max(2048, Number(options.maxTokens) || 2048),
+      extraBody: { ...options.extraBody, reasoning: { effort: 'minimal' } },
+    };
+  }
   if (options.toolChoice === 'none') return { ...options, tools: [], toolChoice: undefined };
   const choice = options.toolChoice;
   const name = choice && typeof choice === 'object' ? choice.function?.name || choice.name : null;
