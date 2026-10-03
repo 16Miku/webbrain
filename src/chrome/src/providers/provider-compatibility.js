@@ -74,6 +74,22 @@ export const RESERVED_EXTRA_BODY_KEYS = new Set([
 
 const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
+/** Muse Spark on OpenRouter accepts only automatic tool selection. Custom
+ * imported provider names still speak the same endpoint/model contract. */
+export function openRouterMuseToolOptions(config = {}, options = {}) {
+  let openRouter = false;
+  try { openRouter = new URL(config.baseUrl || '').hostname.toLowerCase() === 'openrouter.ai'; } catch { /* not an OpenRouter endpoint */ }
+  const model = String(config.model || '').trim().toLowerCase().replace(OPENROUTER_MODEL_VARIANT_SUFFIXES, '');
+  if (!openRouter || model !== 'meta/muse-spark-1.3-contributor') return options;
+  if (options.toolChoice === 'none') return { ...options, tools: [], toolChoice: undefined };
+  const choice = options.toolChoice;
+  const name = choice && typeof choice === 'object' ? choice.function?.name || choice.name : null;
+  const tools = name ? (options.tools || []).filter(tool => tool?.function?.name === name || tool?.name === name) : options.tools;
+  if (name && !tools.length) throw new Error(`Requested tool '${name}' is not available for Muse Spark.`);
+  return { ...options, tools, toolChoice: 'auto' };
+}
+
+
 function clean(value) {
   return String(value || '').trim().toLowerCase();
 }
