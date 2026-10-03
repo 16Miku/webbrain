@@ -391,6 +391,7 @@ export default {
   'st.provider.field.model': 'Modelo',
   'st.provider.field.model_optional': 'Modelo (opsyonal)',
   'st.provider.field.supports_vision': 'Sumusuporta ang modelo sa bisyon (multimodal)',
+  'st.provider.field.tools_mode': 'Native tool use',
   'st.provider.field.vision_auto': 'Awtomatiko',
   'st.provider.field.vision_force_on': 'Sapilitang i-on',
   'st.provider.field.vision_detected_vision': 'Awtomatikong natukoy: Vision',

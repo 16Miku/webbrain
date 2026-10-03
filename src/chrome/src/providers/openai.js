@@ -1,9 +1,12 @@
 import { BaseLLMProvider } from './base.js';
 import { fetchWithFallback } from './fetch-with-fallback.js';
 import {
+  baseModelNameSniffedVision,
   isNewOpenAIContractConfig,
   isOfficialOpenAIConfig,
   isOpenCodeZenConfig,
+  isOpenRouterLingVisionModel,
+  isOpenRouterNexN25MiniModel,
   requiresOpenAIDefaultTemperature,
   shouldUseOpenAIResponsesApi,
   supportsOpenAIAskStreaming,
@@ -106,6 +109,12 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   get supportsTools() {
+    const mode = this._capabilityMode('toolsMode');
+    if (mode === 'on') return true;
+    if (mode === 'off') return false;
+    // OpenRouter's Nex N2.5 mini route accepts chat completions but has no
+    // function-compatible endpoint. Sending even read-only tools returns 404.
+    if (this._isOpenRouterNexN25Mini()) return false;
     return this.config.supportsTools !== false;
   }
 
@@ -130,9 +139,18 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (AUTO_VISION_PROVIDER_IDS.has(providerName)) {
       return configuredVisionSupport(providerName, this.config);
     }
-    // Explicit user opt-in always wins (used by LM Studio and any custom
-    // OpenAI-compatible endpoint where the loaded model varies).
+    // The Advanced vision selector (auto/on/off) wins first. For OpenRouter
+    // the /vision slash command also writes visionMode (see sidepanel
+    // toggledVisionProviderConfig), so the toggle keeps working.
+    const mode = this._capabilityMode('visionMode');
+    if (mode === 'on') return true;
+    if (mode === 'off') return false;
+    // Legacy explicit opt-in/out (used by LM Studio, custom endpoints, and
+    // the /vision toggle for non-OpenRouter providers) wins over detection.
     if (this.config.supportsVision != null) return !!this.config.supportsVision;
+    // OpenRouter-scoped detection for models the shared sniff cannot name
+    // (router route ids such as inclusionai/ling-3.0-flash-vl).
+    if (this._isOpenRouterLingVisionModel()) return true;
     // Otherwise sniff the model name for known vision-capable identifiers.
     // Qwen went natively multimodal starting at 3.5 (no separate -VL
     // checkpoint needed), so qwen3\.[5-9] catches those alongside the
@@ -150,7 +168,22 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
    * `supportsVision` getter above.
    */
   _modelNameSniffedVision(model) {
-    return /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|gpt-6-(?:luna-pro|sol|astra)(?:$|[-_.:/])|claude|gemini|grok|minimax-m3|kimi-k(?:-?3|2\.[5-9])|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|qwen3p8-27b|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|step-3/.test(String(model || ''));
+    return baseModelNameSniffedVision(model);
+  }
+
+  _isOpenRouterNexN25Mini() {
+    return String(this.config.providerName || '').trim().toLowerCase() === 'openrouter'
+      && isOpenRouterNexN25MiniModel(this.model);
+  }
+
+  _isOpenRouterLingVisionModel() {
+    return String(this.config.providerName || '').trim().toLowerCase() === 'openrouter'
+      && isOpenRouterLingVisionModel(this.model);
+  }
+
+  _capabilityMode(key) {
+    const mode = String(this.config[key] || '').trim().toLowerCase();
+    return ['auto', 'on', 'off'].includes(mode) ? mode : 'auto';
   }
 
   get useCompactPrompt() {

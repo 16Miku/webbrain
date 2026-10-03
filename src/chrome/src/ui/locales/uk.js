@@ -399,6 +399,7 @@ export default {
   'st.provider.field.model': 'Модель',
   'st.provider.field.model_optional': 'Модель (необов\'язково)',
   'st.provider.field.supports_vision': 'Модель підтримує зір (мультимодальна)',
+  'st.provider.field.tools_mode': 'Native tool use',
   'st.provider.field.vision_auto': 'Автоматично',
   'st.provider.field.vision_force_on': 'Примусово ввімкнути',
   'st.provider.field.vision_detected_vision': 'Визначено автоматично: Підтримка зображень',

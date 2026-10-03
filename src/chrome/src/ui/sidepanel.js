@@ -72,6 +72,7 @@ import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
 import { visionProviderKind } from '../providers/vision-capabilities.js';
+import { baseModelNameSniffedVision, isOpenRouterLingVisionModel } from '../providers/provider-compatibility.js';
 import {
   clearStagedScreenshots,
   loadStagedScreenshots,
@@ -8154,6 +8155,25 @@ function toggledVisionProviderConfig(providerId, config) {
   if (visionProviderKind(providerId, config)) {
     const visionEnabled = config.visionMode === 'on'
       || (config.visionMode === 'auto' && config.visionDetection?.supportsVision === true);
+    const enabled = !visionEnabled;
+    const { supportsVision: _legacy, ...withoutLegacy } = config;
+    return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
+  }
+  if (String(providerId || '').trim().toLowerCase() === 'openrouter'
+    || String(config?.providerName || '').trim().toLowerCase() === 'openrouter') {
+    // OpenRouter exposes the tri-state vision selector, so the toggle flips
+    // visionMode (not the legacy boolean). Effective state mirrors the
+    // provider: explicit visionMode, then legacy supportsVision, then
+    // automatic model detection.
+    const model = String(config?.model || '');
+    const visionEnabled = config.visionMode === 'on'
+      || (config.visionMode !== 'off' && (
+        config.supportsVision === true
+        || (config.supportsVision == null && (
+          isOpenRouterLingVisionModel(model)
+          || baseModelNameSniffedVision(model.toLowerCase())
+        ))
+      ));
     const enabled = !visionEnabled;
     const { supportsVision: _legacy, ...withoutLegacy } = config;
     return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };

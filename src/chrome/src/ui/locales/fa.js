@@ -852,6 +852,7 @@ export default {
   'st.provider.field.context_window': "پنجره زمینه (توکن ها)",
   'st.provider.field.max_output_tokens': "حداکثر خروجی (توکن ها)",
   'st.provider.field.supports_vision': "مدل از بینایی پشتیبانی می کند (چند وجهی)",
+  'st.provider.field.tools_mode': 'Native tool use',
   'st.provider.field.vision_auto': 'خودکار',
   'st.provider.field.vision_force_on': 'اجباری روشن',
   'st.provider.field.vision_detected_vision': 'شناسایی خودکار: بینایی',

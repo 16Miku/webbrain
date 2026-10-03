@@ -399,6 +399,7 @@ export default {
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (pilihan)',
   'st.provider.field.supports_vision': 'Model menyokong penglihatan (multimodal)',
+  'st.provider.field.tools_mode': 'Native tool use',
   'st.provider.field.vision_auto': 'Automatik',
   'st.provider.field.vision_force_on': 'Paksa hidup',
   'st.provider.field.vision_detected_vision': 'Dikesan secara automatik: Penglihatan',

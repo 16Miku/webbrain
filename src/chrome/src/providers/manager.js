@@ -278,6 +278,7 @@ const DUPLICATE_BLANK_CONFIG_KEYS = [
   'outputCostPerMillionUsd',
   'promptTier',
   'routingVariant',
+  'toolsMode',
   'visionMode',
   'visionDetection',
   'supportsVision',

@@ -1,4 +1,5 @@
 .claude/
+.poolside/
 .DS_Store
 node_modules/
 test/anonymous/.test-profile/

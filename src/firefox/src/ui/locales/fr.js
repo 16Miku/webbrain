@@ -391,6 +391,7 @@ export default {
   'st.provider.field.model': 'Modèle',
   'st.provider.field.model_optional': 'Modèle (facultatif)',
   'st.provider.field.supports_vision': 'Le modèle gère la vision (multimodal)',
+  'st.provider.field.tools_mode': 'Native tool use',
   'st.provider.field.vision_auto': 'Automatique',
   'st.provider.field.vision_force_on': 'Forcer l’activation',
   'st.provider.field.vision_detected_vision': 'Détection automatique : vision',
