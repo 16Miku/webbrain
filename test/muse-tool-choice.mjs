@@ -39,4 +39,24 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(body.tools.length, 1);
     assert.equal(body.tools[0].name, 'done');
   });
+  test(`${browser}: Muse classifiers use minimal reasoning and sufficient output budget`, () => {
+    const provider = new OpenAICompatibleProvider(config);
+    for (const stream of [false, true]) {
+      for (const maxTokens of [24, 64, 2048]) {
+        const body = provider._buildChatCompletionsBody([], { maxTokens, toolChoice: 'none' }, stream);
+        assert.equal(body.max_tokens, 2048);
+        assert.deepEqual(body.reasoning, { effort: 'minimal' });
+        assert.equal(Object.hasOwn(body, 'tool_choice'), false);
+      }
+      const disabled = provider._buildChatCompletionsBody([], { maxTokens: 4096, extraBody: { reasoning: { enabled: false } } }, stream);
+      assert.deepEqual(disabled.reasoning, { effort: 'minimal' });
+      assert.equal(disabled.max_tokens, 4096);
+      const toolCall = provider._buildChatCompletionsBody([], { maxTokens: 64, tools, toolChoice: 'required' }, stream);
+      assert.equal(toolCall.max_tokens, 64);
+      assert.equal(Object.hasOwn(toolCall, 'reasoning'), false);
+      const regular = new OpenAICompatibleProvider({ ...config, model: 'other-model' })._buildChatCompletionsBody([], { maxTokens: 64 });
+      assert.equal(regular.max_tokens, 64);
+      assert.equal(Object.hasOwn(regular, 'reasoning'), false);
+    }
+  });
 }
