@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Simplified Chinese (zh).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '插件界面缩放',
   'sp.ui_scale.decrease': '缩小插件界面',
   'sp.ui_scale.increase': '放大插件界面',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': '今日免费的 WebBrain Compass 额度已用完。',
   'sp.subscribe.btn': '订阅',
   'sp.subscribe.upgrade': '升级到 Plus',
+  "sp.subscribe.resume_payment": "付款方式已更新 — 重试",
   'sp.subscribe.resume_upgrade': '套餐已更新 — 重试',
   'sp.subscribe.resume': '已订阅 — 重试',
   'sp.stopped_by_user': '[用户已停止]',
@@ -326,6 +329,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': '此浏览器配置文件的账单、卡片信息、电子邮件和取消均由 Stripe 管理。',
   'st.account.billing_preparing': '正在为此浏览器配置文件准备 Stripe 账单链接。',
+  "st.account.payment_failed": "未能完成订阅付款。请更新付款方式以恢复付费套餐。",
+  "st.account.update_payment": "更新付款方式",
   'st.account.manage_billing': '管理账单',
 
   'st.display.language.label': '语言',
@@ -394,6 +399,7 @@ export default {
   'st.provider.field.model': '模型',
   'st.provider.field.model_optional': '模型（可选）',
   'st.provider.field.supports_vision': '模型支持视觉（多模态）',
+  'st.provider.field.tools_mode': '原生工具调用',
   'st.provider.field.vision_auto': '自动',
   'st.provider.field.vision_force_on': '强制开启',
   'st.provider.field.vision_detected_vision': '自动检测：支持视觉',
@@ -609,9 +615,6 @@ export default {
   "st.transcription.connected": "连接成功！模型：{model}",
   "st.transcription.failed": "失败：{error}",
   "st.transcription.fill_required": "请先填写基础 URL 和模型。",
-  "st.captcha.desc_html": "让代理通过 <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> API 自动解决 CAPTCHA。支持 reCAPTCHA v2/v3、hCaptcha 和 Cloudflare Turnstile。保存有效的 API 密钥后会自动启用 CapSolver；没有密钥时，代理会停止并请你自行解决 CAPTCHA。CapSolver 按每次解决计费（约 ~$0.001–$0.003）；使用你自己的账号和 API 密钥。",
-  "st.captcha.enabled.label": "启用 CapSolver",
-  "st.captcha.enabled.desc": "当代理遇到 CAPTCHA 时，会先调用一次 CapSolver，然后再回退到询问你。需要下方的 API 密钥。",
   "st.captcha.api_key.label": "CapSolver API 密钥",
   "st.captcha.save": "保存密钥",
   "st.captcha.check_balance": "查询余额",
@@ -622,7 +625,6 @@ export default {
   "st.captcha.need_key": "请输入以 CAP- 开头的有效 CapSolver API 密钥。",
   "st.captcha.balance_ok": "正常 —— 余额：{balance}",
   "st.captcha.balance_fail": "失败：{error}",
-  "st.captcha.security_html": "<strong>请注意：</strong>API 密钥以<strong>明文</strong>形式保存在浏览器的本地存储中。CapSolver 会对每次解决向你的账户计费；代理只会在 CAPTCHA 实际阻塞某一步时才调用它（每次遇到最多调用一次 —— 失败后不会重试）。某些站点的服务条款禁止自动解决 CAPTCHA；请自行判断。",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': '建议操作',
@@ -943,6 +945,7 @@ export default {
   "sp.memory.error": "记忆错误：{msg}",
   "sp.memory.reason.invalid_or_sensitive": "未保存：清理后的文本为空，或看起来包含机密信息（密码、API 密钥、令牌）。",
   "sp.memory.reason.not_found": "没有使用该 ID 的已保存记忆。",
+  'sp.slash.workflow_editor': "工作流编辑器",
   "sp.slash.workflows": "列出和管理已保存的工作流",
   "sp.slash.teach": "将您的操作记录为已保存的工作流",
   "sp.slash.run_workflow": "按 ID 运行已保存的工作流",
@@ -1039,6 +1042,8 @@ export default {
   "st.imageBudget.maxDimension.label": "最大图像尺寸",
   "st.imageBudget.maxDimension.desc": "发送给视觉的任何截图的最长边（宽或高），单位为像素。更小的上限会在发送前缩小图像，降低 token 与成本；更大的上限保留保真度。",
   "st.imageBudget.warning": "⚠️ 这些设置适用于为视觉捕获的截图（自动截图、/screenshot、整页、verify_form）。手动保存的全分辨率图像不受影响。「Image detail」由 OpenAI 风格端点遵循；其他提供商可能忽略。",
+  "sp.slash.export_traces_full": "将完整的已保存跟踪会话导出为 JSON，包括截图",
+  "sp.export_traces.recording_truncated": "已将所有保存的记录导出为 JSON。录制时省略的内容无法通过导出恢复。",
   "sp.slash.export_traces": "导出工具链（跟踪）",
   "sp.export_traces.none": "此对话没有跟踪记录。请在设置中开启「记录跟踪」，然后重新运行。",
   "sp.export_traces.error": "无法导出跟踪。",

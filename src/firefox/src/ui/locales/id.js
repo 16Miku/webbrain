@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Indonesian (id).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom UI ekstensi',
   'sp.ui_scale.decrease': 'Perkecil UI ekstensi',
   'sp.ui_scale.increase': 'Perbesar UI ekstensi',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Kuota harian gratis WebBrain Compass telah habis.',
   'sp.subscribe.btn': 'Berlangganan',
   'sp.subscribe.upgrade': 'Upgrade ke Plus',
+  "sp.subscribe.resume_payment": "Metode pembayaran diperbarui — coba lagi",
   'sp.subscribe.resume_upgrade': 'Paket diperbarui — coba lagi',
   'sp.subscribe.resume': 'Sudah berlangganan — coba lagi',
   'sp.stopped_by_user': '[Dihentikan oleh pengguna]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Penagihan, detail kartu, email, dan pembatalan dikelola oleh Stripe untuk profil browser ini.',
   'st.account.billing_preparing': 'Menyiapkan tautan penagihan Stripe untuk profil browser ini.',
+  "st.account.payment_failed": "Pembayaran langganan Anda belum berhasil. Perbarui metode pembayaran untuk memulihkan paket berbayar Anda.",
+  "st.account.update_payment": "Perbarui metode pembayaran",
   'st.account.manage_billing': 'Kelola penagihan',
 
   'st.display.language.label': 'Bahasa',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (opsional)',
   'st.provider.field.supports_vision': 'Model mendukung visi (multimodal)',
+  'st.provider.field.tools_mode': 'Penggunaan alat bawaan',
   'st.provider.field.vision_auto': 'Otomatis',
   'st.provider.field.vision_force_on': 'Paksa aktif',
   'st.provider.field.vision_detected_vision': 'Terdeteksi otomatis: Vision',
@@ -593,9 +599,6 @@ export default {
   "st.transcription.connected": "Terhubung! Model: {model}",
   "st.transcription.failed": "Gagal: {error}",
   "st.transcription.fill_required": "Isi URL dasar dan Model terlebih dahulu.",
-  "st.captcha.desc_html": "Biarkan agen menyelesaikan CAPTCHA secara otomatis melalui API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Mendukung reCAPTCHA v2/v3, hCaptcha, dan Cloudflare Turnstile. Menyimpan kunci API yang valid akan mengaktifkan CapSolver secara otomatis; tanpa kunci, agen berhenti dan meminta Anda menyelesaikan CAPTCHA sendiri. CapSolver mengenakan biaya per penyelesaian (~$0.001–$0.003); Anda menggunakan akun dan kunci API sendiri.",
-  "st.captcha.enabled.label": "Aktifkan CapSolver",
-  "st.captcha.enabled.desc": "Saat agen menemui CAPTCHA, ia akan memanggil CapSolver sekali sebelum kembali bertanya kepada Anda. Memerlukan kunci API di bawah.",
   "st.captcha.api_key.label": "Kunci API CapSolver",
   "st.captcha.save": "Simpan Kunci",
   "st.captcha.check_balance": "Periksa Saldo",
@@ -606,7 +609,6 @@ export default {
   "st.captcha.need_key": "Masukkan kunci API CapSolver valid yang diawali CAP-.",
   "st.captcha.balance_ok": "OK — saldo: {balance}",
   "st.captcha.balance_fail": "Gagal: {error}",
-  "st.captcha.security_html": "<strong>Perhatian:</strong> kunci API disimpan <strong>dalam bentuk teks biasa</strong> di penyimpanan lokal peramban. CapSolver menarik biaya akun Anda untuk setiap penyelesaian; agen hanya akan memanggilnya saat CAPTCHA benar-benar memblokir sebuah langkah (maksimal sekali per kejadian — ia tidak akan mengulang saat gagal). Ketentuan layanan beberapa situs melarang penyelesaian CAPTCHA otomatis; gunakan pertimbangan Anda.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'Tindakan yang disarankan',
@@ -915,6 +917,7 @@ export default {
   "sp.memory.error": "Kesalahan memori: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Tidak disimpan: teks kosong setelah dibersihkan atau tampaknya berisi rahasia (kata sandi, kunci API, token).",
   "sp.memory.reason.not_found": "Tidak ada memori tersimpan dengan ID tersebut.",
+  'sp.slash.workflow_editor': "Editor alur kerja",
   "sp.slash.workflows": "Lihat dan kelola alur kerja tersimpan",
   "sp.slash.teach": "Rekam tindakan Anda sebagai alur kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan alur kerja tersimpan berdasarkan ID",
@@ -1020,6 +1023,8 @@ export default {
   "sp.upload_picker.cancelled": "Unggahan dibatalkan",
   "sp.upload_picker.too_large": "File yang dipilih melebihi batas 25MB (maks 25MB)",
   "sp.upload_picker.read_failed": "Gagal membaca file yang dipilih",
+  "sp.slash.export_traces_full": "Ekspor seluruh sesi jejak tersimpan sebagai JSON, termasuk tangkapan layar",
+  "sp.export_traces.recording_truncated": "Semua catatan tersimpan telah diekspor sebagai JSON. Konten yang dihilangkan saat perekaman tidak dapat dipulihkan melalui ekspor.",
   "sp.slash.export_traces": "Ekspor rantai alat (jejak)",
   "sp.export_traces.none": "Tidak ada jejak untuk percakapan ini. Aktifkan Rekam jejak di Pengaturan, lalu jalankan lagi.",
   "sp.export_traces.error": "Tidak dapat mengekspor jejak.",

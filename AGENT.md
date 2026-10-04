@@ -10,7 +10,10 @@ vanilla JS/CSS unless there is a very strong reason to add a framework.
 - Keep Ask mode read-only by default and Act mode explicit, reviewable, and
   interruptible.
 - Prefer visible UI actions over hidden API mutations. The `/allow-api` override
-  exists for deliberate exceptions, not as a default path.
+  exists for deliberate exceptions. For Ghost, Drupal, Joomla, Webflow, Shopify,
+  Wix, Strapi, Contentful and Sanity content tasks, the bundled recipes prefer
+  the official API after capability/auth discovery and only with existing task,
+  service and WebBrain mutation permissions. Ask stays read-only.
 - Preserve local-model usability: compact prompts, smaller tool surfaces, context
   trimming, and clear failure-mode reminders matter.
 - Gate optional prompt guidance with mechanical state where possible. For

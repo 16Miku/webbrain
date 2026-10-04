@@ -7,6 +7,42 @@ export function hasFileDragPayload(event) {
   return types.includes(FILE_DRAG_TYPE) || Number(dataTransfer.files?.length || 0) > 0;
 }
 
+export function clipboardImageFiles(event) {
+  const clipboardData = event?.clipboardData;
+  if (!clipboardData) return [];
+  const fromFiles = Array.from(clipboardData.files || []);
+  if (fromFiles.length) return fromFiles.filter(file => (
+    String(file?.type || '').startsWith('image/')
+  ));
+  const fromItems = Array.from(clipboardData.items || [])
+    .filter(item => item?.kind === 'file')
+    .map(item => item.getAsFile?.())
+    .filter(Boolean);
+  return fromItems.filter(file => (
+    String(file?.type || '').startsWith('image/')
+  ));
+}
+
+function clipboardHasText(clipboardData) {
+  return Array.from(clipboardData?.types || []).some(type => (
+    type === 'text/plain' || type === 'text/html'
+  ));
+}
+
+export function installClipboardImagePasteHandler(target, onFiles) {
+  if (!target?.addEventListener || typeof onFiles !== 'function') return () => {};
+
+  const onPaste = (event) => {
+    const files = clipboardImageFiles(event);
+    if (!files.length) return;
+    if (!clipboardHasText(event?.clipboardData)) event.preventDefault();
+    onFiles(files);
+  };
+
+  target.addEventListener('paste', onPaste);
+  return () => target.removeEventListener?.('paste', onPaste);
+}
+
 export function installFileDropHandlers(target, onFiles) {
   if (!target?.addEventListener || typeof onFiles !== 'function') return () => {};
 

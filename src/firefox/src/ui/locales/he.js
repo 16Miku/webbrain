@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Hebrew (he).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'הגדלת ממשק התוסף',
   'sp.ui_scale.decrease': 'הקטנת תצוגת ממשק התוסף',
   'sp.ui_scale.increase': 'הגדלת תצוגת ממשק התוסף',
@@ -316,6 +318,7 @@ export default {
   "sp.subscribe.allowance_used": "ההקצבה היומית החינמית של WebBrain Compass נוצלה.",
   "sp.subscribe.btn": "הירשם",
   'sp.subscribe.upgrade': 'שדרוג ל-Plus',
+  "sp.subscribe.resume_payment": "אמצעי התשלום עודכן — נסו שוב",
   'sp.subscribe.resume_upgrade': 'התוכנית עודכנה — נסו שוב',
   "sp.subscribe.resume": "נרשמתי — נסה שוב",
   "sp.stopped_by_user": "[נעצר על ידי משתמש]",
@@ -524,6 +527,7 @@ export default {
   "st.tab.skills": "מיומנויות",
   "st.tab.vision": "ראייה",
   "st.tab.multimodal": "מודלים מסייעים",
+  'sp.slash.workflow_editor': "עורך תהליכי עבודה",
   "sp.slash.workflows": "הצגה וניהול של תהליכי עבודה שמורים",
   "sp.slash.teach": "הקלטת הפעולות שלך כתהליך עבודה שמור",
   "sp.slash.run_workflow": "הפעלת תהליך עבודה שמור לפי מזהה",
@@ -576,6 +580,8 @@ export default {
   "st.account.provider_name": "WebBrain Compass",
   "st.account.billing_managed": "חיוב, פרטי כרטיס, אימייל וביטול מנוהלים על ידי Stripe עבור פרופיל דפדפן זה.",
   "st.account.billing_preparing": "הכנת הקישור לחיוב Stripe עבור פרופיל דפדפן זה.",
+  "st.account.payment_failed": "לא ניתן היה להשלים את התשלום עבור המינוי. עדכנו את אמצעי התשלום כדי לשחזר את התוכנית בתשלום.",
+  "st.account.update_payment": "עדכון אמצעי התשלום",
   "st.account.manage_billing": "ניהול חיוב",
   "st.display.language.label": "שפה",
   "st.display.language.desc": "שפת הממשק של תוסף WebBrain.",
@@ -748,6 +754,7 @@ export default {
   "st.provider.field.context_window": "חלון הקשר (אסימונים)",
   "st.provider.field.max_output_tokens": "פלט מקסימלי (אסימונים)",
   "st.provider.field.supports_vision": "הדגם תומך בראייה (מולטימודאלי)",
+  'st.provider.field.tools_mode': 'שימוש מובנה בכלי עבודה',
   'st.provider.field.vision_auto': 'אוטומטי',
   'st.provider.field.vision_force_on': 'הפעלה מאולצת',
   'st.provider.field.vision_detected_vision': 'זוהה אוטומטית: ראייה',
@@ -832,9 +839,6 @@ export default {
   "st.memory.reason.invalid_or_sensitive": "לא נשמר: הטקסט ריק לאחר הניקוי או שנראה כי הוא מכיל סוד (סיסמה, מפתח API או אסימון).",
   "st.memory.reason.not_found": "לא נמצא זיכרון שמור עם המזהה הזה.",
   "st.memory.security_html": "<strong>פרטיות:</strong> זיכרון המשתמש נשמר כטקסט גלוי בפרופיל הדפדפן הזה. כאשר הזיכרון מופעל, רשומות פעילות נשלחות לספק ה-LLM שהגדרת כחלק מהנחיית המערכת. אין לשמור כאן סיסמאות, מפתחות API, אסימונים, קודי שחזור או סודות רגישים.",
-  "st.captcha.desc_html": "אפשר לסוכן לפתור CAPTCHA באופן אוטומטי באמצעות API של <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. נתמכים reCAPTCHA v2/v3, ‏hCaptcha ו-Cloudflare Turnstile. שמירת מפתח API תקין מפעילה את CapSolver אוטומטית; ללא מפתח, הסוכן נעצר ומבקש ממך לפתור את ה-CAPTCHA בעצמך. ‏CapSolver גובה תשלום לכל פתרון (כ-$0.001–$0.003); נעשה שימוש בחשבון ובמפתח API משלך.",
-  "st.captcha.enabled.label": "הפעל את CapSolver",
-  "st.captcha.enabled.desc": "כאשר CAPTCHA חוסם את הסוכן, הוא ינסה לפנות ל-CapSolver פעם אחת לפני שיבקש ממך לפתור אותו. נדרש מפתח API למטה.",
   "st.captcha.api_key.label": "מפתח API של CapSolver",
   "st.captcha.save": "שמור מפתח",
   "st.captcha.check_balance": "בדוק יתרה",
@@ -845,7 +849,6 @@ export default {
   "st.captcha.need_key": "יש להזין מפתח API תקין של CapSolver שמתחיל ב-CAP-.",
   "st.captcha.balance_ok": "תקין — יתרה: {balance}",
   "st.captcha.balance_fail": "נכשל: {error}",
-  "st.captcha.security_html": "<strong>לתשומת לבך:</strong> מפתח ה-API נשמר <strong>כטקסט גלוי</strong> באחסון המקומי של הדפדפן. CapSolver מחייב את החשבון שלך על כל פתרון; הסוכן יפנה אליו רק כאשר CAPTCHA חוסם שלב בפועל, ולכל היותר פעם אחת בכל מפגש. תנאי השימוש של אתרים מסוימים אוסרים פתרון CAPTCHA אוטומטי; הפעל שיקול דעת.",
   "hist.title": "WebBrain היסטוריית צ'אט",
   "hist.records": "{n} רשומות",
   "hist.record": "{n} רְשׁוּמָה",
@@ -973,6 +976,8 @@ export default {
   "sp.upload_picker.cancelled": "ההעלאה בוטלה",
   "sp.upload_picker.too_large": "הקובץ שנבחר חורג ממגבלת 25MB (מקסימום 25MB)",
   "sp.upload_picker.read_failed": "קריאת הקובץ שנבחר נכשלה",
+  "sp.slash.export_traces_full": "ייצוא כל סשן המעקב השמור כ־JSON, כולל צילומי מסך",
+  "sp.export_traces.recording_truncated": "כל הרשומות השמורות יוצאו כ־JSON. תוכן שהושמט בזמן ההקלטה אינו ניתן לשחזור באמצעות ייצוא.",
   "sp.slash.export_traces": "ייצוא שרשרת הכלים (מעקבים)",
   "sp.export_traces.none": "אין מעקבים לשיחה זו. הפעילו את «הקלטת מעקבים» בהגדרות והריצו שוב.",
   "sp.export_traces.error": "לא ניתן לייצא מעקבים.",

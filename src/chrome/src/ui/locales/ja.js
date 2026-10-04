@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Japanese (ja).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '拡張機能 UI のズーム',
   'sp.ui_scale.decrease': '拡張機能 UI を縮小',
   'sp.ui_scale.increase': '拡張機能 UI を拡大',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'WebBrain Compass の無料の1日あたりの利用枠を使い切りました。',
   'sp.subscribe.btn': '購読する',
   'sp.subscribe.upgrade': 'Plus にアップグレード',
+  "sp.subscribe.resume_payment": "支払い方法を更新しました — 再試行",
   'sp.subscribe.resume_upgrade': 'プランを更新しました — 再試行',
   'sp.subscribe.resume': '購読しました — 再試行',
   'sp.stopped_by_user': '[ユーザーが停止]',
@@ -326,6 +329,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'このブラウザープロファイルの請求、カード情報、メール、解約は Stripe が管理します。',
   'st.account.billing_preparing': 'このブラウザープロファイルの Stripe 請求リンクを準備しています。',
+  "st.account.payment_failed": "サブスクリプションの支払いを完了できませんでした。有料プランを再開するには、支払い方法を更新してください。",
+  "st.account.update_payment": "支払い方法を更新",
   'st.account.manage_billing': '請求を管理',
 
   'st.display.language.label': '言語',
@@ -394,6 +399,7 @@ export default {
   'st.provider.field.model': 'モデル',
   'st.provider.field.model_optional': 'モデル（任意）',
   'st.provider.field.supports_vision': 'モデルは画像認識（マルチモーダル）対応',
+  'st.provider.field.tools_mode': 'ネイティブツール使用',
   'st.provider.field.vision_auto': '自動',
   'st.provider.field.vision_force_on': '強制的にオン',
   'st.provider.field.vision_detected_vision': '自動検出：画像対応',
@@ -609,9 +615,6 @@ export default {
   "st.transcription.connected": "接続しました！モデル: {model}",
   "st.transcription.failed": "失敗: {error}",
   "st.transcription.fill_required": "先にベース URL とモデルを入力してください。",
-  "st.captcha.desc_html": "<a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> API を使って、エージェントに CAPTCHA を自動で解かせます。reCAPTCHA v2/v3、hCaptcha、Cloudflare Turnstile に対応しています。有効な API キーを保存すると CapSolver が自動的に有効になります。キーがない場合、エージェントは停止し、CAPTCHA を手動で解くよう求めます。CapSolver は解決ごとに課金します（約 ~$0.001–$0.003）。ご自身のアカウントと API キーを使用します。",
-  "st.captcha.enabled.label": "CapSolver を有効化",
-  "st.captcha.enabled.desc": "エージェントが CAPTCHA に遭遇すると、あなたに尋ねる前にまず CapSolver を 1 回呼び出します。下記の API キーが必要です。",
   "st.captcha.api_key.label": "CapSolver API キー",
   "st.captcha.save": "キーを保存",
   "st.captcha.check_balance": "残高を確認",
@@ -622,7 +625,6 @@ export default {
   "st.captcha.need_key": "CAP- で始まる有効な CapSolver API キーを入力してください。",
   "st.captcha.balance_ok": "OK — 残高: {balance}",
   "st.captcha.balance_fail": "失敗: {error}",
-  "st.captcha.security_html": "<strong>ご注意:</strong> API キーはブラウザのローカルストレージに<strong>平文</strong>で保存されます。CapSolver は解くたびにあなたのアカウントに課金します。エージェントは CAPTCHA が実際にステップをブロックしたときにのみ呼び出します（1 回の遭遇につき最大 1 回 — 失敗しても再試行はしません）。一部のサイトの利用規約は自動的な CAPTCHA の解決を禁止しています。ご自身の判断でご利用ください。",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'おすすめのアクション',
@@ -943,6 +945,7 @@ export default {
   "sp.memory.error": "メモリエラー: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "保存されませんでした。整理後のテキストが空か、秘密情報（パスワード、API キー、トークン）が含まれているようです。",
   "sp.memory.reason.not_found": "その ID の保存済みメモリはありません。",
+  'sp.slash.workflow_editor': "ワークフローエディター",
   "sp.slash.workflows": "保存済みワークフローを一覧・管理",
   "sp.slash.teach": "操作を保存済みワークフローとして記録",
   "sp.slash.run_workflow": "保存済みワークフローを ID で実行",
@@ -1039,6 +1042,8 @@ export default {
   "st.imageBudget.maxDimension.label": "最大画像寸法",
   "st.imageBudget.maxDimension.desc": "ビジョンに送るスクリーンショットの長辺（幅または高さ）のピクセル上限。上限を下げると送信前に縮小しトークンとコストを削減。上げると忠実度を保ちます。",
   "st.imageBudget.warning": "⚠️ これらの設定はビジョン用のスクリーンショット（自動撮影、/screenshot、全ページ、verify_form）に適用されます。手動で保存したフル解像度画像には影響しません。「Image detail」は OpenAI 系エンドポイントで尊重され、他のプロバイダでは無視されることがあります。",
+  "sp.slash.export_traces_full": "スクリーンショットを含む保存済みトレースセッション全体をJSONでエクスポート",
+  "sp.export_traces.recording_truncated": "保存済みの全記録をJSONでエクスポートしました。記録時に省略された内容はエクスポートでは復元できません。",
   "sp.slash.export_traces": "ツールチェーンをエクスポート（トレース）",
   "sp.export_traces.none": "この会話のトレースがありません。設定で「トレースを記録」をオンにして、もう一度実行してください。",
   "sp.export_traces.error": "トレースをエクスポートできませんでした。",

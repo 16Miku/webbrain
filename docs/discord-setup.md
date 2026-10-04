@@ -56,8 +56,7 @@ Create channels in this order, under four categories.
 | Channel            | Type | Topic                                                       |
 | ------------------ | ---- | ----------------------------------------------------------- |
 | `#help`            | text | Getting started, side panel, modes, slash commands          |
-| `#local-models`    | text | llama.cpp, Ollama, LM Studio, Jan, vLLM and local providers |
-| `#providers`       | text | Cloud providers, API keys, context windows, model picks     |
+| `#subscription`    | text | Subscription relted issues                                  |
 | `#traces-and-bugs` | text | Trace debugging and triage before a GitHub issue            |
 
 ### Category: Development
@@ -68,12 +67,6 @@ Create channels in this order, under four categories.
 | `#site-adapters` | text             | The highest-leverage contribution — see `CONTRIBUTING.md` |
 | `#roadmap`       | text             | Feature proposals and design discussion                   |
 | `#github-feed`   | text (read-only) | GitHub bot stream of issues, PRs, releases                |
-
-### Category: Lounge
-
-| Channel      | Type | Topic                     |
-| ------------ | ---- | ------------------------- |
-| `#off-topic` | text | Non-WebBrain conversation |
 
 `#help` is a good candidate for Discord **Forums** (per-topic threads) once
 traffic justifies it; start as a text channel to keep moderation simple.

@@ -4,6 +4,351 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [38.0.13] - 2026-10-01
+
+### Changed
+- version up
+- fix(captcha): align provider contracts and recover interrupted signup
+- Share opt-in provider diagnostic traces
+- fix(captcha): ignore empty callback placeholders when applying solutions
+- up
+- fix(traces): assemble full exports outside runtime messaging
+- fix(captcha): recover successive challenges and export full traces
+- Canonicalize tool-arg loop keys so key order cannot dodge the limit
+- up
+- bugfix
+- up
+- bugfixes
+- version up
+- fix(captcha): deliver callbacks and recover solve state
+- Document CMS API-first coverage in the French and Chinese skills guides
+- Stop rejected actions from looping forever before dispatch
+
+## [38.0.1] - 2026-09-30
+
+### Changed
+- chore: bump version 37.0.1 → 38.0.0
+- Use Sanity HTTP publish identity and preserve document revision guards
+- Narrow CMS adapter injection to supported editor routes
+- Tighten CMS prompt budgets and verify per-run skill reset
+- Add conditional API-first content skills for nine CMS platforms
+- Fix Compact WordPress API guidance and REST route loop detection
+- Add API-first WordPress content skill and editor fallback guidance
+- Retire stale CAPTCHA documents consistently across recovery paths
+- Handle expired CAPTCHA answers without trapping completion
+- docs: minor wording tweak in trace-format-compatibility
+- Fix CAPTCHA answer recovery and provider fallback validation
+- build(deps): bump fast-uri
+- build(deps): bump the uv group across 1 directory with 4 updates
+- Recover paid native CAPTCHA answers after chat clear
+- Preserve DataDome and FunCaptcha sessions and GeeTest modes
+- Match Lemin API hosts before native fallback
+- Bind hCaptcha User-Agent to target frame and Tencent script
+- Preserve Yidun and reCAPTCHA endpoints in fallback
+- Match Alibaba verification metadata before fallback
+- Keep native CAPTCHA dispatch across chat clears and validate array payloads
+- Preserve hCaptcha cookies and GeeTest service identity in fallback
+- Compare reCAPTCHA session cookies before fallback
+- Guard NoneCap token injection by browser User-Agent
+- Persist native CAPTCHA dispatch locks before provider calls
+- Match recognition constraints across CAPTCHA fallbacks
+- Preserve paid CAPTCHA answers across worker restarts
+- Retire stale CAPTCHA gates and validate Cloudflare fallbacks
+- Match FunCaptcha fallback service hosts
+- Infer hCaptcha Enterprise from explicit rqdata
+- Validate CAPTCHA instruction aliases and child frame freshness
+- Reject undocumented nested CAPTCHA parameters
+- Match TSPD snapshots and reCAPTCHA v3 fallback scores
+- Match CAPTCHA fallback instructions and visibility
+- Gate CAPTCHA application and match fallback proxy identity
+- Retire stale CAPTCHA documents and validate fallback User-Agent
+- Fix CAPTCHA answer retention and v2 fallback identity
+- Retire stale CAPTCHA answers and correct Enterprise rqdata guidance
+- Require complete CAPTCHA fallback identifiers and preserve falsy answers
+- Match text challenge questions before paid CAPTCHA fallback
+- Bind native CAPTCHA fallbacks to observed media and frame URLs
+- Keep native CAPTCHA answers available until first mutation
+- Align CAPTCHA tool documentation with mode availability
+- Keep recoverable CAPTCHA application failures pending
+- fix: observe field-only Discord embeds
+- Retain native CAPTCHA dispatch history across document restores
+- fix: support transcript-bound Discord threads
+- Bind native CAPTCHA fallback and replay to observed challenges
+- fix: verify Discord sends against authored text
+- Fix CAPTCHA routing, answer application, and provider validation
+- fix: validate Discord guild transcript route
+- fix: bind Discord DM and send evidence
+- Integrate documented CAPTCHA provider catalogs and weighted solving
+- fix: capture Discord polls and bound send reconciliation
+- fix: allow new Discord DMs to bind safely
+- fix: reconcile delayed Discord observations safely
+- fix: allow Discord management on message links
+- fix: handle Discord permalinks and global avatars
+- fix: recognize Discord direct-message conversations
+- fix: restore Discord navigation and durable delivery evidence
+- fix: preserve unknown Discord identity on DM routes
+- fix: support Discord guild avatars and account settings
+- fix: recognize localized Discord settings and rail
+- fix: classify Discord avatars and dialogs structurally
+- fix: verify Discord sends without name identity
+- Address Discord observation review feedback
+- Fix Discord management guard and chat observation
+
+## [38.0.0] - 2026-09-30
+
+### Added
+
+- Added API-first content skills for nine CMS platforms: Contentful, Drupal, Ghost, Joomla, Sanity, Shopify, Strapi, Webflow, and Wix. On Mid and Full they load through the skill catalog only when the task needs them, then prefer the platform's own API for existing content and fall back to the editor when authentication, permissions, or Secret Handling rule the API out. All nine files and the adapter module are byte-identical across Chrome and Firefox.
+- Added a WordPress REST API skill covering posts, pages, REST-enabled custom types, and taxonomy. It reuses existing record IDs, creates content as a draft, and publishes that same record only when asked; a missing `/allow-api` grant is requested once, and Ask mode cannot write.
+- Added NopeCHA and NoneCap as CAPTCHA fallback providers, bringing the catalog to seven. Each has its own key, enable toggle, weight, balance check, and localized Settings controls, and both serve the hCaptcha families.
+- Added a documented native CAPTCHA method catalog audited against each provider's official API reference, with per-provider coverage and documentation links in Settings.
+- Added a Discord management guard so Discord sends verify the active recipient the way other messaging sites already do.
+- Added the `cookies` permission to the Chrome and Firefox manifests, used to match a native CAPTCHA challenge against the session that created it.
+
+### Changed
+
+- Narrowed CMS adapter injection to supported editor routes. Site adapters now supply short conditional notes instead of loading a skill, and a generic admin or Studio path needs observed CMS evidence before a recipe is offered.
+- Tightened the CMS prompt budgets and verified that each run resets its skill state, so a CMS recipe cannot leak into a later task.
+- Sanity publishing now uses the HTTP publish identity and keeps document revision guards, so a stale draft is not silently overwritten.
+- Corrected the Compact WordPress API guidance and added REST route loop detection, so a repeating request is reported instead of retried.
+- Refreshed the CAPTCHA tool documentation to match what each tier actually has: `get_captcha_capabilities`, `solve_captcha`, and `apply_captcha_solution` are Act/Dev Mid and Full tools, while Ask and Compact request manual completion.
+- Documented the CAPTCHA data flow in the privacy guide, including all seven providers, what a fallback sends, and that the browser cookie jar is not exported automatically.
+- Corrected the trace-format compatibility wording and updated the skills documentation, including the French and Simplified Chinese translations.
+
+### Fixed
+
+- Paid CAPTCHA answers now survive chat clears, document restores, and worker restarts. Dispatch locks persist before the provider call, dispatch history is retained, and an answer stays available until the first mutation.
+- Stale CAPTCHA documents and gates are retired consistently across every recovery path, and an expired answer no longer traps completion: the gate flips to manual-required instead of hanging the run.
+- A recoverable CAPTCHA application failure stays pending for a retry rather than ending the run, and falsy answers are no longer dropped.
+- Hardened native CAPTCHA fallback matching. A fallback now requires complete identifiers, binds to the observed frame, media, and proxy identity, checks instruction aliases, challenge visibility, child-frame freshness, reCAPTCHA session cookies, and the browser User-Agent, and rejects undocumented nested parameters. DataDome, FunCaptcha, GeeTest, Yidun, Alibaba, Lemin, TSPD snapshots, reCAPTCHA v3 scores, and text challenges are recognized before a paid solve, and hCaptcha Enterprise is inferred from an explicit `rqdata`.
+- Fixed a full pass of Discord observation and delivery evidence: direct messages, permalinks, message links, new DM binds, polls, field-only embeds, transcript-bound threads, guild avatars, localized settings and rail, and structurally classified avatars and dialogs are all recognized. Sends are verified against the authored text rather than a display name, the guild transcript route is validated, unknown identities are preserved instead of overwritten, and delayed observations reconcile safely.
+- Restored Discord navigation and durable delivery evidence.
+
+### Tests
+
+- Added CAPTCHA coverage for the hCaptcha providers, native providers, application UI, runtime policy, and weighted fallback, and registered the new files in `npm test`.
+- Added a Discord guard suite covering the observation and delivery paths, registered in the main test run.
+- Added CMS API-first coverage with browser smoke fixtures and nine CMS LLM scenarios.
+- Kept every mirrored Chrome and Firefox change paired on both sides.
+
+## [37.0.1] - 2026-09-29
+
+### Changed
+- Link workflow editor from workflow docs
+- Remove WebBrain Cloud footer link
+- Hide WebBrain Cloud homepage panel
+- Keep catalog icon guidance SVG-only
+- Use official ODS product logo
+- Guide WordPress editor recovery and preserve post type
+- Add ODS local provider support
+- Update discord-setup.md
+- Delete docs/memcode-memory-proposal.md
+- Update memcode-memory-proposal.md
+- test: align packaging checks with current rendering
+- Fix cloud clarification timeout state and deadline updates
+- fix: match imported workflow save state
+- fix: validate normalized workflow locators
+- fix: measure canonical workflow import size
+- fix: consume rejected saves and reserve import headroom
+- fix: block downloads after rejected blur edits
+- Add weighted CAPTCHA fallback across five providers
+- fix: stop shortcut save after invalid edits
+- fix: require at least one workflow step
+- fix: flag workflows that cannot be imported
+- test: isolate social submission gate fixture
+- fix: enforce workflow editor importer constraints
+- docs: add 37.0.0 changelog entry
+- fix: make workflow editor import-safe
+- build(deps): bump ip-address
+- 37
+- feat: link workflow editor from slash help
+- feat: add 2Captcha fallback provider
+- feat: add offline workflow editor
+- fix: reject invisible Unicode clarification options
+- fix: allow visible format characters in clarify options
+- fix: center horizontal scroll targets clear of side rails
+- fix: distinguish pinned and unstuck sticky controls
+- fix: preserve scroll for visible fixed-surface controls
+- fix: reject braille blank safe-first options
+- fix: mark ancestor pseudo-element covers as occluded
+- fix: fail closed for malformed safe-first options
+- fix: reject ancestor hits for trusted click fallback
+- fix: reject invisible safe-first options
+- fix: clear targets covered by unclassified fixed overlays
+- fix: bind safe-first to the declared first option
+- fix: clear floating fixed bars above covered targets
+- fix: detect ARIA toolbars and ignore modal-open page state
+- fix: clear stacked docked bars during interactions
+- fix: reject blank safe-first options
+- fix: bound visible layer metadata in page reads
+- fix: hoist nested modal surfaces only once
+- fix: preserve timeout guard across safe-first clarifications
+- fix: preserve docked controls and correct obstruction scroll
+- fix: keep timed-out sensitive choices unconfirmed
+- fix: expose layered surfaces alongside page text
+- fix: accept affirmative clarify timeout with safe_first flag
+- fix: handle clipped scrollers and shadow host occlusion
+- fix: handle overlapping content elements and docked headers (#3085)
+- fix: preserve text in mixed image clipboard payloads
+- fix: avoid duplicate clipboard images from files+items union
+- feat: paste images into chat from clipboard
+- Route managed Cloud captcha solving through broker
+- Report encrypted vault counts for storage stats
+- Delete README.es.md
+- Revise README.es.md for improved organization
+- Add Osaurus provider support
+- docs: propose opt-in MemCode memory architecture
+- Benchmark Spark X2.5 and MiniCPM5 Compact routing
+- Add GPT-6 Sol and Astra compatibility
+- Mark GPT-6 Luna Pro vision-capable
+- Wait for WebMCP preference before scheduled runs
+- Add GPT-6 Luna Pro compatibility
+- Clarify French WebMCP opt-out disclosure
+- fix: fail closed WebMCP hydration
+- feat: enable WebMCP by default
+- Preserve list continuation after empty bullet markers
+- Stop Markdown list scans at HTML blocks
+- Preserve nested Markdown fences in final assistant renders
+- Keep trailing blank outside quoted Markdown fences
+- Reprocess fences after Markdown container boundaries
+- Scan quoted Markdown list continuations
+- Handle empty ordered markers and thematic lines
+- Respect lazy ordered Markdown continuations
+- Bound lazy Markdown list scans
+- Scan lazy Markdown list continuations
+- Scope cached Markdown list continuations
+- Cache Markdown list continuations
+- Avoid duplicate Markdown list padding
+- Retain nested Markdown list indentation
+- Track innermost Markdown list padding
+- Detect nested empty Markdown list items
+- Track Markdown list continuation columns
+- Preserve tabbed Markdown list padding
+- Handle whitespace-only Markdown list items
+- Limit Markdown ordered list markers
+- Preserve Markdown quote continuation prefixes
+- Respect mixed Markdown quote boundaries
+- End Markdown quotes at blank boundaries
+- Honor implicit Markdown list padding
+- Preserve streamed alternate Markdown fences
+- Respect nested Markdown container indentation
+- Handle empty Markdown list fence containers
+- Honor visual Markdown list padding
+- Preserve indented Markdown list snippets
+- Parse nested Markdown list containers
+- Limit Markdown fence recovery to streams
+- Align Markdown fences in quoted tabs
+- Handle nested tabbed list fences
+- Validate nested Markdown fence closures
+- Index nested Markdown fence closers
+- Scan complete alternate Markdown fences
+- Bound alternate Markdown fence nesting
+- Validate nested Markdown fence indentation
+- Cache list-free Markdown fence regions
+- Preserve list fences in Markdown wrappers
+- Strip Markdown fence indentation from code
+- Preserve Markdown fence boundary newlines
+- Support wide list quote fences
+- Preserve longer nested Markdown fences
+- Find indented Markdown fence continuations
+- Scan Markdown fence blank lines once
+- Handle Markdown fence container whitespace
+- Avoid copying Markdown fence prefixes
+- Track Markdown fence container indentation
+- Preserve quoted fence boundaries
+- Cache Markdown fence container boundaries
+- Avoid backtracking in fence container parsing
+- Parse nested Markdown fence containers
+- Reprocess fences after container boundaries
+- Preserve fenced blocks across final renders
+- Use streaming state for nested Markdown fences
+- End unfinished fences at container boundaries
+- Retain list context for indented fences
+- Support continuation list code fences
+- Bound nested fence lookahead
+- Distinguish streamed and completed nested fences
+- Keep unmatched nested fences from consuming prose
+- Separate history fence info strings
+- Handle tab-indented list code fences
+- Reject over-indented list fence closers
+- Handle variable fence container indentation
+- Harden Markdown fence container handling
+- Preserve Markdown fence containers
+- Potential fix for pull request finding 'CodeQL / Bad HTML filtering regexp'
+- Fix nested Markdown code fence rendering
+- Update LICENSE to reflect current licensing terms
+- docs: sync zh-CN and fr README license ending with README.md
+- Update licensing details in README.fr.md
+- Update license statement in README.md
+- fix: address recipient guard review findings
+- feat(sidepanel): chime when a clarification/permission card appears
+- feat(adapters): generic-first recipient guard on any site
+- fix(agent): fail-open recipient guard, user-granted send authorization, silent-reply recovery, screenshot budget
+- fix(content): prove non-sends in recipient probe, reliable text-click locator, content-script self-heal, candidate cache
+- [ImgBot] Optimize images
+- Respect hidden assigned slots in click candidates
+- Fix _hasVisibleBox shadow host aria-hidden traversal
+- Support X group DM recipient binding
+- Stabilize X message history baselines
+- Harden message metadata and X history proofs
+- Recognize localized LinkedIn post controls
+- Accept settled empty X conversations
+- Scope message and public-post guards
+- Require settled X message history
+- Recover route-local X DM body commands
+- Bind approved X DM bodies in workflow metadata
+- Resolve named X message recipients to observed handles
+- Fix social click guards and verify X message delivery
+- Refine SafeSocial explainer copy
+- Add SafeSocial 36.8.0 blog and visual
+- test: publish compact model benchmark artifacts
+- Add WebBrain Cloud section strip
+
+## [37.0.0] - 2026-09-29
+
+### Added
+
+- Added clipboard image paste to the chat composer in Chrome and Firefox, reusing the attachment pipeline so size limits, preview chips, and per-tab binding behave exactly like drag-and-drop.
+- Added 2Captcha as an independent fallback captcha provider with its own key, balance check, and localized Settings controls; a solve falls through to the next eligible provider before any token is injected.
+- Added Osaurus as a default-on local provider card with its own icon, model listing, and documentation.
+- Added GPT-6 Luna Pro, Sol, and Astra compatibility across context windows, temperature handling, streaming, and vision detection.
+- Added a structured `safe_first` contract to the clarify tool, so a waited timeout applies the declared first option instead of halting the run with a misleading authorization message.
+- Added a side-panel chime when a clarification or permission card appears, honoring the existing notification sound setting.
+- Enabled experimental WebMCP by default with an opt-out in Settings, and refreshed the privacy, security, and translated documentation to match.
+- Added Spark-X2.5 and MiniCPM5 compact-routing benchmark runs, the 15-model comparison write-up, and the published result artifacts with a replay harness.
+- Added an opt-in MemCode memory architecture proposal to the docs.
+- Added a WebBrain Cloud section to the landing page across every localized site.
+- Armed recipient verification on any site rather than only Gmail, LinkedIn, and Douyin, with mail-like and chat-like surfaces selecting which verification shape applies.
+- Added X group DM recipient binding alongside the existing X direct-message workflow, which binds approved bodies to workflow metadata and verifies delivery.
+
+### Changed
+
+- Routed WebBrain Cloud managed captcha solving through the broker and reported configured provider, memory record, and profile counts with each encrypted vault upload, so the authenticated admin stats page no longer needs to open a vault.
+- Made scheduled runs wait for the WebMCP preference before they start, and left WebMCP closed when its preference cannot be hydrated.
+- Trimmed the LICENSE to current terms, aligned the READMEs with it, and removed the Spanish README.
+- Made the recipient guard fail open: only a confident send classification reaches verification, and a bound recipient clarification authorizes the address observed on the page instead of looping.
+- Made screenshot capture repetition-aware within a burst of actions, so an eight-click turn costs roughly two screenshots and two vision calls instead of eight.
+- Refreshed provider and flag artwork and slimmed the largest icon assets.
+
+### Fixed
+
+- Stopped overlapping content elements and docked headers from blocking interaction. Fixed and sticky insets are detected, targets scroll clear of side rails, the perimeter is sampled when the center point is occluded, `pointer-events: none` wrappers no longer swallow clicks, the accessibility tree reports occlusion and hoists modern component overlays, and the loop detector names the obstruction instead of retrying blindly.
+- Hardened `safe_first` clarifications. Blank, Braille-blank, invisible, and format-only options are rejected, `safe_first` stays bound to the declared first option, a malformed option list fails closed, and a safe-first timeout no longer clears an earlier blocked clarification. Recipient binding and research escalation stay human-only after a timeout.
+- Corrected layered surface reads. Visible layers are now exposed alongside page text with bounded metadata, nested modal surfaces are hoisted once, ancestor pseudo-element covers and ancestor hits count as occluded, shadow hosts respect `aria-hidden`, and hidden assigned slots no longer become click candidates.
+- Preserved scroll position for visible fixed and pinned sticky controls, and told pinned elements apart from unstuck ones.
+- Verified X direct-message delivery against a settled history baseline and the same canonical handle, including group conversations, and recognized localized LinkedIn post controls without loosening the private-message guards.
+- Proved non-sends in the recipient probe, read typed and chipified addresses on any site, and made text clicks resolve reliably. A cached candidate list removes a full DOM walk per click, and the content script self-heals after an extension reload.
+- Forced one re-injection and a precise stale-script error for silent content-action replies instead of closing the channel.
+- Preserved nested code fences, list containers, quotes, and tabbed blocks through streaming and final Markdown renders, including fences inside lists, alternate fence lengths, empty markers, and quoted continuations.
+- Stopped duplicate images when a clipboard populates both the files and items collections, and kept the text when a paste carries text and an image together.
+
+### Tests
+
+- Added captcha provider, captcha Settings UI, Cloud broker, and profile-sync stats coverage.
+- Added mirrored Chrome and Firefox regressions for occlusion, docked insets, scroll clearance, layered surface reads, and `safe_first` clarification timeouts, keeping the two implementations byte-identical where they are paired.
+- Added local DOM fixtures for the X direct-message workflow and for LinkedIn public-post controls.
+- Added nested Markdown fence, list, and quote rendering tests, plus a replay harness for the compact model benchmark artifacts.
+
 ## [36.8.0] - 2026-09-20
 
 ### Added

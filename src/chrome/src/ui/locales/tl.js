@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Filipino / Tagalog (tl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Pag-zoom ng UI ng extension',
   'sp.ui_scale.decrease': 'Bawasan ang zoom ng UI ng extension',
   'sp.ui_scale.increase': 'Dagdagan ang zoom ng UI ng extension',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Naubos na ang libreng pang-araw-araw na alokasyon ng WebBrain Compass.',
   'sp.subscribe.btn': 'Mag-subscribe',
   'sp.subscribe.upgrade': 'Mag-upgrade sa Plus',
+  "sp.subscribe.resume_payment": "Na-update ang paraan ng pagbabayad — subukan muli",
   'sp.subscribe.resume_upgrade': 'Na-update ang plan — subukan muli',
   'sp.subscribe.resume': 'Naka-subscribe na — subukan muli',
   'sp.stopped_by_user': '[Itinigil ng user]',
@@ -326,6 +329,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Ang pagsingil, mga detalye ng card, email, at pagkansela ay pinamamahalaan ng Stripe para sa profile ng browser na ito.',
   'st.account.billing_preparing': 'Inihahanda ang link ng pagsingil ng Stripe para sa profile ng browser na ito.',
+  "st.account.payment_failed": "Hindi nakumpleto ang bayad sa iyong subscription. I-update ang paraan ng pagbabayad para maibalik ang iyong bayad na plan.",
+  "st.account.update_payment": "I-update ang paraan ng pagbabayad",
   'st.account.manage_billing': 'Pamahalaan ang pagsingil',
 
   'st.display.language.label': 'Wika',
@@ -394,6 +399,7 @@ export default {
   'st.provider.field.model': 'Modelo',
   'st.provider.field.model_optional': 'Modelo (opsyonal)',
   'st.provider.field.supports_vision': 'Sumusuporta ang modelo sa bisyon (multimodal)',
+  'st.provider.field.tools_mode': 'Paggamit ng native na mga tool',
   'st.provider.field.vision_auto': 'Awtomatiko',
   'st.provider.field.vision_force_on': 'Sapilitang i-on',
   'st.provider.field.vision_detected_vision': 'Awtomatikong natukoy: Vision',
@@ -609,9 +615,6 @@ export default {
   "st.transcription.connected": "Konektado! Modelo: {model}",
   "st.transcription.failed": "Nabigo: {error}",
   "st.transcription.fill_required": "Punan muna ang Base URL at Modelo.",
-  "st.captcha.desc_html": "Hayaan ang ahente na awtomatikong lutasin ang mga CAPTCHA sa pamamagitan ng <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> API. Sinusuportahan ang reCAPTCHA v2/v3, hCaptcha, at Cloudflare Turnstile. Awtomatikong pinapagana ang CapSolver kapag nag-save ka ng wastong API key; kung walang key, hihinto ang ahente at hihilingin sa iyong lutasin mismo ang CAPTCHA. Naniningil ang CapSolver sa bawat solve (~$0.001–$0.003); ginagamit mo ang sarili mong account at API key.",
-  "st.captcha.enabled.label": "I-enable ang CapSolver",
-  "st.captcha.enabled.desc": "Kapag may naabot na CAPTCHA ang ahente, tatawag ito sa CapSolver nang isang beses bago bumalik sa pagtatanong sa iyo. Kailangan ng API key sa ibaba.",
   "st.captcha.api_key.label": "CapSolver API Key",
   "st.captcha.save": "I-save ang Key",
   "st.captcha.check_balance": "Tingnan ang Balanse",
@@ -622,7 +625,6 @@ export default {
   "st.captcha.need_key": "Maglagay ng wastong CapSolver API key na nagsisimula sa CAP-.",
   "st.captcha.balance_ok": "OK — balanse: {balance}",
   "st.captcha.balance_fail": "Nabigo: {error}",
-  "st.captcha.security_html": "<strong>Paalala:</strong> ang API key ay iniimbak <strong>bilang plaintext</strong> sa local storage ng browser. Naniningil ang CapSolver sa iyong account sa bawat solve; tatawag lamang dito ang ahente kapag tunay na hinaharang ng CAPTCHA ang isang hakbang (pinakamarami ay isang beses bawat pagkakataon — hindi ito mag-uulit kapag nabigo). Ang mga terms of service ng ilang site ay nagbabawal sa automated na paglutas ng CAPTCHA; gamitin ang iyong pagpapasya.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'Mga iminungkahing aksyon',
@@ -943,6 +945,7 @@ export default {
   "sp.memory.error": "Error sa memory: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Hindi na-save: walang laman ang text pagkatapos linisin o mukhang may lihim (password, API key, token).",
   "sp.memory.reason.not_found": "Walang naka-save na memory na may ganoong ID.",
+  'sp.slash.workflow_editor': "Editor ng workflow",
   "sp.slash.workflows": "Ilista at pamahalaan ang mga naka-save na workflow",
   "sp.slash.teach": "I-record ang iyong mga kilos bilang naka-save na workflow",
   "sp.slash.run_workflow": "Patakbuhin ang naka-save na workflow ayon sa ID",
@@ -1039,6 +1042,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Max na sukat ng imahe",
   "st.imageBudget.maxDimension.desc": "Pinakamahabang gilid (lapad o taas) sa pixels para sa anumang screenshot na ipinapadala sa vision. Mas mababang cap ay nagpapaliit ng imahe bago ipadala, binabawasan ang token at gastos. Mas mataas na cap ay nagpapanatili ng fidelity.",
   "st.imageBudget.warning": "⚠️ Naaangkop ang mga setting na ito sa screenshot para sa vision (auto-screenshot, /screenshot, buong page, verify_form). Hindi apektado ang manu-manong naka-save na full-resolution na imahe. Iginagalang ang «Image detail» ng OpenAI-style endpoints; maaaring balewalain ng ibang provider.",
+  "sp.slash.export_traces_full": "I-export ang buong naka-save na trace session bilang JSON, kasama ang mga screenshot",
+  "sp.export_traces.recording_truncated": "Na-export bilang JSON ang lahat ng naka-save na tala. Hindi maibabalik sa pag-export ang nilalamang hindi naisama habang nagre-record.",
   "sp.slash.export_traces": "I-export ang tool chain (mga trace)",
   "sp.export_traces.none": "Walang trace para sa usapang ito. I-on ang Record traces sa Settings, pagkatapos ay patakbuhin muli.",
   "sp.export_traces.error": "Hindi ma-export ang mga trace.",

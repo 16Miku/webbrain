@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Portuguese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom da interface da extensão',
   'sp.ui_scale.decrease': 'Reduzir o zoom da interface',
   'sp.ui_scale.increase': 'Aumentar o zoom da interface',
@@ -172,6 +174,7 @@ export default {
   'sp.slash.remember': "Lembre-se de uma preferência do usuário",
   'sp.slash.show_memory': "Mostrar memória salva do usuário",
   'sp.slash.forget_memory': "Esqueça uma memória salva por ID",
+  'sp.slash.workflow_editor': "Editor de fluxos de trabalho",
   'sp.slash.workflows': "Liste e gerencie fluxos de trabalho salvos",
   "sp.slash.teach": "Grave suas ações como um fluxo de trabalho salvo",
   'sp.slash.run_workflow': "Execute um fluxo de trabalho salvo por ID",
@@ -321,6 +324,7 @@ export default {
   'sp.subscribe.allowance_used': "Limite diário gratuito do WebBrain Compass utilizado.",
   'sp.subscribe.btn': "Inscrever-se",
   'sp.subscribe.upgrade': 'Fazer upgrade para o Plus',
+  "sp.subscribe.resume_payment": "Método de pagamento atualizado — tentar novamente",
   'sp.subscribe.resume_upgrade': 'Plano atualizado — tentar novamente',
   'sp.subscribe.resume': "Eu me inscrevi – tente novamente",
   'sp.stopped_by_user': "[Interrompido pelo usuário]",
@@ -599,6 +603,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "Faturamento, detalhes do cartão, e-mail e cancelamento são gerenciados por Stripe para este perfil de navegador.",
   'st.account.billing_preparing': "Preparando o link de cobrança Stripe para este perfil de navegador.",
+  "st.account.payment_failed": "Não foi possível concluir o pagamento da sua assinatura. Atualize o método de pagamento para recuperar seu plano pago.",
+  "st.account.update_payment": "Atualizar método de pagamento",
   'st.account.manage_billing': "Gerenciar faturamento",
 
   'st.display.language.label': "Idioma",
@@ -846,6 +852,7 @@ export default {
   'st.provider.field.context_window': "Janela de contexto (tokens)",
   'st.provider.field.max_output_tokens': "Saída máxima (tokens)",
   'st.provider.field.supports_vision': "Modelo apoia visão (multimodal)",
+  'st.provider.field.tools_mode': 'Uso de ferramentas nativas',
   'st.provider.field.vision_auto': 'Automático',
   'st.provider.field.vision_force_on': 'Forçar ativação',
   'st.provider.field.vision_detected_vision': 'Detectado automaticamente: Visão',
@@ -963,9 +970,6 @@ export default {
   'st.memory.reason.not_found': "Nenhuma memória salva possui esse ID.",
   'st.memory.security_html': "<strong>Privacidade:</strong> a memória do usuário é armazenada em texto simples neste perfil de navegador. Quando ativado, os registros de memória ativa são enviados para qualquer provedor LLM configurado como parte do prompt do sistema. Não armazene senhas, chaves de API, tokens, códigos de recuperação ou segredos confidenciais aqui.",
 
-  'st.captcha.desc_html': "Deixe o agente resolver CAPTCHAs automaticamente pela API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Suporta reCAPTCHA v2/v3, hCaptcha e Cloudflare Turnstile. Salvar uma chave de API válida ativa o CapSolver automaticamente; sem uma chave, o agente para e pede que você resolva o CAPTCHA. O CapSolver cobra por resolução (~$0,001–$0,003); você usa sua própria conta e chave de API.",
-  'st.captcha.enabled.label': "Habilitar CapSolver",
-  'st.captcha.enabled.desc': "Quando o agente atingir um CAPTCHA, ele ligará para o CapSolver uma vez antes de voltar a perguntar a você. Requer uma chave de API abaixo.",
   'st.captcha.api_key.label': "Chave de API CapSolver",
   'st.captcha.save': "Salvar chave",
   'st.captcha.check_balance': "Verifique o saldo",
@@ -976,7 +980,6 @@ export default {
   'st.captcha.need_key': "Insira uma chave de API válida do CapSolver que comece com CAP-.",
   'st.captcha.balance_ok': "OK - saldo: {balance}",
   'st.captcha.balance_fail': "Falha: {error}",
-  'st.captcha.security_html': "<strong>Atenção:</strong> a chave API é armazenada <strong>em texto simples</strong> no armazenamento local do navegador. CapSolver cobra sua conta por cada solução; o agente só o chamará quando um CAPTCHA realmente bloquear uma etapa (no máximo uma vez por encontro - ele não tentará novamente em caso de falha). Os termos de serviço de alguns sites proíbem a resolução automatizada de CAPTCHA; use seu julgamento.",
 
   "st.system_one.desc_html": "Verificação adicional de monitoramentos e tarefas agendadas.",
   "st.system_one.enabled.label": "Ativar Jev",
@@ -1104,6 +1107,8 @@ export default {
   'tr.event.args': "argumentos",
   'tr.event.result': "resultado",
   'tr.event.step': "etapa {step}",
+  "sp.slash.export_traces_full": "Exportar toda a sessão de rastreamento salva como JSON, incluindo capturas de tela",
+  "sp.export_traces.recording_truncated": "Todos os registros salvos foram exportados como JSON. O conteúdo omitido durante a gravação não pode ser recuperado pela exportação.",
   "sp.slash.export_traces": "Exportar a cadeia de ferramentas (traços)",
   "sp.export_traces.none": "Não há vestígios desta conversa. Habilite Gravar rastreamentos em Configurações e execute novamente.",
   "sp.export_traces.error": "Não foi possível exportar rastreamentos.",

@@ -122,6 +122,19 @@ Users can store a short profile (name, email, throwaway password) in Settings �
 
 ---
 
+### Cloud Bridge Browser Approval
+
+The Cloud Bridge lets a controller send `cloud_*` run commands to the browser. By default (no token) it behaves as before. When a Cloud Bridge token is configured the bridge adds an opt-in approval step:
+
+- Each socket sends a `hello` with the token, `browserId`, `installationId` and browser/extension/platform info, then is *pending*; the backend must answer `connection_approved` before any command runs. Earlier commands get `connection_not_approved` (403) and never reach the background.
+- Approval is **per socket**: a reconnect, URL change or identity change starts pending again. `connection_rejected` closes the socket and stops auto-reconnect, and cancels any pending reconnect timer.
+- The token is a Cloud Bridge credential, distinct from provider API keys. It is stored in `chrome.storage.local` and is never included in the bridge `status`.
+- The URL stays restricted to `ws://` on localhost, and the allowed actions stay limited to the `cloud_*` run operations rather than general browser APIs. The bridge sends connection metadata (such as the configured URL) and run data (`tabId`, `finalUrl`, `content` and `result`), which may contain sensitive page data.
+
+**Where it stops.** The permission prompts raised during a cloud run (navigate, click, …) are answered by the backend through `cloud_respond`, including "always". An approved backend is therefore effectively an operator of that browser. Approval is per socket and is not persisted. The backend can revoke it with `connection_rejected`, which closes the socket and stops auto-reconnect. Disabling the bridge or changing its URL or identity also closes the active socket; a replacement needs fresh approval if a token remains configured. Details: [cloud-bridge-browser-approval.md](cloud-bridge-browser-approval.md).
+
+---
+
 ## Prompt Injection Defenses
 
 The primary threat: a malicious page crafts content that, when read by the agent and fed to the LLM, causes the model to execute unintended actions.
@@ -175,7 +188,10 @@ go through the capability × origin gate. (`isNetworkMutation` in
 
 The system prompt adds a preamble telling the model to:
 - State the URL, method, and payload in plain text before any destructive API call
-- Default to UI-first; only reach for the API when UI has actually failed
+- For the nine supported [CMS content recipes](cms-api-first.md), prefer the
+  official API after capability/auth discovery when task scope, CMS rights and
+  WebBrain mutation permission allow it. Ask remains read-only.
+- For other tasks, default to UI-first; only reach for the API when UI has actually failed
 
 Loop-detection API shortcut hints do not bypass this policy. They can expose
 the exact method and URL the page was already calling, including POST/PATCH/etc.,
@@ -191,7 +207,10 @@ persistent setting, which remains active until the user turns it off.
 ## Trace Data Isolation
 
 The trace recorder (`trace/recorder.js`) writes to IndexedDB on the user's
-machine only when explicitly enabled (Settings → Display → "Record traces").
+machine when explicitly enabled (Settings → Display → "Record traces") or
+when a local/bring-your-own provider's separate **Share queries for research**
+switch is enabled for that run. The latter forces a local record so a bounded,
+content-free diagnostic timeline can be uploaded under that explicit consent.
 The default tier is metadata-only: run records omit user and final assistant
 text; event records keep allowlisted counts, timings, usage, status/error codes,
 tool names/outcome status, and screenshot markers while omitting raw model

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WebBrain",
-  "version": "36.8.0",
+  "version": "38.0.13",
   "description": "Open-source AI browser agent — chat with pages, automate tasks, multi-provider LLM support.",
   "permissions": [
     "sidePanel",
@@ -12,6 +12,7 @@
     "scripting",
     "storage",
     "identity",
+    "cookies",
     "notifications",
     "webNavigation",
     "webRequest",
@@ -45,6 +46,14 @@
     "type": "module"
   },
   "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/captcha-callback-bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true,
+      "match_about_blank": true
+    },
     {
       "matches": ["<all_urls>"],
       "js": ["src/content/file-picker-guard-page.js"],

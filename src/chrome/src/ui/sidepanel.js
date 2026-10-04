@@ -72,6 +72,7 @@ import { providerIconUrl } from './provider-icons.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
 import { createSidePanelWindowScope } from './sidepanel-window-scope.js';
 import { visionProviderKind } from '../providers/vision-capabilities.js';
+import { baseModelNameSniffedVision, isOpenRouterLingVisionModel } from '../providers/provider-compatibility.js';
 import {
   clearStagedScreenshots,
   loadStagedScreenshots,
@@ -80,7 +81,7 @@ import {
   removeStagedScreenshots,
   saveStagedScreenshot,
 } from './staged-screenshot-store.js';
-import { installFileDropHandlers } from './attachment-drop.js';
+import { installClipboardImagePasteHandler, installFileDropHandlers } from './attachment-drop.js';
 import { isTextAttachment } from './attachment-file.js';
 
 const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
@@ -250,7 +251,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
   const localModels = document.getElementById('ob-local-models');
   const localModelList = document.getElementById('ob-local-model-list');
   const totalSteps = steps.length;
-  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
+  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'ods', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
   let current = 0;
   let localScanStarted = false;
   let localModelChoices = [];
@@ -850,12 +851,13 @@ const SLASH_COMMANDS = [
   },
   {
     value: '/export',
-    usage: '/export [--traces | --config]',
+    usage: '/export [--traces [--full] | --config]',
     descriptionKey: 'sp.slash.export',
     action: 'conversation',
     outOfBand: true,
     options: [
       { value: '--traces', descriptionKey: 'sp.slash.export_traces', action: 'traces', outOfBand: true, disallowPayload: true, exclusiveGroup: 'export-format' },
+      { value: '--full', descriptionKey: 'sp.slash.export_traces_full', requires: '--traces', conflicts: ['--config'], disallowPayload: true },
       { value: '--config', descriptionKey: 'sp.slash.export_config', action: 'config', outOfBand: true, disallowPayload: true, exclusiveGroup: 'export-format' },
     ],
   },
@@ -894,6 +896,14 @@ function slashCommandIsDiscoverable(command) {
 
 function slashOptionIsDiscoverable(option) {
   return option?.unsupported !== true;
+}
+
+function slashOptionDescriptionHtml(command, option) {
+  const description = escapeHtml(t(option.descriptionKey));
+  if (command.value !== '/workflow' || !['--save', '--export', '--import'].includes(option.value)) {
+    return description;
+  }
+  return `${description} <a href="https://webbrain.one/workflow-editor/" target="_blank" rel="noopener noreferrer">${escapeHtml(t('sp.slash.workflow_editor'))}</a>`;
 }
 
 function slashOptionIsAvailable(option, selectedValues, selectedGroups) {
@@ -1015,7 +1025,7 @@ function buildSlashCommandHelpHtml() {
     lines.push(`<code>${escapeHtml(command.usage)}</code> — ${escapeHtml(t(command.descriptionKey))}`);
     for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
       const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
-      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+      lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${slashOptionDescriptionHtml(command, option)}`);
     }
   }
   const shortcuts = t('sp.help.shortcuts_html');
@@ -1033,7 +1043,7 @@ function buildSlashCommandDetailHtml(command) {
   ];
   for (const option of (command.options || []).filter(slashOptionIsDiscoverable)) {
     const value = `${option.value}${option.valueLabel ? ` ${option.valueLabel}` : ''}`;
-    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${escapeHtml(t(option.descriptionKey))}`);
+    lines.push(`&nbsp;&nbsp;<code>${escapeHtml(value)}</code> — ${slashOptionDescriptionHtml(command, option)}`);
   }
   return lines.join('<br>');
 }
@@ -8149,6 +8159,25 @@ function toggledVisionProviderConfig(providerId, config) {
     const { supportsVision: _legacy, ...withoutLegacy } = config;
     return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
   }
+  if (String(providerId || '').trim().toLowerCase() === 'openrouter'
+    || String(config?.providerName || '').trim().toLowerCase() === 'openrouter') {
+    // OpenRouter exposes the tri-state vision selector, so the toggle flips
+    // visionMode (not the legacy boolean). Effective state mirrors the
+    // provider: explicit visionMode, then legacy supportsVision, then
+    // automatic model detection.
+    const model = String(config?.model || '');
+    const visionEnabled = config.visionMode === 'on'
+      || (config.visionMode !== 'off' && (
+        config.supportsVision === true
+        || (config.supportsVision == null && (
+          isOpenRouterLingVisionModel(model)
+          || baseModelNameSniffedVision(model.toLowerCase())
+        ))
+      ));
+    const enabled = !visionEnabled;
+    const { supportsVision: _legacy, ...withoutLegacy } = config;
+    return { enabled, config: { ...withoutLegacy, visionMode: enabled ? 'on' : 'off' } };
+  }
   const enabled = !config.supportsVision;
   return { enabled, config: { ...config, supportsVision: enabled } };
 }
@@ -8558,7 +8587,14 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   if (command.value === '/export' && action === 'traces') {
     let res;
     try {
-      res = await sendToBackground('export_traces', { tabId });
+      res = await sendToBackground('export_traces', { tabId, full: optionValues.has('--full') });
+      if (optionValues.has('--full') && res?.ok && res.sessionId) {
+        const [store, { exportRecordedSession }] = await Promise.all([
+          import('../trace/recorder.js'),
+          import('../trace/session-export.js'),
+        ]);
+        res = { ok: true, ...await exportRecordedSession(store, res.sessionId, chrome.runtime.getManifest().version || '') };
+      }
     } catch (e) {
       addPersistentSlashMessage(`${t('sp.export_traces.error')} (${e?.message || e})`);
       return '';
@@ -8567,7 +8603,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       addPersistentSlashMessage(`${t('sp.export_traces.error')} (${res?.error || 'unknown error'})`);
       return '';
     }
-    if (!res.markdown || res.turnCount === 0) {
+    if (!(res.json || res.markdown) || res.turnCount === 0) {
       addPersistentSlashMessage(
         res.reason === 'no-conversation'
           ? t('sp.export_traces.no_conversation')
@@ -8575,11 +8611,11 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       );
       return '';
     }
-    const blob = new Blob([res.markdown], { type: 'text/markdown' });
+    const blob = new Blob([res.json || res.markdown], { type: res.json ? 'application/json' : 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `webbrain-traces-${Date.now()}.md`;
+    a.download = `webbrain-traces-${Date.now()}.${res.json ? 'json' : 'md'}`;
     document.body.appendChild(a);
     try {
       a.click();
@@ -8587,7 +8623,9 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 7000);
     }
-    if (res.partial) {
+    if (res.recordingTruncated) {
+      addPersistentSlashMessage(t('sp.export_traces.recording_truncated'));
+    } else if (res.partial) {
       addPersistentSlashMessage(t('sp.export_traces.partial'));
     } else if (res.truncated) {
       addPersistentSlashMessage(t('sp.export_traces.truncated'));
@@ -11330,7 +11368,9 @@ function clearTransientAssistantTextForToolCall() {
 
 // WebBrain Compass returns a 402 with one trailing billing action. Keep the
 // matcher narrow so ordinary subscription text is not converted into billing UI.
-const SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain Plus):\s*(https?:\/\/\S+)/i;
+const SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain Plus|Update payment method):\s*(https?:\/\/\S+)/i;
+const SUBSCRIBE_ACTION_LABELS = { upgrade: 'sp.subscribe.upgrade', payment: 'st.account.update_payment', subscribe: 'sp.subscribe.btn' };
+const SUBSCRIBE_RESUME_LABELS = { upgrade: 'sp.subscribe.resume_upgrade', payment: 'sp.subscribe.resume_payment', subscribe: 'sp.subscribe.resume' };
 const COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
 const COST_ALLOWANCE_BUMP_USD = 10;
 
@@ -11409,7 +11449,7 @@ function parseSubscribeError(content) {
   // Strip trailing punctuation that markdown/markup might have appended.
   const url = m[2].replace(/[)\].,"'>]+$/, '');
   const message = content.slice(0, m.index).replace(/\s+$/, '').trim();
-  return { url, message, action: /^Upgrade/i.test(m[1]) ? 'upgrade' : 'subscribe' };
+  return { url, message, action: /^Update payment/i.test(m[1]) ? 'payment' : (/^Upgrade/i.test(m[1]) ? 'upgrade' : 'subscribe') };
 }
 
 function openSubscribeUrl(url) {
@@ -11441,7 +11481,7 @@ function renderSubscribeError(textEl, content, resumeMode = '') {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'subscribe-btn';
-  btn.textContent = t(parsed.action === 'upgrade' ? 'sp.subscribe.upgrade' : 'sp.subscribe.btn');
+  btn.textContent = t(SUBSCRIBE_ACTION_LABELS[parsed.action] || SUBSCRIBE_ACTION_LABELS.subscribe);
   if (parsed.action === 'upgrade') btn.classList.add('subscribe-upgrade-btn');
   btn.dataset.subscribeUrl = parsed.url;
   btn.dataset.bound = 'true';
@@ -11451,7 +11491,7 @@ function renderSubscribeError(textEl, content, resumeMode = '') {
   const resumeBtn = document.createElement('button');
   resumeBtn.type = 'button';
   resumeBtn.className = 'subscribe-resume-btn';
-  resumeBtn.textContent = t(parsed.action === 'upgrade' ? 'sp.subscribe.resume_upgrade' : 'sp.subscribe.resume');
+  resumeBtn.textContent = t(SUBSCRIBE_RESUME_LABELS[parsed.action] || SUBSCRIBE_RESUME_LABELS.subscribe);
   resumeBtn.dataset.resumeMode = ['ask', 'act', 'dev'].includes(resumeMode)
     ? resumeMode
     : (textEl.closest('.message.assistant')?.dataset.runMode || agentMode);
@@ -14243,6 +14283,10 @@ if (attachBtn && fileAttachInput) {
 }
 
 installFileDropHandlers(inputArea, (files) => {
+  handleAttachedFiles(files, renderedTabId ?? currentTabId);
+});
+
+installClipboardImagePasteHandler(inputEl, (files) => {
   handleAttachedFiles(files, renderedTabId ?? currentTabId);
 });
 

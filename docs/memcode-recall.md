@@ -3,7 +3,7 @@
 WebBrain's built-in user memory is local and remains the default. MemCode is an
 optional cross-device **read-only** lookup, not a replacement for local memory.
 
-1. Open **Settings → Profile → MemCode cross-device recall** and select **Connect
+1. Open **Settings → Memory → MemCode cross-device recall** and select **Connect
    MemCode**. WebBrain registers a public OAuth client and opens MemCode's sign-in
    and consent page using the browser's extension-owned redirect and PKCE.
 2. After connecting, switch on **Enable MemCode recall**. Connection alone does

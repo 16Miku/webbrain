@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Arabic (ar).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'تكبير واجهة الإضافة',
   'sp.ui_scale.decrease': 'تصغير واجهة الإضافة',
   'sp.ui_scale.increase': 'تكبير واجهة الإضافة',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'تم استخدام الحصة اليومية المجانية من WebBrain Compass.',
   'sp.subscribe.btn': 'اشترك',
   'sp.subscribe.upgrade': 'الترقية إلى Plus',
+  "sp.subscribe.resume_payment": "تم تحديث طريقة الدفع — أعد المحاولة",
   'sp.subscribe.resume_upgrade': 'تم تحديث الخطة — أعد المحاولة',
   'sp.subscribe.resume': 'اشتركت — أعد المحاولة',
   'sp.stopped_by_user': '[أوقفه المستخدم]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'تتم إدارة الفوترة وبيانات البطاقة والبريد الإلكتروني والإلغاء بواسطة Stripe لملف المتصفح هذا.',
   'st.account.billing_preparing': 'يتم تجهيز رابط الفوترة عبر Stripe لملف المتصفح هذا.',
+  "st.account.payment_failed": "تعذر إتمام دفعة اشتراكك. حدّث طريقة الدفع لاستعادة خطتك المدفوعة.",
+  "st.account.update_payment": "تحديث طريقة الدفع",
   'st.account.manage_billing': 'إدارة الفوترة',
 
   'st.display.language.label': 'اللغة',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': 'النموذج',
   'st.provider.field.model_optional': 'النموذج (اختياري)',
   'st.provider.field.supports_vision': 'النموذج يدعم الرؤية (متعدّد الوسائط)',
+  'st.provider.field.tools_mode': 'استخدام الأدوات الأصلية',
   'st.provider.field.vision_auto': 'تلقائي',
   'st.provider.field.vision_force_on': 'فرض التشغيل',
   'st.provider.field.vision_detected_vision': 'تم الاكتشاف تلقائيًا: يدعم الرؤية',
@@ -593,9 +599,6 @@ export default {
   "st.transcription.connected": "تم الاتصال! النموذج: {model}",
   "st.transcription.failed": "فشل: {error}",
   "st.transcription.fill_required": "املأ عنوان API الأساسي والنموذج أولًا.",
-  "st.captcha.desc_html": "دع الوكيل يحلّ اختبارات CAPTCHA تلقائيًا عبر واجهة <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. يدعم reCAPTCHA v2/v3 وhCaptcha وCloudflare Turnstile. يؤدي حفظ مفتاح API صالح إلى تمكين CapSolver تلقائيًا؛ وبدونه، يتوقّف الوكيل ويطلب منك حلّ الاختبار بنفسك. تتقاضى CapSolver رسومًا لكل عملية حلّ (~$0.001–$0.003)؛ تستخدم حسابك ومفتاح API الخاص بك.",
-  "st.captcha.enabled.label": "تفعيل CapSolver",
-  "st.captcha.enabled.desc": "عندما يصادف الوكيل اختبار CAPTCHA فإنه يستدعي CapSolver مرّة واحدة قبل اللجوء إلى سؤالك. يتطلّب مفتاح API أدناه.",
   "st.captcha.api_key.label": "مفتاح CapSolver API",
   "st.captcha.save": "حفظ المفتاح",
   "st.captcha.check_balance": "التحقّق من الرصيد",
@@ -606,7 +609,6 @@ export default {
   "st.captcha.need_key": "أدخل مفتاح CapSolver API صالحًا يبدأ بـ CAP-.",
   "st.captcha.balance_ok": "موافق — الرصيد: {balance}",
   "st.captcha.balance_fail": "فشل: {error}",
-  "st.captcha.security_html": "<strong>تنبيه:</strong> يُخزَّن مفتاح API <strong>بصيغة نصية واضحة</strong> في التخزين المحلي للمتصفح. تتقاضى CapSolver رسومًا من حسابك عن كل عملية حلّ؛ ولن يستدعيها الوكيل إلا عندما يحجب اختبار CAPTCHA خطوةً فعلًا (مرّة واحدة كحدّ أقصى لكل مواجهة — لن يعيد المحاولة عند الفشل). تحظر شروط خدمة بعض المواقع حلّ اختبارات CAPTCHA آليًا؛ استخدم حسن تقديرك.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'الإجراءات المقترحة',
@@ -915,6 +917,7 @@ export default {
   "sp.memory.error": "خطأ في الذاكرة: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "لم يتم الحفظ: النص فارغ بعد التنظيف أو يبدو أنه يحتوي على سر (كلمة مرور أو مفتاح API أو رمز مميز).",
   "sp.memory.reason.not_found": "لا توجد ذاكرة محفوظة بهذا المعرّف.",
+  'sp.slash.workflow_editor': "محرر مهام سير العمل",
   "sp.slash.workflows": "عرض مهام سير العمل المحفوظة وإدارتها",
   "sp.slash.teach": "سجّل إجراءاتك كمسار عمل محفوظ",
   "sp.slash.run_workflow": "تشغيل سير عمل محفوظ حسب المعرّف",
@@ -1020,6 +1023,8 @@ export default {
   "sp.upload_picker.cancelled": "تم إلغاء الرفع",
   "sp.upload_picker.too_large": "الملف المحدد يتجاوز حد 25 ميجابايت (الحد الأقصى 25 ميجابايت)",
   "sp.upload_picker.read_failed": "فشل قراءة الملف المحدد",
+  "sp.slash.export_traces_full": "تصدير جلسة التتبع المحفوظة كاملة بصيغة JSON، بما فيها لقطات الشاشة",
+  "sp.export_traces.recording_truncated": "تم تصدير جميع السجلات المحفوظة بصيغة JSON. حُذف بعض المحتوى أثناء التسجيل ولا يمكن استعادته بالتصدير.",
   "sp.slash.export_traces": "تصدير سلسلة الأدوات (التتبعات)",
   "sp.export_traces.none": "لا توجد تتبعات لهذه المحادثة. فعّل «تسجيل التتبعات» في الإعدادات ثم أعد التشغيل.",
   "sp.export_traces.error": "تعذّر تصدير التتبعات.",

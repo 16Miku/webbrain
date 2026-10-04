@@ -40,7 +40,9 @@ import {
   getClaudeOAuthStatus,
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
-import { isCapsolverEnabled } from './agent/capsolver-config.js';
+import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
+import { getAdditionalCaptchaBalance } from './agent/captcha-additional-providers.js';
+import { getTwoCaptchaBalance } from './agent/two-captcha.js';
 import { createSystemOneJudge } from './agent/systemone-judge.js';
 import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
@@ -1082,15 +1084,13 @@ async function loadCustomSkills() {
 }
 const customSkillsReady = loadCustomSkills();
 
-// A valid key plus explicit consent enables CapSolver. Requiring the existing
-// boolean preserves legacy profiles that saved a key while the old switch was
-// off; pressing Save Key in the new UI sets consent to true.
+// Local browsers require a valid key and explicit consent. Managed Cloud
+// browsers use the broker flag and never use a CapSolver key from storage.
 async function loadCaptchaSolver() {
-  const stored = await chrome.storage.local.get(['capsolverApiKey', 'captchaSolverEnabled']);
-  agent.captchaSolverEnabled = isCapsolverEnabled(
-    stored.capsolverApiKey,
-    stored.captchaSolverEnabled,
-  );
+  const stored = await chrome.storage.local.get(CAPTCHA_SETTINGS_KEYS);
+  const providers = getCaptchaProviders(stored);
+  agent.captchaProviderIds = providers.map(provider => provider.id);
+  agent.captchaSolverEnabled = providers.length > 0;
 }
 loadCaptchaSolver();
 
@@ -1214,7 +1214,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
   if (PROFILE_SYNC_DATA_KEYS.some((key) => changes[key])) profileSync.noteChanges(changes).catch(() => {});
   if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => {});
-  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl) {
+  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
+    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
     cloudRunController.syncBridge().catch(() => {});
   }
   if (changes.maxAgentSteps) {
@@ -1310,10 +1311,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
     refreshPrompts = true;
   }
-  if (changes.capsolverApiKey || changes.captchaSolverEnabled) {
+  if (CAPTCHA_SETTINGS_KEYS.some(key => changes[key])) {
     loadCaptchaSolver()
       .then(() => agent._refreshSystemPrompts())
-      .catch((error) => console.warn('[WebBrain] CapSolver setting could not be refreshed', error));
+      .catch((error) => console.warn('[WebBrain] CAPTCHA settings could not be refreshed', error));
   }
   if (changes.planBeforeActMode || changes.planBeforeAct) {
     applyPlanBeforeActMode(normalizePlanBeforeActMode({
@@ -3617,7 +3618,7 @@ async function handleMessage(msg, sender) {
           throw new Error('Could not durably clear the tab transcript.');
         }
         clearedContextMenuPromptId = tabChatClearResult.clearedContextMenuPromptId || null;
-        agent.clearConversation(tabId);
+        await agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
         chrome.runtime.sendMessage({
           target: 'sidepanel',
@@ -3717,7 +3718,7 @@ async function handleMessage(msg, sender) {
     case 'export_traces': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) return { ok: false, error: 'No tab ID' };
-      return { ok: true, ...(await agent.exportTraces(tabId)) };
+      return { ok: true, ...(await agent.exportTraces(tabId, { full: msg.full === true })) };
     }
 
     case 'export_config': {
@@ -4107,6 +4108,22 @@ async function handleMessage(msg, sender) {
         });
         return { success: true, model: result.model };
       } catch (error) { return { success: false, error: error.message }; }
+    }
+
+    case 'test_captcha_provider_balance': {
+      try {
+        return { ok: true, ...await getAdditionalCaptchaBalance(msg.provider, String(msg.apiKey || '').trim()) };
+      } catch (error) { return { ok: false, error: error.message }; }
+    }
+
+    case 'test_two_captcha_balance': {
+      try {
+        const key = String(msg.apiKey || '').trim();
+        if (!key) return { ok: false, error: 'No API key provided' };
+        return { ok: true, ...await getTwoCaptchaBalance(key) };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
     }
 
     case 'test_capsolver_balance': {

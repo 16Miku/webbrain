@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Bengali — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'এক্সটেনশনের UI জুম',
   'sp.ui_scale.decrease': 'এক্সটেনশনের UI ছোট করুন',
   'sp.ui_scale.increase': 'এক্সটেনশনের UI বড় করুন',
@@ -172,6 +174,7 @@ export default {
   'sp.slash.remember': "একটি ব্যবহারকারী পছন্দ মনে রাখবেন",
   'sp.slash.show_memory': "সংরক্ষিত ব্যবহারকারী মেমরি দেখান",
   'sp.slash.forget_memory': "আইডি দ্বারা একটি সংরক্ষিত মেমরি ভুলে যান",
+  'sp.slash.workflow_editor': "ওয়ার্কফ্লো এডিটর",
   'sp.slash.workflows': "সংরক্ষিত ওয়ার্কফ্লো তালিকাভুক্ত করুন এবং পরিচালনা করুন",
   "sp.slash.teach": "আপনার কাজগুলো সংরক্ষিত ওয়ার্কফ্লো হিসেবে রেকর্ড করুন",
   'sp.slash.run_workflow': "আইডি দ্বারা একটি সংরক্ষিত ওয়ার্কফ্লো চালান",
@@ -320,6 +323,7 @@ export default {
   'sp.subscribe.allowance_used': "দৈনিক বিনামূল্যের WebBrain Compass ভাতা ব্যবহার করা হয়েছে।",
   'sp.subscribe.btn': "সদস্যতা",
   'sp.subscribe.upgrade': 'Plus-এ আপগ্রেড করুন',
+  "sp.subscribe.resume_payment": "পেমেন্ট পদ্ধতি আপডেট হয়েছে — আবার চেষ্টা করুন",
   'sp.subscribe.resume_upgrade': 'প্ল্যান আপডেট হয়েছে — আবার চেষ্টা করুন',
   'sp.subscribe.resume': "আমি সাবস্ক্রাইব করেছি — আবার চেষ্টা করুন",
   'sp.stopped_by_user': "[ব্যবহারকারীর দ্বারা থামানো]",
@@ -596,6 +600,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "এই ব্রাউজার প্রোফাইলের জন্য বিলিং, কার্ডের বিবরণ, ইমেল এবং বাতিলকরণ Stripe দ্বারা পরিচালিত হয়।",
   'st.account.billing_preparing': "এই ব্রাউজার প্রোফাইলের জন্য Stripe বিলিং লিঙ্ক প্রস্তুত করা হচ্ছে।",
+  "st.account.payment_failed": "আপনার সদস্যতার পেমেন্ট সম্পন্ন হয়নি। পেইড প্ল্যান ফিরে পেতে পেমেন্ট পদ্ধতি আপডেট করুন।",
+  "st.account.update_payment": "পেমেন্ট পদ্ধতি আপডেট করুন",
   'st.account.manage_billing': "বিলিং পরিচালনা করুন",
 
   'st.display.language.label': "ভাষা",
@@ -832,6 +838,7 @@ export default {
   'st.provider.field.context_window': "প্রসঙ্গ উইন্ডো (টোকেন)",
   'st.provider.field.max_output_tokens': "সর্বোচ্চ আউটপুট (টোকেন)",
   'st.provider.field.supports_vision': "মডেল দৃষ্টি সমর্থন করে (মাল্টিমোডাল)",
+  'st.provider.field.tools_mode': 'নেটিভ টুল ব্যবহার',
   'st.provider.field.vision_auto': 'স্বয়ংক্রিয়',
   'st.provider.field.vision_force_on': 'জোর করে চালু',
   'st.provider.field.vision_detected_vision': 'স্বয়ংক্রিয়ভাবে শনাক্ত: ভিশন',
@@ -942,9 +949,6 @@ export default {
   'st.memory.reason.not_found': "কোনো সংরক্ষিত মেমরি সেই আইডি নেই।",
   'st.memory.security_html': "<strong>গোপনীয়তা:</strong> ব্যবহারকারীর মেমরি এই ব্রাউজার প্রোফাইলে প্লেইনটেক্সটে সংরক্ষণ করা হয়। সক্রিয় করা হলে, সিস্টেম প্রম্পটের অংশ হিসাবে আপনি যে LLM প্রদানকারীকে কনফিগার করেন সক্রিয় মেমরি রেকর্ডগুলি পাঠানো হয়৷ এখানে পাসওয়ার্ড, API কী, টোকেন, রিকভারি কোড বা সংবেদনশীল গোপনীয়তা সংরক্ষণ করবেন না।",
 
-  'st.captcha.desc_html': "এজেন্টকে <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> API-এর মাধ্যমে স্বয়ংক্রিয়ভাবে CAPTCHA সমাধান করতে দিন। এটি reCAPTCHA v2/v3, hCaptcha এবং Cloudflare Turnstile সমর্থন করে। একটি বৈধ API কী সংরক্ষণ করলে CapSolver স্বয়ংক্রিয়ভাবে সক্রিয় হয়; কী না থাকলে এজেন্ট থামে এবং আপনাকে নিজেই CAPTCHA সমাধান করতে বলে। প্রতিটি সমাধানের জন্য CapSolver চার্জ করে (~$0.001–$0.003); আপনি নিজের অ্যাকাউন্ট ও API কী ব্যবহার করেন।",
-  'st.captcha.enabled.label': "CapSolver সক্ষম করুন",
-  'st.captcha.enabled.desc': "যখন এজেন্ট একটি ক্যাপচা হিট করে তখন এটি আপনাকে জিজ্ঞাসা করার আগে একবার ক্যাপসোলভারকে কল করবে। নীচে একটি API কী প্রয়োজন৷",
   'st.captcha.api_key.label': "CapSolver API কী",
   'st.captcha.save': "কী সংরক্ষণ করুন",
   'st.captcha.check_balance': "ব্যালেন্স চেক করুন",
@@ -955,7 +959,6 @@ export default {
   'st.captcha.need_key': "CAP- দিয়ে শুরু হওয়া একটি বৈধ CapSolver API কী লিখুন।",
   'st.captcha.balance_ok': "ঠিক আছে — ব্যালেন্স: {balance}",
   'st.captcha.balance_fail': "ব্যর্থ হয়েছে: {error}",
-  'st.captcha.security_html': "<strong>হেড-আপ:</strong> API কী সংরক্ষণ করা হয় <strong>প্লেইনটেক্সট</strong> ব্রাউজার স্থানীয় স্টোরেজে। CapSolver প্রতিটি সমাধানের জন্য আপনার অ্যাকাউন্ট চার্জ করে; এজেন্ট কেবল তখনই এটিকে কল করবে যখন একটি ক্যাপচা প্রকৃতপক্ষে একটি পদক্ষেপকে ব্লক করে (প্রতি এনকাউন্টারে সর্বোচ্চ একবার - এটি ব্যর্থ হলে পুনরায় চেষ্টা করবে না)। কিছু সাইটের পরিষেবার শর্তাবলী স্বয়ংক্রিয় ক্যাপচা সমাধান নিষিদ্ধ করে; আপনার রায় ব্যবহার করুন।",
 
   "st.system_one.desc_html": "নির্ধারিত পর্যবেক্ষণ ও কাজ সম্পন্ন হওয়ার অতিরিক্ত যাচাই।",
   "st.system_one.enabled.label": "Jev চালু করুন",
@@ -1083,6 +1086,8 @@ export default {
   'tr.event.args': "args",
   'tr.event.result': "ফলাফল",
   'tr.event.step': "ধাপ {step}",
+  "sp.slash.export_traces_full": "স্ক্রিনশটসহ সম্পূর্ণ সংরক্ষিত ট্রেস সেশন JSON হিসেবে রপ্তানি করুন",
+  "sp.export_traces.recording_truncated": "সব সংরক্ষিত রেকর্ড JSON হিসেবে রপ্তানি করা হয়েছে। রেকর্ডিংয়ের সময় বাদ পড়া কিছু তথ্য রপ্তানির মাধ্যমে ফেরত পাওয়া যাবে না।",
   "sp.slash.export_traces": "টুল চেইন (ট্রেস) রপ্তানি করুন",
   "sp.export_traces.none": "এই কথোপকথনের জন্য কোন চিহ্ন নেই. সেটিংসে রেকর্ড ট্রেস সক্ষম করুন, তারপর আবার চালান।",
   "sp.export_traces.error": "ট্রেস এক্সপোর্ট করা যায়নি।",

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Korean (ko).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '확장 프로그램 UI 확대/축소',
   'sp.ui_scale.decrease': '확장 프로그램 UI 축소',
   'sp.ui_scale.increase': '확장 프로그램 UI 확대',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'WebBrain Compass의 무료 일일 사용량을 모두 사용했습니다.',
   'sp.subscribe.btn': '구독하기',
   'sp.subscribe.upgrade': 'Plus로 업그레이드',
+  "sp.subscribe.resume_payment": "결제 수단 업데이트 완료 — 다시 시도",
   'sp.subscribe.resume_upgrade': '요금제가 업데이트되었습니다 — 다시 시도',
   'sp.subscribe.resume': '구독했습니다 — 다시 시도',
   'sp.stopped_by_user': '[사용자가 중지함]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': '이 브라우저 프로필의 청구, 카드 정보, 이메일 및 해지는 Stripe에서 관리합니다.',
   'st.account.billing_preparing': '이 브라우저 프로필의 Stripe 청구 링크를 준비하는 중입니다.',
+  "st.account.payment_failed": "구독 결제를 완료하지 못했습니다. 유료 요금제를 다시 사용하려면 결제 수단을 업데이트하세요.",
+  "st.account.update_payment": "결제 수단 업데이트",
   'st.account.manage_billing': '청구 관리',
 
   'st.display.language.label': '언어',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': '모델',
   'st.provider.field.model_optional': '모델 (선택)',
   'st.provider.field.supports_vision': '모델이 비전(멀티모달)을 지원합니다',
+  'st.provider.field.tools_mode': '네이티브 도구 사용',
   'st.provider.field.vision_auto': '자동',
   'st.provider.field.vision_force_on': '강제로 켜기',
   'st.provider.field.vision_detected_vision': '자동 감지: 비전',
@@ -593,9 +599,6 @@ export default {
   "st.transcription.connected": "연결됨! 모델: {model}",
   "st.transcription.failed": "실패: {error}",
   "st.transcription.fill_required": "먼저 기본 URL과 모델을 입력하세요.",
-  "st.captcha.desc_html": "에이전트가 <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> API를 통해 CAPTCHA를 자동으로 풀게 합니다. reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile을 지원합니다. 유효한 API 키를 저장하면 CapSolver가 자동으로 활성화됩니다. 키가 없으면 에이전트가 멈추고 CAPTCHA를 직접 풀어 달라고 요청합니다. CapSolver는 풀이당 요금을 부과하며(~$0.001–$0.003), 본인의 계정과 API 키를 사용합니다.",
-  "st.captcha.enabled.label": "CapSolver 사용",
-  "st.captcha.enabled.desc": "에이전트가 CAPTCHA를 만나면 사용자에게 묻기로 폴백하기 전에 CapSolver를 한 번 호출합니다. 아래에 API 키가 필요합니다.",
   "st.captcha.api_key.label": "CapSolver API 키",
   "st.captcha.save": "키 저장",
   "st.captcha.check_balance": "잔액 확인",
@@ -606,7 +609,6 @@ export default {
   "st.captcha.need_key": "CAP-로 시작하는 유효한 CapSolver API 키를 입력하세요.",
   "st.captcha.balance_ok": "정상 — 잔액: {balance}",
   "st.captcha.balance_fail": "실패: {error}",
-  "st.captcha.security_html": "<strong>참고:</strong> API 키는 브라우저 로컬 저장소에 <strong>평문으로</strong> 저장됩니다. CapSolver는 풀이마다 계정에 요금을 부과합니다. 에이전트는 CAPTCHA가 실제로 단계를 막을 때만 이를 호출하며(한 번 만날 때마다 최대 한 번 — 실패해도 재시도하지 않습니다), 일부 사이트의 서비스 약관은 자동 CAPTCHA 풀이를 금지하므로, 판단에 따라 사용하세요.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': '추천 작업',
@@ -915,6 +917,7 @@ export default {
   "sp.memory.error": "메모리 오류: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "저장하지 않았습니다. 정리 후 텍스트가 비어 있거나 비밀 정보(비밀번호, API 키, 토큰)가 포함된 것으로 보입니다.",
   "sp.memory.reason.not_found": "해당 ID의 저장된 메모리가 없습니다.",
+  'sp.slash.workflow_editor': "워크플로 편집기",
   "sp.slash.workflows": "저장된 워크플로 목록 및 관리",
   "sp.slash.teach": "작업을 저장된 워크플로로 기록",
   "sp.slash.run_workflow": "ID로 저장된 워크플로 실행",
@@ -1020,6 +1023,8 @@ export default {
   "sp.upload_picker.cancelled": "업로드가 취소되었습니다",
   "sp.upload_picker.too_large": "선택한 파일이 25MB 제한을 초과합니다 (최대 25MB)",
   "sp.upload_picker.read_failed": "선택한 파일을 읽지 못했습니다",
+  "sp.slash.export_traces_full": "스크린샷을 포함한 저장된 전체 추적 세션을 JSON으로 내보내기",
+  "sp.export_traces.recording_truncated": "저장된 모든 기록을 JSON으로 내보냈습니다. 기록 중 누락된 내용은 내보내기로 복구할 수 없습니다.",
   "sp.slash.export_traces": "도구 체인 내보내기(트레이스)",
   "sp.export_traces.none": "이 대화에 대한 트레이스가 없습니다. 설정에서 '트레이스 기록'을 켜고 다시 실행하세요.",
   "sp.export_traces.error": "트레이스를 내보낼 수 없습니다.",

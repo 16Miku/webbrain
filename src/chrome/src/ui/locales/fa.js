@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Persian — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'بزرگ‌نمایی رابط کاربری افزونه',
   'sp.ui_scale.decrease': 'کاهش بزرگ‌نمایی رابط افزونه',
   'sp.ui_scale.increase': 'افزایش بزرگ‌نمایی رابط افزونه',
@@ -172,6 +174,7 @@ export default {
   'sp.slash.remember': "یک اولویت کاربر را به خاطر بسپارید",
   'sp.slash.show_memory': "نمایش حافظه کاربر ذخیره شده",
   'sp.slash.forget_memory': "یک حافظه ذخیره شده توسط ID را فراموش کنید",
+  'sp.slash.workflow_editor': "ویرایشگر گردش کار",
   'sp.slash.workflows': "گردش کار ذخیره شده را فهرست و مدیریت کنید",
   "sp.slash.teach": "اقدامات خود را به‌صورت گردش‌کار ذخیره‌شده ضبط کنید",
   'sp.slash.run_workflow': "یک گردش کار ذخیره شده توسط ID را اجرا کنید",
@@ -321,6 +324,7 @@ export default {
   'sp.subscribe.allowance_used': "سهمیه رایگان روزانه WebBrain Compass استفاده شد.",
   'sp.subscribe.btn': "مشترک شوید",
   'sp.subscribe.upgrade': 'ارتقا به Plus',
+  "sp.subscribe.resume_payment": "روش پرداخت به‌روز شد — تلاش دوباره",
   'sp.subscribe.resume_upgrade': 'طرح به‌روزرسانی شد — تلاش دوباره',
   'sp.subscribe.resume': "مشترک شدم - دوباره امتحان کنید",
   'sp.stopped_by_user': "[توقف کاربر]",
@@ -599,6 +603,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "صورت‌حساب، جزئیات کارت، ایمیل، و لغو توسط Stripe برای نمایه این مرورگر مدیریت می‌شود.",
   'st.account.billing_preparing': "در حال آماده سازی پیوند صورتحساب Stripe برای این نمایه مرورگر.",
+  "st.account.payment_failed": "پرداخت اشتراک شما انجام نشد. برای بازگرداندن طرح پولی، روش پرداخت خود را به‌روز کنید.",
+  "st.account.update_payment": "به‌روزرسانی روش پرداخت",
   'st.account.manage_billing': "مدیریت صورتحساب",
 
   'st.display.language.label': "زبان",
@@ -846,6 +852,7 @@ export default {
   'st.provider.field.context_window': "پنجره زمینه (توکن ها)",
   'st.provider.field.max_output_tokens': "حداکثر خروجی (توکن ها)",
   'st.provider.field.supports_vision': "مدل از بینایی پشتیبانی می کند (چند وجهی)",
+  'st.provider.field.tools_mode': 'استفاده بومی از ابزارها',
   'st.provider.field.vision_auto': 'خودکار',
   'st.provider.field.vision_force_on': 'اجباری روشن',
   'st.provider.field.vision_detected_vision': 'شناسایی خودکار: بینایی',
@@ -963,9 +970,6 @@ export default {
   'st.memory.reason.not_found': "هیچ حافظه ذخیره شده ای آن شناسه را ندارد.",
   'st.memory.security_html': "<strong>حریم خصوصی:</strong> حافظه کاربر به صورت متن ساده در این نمایه مرورگر ذخیره می شود. هنگامی که فعال باشد، سوابق حافظه فعال به هر ارائه دهنده LLM که به عنوان بخشی از درخواست سیستم پیکربندی می کنید ارسال می شود. رمزهای عبور، کلیدهای API، نشانه‌ها، کدهای بازیابی یا اسرار حساس را در اینجا ذخیره نکنید.",
 
-  'st.captcha.desc_html': "به عامل اجازه دهید CAPTCHAها را به‌طور خودکار از طریق API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> حل کند. از reCAPTCHA v2/v3، hCaptcha و Cloudflare Turnstile پشتیبانی می‌کند. با ذخیره یک کلید API معتبر، CapSolver به‌طور خودکار فعال می‌شود؛ بدون کلید، عامل متوقف می‌شود و از شما می‌خواهد CAPTCHA را خودتان حل کنید. CapSolver برای هر حل هزینه دریافت می‌کند (~$0.001–$0.003)؛ از حساب و کلید API خودتان استفاده می‌کنید.",
-  'st.captcha.enabled.label': "CapSolver را فعال کنید",
-  'st.captcha.enabled.desc': "هنگامی که عامل به یک CAPTCHA برخورد می کند، قبل از اینکه دوباره از شما بپرسد، یک بار با CapSolver تماس می گیرد. به یک کلید API در زیر نیاز دارد.",
   'st.captcha.api_key.label': "کلید API CapSolver",
   'st.captcha.save': "ذخیره کلید",
   'st.captcha.check_balance': "تعادل را بررسی کنید",
@@ -976,7 +980,6 @@ export default {
   'st.captcha.need_key': "یک کلید API معتبر CapSolver که با CAP- شروع می‌شود وارد کنید.",
   'st.captcha.balance_ok': "خوب - تعادل: {balance}",
   'st.captcha.balance_fail': "ناموفق: {error}",
-  'st.captcha.security_html': "<strong>هدآپ:</strong> کلید API ذخیره می شود <strong>در متن ساده</strong> در حافظه محلی مرورگر CapSolver برای هر حل حساب شما را شارژ می کند. عامل فقط زمانی آن را فراخوانی می کند که یک CAPTCHA در واقع یک مرحله را مسدود کند (حداکثر یک بار در هر برخورد - در صورت شکست مجدداً تلاش نمی کند). شرایط خدمات برخی از سایت ها حل خودکار CAPTCHA را ممنوع می کند. از قضاوت خود استفاده کنید",
 
   "st.system_one.desc_html": "بررسی تکمیلی پایش‌های زمان‌بندی‌شده و تکمیل کارها.",
   "st.system_one.enabled.label": "فعال‌سازی Jev",
@@ -1104,6 +1107,8 @@ export default {
   'tr.event.args': "ارگ",
   'tr.event.result': "نتیجه",
   'tr.event.step': "مرحله {step}",
+  "sp.slash.export_traces_full": "صدور تمام نشست ردگیری ذخیره‌شده به صورت JSON، شامل تصاویر صفحه",
+  "sp.export_traces.recording_truncated": "تمام رکوردهای ذخیره‌شده به صورت JSON صادر شدند. محتوای حذف‌شده هنگام ضبط با صدور قابل بازیابی نیست.",
   "sp.slash.export_traces": "صادرات زنجیره ابزار (ردیابی)",
   "sp.export_traces.none": "هیچ اثری برای این گفتگو وجود ندارد. ضبط ردیابی را در تنظیمات فعال کنید، سپس دوباره اجرا کنید.",
   "sp.export_traces.error": "ردیابی صادر نشد.",

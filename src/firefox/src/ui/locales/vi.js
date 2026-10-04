@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Vietnamese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Thu phóng giao diện tiện ích',
   'sp.ui_scale.decrease': 'Thu nhỏ giao diện tiện ích',
   'sp.ui_scale.increase': 'Phóng to giao diện tiện ích',
@@ -172,6 +174,7 @@ export default {
   'sp.slash.remember': "Ghi nhớ sở thích của người dùng",
   'sp.slash.show_memory': "Hiển thị bộ nhớ người dùng đã lưu",
   'sp.slash.forget_memory': "Quên bộ nhớ đã lưu bằng ID",
+  'sp.slash.workflow_editor': "Trình chỉnh sửa quy trình làm việc",
   'sp.slash.workflows': "Liệt kê và quản lý quy trình công việc đã lưu",
   "sp.slash.teach": "Ghi lại thao tác của bạn thành quy trình đã lưu",
   'sp.slash.run_workflow': "Chạy quy trình công việc đã lưu theo ID",
@@ -320,6 +323,7 @@ export default {
   'sp.subscribe.allowance_used': "Đã sử dụng hạn mức WebBrain Compass miễn phí hàng ngày.",
   'sp.subscribe.btn': "Đăng ký",
   'sp.subscribe.upgrade': 'Nâng cấp lên Plus',
+  "sp.subscribe.resume_payment": "Đã cập nhật phương thức thanh toán — thử lại",
   'sp.subscribe.resume_upgrade': 'Gói đã được cập nhật — thử lại',
   'sp.subscribe.resume': "Tôi đã đăng ký - thử lại",
   'sp.stopped_by_user': "[Người dùng đã dừng]",
@@ -596,6 +600,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "Việc thanh toán, chi tiết thẻ, email và việc hủy do Stripe quản lý cho cấu hình trình duyệt này.",
   'st.account.billing_preparing': "Đang chuẩn bị liên kết thanh toán Stripe cho cấu hình trình duyệt này.",
+  "st.account.payment_failed": "Không thể hoàn tất thanh toán gói đăng ký. Hãy cập nhật phương thức thanh toán để khôi phục gói trả phí.",
+  "st.account.update_payment": "Cập nhật phương thức thanh toán",
   'st.account.manage_billing': "Quản lý thanh toán",
 
   'st.display.language.label': "Ngôn ngữ",
@@ -832,6 +838,7 @@ export default {
   'st.provider.field.context_window': "Cửa sổ ngữ cảnh (mã thông báo)",
   'st.provider.field.max_output_tokens': "Đầu ra tối đa (mã thông báo)",
   'st.provider.field.supports_vision': "Mô hình hỗ trợ tầm nhìn (đa phương thức)",
+  'st.provider.field.tools_mode': 'Sử dụng công cụ gốc',
   'st.provider.field.vision_auto': 'Tự động',
   'st.provider.field.vision_force_on': 'Buộc bật',
   'st.provider.field.vision_detected_vision': 'Tự động phát hiện: Thị giác',
@@ -942,9 +949,6 @@ export default {
   'st.memory.reason.not_found': "Không có bộ nhớ đã lưu nào có ID đó.",
   'st.memory.security_html': "<strong>Quyền riêng tư:</strong> bộ nhớ người dùng được lưu trữ dưới dạng văn bản gốc trong hồ sơ trình duyệt này. Khi được bật, các bản ghi bộ nhớ hoạt động sẽ được gửi đến bất kỳ nhà cung cấp LLM nào mà bạn định cấu hình như một phần của lời nhắc hệ thống. Không lưu trữ mật khẩu, khóa API, mã thông báo, mã khôi phục hoặc bí mật nhạy cảm ở đây.",
 
-  'st.captcha.desc_html': "Cho phép tác nhân tự động giải CAPTCHA qua API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Hỗ trợ reCAPTCHA v2/v3, hCaptcha và Cloudflare Turnstile. Lưu khóa API hợp lệ sẽ tự động bật CapSolver; nếu không có khóa, tác nhân sẽ dừng và yêu cầu bạn tự giải CAPTCHA. CapSolver tính phí cho mỗi lần giải (~$0,001–$0,003); bạn sử dụng tài khoản và khóa API của riêng mình.",
-  'st.captcha.enabled.label': "Kích hoạt CapSolver",
-  'st.captcha.enabled.desc': "Khi nhân viên chạm vào CAPTCHA, nó sẽ gọi CapSolver một lần trước khi quay lại hỏi bạn. Yêu cầu khóa API bên dưới.",
   'st.captcha.api_key.label': "Khóa API CapSolver",
   'st.captcha.save': "Lưu khóa",
   'st.captcha.check_balance': "Kiểm tra số dư",
@@ -955,7 +959,6 @@ export default {
   'st.captcha.need_key': "Nhập khóa API CapSolver hợp lệ bắt đầu bằng CAP-.",
   'st.captcha.balance_ok': "Được rồi — số dư: {balance}",
   'st.captcha.balance_fail': "Không thành công: {error}",
-  'st.captcha.security_html': "<strong>Lưu ý:</strong> khóa API được lưu trữ <strong>trong bản rõ</strong> trong bộ nhớ cục bộ của trình duyệt. CapSolver tính phí tài khoản của bạn cho mỗi lần giải; tác nhân sẽ chỉ gọi nó khi CAPTCHA thực sự chặn một bước (tối đa một lần cho mỗi lần gặp - nó sẽ không thử lại nếu thất bại). Điều khoản dịch vụ của một số trang web nghiêm cấm việc giải CAPTCHA tự động; sử dụng phán đoán của bạn.",
 
   "st.system_one.desc_html": "Xác minh bổ sung cho theo dõi định kỳ và hoàn thành tác vụ.",
   "st.system_one.enabled.label": "Bật Jev",
@@ -1083,6 +1086,8 @@ export default {
   'tr.event.args': "lập luận",
   'tr.event.result': "kết quả",
   'tr.event.step': "bước {step}",
+  "sp.slash.export_traces_full": "Xuất toàn bộ phiên theo dõi đã lưu dưới dạng JSON, gồm cả ảnh chụp màn hình",
+  "sp.export_traces.recording_truncated": "Đã xuất mọi bản ghi đã lưu dưới dạng JSON. Nội dung bị bỏ qua trong lúc ghi không thể khôi phục bằng cách xuất.",
   "sp.slash.export_traces": "Xuất chuỗi công cụ (dấu vết)",
   "sp.export_traces.none": "Không có dấu vết cho cuộc trò chuyện này. Bật Ghi dấu vết trong Cài đặt rồi chạy lại.",
   "sp.export_traces.error": "Không thể xuất dấu vết.",

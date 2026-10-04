@@ -37,10 +37,7 @@ import {
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
   normalizeUserMemoryMaxPromptChars,
 } from '../agent/user-memory.js';
-import {
-  isValidCapsolverApiKey,
-  normalizeCapsolverApiKey,
-} from '../agent/capsolver-config.js';
+import { initCaptchaSettings } from './captcha-settings.js';
 import {
   isValidTypesafeApiKey,
   normalizeSystemOneThreshold,
@@ -83,7 +80,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '36.8.0';
+const EXT_VERSION = '38.0.13';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -200,11 +197,6 @@ const memcodeRecallToggle = document.getElementById('toggle-memcode-recall');
 const memcodeConnectButton = document.getElementById('btn-memcode-connect');
 const memcodeDisconnectButton = document.getElementById('btn-memcode-disconnect');
 const memcodeRecallResult = document.getElementById('test-memcode-recall');
-const captchaApiKeyInput = document.getElementById('captcha-api-key');
-const btnSaveCaptcha = document.getElementById('btn-save-captcha');
-const btnTestCaptcha = document.getElementById('btn-test-captcha');
-const btnClearCaptcha = document.getElementById('btn-clear-captcha');
-const captchaTestResult = document.getElementById('test-captcha');
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
 const systemOneEnabledToggle = document.getElementById('toggle-system-one');
 const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
@@ -447,6 +439,7 @@ if (globalThis.browser?.storage?.onChanged) {
 
 const WEBBRAIN_SUBSCRIBE_URL = 'https://webbrain.one/subscribe';
 const WEBBRAIN_ACCOUNT_URL = 'https://api.webbrain.one/account';
+const WEBBRAIN_BILLING_STATUS_URL = 'https://api.webbrain.one/v1/billing/status';
 
 const DEFAULT_COST_ALLOWANCE_USD = 10;
 const MAX_AGENT_STEPS_DEFAULT = 130;
@@ -701,9 +694,8 @@ async function init() {
   await loadUserMemorySettings();
   await loadMemcodeStatus();
 
-  // A valid saved key is the CapSolver enable control.
-  const captchaStored = await browser.storage.local.get('capsolverApiKey');
-  if (captchaApiKeyInput) captchaApiKeyInput.value = captchaStored.capsolverApiKey || '';
+  // Each provider has independent key, enable state, and fallback weight.
+  await initCaptchaSettings(browser.storage.local, sendToBackground, t);
 
   await loadCustomSkills();
 
@@ -2015,71 +2007,6 @@ if (btnImportUserMemory) {
   });
 }
 
-// --- CapSolver (captcha solving) ---
-// Saving a structurally valid API key enables CapSolver automatically.
-
-function showCaptchaResult(className, text, color = '') {
-  if (!captchaTestResult) return;
-  captchaTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
-  captchaTestResult.textContent = text;
-  captchaTestResult.style.color = color || '';
-  return captchaTestResult;
-}
-
-function flashCaptchaResult(className, text) {
-  const resultEl = showCaptchaResult(className, text);
-  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 3000);
-}
-
-if (btnSaveCaptcha) {
-  btnSaveCaptcha.addEventListener('click', async () => {
-    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
-    if (!isValidCapsolverApiKey(key)) {
-      flashCaptchaResult('fail', t('st.captcha.need_key'));
-      return;
-    }
-    if (captchaApiKeyInput) captchaApiKeyInput.value = key;
-    // Saving the key is the user's explicit opt-in. Keep the legacy boolean
-    // as an internal consent bit so upgrades preserve an existing opt-out.
-    await browser.storage.local.set({
-      capsolverApiKey: key,
-      captchaSolverEnabled: true,
-    });
-    flashCaptchaResult('ok', t('st.captcha.saved'));
-  });
-}
-
-if (btnTestCaptcha) {
-  btnTestCaptcha.addEventListener('click', async () => {
-    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
-    if (!isValidCapsolverApiKey(key)) {
-      flashCaptchaResult('fail', t('st.captcha.need_key'));
-      return;
-    }
-    showCaptchaResult('', t('st.captcha.checking'), 'var(--text2)');
-    try {
-      const res = await sendToBackground('test_capsolver_balance', { apiKey: key });
-      if (res?.ok) {
-        flashCaptchaResult('ok', t('st.captcha.balance_ok', { balance: `$${Number(res.balance).toFixed(4)}` }));
-      } else {
-        flashCaptchaResult('fail', t('st.captcha.balance_fail', { error: res?.error || 'Unknown error' }));
-      }
-    } catch (e) {
-      flashCaptchaResult('fail', t('st.captcha.balance_fail', { error: e.message }));
-    }
-  });
-}
-
-if (btnClearCaptcha) {
-  btnClearCaptcha.addEventListener('click', async () => {
-    if (captchaApiKeyInput) captchaApiKeyInput.value = '';
-    // Remove the legacy flag too so old exports cannot preserve a
-    // contradictory enabled-without-a-key state.
-    await browser.storage.local.remove(['capsolverApiKey', 'captchaSolverEnabled']);
-    flashCaptchaResult('ok', t('st.captcha.cleared'));
-  });
-}
-
 // --- Provider Rendering ---
 
 // Prompt-tier selector, shown only for local + OpenRouter providers (cloud is
@@ -2105,6 +2032,18 @@ const VISION_MODE_FIELD = {
     { value: 'off', labelKey: 'st.providers.compat.value.off' },
   ],
 };
+const TOOL_MODE_FIELD = {
+  key: 'toolsMode',
+  labelKey: 'st.provider.field.tools_mode',
+  type: 'select',
+  collapsed: true,
+  options: [
+    { value: 'auto', labelKey: 'st.provider.field.vision_auto' },
+    { value: 'on', labelKey: 'st.provider.field.vision_force_on' },
+    { value: 'off', labelKey: 'st.providers.compat.value.off' },
+  ],
+};
+const OPENROUTER_VISION_MODE_FIELD = { ...VISION_MODE_FIELD, collapsed: true };
 const OLLAMA_VISION_MODE_FIELD = VISION_MODE_FIELD;
 const OPTIONAL_LOCAL_API_KEY_FIELD = {
   key: 'apiKey',
@@ -2536,6 +2475,77 @@ function providerSubscriptionGuideHtml(definitionId) {
   </aside>`;
 }
 
+async function refreshWebbrainPaymentNotice() {
+  if (!refreshWebbrainPaymentNotice._focusBound && typeof window !== 'undefined') {
+    window.addEventListener('focus', () => {
+      refreshWebbrainPaymentNotice._cache = null;
+      void refreshWebbrainPaymentNotice();
+    });
+    refreshWebbrainPaymentNotice._focusBound = true;
+  }
+  const notice = providersContainer.querySelector('.webbrain-payment-notice');
+  const deviceGuid = providersData.webbrain_cloud?.deviceGuid;
+  if (!notice || !deviceGuid) return;
+  const billingStatusUrl = typeof WEBBRAIN_BILLING_STATUS_URL === 'string'
+    ? WEBBRAIN_BILLING_STATUS_URL
+    : 'https://api.webbrain.one/v1/billing/status';
+  const renderNotice = (subscriptionStatus) => {
+    if (!notice.isConnected) return;
+    if (!['past_due', 'unpaid'].includes(subscriptionStatus)) {
+      notice.hidden = true;
+      notice.replaceChildren();
+      return;
+    }
+    const message = document.createElement('p');
+    message.textContent = t('st.account.payment_failed');
+    const link = document.createElement('a');
+    link.href = webbrainAccountUrl(deviceGuid);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = t('st.account.update_payment');
+    notice.replaceChildren(message, link);
+    notice.style.cssText = 'margin-top:10px;padding:12px;border-radius:6px;border:1px solid var(--warning,#b7791f);';
+    notice.hidden = false;
+  };
+  // Reuse recent results during search, but refresh on focus or after 30 seconds.
+  const cached = refreshWebbrainPaymentNotice._cache;
+  if (cached?.deviceGuid === deviceGuid && Date.now() - cached.fetchedAt < 30000) {
+    renderNotice(cached.subscriptionStatus);
+    return;
+  }
+  try {
+    let statusPromise = refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid
+      ? refreshWebbrainPaymentNotice._inflight.promise
+      : null;
+    if (!statusPromise) {
+      statusPromise = (async () => {
+        const response = await fetch(billingStatusUrl, {
+          headers: { 'X-WebBrain-Device-Id': deviceGuid },
+          cache: 'no-store',
+          credentials: 'omit',
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) return null;
+        const status = await response.json();
+        return status.subscription_status;
+      })();
+      refreshWebbrainPaymentNotice._inflight = { deviceGuid, promise: statusPromise };
+    }
+    const subscriptionStatus = await statusPromise;
+    if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
+      refreshWebbrainPaymentNotice._inflight = null;
+    }
+    if (subscriptionStatus == null) return;
+    refreshWebbrainPaymentNotice._cache = { deviceGuid, subscriptionStatus, fetchedAt: Date.now() };
+    renderNotice(subscriptionStatus);
+  } catch {
+    if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
+      refreshWebbrainPaymentNotice._inflight = null;
+    }
+    /* An unavailable billing check must not interrupt settings. */
+  }
+}
+
 function renderProviders() {
   providersContainer.innerHTML = '';
 
@@ -2564,6 +2574,16 @@ function renderProviders() {
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'qwen3.8:27b' },
         CONTEXT_WINDOW_FIELD,
         OLLAMA_VISION_MODE_FIELD,
+        PROMPT_TIER_FIELD,
+      ],
+    },
+    ods: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:11434/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'select the running ODS model' },
+        CONTEXT_WINDOW_FIELD,
+        VISION_MODE_FIELD,
         PROMPT_TIER_FIELD,
       ],
     },
@@ -2707,6 +2727,8 @@ function renderProviders() {
           suggestions: ['openrouter/free', 'anthropic/claude-opus-5.5', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k3', 'z-ai/glm-5.3', 'minimax/minimax-m3'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://openrouter.ai/api/v1' },
         PROMPT_TIER_FIELD,
+        TOOL_MODE_FIELD,
+        OPENROUTER_VISION_MODE_FIELD,
       ],
     },
     huggingface: {
@@ -3013,7 +3035,7 @@ function renderProviders() {
           </div>
         `;
       } else {
-        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+        const localModelProviders = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
         const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';
@@ -3116,6 +3138,7 @@ function renderProviders() {
       ${subscriptionGuide}
       ${fieldsHTML}
       ${providerNote}
+      ${id === 'webbrain_cloud' ? '<div class="webbrain-payment-notice" role="status" hidden></div>' : ''}
       ${ollamaWarning}
       ${compatibilitySettings}
       <div class="btn-row">
@@ -3142,6 +3165,7 @@ function renderProviders() {
     providersContainer.appendChild(empty);
   }
 
+  refreshWebbrainPaymentNotice();
   restoreProviderApiKeyWarnings();
 
   document.querySelectorAll('.btn-save').forEach(btn => {

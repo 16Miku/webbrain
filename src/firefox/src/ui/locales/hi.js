@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Hindi — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'एक्सटेंशन UI ज़ूम',
   'sp.ui_scale.decrease': 'एक्सटेंशन UI को छोटा करें',
   'sp.ui_scale.increase': 'एक्सटेंशन UI को बड़ा करें',
@@ -172,6 +174,7 @@ export default {
   'sp.slash.remember': "उपयोगकर्ता प्राथमिकता याद रखें",
   'sp.slash.show_memory': "सहेजी गई उपयोगकर्ता मेमोरी दिखाएँ",
   'sp.slash.forget_memory': "आईडी द्वारा सहेजी गई मेमोरी को भूल जाएं",
+  'sp.slash.workflow_editor': "वर्कफ़्लो एडिटर",
   'sp.slash.workflows': "सहेजे गए वर्कफ़्लो को सूचीबद्ध करें और प्रबंधित करें",
   "sp.slash.teach": "अपने कार्यों को सहेजे गए वर्कफ़्लो के रूप में रिकॉर्ड करें",
   'sp.slash.run_workflow': "आईडी द्वारा सहेजा गया वर्कफ़्लो चलाएँ",
@@ -320,6 +323,7 @@ export default {
   'sp.subscribe.allowance_used': "दैनिक निःशुल्क WebBrain Compass भत्ता उपयोग किया गया।",
   'sp.subscribe.btn': "सदस्यता लें",
   'sp.subscribe.upgrade': 'Plus में अपग्रेड करें',
+  "sp.subscribe.resume_payment": "भुगतान विधि अपडेट हो गई — फिर कोशिश करें",
   'sp.subscribe.resume_upgrade': 'प्लान अपडेट हो गया — फिर कोशिश करें',
   'sp.subscribe.resume': "मैंने सदस्यता ले ली है - पुनः प्रयास करें",
   'sp.stopped_by_user': "[उपयोगकर्ता द्वारा रोका गया]",
@@ -596,6 +600,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "इस ब्राउज़र प्रोफ़ाइल के लिए बिलिंग, कार्ड विवरण, ईमेल और रद्दीकरण Stripe द्वारा प्रबंधित किया जाता है।",
   'st.account.billing_preparing': "इस ब्राउज़र प्रोफ़ाइल के लिए Stripe बिलिंग लिंक तैयार किया जा रहा है।",
+  "st.account.payment_failed": "आपकी सदस्यता का भुगतान पूरा नहीं हो सका। अपना सशुल्क प्लान बहाल करने के लिए भुगतान विधि अपडेट करें।",
+  "st.account.update_payment": "भुगतान विधि अपडेट करें",
   'st.account.manage_billing': "बिलिंग प्रबंधित करें",
 
   'st.display.language.label': "भाषा",
@@ -832,6 +838,7 @@ export default {
   'st.provider.field.context_window': "संदर्भ विंडो (टोकन)",
   'st.provider.field.max_output_tokens': "अधिकतम आउटपुट (टोकन)",
   'st.provider.field.supports_vision': "मॉडल दृष्टि का समर्थन करता है (मल्टीमॉडल)",
+  'st.provider.field.tools_mode': 'नेटिव टूल का उपयोग',
   'st.provider.field.vision_auto': 'स्वचालित',
   'st.provider.field.vision_force_on': 'बलपूर्वक चालू',
   'st.provider.field.vision_detected_vision': 'स्वतः पहचाना गया: विज़न',
@@ -942,9 +949,6 @@ export default {
   'st.memory.reason.not_found': "किसी भी सहेजी गई मेमोरी में वह आईडी नहीं है।",
   'st.memory.security_html': "<strong>गोपनीयता:</strong> इस ब्राउज़र प्रोफ़ाइल में उपयोगकर्ता मेमोरी को प्लेनटेक्स्ट में संग्रहीत किया जाता है। सक्षम होने पर, सक्रिय मेमोरी रिकॉर्ड सिस्टम प्रॉम्प्ट के भाग के रूप में आपके द्वारा कॉन्फ़िगर किए गए किसी भी एलएलएम प्रदाता को भेजे जाते हैं। यहां पासवर्ड, एपीआई कुंजी, टोकन, पुनर्प्राप्ति कोड या संवेदनशील रहस्य संग्रहीत न करें।",
 
-  'st.captcha.desc_html': "एजेंट को <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> API के माध्यम से CAPTCHA अपने-आप हल करने दें। यह reCAPTCHA v2/v3, hCaptcha और Cloudflare Turnstile का समर्थन करता है। मान्य API कुंजी सहेजने पर CapSolver अपने-आप सक्रिय हो जाता है; कुंजी के बिना एजेंट रुकता है और आपसे CAPTCHA स्वयं हल करने को कहता है। CapSolver हर समाधान के लिए शुल्क लेता है (~$0.001–$0.003); आप अपना खाता और API कुंजी उपयोग करते हैं।",
-  'st.captcha.enabled.label': "कैपसॉल्वर सक्षम करें",
-  'st.captcha.enabled.desc': "जब एजेंट कैप्चा दबाता है तो वह आपसे पूछने से पहले एक बार कैपसॉल्वर को कॉल करेगा। नीचे एक एपीआई कुंजी की आवश्यकता है।",
   'st.captcha.api_key.label': "कैपसॉल्वर एपीआई कुंजी",
   'st.captcha.save': "कुंजी सहेजें",
   'st.captcha.check_balance': "शेष राशि जांचें",
@@ -955,7 +959,6 @@ export default {
   'st.captcha.need_key': "CAP- से शुरू होने वाली मान्य CapSolver API कुंजी दर्ज करें।",
   'st.captcha.balance_ok': "ठीक है - संतुलन: {balance}",
   'st.captcha.balance_fail': "विफल: {error}",
-  'st.captcha.security_html': "<strong>सावधान:</strong> एपीआई कुंजी संग्रहीत है <strong>सादे पाठ में</strong> ब्राउज़र स्थानीय भंडारण में. कैपसॉल्वर प्रत्येक समाधान के लिए आपके खाते से शुल्क लेता है; एजेंट इसे केवल तभी कॉल करेगा जब कैप्चा वास्तव में एक चरण को अवरुद्ध करता है (प्रति मुठभेड़ अधिकतम एक बार - यह विफलता पर पुनः प्रयास नहीं करेगा)। कुछ साइटों की सेवा की शर्तें स्वचालित कैप्चा समाधान पर रोक लगाती हैं; अपने निर्णय का प्रयोग करें.",
 
   "st.system_one.desc_html": "निर्धारित निगरानी और कार्य पूर्ण होने की अतिरिक्त जाँच।",
   "st.system_one.enabled.label": "Jev चालू करें",
@@ -1083,6 +1086,8 @@ export default {
   'tr.event.args': "तर्क",
   'tr.event.result': "परिणाम",
   'tr.event.step': "चरण {step}",
+  "sp.slash.export_traces_full": "स्क्रीनशॉट सहित पूरा सहेजा गया ट्रेस सत्र JSON के रूप में निर्यात करें",
+  "sp.export_traces.recording_truncated": "सभी सहेजे गए रिकॉर्ड JSON में निर्यात हो गए। रिकॉर्डिंग के दौरान छोड़ी गई सामग्री निर्यात से वापस नहीं मिल सकती।",
   "sp.slash.export_traces": "उपकरण श्रृंखला (निशान) निर्यात करें",
   "sp.export_traces.none": "इस बातचीत का कोई निशान नहीं. सेटिंग्स में रिकॉर्ड ट्रेस सक्षम करें, फिर से चलाएँ।",
   "sp.export_traces.error": "निशान निर्यात नहीं किए जा सके.",

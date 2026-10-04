@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Malay (ms).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zum UI sambungan',
   'sp.ui_scale.decrease': 'Kecilkan UI sambungan',
   'sp.ui_scale.increase': 'Besarkan UI sambungan',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Peruntukan harian percuma WebBrain Compass telah digunakan.',
   'sp.subscribe.btn': 'Langgan',
   'sp.subscribe.upgrade': 'Naik taraf kepada Plus',
+  "sp.subscribe.resume_payment": "Kaedah pembayaran dikemas kini — cuba lagi",
   'sp.subscribe.resume_upgrade': 'Pelan dikemas kini — cuba lagi',
   'sp.subscribe.resume': 'Saya sudah melanggan — cuba lagi',
   'sp.stopped_by_user': '[Dihentikan oleh pengguna]',
@@ -326,6 +329,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Pengebilan, butiran kad, e-mel dan pembatalan diuruskan oleh Stripe untuk profil pelayar ini.',
   'st.account.billing_preparing': 'Menyediakan pautan pengebilan Stripe untuk profil pelayar ini.',
+  "st.account.payment_failed": "Pembayaran langganan anda tidak dapat diselesaikan. Kemas kini kaedah pembayaran untuk memulihkan pelan berbayar anda.",
+  "st.account.update_payment": "Kemas kini kaedah pembayaran",
   'st.account.manage_billing': 'Urus pengebilan',
 
   'st.display.language.label': 'Bahasa',
@@ -394,6 +399,7 @@ export default {
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (pilihan)',
   'st.provider.field.supports_vision': 'Model menyokong penglihatan (multimodal)',
+  'st.provider.field.tools_mode': 'Penggunaan alat bawaan',
   'st.provider.field.vision_auto': 'Automatik',
   'st.provider.field.vision_force_on': 'Paksa hidup',
   'st.provider.field.vision_detected_vision': 'Dikesan secara automatik: Penglihatan',
@@ -609,9 +615,6 @@ export default {
   "st.transcription.connected": "Tersambung! Model: {model}",
   "st.transcription.failed": "Gagal: {error}",
   "st.transcription.fill_required": "Isi URL Asas dan Model terlebih dahulu.",
-  "st.captcha.desc_html": "Biarkan ejen menyelesaikan CAPTCHA secara automatik melalui API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Menyokong reCAPTCHA v2/v3, hCaptcha dan Cloudflare Turnstile. Menyimpan kunci API yang sah akan mengaktifkan CapSolver secara automatik; tanpa kunci, ejen berhenti dan meminta anda menyelesaikan CAPTCHA sendiri. CapSolver mengenakan bayaran bagi setiap penyelesaian (~$0.001–$0.003); anda menggunakan akaun dan kunci API sendiri.",
-  "st.captcha.enabled.label": "Dayakan CapSolver",
-  "st.captcha.enabled.desc": "Apabila ejen menemui CAPTCHA, ia akan memanggil CapSolver sekali sebelum berundur untuk bertanya kepada anda. Memerlukan kunci API di bawah.",
   "st.captcha.api_key.label": "Kunci API CapSolver",
   "st.captcha.save": "Simpan Kunci",
   "st.captcha.check_balance": "Semak Baki",
@@ -622,7 +625,6 @@ export default {
   "st.captcha.need_key": "Masukkan kunci API CapSolver yang sah dan bermula dengan CAP-.",
   "st.captcha.balance_ok": "OK — baki: {balance}",
   "st.captcha.balance_fail": "Gagal: {error}",
-  "st.captcha.security_html": "<strong>Perhatian:</strong> kunci API disimpan <strong>sebagai teks biasa</strong> dalam storan tempatan pelayar. CapSolver mengenakan bayaran kepada akaun anda bagi setiap penyelesaian; ejen hanya akan memanggilnya apabila CAPTCHA benar-benar menyekat sesuatu langkah (maksimum sekali setiap pertemuan — ia tidak akan mencuba semula apabila gagal). Sesetengah syarat perkhidmatan laman melarang penyelesaian CAPTCHA automatik; gunakan budi bicara anda.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'Tindakan yang dicadangkan',
@@ -943,6 +945,7 @@ export default {
   "sp.memory.error": "Ralat memori: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Tidak disimpan: teks kosong selepas dibersihkan atau kelihatan mengandungi rahsia (kata laluan, kunci API, token).",
   "sp.memory.reason.not_found": "Tiada memori yang disimpan dengan ID tersebut.",
+  'sp.slash.workflow_editor': "Editor aliran kerja",
   "sp.slash.workflows": "Senarai dan urus aliran kerja tersimpan",
   "sp.slash.teach": "Rakam tindakan anda sebagai aliran kerja tersimpan",
   "sp.slash.run_workflow": "Jalankan aliran kerja tersimpan mengikut ID",
@@ -1039,6 +1042,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Dimensi imej maksimum",
   "st.imageBudget.maxDimension.desc": "Sisi terpanjang (lebar atau tinggi) dalam piksel untuk mana-mana tangkapan yang dihantar ke visi. Had lebih kecil mengecilkan imej sebelum dihantar, mengurangkan token dan kos. Had lebih besar mengekalkan ketepatan.",
   "st.imageBudget.warning": "⚠️ Tetapan ini digunakan pada tangkapan untuk visi (tangkapan auto, /screenshot, halaman penuh, verify_form). Imej resolusi penuh yang disimpan secara manual tidak terjejas. «Image detail» dihormati oleh endpoint gaya OpenAI; pembekal lain mungkin mengabaikannya.",
+  "sp.slash.export_traces_full": "Eksport seluruh sesi jejak tersimpan sebagai JSON, termasuk tangkapan skrin",
+  "sp.export_traces.recording_truncated": "Semua rekod tersimpan telah dieksport sebagai JSON. Kandungan yang ditinggalkan semasa rakaman tidak dapat dipulihkan melalui eksport.",
   "sp.slash.export_traces": "Eksport rantaian alat (jejak)",
   "sp.export_traces.none": "Tiada jejak untuk perbualan ini. Hidupkan Rakam jejak dalam Tetapan, kemudian jalankan semula.",
   "sp.export_traces.error": "Tidak dapat mengeksport jejak.",

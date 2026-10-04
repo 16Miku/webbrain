@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Ukrainian (uk).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Масштаб інтерфейсу розширення',
   'sp.ui_scale.decrease': 'Зменшити інтерфейс розширення',
   'sp.ui_scale.increase': 'Збільшити інтерфейс розширення',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Безкоштовний денний ліміт WebBrain Compass вичерпано.',
   'sp.subscribe.btn': 'Оформити підписку',
   'sp.subscribe.upgrade': 'Перейти на Plus',
+  "sp.subscribe.resume_payment": "Спосіб оплати оновлено — повторити",
   'sp.subscribe.resume_upgrade': 'План оновлено — повторити',
   'sp.subscribe.resume': 'Підписку оформлено — повторити',
   'sp.stopped_by_user': '[Зупинено користувачем]',
@@ -326,6 +329,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Оплата, дані картки, електронна пошта та скасування керуються Stripe для цього профілю браузера.',
   'st.account.billing_preparing': 'Підготовка посилання на оплату Stripe для цього профілю браузера.',
+  "st.account.payment_failed": "Не вдалося здійснити оплату підписки. Оновіть спосіб оплати, щоб відновити платний тариф.",
+  "st.account.update_payment": "Оновити спосіб оплати",
   'st.account.manage_billing': 'Керування оплатою',
 
   'st.display.language.label': 'Мова',
@@ -394,6 +399,7 @@ export default {
   'st.provider.field.model': 'Модель',
   'st.provider.field.model_optional': 'Модель (необов\'язково)',
   'st.provider.field.supports_vision': 'Модель підтримує зір (мультимодальна)',
+  'st.provider.field.tools_mode': 'Нативне використання інструментів',
   'st.provider.field.vision_auto': 'Автоматично',
   'st.provider.field.vision_force_on': 'Примусово ввімкнути',
   'st.provider.field.vision_detected_vision': 'Визначено автоматично: Підтримка зображень',
@@ -609,9 +615,6 @@ export default {
   "st.transcription.connected": "Підключено! Модель: {model}",
   "st.transcription.failed": "Збій: {error}",
   "st.transcription.fill_required": "Спочатку заповніть базовий URL і модель.",
-  "st.captcha.desc_html": "Дозвольте агенту автоматично розв'язувати CAPTCHA через API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Підтримує reCAPTCHA v2/v3, hCaptcha та Cloudflare Turnstile. Збереження дійсного API-ключа автоматично вмикає CapSolver; без ключа агент зупиняється й просить вас розв'язати CAPTCHA самостійно. CapSolver стягує плату за кожне розв'язання (~$0.001–$0.003); ви використовуєте власний акаунт і API-ключ.",
-  "st.captcha.enabled.label": "Увімкнути CapSolver",
-  "st.captcha.enabled.desc": "Коли агент натрапляє на CAPTCHA, він один раз викличе CapSolver, перш ніж повернутися до запиту до вас. Потрібен API-ключ нижче.",
   "st.captcha.api_key.label": "API-ключ CapSolver",
   "st.captcha.save": "Зберегти ключ",
   "st.captcha.check_balance": "Перевірити баланс",
@@ -622,7 +625,6 @@ export default {
   "st.captcha.need_key": "Введіть дійсний API-ключ CapSolver, що починається з CAP-.",
   "st.captcha.balance_ok": "ОК — баланс: {balance}",
   "st.captcha.balance_fail": "Збій: {error}",
-  "st.captcha.security_html": "<strong>Зверніть увагу:</strong> API-ключ зберігається <strong>у відкритому вигляді</strong> в локальному сховищі браузера. CapSolver стягує плату з вашого акаунта за кожне розв'язання; агент викличе його лише тоді, коли CAPTCHA справді блокує крок (максимум один раз на зустріч — він не повторюватиме спробу після невдачі). Умови надання послуг деяких сайтів забороняють автоматичне розв'язання CAPTCHA; дійте на власний розсуд.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'Рекомендовані дії',
@@ -943,6 +945,7 @@ export default {
   "sp.memory.error": "Помилка пам’яті: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Не збережено: після очищення текст порожній або схожий на секрет (пароль, ключ API, токен).",
   "sp.memory.reason.not_found": "Збереженого запису з таким ID немає.",
+  'sp.slash.workflow_editor': "Редактор робочих процесів",
   "sp.slash.workflows": "Перегляд і керування збереженими сценаріями",
   "sp.slash.teach": "Записати ваші дії як збережений робочий процес",
   "sp.slash.run_workflow": "Запустити збережений сценарій за ID",
@@ -1039,6 +1042,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Макс. розмір зображення",
   "st.imageBudget.maxDimension.desc": "Найбільша сторона (ширина або висота) у пікселях для будь-якого знімка, надісланого у vision. Менша межа стискає зображення до надсилання, зменшуючи токени й вартість. Більша межа зберігає точність.",
   "st.imageBudget.warning": "⚠️ Ці налаштування застосовуються до знімків для vision (авто-знімок, /screenshot, вся сторінка, verify_form). Вручну збережені зображення в повній роздільності не зачіпаються. «Image detail» враховують endpoint’и в стилі OpenAI; інші провайдери можуть ігнорувати.",
+  "sp.slash.export_traces_full": "Експортувати весь збережений сеанс трасування у JSON, включно зі знімками екрана",
+  "sp.export_traces.recording_truncated": "Усі збережені записи експортовано у JSON. Вміст, пропущений під час запису, неможливо відновити експортом.",
   "sp.slash.export_traces": "Експортувати ланцюг інструментів (трасування)",
   "sp.export_traces.none": "Немає трасувань для цієї розмови. Увімкніть «Записувати трасування» в налаштуваннях і запустіть знову.",
   "sp.export_traces.error": "Не вдалося експортувати трасування.",

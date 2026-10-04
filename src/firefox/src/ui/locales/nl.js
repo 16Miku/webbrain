@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Dutch (nl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom van extensie-interface',
   'sp.ui_scale.decrease': 'Extensie-interface uitzoomen',
   'sp.ui_scale.increase': 'Extensie-interface inzoomen',
@@ -168,6 +170,7 @@ export default {
   'sp.slash.remember': 'Een gebruikersvoorkeur onthouden',
   'sp.slash.show_memory': 'Toon opgeslagen gebruikersgeheugen',
   'sp.slash.forget_memory': 'Een opgeslagen geheugen vergeten op ID',
+  'sp.slash.workflow_editor': "Workfloweditor",
   'sp.slash.workflows': 'Lijst en beheer opgeslagen workflows',
   "sp.slash.teach": "Acties opnemen als opgeslagen workflow",
   'sp.slash.run_workflow': 'Voer een opgeslagen workflow uit op ID',
@@ -312,6 +315,7 @@ export default {
   'sp.subscribe.allowance_used': 'Dagelijkse gratis WebBrain Compass-tegoed gebruikt.',
   'sp.subscribe.btn': 'Abonneren',
   'sp.subscribe.upgrade': 'Upgraden naar Plus',
+  "sp.subscribe.resume_payment": "Betaalmethode bijgewerkt — opnieuw proberen",
   'sp.subscribe.resume_upgrade': 'Abonnement bijgewerkt — opnieuw proberen',
   'sp.subscribe.resume': 'Ik heb geabonneerd — opnieuw proberen',
   'sp.stopped_by_user': '[Gestopt door gebruiker]',
@@ -574,6 +578,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Facturering, kaartgegevens, e-mail en annulering worden beheerd door Stripe...',
   'st.account.billing_preparing': 'Stripe-factureringslink voorbereiden...',
+  "st.account.payment_failed": "Je abonnementsbetaling kon niet worden voltooid. Werk je betaalmethode bij om je betaalde abonnement te herstellen.",
+  "st.account.update_payment": "Betaalmethode bijwerken",
   'st.account.manage_billing': 'Facturering beheren',
   'st.display.language.label': 'Taal',
   'st.display.language.desc': 'Interfacetaal voor de WebBrain-plug-in.',
@@ -742,6 +748,7 @@ export default {
   'st.provider.field.context_window': 'Contextvenster (tokens)',
   'st.provider.field.max_output_tokens': 'Maximale uitvoer (tokens)',
   'st.provider.field.supports_vision': 'Model ondersteunt visie (multimodaal)',
+  'st.provider.field.tools_mode': 'Native toolgebruik',
   'st.provider.field.vision_auto': 'Automatisch',
   'st.provider.field.vision_force_on': 'Geforceerd aan',
   'st.provider.field.vision_detected_vision': 'Automatisch gedetecteerd: Visie',
@@ -843,9 +850,6 @@ export default {
   'st.memory.reason.invalid_or_sensitive': 'Niet opgeslagen: de tekst is leeg na opschonen...',
   'st.memory.reason.not_found': 'Geen opgeslagen geheugen heeft die ID.',
   'st.memory.security_html': '<strong>Privacy:</strong> gebruikersgeheugen wordt in platte tekst opgeslagen...',
-  'st.captcha.desc_html': 'Laat de agent CAPTCHA\'s automatisch oplossen via de <a href="https://capsolver.com" target="_blank" style="color:var(--accent);">CapSolver</a>-API. Ondersteunt reCAPTCHA v2/v3, hCaptcha en Cloudflare Turnstile. Door een geldige API-sleutel op te slaan wordt CapSolver automatisch ingeschakeld; zonder sleutel stopt de agent en vraagt deze u de CAPTCHA zelf op te lossen. CapSolver brengt kosten per oplossing in rekening (~$0.001–$0.003); u gebruikt uw eigen account en API-sleutel.',
-  'st.captcha.enabled.label': 'CapSolver inschakelen',
-  'st.captcha.enabled.desc': 'Wanneer de agent een CAPTCHA tegenkomt, belt deze één keer CapSolver...',
   'st.captcha.api_key.label': 'CapSolver API-sleutel',
   'st.captcha.save': 'Sleutel opslaan',
   'st.captcha.check_balance': 'Saldo controleren',
@@ -856,7 +860,6 @@ export default {
   'st.captcha.need_key': 'Voer een geldige CapSolver API-sleutel in die met CAP- begint.',
   'st.captcha.balance_ok': 'OK — saldo: {balance}',
   'st.captcha.balance_fail': 'Mislukt: {error}',
-  'st.captcha.security_html': '<strong>Let op:</strong> de API-sleutel wordt in platte tekst opgeslagen...',
 
   "st.system_one.desc_html": "Extra controle van geplande bewakingen en voltooide taken.",
   "st.system_one.enabled.label": "Jev inschakelen",
@@ -972,6 +975,8 @@ export default {
   'tr.event.args': 'argumenten',
   'tr.event.result': 'resultaat',
   'tr.event.step': 'stap {step}',
+  "sp.slash.export_traces_full": "De volledige opgeslagen tracesessie inclusief screenshots als JSON exporteren",
+  "sp.export_traces.recording_truncated": "Alle opgeslagen records zijn als JSON geëxporteerd. Inhoud die tijdens de opname is weggelaten, kan niet via export worden hersteld.",
   "sp.slash.export_traces": "De toolketen (traces) exporteren",
   "sp.export_traces.none": "Geen traces voor dit gesprek...",
   "sp.export_traces.error": "Kon traces niet exporteren.",

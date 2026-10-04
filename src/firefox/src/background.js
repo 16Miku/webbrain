@@ -16,6 +16,8 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
+import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
+import { createCloudBridge } from './cloud-bridge.js';
 import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController, sweepOpfsSwapFiles } from './agent/apocalypse-mode.js';
 import { createEmergencyDownloadController } from './agent/emergency-download-controller.js';
 import { createHostedOfflineRagIndexClient } from './agent/offline-rag-index-host.js';
@@ -39,7 +41,9 @@ import {
   getClaudeOAuthStatus,
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
-import { isCapsolverEnabled } from './agent/capsolver-config.js';
+import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
+import { getAdditionalCaptchaBalance } from './agent/captcha-additional-providers.js';
+import { getTwoCaptchaBalance } from './agent/two-captcha.js';
 import { createSystemOneJudge } from './agent/systemone-judge.js';
 import {
   SELECTION_CONTEXT_SOURCE_GROUNDING,
@@ -175,7 +179,8 @@ const teacherSessionStore = createTeacherSessionStore(browser.storage.session);
 const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
   automationOwnsTab: (tabId) => agent.isRunning(tabId)
     || detachedRunStarts.has(tabId)
-    || scheduler.isRunning(tabId),
+    || scheduler.isRunning(tabId)
+    || cloudRunController.isRunning(tabId),
 });
 agent.setRunStartGuard((tabId) => teacherRunInterlock.guardRunStart(tabId));
 const profileSync = new ProfileSyncManager(browser.storage.local);
@@ -209,6 +214,20 @@ const scheduler = new ScheduledJobManager({
 });
 agent.setScheduler(scheduler);
 scheduler.start();
+
+// Firefox has no offscreen document, so the Cloud Bridge socket lives in this
+// background page and hands commands straight to handleMessage.
+const cloudBridge = createCloudBridge({ dispatch: (msg) => handleMessage(msg, null) });
+const cloudRunController = createCloudRunController({
+  chromeApi: browser,
+  agent,
+  bridge: cloudBridge,
+  sendIndicator: (tabId, type) => sendIndicatorMessage(tabId, type),
+  workflowTrace,
+});
+alwaysAllowApiMutationsReady
+  .then(() => cloudRunController.syncBridge())
+  .catch(() => {});
 
 const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
@@ -958,15 +977,13 @@ async function loadCustomSkills() {
 }
 const customSkillsReady = loadCustomSkills();
 
-// A valid key plus explicit consent enables CapSolver. Requiring the existing
-// boolean preserves legacy profiles that saved a key while the old switch was
-// off; pressing Save Key in the new UI sets consent to true.
+// Local browsers require a valid key and explicit consent. Managed Cloud
+// browsers use the broker flag and never use a CapSolver key from storage.
 async function loadCaptchaSolver() {
-  const stored = await browser.storage.local.get(['capsolverApiKey', 'captchaSolverEnabled']);
-  agent.captchaSolverEnabled = isCapsolverEnabled(
-    stored.capsolverApiKey,
-    stored.captchaSolverEnabled,
-  );
+  const stored = await browser.storage.local.get(CAPTCHA_SETTINGS_KEYS);
+  const providers = getCaptchaProviders(stored);
+  agent.captchaProviderIds = providers.map(provider => provider.id);
+  agent.captchaSolverEnabled = providers.length > 0;
 }
 loadCaptchaSolver();
 
@@ -1050,6 +1067,7 @@ browser.runtime.onInstalled.addListener(async (details) => {
   await loadClarifyTimeout();
   await loadAutoScreenshot();
   await syncAgentUserMemoryFromStorage().catch(() => {});
+  await cloudRunController.syncBridge().catch(() => {});
   scheduleUserMemoryExtractionDrain(5000);
   console.log('[WebBrain] Extension installed, providers loaded.');
 });
@@ -1057,6 +1075,7 @@ browser.runtime.onInstalled.addListener(async (details) => {
 browser.runtime.onStartup?.addListener?.(async () => {
   await createContextMenus();
   syncAgentUserMemoryFromStorage().catch(() => {});
+  cloudRunController.syncBridge().catch(() => {});
   scheduleUserMemoryExtractionDrain(5000);
 });
 
@@ -1099,6 +1118,10 @@ browser.storage.onChanged.addListener((changes) => {
   if (changes[API_MUTATION_OBSERVER_KEY]) {
     const value = changes[API_MUTATION_OBSERVER_KEY].newValue;
     setApiMutationObserverEnabled(value === undefined || value === true);
+  }
+  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
+    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
+    cloudRunController.syncBridge().catch(() => {});
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = changes.strictSecretMode.newValue === true;
@@ -1155,10 +1178,10 @@ browser.storage.onChanged.addListener((changes) => {
     }
     refreshPrompts = true;
   }
-  if (changes.capsolverApiKey || changes.captchaSolverEnabled) {
+  if (CAPTCHA_SETTINGS_KEYS.some(key => changes[key])) {
     loadCaptchaSolver()
       .then(() => agent._refreshSystemPrompts())
-      .catch((error) => console.warn('[WebBrain] CapSolver setting could not be refreshed', error));
+      .catch((error) => console.warn('[WebBrain] CAPTCHA settings could not be refreshed', error));
   }
   if (changes.planBeforeActMode || changes.planBeforeAct) {
     applyPlanBeforeActMode(normalizePlanBeforeActMode({
@@ -3069,7 +3092,7 @@ async function handleMessage(msg, sender) {
           throw new Error('Could not durably clear the tab transcript.');
         }
         clearedContextMenuPromptId = tabChatClearResult.clearedContextMenuPromptId || null;
-        agent.clearConversation(tabId);
+        await agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
         browser.runtime.sendMessage({
           target: 'sidepanel',
@@ -3160,7 +3183,7 @@ async function handleMessage(msg, sender) {
     case 'export_traces': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) return { ok: false, error: 'No tab ID' };
-      return { ok: true, ...(await agent.exportTraces(tabId)) };
+      return { ok: true, ...(await agent.exportTraces(tabId, { full: msg.full === true })) };
     }
 
     case 'export_config': {
@@ -3434,6 +3457,40 @@ async function handleMessage(msg, sender) {
       return { ok: true, enabled: msg.enabled };
     }
 
+    case 'cloud_run':
+      return await cloudRunController.startRun(msg);
+    case 'cloud_workflow_compile':
+      return await cloudRunController.compileWorkflow(msg);
+    case 'cloud_workflow_run':
+      return await cloudRunController.startWorkflowRun(msg);
+    case 'cloud_status':
+      return await cloudRunController.status(msg);
+    case 'cloud_scheduled_jobs': {
+      const jobIds = [...new Set((msg.jobIds || msg.job_ids || [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean))].slice(0, 100);
+      if (!jobIds.length) {
+        return { error: 'cloud_scheduled_jobs requires expected job IDs.', status: 400 };
+      }
+      const expected = new Set(jobIds);
+      const jobs = await scheduler.listJobs({ tabId: null });
+      return {
+        ok: true,
+        jobs: jobs
+          .filter(job => expected.has(String(job?.id || '')))
+          .map(job => cloudSafeScheduledJob(job, { strictSecretMode: agent.strictSecretMode === true })),
+      };
+    }
+    case 'cloud_respond':
+      return await cloudRunController.respond(msg);
+    case 'cloud_abort':
+      return await cloudRunController.abort(msg);
+    case 'cloud_bridge_start':
+      return await cloudRunController.startBridge(msg.url);
+    case 'cloud_bridge_stop':
+      return await cloudRunController.stopBridge();
+    case 'cloud_bridge_status':
+      return await cloudRunController.bridgeStatus();
     case 'get_providers': {
       return { providers: providerManager.getAll(), active: providerManager.activeProviderId };
     }
@@ -3500,6 +3557,22 @@ async function handleMessage(msg, sender) {
         });
         return { success: true, model: result.model };
       } catch (error) { return { success: false, error: error.message }; }
+    }
+
+    case 'test_captcha_provider_balance': {
+      try {
+        return { ok: true, ...await getAdditionalCaptchaBalance(msg.provider, String(msg.apiKey || '').trim()) };
+      } catch (error) { return { ok: false, error: error.message }; }
+    }
+
+    case 'test_two_captcha_balance': {
+      try {
+        const key = String(msg.apiKey || '').trim();
+        if (!key) return { ok: false, error: 'No API key provided' };
+        return { ok: true, ...await getTwoCaptchaBalance(key) };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
     }
 
     case 'test_capsolver_balance': {
@@ -3580,6 +3653,10 @@ async function handleMessage(msg, sender) {
     case 'get_recording_state':
       return { ok: true, state: { recording: false, supported: false } };
 
+    case 'capture_full_page_screenshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureFullPageScreenshotForUser(tabId);
+    }
     case 'capture_viewport_screenshot': {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureViewportScreenshotForUser(tabId);

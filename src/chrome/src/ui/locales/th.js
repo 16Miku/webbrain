@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Thai (th).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'ซูม UI ของส่วนขยาย',
   'sp.ui_scale.decrease': 'ย่อ UI ของส่วนขยาย',
   'sp.ui_scale.increase': 'ขยาย UI ของส่วนขยาย',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'ใช้โควตารายวันฟรีของ WebBrain Compass หมดแล้ว',
   'sp.subscribe.btn': 'สมัครสมาชิก',
   'sp.subscribe.upgrade': 'อัปเกรดเป็น Plus',
+  "sp.subscribe.resume_payment": "อัปเดตวิธีชำระเงินแล้ว — ลองอีกครั้ง",
   'sp.subscribe.resume_upgrade': 'อัปเดตแพ็กเกจแล้ว — ลองอีกครั้ง',
   'sp.subscribe.resume': 'สมัครแล้ว — ลองอีกครั้ง',
   'sp.stopped_by_user': '[ผู้ใช้หยุด]',
@@ -326,6 +329,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'การเรียกเก็บเงิน รายละเอียดบัตร อีเมล และการยกเลิก จัดการโดย Stripe สำหรับโปรไฟล์เบราว์เซอร์นี้',
   'st.account.billing_preparing': 'กำลังเตรียมลิงก์การเรียกเก็บเงินของ Stripe สำหรับโปรไฟล์เบราว์เซอร์นี้',
+  "st.account.payment_failed": "ไม่สามารถชำระค่าสมัครสมาชิกได้ โปรดอัปเดตวิธีชำระเงินเพื่อกลับมาใช้แพ็กเกจแบบชำระเงิน",
+  "st.account.update_payment": "อัปเดตวิธีชำระเงิน",
   'st.account.manage_billing': 'จัดการการเรียกเก็บเงิน',
 
   'st.display.language.label': 'ภาษา',
@@ -394,6 +399,7 @@ export default {
   'st.provider.field.model': 'โมเดล',
   'st.provider.field.model_optional': 'โมเดล (ไม่บังคับ)',
   'st.provider.field.supports_vision': 'โมเดลรองรับการมองเห็น (มัลติโมดัล)',
+  'st.provider.field.tools_mode': 'การใช้เครื่องมือเนทีฟ',
   'st.provider.field.vision_auto': 'อัตโนมัติ',
   'st.provider.field.vision_force_on': 'บังคับเปิด',
   'st.provider.field.vision_detected_vision': 'ตรวจพบอัตโนมัติ: รองรับภาพ',
@@ -609,9 +615,6 @@ export default {
   "st.transcription.connected": "เชื่อมต่อแล้ว! โมเดล: {model}",
   "st.transcription.failed": "ล้มเหลว: {error}",
   "st.transcription.fill_required": "กรอก URL ฐานและโมเดลก่อน",
-  "st.captcha.desc_html": "ให้เอเจนต์แก้ CAPTCHA โดยอัตโนมัติผ่าน API ของ <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> รองรับ reCAPTCHA v2/v3, hCaptcha และ Cloudflare Turnstile การบันทึกคีย์ API ที่ถูกต้องจะเปิดใช้ CapSolver โดยอัตโนมัติ หากไม่มีคีย์ เอเจนต์จะหยุดและขอให้คุณแก้ CAPTCHA เอง CapSolver คิดค่าบริการต่อการแก้หนึ่งครั้ง (~$0.001–$0.003) โดยใช้บัญชีและคีย์ API ของคุณเอง",
-  "st.captcha.enabled.label": "เปิดใช้งาน CapSolver",
-  "st.captcha.enabled.desc": "เมื่อเอเจนต์เจอ CAPTCHA มันจะเรียก CapSolver หนึ่งครั้งก่อนถอยไปถามคุณ ต้องมีคีย์ API ด้านล่าง",
   "st.captcha.api_key.label": "คีย์ API ของ CapSolver",
   "st.captcha.save": "บันทึกคีย์",
   "st.captcha.check_balance": "ตรวจสอบยอดคงเหลือ",
@@ -622,7 +625,6 @@ export default {
   "st.captcha.need_key": "กรอกคีย์ API ของ CapSolver ที่ถูกต้องและขึ้นต้นด้วย CAP-",
   "st.captcha.balance_ok": "สำเร็จ — ยอดคงเหลือ: {balance}",
   "st.captcha.balance_fail": "ล้มเหลว: {error}",
-  "st.captcha.security_html": "<strong>โปรดทราบ:</strong> คีย์ API ถูกเก็บ <strong>เป็นข้อความธรรมดา</strong> ใน local storage ของเบราว์เซอร์ CapSolver คิดเงินจากบัญชีของคุณทุกครั้งที่แก้ เอเจนต์จะเรียกใช้เฉพาะเมื่อ CAPTCHA บล็อกขั้นตอนจริง ๆ เท่านั้น (สูงสุดหนึ่งครั้งต่อการพบหนึ่งครั้ง — จะไม่ลองใหม่เมื่อล้มเหลว) ข้อกำหนดการให้บริการของบางเว็บไซต์ห้ามการแก้ CAPTCHA แบบอัตโนมัติ โปรดใช้วิจารณญาณ",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'การดำเนินการที่แนะนำ',
@@ -943,6 +945,7 @@ export default {
   "sp.memory.error": "ข้อผิดพลาดของหน่วยความจำ: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "ไม่ได้บันทึก: ข้อความว่างหลังการล้างหรือดูเหมือนมีข้อมูลลับ (รหัสผ่าน คีย์ API โทเค็น)",
   "sp.memory.reason.not_found": "ไม่มีหน่วยความจำที่บันทึกไว้ด้วย ID นี้",
+  'sp.slash.workflow_editor': "ตัวแก้ไขเวิร์กโฟลว์",
   "sp.slash.workflows": "แสดงและจัดการเวิร์กโฟลว์ที่บันทึกไว้",
   "sp.slash.teach": "บันทึกการทำงานของคุณเป็นเวิร์กโฟลว์ที่บันทึกไว้",
   "sp.slash.run_workflow": "เรียกใช้เวิร์กโฟลว์ที่บันทึกไว้ด้วย ID",
@@ -1039,6 +1042,8 @@ export default {
   "st.imageBudget.maxDimension.label": "มิติรูปสูงสุด",
   "st.imageBudget.maxDimension.desc": "ด้านที่ยาวที่สุด (กว้างหรือสูง) เป็นพิกเซลของภาพที่ส่งไปวิชัน เพดานต่ำกว่าจะย่อภาพก่อนส่ง ลดโทเคนและต้นทุน เพดานสูงกว่าคงความคมชัด",
   "st.imageBudget.warning": "⚠️ การตั้งค่าเหล่านี้ใช้กับภาพสำหรับวิชัน (จับอัตโนมัติ, /screenshot, ทั้งหน้า, verify_form) รูปความละเอียดเต็มที่บันทึกด้วยตนเองไม่ได้รับผลกระทบ «Image detail» เคารพโดย endpoint แบบ OpenAI ผู้ให้บริการอื่นอาจละเว้น",
+  "sp.slash.export_traces_full": "ส่งออกเซสชันการติดตามที่บันทึกไว้ทั้งหมดเป็น JSON รวมภาพหน้าจอ",
+  "sp.export_traces.recording_truncated": "ส่งออกข้อมูลที่บันทึกไว้ทั้งหมดเป็น JSON แล้ว เนื้อหาที่ละเว้นระหว่างการบันทึกไม่สามารถกู้คืนด้วยการส่งออกได้",
   "sp.slash.export_traces": "ส่งออกลำดับการทำงานของเครื่องมือ (trace)",
   "sp.export_traces.none": "ไม่มี trace สำหรับการสนทนานี้ เปิด «บันทึก trace» ในการตั้งค่า แล้วเรียกใช้อีกครั้ง",
   "sp.export_traces.error": "ไม่สามารถส่งออก trace ได้",

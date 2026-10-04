@@ -4,6 +4,7 @@
 
 import en from './locales/en.js';
 import { memcodeEnglish } from './locales/memcode-copy.mjs';
+import { captchaEnglish, captchaTranslations } from './locales/captcha-copy.mjs';
 import { safeSocialEnglish, safeSocialTranslations } from './locales/safesocial-copy.mjs';
 import es from './locales/es.js';
 import fr from './locales/fr.js';
@@ -35,6 +36,8 @@ const DICTS = Object.fromEntries(Object.entries({ en, es, fr, tr, zh, ru, uk, ar
     ...memcodeEnglish,
     ...providerGuideEnglish,
     ...safeSocialEnglish,
+    ...captchaEnglish,
+    ...(captchaTranslations[code] || {}),
     ...(safeSocialTranslations[code] || {}),
     ...(providerGuideTranslations[code] || {}),
   }]));
@@ -137,7 +140,9 @@ export function translationsForKey(key) {
 export function applyDOMTranslations(root) {
   root = root || document;
   root.querySelectorAll('[data-i18n]').forEach((el) => {
-    el.textContent = t(el.dataset.i18n);
+    let params;
+    try { params = JSON.parse(el.dataset.i18nParams || '{}'); } catch { /* ignore malformed optional parameters */ }
+    el.textContent = t(el.dataset.i18n, params);
   });
   root.querySelectorAll('[data-i18n-html]').forEach((el) => {
     el.innerHTML = t(el.dataset.i18nHtml);

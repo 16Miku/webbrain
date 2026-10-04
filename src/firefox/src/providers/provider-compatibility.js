@@ -14,9 +14,33 @@ const MAX_TOKEN_FIELDS = new Set(['auto', 'max_tokens', 'max_completion_tokens']
 const OPENROUTER_ROUTING_VARIANT_VALUES = new Set(['standard', 'nitro', 'exacto']);
 const OPENROUTER_MODEL_VARIANT_SUFFIXES = /(?::(?:free|extended|thinking|online|nitro|floor|exacto))+$/i;
 export const OPENROUTER_ROUTING_VARIANTS = Object.freeze(['standard', 'nitro', 'exacto']);
+
+// Shared base vision sniff (provider-agnostic). OpenAICompatibleProvider exposes
+// it via _modelNameSniffedVision so vendor subclasses (e.g. DeepSeek) can extend
+// it without duplicating the explicit-override precedence in supportsVision.
+const BASE_VISION_MODEL_PATTERN = /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|gpt-6-(?:luna-pro|sol|astra)(?:$|[-_.:/])|claude|gemini|grok|minimax-m3|kimi-k(?:-?3|2\.[5-9])|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|qwen3p8-27b|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|step-3/;
+export function baseModelNameSniffedVision(model) {
+  return BASE_VISION_MODEL_PATTERN.test(String(model || ''));
+}
+
+// OpenRouter model-specific capability helpers (pure model-id checks; callers
+// scope them with providerName === 'openrouter'). Nex N2.5 mini has no
+// function-compatible route: match the base id with any trailing variant
+// (colon variants like :free/:nitro, or hyphenated snapshots) so future
+// variants stay safe by default. Users can still Force on via toolsMode.
+export function isOpenRouterNexN25MiniModel(model) {
+  return /^nex-agi\/nex-n2\.5-mini(?:[:\-].*)?$/i.test(String(model || '').trim());
+}
+
+// Ling 3 Flash VL family: requires the -vl marker so text-only Ling
+// checkpoints never match. Accepts an optional org prefix and trailing variants.
+export function isOpenRouterLingVisionModel(model) {
+  return /(?:^|\/)ling-3[^/]*-vl(?:[:\-].*)?$/i.test(String(model || '').trim());
+}
 const STRUCTURED_OUTPUT_PROVIDER_NAMES = new Set([
   'azure-openai',
   'llamacpp',
+  'ods',
   'lmstudio',
   'localai',
   'ollama',
@@ -27,6 +51,7 @@ const STRUCTURED_OUTPUT_PROVIDER_NAMES = new Set([
 ]);
 const LOCAL_OPENAI_COMPAT_PROVIDER_NAMES = new Set([
   'llamacpp',
+  'ods',
   'lmstudio',
   'localai',
   'ollama',
@@ -48,6 +73,34 @@ export const RESERVED_EXTRA_BODY_KEYS = new Set([
 ]);
 
 const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
+/** Muse Spark on OpenRouter accepts only automatic tool selection. Custom
+ * imported provider names still speak the same endpoint/model contract. */
+export function openRouterMuseToolOptions(config = {}, options = {}) {
+  let openRouter = false;
+  try { openRouter = new URL(config.baseUrl || '').hostname.toLowerCase() === 'openrouter.ai'; } catch { /* not an OpenRouter endpoint */ }
+  const model = String(config.model || '').trim().toLowerCase().replace(OPENROUTER_MODEL_VARIANT_SUFFIXES, '');
+  if (!openRouter || model !== 'meta/muse-spark-1.3-contributor') return options;
+  // Muse cannot disable reasoning. Small classifier budgets otherwise end in
+  // hidden reasoning with no JSON output, even after the portable retry.
+  const disabledReasoning = options.extraBody?.reasoning?.enabled === false;
+  const smallTextCall = (options.toolChoice === 'none' || !options.tools?.length)
+    && Number(options.maxTokens) > 0 && Number(options.maxTokens) <= 2048;
+  if (disabledReasoning || smallTextCall) {
+    options = {
+      ...options,
+      maxTokens: Math.max(2048, Number(options.maxTokens) || 2048),
+      extraBody: { ...options.extraBody, reasoning: { effort: 'minimal' } },
+    };
+  }
+  if (options.toolChoice === 'none') return { ...options, tools: [], toolChoice: undefined };
+  const choice = options.toolChoice;
+  const name = choice && typeof choice === 'object' ? choice.function?.name || choice.name : null;
+  const tools = name ? (options.tools || []).filter(tool => tool?.function?.name === name || tool?.name === name) : options.tools;
+  if (name && !tools.length) throw new Error(`Requested tool '${name}' is not available for Muse Spark.`);
+  return { ...options, tools, toolChoice: 'auto' };
+}
+
 
 function clean(value) {
   return String(value || '').trim().toLowerCase();

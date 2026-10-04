@@ -166,6 +166,55 @@
     return blocks.join('\n\n').trim();
   }
 
+  function getVisibleLayers() {
+    const selectors = [
+      'header', 'nav', '[role="banner"]', '[role="navigation"]',
+      '[role="toolbar"]', '[class*="toolbar" i]',
+      '[role="dialog"]', '[role="alertdialog"]', '[aria-modal="true"]',
+      'dialog[open]', '.modal.show', '[class*="DialogContent"]', '[class*="ModalContent"]',
+      '[data-overlay]', '[class*="overlay" i]', '[class*="popover" i]', '[class*="drawer" i]',
+    ].join(',');
+    const layers = [];
+    let candidates = [];
+    try { candidates = Array.from(document.querySelectorAll(selectors)); } catch { return []; }
+    const dialogSelector = '[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog[open],.modal.show,[class*="DialogContent"],[class*="ModalContent"]';
+    // Preserve the active dialog even when the page has many fixed nav items.
+    candidates.sort((a, b) => Number(b.matches(dialogSelector)) - Number(a.matches(dialogSelector)));
+    for (const el of candidates) {
+      if (layers.length >= 4) break;
+      try {
+        if (!gateElementIsRendered(el)) continue;
+        const style = getComputedStyle(el);
+        if (!['fixed', 'sticky', 'absolute'].includes(style.position) && !(el.tagName === 'DIALOG' && el.open)) continue;
+        const r = el.getBoundingClientRect();
+        const left = Math.max(0, r.left), right = Math.min(window.innerWidth, r.right);
+        const top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom);
+        if (right - left < 10 || bottom - top < 10) continue;
+        if (layers.some(layer => layer.element.contains(el) || el.contains(layer.element))) continue;
+        const text = String(el.innerText || el.getAttribute('aria-label') || '')
+          .replace(/\s+/g, ' ').trim().slice(0, 240);
+        if (!text) continue;
+        const points = [
+          [(left + right) / 2, (top + bottom) / 2],
+          [left + (right - left) * 0.2, top + (bottom - top) * 0.2],
+          [right - (right - left) * 0.2, bottom - (bottom - top) * 0.2],
+        ];
+        if (!points.some(([x, y]) => {
+          const hit = document.elementFromPoint(x, y);
+          return hit === el || el.contains(hit);
+        })) continue;
+        layers.push({
+          element: el,
+          role: (el.getAttribute('role') || el.tagName.toLowerCase()).slice(0, 80),
+          text,
+          position: style.position,
+          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+        });
+      } catch { /* ignore malformed or changing page surfaces */ }
+    }
+    return layers.map(({ element, ...layer }) => layer);
+  }
+
   /**
    * Extract readable text content from the page.
    *
@@ -349,6 +398,7 @@
       textSource: t.textSource,
       isArticlePage: t.isArticlePage,
       includeChrome: !!(params && params.includeChrome),
+      visibleLayers: blockedAuxiliaryContent ? [] : getVisibleLayers(),
       media: blockedAuxiliaryContent
         ? { videoCount: 0, imageCount: 0, videos: [], images: [] }
         : getPageMediaSummary(),
@@ -401,6 +451,7 @@
       textSource: t.textSource,
       isArticlePage: t.isArticlePage,
       includeChrome: !!(params && params.includeChrome),
+      visibleLayers: blockedAuxiliaryContent ? [] : getVisibleLayers(),
       media: blockedAuxiliaryContent
         ? { videoCount: 0, imageCount: 0, videos: [], images: [] }
         : getPageMediaSummary(),
@@ -520,18 +571,145 @@
       : null;
   }
 
-  function _isFullyVisibleForInteraction(el) {
+  function _getViewportDockedInsets(view = window, target = null) {
+    let top = 0;
+    let bottom = 0;
+    try {
+      const doc = view.document;
+      if (!doc) return { top: 0, bottom: 0 };
+      const htmlStyle = view.getComputedStyle(doc.documentElement);
+      const bodyStyle = doc.body ? view.getComputedStyle(doc.body) : null;
+      const parsePadding = val => {
+        const n = parseFloat(val);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      };
+      let targetInTopDock = false;
+      let targetInBottomDock = false;
+      for (let node = target; node && node !== doc; node = _composedParent(node)) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const style = view.getComputedStyle(node);
+        if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+        const rect = node.getBoundingClientRect();
+        if (rect.top >= -10 && rect.top < view.innerHeight * 0.4 && rect.bottom > 0 && rect.bottom <= view.innerHeight * 0.4) targetInTopDock = true;
+        if (rect.bottom <= view.innerHeight + 10 && rect.bottom > view.innerHeight * 0.6 && rect.top >= view.innerHeight * 0.6) targetInBottomDock = true;
+      }
+      if (!targetInTopDock) top = Math.max(top, parsePadding(htmlStyle.scrollPaddingTop));
+      if (!targetInBottomDock) bottom = Math.max(bottom, parsePadding(htmlStyle.scrollPaddingBottom));
+      if (bodyStyle) {
+        if (!targetInTopDock) top = Math.max(top, parsePadding(bodyStyle.scrollPaddingTop));
+        if (!targetInBottomDock) bottom = Math.max(bottom, parsePadding(bodyStyle.scrollPaddingBottom));
+      }
+      const candidates = doc.querySelectorAll('header, nav, [role="banner"], [role="navigation"], [role="toolbar"], [class*="header" i], [class*="navbar" i], [class*="toolbar" i]');
+      const vw = view.innerWidth || 800;
+      const vh = view.innerHeight || 600;
+      const topRects = [];
+      const bottomRects = [];
+      for (const c of candidates) {
+        if (target && _isComposedAncestor(c, target)) continue;
+        if (!c.isConnected || c.offsetWidth <= 0 || c.offsetHeight <= 0) continue;
+        const cs = view.getComputedStyle(c);
+        if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+        if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const r = c.getBoundingClientRect();
+        if (r.width < vw * 0.4) continue;
+        if (r.top < vh * 0.4 && r.bottom > 0 && r.bottom < vh * 0.4) topRects.push(r);
+        if (r.bottom > vh * 0.6 && r.top < vh && r.top > vh * 0.6) bottomRects.push(r);
+      }
+      // Recheck until all contiguous bars are included, regardless of DOM order.
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const r of topRects) {
+          if (r.top <= top + 10 && r.bottom > top) {
+            top = r.bottom;
+            changed = true;
+          }
+        }
+        for (const r of bottomRects) {
+          if (r.bottom >= vh - bottom - 10 && r.top < vh - bottom) {
+            bottom = vh - r.top;
+            changed = true;
+          }
+        }
+      }
+    } catch {}
+    return {
+      top: Math.min(top, (view.innerHeight || 600) * 0.4),
+      bottom: Math.min(bottom, (view.innerHeight || 600) * 0.4),
+    };
+  }
+
+  function _floatingTopBarRect(blocker, view = window) {
+    const vh = view.innerHeight || 600;
+    const vw = view.innerWidth || 800;
+    for (let node = blocker; node; node = _composedParent(node)) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (node.matches?.('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]')) return null;
+      const style = view.getComputedStyle(node);
+      if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.top > 10 && rect.top < vh * 0.35 && rect.bottom < vh * 0.45
+        && rect.height <= vh * 0.25 && rect.width >= vw * 0.4) return rect;
+    }
+    return null;
+  }
+
+  function _isCoveredByFixedNonModalSurface(el, view = window) {
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    if (cx < 0 || cy < 0 || cx >= view.innerWidth || cy >= view.innerHeight) return false;
+    const hit = _shadowAwareElementFromPoint(cx, cy);
+    if (!hit || _isComposedAncestor(el, hit) || _isComposedAncestor(hit, el)) return false;
+    for (let node = hit; node; node = _composedParent(node)) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (node.matches?.('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]')) return false;
+      const style = view.getComputedStyle(node);
+      if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+      const blocker = node.getBoundingClientRect();
+      if (blocker.width >= view.innerWidth * 0.8 && blocker.height >= view.innerHeight * 0.8) return false;
+      return true;
+    }
+    return false;
+  }
+
+  function _scrollElementIntoClearView(el) {
+    if (!el?.isConnected) return;
+    try {
+      const view = el.ownerDocument?.defaultView || window;
+      if (_isAlreadyVisibleInFixedSurface(el, view)) return;
+      const insets = _getViewportDockedInsets(view, el);
+      // A viewport-only rect check misses elements clipped by a scrollable
+      // ancestor even when their bounding box is inside the viewport.
+      const fullyVisible = _isFullyVisibleForInteraction(el, insets);
+      const coveredByFixed = fullyVisible && _isCoveredByFixedNonModalSurface(el, view);
+      if (!fullyVisible || coveredByFixed) {
+        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        const rAfter = el.getBoundingClientRect();
+        if (rAfter.top < insets.top) {
+          view.scrollBy({ top: rAfter.top - insets.top - 16, behavior: 'instant' });
+        } else if (rAfter.bottom > view.innerHeight - insets.bottom) {
+          view.scrollBy({ top: rAfter.bottom - (view.innerHeight - insets.bottom) + 16, behavior: 'instant' });
+        }
+      }
+    } catch {
+      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+    }
+  }
+
+  function _isFullyVisibleForInteraction(el, dockedInsets = null) {
     try {
       if (!el?.isConnected) return false;
       const view = el.ownerDocument?.defaultView || window;
       const rect = el.getBoundingClientRect();
+      const insets = dockedInsets || _getViewportDockedInsets(view, el);
       if (
         rect.width < 1
         || rect.height < 1
         || rect.left < 0
-        || rect.top < 0
+        || rect.top < insets.top
         || rect.right > view.innerWidth
-        || rect.bottom > view.innerHeight
+        || rect.bottom > (view.innerHeight - insets.bottom)
       ) return false;
       for (let node = _composedParent(el); node && node !== el.ownerDocument; node = _composedParent(node)) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
@@ -547,6 +725,33 @@
     } catch {
       return false;
     }
+  }
+
+  function _isAlreadyVisibleInFixedSurface(el, view = window) {
+    if (!_isFullyVisibleForInteraction(el, { top: 0, bottom: 0 })) return false;
+    for (let node = el; node; node = _composedParent(node)) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      const style = view.getComputedStyle(node);
+      if (style.position === 'fixed') return true;
+      if (style.position !== 'sticky') continue;
+      let portTop = 0;
+      let portBottom = view.innerHeight;
+      for (let parent = _composedParent(node); parent; parent = _composedParent(parent)) {
+        if (parent.nodeType !== Node.ELEMENT_NODE) continue;
+        const parentStyle = view.getComputedStyle(parent);
+        if (!/^(?:auto|scroll|hidden)$/.test(parentStyle.overflowY)) continue;
+        const parentRect = parent.getBoundingClientRect();
+        portTop = parentRect.top + parent.clientTop;
+        portBottom = portTop + parent.clientHeight;
+        break;
+      }
+      const rect = node.getBoundingClientRect();
+      const top = parseFloat(style.top);
+      const bottom = parseFloat(style.bottom);
+      if ((Number.isFinite(top) && Math.abs(rect.top - portTop - top) <= 2)
+        || (Number.isFinite(bottom) && Math.abs(rect.bottom - portBottom + bottom) <= 2)) return true;
+    }
+    return false;
   }
 
   function _isComposedAncestor(ancestor, node) {
@@ -2144,9 +2349,7 @@
     // Do NOT scrollIntoView on SELECT elements (hidden selects in modals cause scroll jumps)
     if (el.tagName !== 'SELECT') {
       if (actionDeadlineExpired()) return deadlineFailure();
-      // BiDi validates the target in the same turn. A smooth scroll leaves a
-      // transient offscreen geometry window where that validation must fail.
-      el.scrollIntoView({ behavior: params._bidiPrepare ? 'instant' : 'smooth', block: 'center' });
+      _scrollElementIntoClearView(el);
     }
 
     // Occlusion hit-test: for text/selector/index clicks, verify that the
@@ -2157,11 +2360,62 @@
     // SELECT (already handled).
     if (el.tagName !== 'SELECT' && params.x == null && params.y == null) {
       try {
-        const r = el.getBoundingClientRect();
+        let r = el.getBoundingClientRect();
         if (r.width >= 1 && r.height >= 1 && r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth) {
-          const cx = Math.round(r.left + r.width / 2);
-          const cy = Math.round(r.top + r.height / 2);
-          const topmost = _shadowAwareElementFromPoint(cx, cy);
+          let cx = Math.round(r.left + r.width / 2);
+          let cy = Math.round(r.top + r.height / 2);
+          let topmost = _shadowAwareElementFromPoint(cx, cy);
+
+          // If covered at center, test if scrolling can clear a fixed/sticky header
+          if (topmost && !_hitTestMatchesTarget(el, topmost)) {
+            const floatingBar = _floatingTopBarRect(topmost);
+            const bRect = floatingBar || topmost.getBoundingClientRect();
+            if (!_isAlreadyVisibleInFixedSurface(el)
+              && (floatingBar || bRect.top <= _getViewportDockedInsets(window, el).top + 10)
+              && bRect.bottom > r.top && bRect.bottom < window.innerHeight * 0.45) {
+              window.scrollBy({ top: r.top - bRect.bottom - 20, behavior: 'instant' });
+              r = el.getBoundingClientRect();
+              cx = Math.round(r.left + r.width / 2);
+              cy = Math.round(r.top + r.height / 2);
+              topmost = _shadowAwareElementFromPoint(cx, cy);
+            }
+          }
+
+          // If still covered at center, test sample perimeter points
+          if (topmost && !_hitTestMatchesTarget(el, topmost)) {
+            const sampleOffsets = [
+              [cx, Math.round(r.top + Math.max(2, Math.min(8, r.height * 0.2)))],
+              [cx, Math.round(r.bottom - Math.max(2, Math.min(8, r.height * 0.2)))],
+              [Math.round(r.left + Math.max(2, Math.min(8, r.width * 0.2))), cy],
+              [Math.round(r.right - Math.max(2, Math.min(8, r.width * 0.2))), cy],
+            ];
+            for (const [sx, sy] of sampleOffsets) {
+              if (sx < 0 || sy < 0 || sx > window.innerWidth || sy > window.innerHeight) continue;
+              const sampleHit = _shadowAwareElementFromPoint(sx, sy);
+              if (sampleHit && _hitTestMatchesTarget(el, sampleHit)) {
+                topmost = sampleHit;
+                cx = sx;
+                cy = sy;
+                break;
+              }
+            }
+          }
+
+          // If still covered, check if the blocker chain has pointer-events: none
+          if (topmost && !_hitTestMatchesTarget(el, topmost)) {
+            try {
+              const elements = document.elementsFromPoint ? document.elementsFromPoint(cx, cy) : [];
+              const targetIdx = elements.indexOf(el);
+              if (targetIdx > 0) {
+                const allAboveNone = elements.slice(0, targetIdx).every(item => {
+                  const pe = window.getComputedStyle(item).pointerEvents;
+                  return pe === 'none' || _hitTestMatchesTarget(el, item);
+                });
+                if (allAboveNone) topmost = el;
+              }
+            } catch {}
+          }
+
           if (topmost && !_hitTestMatchesTarget(el, topmost)) {
             let blockerInfo = topmost.tagName.toLowerCase();
             const role = topmost.getAttribute && topmost.getAttribute('role');
@@ -4697,6 +4951,105 @@
         }
       };
 
+      const verifiedDiscordManagementControl = (clicked) => {
+        if (params.adapterName !== 'discord'
+            || !/^(?:www\.)?discord\.com$/.test(location.hostname)
+            || !/^\/channels\/(?:\d+|@me)(?:\/\d+){0,2}\/?$/.test(location.pathname)) return false;
+        const control = _composedClosestElement(clicked,
+          'button,a[href],input,select,textarea,[role="textbox"],[role="button"],[role="menuitem"],[role="tab"],[role="treeitem"],[role="switch"],[role="radio"],[role="checkbox"]');
+        if (!control || !visible(control) || control.disabled
+            || control.getAttribute('aria-disabled') === 'true'
+            || _composedClosestElement(control,
+              'article,[role="log"],[data-message-id],[data-list-item-id^="chat-messages"]')) return false;
+        const label = compact(control.getAttribute('aria-label') || control.innerText || control.textContent);
+        const messageCommit = /(?:^|[^\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\p{L}]|$)/iu;
+        const actionLabels = [control.getAttribute('aria-label'), control.getAttribute('title'),
+          ...(!editable(control) ? [control.innerText || control.textContent, control.value] : [])];
+        if (actionLabels.some(value => messageCommit.test(value || ''))) return false;
+        const modal = _findTopmostBlockingModal();
+        if (modal && !_isComposedAncestor(modal, control)) return false;
+        const rect = control.getBoundingClientRect();
+        if (!_isComposedAncestor(control, _shadowAwareElementFromPoint(
+          rect.left + rect.width / 2, rect.top + rect.height / 2))) return false;
+        const dialog = _composedClosestElement(control, 'dialog,[role="dialog"],[role="alertdialog"]');
+        if (dialog) {
+          // Discord keeps the channel composer mounted behind its settings.
+          // Only the owning management dialog is a non-message surface.
+          if (dialog.querySelector('[data-message-id],[data-list-id="chat-messages"],[role="textbox"][aria-label^="Message " i],[role="log"] article')) return false;
+          const dialogId = dialog.getAttribute('id');
+          const creationHeading = dialogId && Array.from(dialog.querySelectorAll('h1'))
+            .some(el => visible(el) && el.id === `heading-${dialogId}`);
+          const creationInputs = Array.from(dialog.querySelectorAll('input[type="text"],input:not([type])'))
+            .filter(visible);
+          const creationRadios = Array.from(dialog.querySelectorAll('input[type="radio"],[role="radio"]'))
+            .filter(visible);
+          const creation = dialog.getAttribute('data-dialog') === 'modal'
+            && creationHeading && creationInputs.length === 1
+            && Array.from(dialog.querySelectorAll('input[type="checkbox"],[role="switch"]')).some(visible)
+            && Array.from(dialog.querySelectorAll('button[type="submit"],input[type="submit"]')).some(visible)
+            && (creationRadios.length === 0 || creationRadios.length >= 2);
+          const settingsNav = dialog.querySelector('nav [role="tablist"],[role="navigation"] [role="tablist"]');
+          const hasSettingsTabs = !!settingsNav
+            && Array.from(settingsNav.querySelectorAll('[role="tab"]')).some(visible);
+          const serverSettings = dialog.getAttribute('data-layer') === 'GUILD_SETTINGS' && hasSettingsTabs;
+          const channelSettings = dialog.getAttribute('data-layer') === 'CHANNEL_SETTINGS'
+            && hasSettingsTabs;
+          const userSettings = !!dialog.id
+            && dialog.getAttribute('aria-modal') === 'true'
+            && dialog.getAttribute('aria-labelledby') === `heading-${dialog.id}`
+            && !!dialog.querySelector('nav [data-settings-sidebar-item="account_panel"]')
+            && !!dialog.querySelector('nav [data-settings-sidebar-item="appearance_panel"]');
+          if (!channelSettings && dialog.querySelector('[data-slate-editor]')) return false;
+          return (creation || serverSettings || channelSettings || userSettings) && !control.hasAttribute('form');
+        }
+        if (editable(control) || control.form || control.hasAttribute('form')
+            || _composedClosestElement(control, 'form')) return false;
+        const menu = _composedClosestElement(control, '[role="menu"]');
+        if (menu) {
+          const menuActionIds = new Set([
+            'guild-header-popout-settings',
+            'guild-header-popout-create-channel',
+            'guild-header-popout-create-category',
+          ]);
+          return menu.id === 'guild-header-popout'
+            && control.getAttribute('role') === 'menuitem'
+            && menuActionIds.has(control.id);
+        }
+        const accountSettingsPanel = _composedClosestElement(control, 'section[class*="panels"]');
+        if (accountSettingsPanel?.querySelector('[class*="accountPopoutButtonWrapper"]')
+            && control.matches('button:not([role])')
+            && control.parentElement?.matches('[class*="buttons"]')) return true;
+        const nav = _composedClosestElement(control, 'nav,[role="navigation"]');
+        if (!nav) return false;
+        const serverRailItem = _composedClosestElement(control, '[role="treeitem"][data-list-item-id^="guildsnav___"]');
+        if (serverRailItem) {
+          const guildsTree = _composedClosestElement(serverRailItem, '[role="tree"][data-list-id="guildsnav"]');
+          return /^guildsnav___(?:home|\d+)$/.test(serverRailItem.getAttribute('data-list-item-id') || '')
+            && !!guildsTree && _isComposedAncestor(nav, guildsTree);
+        }
+        if (control.matches('a[href][data-list-item-id^="private-channels-"]')) {
+          try {
+            const destination = new URL(control.getAttribute('href'), location.href);
+            return destination.origin === location.origin && !destination.search && !destination.hash
+              && !destination.username && !destination.password
+              && /^\/channels\/@me(?:\/\d+)?\/?$/.test(destination.pathname);
+          } catch { return false; }
+        }
+        const channelsList = nav?.querySelector('#channels');
+        const serverHeader = nav?.querySelector('header');
+        if (!channelsList || !serverHeader) return false;
+        if (control.matches('a[href]')) {
+          const destination = new URL(control.getAttribute('href'), location.href);
+          return destination.origin === location.origin && !destination.search && !destination.hash
+            && !destination.username && !destination.password
+            && /^\/channels\/\d+\/\d+\/?$/.test(destination.pathname);
+        }
+        if (control.hasAttribute('aria-expanded') && _isComposedAncestor(serverHeader, control)) return true;
+        const channelControl = /^(?:button|input)$/i.test(control.tagName)
+          || control.getAttribute('role') === 'button';
+        return channelControl && _isComposedAncestor(channelsList, control);
+      };
+
       const verifiedLinkedInPostEntry = (clicked) => {
         if (params.adapterName !== 'linkedin' || !/^\/feed\/?$/.test(location.pathname)) return false;
         const button = _composedClosestElement(clicked, 'button,[role="button"]');
@@ -4772,6 +5125,15 @@
 
       let composer = null;
       let messageSend = null;
+      const discordManagementTarget = tool === 'press_keys' && String(args.key) === 'Enter'
+        ? active : (targetResolved ? target : null);
+      if (!observationOnly && ['click', 'click_ax', 'set_field', 'press_keys'].includes(tool)
+          && verifiedDiscordManagementControl(discordManagementTarget)) {
+        return {
+          success: true, messageSend: false, conclusive: true,
+          nonMessagingTarget: true, reasonCode: 'non_messaging_target', identityCandidates: [],
+        };
+      }
       if (observationOnly) {
         composer = layoutComposer;
       } else if (tool === 'press_keys') {
@@ -5730,11 +6092,7 @@
           const targetName = canonicalTargetName || _axAccessibleName(el);
           if (!_isFullyVisibleForInteraction(el)) {
             try {
-              el.scrollIntoView({
-                block: 'center',
-                inline: 'center',
-                ...(msg.params?._bidiPrepare ? { behavior: 'instant' } : {}),
-              });
+              _scrollElementIntoClearView(el);
             } catch {}
           }
           try { el.focus({ preventScroll: true }); } catch {}
@@ -6058,7 +6416,7 @@
             return failure(`set_checked only supports native input[type="checkbox"] controls; ${ref_id} resolved to ${tag || 'unknown'}${inputType ? `[type="${inputType}"]` : ''}.`);
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -6176,7 +6534,7 @@
             return failure(`ref_id ${ref_id} not found. Re-read the accessibility tree to get fresh ids.`, { suggestions });
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -6350,7 +6708,7 @@
           const el = window.__wb_ax_lookup(ref_id);
           if (!el) return failure(`ref_id ${ref_id} not found. Re-read the accessibility tree.`);
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -6736,7 +7094,7 @@
             return { success: false, error: `ref_id ${ref_id} not found.`, suggestions };
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
           const r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;

@@ -18,6 +18,14 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Agent } from '../../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../../src/firefox/src/agent/agent.js';
+import {
+  applyReadPageWindow as applyChromeReadPageWindow,
+  fitReadPageWindowResult as fitChromeReadPageWindowResult,
+} from '../../src/chrome/src/agent/read-page-window.js';
+import {
+  applyReadPageWindow as applyFirefoxReadPageWindow,
+  fitReadPageWindowResult as fitFirefoxReadPageWindowResult,
+} from '../../src/firefox/src/agent/read-page-window.js';
 import { CDPClient, cdpClient } from '../../src/chrome/src/cdp/cdp-client.js';
 import {
   SELECTION_SHORTCUT_LOCALES,
@@ -1090,6 +1098,123 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
   });
 }
 
+const layeredReadingHtml = `<!doctype html>
+  <style>
+    body { margin: 0; }
+    header { position: fixed; top: 0; width: 100%; height: 40px; z-index: 5; background: white; }
+    article { padding: 70px 20px 20px; }
+    #read-target { position: absolute; left: 70px; top: 130px; width: 100px; height: 36px; }
+    [role="dialog"] { position: fixed; left: 50px; top: 100px; width: 240px; height: 120px; z-index: 20; background: white; }
+    [role="toolbar"] { position: fixed; right: 0; bottom: 0; width: 160px; height: 40px; z-index: 10; background: white; }
+  </style>
+  <header>Pinned navigation</header>
+  <article>
+    <button id="read-target">Read target</button>
+    <p>${'UNDERLYING_ARTICLE_TEXT describes the public inventory and its normal display. '.repeat(8)}</p>
+    <table><tr><th>Item</th><th>Count</th></tr><tr><td>Widget</td><td>42</td></tr></table>
+  </article>
+  <div role="dialog" aria-label="Open filters">Open filters dialog <button>Close filters</button></div>
+  <div data-overlay style="position:absolute;left:330px;top:120px;width:140px;height:60px;z-index:11;background:white">Floating panel</div>
+  <div role="toolbar">Floating tools</div>
+  <div role="dialog" style="display:none">Hidden dialog</div>`;
+
+function assertLayeredPageInfo(result, label) {
+  if (result?.pageGate || !result?.text?.includes('UNDERLYING_ARTICLE_TEXT')) {
+    throw new Error(`${label}: underlying article was lost: ${JSON.stringify(result)}`);
+  }
+  const layers = result.visibleLayers || [];
+  if (!layers.some(layer => layer.role === 'dialog' && layer.text.includes('Open filters dialog'))
+    || !layers.some(layer => layer.role === 'toolbar' && layer.text.includes('Floating tools'))
+    || !layers.some(layer => layer.role === 'header' && layer.text.includes('Pinned navigation'))
+    || !layers.some(layer => layer.role === 'div' && layer.position === 'absolute' && layer.text.includes('Floating panel'))
+    || layers.some(layer => layer.text.includes('Hidden dialog'))
+    || layers.some(layer => !Number.isFinite(layer.rect?.x) || !Number.isFinite(layer.rect?.y))) {
+    throw new Error(`${label}: visible layer context is incomplete: ${JSON.stringify(layers)}`);
+  }
+}
+
+async function assertLayeredContentReading(page, browserKind) {
+  await setupContentHtml(page, layeredReadingHtml, browserKind);
+  const overlapsTarget = await page.evaluate(() => {
+    const r = document.getElementById('read-target').getBoundingClientRect();
+    return !!document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('[role="dialog"]');
+  });
+  if (!overlapsTarget) throw new Error(`${browserKind}: fixture dialog does not cover the target`);
+  const pageInfo = await call(page, 'get_page_info_cdp', {});
+  assertLayeredPageInfo(pageInfo, browserKind);
+  const basicPageInfo = await call(page, 'get_page_info', {});
+  if (!basicPageInfo?.visibleLayers?.some(layer => layer.role === 'dialog' && layer.text.includes('Open filters dialog'))) {
+    throw new Error(`${browserKind}: basic page info omitted the dialog: ${JSON.stringify(basicPageInfo?.visibleLayers)}`);
+  }
+  const tables = await call(page, 'extract_data', { type: 'tables' });
+  if (tables?.[0]?.rows?.[1]?.join('|') !== 'Widget|42') {
+    throw new Error(`${browserKind}: underlying table data was lost: ${JSON.stringify(tables)}`);
+  }
+  const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 8, maxChars: 20000 });
+  if (!/button "Read target" \[ref_\d+\][^\n]*occluded=true/.test(tree?.pageContent || '')) {
+    throw new Error(`${browserKind}: accessibility tree did not mark the covered target: ${tree?.pageContent}`);
+  }
+  await page.evaluate(() => {
+    const dialog = document.querySelector('[role="dialog"]');
+    for (let i = 0; i < 5; i++) {
+      const nav = document.createElement('nav');
+      nav.textContent = `Floating navigation ${i}`;
+      nav.style.cssText = `position:fixed;left:0;top:${390 + i * 42}px;width:180px;height:32px;background:white`;
+      document.body.insertBefore(nav, dialog);
+    }
+  });
+  const crowded = await call(page, 'get_page_info_cdp', {});
+  if (crowded.visibleLayers?.length > 4
+    || !crowded.visibleLayers?.some(layer => layer.role === 'dialog' && layer.text.includes('Open filters dialog'))) {
+    throw new Error(`${browserKind}: dialog was displaced by navigation layers: ${JSON.stringify(crowded.visibleLayers)}`);
+  }
+}
+
+test('Chrome: layered page read keeps underlying data and visible surfaces', page =>
+  assertLayeredContentReading(page, 'chrome'));
+firefoxTest('Firefox: layered page read keeps underlying data and visible surfaces', page =>
+  assertLayeredContentReading(page, 'firefox'));
+
+test('Chrome CDP mirror: layered page read keeps underlying data and visible surfaces', async (page) => {
+  await page.setContent(layeredReadingHtml);
+  assertLayeredPageInfo(await readThroughCdpMirror(page), 'CDP mirror');
+});
+
+test('read_page windows keep layer context when oversized output is compacted', async () => {
+  for (const [label, applyWindow, fitWindow] of [
+    ['chrome', applyChromeReadPageWindow, fitChromeReadPageWindowResult],
+    ['firefox', applyFirefoxReadPageWindow, fitFirefoxReadPageWindowResult],
+  ]) {
+    const raw = {
+      url: 'https://example.test/article',
+      title: 'Layered article',
+      text: 'Article text. '.repeat(500),
+      visibleLayers: [{ role: 'dialog', text: 'Open filters dialog', position: 'fixed', rect: { x: 50, y: 100, w: 240, h: 120 } }],
+      links: Array.from({ length: 100 }, (_, i) => ({ text: `Link ${i}`, href: `https://example.test/${i}` })),
+    };
+    const fitted = fitWindow(applyWindow(raw, { limit: 6000 }), 1200);
+    if (JSON.stringify(fitted).length > 1200 || fitted.visibleLayers?.[0]?.text !== 'Open filters dialog') {
+      throw new Error(`${label}: bounded read lost the visible layer: ${JSON.stringify(fitted)}`);
+    }
+    const oversized = {
+      ...raw,
+      visibleLayers: [
+        { ...raw.visibleLayers[0], role: 'dialog' + 'x'.repeat(10000) },
+        ...Array.from({ length: 3 }, (_, i) => ({
+          role: 'toolbar', text: `Toolbar ${i} ${'x'.repeat(220)}`, position: 'fixed',
+          rect: { x: 0, y: i * 30, w: 800, h: 30 },
+        })),
+      ],
+    };
+    const bounded = fitWindow(applyWindow(oversized, { limit: 6000 }), 1200);
+    if (JSON.stringify(bounded).length > 1200
+      || bounded.visibleLayers?.[0]?.text !== 'Open filters dialog'
+      || bounded.visibleLayers[0].role.length > 80) {
+      throw new Error(`${label}: oversized layer metadata broke the read_page cap: ${JSON.stringify(bounded)}`);
+    }
+  }
+});
+
 test('Chrome CDP mirror suppresses a blocking Athletic article body', async (page) => {
   await page.goto(fixtureUrl('athletic-subscription-overlay.html'));
   const result = await readThroughCdpMirror(page);
@@ -1500,6 +1625,32 @@ function assertGmailComposeRecipientTree(tree, label) {
   }
   return normalizeTreeRefs(content);
 }
+
+async function assertNestedModalHoistedOnce(page, sourcePath, label) {
+  await setupAccessibilityTreeHtml(page, `<!doctype html>
+    <body class="modal-open">
+      <button>Background control</button>
+      <div class="modal-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.3)">
+        <div role="dialog" aria-label="Review dialog" style="background:white;padding:20px">
+          <button>Confirm layered action</button>
+        </div>
+      </div>
+    </body>`, sourcePath);
+  const tree = await page.evaluate(() => window.__generateAccessibilityTree('all', 10, null, null, 1));
+  const content = String(tree?.pageContent || '');
+  const matches = content.match(/button "Confirm layered action"/g) || [];
+  const dialogAt = content.indexOf('dialog "Review dialog"');
+  const backgroundAt = content.indexOf('button "Background control"');
+  if (!content.includes('[open overlays') || matches.length !== 1
+    || dialogAt < 0 || backgroundAt < 0 || dialogAt > backgroundAt) {
+    throw new Error(`${label}: body.modal-open must not displace or duplicate the dialog: ${content}`);
+  }
+}
+
+test('accessibility tree (Chrome): a dialog inside its modal wrapper is hoisted once', page =>
+  assertNestedModalHoistedOnce(page, accessibilityTreeJsPath, 'chrome'));
+test('accessibility tree (Firefox): a dialog inside its modal wrapper is hoisted once', page =>
+  assertNestedModalHoistedOnce(page, firefoxAccessibilityTreeJsPath, 'firefox'));
 
 test('accessibility tree (Chrome): existing Gmail compose exposes the selected recipient chip', async (page) => {
   await setupAccessibilityTreeHtml(page, gmailComposeRecipientFixture, accessibilityTreeJsPath);
@@ -2181,6 +2332,482 @@ test('Chrome Agent: modal auto-select ignores background/hidden clickables and k
 });
 
 // ─── occlusion ────────────────────────────────────────────────────────────
+async function assertDockedControlsKeepScroll(page, browserKind) {
+  for (const position of ['fixed', 'sticky']) {
+    await setupContentHtml(page, `<!doctype html>
+      <style>
+        html { scroll-padding-top: 80px; scroll-padding-bottom: 60px; }
+        body { margin: 0; height: 1700px; }
+        header { position: ${position}; top: 0; height: 80px; width: 100%; background: white; }
+        .toolbar { position: fixed; bottom: 0; height: 60px; width: 100%; background: white; }
+      </style>
+      <header><button id="top-control" onclick="window.__topClicked = true">Top control</button><input id="top-input" aria-label="Top input"></header>
+      <div class="toolbar"><button id="bottom-control" onclick="window.__bottomClicked = true">Bottom control</button><input id="bottom-check" type="checkbox" aria-label="Bottom check"></div>
+    `, browserKind);
+    await page.evaluate(() => window.scrollTo(0, 300));
+    const before = await page.evaluate(() => window.scrollY);
+    for (const [selector, flag] of [['#top-control', '__topClicked'], ['#bottom-control', '__bottomClicked']]) {
+      const result = await call(page, 'click', { selector });
+      const after = await page.evaluate(name => ({ scrollY: window.scrollY, clicked: window[name] === true }), flag);
+      if (!result?.success || !after.clicked || Math.abs(after.scrollY - before) > 1) {
+        throw new Error(`${browserKind} ${position} ${selector} jumped from ${before}: ${JSON.stringify({ result, after })}`);
+      }
+    }
+    const inputRef = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('top-input')));
+    const typed = await call(page, 'type_ax', { ref_id: inputRef, text: 'Ada', clear: true });
+    const typedState = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      value: document.getElementById('top-input').value,
+    }));
+    if (!typed?.success || typedState.value !== 'Ada' || Math.abs(typedState.scrollY - before) > 1) {
+      throw new Error(`${browserKind} ${position} input jumped from ${before}: ${JSON.stringify({ typed, typedState })}`);
+    }
+    const checkRef = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('bottom-check')));
+    const checked = await call(page, 'set_checked', { ref_id: checkRef, checked: true });
+    const checkedState = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      checked: document.getElementById('bottom-check').checked,
+    }));
+    if (!checked?.success || !checkedState.checked || Math.abs(checkedState.scrollY - before) > 1) {
+      throw new Error(`${browserKind} ${position} checkbox jumped from ${before}: ${JSON.stringify({ checked, checkedState })}`);
+    }
+    if (browserKind === 'chrome') {
+      const rect = await call(page, 'ax_resolve_rect', { ref_id: inputRef });
+      const afterRect = await page.evaluate(() => window.scrollY);
+      if (!rect?.success || Math.abs(afterRect - before) > 1) {
+        throw new Error(`Chrome ${position} rect resolution jumped from ${before}: ${JSON.stringify({ rect, afterRect })}`);
+      }
+    }
+  }
+}
+
+test('Chrome: controls inside docked bars keep the document scroll position', page =>
+  assertDockedControlsKeepScroll(page, 'chrome'));
+firefoxTest('Firefox: controls inside docked bars keep the document scroll position', page =>
+  assertDockedControlsKeepScroll(page, 'firefox'));
+
+async function assertFixedSideRailControlsKeepScroll(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      html { scroll-padding-top: 80px; }
+      body { margin: 0; height: 1700px; }
+      header { position: fixed; top: 0; width: 100%; height: 80px; z-index: 10; background: white; }
+      #side { position: fixed; top: 0; left: 0; width: 220px; height: 100vh; z-index: 20; background: white; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px; }
+    </style>
+    <header>Page header</header>
+    <div id="side">
+      <button id="rail-button" onclick="window.__railClicked = true">Rail action</button>
+      <input id="rail-input" aria-label="Rail input">
+      <input id="rail-check" type="checkbox" aria-label="Rail check">
+    </div>
+  `, browserKind);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const before = await page.evaluate(() => window.scrollY);
+  const click = await call(page, 'click', { selector: '#rail-button' });
+  const clicked = await page.evaluate(() => ({ clicked: window.__railClicked === true, scrollY: window.scrollY }));
+  if (!click?.success || !clicked.clicked || Math.abs(clicked.scrollY - before) > 1) {
+    throw new Error(`${browserKind}: fixed side-rail click scrolled the page: ${JSON.stringify({ before, click, clicked })}`);
+  }
+  const inputRef = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('rail-input')));
+  const typed = await call(page, 'type_ax', { ref_id: inputRef, text: 'Ada', clear: true });
+  const inputState = await page.evaluate(() => ({
+    value: document.getElementById('rail-input').value, scrollY: window.scrollY,
+  }));
+  if (!typed?.success || inputState.value !== 'Ada' || Math.abs(inputState.scrollY - before) > 1) {
+    throw new Error(`${browserKind}: fixed side-rail input scrolled the page: ${JSON.stringify({ before, typed, inputState })}`);
+  }
+  const checkRef = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('rail-check')));
+  const checked = await call(page, 'set_checked', { ref_id: checkRef, checked: true });
+  const checkState = await page.evaluate(() => ({
+    checked: document.getElementById('rail-check').checked, scrollY: window.scrollY,
+  }));
+  if (!checked?.success || !checkState.checked || Math.abs(checkState.scrollY - before) > 1) {
+    throw new Error(`${browserKind}: fixed side-rail checkbox scrolled the page: ${JSON.stringify({ before, checked, checkState })}`);
+  }
+  if (browserKind === 'chrome') {
+    const resolved = await call(page, 'ax_resolve_rect', { ref_id: inputRef });
+    const afterResolve = await page.evaluate(() => window.scrollY);
+    if (!resolved?.success || Math.abs(afterResolve - before) > 1) {
+      throw new Error(`Chrome fixed side-rail rect resolution scrolled the page: ${JSON.stringify({ before, resolved, afterResolve })}`);
+    }
+  }
+}
+
+test('Chrome: controls inside a fixed side rail keep document scroll position', page =>
+  assertFixedSideRailControlsKeepScroll(page, 'chrome'));
+firefoxTest('Firefox: controls inside a fixed side rail keep document scroll position', page =>
+  assertFixedSideRailControlsKeepScroll(page, 'firefox'));
+
+async function assertHorizontalTargetClearsSideRail(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; }
+      #side { position: fixed; top: 0; left: 0; width: 200px; height: 100vh; z-index: 20; background: white; }
+      #scroller { width: 500px; height: 160px; overflow: auto; margin-top: 120px; }
+      #content { width: 1200px; height: 100px; position: relative; }
+      #target { position: absolute; left: 300px; top: 20px; }
+    </style>
+    <div id="side">Fixed side rail</div>
+    <div id="scroller"><div id="content"><input id="target" type="checkbox" aria-label="Grid checkbox"></div></div>
+  `, browserKind);
+  const before = await page.evaluate(() => {
+    document.getElementById('scroller').scrollLeft = 600;
+    return document.getElementById('target').getBoundingClientRect().left;
+  });
+  if (before >= 0) throw new Error(`${browserKind}: target must start outside the horizontal scrollport: ${before}`);
+  const ref = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('target')));
+  const result = await call(page, 'set_checked', { ref_id: ref, checked: true });
+  const after = await page.evaluate(() => ({
+    checked: document.getElementById('target').checked,
+    left: document.getElementById('target').getBoundingClientRect().left,
+    scrollLeft: document.getElementById('scroller').scrollLeft,
+  }));
+  if (!result?.success || !after.checked || after.left < 200) {
+    throw new Error(`${browserKind}: horizontal target remained behind the side rail: ${JSON.stringify({ before, result, after })}`);
+  }
+}
+
+test('Chrome: horizontal target clears a fixed side rail', page =>
+  assertHorizontalTargetClearsSideRail(page, 'chrome'));
+firefoxTest('Firefox: horizontal target clears a fixed side rail', page =>
+  assertHorizontalTargetClearsSideRail(page, 'firefox'));
+
+async function assertUnstuckStickyTargetClearsHeader(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; height: 1700px; }
+      header { position: fixed; top: 0; width: 100%; height: 80px; z-index: 20; background: white; }
+      #spacer { height: 350px; }
+      #sticky-row { position: sticky; top: 0; height: 40px; z-index: 10; }
+    </style>
+    <header>Fixed header</header>
+    <div id="spacer"></div>
+    <div id="sticky-row"><button id="target" onclick="window.__targetClicked = true">Unstuck sticky action</button></div>
+  `, browserKind);
+  const before = await page.evaluate(() => {
+    window.scrollTo(0, 300);
+    return {
+      scrollY: window.scrollY,
+      rowTop: document.getElementById('sticky-row').getBoundingClientRect().top,
+    };
+  });
+  if (before.scrollY !== 300 || before.rowTop <= 0 || before.rowTop >= 80) {
+    throw new Error(`${browserKind}: sticky fixture must be unstuck under the header: ${JSON.stringify(before)}`);
+  }
+  const click = await call(page, 'click', { selector: '#target' });
+  const after = await page.evaluate(() => ({
+    clicked: window.__targetClicked === true,
+    scrollY: window.scrollY,
+    top: document.getElementById('target').getBoundingClientRect().top,
+  }));
+  if (!click?.success || !after.clicked || after.scrollY >= 300 || after.top < 80) {
+    throw new Error(`${browserKind}: unstuck sticky target was not cleared: ${JSON.stringify({ before, click, after })}`);
+  }
+}
+
+test('Chrome: an unstuck sticky control clears a fixed header', page =>
+  assertUnstuckStickyTargetClearsHeader(page, 'chrome'));
+firefoxTest('Firefox: an unstuck sticky control clears a fixed header', page =>
+  assertUnstuckStickyTargetClearsHeader(page, 'firefox'));
+
+async function assertStackedDockedBars(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; height: 2000px; }
+      header { position: fixed; top: 0; width: 100%; height: 64px; background: white; }
+      .secondary-bar { position: fixed; top: 64px; width: 100%; height: 48px; background: white; }
+      .toolbar-lower { position: fixed; bottom: 0; width: 100%; height: 50px; background: white; }
+      .upper-bar { position: fixed; bottom: 50px; width: 100%; height: 50px; background: white; }
+      #top-target { position: absolute; top: 376px; left: 30px; height: 30px; }
+      #bottom-target { position: absolute; top: calc(300px + 100vh - 80px); left: 30px; height: 30px; }
+    </style>
+    <header>Primary header</header>
+    <div class="secondary-bar" role="toolbar"><button id="secondary-control" onclick="window.__secondaryClicked = true">Secondary control</button></div>
+    <div class="toolbar-lower">Lower toolbar</div>
+    <div class="upper-bar" role="toolbar"><button id="upper-control" onclick="window.__upperClicked = true">Upper control</button></div>
+    <button id="top-target" onclick="window.__topTargetClicked = true">Covered by secondary header</button>
+    <button id="bottom-target" onclick="window.__bottomTargetClicked = true">Covered by upper toolbar</button>
+  `, browserKind);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const topClick = await call(page, 'click', { selector: '#top-target' });
+  const topState = await page.evaluate(() => ({
+    clicked: window.__topTargetClicked === true,
+    scrollY: window.scrollY,
+    top: document.getElementById('top-target').getBoundingClientRect().top,
+  }));
+  if (!topClick?.success || !topState.clicked || topState.scrollY >= 300 || topState.top < 112) {
+    throw new Error(`${browserKind}: stacked top bars did not clear the target: ${JSON.stringify({ topClick, topState })}`);
+  }
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const bottomClick = await call(page, 'click', { selector: '#bottom-target' });
+  const bottomState = await page.evaluate(() => ({
+    clicked: window.__bottomTargetClicked === true,
+    scrollY: window.scrollY,
+    bottom: document.getElementById('bottom-target').getBoundingClientRect().bottom,
+    viewportHeight: window.innerHeight,
+  }));
+  if (!bottomClick?.success || !bottomState.clicked || bottomState.scrollY <= 300
+    || bottomState.bottom > bottomState.viewportHeight - 100) {
+    throw new Error(`${browserKind}: stacked bottom bars did not clear the target: ${JSON.stringify({ bottomClick, bottomState })}`);
+  }
+  await page.evaluate(() => {
+    document.documentElement.style.scrollPaddingTop = '112px';
+    document.documentElement.style.scrollPaddingBottom = '100px';
+  });
+  const dockedBefore = await page.evaluate(() => ({
+    scrollY: window.scrollY,
+    secondaryTop: document.getElementById('secondary-control').getBoundingClientRect().top,
+    upperBottom: document.getElementById('upper-control').getBoundingClientRect().bottom,
+  }));
+  for (const [selector, flag] of [['#secondary-control', '__secondaryClicked'], ['#upper-control', '__upperClicked']]) {
+    const result = await call(page, 'click', { selector });
+    const state = await page.evaluate(name => ({ clicked: window[name] === true, scrollY: window.scrollY }), flag);
+    if (!result?.success || !state.clicked || Math.abs(state.scrollY - dockedBefore.scrollY) > 1) {
+      throw new Error(`${browserKind}: offset dock control ${selector} scrolled the page: ${JSON.stringify({ dockedBefore, result, state })}`);
+    }
+  }
+}
+
+test('Chrome: stacked docked bars clear targets and preserve docked controls', page =>
+  assertStackedDockedBars(page, 'chrome'));
+firefoxTest('Firefox: stacked docked bars clear targets and preserve docked controls', page =>
+  assertStackedDockedBars(page, 'firefox'));
+
+async function assertTopObstructionScrollDirection(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; height: 1700px; }
+      #obstruction { position: fixed; top: 0; left: 0; width: 100%; height: 80px; z-index: 20; background: white; }
+      #target { position: absolute; top: 320px; left: 60px; width: 120px; height: 100px; }
+      #row { position: absolute; top: 320px; left: 220px; width: 120px; height: 40px; }
+    </style>
+    <button id="target" onclick="window.__targetClicked = true">Partly covered</button>
+    <div id="row" role="listitem">Covered row</div>
+    <div id="obstruction">Floating obstruction</div>
+  `, browserKind);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const click = await call(page, 'click', { selector: '#target' });
+  const afterClick = await page.evaluate(() => ({
+    scrollY: window.scrollY,
+    clicked: window.__targetClicked === true,
+    top: document.getElementById('target').getBoundingClientRect().top,
+  }));
+  if (!click?.success || !afterClick.clicked || afterClick.scrollY >= 300 || afterClick.top < 80) {
+    throw new Error(`${browserKind} top obstruction retry scrolled the wrong way: ${JSON.stringify({ click, afterClick })}`);
+  }
+  if (browserKind === 'chrome') {
+    await page.evaluate(() => window.scrollTo(0, 300));
+    const refId = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('row')));
+    const resolved = await call(page, 'ax_resolve_rect', { ref_id: refId, forClickFallback: true });
+    const afterResolve = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      top: document.getElementById('row').getBoundingClientRect().top,
+    }));
+    if (!resolved?.success || !resolved.hitOk || afterResolve.scrollY >= 300 || afterResolve.top < 80
+      || Math.abs(resolved.rect?.y - afterResolve.top) > 1) {
+      throw new Error(`Chrome rect resolver scrolled the wrong way: ${JSON.stringify({ resolved, afterResolve })}`);
+    }
+  }
+}
+
+test('Chrome: top obstruction retry moves targets below the blocker', page =>
+  assertTopObstructionScrollDirection(page, 'chrome'));
+firefoxTest('Firefox: top obstruction retry moves targets below the blocker', page =>
+  assertTopObstructionScrollDirection(page, 'firefox'));
+
+async function assertFloatingTopBarClearance(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; height: 1700px; }
+      #obstruction { position: fixed; top: 40px; left: 0; width: 100%; height: 80px; z-index: 20; background: white; }
+      #target { position: absolute; top: 350px; left: 60px; width: 120px; height: 40px; }
+      #row { position: absolute; top: 350px; left: 220px; width: 120px; height: 40px; }
+    </style>
+    <button id="target" onclick="window.__targetClicked = true">Covered target</button>
+    <div id="row" role="listitem">Covered row</div>
+    <div id="obstruction">Floating obstruction</div>
+  `, browserKind);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const click = await call(page, 'click', { selector: '#target' });
+  const afterClick = await page.evaluate(() => ({
+    clicked: window.__targetClicked === true,
+    scrollY: window.scrollY,
+    top: document.getElementById('target').getBoundingClientRect().top,
+  }));
+  if (!click?.success || !afterClick.clicked || afterClick.scrollY >= 300 || afterClick.top < 120) {
+    throw new Error(`${browserKind}: floating top bar did not clear the click target: ${JSON.stringify({ click, afterClick })}`);
+  }
+  if (browserKind === 'chrome') {
+    await page.evaluate(() => window.scrollTo(0, 300));
+    const refId = await page.evaluate(() => window.__wb_ax_ref(document.getElementById('row')));
+    const resolved = await call(page, 'ax_resolve_rect', { ref_id: refId, forClickFallback: true });
+    const afterResolve = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      top: document.getElementById('row').getBoundingClientRect().top,
+    }));
+    if (!resolved?.success || !resolved.hitOk || afterResolve.scrollY >= 300 || afterResolve.top < 120) {
+      throw new Error(`Chrome floating top bar did not clear rect resolution: ${JSON.stringify({ resolved, afterResolve })}`);
+    }
+  }
+}
+
+test('Chrome: floating top bar clears a fully covered target', page =>
+  assertFloatingTopBarClearance(page, 'chrome'));
+firefoxTest('Firefox: floating top bar clears a fully covered target', page =>
+  assertFloatingTopBarClearance(page, 'firefox'));
+
+async function assertUnclassifiedFixedOverlayClearance(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; height: 1700px; }
+      #cookie-banner { position: fixed; bottom: 0; left: 0; width: 100%; height: 80px; z-index: 20; background: white; }
+      #target { position: absolute; top: calc(300px + 100vh - 60px); left: 60px; width: 120px; height: 40px; }
+    </style>
+    <button id="target" onclick="window.__targetClicked = true">Behind cookie banner</button>
+    <div id="cookie-banner">Cookie notice</div>
+  `, browserKind);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const bottomClick = await call(page, 'click', { selector: '#target' });
+  const bottomState = await page.evaluate(() => ({
+    clicked: window.__targetClicked === true,
+    scrollY: window.scrollY,
+    bottom: document.getElementById('target').getBoundingClientRect().bottom,
+    viewportHeight: window.innerHeight,
+  }));
+  if (!bottomClick?.success || !bottomState.clicked || bottomState.scrollY <= 300
+    || bottomState.bottom > bottomState.viewportHeight - 80) {
+    throw new Error(`${browserKind}: unclassified bottom banner was not cleared: ${JSON.stringify({ bottomClick, bottomState })}`);
+  }
+
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; width: 2000px; height: 1700px; }
+      #side-panel { position: fixed; top: 0; left: 0; width: 240px; height: 100vh; z-index: 20; background: white; }
+      #target { position: absolute; top: 500px; left: 350px; width: 100px; height: 40px; }
+    </style>
+    <button id="target" onclick="window.__targetClicked = true">Behind side panel</button>
+    <div id="side-panel">Side panel</div>
+  `, browserKind);
+  const beforeSide = await page.evaluate(() => {
+    window.scrollTo(300, 300);
+    return { scrollX: window.scrollX, left: document.getElementById('target').getBoundingClientRect().left };
+  });
+  if (beforeSide.scrollX !== 300 || beforeSide.left >= 240) {
+    throw new Error(`${browserKind}: side panel fixture did not cover the target: ${JSON.stringify(beforeSide)}`);
+  }
+  const sideClick = await call(page, 'click', { selector: '#target' });
+  const sideState = await page.evaluate(() => ({
+    clicked: window.__targetClicked === true,
+    scrollX: window.scrollX,
+    left: document.getElementById('target').getBoundingClientRect().left,
+  }));
+  if (!sideClick?.success || !sideState.clicked || sideState.scrollX >= 300 || sideState.left < 240) {
+    throw new Error(`${browserKind}: unclassified side panel was not cleared: ${JSON.stringify({ sideClick, sideState })}`);
+  }
+}
+
+test('Chrome: unclassified bottom and side overlays clear their targets', page =>
+  assertUnclassifiedFixedOverlayClearance(page, 'chrome'));
+firefoxTest('Firefox: unclassified bottom and side overlays clear their targets', page =>
+  assertUnclassifiedFixedOverlayClearance(page, 'firefox'));
+
+async function assertInnerScrollerClearance(page, browserKind) {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; }
+      #scroller { margin: 20px; width: 260px; height: 100px; overflow: auto; }
+      #target { display: block; margin-top: 200px; width: 120px; height: 32px; }
+    </style>
+    <div id="scroller"><button id="target" onclick="window.__targetClicked = true">Target</button></div>
+  `, browserKind);
+  const before = await page.evaluate(() => {
+    const scroller = document.getElementById('scroller');
+    const target = document.getElementById('target');
+    return {
+      scrollTop: scroller.scrollTop,
+      targetTop: target.getBoundingClientRect().top,
+      scrollerBottom: scroller.getBoundingClientRect().bottom,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  if (before.scrollTop !== 0 || before.targetTop <= before.scrollerBottom || before.targetTop >= before.viewportHeight) {
+    throw new Error(`fixture must be clipped by its scroller but inside the viewport: ${JSON.stringify(before)}`);
+  }
+  const result = await call(page, 'click', { selector: '#target' });
+  const after = await page.evaluate(() => ({
+    scrollTop: document.getElementById('scroller').scrollTop,
+    clicked: window.__targetClicked === true,
+  }));
+  if (!result?.success || !after.clicked || after.scrollTop <= 0) {
+    throw new Error(`${browserKind} click did not expose the clipped target: ${JSON.stringify({ result, after })}`);
+  }
+}
+
+test('Chrome: click scrolls a target clipped by an inner scroller', page =>
+  assertInnerScrollerClearance(page, 'chrome'));
+firefoxTest('Firefox: click scrolls a target clipped by an inner scroller', page =>
+  assertInnerScrollerClearance(page, 'firefox'));
+
+async function assertShadowHostOcclusion(page, sourcePath) {
+  await setupAccessibilityTreeHtml(page, `<!doctype html>
+    <style>
+      body { margin: 0; }
+      #host { position: absolute; left: 20px; top: 20px; width: 200px; height: 50px; }
+    </style>
+    <div id="host" role="button" tabindex="0" aria-label="Shadow control"></div>
+    <script>
+      document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML =
+        '<span style="display:block;width:100%;height:100%;background:green">Visible content</span>';
+    </script>
+  `, sourcePath);
+  const result = await page.evaluate(() => {
+    const line = () => String(window.__generateAccessibilityTree('all', 5, 20000).pageContent || '')
+      .split('\n').find(item => item.includes('"Shadow control"')) || '';
+    const visible = line();
+    const cover = document.createElement('div');
+    cover.style.cssText = 'position:absolute;left:20px;top:20px;width:200px;height:50px;z-index:2;background:red';
+    document.body.append(cover);
+    return { visible, covered: line() };
+  });
+  if (!result.visible || result.visible.includes('occluded=true') || !result.covered.includes('occluded=true')) {
+    throw new Error(`shadow host occlusion state is wrong: ${JSON.stringify(result)}`);
+  }
+}
+
+test('Chrome: visible shadow host is not marked occluded', page =>
+  assertShadowHostOcclusion(page, accessibilityTreeJsPath));
+firefoxTest('Firefox: visible shadow host is not marked occluded', page =>
+  assertShadowHostOcclusion(page, firefoxAccessibilityTreeJsPath));
+
+async function assertAncestorPseudoElementOcclusion(page, sourcePath, label) {
+  await setupAccessibilityTreeHtml(page, `<!doctype html>
+    <style>
+      #cover-parent { position: relative; margin: 100px; width: 220px; height: 100px; }
+      #cover-parent::after { content: ''; position: absolute; inset: 0; z-index: 2; background: rgba(255,255,255,.1); pointer-events: auto; }
+      #target { position: absolute; top: 20px; left: 20px; width: 120px; height: 40px; }
+    </style>
+    <div id="cover-parent"><button id="target">Pseudo covered action</button></div>
+  `, sourcePath);
+  const state = await page.evaluate(() => {
+    const target = document.getElementById('target');
+    const rect = target.getBoundingClientRect();
+    const tree = window.__generateAccessibilityTree('all', 5, 20000);
+    return {
+      hitIsParent: document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+        === document.getElementById('cover-parent'),
+      line: String(tree?.pageContent || '').split('\n').find(item => item.includes('"Pseudo covered action"')) || '',
+    };
+  });
+  if (!state.hitIsParent || !state.line.includes('occluded=true')) {
+    throw new Error(`${label}: ancestor pseudo-element was not marked as covering the target: ${JSON.stringify(state)}`);
+  }
+}
+
+test('Chrome: ancestor pseudo-element marks its child control occluded', page =>
+  assertAncestorPseudoElementOcclusion(page, accessibilityTreeJsPath, 'chrome'));
+firefoxTest('Firefox: ancestor pseudo-element marks its child control occluded', page =>
+  assertAncestorPseudoElementOcclusion(page, firefoxAccessibilityTreeJsPath, 'firefox'));
+
 test('occlusion: click({text:"Submit"}) refuses when covered', async (page) => {
   await setup(page, 'occlusion.html');
   const resp = await call(page, 'click', { text: 'Submit' });
@@ -4180,6 +4807,34 @@ test('ax_resolve_rect: trusted fallback eligibility rejects interactive descenda
     || ordinaryResolve.documentToken !== undefined
   ) {
     throw new Error(`fallback-only metadata leaked into ordinary ref resolution: ${JSON.stringify(ordinaryResolve)}`);
+  }
+});
+
+test('ax_resolve_rect: an ancestor pseudo-element cannot authorize a trusted fallback click', async (page) => {
+  await setupContentHtml(page, `<!doctype html>
+    <style>
+      #cover-parent { position: relative; margin: 100px; width: 220px; height: 100px; }
+      #cover-parent::after { content: ''; position: absolute; inset: 0; z-index: 2; background: rgba(255,255,255,.1); pointer-events: auto; }
+      #target { position: absolute; top: 20px; left: 20px; width: 120px; height: 40px; }
+    </style>
+    <div id="cover-parent">
+      <div id="target" role="listitem" tabindex="0" aria-label="Safe row">Safe row</div>
+    </div>
+  `, 'chrome');
+  const setupState = await page.evaluate(() => {
+    const target = document.getElementById('target');
+    const rect = target.getBoundingClientRect();
+    return {
+      refId: window.__wb_ax_ref(target),
+      hitIsParent: document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+        === document.getElementById('cover-parent'),
+    };
+  });
+  if (!setupState.hitIsParent) throw new Error(`pseudo-element fixture did not cover its child: ${JSON.stringify(setupState)}`);
+  const resolved = await call(page, 'ax_resolve_rect', { ref_id: setupState.refId, forClickFallback: true });
+  if (!resolved?.success || resolved.hitOk !== false || resolved.fallbackEligible !== false
+    || !/covered/.test(resolved.fallbackBlockedReason || '')) {
+    throw new Error(`ancestor pseudo-element incorrectly authorized the target: ${JSON.stringify(resolved)}`);
   }
 });
 

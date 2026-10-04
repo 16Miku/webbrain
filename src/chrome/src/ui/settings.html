@@ -1383,7 +1383,23 @@
     #safesocial-labels .safesocial-label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
     #safesocial-labels input { width: auto; margin: 0; flex-shrink: 0; }
     #safesocial-status { margin-top: 12px; }
-  </style>
+    #captcha-heading { font-size: 15px; margin-bottom: 8px; }
+    .captcha-description { font-size: 12px; color: var(--text2); line-height: 1.55; margin: 0 0 14px; }
+    .captcha-provider { padding: 18px 0; border-top: 1px solid var(--border); }
+    .captcha-provider h4 { font-size: 13px; margin: 0 0 8px; }
+    .captcha-provider h4 a { color: var(--accent); text-decoration: none; }
+    .captcha-provider h4 a:hover { text-decoration: underline; }
+    .captcha-provider .btn-row { flex-wrap: wrap; }
+    .captcha-provider-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .captcha-enabled { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+  .captcha-enabled input { margin: 0; width: auto; }
+  .captcha-advanced { margin-top: 14px; font-size: 12px; color: var(--text2); }
+  .captcha-advanced summary { cursor: pointer; }
+  #captcha-card .captcha-advanced > summary::after { content: '+'; }
+  #captcha-card .captcha-advanced[open] > summary::after { content: '-'; }
+  .captcha-advanced .field { margin-top: 12px; }
+  .captcha-advanced input { max-width: 140px; }
+</style>
   <link rel="stylesheet" href="apocalypse-comm.css">
   <link rel="stylesheet" href="download-tracker.css">
 </head>
@@ -1413,6 +1429,7 @@
     <button class="tab-btn" type="button" role="tab" data-tab="memory" data-i18n="st.tab.memory"></button>
     <button class="tab-btn" type="button" role="tab" data-tab="skills" data-i18n="st.tab.skills"></button>
     <button class="tab-btn" type="button" role="tab" data-tab="permissions" data-i18n="st.tab.permissions"></button>
+    <button class="tab-btn" type="button" role="tab" data-tab="cloudbridge" data-i18n="st.tab.cloudbridge"></button>
   </nav>
 
   <section class="tab-panel" data-panel="display" role="tabpanel">
@@ -1703,7 +1720,7 @@
             </label>
             <div class="cloud-bridge-status" id="cloud-bridge-status" data-state="disabled" role="status" aria-live="polite">
               <span class="cloud-bridge-status-dot" aria-hidden="true"></span>
-              <span id="cloud-bridge-status-text" data-i18n="st.display.cloud_bridge.status_disabled"></span>
+              <span id="cloud-bridge-status-text" data-i18n="st.cb.status_disabled"></span>
             </div>
           </div>
           <div class="setting-row">
@@ -1805,22 +1822,192 @@
             </label>
           </div>
 
-          <div class="provider-card" id="captcha-card">
-            <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.captcha.desc_html"></div>
+          <div class="provider-card" id="captcha-card" aria-labelledby="captcha-heading">
+            <h3 id="captcha-heading" data-i18n="st.captcha.heading"></h3>
+            <p class="captcha-description" data-i18n="st.captcha.order"></p>
 
-            <div class="field">
-              <label data-i18n="st.captcha.api_key.label"></label>
-              <input type="password" id="captcha-api-key" placeholder="CAP-XXXXXXXXXXXXXXXXXXXX" pattern="CAP-[A-Za-z0-9_-]{20,}" minlength="24" autocomplete="off" spellcheck="false">
-            </div>
+            <section class="captcha-provider" aria-labelledby="capsolver-heading">
+              <div class="captcha-provider-header">
+                <h4 id="capsolver-heading"><a href="https://capsolver.com" target="_blank" rel="noopener noreferrer">CapSolver</a></h4>
+                <label class="captcha-enabled"><input type="checkbox" id="captcha-enabled"><span data-i18n="st.captcha.enabled"></span></label>
+              </div>
+              <p class="captcha-description"><span data-i18n="st.captcha.coverage"></span> <span id="captcha-coverage"></span></p>
+              <p class="captcha-description"><a id="captcha-docs" target="_blank" rel="noopener noreferrer" data-i18n="st.captcha.docs"></a></p>
+              <div class="field">
+                <label for="captcha-api-key" data-i18n="st.captcha.api_key.label" data-i18n-params='{"provider":"CapSolver"}'></label>
+                <input type="password" id="captcha-api-key" pattern="CAP-[A-Za-z0-9_-]{20,}" minlength="24" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="btn-row">
+                <button class="btn-primary" id="btn-save-captcha" data-i18n="st.captcha.save"></button>
+                <button class="btn-secondary" id="btn-test-captcha" data-i18n="st.captcha.check_balance"></button>
+                <button class="btn-secondary" id="btn-clear-captcha" data-i18n="st.captcha.clear"></button>
+              </div>
+              <div class="test-result" id="test-captcha" role="status" aria-live="polite"></div>
+              <details class="captcha-advanced">
+                <summary data-i18n="st.display.advanced"></summary>
+                <div class="field">
+                  <label for="captcha-weight" data-i18n="st.captcha.weight"></label>
+                  <input type="number" id="captcha-weight" value="100" step="any">
+                </div>
+              </details>
+            </section>
 
-            <div class="btn-row">
-              <button class="btn-primary" id="btn-save-captcha" data-i18n="st.captcha.save"></button>
-              <button class="btn-secondary" id="btn-test-captcha" data-i18n="st.captcha.check_balance"></button>
-              <button class="btn-secondary" id="btn-clear-captcha" data-i18n="st.captcha.clear"></button>
-            </div>
-            <div class="test-result" id="test-captcha"></div>
+            <section class="captcha-provider" aria-labelledby="two-captcha-heading">
+              <div class="captcha-provider-header">
+                <h4 id="two-captcha-heading"><a href="https://2captcha.com" target="_blank" rel="noopener noreferrer">2Captcha</a></h4>
+                <label class="captcha-enabled"><input type="checkbox" id="two-captcha-enabled"><span data-i18n="st.captcha.enabled"></span></label>
+              </div>
+              <p class="captcha-description"><span data-i18n="st.captcha.coverage"></span> <span id="two-captcha-coverage"></span></p>
+              <p class="captcha-description"><a id="two-captcha-docs" target="_blank" rel="noopener noreferrer" data-i18n="st.captcha.docs"></a></p>
+              <div class="field">
+                <label for="two-captcha-api-key" data-i18n="st.captcha.provider_key" data-i18n-params='{"provider":"2Captcha"}'></label>
+                <input type="password" id="two-captcha-api-key" pattern="[A-Fa-f0-9]{32}" minlength="32" maxlength="32" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="btn-row">
+                <button class="btn-primary" id="btn-save-two-captcha" data-i18n="st.captcha.save"></button>
+                <button class="btn-secondary" id="btn-test-two-captcha" data-i18n="st.captcha.check_balance"></button>
+                <button class="btn-secondary" id="btn-clear-two-captcha" data-i18n="st.captcha.clear"></button>
+              </div>
+              <div class="test-result" id="test-two-captcha" role="status" aria-live="polite"></div>
+              <details class="captcha-advanced">
+                <summary data-i18n="st.display.advanced"></summary>
+                <div class="field">
+                  <label for="two-captcha-weight" data-i18n="st.captcha.weight"></label>
+                  <input type="number" id="two-captcha-weight" value="99" step="any">
+                </div>
+              </details>
+            </section>
 
-            <div class="info-box" style="margin-top:16px;" data-i18n-html="st.captcha.security_html"></div>
+            <section class="captcha-provider" aria-labelledby="capmonster-heading">
+              <div class="captcha-provider-header">
+                <h4 id="capmonster-heading"><a href="https://capmonster.cloud" target="_blank" rel="noopener noreferrer">CapMonster Cloud</a></h4>
+                <label class="captcha-enabled"><input type="checkbox" id="capmonster-enabled"><span data-i18n="st.captcha.enabled"></span></label>
+              </div>
+              <p class="captcha-description"><span data-i18n="st.captcha.coverage"></span> <span id="capmonster-coverage"></span></p>
+              <p class="captcha-description"><a id="capmonster-docs" target="_blank" rel="noopener noreferrer" data-i18n="st.captcha.docs"></a></p>
+              <div class="field">
+                <label for="capmonster-api-key" data-i18n="st.captcha.provider_key" data-i18n-params='{"provider":"CapMonster Cloud"}'></label>
+                <input type="password" id="capmonster-api-key" pattern="[A-Fa-f0-9]{32}" minlength="32" maxlength="32" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="btn-row">
+                <button class="btn-primary" id="btn-save-capmonster" data-i18n="st.captcha.save"></button>
+                <button class="btn-secondary" id="btn-test-capmonster" data-i18n="st.captcha.check_balance"></button>
+                <button class="btn-secondary" id="btn-clear-capmonster" data-i18n="st.captcha.clear"></button>
+              </div>
+              <div class="test-result" id="test-capmonster" role="status" aria-live="polite"></div>
+              <details class="captcha-advanced">
+                <summary data-i18n="st.display.advanced"></summary>
+                <div class="field">
+                  <label for="capmonster-weight" data-i18n="st.captcha.weight"></label>
+                  <input type="number" id="capmonster-weight" value="98" step="any">
+                </div>
+              </details>
+            </section>
+
+            <section class="captcha-provider" aria-labelledby="solve-captcha-heading">
+              <div class="captcha-provider-header">
+                <h4 id="solve-captcha-heading"><a href="https://solvecaptcha.com" target="_blank" rel="noopener noreferrer">SolveCaptcha</a></h4>
+                <label class="captcha-enabled"><input type="checkbox" id="solve-captcha-enabled"><span data-i18n="st.captcha.enabled"></span></label>
+              </div>
+              <p class="captcha-description"><span data-i18n="st.captcha.coverage"></span> <span id="solve-captcha-coverage"></span></p>
+              <p class="captcha-description"><a id="solve-captcha-docs" target="_blank" rel="noopener noreferrer" data-i18n="st.captcha.docs"></a></p>
+              <div class="field">
+                <label for="solve-captcha-api-key" data-i18n="st.captcha.provider_key" data-i18n-params='{"provider":"SolveCaptcha"}'></label>
+                <input type="password" id="solve-captcha-api-key" pattern="[A-Fa-f0-9]{32}" minlength="32" maxlength="32" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="btn-row">
+                <button class="btn-primary" id="btn-save-solve-captcha" data-i18n="st.captcha.save"></button>
+                <button class="btn-secondary" id="btn-test-solve-captcha" data-i18n="st.captcha.check_balance"></button>
+                <button class="btn-secondary" id="btn-clear-solve-captcha" data-i18n="st.captcha.clear"></button>
+              </div>
+              <div class="test-result" id="test-solve-captcha" role="status" aria-live="polite"></div>
+              <details class="captcha-advanced">
+                <summary data-i18n="st.display.advanced"></summary>
+                <div class="field">
+                  <label for="solve-captcha-weight" data-i18n="st.captcha.weight"></label>
+                  <input type="number" id="solve-captcha-weight" value="97" step="any">
+                </div>
+              </details>
+            </section>
+
+            <section class="captcha-provider" aria-labelledby="anti-captcha-heading">
+              <div class="captcha-provider-header">
+                <h4 id="anti-captcha-heading"><a href="https://anti-captcha.com" target="_blank" rel="noopener noreferrer">Anti-Captcha</a></h4>
+                <label class="captcha-enabled"><input type="checkbox" id="anti-captcha-enabled"><span data-i18n="st.captcha.enabled"></span></label>
+              </div>
+              <p class="captcha-description"><span data-i18n="st.captcha.coverage"></span> <span id="anti-captcha-coverage"></span></p>
+              <p class="captcha-description"><a id="anti-captcha-docs" target="_blank" rel="noopener noreferrer" data-i18n="st.captcha.docs"></a></p>
+              <div class="field">
+                <label for="anti-captcha-api-key" data-i18n="st.captcha.provider_key" data-i18n-params='{"provider":"Anti-Captcha"}'></label>
+                <input type="password" id="anti-captcha-api-key" pattern="[A-Fa-f0-9]{32}" minlength="32" maxlength="32" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="btn-row">
+                <button class="btn-primary" id="btn-save-anti-captcha" data-i18n="st.captcha.save"></button>
+                <button class="btn-secondary" id="btn-test-anti-captcha" data-i18n="st.captcha.check_balance"></button>
+                <button class="btn-secondary" id="btn-clear-anti-captcha" data-i18n="st.captcha.clear"></button>
+              </div>
+              <div class="test-result" id="test-anti-captcha" role="status" aria-live="polite"></div>
+              <details class="captcha-advanced">
+                <summary data-i18n="st.display.advanced"></summary>
+                <div class="field">
+                  <label for="anti-captcha-weight" data-i18n="st.captcha.weight"></label>
+                  <input type="number" id="anti-captcha-weight" value="96" step="any">
+                </div>
+              </details>
+            </section>
+            <section class="captcha-provider" aria-labelledby="nopecha-heading">
+              <div class="captcha-provider-header">
+                <h4 id="nopecha-heading"><a href="https://nopecha.com/pricing" target="_blank" rel="noopener noreferrer">NopeCHA</a></h4>
+                <label class="captcha-enabled"><input type="checkbox" id="nopecha-enabled"><span data-i18n="st.captcha.enabled"></span></label>
+              </div>
+              <p class="captcha-description" data-i18n="st.captcha.hcaptcha_desc" data-i18n-params='{"provider":"NopeCHA"}'></p>
+              <p class="captcha-description"><span data-i18n="st.captcha.coverage"></span> <span id="nopecha-coverage"></span></p>
+              <p class="captcha-description"><a id="nopecha-docs" target="_blank" rel="noopener noreferrer" data-i18n="st.captcha.docs"></a></p>
+              <div class="field">
+                <label for="nopecha-api-key" data-i18n="st.captcha.provider_key" data-i18n-params='{"provider":"NopeCHA"}'></label>
+                <input type="password" id="nopecha-api-key" pattern="[A-Za-z0-9_\-]{1,256}" maxlength="256" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="btn-row">
+                <button class="btn-primary" id="btn-save-nopecha" data-i18n="st.captcha.save"></button>
+                <button class="btn-secondary" id="btn-test-nopecha" data-i18n="st.captcha.check_balance"></button>
+                <button class="btn-secondary" id="btn-clear-nopecha" data-i18n="st.captcha.clear"></button>
+              </div>
+              <div class="test-result" id="test-nopecha" role="status" aria-live="polite"></div>
+              <details class="captcha-advanced">
+                <summary data-i18n="st.display.advanced"></summary>
+                <div class="field">
+                  <label for="nopecha-weight" data-i18n="st.captcha.weight"></label>
+                  <input type="number" id="nopecha-weight" value="95" step="any">
+                </div>
+              </details>
+            </section>
+            <section class="captcha-provider" aria-labelledby="nonecap-heading">
+              <div class="captcha-provider-header">
+                <h4 id="nonecap-heading"><a href="https://nonecap.com/" target="_blank" rel="noopener noreferrer">NoneCap</a></h4>
+                <label class="captcha-enabled"><input type="checkbox" id="nonecap-enabled"><span data-i18n="st.captcha.enabled"></span></label>
+              </div>
+              <p class="captcha-description" data-i18n="st.captcha.hcaptcha_desc" data-i18n-params='{"provider":"NoneCap"}'></p>
+              <p class="captcha-description"><span data-i18n="st.captcha.coverage"></span> <span id="nonecap-coverage"></span></p>
+              <p class="captcha-description"><a id="nonecap-docs" target="_blank" rel="noopener noreferrer" data-i18n="st.captcha.docs"></a></p>
+              <div class="field">
+                <label for="nonecap-api-key" data-i18n="st.captcha.provider_key" data-i18n-params='{"provider":"NoneCap"}'></label>
+                <input type="password" id="nonecap-api-key" pattern="nc_live_[A-Za-z0-9_\-]{32}" minlength="40" maxlength="40" placeholder="nc_live_…" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="btn-row">
+                <button class="btn-primary" id="btn-save-nonecap" data-i18n="st.captcha.save"></button>
+                <button class="btn-secondary" id="btn-test-nonecap" data-i18n="st.captcha.check_balance"></button>
+                <button class="btn-secondary" id="btn-clear-nonecap" data-i18n="st.captcha.clear"></button>
+              </div>
+              <div class="test-result" id="test-nonecap" role="status" aria-live="polite"></div>
+              <details class="captcha-advanced">
+                <summary data-i18n="st.display.advanced"></summary>
+                <div class="field">
+                  <label for="nonecap-weight" data-i18n="st.captcha.weight"></label>
+                  <input type="number" id="nonecap-weight" value="94" step="any">
+                </div>
+              </details>
+            </section>
+            <div class="info-box" style="margin-top:16px;" data-i18n="st.captcha.providers_security"></div>
           </div>
 
 
@@ -2327,12 +2514,50 @@
     </div>
   </section>
 
+  <section class="tab-panel" data-panel="cloudbridge" role="tabpanel">
+    <div class="provider-card" id="cb-card">
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label" id="cb-enabled-label" data-i18n="st.cb.enabled"></div>
+          <div class="setting-desc" data-i18n="st.cb.desc"></div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="cb-enabled" aria-labelledby="cb-enabled-label">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <label class="cloud-bridge-url-field" for="cb-url">
+        <span class="cloud-bridge-url-label" data-i18n="st.cb.url"></span>
+        <input class="setting-input" type="text" id="cb-url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="ws://127.0.0.1:17374/extension">
+      </label>
+      <label class="cloud-bridge-url-field" for="cb-token" style="margin-top:12px;">
+        <span class="cloud-bridge-url-label" data-i18n="st.cb.token"></span>
+        <input class="setting-input" type="password" id="cb-token" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="setting-desc" style="margin-top:4px;" data-i18n="st.cb.token_hint"></div>
+      <label class="cloud-bridge-url-field" for="cb-browser-id" style="margin-top:12px;">
+        <span class="cloud-bridge-url-label" data-i18n="st.cb.browser_name"></span>
+        <input class="setting-input" type="text" id="cb-browser-id" autocomplete="off" spellcheck="false" maxlength="64">
+      </label>
+      <div class="setting-desc" style="margin-top:12px;"><span data-i18n="st.cb.installation_id"></span> <code id="cb-installation-id">—</code></div>
+      <div class="btn-row" style="margin-top:14px;">
+        <button class="btn-secondary" id="cb-test" data-i18n="st.cb.test"></button>
+      </div>
+      <div class="cloud-bridge-status" id="cb-status" data-state="disabled" role="status" aria-live="polite" style="margin-top:12px;">
+        <span class="cloud-bridge-status-dot" aria-hidden="true"></span>
+        <span id="cb-status-text" data-i18n="st.cb.status_disabled"></span>
+      </div>
+      <div class="info-box" style="margin-top:16px;" data-i18n-html="st.cb.howto_html"></div>
+    </div>
+  </section>
+
   <!-- Tab switcher must be an external script — Manifest V3's default
        CSP (`script-src 'self'`) blocks inline <script> execution. -->
   <script src="settings-tabs.js"></script>
   <script type="module" src="apocalypse-comm.js"></script>
   <script type="module" src="download-tracker.js"></script>
   <script src="settings.js" type="module"></script>
+  <script src="settings-cloud-bridge.js" type="module"></script>
   <script src="safesocial-settings.js" type="module"></script>
 </body>
 </html>

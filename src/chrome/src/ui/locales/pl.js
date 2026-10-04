@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Polski — translated from en.js. Keys mirror the English canonical file.
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Powiększenie interfejsu rozszerzenia',
   'sp.ui_scale.decrease': 'Pomniejsz interfejs rozszerzenia',
   'sp.ui_scale.increase': 'Powiększ interfejs rozszerzenia',
@@ -258,6 +260,7 @@ export default {
   'sp.subscribe.allowance_used': 'Wykorzystano dzienny darmowy limit WebBrain Compass.',
   'sp.subscribe.btn': 'Subskrybuj',
   'sp.subscribe.upgrade': 'Przejdź na Plus',
+  "sp.subscribe.resume_payment": "Metoda płatności zaktualizowana — spróbuj ponownie",
   'sp.subscribe.resume_upgrade': 'Plan zaktualizowany — spróbuj ponownie',
   'sp.subscribe.resume': 'Subskrypcja gotowa — spróbuj ponownie',
   'sp.stopped_by_user': '[Zatrzymane przez użytkownika]',
@@ -458,6 +461,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Rozliczenia, dane karty, e-mail i anulowanie są zarządzane przez Stripe dla tego profilu przeglądarki.',
   'st.account.billing_preparing': 'Przygotowywanie linku rozliczeniowego Stripe dla tego profilu przeglądarki.',
+  "st.account.payment_failed": "Nie udało się zrealizować płatności za subskrypcję. Zaktualizuj metodę płatności, aby przywrócić płatny plan.",
+  "st.account.update_payment": "Zaktualizuj metodę płatności",
   'st.account.manage_billing': 'Zarządzaj rozliczeniami',
   'st.display.language.label': 'Język',
   'st.display.language.desc': 'Język interfejsu wtyczki WebBrain.',
@@ -593,6 +598,7 @@ export default {
   'st.provider.field.context_window': 'Okno kontekstu (tokeny)',
   'st.provider.field.max_output_tokens': 'Maksymalne wyjście (tokeny)',
   'st.provider.field.supports_vision': 'Model obsługuje wizję (multimodalność)',
+  'st.provider.field.tools_mode': 'Natywne użycie narzędzi',
   'st.provider.field.vision_auto': 'Automatycznie',
   'st.provider.field.vision_force_on': 'Wymuś włączenie',
   'st.provider.field.vision_detected_vision': 'Wykryto automatycznie: Obsługa obrazu',
@@ -646,9 +652,6 @@ export default {
   'st.profile.saved': 'Zapisano.',
   'st.profile.cleared': 'Wyczyszczono.',
   'st.profile.security_html': '<strong>Bezpieczeństwo — przeczytaj to:</strong><br><ul style="margin:6px 0 0 18px;padding:0;line-height:1.55;"><li>Tekst wprowadzony tutaj jest przechowywany <strong>w postaci jawnej</strong> w lokalnej pamięci przeglądarki. <strong>Nie</strong> jest przesyłany do projektu WebBrain — ale <strong>jest</strong> wysyłany do skonfigurowanego dostawcy LLM w każdej turze, jako część promptu systemowego.</li><li><strong>Nie umieszczaj tutaj haseł do ważnych kont</strong> (Google, Apple, iCloud, bankowość, służbowe SSO, główny e-mail). Te konta powinny używać 2FA i i tak nie powinieneś przekazywać ich agentowi.</li><li><strong>Jednorazowe hasło</strong>, którego używasz wielokrotnie do mało istotnych rejestracji (newslettery, darmowe wersje próbne, konta forów) to docelowy przypadek użycia.</li><li>Jeśli ten profil przeglądarki kiedykolwiek zostanie naruszony, atakujący z dostępem do dysku może odczytać ten tekst. Ogranicz go do minimum.</li></ul>',
-  'st.captcha.desc_html': 'Pozwól agentowi automatycznie rozwiązywać CAPTCHA przez API <a href="https://capsolver.com" target="_blank" style="color:var(--accent);">CapSolver</a>. Obsługuje reCAPTCHA v2/v3, hCaptcha i Cloudflare Turnstile. Zapisanie prawidłowego klucza API automatycznie włącza CapSolver; bez klucza agent zatrzymuje się i prosi o samodzielne rozwiązanie CAPTCHA. CapSolver pobiera opłatę za każde rozwiązanie (~0,001–0,003 USD); używasz własnego konta i klucza API.',
-  'st.captcha.enabled.label': 'Włącz CapSolver',
-  'st.captcha.enabled.desc': 'Gdy agent natrafi na CAPTCHA, wywoła CapSolver raz, zanim wróci do proszenia Ciebie. Wymaga klucza API poniżej.',
   'st.captcha.api_key.label': 'Klucz API CapSolver',
   'st.captcha.save': 'Zapisz klucz',
   'st.captcha.check_balance': 'Sprawdź saldo',
@@ -659,7 +662,6 @@ export default {
   'st.captcha.need_key': 'Wprowadź prawidłowy klucz API CapSolver zaczynający się od CAP-.',
   'st.captcha.balance_ok': 'OK — saldo: {balance}',
   'st.captcha.balance_fail': 'Niepowodzenie: {error}',
-  'st.captcha.security_html': '<strong>Uwaga:</strong> klucz API jest przechowywany <strong>w postaci jawnej</strong> w lokalnej pamięci przeglądarki. CapSolver obciąża Twoje konto za każde rozwiązanie; agent wywoła go tylko, gdy CAPTCHA faktycznie zablokuje krok (maksymalnie raz na napotkanie — nie ponawia po niepowodzeniu). Regulaminy niektórych witryn zabraniają automatycznego rozwiązywania CAPTCHA; kieruj się własnym osądem.',
 
   "st.system_one.desc_html": "Dodatkowa weryfikacja zaplanowanego monitorowania i ukończenia zadań.",
   "st.system_one.enabled.label": "Włącz Jev",
@@ -935,6 +937,7 @@ export default {
   "sp.memory.error": "Błąd pamięci: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "Nie zapisano: po oczyszczeniu tekst jest pusty lub wygląda na zawierający sekret (hasło, klucz API, token).",
   "sp.memory.reason.not_found": "Nie ma zapisanego wpisu o tym ID.",
+  'sp.slash.workflow_editor': "Edytor przepływów pracy",
   "sp.slash.workflows": "Wyświetlaj i zarządzaj zapisanymi przepływami pracy",
   "sp.slash.teach": "Nagraj działania jako zapisany przepływ pracy",
   "sp.slash.run_workflow": "Uruchom zapisany przepływ pracy według ID",
@@ -1031,6 +1034,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Maks. wymiar obrazu",
   "st.imageBudget.maxDimension.desc": "Najdłuższy bok (szerokość lub wysokość) w pikselach dla każdego zrzutu wysyłanego do vision. Niższy limit zmniejsza obrazy przed wysłaniem, tnąc tokeny i koszt. Wyższy limit zachowuje wierność.",
   "st.imageBudget.warning": "⚠️ Te ustawienia dotyczą zrzutów na vision (auto-zrzut, /screenshot, cała strona, verify_form). Ręcznie zapisane obrazy w pełnej rozdzielczości nie są objęte. «Image detail» honorują endpointy w stylu OpenAI; inni dostawcy mogą to ignorować.",
+  "sp.slash.export_traces_full": "Eksportuj całą zapisaną sesję śledzenia jako JSON, wraz ze zrzutami ekranu",
+  "sp.export_traces.recording_truncated": "Wyeksportowano wszystkie zapisane rekordy jako JSON. Treści pominiętych podczas rejestrowania nie można odzyskać przez eksport.",
   "sp.slash.export_traces": "Eksportuj łańcuch narzędzi (ślady)",
   "sp.export_traces.none": "Brak śladów dla tej rozmowy. Włącz „Rejestruj ślady\" w Ustawieniach i uruchom ponownie.",
   "sp.export_traces.error": "Nie udało się wyeksportować śladów.",

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Spanish (es).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom de la interfaz de la extensión',
   'sp.ui_scale.decrease': 'Reducir el zoom de la interfaz',
   'sp.ui_scale.increase': 'Aumentar el zoom de la interfaz',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Se agotó la asignación diaria gratuita de WebBrain Compass.',
   'sp.subscribe.btn': 'Suscribirse',
   'sp.subscribe.upgrade': 'Cambiar a Plus',
+  "sp.subscribe.resume_payment": "Método de pago actualizado — reintentar",
   'sp.subscribe.resume_upgrade': 'Plan actualizado — reintentar',
   'sp.subscribe.resume': 'Ya me suscribí — reintentar',
   'sp.stopped_by_user': '[Detenido por el usuario]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'La facturación, los datos de la tarjeta, el correo electrónico y la cancelación los gestiona Stripe para este perfil del navegador.',
   'st.account.billing_preparing': 'Preparando el enlace de facturación de Stripe para este perfil del navegador.',
+  "st.account.payment_failed": "No se pudo completar el pago de tu suscripción. Actualiza tu método de pago para recuperar tu plan de pago.",
+  "st.account.update_payment": "Actualizar método de pago",
   'st.account.manage_billing': 'Gestionar facturación',
 
   'st.display.language.label': 'Idioma',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': 'Modelo',
   'st.provider.field.model_optional': 'Modelo (opcional)',
   'st.provider.field.supports_vision': 'El modelo admite visión (multimodal)',
+  'st.provider.field.tools_mode': 'Uso de herramientas nativas',
   'st.provider.field.vision_auto': 'Automático',
   'st.provider.field.vision_force_on': 'Forzar activación',
   'st.provider.field.vision_detected_vision': 'Detectado automáticamente: Visión',
@@ -593,9 +599,6 @@ export default {
   "st.transcription.connected": "¡Conectado! Modelo: {model}",
   "st.transcription.failed": "Falló: {error}",
   "st.transcription.fill_required": "Rellena primero la URL base y el modelo.",
-  "st.captcha.desc_html": "Deja que el agente resuelva CAPTCHAs automáticamente mediante la API de <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Admite reCAPTCHA v2/v3, hCaptcha y Cloudflare Turnstile. Al guardar una clave de API válida, CapSolver se activa automáticamente; sin una, el agente se detiene y te pide que resuelvas el captcha tú mismo. CapSolver cobra por cada resolución (~$0.001–$0.003); utilizas tu propia cuenta y clave de API.",
-  "st.captcha.enabled.label": "Activar CapSolver",
-  "st.captcha.enabled.desc": "Cuando el agente se encuentra con un CAPTCHA, llamará a CapSolver una vez antes de recurrir a pedírtelo a ti. Requiere una clave de API más abajo.",
   "st.captcha.api_key.label": "Clave de API de CapSolver",
   "st.captcha.save": "Guardar clave",
   "st.captcha.check_balance": "Consultar saldo",
@@ -606,7 +609,6 @@ export default {
   "st.captcha.need_key": "Introduce una clave de API de CapSolver válida que empiece por CAP-.",
   "st.captcha.balance_ok": "OK — saldo: {balance}",
   "st.captcha.balance_fail": "Falló: {error}",
-  "st.captcha.security_html": "<strong>Atención:</strong> la clave de API se guarda <strong>en texto plano</strong> en el almacenamiento local del navegador. CapSolver cobra a tu cuenta por cada resolución; el agente solo la llamará cuando un CAPTCHA bloquee realmente un paso (como máximo una vez por encuentro: no reintentará tras un fallo). Los términos de servicio de algunos sitios prohíben la resolución automatizada de CAPTCHAs; usa tu criterio.",
 
   // --- Scheduled tasks & scratchpad (added) ---
   'sp.recommended.title': 'Acciones sugeridas',
@@ -915,6 +917,7 @@ export default {
   "sp.memory.error": "Error de memoria: {msg}",
   "sp.memory.reason.invalid_or_sensitive": "No se guardó: el texto queda vacío tras la limpieza o parece contener un secreto (contraseña, clave de API o token).",
   "sp.memory.reason.not_found": "Ninguna memoria guardada tiene ese ID.",
+  'sp.slash.workflow_editor': "Editor de flujos de trabajo",
   "sp.slash.workflows": "Listar y administrar flujos de trabajo guardados",
   "sp.slash.teach": "Graba tus acciones como un flujo de trabajo guardado",
   "sp.slash.run_workflow": "Ejecutar un flujo guardado por ID",
@@ -1020,6 +1023,8 @@ export default {
   "sp.upload_picker.cancelled": "Subida cancelada",
   "sp.upload_picker.too_large": "El archivo seleccionado supera el límite de 25 MB (máx. 25 MB)",
   "sp.upload_picker.read_failed": "No se pudo leer el archivo seleccionado",
+  "sp.slash.export_traces_full": "Exportar toda la sesión de trazas guardada como JSON, incluidas las capturas",
+  "sp.export_traces.recording_truncated": "Se exportaron todos los registros guardados como JSON. El contenido omitido durante la grabación no puede recuperarse mediante la exportación.",
   "sp.slash.export_traces": "Exportar la cadena de herramientas (trazas)",
   "sp.export_traces.none": "No hay trazas para esta conversación. Activa «Registrar trazas» en Ajustes y vuelve a ejecutar.",
   "sp.export_traces.error": "No se pudieron exportar las trazas.",
