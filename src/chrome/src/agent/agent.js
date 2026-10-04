@@ -6130,10 +6130,26 @@ export class Agent extends LoopDetector {
     if (this._runningTabs.has(forkId)) throw new Error('Fork conversation is already running');
 
     await this._hydrate(sourceId);
+    await this._hydrate(forkId);
+    const existingFork = this.conversations.get(forkId);
+    if (Array.isArray(existingFork) && existingFork.length) {
+      // Reloading a /btw window reuses its popup tab id. Keep the side
+      // conversation instead of resetting it to a fresh source snapshot.
+      if (!this.conversationIds.get(forkId)) {
+        this.conversationIds.set(forkId, `conv_${forkId}_${Date.now()}_${secureRandomBase36Token(12)}`);
+        await this._persistNow(forkId);
+      }
+      return { conversationId: this.conversationIds.get(forkId), resumed: true };
+    }
+
     const sourceMessages = this.conversations.get(sourceId) || [];
-    const messages = sourceMessages.length
+    let messages = sourceMessages.length
       ? JSON.parse(JSON.stringify(sourceMessages))
       : [{ role: 'system', content: this._buildSystemPrompt('ask', forkId) }];
+    // A fork taken mid-run can copy an assistant `tool_calls` turn before its
+    // `tool` results are appended. Providers reject orphaned `tool_calls`
+    // with a 400, so drop the trailing incomplete batch.
+    messages = this._trimIncompleteToolTail(messages);
     if (messages[0]?.role === 'system') {
       messages[0].content = this._buildSystemPrompt('ask', forkId);
     } else {
@@ -6156,6 +6172,45 @@ export class Agent extends LoopDetector {
     this.hydratedTabs.add(forkId);
     await this._persistNow(forkId);
     return { conversationId: this.conversationIds.get(forkId) };
+  }
+
+  _trimIncompleteToolTail(messages) {
+    let end = messages.length;
+    // Never drop the leading system prompt.
+    while (end > 1) {
+      const last = messages[end - 1];
+      if (last?.role === 'assistant' && Array.isArray(last.tool_calls) && last.tool_calls.length) {
+        // Assistant tool request with no following results in the slice is mid-run.
+        end -= 1;
+        continue;
+      }
+      if (last?.role === 'tool' && last.tool_call_id != null) {
+        let parentIndex = -1;
+        for (let i = end - 2; i >= 0; i--) {
+          const m = messages[i];
+          if (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.some((tc) => tc?.id === last.tool_call_id)) {
+            parentIndex = i;
+            break;
+          }
+        }
+        if (parentIndex === -1) {
+          end -= 1;
+          continue;
+        }
+        const requested = messages[parentIndex].tool_calls.map((tc) => tc?.id).filter(Boolean);
+        const answered = new Set();
+        for (let i = parentIndex + 1; i < end; i++) {
+          const m = messages[i];
+          if (m?.role === 'tool' && m.tool_call_id != null) answered.add(m.tool_call_id);
+        }
+        if (requested.every((id) => answered.has(id))) break;
+        // Incomplete batch — drop the parent request and its partial results.
+        end = parentIndex;
+        continue;
+      }
+      break;
+    }
+    return messages.slice(0, end);
   }
 
   _rememberWorkflowDraftFromCapture(tabId, capture) {

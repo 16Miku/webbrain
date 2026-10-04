@@ -3235,8 +3235,10 @@ async function handleMessage(msg, sender) {
         throw new Error('No source or fork tab ID');
       }
       const fork = await agent.forkConversation(sourceTabId, forkTabId);
-      const sourceChat = await tabChatHandoff.load(sourceTabId, { waitForHandoff: true });
-      if (sourceChat?.found) await tabChatHandoff.save(forkTabId, sourceChat.html);
+      if (!fork?.resumed) {
+        const sourceChat = await tabChatHandoff.load(sourceTabId, { waitForHandoff: true });
+        if (sourceChat?.found) await tabChatHandoff.save(forkTabId, sourceChat.html);
+      }
       return { ok: true, ...fork };
     }
 
