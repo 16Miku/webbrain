@@ -47793,6 +47793,22 @@ test('chrome sidepanel serializes tab-chat storage writes with clears and reads'
   assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'chrome: tab-chat restore should read through the shared background queue');
   assert.match(loadBody, /catch \(e\) \{\s*if \(waitForHandoff\) return TAB_CHAT_LOAD_FAILED;\s*\}[\s\S]*?return null;/, 'chrome: coordinated load failures should remain distinct from successful empty restores');
   assert.match(panel, /const html = await loadTabChat\(tabId, \{ waitForHandoff: true \}\);\s*if \(html === TAB_CHAT_LOAD_FAILED\) return false;[\s\S]*?messagesEl\.innerHTML = '';/, 'chrome: a failed visibility handoff must preserve the current transcript DOM');
+  assert.match(panel, /const btwSourceTabId = isBtwWindow \? \(Number\(_btwParams\.get\('forkFromTabId'\)\) \|\| null\) : null;/, 'chrome: /btw should retain its source only as fork metadata');
+  assert.match(panel, /if \(isBtwWindow && btwSourceTabId != null && initialTabId != null\) \{[\s\S]*?sendToBackground\('fork_standalone_conversation', \{[\s\S]*?sourceTabId: btwSourceTabId,[\s\S]*?forkTabId: initialTabId,/, 'chrome: /btw must use its popup tab as an independent fork scope');
+  assert.match(panel, /async function openBtwWindow\(tabId, prompt = ''\) \{[\s\S]*?const existing = await getBtwWindowState\(tabId\);[\s\S]*?forkFromTabId=\$\{tabId\}/, 'chrome: /btw should only reuse a popup for the same source tab');
+  assert.match(panel, /async function openBtwWindow\(tabId, prompt = ''\) \{[\s\S]*?pendingPrompt: prompt[\s\S]*?chrome\.tabs\.sendMessage\(target\.id, \{ action: 'btw_prompt', prompt \}\)\.catch\(\(\) => \{\}\);/, 'chrome: /btw should retain a prompt until its same-tab window receives it');
+  assert.match(panel, /async function consumePendingBtwPrompt\(directPrompt = ''\) \{[\s\S]*?await btwReady;[\s\S]*?pendingPrompts: \[\][\s\S]*?for \(const p of prompts\) \{[\s\S]*?await sendBtwPrompt\(p\);/, 'chrome: a /btw window should drain queued forwarded prompts after readiness');
+  assert.match(panel, /void consumePendingBtwPrompt\(msg\?\.prompt\)/, 'chrome: /btw prompt listener should forward the message payload instead of dropping it');
+  assert.match(panel, /pendingPrompts: queued/, 'chrome: /btw should queue concurrent prompts instead of overwriting a single slot');
+  assert.match(panel, /markBtwReady\(\);[\s\S]*?await sendBtwPrompt\(btwInitialPrompt\)/, 'chrome: /btw auto-send should run after readiness without a fixed delay');
+  assert.match(panel, /try \{\s*await sendToBackground\('fork_standalone_conversation'/, 'chrome: /btw fork bootstrap must not abort panel init on failure');
+  const chromeBackground = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const chromeAgent = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  assert.match(chromeBackground, /case 'fork_standalone_conversation':[\s\S]*?agent\.forkConversation\(sourceTabId, forkTabId\);[\s\S]*?tabChatHandoff\.save\(forkTabId, sourceChat\.html\)/, 'chrome: /btw fork bootstrap must copy history and transcript into the popup scope');
+  assert.match(chromeBackground, /if \(!fork\?\.resumed\)/, 'chrome: /btw reload should keep the side conversation instead of re-forking');
+  assert.match(chromeAgent, /async forkConversation\(sourceTabId, forkTabId\) \{[\s\S]*?this\.conversationModes\.set\(forkId, 'ask'\);[\s\S]*?this\.conversationIds\.set\(forkId, `conv_\$\{forkId\}_\$\{Date\.now\(\)\}_\$\{secureRandomBase36Token\(12\)\}`\);/, 'chrome: /btw forks must mint a distinct Ask-only conversation identity');
+  assert.match(chromeAgent, /_trimIncompleteToolTail\(messages\)/, 'chrome: /btw fork should drop a trailing incomplete tool batch');
+  assert.match(chromeAgent, /resumed: true/, 'chrome: /btw fork should report a resumed side conversation on reload');
   assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: visible tab-chat persistence should carry its owner generation through the shared background queue');
   assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
@@ -47819,6 +47835,22 @@ test('firefox sidepanel serializes tab-chat storage writes with clears and reads
   assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'firefox: tab-chat restore should read through the shared background queue');
   assert.match(loadBody, /catch \(e\) \{\s*if \(waitForHandoff\) return TAB_CHAT_LOAD_FAILED;\s*\}[\s\S]*?return null;/, 'firefox: coordinated load failures should remain distinct from successful empty restores');
   assert.match(panel, /const html = await loadTabChat\(tabId, \{ waitForHandoff: true \}\);\s*if \(html === TAB_CHAT_LOAD_FAILED\) return false;[\s\S]*?messagesEl\.innerHTML = '';/, 'firefox: a failed visibility handoff must preserve the current transcript DOM');
+  assert.match(panel, /const btwSourceTabId = isBtwWindow \? \(Number\(_btwParams\.get\('forkFromTabId'\)\) \|\| null\) : null;/, 'firefox: /btw should retain its source only as fork metadata');
+  assert.match(panel, /if \(isBtwWindow && btwSourceTabId != null && initialTabId != null\) \{[\s\S]*?sendToBackground\('fork_standalone_conversation', \{[\s\S]*?sourceTabId: btwSourceTabId,[\s\S]*?forkTabId: initialTabId,/, 'firefox: /btw must use its popup tab as an independent fork scope');
+  assert.match(panel, /async function openBtwWindow\(tabId, prompt = ''\) \{[\s\S]*?const existing = await getBtwWindowState\(tabId\);[\s\S]*?forkFromTabId=\$\{tabId\}/, 'firefox: /btw should only reuse a popup for the same source tab');
+  assert.match(panel, /async function openBtwWindow\(tabId, prompt = ''\) \{[\s\S]*?pendingPrompt: prompt[\s\S]*?browser\.tabs\.sendMessage\(target\.id, \{ action: 'btw_prompt', prompt \}\)\.catch\(\(\) => \{\}\);/, 'firefox: /btw should retain a prompt until its same-tab window receives it');
+  assert.match(panel, /async function consumePendingBtwPrompt\(directPrompt = ''\) \{[\s\S]*?await btwReady;[\s\S]*?pendingPrompts: \[\][\s\S]*?for \(const p of prompts\) \{[\s\S]*?await sendBtwPrompt\(p\);/, 'firefox: a /btw window should drain queued forwarded prompts after readiness');
+  assert.match(panel, /void consumePendingBtwPrompt\(msg\?\.prompt\)/, 'firefox: /btw prompt listener should forward the message payload instead of dropping it');
+  assert.match(panel, /pendingPrompts: queued/, 'firefox: /btw should queue concurrent prompts instead of overwriting a single slot');
+  assert.match(panel, /markBtwReady\(\);[\s\S]*?await sendBtwPrompt\(btwInitialPrompt\)/, 'firefox: /btw auto-send should run after readiness without a fixed delay');
+  assert.match(panel, /try \{\s*await sendToBackground\('fork_standalone_conversation'/, 'firefox: /btw fork bootstrap must not abort panel init on failure');
+  const firefoxBackground = fs.readFileSync(path.join(ROOT, 'src/firefox/src/background.js'), 'utf8');
+  const firefoxAgent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
+  assert.match(firefoxBackground, /case 'fork_standalone_conversation':[\s\S]*?agent\.forkConversation\(sourceTabId, forkTabId\);[\s\S]*?tabChatHandoff\.save\(forkTabId, sourceChat\.html\)/, 'firefox: /btw fork bootstrap must copy history and transcript into the popup scope');
+  assert.match(firefoxBackground, /if \(!fork\?\.resumed\)/, 'firefox: /btw reload should keep the side conversation instead of re-forking');
+  assert.match(firefoxAgent, /async forkConversation\(sourceTabId, forkTabId\) \{[\s\S]*?this\.conversationModes\.set\(forkId, 'ask'\);[\s\S]*?this\.conversationIds\.set\(forkId, `conv_\$\{forkId\}_\$\{Date\.now\(\)\}_\$\{secureRandomBase36Token\(12\)\}`\);/, 'firefox: /btw forks must mint a distinct Ask-only conversation identity');
+  assert.match(firefoxAgent, /_trimIncompleteToolTail\(messages\)/, 'firefox: /btw fork should drop a trailing incomplete tool batch');
+  assert.match(firefoxAgent, /resumed: true/, 'firefox: /btw fork should report a resumed side conversation on reload');
   assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: visible tab-chat persistence should carry its owner generation through the shared background queue');
   assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
@@ -50667,7 +50699,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     const locale = fs.readFileSync(path.join(ROOT, localeRel), 'utf8');
     const slash = loadSlashCommandRuntime(panelRel);
-    for (const command of ['/help', '/progress', '/scratchpad', '/memory', '/schedule --list', '/screenshot', '/export', '/export --traces', '/verbose']) {
+    for (const command of ['/help', '/progress', '/btw', '/scratchpad', '/memory', '/schedule --list', '/screenshot', '/export', '/export --traces', '/verbose']) {
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation(command)), true, `${label}: ${command} should be allowed while busy`);
     }
     for (const command of ['/schedule task', '/scratchpad --append note', '/scratchpad --clear', '/memory --add note', '/memory --forget id']) {
@@ -50700,7 +50732,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     );
     assert.match(
       locale,
-      /'sp\.slash\.busy_only_oob': 'Messages are queued while WebBrain is busy\. Only \/help, \/progress, \/scratchpad, \/memory, \/schedule --list, \/watch, \/dangerously-skip-permissions, \/screenshot, \/export, \/export --traces, and \/verbose can run immediately as slash commands\./,
+      /'sp\.slash\.busy_only_oob': 'Messages are queued while WebBrain is busy\. Only \/help, \/progress, \/btw, \/scratchpad, \/memory, \/schedule --list, \/watch, \/dangerously-skip-permissions, \/screenshot, \/export, \/export --traces, and \/verbose can run immediately as slash commands\./,
       `${label}: busy slash notice should explain queued messages and safe slash commands`,
     );
   }
@@ -50824,7 +50856,7 @@ test('sidepanel busy slash notice is updated in every locale', async () => {
       const locale = (await import('file://' + path.join(ROOT, localeDir, filename).replace(/\\/g, '/'))).default;
       const message = locale['sp.slash.busy_only_oob'];
       assert.equal(typeof message, 'string', `${label}/${filename}: busy slash notice key missing`);
-      for (const syntax of ['/help', '/progress', '/scratchpad', '/memory', '/schedule --list', '/watch', '/dangerously-skip-permissions', '/screenshot', '/export --traces', '/verbose']) {
+      for (const syntax of ['/help', '/progress', '/btw', '/scratchpad', '/memory', '/schedule --list', '/watch', '/dangerously-skip-permissions', '/screenshot', '/export --traces', '/verbose']) {
         assert.match(message, new RegExp(syntax.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${label}/${filename}: busy notice should mention ${syntax}`);
       }
     }

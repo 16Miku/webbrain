@@ -85,6 +85,19 @@ import { installClipboardImagePasteHandler, installFileDropHandlers } from './at
 import { isTextAttachment } from './attachment-file.js';
 
 const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
+const _btwParams = new URLSearchParams(window.location.search);
+const isBtwWindow = _btwParams.get('btw') === '1';
+const btwSourceTabId = isBtwWindow ? (Number(_btwParams.get('forkFromTabId')) || null) : null;
+const btwInitialPrompt = isBtwWindow ? (_btwParams.get('prompt') || '') : '';
+let _btwReadyResolve = null;
+let _btwReadySettled = false;
+const btwReady = new Promise((resolve) => { _btwReadyResolve = resolve; });
+if (!isBtwWindow && _btwReadyResolve) { _btwReadySettled = true; _btwReadyResolve(); }
+function markBtwReady() {
+  if (_btwReadySettled) return;
+  _btwReadySettled = true;
+  _btwReadyResolve?.();
+}
 
 // Hydrate the theme from chrome.storage.local (the inline <head> bootstrap
 // only sees localStorage; if the user changes the theme on another device
@@ -772,6 +785,7 @@ const SLASH_COMMANDS = [
     ],
   },
   { value: '/progress', usage: '/progress', descriptionKey: 'sp.slash.check_progress', action: 'show', outOfBand: true },
+  { value: '/btw', usage: '/btw [prompt]', descriptionKey: 'sp.slash.btw', action: 'open_btw', acceptsPayload: true, outOfBand: true },
   {
     value: '/scratchpad',
     usage: '/scratchpad [--append <text> | --clear]',
@@ -4651,11 +4665,23 @@ async function init() {
     ? { active: true, windowId: initialWindowId }
     : { active: true, currentWindow: true });
   let initialTabId = tab?.id;
-  try {
-    const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
-    const sourceTabId = researchEscalationSourceTabIdFromState(state);
-    if (sourceTabId != null) initialTabId = sourceTabId;
-  } catch {}
+
+  if (isBtwWindow && btwSourceTabId != null && initialTabId != null) {
+    try {
+      await sendToBackground('fork_standalone_conversation', {
+        sourceTabId: btwSourceTabId,
+        forkTabId: initialTabId,
+      });
+    } catch {
+      // Degrade to an empty standalone window rather than aborting init.
+    }
+  } else {
+    try {
+      const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
+      const sourceTabId = researchEscalationSourceTabIdFromState(state);
+      if (sourceTabId != null) initialTabId = sourceTabId;
+    } catch {}
+  }
   currentTabId = initialTabId;
   renderedTabId = currentTabId;
 
@@ -4663,7 +4689,7 @@ async function init() {
   // browser window fires them, and each window has its own side panel
   // instance. Without scoping, activity in window B would silently
   // retarget window A's panel to B's tab.
-  const windowScope = createSidePanelWindowScope({
+  const windowScope = isBtwWindow ? null : createSidePanelWindowScope({
     browserApi: chrome,
     initialWindowId: initialWindowId ?? tab?.windowId ?? null,
     getCurrentTabId: () => currentTabId,
@@ -4671,29 +4697,31 @@ async function init() {
     switchToTab,
   });
 
-  chrome.tabs.onActivated.addListener(async (info) => {
-    await windowScope.handleActivated(info);
-  });
+  if (windowScope) {
+    chrome.tabs.onActivated.addListener(async (info) => {
+      await windowScope.handleActivated(info);
+    });
 
-  chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
-    windowScope.handleDetached(tabId, detachInfo);
-  });
+    chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
+      windowScope.handleDetached(tabId, detachInfo);
+    });
 
-  chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
-    await windowScope.handleAttached(tabId, attachInfo);
-  });
+    chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
+      await windowScope.handleAttached(tabId, attachInfo);
+    });
 
-  // Also handle window focus changes
-  chrome.windows.onFocusChanged.addListener(async (windowId) => {
-    await windowScope.handleFocusChanged(windowId, chrome.windows.WINDOW_ID_NONE);
-  });
+    // Also handle window focus changes
+    chrome.windows.onFocusChanged.addListener(async (windowId) => {
+      await windowScope.handleFocusChanged(windowId, chrome.windows.WINDOW_ID_NONE);
+    });
 
-  chrome.tabs.onUpdated?.addListener?.((tabId, changeInfo) => {
-    if (tabId !== currentTabId || isProcessing) return;
-    if (changeInfo.status === 'complete' || changeInfo.url || changeInfo.title) {
-      refreshRecommendedActions();
-    }
-  });
+    chrome.tabs.onUpdated?.addListener?.((tabId, changeInfo) => {
+      if (tabId !== currentTabId || isProcessing) return;
+      if (changeInfo.status === 'complete' || changeInfo.url || changeInfo.title) {
+        refreshRecommendedActions();
+      }
+    });
+  }
 
   // Load settings that affect the composer state.
   const stored = await chrome.storage.local.get(['verboseMode', 'alwaysAllowApiMutations']);
@@ -4746,7 +4774,7 @@ async function init() {
   await loadProviders();
   await refreshStandaloneWebgpuStatus();
   await testConnection({ skipWebBrainCloud: true });
-  await windowScope.syncActiveTab();
+  if (windowScope) await windowScope.syncActiveTab();
   refreshScheduledJobs({ tabId: currentTabId });
   refreshRecommendedActions();
   await consumePendingContextMenuPrompt();
@@ -4773,6 +4801,15 @@ async function init() {
       void refreshStandaloneWebgpuStatus();
     }
   });
+
+  if (isBtwWindow) {
+    markBtwReady();
+    // Auto-send the initial prompt if provided.
+    if (btwInitialPrompt) {
+      await sendBtwPrompt(btwInitialPrompt);
+    }
+    await consumePendingBtwPrompt();
+  }
 }
 
 // Verbose toggle button: persists the choice via the same storage key the
@@ -8402,6 +8439,15 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     showComposerToast(systemHtml(verboseMode
       ? t('sp.compact.verbose_on')
       : t('sp.compact.verbose_off')));
+    return '';
+  }
+
+  if (command.value === '/btw') {
+    if (isBtwWindow) {
+      showComposerToast(t('sp.slash.btw_disabled'), { duration: 3000 });
+      return '';
+    }
+    await openBtwWindow(tabId, payload || '');
     return '';
   }
 
@@ -14600,6 +14646,122 @@ function standaloneWindowBounds(display = window.screen) {
     top: availableTop + Math.round((availableHeight - height) / 2),
   };
 }
+
+function btwWindowBounds(display = window.screen) {
+  const availableWidth = Math.max(1, Number(display?.availWidth) || 1280);
+  const availableHeight = Math.max(1, Number(display?.availHeight) || 800);
+  const availableLeft = Number(display?.availLeft) || 0;
+  const availableTop = Number(display?.availTop) || 0;
+  const width = Math.min(availableWidth, Math.max(380, Math.round(availableWidth * 0.45)));
+  const height = Math.min(availableHeight, Math.max(500, Math.round(availableHeight * 0.7)));
+  return {
+    width,
+    height,
+    left: availableLeft + Math.round((availableWidth - width) / 2),
+    top: availableTop + Math.round((availableHeight - height) / 2),
+  };
+}
+
+const BTW_WINDOWS_KEY = 'btwWindows';
+
+async function getBtwWindowStates() {
+  try {
+    const stored = await chrome.storage.session.get(BTW_WINDOWS_KEY);
+    return stored[BTW_WINDOWS_KEY] || {};
+  } catch {
+    return {};
+  }
+}
+
+async function getBtwWindowState(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return null;
+  const states = await getBtwWindowStates();
+  return states[numericTabId] || null;
+}
+
+async function setBtwWindowState(tabId, state) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  const states = await getBtwWindowStates();
+  states[numericTabId] = state;
+  await chrome.storage.session.set({ [BTW_WINDOWS_KEY]: states }).catch(() => {});
+}
+
+async function clearBtwWindowState(tabId, windowId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  const states = await getBtwWindowStates();
+  if (windowId != null && states[numericTabId]?.windowId !== windowId) return;
+  delete states[numericTabId];
+  await chrome.storage.session.set({ [BTW_WINDOWS_KEY]: states }).catch(() => {});
+}
+
+async function openBtwWindow(tabId, prompt = '') {
+  if (tabId == null) return;
+
+  const existing = await getBtwWindowState(tabId);
+  if (existing?.windowId != null) {
+    try {
+      const win = await chrome.windows.get(existing.windowId, { populate: true });
+      if (win) {
+        await chrome.windows.update(existing.windowId, { focused: true });
+        if (prompt) {
+          const queued = Array.isArray(existing.pendingPrompts)
+            ? existing.pendingPrompts.filter((p) => typeof p === 'string' && p)
+            : (typeof existing.pendingPrompt === 'string' && existing.pendingPrompt ? [existing.pendingPrompt] : []);
+          queued.push(prompt);
+          await setBtwWindowState(tabId, { ...existing, pendingPrompt: prompt, pendingPrompts: queued });
+          const target = win.tabs?.[0];
+          if (target?.id != null) {
+            await chrome.tabs.sendMessage(target.id, { action: 'btw_prompt', prompt }).catch(() => {});
+          }
+        }
+        return;
+      }
+    } catch {
+      await clearBtwWindowState(tabId, existing.windowId);
+    }
+  }
+
+  const promptParam = prompt ? `&prompt=${encodeURIComponent(prompt)}` : '';
+  const url = chrome.runtime.getURL(`src/ui/sidepanel.html?mode=ask&standalone=true&btw=1&forkFromTabId=${tabId}${promptParam}`);
+  const win = await chrome.windows.create({
+    url,
+    type: 'popup',
+    ...btwWindowBounds(),
+  });
+
+  await setBtwWindowState(tabId, { windowId: win.id, tabId });
+}
+
+async function sendBtwPrompt(prompt) {
+  if (!prompt || !inputEl) return;
+  inputEl.value = prompt;
+  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  await sendMessage();
+}
+
+async function consumePendingBtwPrompt(directPrompt = '') {
+  if (!isBtwWindow || btwSourceTabId == null) return;
+  await btwReady;
+  const state = await getBtwWindowState(btwSourceTabId);
+  let prompts = Array.isArray(state?.pendingPrompts)
+    ? state.pendingPrompts.filter((p) => typeof p === 'string' && p)
+    : (typeof state?.pendingPrompt === 'string' && state.pendingPrompt ? [state.pendingPrompt] : []);
+  const direct = String(directPrompt || '');
+  if (direct && prompts[prompts.length - 1] !== direct) prompts.push(direct);
+  if (!prompts.length) return;
+  await setBtwWindowState(btwSourceTabId, { ...state, pendingPrompt: '', pendingPrompts: [] });
+  for (const p of prompts) {
+    await sendBtwPrompt(p);
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!isBtwWindow || msg?.action !== 'btw_prompt') return;
+  void consumePendingBtwPrompt(msg?.prompt).catch(() => {});
+});
 
 if (expandBtn) {
   if (isStandaloneWindow) {

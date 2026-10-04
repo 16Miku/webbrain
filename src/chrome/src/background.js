@@ -3228,6 +3228,20 @@ async function handleMessage(msg, sender) {
       };
     }
 
+    case 'fork_standalone_conversation': {
+      const sourceTabId = Number(msg.sourceTabId);
+      const forkTabId = Number(msg.forkTabId || sender.tab?.id);
+      if (!Number.isFinite(sourceTabId) || !Number.isFinite(forkTabId)) {
+        throw new Error('No source or fork tab ID');
+      }
+      const fork = await agent.forkConversation(sourceTabId, forkTabId);
+      if (!fork?.resumed) {
+        const sourceChat = await tabChatHandoff.load(sourceTabId, { waitForHandoff: true });
+        if (sourceChat?.found) await tabChatHandoff.save(forkTabId, sourceChat.html);
+      }
+      return { ok: true, ...fork };
+    }
+
     case 'chat_start': {
       await standaloneRunProviderId(msg);
       const claim = msg.contextMenuClaim;
