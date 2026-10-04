@@ -4642,41 +4642,19 @@ async function init() {
   });
 
   if (isBtwWindow) {
-    // Clean up the btw window tracking when this window is closed
-    browser.windows.onRemoved.addListener(async (removedWindowId) => {
-      const state = await getBtwWindowState();
-      if (state?.windowId === removedWindowId) {
-        await browser.storage.session.remove(BTW_WINDOW_KEY).catch(() => {});
-      }
-    });
-
-    // Auto-send the initial prompt if provided
+    // Auto-send the initial prompt if provided.
     if (btwInitialPrompt) {
       await new Promise(r => setTimeout(r, 300));
-      inputEl.value = btwInitialPrompt;
-      inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-      await sendMessage();
+      await sendBtwPrompt(btwInitialPrompt);
     }
+    await consumePendingBtwPrompt();
   } else {
-    // When the btw window closes, reload the main panel chat to sync display
+    // Keep the stale record until the next open verifies its window ID. Every
+    // panel must be able to observe this event before that record disappears.
     browser.windows.onRemoved.addListener(async (removedWindowId) => {
-      const state = await getBtwWindowState();
-      if (state?.windowId === removedWindowId) {
-        await browser.storage.session.remove(BTW_WINDOW_KEY).catch(() => {});
-        // Reload the tab chat to pick up any messages the btw window added
-        const tabId = state?.tabId;
-        if (tabId != null && tabId === currentTabId) {
-          try {
-            const html = await loadTabChat(tabId, { waitForHandoff: true });
-            if (html && html !== TAB_CHAT_LOAD_FAILED) {
-              messagesEl.innerHTML = html;
-              rebindRestoredMessageControls();
-              refreshRenderedStepLabels();
-              restoreLatestChatTurnPosition();
-            }
-          } catch {}
-        }
-      }
+      const states = await getBtwWindowStates();
+      const state = Object.values(states).find(candidate => candidate?.windowId === removedWindowId);
+      if (state && sameTabId(state.tabId, currentTabId)) requestVisibleSidePanelStateRefresh();
     });
   }
 }
@@ -14175,26 +14153,51 @@ function btwWindowBounds(display = window.screen) {
   };
 }
 
-const BTW_WINDOW_KEY = 'btwWindow';
+const BTW_WINDOWS_KEY = 'btwWindows';
 
-async function getBtwWindowState() {
+async function getBtwWindowStates() {
   try {
-    const result = await browser.storage.session.get(BTW_WINDOW_KEY);
-    return result[BTW_WINDOW_KEY] || null;
+    const result = await browser.storage.session.get(BTW_WINDOWS_KEY);
+    return result[BTW_WINDOWS_KEY] || {};
   } catch {
-    return null;
+    return {};
   }
+}
+
+async function getBtwWindowState(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return null;
+  const states = await getBtwWindowStates();
+  return states[numericTabId] || null;
+}
+
+async function setBtwWindowState(tabId, state) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  const states = await getBtwWindowStates();
+  states[numericTabId] = state;
+  await browser.storage.session.set({ [BTW_WINDOWS_KEY]: states }).catch(() => {});
+}
+
+async function clearBtwWindowState(tabId, windowId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  const states = await getBtwWindowStates();
+  if (windowId != null && states[numericTabId]?.windowId !== windowId) return;
+  delete states[numericTabId];
+  await browser.storage.session.set({ [BTW_WINDOWS_KEY]: states }).catch(() => {});
 }
 
 async function openBtwWindow(tabId, prompt = '') {
   if (tabId == null) return;
-  const existing = await getBtwWindowState();
+  const existing = await getBtwWindowState(tabId);
   if (existing?.windowId != null) {
     try {
-      const win = await browser.windows.get(existing.windowId);
+      const win = await browser.windows.get(existing.windowId, { populate: true });
       if (win) {
         await browser.windows.update(win.id, { focused: true });
-        if (prompt && Number(existing.tabId) === Number(tabId)) {
+        if (prompt) {
+          await setBtwWindowState(tabId, { ...existing, pendingPrompt: prompt });
           const target = win.tabs?.[0];
           if (target?.id != null) {
             await browser.tabs.sendMessage(target.id, { action: 'btw_prompt', prompt }).catch(() => {});
@@ -14203,7 +14206,7 @@ async function openBtwWindow(tabId, prompt = '') {
         return;
       }
     } catch {}
-    await browser.storage.session.remove(BTW_WINDOW_KEY).catch(() => {});
+    await clearBtwWindowState(tabId, existing.windowId);
   }
   const promptParam = prompt ? `&prompt=${encodeURIComponent(prompt)}` : '';
   const url = browser.runtime.getURL(`src/ui/sidepanel.html?mode=ask&standalone=true&btw=1&tabId=${tabId}${promptParam}`);
@@ -14212,16 +14215,28 @@ async function openBtwWindow(tabId, prompt = '') {
     type: 'popup',
     ...btwWindowBounds(),
   });
-  await browser.storage.session.set({ [BTW_WINDOW_KEY]: { windowId: win.id, tabId } });
+  await setBtwWindowState(tabId, { windowId: win.id, tabId });
+}
+
+async function sendBtwPrompt(prompt) {
+  if (!prompt || !inputEl) return;
+  inputEl.value = prompt;
+  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  await sendMessage();
+}
+
+async function consumePendingBtwPrompt() {
+  if (!isBtwWindow || btwPinnedTabId == null) return;
+  const state = await getBtwWindowState(btwPinnedTabId);
+  const prompt = String(state?.pendingPrompt || '');
+  if (!prompt) return;
+  await setBtwWindowState(btwPinnedTabId, { ...state, pendingPrompt: '' });
+  await sendBtwPrompt(prompt);
 }
 
 browser.runtime.onMessage.addListener((msg) => {
   if (!isBtwWindow || msg?.action !== 'btw_prompt') return;
-  const prompt = String(msg?.prompt || '');
-  if (!prompt || !inputEl) return;
-  inputEl.value = prompt;
-  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-  void sendMessage().catch(() => {});
+  void consumePendingBtwPrompt().catch(() => {});
 });
 
 if (expandBtn) {
