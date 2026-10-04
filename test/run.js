@@ -50667,7 +50667,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     const locale = fs.readFileSync(path.join(ROOT, localeRel), 'utf8');
     const slash = loadSlashCommandRuntime(panelRel);
-    for (const command of ['/help', '/progress', '/scratchpad', '/memory', '/schedule --list', '/screenshot', '/export', '/export --traces', '/verbose']) {
+    for (const command of ['/help', '/progress', '/btw', '/scratchpad', '/memory', '/schedule --list', '/screenshot', '/export', '/export --traces', '/verbose']) {
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation(command)), true, `${label}: ${command} should be allowed while busy`);
     }
     for (const command of ['/schedule task', '/scratchpad --append note', '/scratchpad --clear', '/memory --add note', '/memory --forget id']) {
@@ -50700,7 +50700,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     );
     assert.match(
       locale,
-      /'sp\.slash\.busy_only_oob': 'Messages are queued while WebBrain is busy\. Only \/help, \/progress, \/scratchpad, \/memory, \/schedule --list, \/watch, \/dangerously-skip-permissions, \/screenshot, \/export, \/export --traces, and \/verbose can run immediately as slash commands\./,
+      /'sp\.slash\.busy_only_oob': 'Messages are queued while WebBrain is busy\. Only \/help, \/progress, \/btw, \/scratchpad, \/memory, \/schedule --list, \/watch, \/dangerously-skip-permissions, \/screenshot, \/export, \/export --traces, and \/verbose can run immediately as slash commands\./,
       `${label}: busy slash notice should explain queued messages and safe slash commands`,
     );
   }
@@ -50824,7 +50824,7 @@ test('sidepanel busy slash notice is updated in every locale', async () => {
       const locale = (await import('file://' + path.join(ROOT, localeDir, filename).replace(/\\/g, '/'))).default;
       const message = locale['sp.slash.busy_only_oob'];
       assert.equal(typeof message, 'string', `${label}/${filename}: busy slash notice key missing`);
-      for (const syntax of ['/help', '/progress', '/scratchpad', '/memory', '/schedule --list', '/watch', '/dangerously-skip-permissions', '/screenshot', '/export --traces', '/verbose']) {
+      for (const syntax of ['/help', '/progress', '/btw', '/scratchpad', '/memory', '/schedule --list', '/watch', '/dangerously-skip-permissions', '/screenshot', '/export --traces', '/verbose']) {
         assert.match(message, new RegExp(syntax.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${label}/${filename}: busy notice should mention ${syntax}`);
       }
     }

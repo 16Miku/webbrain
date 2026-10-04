@@ -91,6 +91,11 @@ import { isTextAttachment } from './attachment-file.js';
 
 const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
 
+const _btwParams = new URLSearchParams(window.location.search);
+const isBtwWindow = _btwParams.get('btw') === '1';
+const btwPinnedTabId = isBtwWindow ? (Number(_btwParams.get('tabId')) || null) : null;
+const btwInitialPrompt = isBtwWindow ? (_btwParams.get('prompt') || '') : '';
+
 // Hydrate the theme from browser.storage.local (the inline <head> bootstrap
 // only sees localStorage; if the user changes the theme on another device
 // or page, sync it in here) and subscribe to live changes so the panel
@@ -649,6 +654,7 @@ const SLASH_COMMANDS = [
     ],
   },
   { value: '/progress', usage: '/progress', descriptionKey: 'sp.slash.check_progress', action: 'show', outOfBand: true },
+  { value: '/btw', usage: '/btw [prompt]', descriptionKey: 'sp.slash.btw', action: 'open_btw', acceptsPayload: true, outOfBand: true },
   {
     value: '/scratchpad',
     usage: '/scratchpad [--append <text> | --clear]',
@@ -4513,11 +4519,16 @@ async function init() {
     ? { active: true, windowId: initialWindowId }
     : { active: true, currentWindow: true });
   let initialTabId = tab?.id;
-  try {
-    const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
-    const sourceTabId = researchEscalationSourceTabIdFromState(state);
-    if (sourceTabId != null) initialTabId = sourceTabId;
-  } catch {}
+
+  if (isBtwWindow && btwPinnedTabId != null) {
+    initialTabId = btwPinnedTabId;
+  } else {
+    try {
+      const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
+      const sourceTabId = researchEscalationSourceTabIdFromState(state);
+      if (sourceTabId != null) initialTabId = sourceTabId;
+    } catch {}
+  }
   currentTabId = initialTabId;
   renderedTabId = currentTabId;
 
@@ -4525,7 +4536,7 @@ async function init() {
   // them, and each window has its own side panel instance. Without
   // scoping, activity in window B would silently retarget window A's
   // panel to B's tab.
-  const windowScope = createSidePanelWindowScope({
+  const windowScope = isBtwWindow ? null : createSidePanelWindowScope({
     browserApi: browser,
     initialWindowId: initialWindowId ?? tab?.windowId ?? null,
     getCurrentTabId: () => currentTabId,
@@ -4533,24 +4544,26 @@ async function init() {
     switchToTab,
   });
 
-  browser.tabs.onActivated.addListener(async (info) => {
-    await windowScope.handleActivated(info);
-  });
+  if (windowScope) {
+    browser.tabs.onActivated.addListener(async (info) => {
+      await windowScope.handleActivated(info);
+    });
 
-  browser.tabs.onDetached.addListener((tabId, detachInfo) => {
-    windowScope.handleDetached(tabId, detachInfo);
-  });
+    browser.tabs.onDetached.addListener((tabId, detachInfo) => {
+      windowScope.handleDetached(tabId, detachInfo);
+    });
 
-  browser.tabs.onAttached.addListener(async (tabId, attachInfo) => {
-    await windowScope.handleAttached(tabId, attachInfo);
-  });
+    browser.tabs.onAttached.addListener(async (tabId, attachInfo) => {
+      await windowScope.handleAttached(tabId, attachInfo);
+    });
 
-  browser.tabs.onUpdated?.addListener?.((tabId, changeInfo) => {
-    if (tabId !== currentTabId || isProcessing) return;
-    if (changeInfo.status === 'complete' || changeInfo.url || changeInfo.title) {
-      refreshRecommendedActions();
-    }
-  });
+    browser.tabs.onUpdated?.addListener?.((tabId, changeInfo) => {
+      if (tabId !== currentTabId || isProcessing) return;
+      if (changeInfo.status === 'complete' || changeInfo.url || changeInfo.title) {
+        refreshRecommendedActions();
+      }
+    });
+  }
 
   // Load settings that affect the composer state.
   const stored = await browser.storage.local.get(['verboseMode', 'alwaysAllowApiMutations']);
@@ -4602,7 +4615,7 @@ async function init() {
 
   await loadProviders();
   await testConnection({ skipWebBrainCloud: true });
-  await windowScope.syncActiveTab();
+  if (windowScope) await windowScope.syncActiveTab();
   refreshScheduledJobs({ tabId: currentTabId });
   refreshRecommendedActions();
   await consumePendingContextMenuPrompt();
@@ -4627,6 +4640,45 @@ async function init() {
       void loadProviders();
     }
   });
+
+  if (isBtwWindow) {
+    // Clean up the btw window tracking when this window is closed
+    browser.windows.onRemoved.addListener(async (removedWindowId) => {
+      const state = await getBtwWindowState();
+      if (state?.windowId === removedWindowId) {
+        await browser.storage.session.remove(BTW_WINDOW_KEY).catch(() => {});
+      }
+    });
+
+    // Auto-send the initial prompt if provided
+    if (btwInitialPrompt) {
+      await new Promise(r => setTimeout(r, 300));
+      inputEl.value = btwInitialPrompt;
+      inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+      await sendMessage();
+    }
+  } else {
+    // When the btw window closes, reload the main panel chat to sync display
+    browser.windows.onRemoved.addListener(async (removedWindowId) => {
+      const state = await getBtwWindowState();
+      if (state?.windowId === removedWindowId) {
+        await browser.storage.session.remove(BTW_WINDOW_KEY).catch(() => {});
+        // Reload the tab chat to pick up any messages the btw window added
+        const tabId = state?.tabId;
+        if (tabId != null && tabId === currentTabId) {
+          try {
+            const html = await loadTabChat(tabId);
+            if (html && html !== TAB_CHAT_LOAD_FAILED) {
+              messagesEl.innerHTML = html;
+              rebindRestoredMessageControls();
+              refreshRenderedStepLabels();
+              restoreLatestChatTurnPosition();
+            }
+          } catch {}
+        }
+      }
+    });
+  }
 }
 
 if (verboseBtn) {
@@ -8183,6 +8235,15 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     showComposerToast(systemHtml(verboseMode
       ? t('sp.compact.verbose_on')
       : t('sp.compact.verbose_off')));
+    return '';
+  }
+
+  if (command.value === '/btw') {
+    if (isBtwWindow) {
+      showComposerToast(t('sp.slash.btw_disabled'), { duration: 3000 });
+      return '';
+    }
+    await openBtwWindow(tabId, payload || '');
     return '';
   }
 
@@ -14097,6 +14158,55 @@ function standaloneWindowBounds(display = window.screen) {
     left: availableLeft + Math.round((availableWidth - width) / 2),
     top: availableTop + Math.round((availableHeight - height) / 2),
   };
+}
+
+function btwWindowBounds(display = window.screen) {
+  const availableWidth = Math.max(1, Number(display?.availWidth) || 1280);
+  const availableHeight = Math.max(1, Number(display?.availHeight) || 800);
+  const availableLeft = Number(display?.availLeft) || 0;
+  const availableTop = Number(display?.availTop) || 0;
+  const width = Math.min(availableWidth, Math.max(380, Math.round(availableWidth * 0.45)));
+  const height = Math.min(availableHeight, Math.max(500, Math.round(availableHeight * 0.7)));
+  return {
+    width,
+    height,
+    left: availableLeft + Math.round((availableWidth - width) / 2),
+    top: availableTop + Math.round((availableHeight - height) / 2),
+  };
+}
+
+const BTW_WINDOW_KEY = 'btwWindow';
+
+async function getBtwWindowState() {
+  try {
+    const result = await browser.storage.session.get(BTW_WINDOW_KEY);
+    return result[BTW_WINDOW_KEY] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function openBtwWindow(tabId, prompt = '') {
+  if (tabId == null) return;
+  const existing = await getBtwWindowState();
+  if (existing?.windowId != null) {
+    try {
+      const win = await browser.windows.get(existing.windowId);
+      if (win) {
+        await browser.windows.update(win.id, { focused: true });
+        return;
+      }
+    } catch {}
+    await browser.storage.session.remove(BTW_WINDOW_KEY).catch(() => {});
+  }
+  const promptParam = prompt ? `&prompt=${encodeURIComponent(prompt)}` : '';
+  const url = browser.runtime.getURL(`src/ui/sidepanel.html?mode=ask&standalone=true&btw=1&tabId=${tabId}${promptParam}`);
+  const win = await browser.windows.create({
+    url,
+    type: 'popup',
+    ...btwWindowBounds(),
+  });
+  await browser.storage.session.set({ [BTW_WINDOW_KEY]: { windowId: win.id, tabId } });
 }
 
 if (expandBtn) {
