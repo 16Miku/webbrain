@@ -103,6 +103,7 @@ import {
   parseUserMemoryExtractionResult,
 } from './agent/user-memory.js';
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
+import { createMemcodeRecall, MEMCODE_RECALL_ENABLED_KEY } from './agent/memcode-recall.js';
 import { shouldAutoGroupTabs } from './tab-group-preference.js';
 import {
   CONFIG_STORAGE_KEYS,
@@ -234,6 +235,7 @@ agent.setConversationScopeChangeListener((tabId, state) => {
   }).catch(() => { });
 });
 const userMemoryStore = createUserMemoryStore(chrome.storage.local);
+const memcodeRecall = createMemcodeRecall({ storage: chrome.storage.local, identity: chrome.identity });
 const savedWorkflowStore = createSavedWorkflowStore(chrome.storage.local);
 const teacherSessionStore = createTeacherSessionStore(chrome.storage.session);
 const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
@@ -1214,7 +1216,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
   if (PROFILE_SYNC_DATA_KEYS.some((key) => changes[key])) profileSync.noteChanges(changes).catch(() => { });
   if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => { });
-  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl) {
+  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
+    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
     cloudRunController.syncBridge().catch(() => { });
   }
   if (changes.maxAgentSteps) {
@@ -2819,6 +2822,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 async function handleMessage(msg, sender) {
+  // Only Settings may start OAuth or change the user's remote-memory choice.
+  // Content scripts share this message bus and must not control the connection.
+  if (String(msg.action || '').startsWith('memcode_recall_')
+    && sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/settings.html')) {
+    return { ok: false, error: 'MemCode connection controls are available in Settings only.' };
+  }
   const lightweightAction = [
     'get_recording_state',
     'persist_tab_chat',
@@ -3000,6 +3009,19 @@ async function handleMessage(msg, sender) {
         formCaptureEnabled: settings[USER_MEMORY_FORM_CAPTURE_KEY] === true,
         maxPromptChars: normalizeUserMemoryMaxPromptChars(settings[USER_MEMORY_MAX_PROMPT_CHARS_KEY]),
       };
+    }
+
+    case 'memcode_recall_status':
+      return { ok: true, ...(await memcodeRecall.status()) };
+    case 'memcode_recall_connect':
+      return { ok: true, ...(await memcodeRecall.connect()) };
+    case 'memcode_recall_disconnect':
+      return { ok: true, ...(await memcodeRecall.disconnect()) };
+    case 'memcode_recall_enable': {
+      const status = await memcodeRecall.status();
+      if (!status.connected && msg.enabled) return { ok: false, error: 'Connect MemCode before enabling recall.' };
+      await chrome.storage.local.set({ [MEMCODE_RECALL_ENABLED_KEY]: status.connected && msg.enabled === true });
+      return { ok: true, ...(await memcodeRecall.status()) };
     }
 
     case 'add_user_memory': {
@@ -3598,7 +3620,7 @@ async function handleMessage(msg, sender) {
           throw new Error('Could not durably clear the tab transcript.');
         }
         clearedContextMenuPromptId = tabChatClearResult.clearedContextMenuPromptId || null;
-        agent.clearConversation(tabId);
+        await agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
         chrome.runtime.sendMessage({
           target: 'sidepanel',
@@ -3698,7 +3720,7 @@ async function handleMessage(msg, sender) {
     case 'export_traces': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) return { ok: false, error: 'No tab ID' };
-      return { ok: true, ...(await agent.exportTraces(tabId)) };
+      return { ok: true, ...(await agent.exportTraces(tabId, { full: msg.full === true })) };
     }
 
     case 'export_config': {

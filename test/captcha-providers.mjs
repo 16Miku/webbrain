@@ -39,7 +39,8 @@ for (const build of ['chrome', 'firefox']) {
       assert.ok(copy, `${lang}: missing translation`);
       assert.deepEqual(Object.keys(copy).sort(), keys, `${lang}: incomplete translation`);
       for (const key of keys) assert.ok(copy[key].trim().length > 0, `${lang}/${key}: empty translation`);
-      assert.match(copy['st.captcha.provider_desc'], /hCaptcha.*CapSolver|CapSolver.*hCaptcha/, lang);
+      assert.match(copy['st.captcha.hcaptcha_desc'], /hCaptcha/, lang);
+      assert.doesNotMatch(copy['st.captcha.hcaptcha_desc'], /CapSolver/, `${lang}: do not recommend CapSolver for hCaptcha`);
       const legacy = (await import(new URL(`${lang}.js`, base))).default;
       for (const key of ['desc_html', 'security_html', 'enabled.label', 'enabled.desc']) {
         assert.equal(legacy[`st.captcha.${key}`], undefined, `${lang}: stale copy retained`);
@@ -47,13 +48,18 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
-  test(`${build}: unsupported providers are skipped without creating paid hCaptcha tasks`, async t => {
-    const calls = mockApi(t, () => ({ errorId: 12, errorCode: 'ERROR_CAPTCHA_UNSOLVABLE' }));
-    await assert.rejects(solver.solveCaptchaWithProviders(config.getCaptchaProviders({ ...enabled, captchaSolverEnabled: false }), { ...params, type: 'hcaptcha' }), /No enabled provider supports hcaptcha/);
+  test(`${build}: original providers never create a paid hCaptcha task, including direct CapSolver and Cloud routes`, async t => {
+    const calls = mockApi(t, () => { throw new Error('must not dispatch'); });
+    const hcaptcha = { ...params, type: 'hcaptcha' };
+    for (const provider of config.CAPTCHA_PROVIDERS.filter(p => !['nopecha', 'nonecap'].includes(p.id))) {
+      assert.equal(config.captchaProviderSupportsType(provider.id, 'hcaptcha'), false);
+      await assert.rejects(solver.solveCaptchaWithProviders([{ id: provider.id, apiKey: capKey }], hcaptcha), /No enabled provider supports hcaptcha/);
+    }
+    await assert.rejects(solver.solveCaptchaWithProviders(config.getCaptchaProviders(enabled), hcaptcha), /No enabled provider supports hcaptcha/);
+    await assert.rejects(solver.solveCaptcha(capKey, hcaptcha), /hCaptcha requires manual completion/);
+    await assert.rejects(solver.solveCaptcha('', hcaptcha, { useCloudBroker: true }), /hCaptcha requires manual completion/);
+    assert.throws(() => solver.buildTask(hcaptcha), /hCaptcha requires manual completion/);
     assert.equal(calls.length, 0);
-    await assert.rejects(solver.solveCaptchaWithProviders(config.getCaptchaProviders(enabled), { ...params, type: 'hcaptcha' }), /ERROR_CAPTCHA_UNSOLVABLE/);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, 'https://api.capsolver.com/createTask');
   });
 
   test(`${build}: independent consent, validation, order, and managed isolation`, () => {
@@ -158,7 +164,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(task({ metadata: { action: 'login', cdata: 'opaque', chlPageData: 'page' } }), {
       type: 'TurnstileTaskProxyless', websiteURL: params.websiteURL, websiteKey: params.websiteKey, action: 'login', data: 'opaque', pagedata: 'page',
     });
-    assert.throws(() => task({ type: 'hcaptcha' }), /does not support/);
+    assert.throws(() => two.buildTwoCaptchaTask({ type: 'HCaptchaTaskProxyLess' }), /does not support/);
   });
 
   test(`${build}: balance check uses 2Captcha and surfaces API errors`, async t => {

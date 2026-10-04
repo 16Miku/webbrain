@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Vietnamese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Thu phóng giao diện tiện ích',
   'sp.ui_scale.decrease': 'Thu nhỏ giao diện tiện ích',
   'sp.ui_scale.increase': 'Phóng to giao diện tiện ích',
@@ -321,6 +323,7 @@ export default {
   'sp.subscribe.allowance_used': "Đã sử dụng hạn mức WebBrain Compass miễn phí hàng ngày.",
   'sp.subscribe.btn': "Đăng ký",
   'sp.subscribe.upgrade': 'Nâng cấp lên Plus',
+  "sp.subscribe.resume_payment": "Đã cập nhật phương thức thanh toán — thử lại",
   'sp.subscribe.resume_upgrade': 'Gói đã được cập nhật — thử lại',
   'sp.subscribe.resume': "Tôi đã đăng ký - thử lại",
   'sp.stopped_by_user': "[Người dùng đã dừng]",
@@ -597,6 +600,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "Việc thanh toán, chi tiết thẻ, email và việc hủy do Stripe quản lý cho cấu hình trình duyệt này.",
   'st.account.billing_preparing': "Đang chuẩn bị liên kết thanh toán Stripe cho cấu hình trình duyệt này.",
+  "st.account.payment_failed": "Không thể hoàn tất thanh toán gói đăng ký. Hãy cập nhật phương thức thanh toán để khôi phục gói trả phí.",
+  "st.account.update_payment": "Cập nhật phương thức thanh toán",
   'st.account.manage_billing': "Quản lý thanh toán",
 
   'st.display.language.label': "Ngôn ngữ",
@@ -833,6 +838,7 @@ export default {
   'st.provider.field.context_window': "Cửa sổ ngữ cảnh (mã thông báo)",
   'st.provider.field.max_output_tokens': "Đầu ra tối đa (mã thông báo)",
   'st.provider.field.supports_vision': "Mô hình hỗ trợ tầm nhìn (đa phương thức)",
+  'st.provider.field.tools_mode': 'Sử dụng công cụ gốc',
   'st.provider.field.vision_auto': 'Tự động',
   'st.provider.field.vision_force_on': 'Buộc bật',
   'st.provider.field.vision_detected_vision': 'Tự động phát hiện: Thị giác',
@@ -1088,6 +1094,8 @@ export default {
   'tr.event.args': "lập luận",
   'tr.event.result': "kết quả",
   'tr.event.step': "bước {step}",
+  "sp.slash.export_traces_full": "Xuất toàn bộ phiên theo dõi đã lưu dưới dạng JSON, gồm cả ảnh chụp màn hình",
+  "sp.export_traces.recording_truncated": "Đã xuất mọi bản ghi đã lưu dưới dạng JSON. Nội dung bị bỏ qua trong lúc ghi không thể khôi phục bằng cách xuất.",
   "sp.slash.export_traces": "Xuất chuỗi công cụ (dấu vết)",
   "sp.export_traces.none": "Không có dấu vết cho cuộc trò chuyện này. Bật Ghi dấu vết trong Cài đặt rồi chạy lại.",
   "sp.export_traces.error": "Không thể xuất dấu vết.",

@@ -1,13 +1,17 @@
 import { BaseLLMProvider } from './base.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
 import {
+  baseModelNameSniffedVision,
   isNewOpenAIContractConfig,
   isOfficialOpenAIConfig,
   isOpenCodeZenConfig,
+  isOpenRouterLingVisionModel,
+  isOpenRouterNexN25MiniModel,
   requiresOpenAIDefaultTemperature,
   shouldUseOpenAIResponsesApi,
   supportsOpenAIAskStreaming,
   applyOpenRouterRoutingVariant,
+  openRouterMuseToolOptions,
 } from './provider-compatibility.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
@@ -107,6 +111,12 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   get supportsTools() {
+    const mode = this._capabilityMode('toolsMode');
+    if (mode === 'on') return true;
+    if (mode === 'off') return false;
+    // OpenRouter's Nex N2.5 mini route accepts chat completions but has no
+    // function-compatible endpoint. Sending even read-only tools returns 404.
+    if (this._isOpenRouterNexN25Mini()) return false;
     return this.config.supportsTools !== false;
   }
 
@@ -131,9 +141,18 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (AUTO_VISION_PROVIDER_IDS.has(providerName)) {
       return configuredVisionSupport(providerName, this.config);
     }
-    // Explicit user opt-in always wins (used by LM Studio and any custom
-    // OpenAI-compatible endpoint where the loaded model varies).
+    // The Advanced vision selector (auto/on/off) wins first. For OpenRouter
+    // the /vision slash command also writes visionMode (see sidepanel
+    // toggledVisionProviderConfig), so the toggle keeps working.
+    const mode = this._capabilityMode('visionMode');
+    if (mode === 'on') return true;
+    if (mode === 'off') return false;
+    // Legacy explicit opt-in/out (used by LM Studio, custom endpoints, and
+    // the /vision toggle for non-OpenRouter providers) wins over detection.
     if (this.config.supportsVision != null) return !!this.config.supportsVision;
+    // OpenRouter-scoped detection for models the shared sniff cannot name
+    // (router route ids such as inclusionai/ling-3.0-flash-vl).
+    if (this._isOpenRouterLingVisionModel()) return true;
     // Otherwise sniff the model name for known vision-capable identifiers.
     // Qwen went natively multimodal starting at 3.5 (no separate -VL
     // checkpoint needed), so qwen3\.[5-9] catches those alongside the
@@ -151,7 +170,22 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
    * `supportsVision` getter above.
    */
   _modelNameSniffedVision(model) {
-    return /gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|gpt-6-(?:luna-pro|sol|astra)(?:$|[-_.:/])|claude|gemini|grok|minimax-m3|kimi-k(?:-?3|2\.[5-9])|llava|qwen.*vl|qwen2.*vl|qwen3.*vl|qwen3\.[5-9]|qwen3p8-27b|pixtral|llama.*vision|gemma.*vision|gemma-?[34]|step-3/.test(String(model || ''));
+    return baseModelNameSniffedVision(model);
+  }
+
+  _isOpenRouterNexN25Mini() {
+    return String(this.config.providerName || '').trim().toLowerCase() === 'openrouter'
+      && isOpenRouterNexN25MiniModel(this.model);
+  }
+
+  _isOpenRouterLingVisionModel() {
+    return String(this.config.providerName || '').trim().toLowerCase() === 'openrouter'
+      && isOpenRouterLingVisionModel(this.model);
+  }
+
+  _capabilityMode(key) {
+    const mode = String(this.config[key] || '').trim().toLowerCase();
+    return ['auto', 'on', 'off'].includes(mode) ? mode : 'auto';
   }
 
   get useCompactPrompt() {
@@ -284,6 +318,38 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     }
   }
 
+  async sendShareDiagnostic(sessionId, diagnostic, { timeoutMs = 4000 } = {}) {
+    if (String(this.config.providerName || '').toLowerCase() !== 'webbrain-cloud') {
+      return { ok: false, retryable: false, status: 0 };
+    }
+    try {
+      if (!await browser.permissions.contains({ data_collection: RESEARCH_DATA_COLLECTION })) {
+        return { ok: false, retryable: false, status: 0 };
+      }
+    } catch {
+      return { ok: false, retryable: false, status: 0 };
+    }
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), Math.max(250, timeoutMs)) : null;
+    try {
+      const response = await fetchWithTimeout(`${this.baseUrl}/improvement/diagnostic-traces`, {
+        method: 'POST',
+        headers: this._headers({ helpImprove: '1' }),
+        body: JSON.stringify({ session_id: String(sessionId || ''), diagnostic }),
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (response.ok) return { ok: true, retryable: false, status: response.status };
+      try { await response.text(); } catch {}
+      // Keep the durable outbox entry while an older Cloud deployment lacks
+      // this newer endpoint; it will be retried after the server rolls out.
+      return { ok: false, retryable: response.status === 404 || response.status === 408 || response.status === 429 || response.status >= 500, status: response.status };
+    } catch {
+      return { ok: false, retryable: true, status: 0 };
+    } finally {
+      if (timer != null) clearTimeout(timer);
+    }
+  }
+
   /**
    * Newer OpenAI models (gpt-5 and the o-series) reject `max_tokens` and any
    * non-default `temperature`, requiring `max_completion_tokens`. Detected by
@@ -325,6 +391,14 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     return url.toString();
   }
 
+  _webbrainAccountUrl() {
+    const url = new URL('https://api.webbrain.one/account');
+    if (this.config.deviceGuid) {
+      url.searchParams.set('client_reference_id', this.config.deviceGuid);
+    }
+    return url.toString();
+  }
+
   _formatHttpError(status, body) {
     const providerName = (this.config.providerName || '').toLowerCase();
     if (status === 402 && providerName === 'webbrain-cloud') {
@@ -333,7 +407,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       let message = 'Daily free WebBrain Compass allowance used.';
       try {
         const parsed = JSON.parse(body || '{}');
-        if (parsed.upgrade_url) {
+        if (parsed.error?.code === 'webbrain_cloud_payment_failed') {
+          actionUrl = parsed.manage_billing_url || this._webbrainAccountUrl();
+          actionLabel = 'Update payment method';
+        } else if (parsed.upgrade_url) {
           actionUrl = parsed.upgrade_url;
           actionLabel = 'Upgrade to WebBrain Plus';
         } else if (parsed.subscribe_url) {
@@ -519,6 +596,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
    * compatibility presets, and safe extraBody merge.
    */
   _buildChatCompletionsBody(messages, options = {}, stream = false) {
+    options = openRouterMuseToolOptions({ ...this.config, baseUrl: this.baseUrl, model: this.model }, options);
     let body = {
       messages: this._chatMessages(messages, options),
       stream,
@@ -643,6 +721,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   _responsesBody(messages, options, stream) {
+    options = openRouterMuseToolOptions({ ...this.config, baseUrl: this.baseUrl, model: this.model }, options);
     let body = {
       input: this._responsesInput(messages),
       stream,

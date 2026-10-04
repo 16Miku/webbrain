@@ -21,4 +21,5 @@ export const BROWSER_MUTATION_TOOLS = new Set([
   ...STATE_CHANGE_TOOLS,
   'upload_file',
   'solve_captcha',
+  'apply_captcha_solution',
 ]);

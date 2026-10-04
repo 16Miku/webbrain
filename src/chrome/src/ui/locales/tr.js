@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Turkish (tr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Uzantı arayüzü yakınlaştırması',
   'sp.ui_scale.decrease': 'Uzantı arayüzünü uzaklaştır',
   'sp.ui_scale.increase': 'Uzantı arayüzünü yakınlaştır',
@@ -263,6 +265,7 @@ export default {
   'sp.subscribe.allowance_used': 'Ücretsiz günlük WebBrain Compass kullanım hakkınız doldu.',
   'sp.subscribe.btn': 'Abone ol',
   'sp.subscribe.upgrade': 'Plus\'a yükselt',
+  'sp.subscribe.resume_payment': 'Ödeme yöntemi güncellendi — yeniden dene',
   'sp.subscribe.resume_upgrade': 'Plan güncellendi — yeniden dene',
   'sp.subscribe.resume': 'Abone oldum — yeniden dene',
   'sp.stopped_by_user': '[Kullanıcı durdurdu]',
@@ -363,6 +366,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Faturalandırma, kart bilgileri, e-posta ve iptal işlemleri bu tarayıcı profili için Stripe tarafından yönetilir.',
   'st.account.billing_preparing': 'Bu tarayıcı profili için Stripe faturalandırma bağlantısı hazırlanıyor.',
+  'st.account.payment_failed': 'Abonelik ödemeniz tamamlanamadı. Ücretli planınızı yeniden kullanmak için ödeme yönteminizi güncelleyin.',
+  'st.account.update_payment': 'Ödeme yöntemini güncelle',
   'st.account.manage_billing': 'Faturalandırmayı yönet',
 
   'st.display.language.label': 'Dil',
@@ -434,6 +439,7 @@ export default {
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (isteğe bağlı)',
   'st.provider.field.supports_vision': 'Model görme yeteneğini destekliyor (çok kipli)',
+  'st.provider.field.tools_mode': 'Yerel araç kullanımı',
   'st.provider.field.vision_auto': 'Otomatik',
   'st.provider.field.vision_force_on': 'Zorla açık',
   'st.provider.field.vision_detected_vision': 'Otomatik algılandı: Görsel',
@@ -1046,6 +1052,8 @@ export default {
   "st.imageBudget.maxDimension.label": "En büyük görüntü boyutu",
   "st.imageBudget.maxDimension.desc": "Görüşe gönderilen herhangi bir ekran görüntüsünün en uzun kenarı (genişlik veya yükseklik) piksel cinsinden. Daha küçük üst sınır görüntüleri göndermeden önce küçültür, token ve maliyeti düşürür. Daha büyük üst sınır sadakati korur.",
   "st.imageBudget.warning": "⚠️ Bu ayarlar görüş için yakalanan ekran görüntülerine uygulanır (otomatik görüntü, /screenshot, tam sayfa, verify_form). Elle kaydedilen tam çözünürlüklü görüntüler etkilenmez. «Image detail» OpenAI tarzı uçlar tarafından uygulanır; diğer sağlayıcılar yok sayabilir.",
+  "sp.slash.export_traces_full": "Ekran görüntüleri dahil kaydedilmiş izleme oturumunun tamamını JSON olarak dışa aktar",
+  "sp.export_traces.recording_truncated": "Kaydedilmiş tüm kayıtlar JSON olarak dışa aktarıldı. Kayıt sırasında atlanan içerikler dışa aktarılarak geri getirilemez.",
   "sp.slash.export_traces": "Araç zincirini dışa aktar (izler)",
   "sp.export_traces.none": "Bu konuşma için iz yok. Ayarlar'da İzleri kaydet seçeneğini açıp yeniden çalıştırın.",
   "sp.export_traces.error": "İzler dışa aktarılamadı.",
@@ -1057,8 +1065,8 @@ export default {
   "st.display.help_improve.desc_html": "Seçili WebBrain Compass etkileşimlerinin saklanmasına ve değerlendirme, iyileştirme, ince ayar ve eğitim için kullanılmasına izin verin. Varsayılan olarak açıktır. Gelecekteki Compass etkileşimlerinin bu amaçlarla kullanılmasını önlemek için kapatın. <u>WebBrain, yerel model ve kendi API isteklerinizi yalnızca “Araştırma için sorguları paylaş” seçeneğini açtığınız sağlayıcılardan toplar.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Gizlilik politikası →</a>",
   "st.providers.webbrain_data_use.body": "Ücretsiz günlük WebBrain Compass kullanımı dahildir. WebBrain’i İyileştirmeye Yardım Et varsayılan olarak açıkken, seçili Compass konuşmaları değerlendirme, iyileştirme, ince ayar ve eğitim için saklanabilir ve kullanılabilir. Gelecekteki Compass etkileşimlerini bu kullanımların dışında tutmak için Genel → Gelişmiş bölümünden kapatın. <u>WebBrain, yerel model ve kendi API isteklerinizi yalnızca ilgili sağlayıcıda “Araştırma için sorguları paylaş” seçeneğini açtığınızda toplar.</u> {privacyLink}. Daha fazla kullanım için {subscribeLink} adresinden abone olun. Faturalandırmayı {accountLink} adresinden yönetin.",
   'st.providers.share_research.label': "Araştırma için sorguları paylaş",
-  'st.providers.share_research.hint': "Bu sağlayıcının istemlerini ve yanıtlarını, kullanılan sağlayıcı ve model bilgisiyle birlikte değerlendirme ve iyileştirme amacıyla WebBrain’e gönderir. Görseller ve ikili ekler paylaşılmadan önce kaldırılır, metin kısaltılır; kalan metin olduğu gibi gönderilir.",
-  'st.providers.share_research.confirm': "Bu sağlayıcının sorgularını araştırma için WebBrain ile paylaşılsın mı?\n\nAçıkken istemleriniz, yanıtlarınız ve bu sağlayıcıyla araç etkileşimleriniz, sağlayıcı ve model adıyla birlikte değerlendirme ve iyileştirme amacıyla WebBrain’e gönderilir. Metin, görseller kaldırılıp uzun içerikler kısaltıldıktan sonra olduğu gibi gönderilir; bu yüzden hassas kişisel verileri paylaşmaktan kaçının. Gelecekteki paylaşımları durdurmak için bunu istediğiniz zaman kapatabilirsiniz.",
+  'st.providers.share_research.hint': "Bu sağlayıcının sınırlı istemlerini, yanıtlarını, araç etkileşimlerini ve tanılama izi metaverilerini (adımlar, araç adları, durumlar, hatalar ve süreler) değerlendirme amacıyla WebBrain’e gönderir. Görseller ve ikili ekler kaldırılır; metin kısaltılır.",
+  'st.providers.share_research.confirm': "Bu sağlayıcının sorguları ve tanılama izleri araştırma için WebBrain ile paylaşılsın mı?\n\nAçıkken istemleriniz, yanıtlarınız, araç etkileşimleriniz ve başarısız çalıştırmalar dâhil sınırlı tanılama izi metaverileri (araç adları, durumlar, hatalar ve süreler) sağlayıcı ve model adıyla birlikte gönderilir. Ekran görüntüleri ve ikili ekler yüklenmez. Diğer metin kısaltıldıktan sonra olduğu gibi gönderilir; hassas kişisel veri paylaşmamaya dikkat edin. Gelecekteki paylaşımları durdurmak için bunu istediğiniz zaman kapatabilirsiniz.",
   'st.providers.compat.title': 'Gelişmiş model uyumluluğu',
   'st.providers.compat.blurb': 'Model veya uç nokta farklı bir istek sözleşmesi belgelemedikçe bunları Otomatik bırakın.',
   'st.providers.compat.preset': 'Uyumluluk ön ayarı',

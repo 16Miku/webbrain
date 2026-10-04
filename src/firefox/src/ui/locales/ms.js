@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Malay (ms).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zum UI sambungan',
   'sp.ui_scale.decrease': 'Kecilkan UI sambungan',
   'sp.ui_scale.increase': 'Besarkan UI sambungan',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Peruntukan harian percuma WebBrain Compass telah digunakan.',
   'sp.subscribe.btn': 'Langgan',
   'sp.subscribe.upgrade': 'Naik taraf kepada Plus',
+  "sp.subscribe.resume_payment": "Kaedah pembayaran dikemas kini — cuba lagi",
   'sp.subscribe.resume_upgrade': 'Pelan dikemas kini — cuba lagi',
   'sp.subscribe.resume': 'Saya sudah melanggan — cuba lagi',
   'sp.stopped_by_user': '[Dihentikan oleh pengguna]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Pengebilan, butiran kad, e-mel dan pembatalan diuruskan oleh Stripe untuk profil pelayar ini.',
   'st.account.billing_preparing': 'Menyediakan pautan pengebilan Stripe untuk profil pelayar ini.',
+  "st.account.payment_failed": "Pembayaran langganan anda tidak dapat diselesaikan. Kemas kini kaedah pembayaran untuk memulihkan pelan berbayar anda.",
+  "st.account.update_payment": "Kemas kini kaedah pembayaran",
   'st.account.manage_billing': 'Urus pengebilan',
 
   'st.display.language.label': 'Bahasa',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (pilihan)',
   'st.provider.field.supports_vision': 'Model menyokong penglihatan (multimodal)',
+  'st.provider.field.tools_mode': 'Penggunaan alat bawaan',
   'st.provider.field.vision_auto': 'Automatik',
   'st.provider.field.vision_force_on': 'Paksa hidup',
   'st.provider.field.vision_detected_vision': 'Dikesan secara automatik: Penglihatan',
@@ -1028,6 +1034,8 @@ export default {
   "sp.upload_picker.cancelled": "Muat naik dibatalkan",
   "sp.upload_picker.too_large": "Fail yang dipilih melebihi had 25MB (maks 25MB)",
   "sp.upload_picker.read_failed": "Gagal membaca fail yang dipilih",
+  "sp.slash.export_traces_full": "Eksport seluruh sesi jejak tersimpan sebagai JSON, termasuk tangkapan skrin",
+  "sp.export_traces.recording_truncated": "Semua rekod tersimpan telah dieksport sebagai JSON. Kandungan yang ditinggalkan semasa rakaman tidak dapat dipulihkan melalui eksport.",
   "sp.slash.export_traces": "Eksport rantaian alat (jejak)",
   "sp.export_traces.none": "Tiada jejak untuk perbualan ini. Hidupkan Rakam jejak dalam Tetapan, kemudian jalankan semula.",
   "sp.export_traces.error": "Tidak dapat mengeksport jejak.",

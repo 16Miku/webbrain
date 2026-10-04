@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // French (fr).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom de l’interface de l’extension',
   'sp.ui_scale.decrease': 'Réduire le zoom de l’interface',
   'sp.ui_scale.increase': 'Augmenter le zoom de l’interface',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Quota quotidien gratuit de WebBrain Compass épuisé.',
   'sp.subscribe.btn': 'S’abonner',
   'sp.subscribe.upgrade': 'Passer à Plus',
+  "sp.subscribe.resume_payment": "Moyen de paiement mis à jour — réessayer",
   'sp.subscribe.resume_upgrade': 'Forfait mis à jour — réessayer',
   'sp.subscribe.resume': 'Abonnement effectué — réessayer',
   'sp.stopped_by_user': '[Arrêté par l\'utilisateur]',
@@ -326,6 +329,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'La facturation, les informations de carte, l\'e-mail et la résiliation sont gérés par Stripe pour ce profil de navigateur.',
   'st.account.billing_preparing': 'Préparation du lien de facturation Stripe pour ce profil de navigateur.',
+  "st.account.payment_failed": "Le paiement de votre abonnement n’a pas pu être effectué. Mettez à jour votre moyen de paiement pour retrouver votre offre payante.",
+  "st.account.update_payment": "Mettre à jour le moyen de paiement",
   'st.account.manage_billing': 'Gérer la facturation',
 
   'st.display.language.label': 'Langue',
@@ -394,6 +399,7 @@ export default {
   'st.provider.field.model': 'Modèle',
   'st.provider.field.model_optional': 'Modèle (facultatif)',
   'st.provider.field.supports_vision': 'Le modèle gère la vision (multimodal)',
+  'st.provider.field.tools_mode': 'Utilisation des outils natifs',
   'st.provider.field.vision_auto': 'Automatique',
   'st.provider.field.vision_force_on': 'Forcer l’activation',
   'st.provider.field.vision_detected_vision': 'Détection automatique : vision',
@@ -1047,6 +1053,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Dimension max. d’image",
   "st.imageBudget.maxDimension.desc": "Plus grand côté (largeur ou hauteur) en pixels pour toute capture envoyée à la vision. Un plafond plus bas réduit les images avant envoi, ce qui coupe tokens et coût. Un plafond plus haut conserve la fidélité.",
   "st.imageBudget.warning": "⚠️ Ces réglages s’appliquent aux captures pour la vision (auto-capture, /screenshot, page entière, verify_form). Les images enregistrées manuellement en pleine résolution ne sont pas affectées. « Image detail » est respecté par les endpoints de type OpenAI ; d’autres fournisseurs peuvent l’ignorer.",
+  "sp.slash.export_traces_full": "Exporter toute la session de traces enregistrée en JSON, captures comprises",
+  "sp.export_traces.recording_truncated": "Tous les enregistrements sauvegardés ont été exportés en JSON. Le contenu omis lors de l’enregistrement ne peut pas être récupéré par l’export.",
   "sp.slash.export_traces": "Exporter la chaîne d'outils (traces)",
   "sp.export_traces.none": "Aucune trace pour cette conversation. Activez « Enregistrer les traces » dans les paramètres, puis relancez.",
   "sp.export_traces.error": "Impossible d'exporter les traces.",

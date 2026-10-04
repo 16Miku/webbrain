@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Japanese (ja).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '拡張機能 UI のズーム',
   'sp.ui_scale.decrease': '拡張機能 UI を縮小',
   'sp.ui_scale.increase': '拡張機能 UI を拡大',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'WebBrain Compass の無料の1日あたりの利用枠を使い切りました。',
   'sp.subscribe.btn': '購読する',
   'sp.subscribe.upgrade': 'Plus にアップグレード',
+  "sp.subscribe.resume_payment": "支払い方法を更新しました — 再試行",
   'sp.subscribe.resume_upgrade': 'プランを更新しました — 再試行',
   'sp.subscribe.resume': '購読しました — 再試行',
   'sp.stopped_by_user': '[ユーザーが停止]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'このブラウザープロファイルの請求、カード情報、メール、解約は Stripe が管理します。',
   'st.account.billing_preparing': 'このブラウザープロファイルの Stripe 請求リンクを準備しています。',
+  "st.account.payment_failed": "サブスクリプションの支払いを完了できませんでした。有料プランを再開するには、支払い方法を更新してください。",
+  "st.account.update_payment": "支払い方法を更新",
   'st.account.manage_billing': '請求を管理',
 
   'st.display.language.label': '言語',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': 'モデル',
   'st.provider.field.model_optional': 'モデル（任意）',
   'st.provider.field.supports_vision': 'モデルは画像認識（マルチモーダル）対応',
+  'st.provider.field.tools_mode': 'ネイティブツール使用',
   'st.provider.field.vision_auto': '自動',
   'st.provider.field.vision_force_on': '強制的にオン',
   'st.provider.field.vision_detected_vision': '自動検出：画像対応',
@@ -1028,6 +1034,8 @@ export default {
   "sp.upload_picker.cancelled": "アップロードをキャンセルしました",
   "sp.upload_picker.too_large": "選択したファイルが 25MB の上限を超えています（最大 25MB）",
   "sp.upload_picker.read_failed": "選択したファイルの読み取りに失敗しました",
+  "sp.slash.export_traces_full": "スクリーンショットを含む保存済みトレースセッション全体をJSONでエクスポート",
+  "sp.export_traces.recording_truncated": "保存済みの全記録をJSONでエクスポートしました。記録時に省略された内容はエクスポートでは復元できません。",
   "sp.slash.export_traces": "ツールチェーンをエクスポート（トレース）",
   "sp.export_traces.none": "この会話のトレースがありません。設定で「トレースを記録」をオンにして、もう一度実行してください。",
   "sp.export_traces.error": "トレースをエクスポートできませんでした。",

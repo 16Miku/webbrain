@@ -67,9 +67,59 @@ export const PACKAGED_SKILL_SOURCES = Object.freeze([
     path: 'skills/turkish-deasciifier.md',
   }),
   Object.freeze({
+    id: 'wordpress-rest-api',
+    name: 'WordPress REST API',
+    path: 'skills/wordpress-rest-api.md',
+  }),
+  Object.freeze({
     id: 'phonr-calls',
     name: 'Phone calls (Phonr)',
     path: 'skills/phonr-calls.md',
+  }),
+  Object.freeze({
+    id: 'cms-ghost',
+    name: 'Ghost content (API-first)',
+    path: 'skills/cms-ghost.md',
+  }),
+  Object.freeze({
+    id: 'cms-drupal',
+    name: 'Drupal content (API-first)',
+    path: 'skills/cms-drupal.md',
+  }),
+  Object.freeze({
+    id: 'cms-joomla',
+    name: 'Joomla content (API-first)',
+    path: 'skills/cms-joomla.md',
+  }),
+  Object.freeze({
+    id: 'cms-webflow',
+    name: 'Webflow content (API-first)',
+    path: 'skills/cms-webflow.md',
+  }),
+  Object.freeze({
+    id: 'cms-shopify',
+    name: 'Shopify content (API-first)',
+    path: 'skills/cms-shopify.md',
+  }),
+  Object.freeze({
+    id: 'cms-wix',
+    name: 'Wix content (API-first)',
+    path: 'skills/cms-wix.md',
+  }),
+  Object.freeze({
+    id: 'cms-strapi',
+    name: 'Strapi content (API-first)',
+    path: 'skills/cms-strapi.md',
+  }),
+  Object.freeze({
+    id: 'cms-contentful',
+    name: 'Contentful content (API-first)',
+    path: 'skills/cms-contentful.md',
+  }),
+  Object.freeze({
+    id: 'cms-sanity',
+    name: 'Sanity content (API-first)',
+    path: 'skills/cms-sanity.md',
   }),
 ]);
 export const DEFAULT_SKILL_SOURCES = Object.freeze(
@@ -77,6 +127,16 @@ export const DEFAULT_SKILL_SOURCES = Object.freeze(
     'freeskillz-xyz',
     'otp-verification-code-helper',
     'humanizer',
+    'wordpress-rest-api',
+    'cms-ghost',
+    'cms-drupal',
+    'cms-joomla',
+    'cms-webflow',
+    'cms-shopify',
+    'cms-wix',
+    'cms-strapi',
+    'cms-contentful',
+    'cms-sanity',
   ].includes(source.id))
 );
 

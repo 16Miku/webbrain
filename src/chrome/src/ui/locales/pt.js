@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Portuguese — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom da interface da extensão',
   'sp.ui_scale.decrease': 'Reduzir o zoom da interface',
   'sp.ui_scale.increase': 'Aumentar o zoom da interface',
@@ -322,6 +324,7 @@ export default {
   'sp.subscribe.allowance_used': "Limite diário gratuito do WebBrain Compass utilizado.",
   'sp.subscribe.btn': "Inscrever-se",
   'sp.subscribe.upgrade': 'Fazer upgrade para o Plus',
+  "sp.subscribe.resume_payment": "Método de pagamento atualizado — tentar novamente",
   'sp.subscribe.resume_upgrade': 'Plano atualizado — tentar novamente',
   'sp.subscribe.resume': "Eu me inscrevi – tente novamente",
   'sp.stopped_by_user': "[Interrompido pelo usuário]",
@@ -600,6 +603,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "Faturamento, detalhes do cartão, e-mail e cancelamento são gerenciados por Stripe para este perfil de navegador.",
   'st.account.billing_preparing': "Preparando o link de cobrança Stripe para este perfil de navegador.",
+  "st.account.payment_failed": "Não foi possível concluir o pagamento da sua assinatura. Atualize o método de pagamento para recuperar seu plano pago.",
+  "st.account.update_payment": "Atualizar método de pagamento",
   'st.account.manage_billing': "Gerenciar faturamento",
 
   'st.display.language.label': "Idioma",
@@ -847,6 +852,7 @@ export default {
   'st.provider.field.context_window': "Janela de contexto (tokens)",
   'st.provider.field.max_output_tokens': "Saída máxima (tokens)",
   'st.provider.field.supports_vision': "Modelo apoia visão (multimodal)",
+  'st.provider.field.tools_mode': 'Uso de ferramentas nativas',
   'st.provider.field.vision_auto': 'Automático',
   'st.provider.field.vision_force_on': 'Forçar ativação',
   'st.provider.field.vision_detected_vision': 'Detectado automaticamente: Visão',
@@ -1109,6 +1115,8 @@ export default {
   'tr.event.args': "argumentos",
   'tr.event.result': "resultado",
   'tr.event.step': "etapa {step}",
+  "sp.slash.export_traces_full": "Exportar toda a sessão de rastreamento salva como JSON, incluindo capturas de tela",
+  "sp.export_traces.recording_truncated": "Todos os registros salvos foram exportados como JSON. O conteúdo omitido durante a gravação não pode ser recuperado pela exportação.",
   "sp.slash.export_traces": "Exportar a cadeia de ferramentas (traços)",
   "sp.export_traces.none": "Não há vestígios desta conversa. Habilite Gravar rastreamentos em Configurações e execute novamente.",
   "sp.export_traces.error": "Não foi possível exportar rastreamentos.",

@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Arabic (ar).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'تكبير واجهة الإضافة',
   'sp.ui_scale.decrease': 'تصغير واجهة الإضافة',
   'sp.ui_scale.increase': 'تكبير واجهة الإضافة',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'تم استخدام الحصة اليومية المجانية من WebBrain Compass.',
   'sp.subscribe.btn': 'اشترك',
   'sp.subscribe.upgrade': 'الترقية إلى Plus',
+  "sp.subscribe.resume_payment": "تم تحديث طريقة الدفع — أعد المحاولة",
   'sp.subscribe.resume_upgrade': 'تم تحديث الخطة — أعد المحاولة',
   'sp.subscribe.resume': 'اشتركت — أعد المحاولة',
   'sp.stopped_by_user': '[أوقفه المستخدم]',
@@ -326,6 +329,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'تتم إدارة الفوترة وبيانات البطاقة والبريد الإلكتروني والإلغاء بواسطة Stripe لملف المتصفح هذا.',
   'st.account.billing_preparing': 'يتم تجهيز رابط الفوترة عبر Stripe لملف المتصفح هذا.',
+  "st.account.payment_failed": "تعذر إتمام دفعة اشتراكك. حدّث طريقة الدفع لاستعادة خطتك المدفوعة.",
+  "st.account.update_payment": "تحديث طريقة الدفع",
   'st.account.manage_billing': 'إدارة الفوترة',
 
   'st.display.language.label': 'اللغة',
@@ -394,6 +399,7 @@ export default {
   'st.provider.field.model': 'النموذج',
   'st.provider.field.model_optional': 'النموذج (اختياري)',
   'st.provider.field.supports_vision': 'النموذج يدعم الرؤية (متعدّد الوسائط)',
+  'st.provider.field.tools_mode': 'استخدام الأدوات الأصلية',
   'st.provider.field.vision_auto': 'تلقائي',
   'st.provider.field.vision_force_on': 'فرض التشغيل',
   'st.provider.field.vision_detected_vision': 'تم الاكتشاف تلقائيًا: يدعم الرؤية',
@@ -1047,6 +1053,8 @@ export default {
   "st.imageBudget.maxDimension.label": "أقصى بُعد للصورة",
   "st.imageBudget.maxDimension.desc": "أطول ضلع (العرض أو الارتفاع) بالبكسل لأي لقطة تُرسل إلى الرؤية. حد أصغر يصغّر الصور قبل الإرسال فيخفض الرموز والتكلفة. حد أكبر يحافظ على الدقة.",
   "st.imageBudget.warning": "⚠️ تنطبق هذه الإعدادات على اللقطات المخصصة للرؤية (لقطة تلقائية، /screenshot، صفحة كاملة، verify_form). الصور المحفوظة يدويًا بدقة كاملة لا تتأثر. «Image detail» تحترمه نقاط النهاية بأسلوب OpenAI؛ قد يتجاهلها مزوّدون آخرون.",
+  "sp.slash.export_traces_full": "تصدير جلسة التتبع المحفوظة كاملة بصيغة JSON، بما فيها لقطات الشاشة",
+  "sp.export_traces.recording_truncated": "تم تصدير جميع السجلات المحفوظة بصيغة JSON. حُذف بعض المحتوى أثناء التسجيل ولا يمكن استعادته بالتصدير.",
   "sp.slash.export_traces": "تصدير سلسلة الأدوات (التتبعات)",
   "sp.export_traces.none": "لا توجد تتبعات لهذه المحادثة. فعّل «تسجيل التتبعات» في الإعدادات ثم أعد التشغيل.",
   "sp.export_traces.error": "تعذّر تصدير التتبعات.",

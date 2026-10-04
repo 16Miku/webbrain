@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Korean (ko).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': '확장 프로그램 UI 확대/축소',
   'sp.ui_scale.decrease': '확장 프로그램 UI 축소',
   'sp.ui_scale.increase': '확장 프로그램 UI 확대',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'WebBrain Compass의 무료 일일 사용량을 모두 사용했습니다.',
   'sp.subscribe.btn': '구독하기',
   'sp.subscribe.upgrade': 'Plus로 업그레이드',
+  "sp.subscribe.resume_payment": "결제 수단 업데이트 완료 — 다시 시도",
   'sp.subscribe.resume_upgrade': '요금제가 업데이트되었습니다 — 다시 시도',
   'sp.subscribe.resume': '구독했습니다 — 다시 시도',
   'sp.stopped_by_user': '[사용자가 중지함]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': '이 브라우저 프로필의 청구, 카드 정보, 이메일 및 해지는 Stripe에서 관리합니다.',
   'st.account.billing_preparing': '이 브라우저 프로필의 Stripe 청구 링크를 준비하는 중입니다.',
+  "st.account.payment_failed": "구독 결제를 완료하지 못했습니다. 유료 요금제를 다시 사용하려면 결제 수단을 업데이트하세요.",
+  "st.account.update_payment": "결제 수단 업데이트",
   'st.account.manage_billing': '청구 관리',
 
   'st.display.language.label': '언어',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': '모델',
   'st.provider.field.model_optional': '모델 (선택)',
   'st.provider.field.supports_vision': '모델이 비전(멀티모달)을 지원합니다',
+  'st.provider.field.tools_mode': '네이티브 도구 사용',
   'st.provider.field.vision_auto': '자동',
   'st.provider.field.vision_force_on': '강제로 켜기',
   'st.provider.field.vision_detected_vision': '자동 감지: 비전',
@@ -1028,6 +1034,8 @@ export default {
   "sp.upload_picker.cancelled": "업로드가 취소되었습니다",
   "sp.upload_picker.too_large": "선택한 파일이 25MB 제한을 초과합니다 (최대 25MB)",
   "sp.upload_picker.read_failed": "선택한 파일을 읽지 못했습니다",
+  "sp.slash.export_traces_full": "스크린샷을 포함한 저장된 전체 추적 세션을 JSON으로 내보내기",
+  "sp.export_traces.recording_truncated": "저장된 모든 기록을 JSON으로 내보냈습니다. 기록 중 누락된 내용은 내보내기로 복구할 수 없습니다.",
   "sp.slash.export_traces": "도구 체인 내보내기(트레이스)",
   "sp.export_traces.none": "이 대화에 대한 트레이스가 없습니다. 설정에서 '트레이스 기록'을 켜고 다시 실행하세요.",
   "sp.export_traces.error": "트레이스를 내보낼 수 없습니다.",

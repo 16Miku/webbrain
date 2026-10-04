@@ -16,6 +16,8 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
+import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
+import { createCloudBridge } from './cloud-bridge.js';
 import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController, sweepOpfsSwapFiles } from './agent/apocalypse-mode.js';
 import { createEmergencyDownloadController } from './agent/emergency-download-controller.js';
 import { createHostedOfflineRagIndexClient } from './agent/offline-rag-index-host.js';
@@ -89,6 +91,7 @@ import {
   parseUserMemoryExtractionResult,
 } from './agent/user-memory.js';
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
+import { createMemcodeRecall, MEMCODE_RECALL_ENABLED_KEY } from './agent/memcode-recall.js';
 import { shouldAutoGroupTabs } from './tab-group-preference.js';
 import {
   SHORTCUT_COMMAND_STORAGE_KEY,
@@ -172,12 +175,14 @@ agent.setConversationScopeChangeListener((tabId, state) => {
   }).catch(() => { });
 });
 const userMemoryStore = createUserMemoryStore(browser.storage.local);
+const memcodeRecall = createMemcodeRecall({ storage: browser.storage.local, identity: browser.identity });
 const savedWorkflowStore = createSavedWorkflowStore(browser.storage.local);
 const teacherSessionStore = createTeacherSessionStore(browser.storage.session);
 const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
   automationOwnsTab: (tabId) => agent.isRunning(tabId)
     || detachedRunStarts.has(tabId)
-    || scheduler.isRunning(tabId),
+    || scheduler.isRunning(tabId)
+    || cloudRunController.isRunning(tabId),
 });
 agent.setRunStartGuard((tabId) => teacherRunInterlock.guardRunStart(tabId));
 const profileSync = new ProfileSyncManager(browser.storage.local);
@@ -211,6 +216,20 @@ const scheduler = new ScheduledJobManager({
 });
 agent.setScheduler(scheduler);
 scheduler.start();
+
+// Firefox has no offscreen document, so the Cloud Bridge socket lives in this
+// background page and hands commands straight to handleMessage.
+const cloudBridge = createCloudBridge({ dispatch: (msg) => handleMessage(msg, null) });
+const cloudRunController = createCloudRunController({
+  chromeApi: browser,
+  agent,
+  bridge: cloudBridge,
+  sendIndicator: (tabId, type) => sendIndicatorMessage(tabId, type),
+  workflowTrace,
+});
+alwaysAllowApiMutationsReady
+  .then(() => cloudRunController.syncBridge())
+  .catch(() => { });
 
 const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
@@ -1050,6 +1069,7 @@ browser.runtime.onInstalled.addListener(async (details) => {
   await loadClarifyTimeout();
   await loadAutoScreenshot();
   await syncAgentUserMemoryFromStorage().catch(() => { });
+  await cloudRunController.syncBridge().catch(() => { });
   scheduleUserMemoryExtractionDrain(5000);
   console.log('[WebBrain] Extension installed, providers loaded.');
 });
@@ -1057,6 +1077,7 @@ browser.runtime.onInstalled.addListener(async (details) => {
 browser.runtime.onStartup?.addListener?.(async () => {
   await createContextMenus();
   syncAgentUserMemoryFromStorage().catch(() => { });
+  cloudRunController.syncBridge().catch(() => { });
   scheduleUserMemoryExtractionDrain(5000);
 });
 
@@ -1099,6 +1120,10 @@ browser.storage.onChanged.addListener((changes) => {
   if (changes[API_MUTATION_OBSERVER_KEY]) {
     const value = changes[API_MUTATION_OBSERVER_KEY].newValue;
     setApiMutationObserverEnabled(value === undefined || value === true);
+  }
+  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
+    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
+    cloudRunController.syncBridge().catch(() => { });
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = changes.strictSecretMode.newValue === true;
@@ -2440,6 +2465,12 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 });
 
 async function handleMessage(msg, sender) {
+  // Only Settings may start OAuth or change the user's remote-memory choice.
+  // Content scripts share this message bus and must not control the connection.
+  if (String(msg.action || '').startsWith('memcode_recall_')
+    && sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('src/ui/settings.html')) {
+    return { ok: false, error: 'MemCode connection controls are available in Settings only.' };
+  }
   const lightweightAction = [
     'persist_tab_chat',
     'load_tab_chat',
@@ -2496,6 +2527,19 @@ async function handleMessage(msg, sender) {
         formCaptureEnabled: settings[USER_MEMORY_FORM_CAPTURE_KEY] === true,
         maxPromptChars: normalizeUserMemoryMaxPromptChars(settings[USER_MEMORY_MAX_PROMPT_CHARS_KEY]),
       };
+    }
+
+    case 'memcode_recall_status':
+      return { ok: true, ...(await memcodeRecall.status()) };
+    case 'memcode_recall_connect':
+      return { ok: true, ...(await memcodeRecall.connect()) };
+    case 'memcode_recall_disconnect':
+      return { ok: true, ...(await memcodeRecall.disconnect()) };
+    case 'memcode_recall_enable': {
+      const status = await memcodeRecall.status();
+      if (!status.connected && msg.enabled) return { ok: false, error: 'Connect MemCode before enabling recall.' };
+      await browser.storage.local.set({ [MEMCODE_RECALL_ENABLED_KEY]: status.connected && msg.enabled === true });
+      return { ok: true, ...(await memcodeRecall.status()) };
     }
 
     case 'add_user_memory': {
@@ -3050,7 +3094,7 @@ async function handleMessage(msg, sender) {
           throw new Error('Could not durably clear the tab transcript.');
         }
         clearedContextMenuPromptId = tabChatClearResult.clearedContextMenuPromptId || null;
-        agent.clearConversation(tabId);
+        await agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
         browser.runtime.sendMessage({
           target: 'sidepanel',
@@ -3141,7 +3185,7 @@ async function handleMessage(msg, sender) {
     case 'export_traces': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) return { ok: false, error: 'No tab ID' };
-      return { ok: true, ...(await agent.exportTraces(tabId)) };
+      return { ok: true, ...(await agent.exportTraces(tabId, { full: msg.full === true })) };
     }
 
     case 'export_config': {
@@ -3415,6 +3459,40 @@ async function handleMessage(msg, sender) {
       return { ok: true, enabled: msg.enabled };
     }
 
+    case 'cloud_run':
+      return await cloudRunController.startRun(msg);
+    case 'cloud_workflow_compile':
+      return await cloudRunController.compileWorkflow(msg);
+    case 'cloud_workflow_run':
+      return await cloudRunController.startWorkflowRun(msg);
+    case 'cloud_status':
+      return await cloudRunController.status(msg);
+    case 'cloud_scheduled_jobs': {
+      const jobIds = [...new Set((msg.jobIds || msg.job_ids || [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean))].slice(0, 100);
+      if (!jobIds.length) {
+        return { error: 'cloud_scheduled_jobs requires expected job IDs.', status: 400 };
+      }
+      const expected = new Set(jobIds);
+      const jobs = await scheduler.listJobs({ tabId: null });
+      return {
+        ok: true,
+        jobs: jobs
+          .filter(job => expected.has(String(job?.id || '')))
+          .map(job => cloudSafeScheduledJob(job, { strictSecretMode: agent.strictSecretMode === true })),
+      };
+    }
+    case 'cloud_respond':
+      return await cloudRunController.respond(msg);
+    case 'cloud_abort':
+      return await cloudRunController.abort(msg);
+    case 'cloud_bridge_start':
+      return await cloudRunController.startBridge(msg.url);
+    case 'cloud_bridge_stop':
+      return await cloudRunController.stopBridge();
+    case 'cloud_bridge_status':
+      return await cloudRunController.bridgeStatus();
     case 'get_providers': {
       return { providers: providerManager.getAll(), active: providerManager.activeProviderId };
     }
@@ -3581,6 +3659,10 @@ async function handleMessage(msg, sender) {
     case 'get_recording_state':
       return { ok: true, state: { recording: false, supported: false } };
 
+    case 'capture_full_page_screenshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureFullPageScreenshotForUser(tabId);
+    }
     case 'capture_viewport_screenshot': {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureViewportScreenshotForUser(tabId);

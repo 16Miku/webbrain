@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Russian (ru).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Масштаб интерфейса расширения',
   'sp.ui_scale.decrease': 'Уменьшить интерфейс расширения',
   'sp.ui_scale.increase': 'Увеличить интерфейс расширения',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Бесплатный дневной лимит WebBrain Compass исчерпан.',
   'sp.subscribe.btn': 'Оформить подписку',
   'sp.subscribe.upgrade': 'Перейти на Plus',
+  "sp.subscribe.resume_payment": "Способ оплаты обновлён — повторить",
   'sp.subscribe.resume_upgrade': 'План обновлён — повторить',
   'sp.subscribe.resume': 'Подписка оформлена — повторить',
   'sp.stopped_by_user': '[Остановлено пользователем]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Оплата, данные карты, электронная почта и отмена управляются Stripe для этого профиля браузера.',
   'st.account.billing_preparing': 'Подготовка ссылки на оплату Stripe для этого профиля браузера.',
+  "st.account.payment_failed": "Не удалось провести оплату подписки. Обновите способ оплаты, чтобы восстановить платный тариф.",
+  "st.account.update_payment": "Обновить способ оплаты",
   'st.account.manage_billing': 'Управление оплатой',
 
   'st.display.language.label': 'Язык',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': 'Модель',
   'st.provider.field.model_optional': 'Модель (необязательно)',
   'st.provider.field.supports_vision': 'Модель поддерживает зрение (мультимодальная)',
+  'st.provider.field.tools_mode': 'Использование нативных инструментов',
   'st.provider.field.vision_auto': 'Автоматически',
   'st.provider.field.vision_force_on': 'Принудительно включить',
   'st.provider.field.vision_detected_vision': 'Определено автоматически: Поддержка изображений',
@@ -1028,6 +1034,8 @@ export default {
   "sp.upload_picker.cancelled": "Загрузка отменена",
   "sp.upload_picker.too_large": "Выбранный файл превышает лимит 25 МБ (макс. 25 МБ)",
   "sp.upload_picker.read_failed": "Не удалось прочитать выбранный файл",
+  "sp.slash.export_traces_full": "Экспортировать всю сохранённую сессию трассировки в JSON, включая снимки экрана",
+  "sp.export_traces.recording_truncated": "Все сохранённые записи экспортированы в JSON. Содержимое, пропущенное при записи, невозможно восстановить экспортом.",
   "sp.slash.export_traces": "Экспорт цепочки инструментов (трассировки)",
   "sp.export_traces.none": "Нет трассировок для этого разговора. Включите «Записывать трассировки» в настройках и запустите снова.",
   "sp.export_traces.error": "Не удалось экспортировать трассировки.",

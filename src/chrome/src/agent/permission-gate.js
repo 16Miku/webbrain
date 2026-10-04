@@ -1,3 +1,5 @@
+import { isEmptyCaptchaCallback } from './captcha-callback-binding.js';
+
 /**
  * Deterministic capability × origin permission gate for the WebBrain agent.
  *
@@ -56,6 +58,12 @@ export const CAPABILITY_LABEL = {
  * tool is classified as gated, untrusted-read, or explicitly known-safe.
  */
 export const UNTRUSTED_CONTENT_TOOLS = new Set([
+  'recall_memcode',
+  // Discovery can recover a paid answer; solver output and callback failures
+  // also contain external data, even when the tool otherwise reads a catalog.
+  'get_captcha_capabilities',
+  'solve_captcha',
+  'apply_captcha_solution',
   'chat_observe',
   'chat_send',
   'read_page',
@@ -389,6 +397,7 @@ export function isNetworkMutation(name, args) {
 // gated — adding a new state-changing tool without listing it would silently
 // bypass the gate, so keep this exhaustive.
 const TOOL_CAPABILITY = {
+  recall_memcode: Capability.NETWORK,
   navigate: Capability.NAVIGATE,
   // This read helper temporarily walks Gmail /pN routes before restoring the
   // exact starting URL, so it needs the same site-scoped navigation grant.
@@ -493,6 +502,14 @@ export function capabilityFor(name, args) {
  */
 export function capabilitiesFor(name, args) {
   args = args || {};
+  // CAPTCHA application mutates the selected page. A named callback executes
+  // page JavaScript; cookies likewise change browser state. Page-authored
+  // bindings must not bypass the ordinary host-specific permission gate.
+  if (name === 'apply_captcha_solution') return [
+    ...(args.fields?.length ? [Capability.TYPE] : []),
+    ...(args.clicks?.length ? [Capability.CLICK] : []),
+    ...((args.callback && !isEmptyCaptchaCallback(args.callback)) || args.cookies?.length ? [Capability.EXECUTE_JS] : []),
+  ];
   if (name === 'chat_send') return [Capability.TYPE, Capability.CLICK];
   if (name === 'delegate_research') {
     // agent.js substitutes explicit one-use research authorization for these
@@ -562,6 +579,10 @@ function resolveHostAgainst(url, base) {
  */
 export function hostForCapability(capability, args, currentUrlOrHost, toolName) {
   args = args || {};
+  if (toolName === 'recall_memcode') return 'memory.memcode.in';
+  if (toolName === 'apply_captcha_solution') {
+    return normalizeHost(args.frameUrl);
+  }
   if (toolName === 'read_email_verification_message' && capability === Capability.CLICK) {
     // agent.js supplies this from its opaque inspected-mailbox session only to
     // the permission check; it never comes from model arguments.

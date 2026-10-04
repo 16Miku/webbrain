@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Persian — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'بزرگ‌نمایی رابط کاربری افزونه',
   'sp.ui_scale.decrease': 'کاهش بزرگ‌نمایی رابط افزونه',
   'sp.ui_scale.increase': 'افزایش بزرگ‌نمایی رابط افزونه',
@@ -322,6 +324,7 @@ export default {
   'sp.subscribe.allowance_used': "سهمیه رایگان روزانه WebBrain Compass استفاده شد.",
   'sp.subscribe.btn': "مشترک شوید",
   'sp.subscribe.upgrade': 'ارتقا به Plus',
+  "sp.subscribe.resume_payment": "روش پرداخت به‌روز شد — تلاش دوباره",
   'sp.subscribe.resume_upgrade': 'طرح به‌روزرسانی شد — تلاش دوباره',
   'sp.subscribe.resume': "مشترک شدم - دوباره امتحان کنید",
   'sp.stopped_by_user': "[توقف کاربر]",
@@ -600,6 +603,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "صورت‌حساب، جزئیات کارت، ایمیل، و لغو توسط Stripe برای نمایه این مرورگر مدیریت می‌شود.",
   'st.account.billing_preparing': "در حال آماده سازی پیوند صورتحساب Stripe برای این نمایه مرورگر.",
+  "st.account.payment_failed": "پرداخت اشتراک شما انجام نشد. برای بازگرداندن طرح پولی، روش پرداخت خود را به‌روز کنید.",
+  "st.account.update_payment": "به‌روزرسانی روش پرداخت",
   'st.account.manage_billing': "مدیریت صورتحساب",
 
   'st.display.language.label': "زبان",
@@ -847,6 +852,7 @@ export default {
   'st.provider.field.context_window': "پنجره زمینه (توکن ها)",
   'st.provider.field.max_output_tokens': "حداکثر خروجی (توکن ها)",
   'st.provider.field.supports_vision': "مدل از بینایی پشتیبانی می کند (چند وجهی)",
+  'st.provider.field.tools_mode': 'استفاده بومی از ابزارها',
   'st.provider.field.vision_auto': 'خودکار',
   'st.provider.field.vision_force_on': 'اجباری روشن',
   'st.provider.field.vision_detected_vision': 'شناسایی خودکار: بینایی',
@@ -1109,6 +1115,8 @@ export default {
   'tr.event.args': "ارگ",
   'tr.event.result': "نتیجه",
   'tr.event.step': "مرحله {step}",
+  "sp.slash.export_traces_full": "صدور تمام نشست ردگیری ذخیره‌شده به صورت JSON، شامل تصاویر صفحه",
+  "sp.export_traces.recording_truncated": "تمام رکوردهای ذخیره‌شده به صورت JSON صادر شدند. محتوای حذف‌شده هنگام ضبط با صدور قابل بازیابی نیست.",
   "sp.slash.export_traces": "صادرات زنجیره ابزار (ردیابی)",
   "sp.export_traces.none": "هیچ اثری برای این گفتگو وجود ندارد. ضبط ردیابی را در تنظیمات فعال کنید، سپس دوباره اجرا کنید.",
   "sp.export_traces.error": "ردیابی صادر نشد.",

@@ -1,3 +1,5 @@
+import { CMS_ADAPTERS } from './cms-adapters.js';
+
 import {
   ADAPTER_WORKFLOW_SCHEMA,
   cloneAdapterWorkflowJob,
@@ -15902,6 +15904,10 @@ const ADAPTERS = [
     category: 'general',
     matches: (url) => /^https?:\/\/(?:www\.)?huggingface\.co(?:[/?#]|$)/i.test(url),
     notes: `
+- Signup at /join follows the observed credentials, profile, and email-verification stages. CAPTCHA challenges are conditional; never assume one from a person's name, country, IP, or geography, and never trigger solving or reload on a challenge-free path.
+- Only when an actual CAPTCHA interrupts signup, follow the runtime CAPTCHA gate. A solved widget or applied AWS cookie is not account-creation evidence. Reload only when the runtime explicitly requests it, then inspect the current root form before choosing the next action.
+- If the runtime signup checkpoint reports a reset, resume the visible stage with the original user-provided values and fresh refs. Preserve populated fields; restore only missing requested profile details and the original avatar, reusing its saved download/attachment handle when available. If the form survived, continue it without restarting.
+- Before repeating Create Account after an interruption, reconcile signed-in state, verification-pending notices, and already-registered messages. Continue verification or sign-in for the same account when established; stop if creation remains uncertain. Never create another identity or blindly replay a submission. Verify account creation, email verification, profile saving, and any requested access-token creation each from its own observed success evidence.
 - Repository upload routes expose two file inputs. Use \`input[type="file"]:not([accept])\` for repository files; \`input[type="file"][accept*="image"]\` belongs to the extended-description editor and does not stage a repository file.
 - When the repository input already exists, call \`upload_file\` directly; do not click "Upload file(s)" or the drop zone first.
 - A filename chip, generated commit summary, and enabled "Commit changes" button mean the file is staged only. Click "Commit changes", wait, and verify the file under "Files and versions" before reporting upload success.
@@ -16439,10 +16445,10 @@ const ADAPTERS = [
     // standardized across virtually every WP install.
     name: 'wordpress',
     category: 'general',
-    matches: (url) => /^https?:\/\/[^/]+\/(wp-admin|wp-login\.php)(\/|$|\?)/.test(url),
+    matches: (url) => /^https?:\/\/[^/?#]+\/(?:[^/?#]+\/)*(wp-admin|wp-login\.php)(\/|$|[?#])/.test(url),
     notes: `
-- If Gutenberg's iframe/canvas or another WordPress editor blocks writing, try an available alternative before stopping or repeating failed reads: Gutenberg's top-right Options → Code editor (Kod düzenleyicisi, NOT a Code block), Classic/TinyMCE's Text/Kod tab, or an observed switch back from a page builder to the standard WordPress editor. These existing editing surfaces need no new plugin. Re-read the editable fields after switching, then use their fresh AX refs. Preserve existing content and block markup; save/verify the current draft before navigation and keep the same post, categories, and tags.
-- Classic Editor is another fallback when the site already supports it: append \`classic-editor\` to the current \`post-new.php\` URL without dropping \`post_type\` or other query parameters (e.g. \`/wp-admin/post-new.php?post_type=page&classic-editor\` for a page, \`/wp-admin/post-new.php?classic-editor\` for an ordinary post). For a saved post, keep its ID in \`/wp-admin/post.php?post=<id>&action=edit&classic-editor\`. Check which editor actually opened; if Gutenberg remains, use its Code editor instead of retrying the URL. Do not install/activate plugins or change site-wide editor settings without explicit user authorization. Never treat GET URLs as a way to create/publish content; submit through the editor and explicitly read the post's published status or live content before reporting success.
+- For requested WordPress posts/pages/REST-enabled custom types and taxonomy, prefer API first when required fields and session work, API mutations are allowed, and Strict secret handling is off. If available, load \`wordpress-rest-api\` only for this content work. Without skills: use \`fetch_url\` to discover the same-origin REST root/type endpoint; GET the installation's \`wp-admin/admin-ajax.php?action=rest-nonce\`, send its nonce in \`X-WP-Nonce\`, and verify authenticated access/fields before writing. If only API permission is missing, ask once for \`/allow-api\`; never re-ask an existing grant. Ask mode never writes. Strict mode skips nonce fetching and uses UI; do not suggest disabling it. Reuse the current ID, preserve type/content/taxonomy, create new items as drafts, verify before publishing the same ID only if requested. Reconcile uncertain writes before retrying or creating in UI; stop if unresolved. Nonce values can enter model context/traces; never put them in URLs or summaries.
+- If API is unsuitable or declined, or Gutenberg's canvas blocks writing, try Gutenberg Options → Code editor (Kod düzenleyicisi, NOT a Code block), an existing Classic/TinyMCE Text/Kod tab, or an observed page-builder switch to the standard editor. Preserve unsaved content/block markup and taxonomy; save/verify the draft before navigation and read fresh AX refs after switching. For supported Classic Editor, append \`classic-editor\` without dropping \`post_type\` or other parameters: \`/wp-admin/post-new.php?post_type=page&classic-editor\`, or \`/wp-admin/post-new.php?classic-editor\` for posts. Saved items keep \`/wp-admin/post.php?post=<id>&action=edit&classic-editor\`. Retain the installation path. If Gutenberg remains, use Code editor. Do not install/activate plugins or change site-wide editor settings without explicit authorization. Never treat GET URLs as a way to create/publish; verify saved status and live content after editor submission or authorized REST publication.
 - "My API key" on WordPress is AMBIGUOUS. The two common meanings:
     (a) a WP REST API *application password* — per-user, lives at Users → Profile → "Application Passwords" panel (URL contains \`profile.php\`). This is the most common interpretation of "my WordPress API key".
     (b) a *plugin-specific* key (Rank Math Content AI, Jetpack, Akismet, WP Mail SMTP, etc.) — lives in that plugin's own settings page.
@@ -17601,6 +17607,7 @@ const ADAPTERS = [
   {
     name: 'discord',
     category: 'general',
+    messaging: { verifyActiveRecipient: true },
     matches: (url) => /^https?:\/\/(www\.)?discord\.com\/(channels|app)/.test(url) || /^https?:\/\/(www\.)?discord\.com\/$/.test(url),
     notes: `
 - Three-pane layout: Server list (icons, left-most rail) → Channel list (per-server, second rail) → Channel chat (main pane). Selecting a server reveals its channels; selecting a channel loads its message history.
@@ -17914,6 +17921,7 @@ const ADAPTERS = [
 - Label variants by version/language: "Sign in to continue", "Continue on your server", "Authorize interaction", "Proceed to follow"; Turkish: Takip et=Follow, sunucu/domain=server domain.
 - If the user's Mastodon home domain is not already known from the conversation or account UI, clarify once before entering anything.`,
   },
+  ...CMS_ADAPTERS,
 ];
 
 /**

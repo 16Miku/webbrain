@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Hebrew (he).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'הגדלת ממשק התוסף',
   'sp.ui_scale.decrease': 'הקטנת תצוגת ממשק התוסף',
   'sp.ui_scale.increase': 'הגדלת תצוגת ממשק התוסף',
@@ -317,6 +319,7 @@ export default {
   "sp.subscribe.allowance_used": "ההקצבה היומית החינמית של WebBrain Compass נוצלה.",
   "sp.subscribe.btn": "הירשם",
   'sp.subscribe.upgrade': 'שדרוג ל-Plus',
+  "sp.subscribe.resume_payment": "אמצעי התשלום עודכן — נסו שוב",
   'sp.subscribe.resume_upgrade': 'התוכנית עודכנה — נסו שוב',
   "sp.subscribe.resume": "נרשמתי — נסה שוב",
   "sp.stopped_by_user": "[נעצר על ידי משתמש]",
@@ -587,6 +590,8 @@ export default {
   "st.account.provider_name": "WebBrain Compass",
   "st.account.billing_managed": "חיוב, פרטי כרטיס, אימייל וביטול מנוהלים על ידי Stripe עבור פרופיל דפדפן זה.",
   "st.account.billing_preparing": "הכנת הקישור לחיוב Stripe עבור פרופיל דפדפן זה.",
+  "st.account.payment_failed": "לא ניתן היה להשלים את התשלום עבור המינוי. עדכנו את אמצעי התשלום כדי לשחזר את התוכנית בתשלום.",
+  "st.account.update_payment": "עדכון אמצעי התשלום",
   "st.account.manage_billing": "ניהול חיוב",
   "st.display.language.label": "שפה",
   "st.display.language.desc": "שפת הממשק של תוסף WebBrain.",
@@ -770,6 +775,7 @@ export default {
   "st.provider.field.context_window": "חלון הקשר (אסימונים)",
   "st.provider.field.max_output_tokens": "פלט מקסימלי (אסימונים)",
   "st.provider.field.supports_vision": "הדגם תומך בראייה (מולטימודאלי)",
+  'st.provider.field.tools_mode': 'שימוש מובנה בכלי עבודה',
   'st.provider.field.vision_auto': 'אוטומטי',
   'st.provider.field.vision_force_on': 'הפעלה מאולצת',
   'st.provider.field.vision_detected_vision': 'זוהה אוטומטית: ראייה',
@@ -997,6 +1003,8 @@ export default {
   "st.imageBudget.maxDimension.label": "ממד תמונה מרבי",
   "st.imageBudget.maxDimension.desc": "הצלע הארוכה (רוחב או גובה) בפיקסלים לכל צילום שנשלח לראייה. תקרה נמוכה יותר מקטינה תמונות לפני השליחה ומורידה טוקנים ועלות. תקרה גבוהה יותר שומרת נאמנות.",
   "st.imageBudget.warning": "⚠️ ההגדרות האלה חלות על צילומים לראייה (צילום אוטומטי, /screenshot, עמוד מלא, verify_form). תמונות שנשמרו ידנית ברזולוציה מלאה אינן מושפעות. «Image detail» מכובד על ידי נקודות קצה בסגנון OpenAI; ספקים אחרים עשויים להתעלם.",
+  "sp.slash.export_traces_full": "ייצוא כל סשן המעקב השמור כ־JSON, כולל צילומי מסך",
+  "sp.export_traces.recording_truncated": "כל הרשומות השמורות יוצאו כ־JSON. תוכן שהושמט בזמן ההקלטה אינו ניתן לשחזור באמצעות ייצוא.",
   "sp.slash.export_traces": "ייצוא שרשרת הכלים (מעקבים)",
   "sp.export_traces.none": "אין מעקבים לשיחה זו. הפעילו את «הקלטת מעקבים» בהגדרות והריצו שוב.",
   "sp.export_traces.error": "לא ניתן לייצא מעקבים.",

@@ -88,7 +88,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '37.0.1';
+const EXT_VERSION = '38.0.13';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -216,6 +216,10 @@ const btnClearUserMemory = document.getElementById('btn-clear-user-memory');
 const userMemoryImportText = document.getElementById('user-memory-import-text');
 const btnImportUserMemory = document.getElementById('btn-import-user-memory');
 const userMemoryTestResult = document.getElementById('test-user-memory');
+const memcodeRecallToggle = document.getElementById('toggle-memcode-recall');
+const memcodeConnectButton = document.getElementById('btn-memcode-connect');
+const memcodeDisconnectButton = document.getElementById('btn-memcode-disconnect');
+const memcodeRecallResult = document.getElementById('test-memcode-recall');
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
 const systemOneEnabledToggle = document.getElementById('toggle-system-one');
 const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
@@ -466,6 +470,7 @@ if (globalThis.chrome?.storage?.onChanged) {
 
 const WEBBRAIN_SUBSCRIBE_URL = 'https://webbrain.one/subscribe';
 const WEBBRAIN_ACCOUNT_URL = 'https://api.webbrain.one/account';
+const WEBBRAIN_BILLING_STATUS_URL = 'https://api.webbrain.one/v1/billing/status';
 
 const DEFAULT_COST_ALLOWANCE_USD = 10;
 const MAX_AGENT_STEPS_DEFAULT = 130;
@@ -938,6 +943,7 @@ async function init() {
   if (profileEnabledToggle) profileEnabledToggle.checked = !!profileStored.profileEnabled;
   if (profileTextArea) profileTextArea.value = profileStored.profileText || '';
   await loadUserMemorySettings();
+  await loadMemcodeStatus();
 
   // Each provider has independent key, enable state, and fallback weight.
   await initCaptchaSettings(chrome.storage.local, sendToBackground, t);
@@ -2290,6 +2296,47 @@ function flashUserMemoryResult(className, text) {
   setTimeout(() => userMemoryTestResult.classList.remove('show'), 2500);
 }
 
+async function loadMemcodeStatus() {
+  if (!memcodeRecallToggle) return;
+  const result = await sendToBackground('memcode_recall_status').catch(() => null);
+  memcodeRecallToggle.disabled = !result?.connected;
+  memcodeRecallToggle.checked = result?.recallEnabled === true;
+  if (memcodeConnectButton) memcodeConnectButton.disabled = result?.connected === true;
+  if (memcodeDisconnectButton) memcodeDisconnectButton.disabled = result?.connected !== true;
+  if (memcodeRecallResult) {
+    memcodeRecallResult.className = 'test-result show';
+    memcodeRecallResult.textContent = t(result?.connected
+      ? (result.recallEnabled ? 'st.memcode.active' : 'st.memcode.connected')
+      : 'st.memcode.disconnected', { account: result?.accountId || 'unknown' });
+  }
+}
+
+memcodeConnectButton?.addEventListener('click', async () => {
+  memcodeConnectButton.disabled = true;
+  try {
+    const result = await sendToBackground('memcode_recall_connect');
+    if (!result?.ok) throw new Error(result?.error || 'Connection failed');
+    await loadMemcodeStatus();
+  } catch (error) {
+    memcodeConnectButton.disabled = false;
+    if (memcodeRecallResult) memcodeRecallResult.textContent = t('st.memcode.error', { error: error.message });
+  }
+});
+memcodeDisconnectButton?.addEventListener('click', async () => {
+  const result = await sendToBackground('memcode_recall_disconnect');
+  await loadMemcodeStatus();
+  if (result?.revocationFailed && memcodeRecallResult) {
+    memcodeRecallResult.textContent = t('st.memcode.revocation_warning');
+  }
+});
+memcodeRecallToggle?.addEventListener('change', async () => {
+  const result = await sendToBackground('memcode_recall_enable', { enabled: memcodeRecallToggle.checked });
+  if (!result?.ok) {
+    if (memcodeRecallResult) memcodeRecallResult.textContent = t('st.memcode.error', { error: result?.error || 'Setting unavailable' });
+  }
+  await loadMemcodeStatus();
+});
+
 const USER_MEMORY_FAILURE_REASON_KEYS = {
   invalid_or_sensitive: 'st.memory.reason.invalid_or_sensitive',
   not_found: 'st.memory.reason.not_found',
@@ -2481,6 +2528,18 @@ const VISION_MODE_FIELD = {
     { value: 'off', labelKey: 'st.providers.compat.value.off' },
   ],
 };
+const TOOL_MODE_FIELD = {
+  key: 'toolsMode',
+  labelKey: 'st.provider.field.tools_mode',
+  type: 'select',
+  collapsed: true,
+  options: [
+    { value: 'auto', labelKey: 'st.provider.field.vision_auto' },
+    { value: 'on', labelKey: 'st.provider.field.vision_force_on' },
+    { value: 'off', labelKey: 'st.providers.compat.value.off' },
+  ],
+};
+const OPENROUTER_VISION_MODE_FIELD = { ...VISION_MODE_FIELD, collapsed: true };
 const OLLAMA_VISION_MODE_FIELD = VISION_MODE_FIELD;
 const OPTIONAL_LOCAL_API_KEY_FIELD = {
   key: 'apiKey',
@@ -3108,6 +3167,77 @@ async function handleWebgpuDownloadButton(btn) {
   }
 }
 
+async function refreshWebbrainPaymentNotice() {
+  if (!refreshWebbrainPaymentNotice._focusBound && typeof window !== 'undefined') {
+    window.addEventListener('focus', () => {
+      refreshWebbrainPaymentNotice._cache = null;
+      void refreshWebbrainPaymentNotice();
+    });
+    refreshWebbrainPaymentNotice._focusBound = true;
+  }
+  const notice = providersContainer.querySelector('.webbrain-payment-notice');
+  const deviceGuid = providersData.webbrain_cloud?.deviceGuid;
+  if (!notice || !deviceGuid) return;
+  const billingStatusUrl = typeof WEBBRAIN_BILLING_STATUS_URL === 'string'
+    ? WEBBRAIN_BILLING_STATUS_URL
+    : 'https://api.webbrain.one/v1/billing/status';
+  const renderNotice = (subscriptionStatus) => {
+    if (!notice.isConnected) return;
+    if (!['past_due', 'unpaid'].includes(subscriptionStatus)) {
+      notice.hidden = true;
+      notice.replaceChildren();
+      return;
+    }
+    const message = document.createElement('p');
+    message.textContent = t('st.account.payment_failed');
+    const link = document.createElement('a');
+    link.href = webbrainAccountUrl(deviceGuid);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = t('st.account.update_payment');
+    notice.replaceChildren(message, link);
+    notice.style.cssText = 'margin-top:10px;padding:12px;border-radius:6px;border:1px solid var(--warning,#b7791f);';
+    notice.hidden = false;
+  };
+  // Reuse recent results during search, but refresh on focus or after 30 seconds.
+  const cached = refreshWebbrainPaymentNotice._cache;
+  if (cached?.deviceGuid === deviceGuid && Date.now() - cached.fetchedAt < 30000) {
+    renderNotice(cached.subscriptionStatus);
+    return;
+  }
+  try {
+    let statusPromise = refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid
+      ? refreshWebbrainPaymentNotice._inflight.promise
+      : null;
+    if (!statusPromise) {
+      statusPromise = (async () => {
+        const response = await fetch(billingStatusUrl, {
+          headers: { 'X-WebBrain-Device-Id': deviceGuid },
+          cache: 'no-store',
+          credentials: 'omit',
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) return null;
+        const status = await response.json();
+        return status.subscription_status;
+      })();
+      refreshWebbrainPaymentNotice._inflight = { deviceGuid, promise: statusPromise };
+    }
+    const subscriptionStatus = await statusPromise;
+    if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
+      refreshWebbrainPaymentNotice._inflight = null;
+    }
+    if (subscriptionStatus == null) return;
+    refreshWebbrainPaymentNotice._cache = { deviceGuid, subscriptionStatus, fetchedAt: Date.now() };
+    renderNotice(subscriptionStatus);
+  } catch {
+    if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
+      refreshWebbrainPaymentNotice._inflight = null;
+    }
+    /* An unavailable billing check must not interrupt settings. */
+  }
+}
+
 function renderProviders() {
   providersContainer.innerHTML = '';
 
@@ -3306,6 +3436,8 @@ function renderProviders() {
           suggestions: ['openrouter/free', 'anthropic/claude-opus-5.5', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k3', 'z-ai/glm-5.3', 'minimax/minimax-m3'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://openrouter.ai/api/v1' },
         PROMPT_TIER_FIELD,
+        TOOL_MODE_FIELD,
+        OPENROUTER_VISION_MODE_FIELD,
       ],
     },
     huggingface: {
@@ -3720,6 +3852,7 @@ function renderProviders() {
       ${subscriptionGuide}
       ${fieldsHTML}
       ${providerNote}
+      ${id === 'webbrain_cloud' ? '<div class="webbrain-payment-notice" role="status" hidden></div>' : ''}
       ${ollamaWarning}
       ${compatibilitySettings}
       <div class="btn-row">
@@ -3751,6 +3884,7 @@ function renderProviders() {
     providersContainer.appendChild(empty);
   }
 
+  refreshWebbrainPaymentNotice();
   restoreProviderApiKeyWarnings();
 
   document.querySelectorAll('.btn-save').forEach(btn => {

@@ -3,6 +3,7 @@
 // Works identically in Chrome MV3 and Firefox MV2.
 
 import en from './locales/en.js';
+import { memcodeEnglish } from './locales/memcode-copy.mjs';
 import { captchaEnglish, captchaTranslations } from './locales/captcha-copy.mjs';
 import { safeSocialEnglish, safeSocialTranslations } from './locales/safesocial-copy.mjs';
 import es from './locales/es.js';
@@ -32,6 +33,7 @@ import { providerGuideEnglish, providerGuideTranslations } from './locales/provi
 const DICTS = Object.fromEntries(Object.entries({ en, es, fr, tr, zh, ru, uk, ar, ja, ko, id, th, ms, tl, pl, he, hi, pt, vi, bn, fa, nl, de })
   .map(([code, dict]) => [code, {
     ...dict,
+    ...memcodeEnglish,
     ...providerGuideEnglish,
     ...safeSocialEnglish,
     ...captchaEnglish,

@@ -1,6 +1,6 @@
 # WebBrain Chrome/Edge Extension — Architecture
 
-> Version 37.0.1 · Manifest V3 · Service Worker background
+> Version 38.0.13 · Manifest V3 · Service Worker background
 
 ## High-Level Overview
 
@@ -39,6 +39,7 @@ src/chrome/
 ├── src/
 │   ├── background.js           # Service worker — message router
 │   ├── run-ui-journal.js       # Detached-run replay + streamed-text snapshots
+│   ├── cloud-runs.js           # cloud_* run controller + persistent bridge identity
 │   ├── agent/
 │   │   ├── agent.js            # Core agent loop + tool dispatch
 │   │   ├── loop-detector.js     # Browser-free loop detection, directly unit-tested
@@ -60,6 +61,7 @@ src/chrome/
 │   ├── offscreen/
 │   │   ├── offscreen.html      # Offscreen document host
 │   │   ├── offscreen.js        # HTTP fetch proxy (localhost/PNA fallback)
+│   │   ├── cloud-bridge.js     # Outbound WebSocket bridge + browser-approval state
 │   │   ├── vision-inference-host.js # Local WebGPU worker bridge
 │   │   └── inference-worker.js # Transformers.js WebGPU inference worker
 │   ├── providers/
@@ -256,6 +258,19 @@ tabAudioSource.connect(audioContext.destination); // back to the user's speaker
 
 Mic, by contrast, is only piped into the recording (NOT to the speaker —
 that would feed back).
+
+### Cloud Bridge and browser approval
+
+`offscreen/cloud-bridge.js` dials out to a controller on localhost and accepts
+only the `cloud_*` run actions. `cloud-runs.js` reads the persistent identity
+(`webbrainCloudBridgeToken`, `…BrowserId`, `…InstallationId`) from
+`chrome.storage.local` and passes it with `cloud-bridge-start`, because the
+offscreen page has no storage access. With a token configured, each new socket
+sends an authenticated `hello` and stays *pending* until the backend answers
+`connection_approved`; commands before that get `connection_not_approved`.
+Approval is per socket and never carries over a reconnect. Without a token the
+legacy behaviour is unchanged. Protocol and limits:
+[docs/cloud-bridge-browser-approval.md](../../docs/cloud-bridge-browser-approval.md).
 
 ### Why a shared offscreen document
 

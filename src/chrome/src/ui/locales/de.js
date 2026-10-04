@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // German (de).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Erweiterungsoberfläche zoomen',
   'sp.ui_scale.decrease': 'Erweiterungsoberfläche verkleinern',
   'sp.ui_scale.increase': 'Erweiterungsoberfläche vergrößern',
@@ -205,6 +207,8 @@ export default {
   'sp.watch.error': 'Überwachung konnte nicht erstellt werden: {error}',
   'sp.slash.unsupported': '{usage} wird in diesem Browser nicht unterstützt.',
   'sp.slash.busy_only_oob': 'Nachrichten werden in die Warteschlange gestellt, während WebBrain beschäftigt ist. Nur /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces und /verbose können sofort als Slash-Befehle ausgeführt werden.',
+  "sp.slash.export_traces_full": "Die vollständig gespeicherte Trace-Sitzung einschließlich Screenshots als JSON exportieren",
+  "sp.export_traces.recording_truncated": "Alle gespeicherten Einträge wurden als JSON exportiert. Bei der Aufzeichnung ausgelassene Inhalte können durch den Export nicht wiederhergestellt werden.",
   'sp.slash.export_traces': 'Werkzeugkette (Traces) exportieren',
   'sp.slash.export_config': 'Alle Einstellungen exportieren, einschließlich API-Schlüssel der Anbieter',
   'sp.slash.import_config': 'WebBrain-Konfigurations-Snapshot als JSON importieren',
@@ -331,6 +335,7 @@ export default {
   'sp.subscribe.allowance_used': 'Tägliches kostenloses WebBrain Compass-Kontingent aufgebraucht.',
   'sp.subscribe.btn': 'Abonnieren',
   'sp.subscribe.upgrade': 'Auf Plus upgraden',
+  "sp.subscribe.resume_payment": "Zahlungsmethode aktualisiert — erneut versuchen",
   'sp.subscribe.resume_upgrade': 'Tarif aktualisiert — erneut versuchen',
   'sp.subscribe.resume': 'Ich habe abonniert — erneut versuchen',
   'sp.stopped_by_user': '[Vom Benutzer gestoppt]',
@@ -596,6 +601,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Abrechnung, Karteninformationen, E-Mail und Kündigung werden von Stripe für dieses Browser-Profil verwaltet.',
   'st.account.billing_preparing': 'Stripe-Abrechnungslink für dieses Browser-Profil wird vorbereitet.',
+  "st.account.payment_failed": "Deine Abonnementzahlung konnte nicht abgeschlossen werden. Aktualisiere deine Zahlungsmethode, um deinen kostenpflichtigen Tarif wieder zu nutzen.",
+  "st.account.update_payment": "Zahlungsmethode aktualisieren",
   'st.account.manage_billing': 'Abrechnung verwalten',
   'st.display.language.label': 'Sprache',
   'st.display.language.desc': 'Oberflächensprache des WebBrain-Plugins.',
@@ -783,6 +790,7 @@ export default {
   'st.provider.field.context_window': 'Kontextfenster (Tokens)',
   'st.provider.field.max_output_tokens': 'Maximale Ausgabe (Tokens)',
   'st.provider.field.supports_vision': 'Modell unterstützt Vision (multimodal)',
+  'st.provider.field.tools_mode': 'Native Tool-Nutzung',
   'st.provider.field.vision_auto': 'Automatisch',
   'st.provider.field.vision_force_on': 'Erzwingen',
   'st.provider.field.vision_detected_vision': 'Automatisch erkannt: Bildverarbeitung',

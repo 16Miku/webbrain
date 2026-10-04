@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Spanish (es).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom de la interfaz de la extensión',
   'sp.ui_scale.decrease': 'Reducir el zoom de la interfaz',
   'sp.ui_scale.increase': 'Aumentar el zoom de la interfaz',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Se agotó la asignación diaria gratuita de WebBrain Compass.',
   'sp.subscribe.btn': 'Suscribirse',
   'sp.subscribe.upgrade': 'Cambiar a Plus',
+  "sp.subscribe.resume_payment": "Método de pago actualizado — reintentar",
   'sp.subscribe.resume_upgrade': 'Plan actualizado — reintentar',
   'sp.subscribe.resume': 'Ya me suscribí — reintentar',
   'sp.stopped_by_user': '[Detenido por el usuario]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'La facturación, los datos de la tarjeta, el correo electrónico y la cancelación los gestiona Stripe para este perfil del navegador.',
   'st.account.billing_preparing': 'Preparando el enlace de facturación de Stripe para este perfil del navegador.',
+  "st.account.payment_failed": "No se pudo completar el pago de tu suscripción. Actualiza tu método de pago para recuperar tu plan de pago.",
+  "st.account.update_payment": "Actualizar método de pago",
   'st.account.manage_billing': 'Gestionar facturación',
 
   'st.display.language.label': 'Idioma',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': 'Modelo',
   'st.provider.field.model_optional': 'Modelo (opcional)',
   'st.provider.field.supports_vision': 'El modelo admite visión (multimodal)',
+  'st.provider.field.tools_mode': 'Uso de herramientas nativas',
   'st.provider.field.vision_auto': 'Automático',
   'st.provider.field.vision_force_on': 'Forzar activación',
   'st.provider.field.vision_detected_vision': 'Detectado automáticamente: Visión',
@@ -1028,6 +1034,8 @@ export default {
   "sp.upload_picker.cancelled": "Subida cancelada",
   "sp.upload_picker.too_large": "El archivo seleccionado supera el límite de 25 MB (máx. 25 MB)",
   "sp.upload_picker.read_failed": "No se pudo leer el archivo seleccionado",
+  "sp.slash.export_traces_full": "Exportar toda la sesión de trazas guardada como JSON, incluidas las capturas",
+  "sp.export_traces.recording_truncated": "Se exportaron todos los registros guardados como JSON. El contenido omitido durante la grabación no puede recuperarse mediante la exportación.",
   "sp.slash.export_traces": "Exportar la cadena de herramientas (trazas)",
   "sp.export_traces.none": "No hay trazas para esta conversación. Activa «Registrar trazas» en Ajustes y vuelve a ejecutar.",
   "sp.export_traces.error": "No se pudieron exportar las trazas.",

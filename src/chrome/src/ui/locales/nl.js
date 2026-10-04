@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Dutch (nl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom van extensie-interface',
   'sp.ui_scale.decrease': 'Extensie-interface uitzoomen',
   'sp.ui_scale.increase': 'Extensie-interface inzoomen',
@@ -314,6 +316,7 @@ export default {
   'sp.subscribe.allowance_used': 'Dagelijkse gratis WebBrain Compass-tegoed gebruikt.',
   'sp.subscribe.btn': 'Abonneren',
   'sp.subscribe.upgrade': 'Upgraden naar Plus',
+  "sp.subscribe.resume_payment": "Betaalmethode bijgewerkt — opnieuw proberen",
   'sp.subscribe.resume_upgrade': 'Abonnement bijgewerkt — opnieuw proberen',
   'sp.subscribe.resume': 'Ik heb geabonneerd — opnieuw proberen',
   'sp.stopped_by_user': '[Gestopt door gebruiker]',
@@ -578,6 +581,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Facturering, kaartgegevens, e-mail en annulering worden beheerd door Stripe...',
   'st.account.billing_preparing': 'Stripe-factureringslink voorbereiden...',
+  "st.account.payment_failed": "Je abonnementsbetaling kon niet worden voltooid. Werk je betaalmethode bij om je betaalde abonnement te herstellen.",
+  "st.account.update_payment": "Betaalmethode bijwerken",
   'st.account.manage_billing': 'Facturering beheren',
   'st.display.language.label': 'Taal',
   'st.display.language.desc': 'Interfacetaal voor de WebBrain-plug-in.',
@@ -757,6 +762,7 @@ export default {
   'st.provider.field.context_window': 'Contextvenster (tokens)',
   'st.provider.field.max_output_tokens': 'Maximale uitvoer (tokens)',
   'st.provider.field.supports_vision': 'Model ondersteunt visie (multimodaal)',
+  'st.provider.field.tools_mode': 'Native toolgebruik',
   'st.provider.field.vision_auto': 'Automatisch',
   'st.provider.field.vision_force_on': 'Geforceerd aan',
   'st.provider.field.vision_detected_vision': 'Automatisch gedetecteerd: Visie',
@@ -998,6 +1004,8 @@ export default {
   'tr.event.args': 'argumenten',
   'tr.event.result': 'resultaat',
   'tr.event.step': 'stap {step}',
+  "sp.slash.export_traces_full": "De volledige opgeslagen tracesessie inclusief screenshots als JSON exporteren",
+  "sp.export_traces.recording_truncated": "Alle opgeslagen records zijn als JSON geëxporteerd. Inhoud die tijdens de opname is weggelaten, kan niet via export worden hersteld.",
   "sp.slash.export_traces": "De toolketen (traces) exporteren",
   "sp.export_traces.none": "Geen traces voor dit gesprek...",
   "sp.export_traces.error": "Kon traces niet exporteren.",

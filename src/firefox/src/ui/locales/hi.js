@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Hindi — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'एक्सटेंशन UI ज़ूम',
   'sp.ui_scale.decrease': 'एक्सटेंशन UI को छोटा करें',
   'sp.ui_scale.increase': 'एक्सटेंशन UI को बड़ा करें',
@@ -321,6 +323,7 @@ export default {
   'sp.subscribe.allowance_used': "दैनिक निःशुल्क WebBrain Compass भत्ता उपयोग किया गया।",
   'sp.subscribe.btn': "सदस्यता लें",
   'sp.subscribe.upgrade': 'Plus में अपग्रेड करें',
+  "sp.subscribe.resume_payment": "भुगतान विधि अपडेट हो गई — फिर कोशिश करें",
   'sp.subscribe.resume_upgrade': 'प्लान अपडेट हो गया — फिर कोशिश करें',
   'sp.subscribe.resume': "मैंने सदस्यता ले ली है - पुनः प्रयास करें",
   'sp.stopped_by_user': "[उपयोगकर्ता द्वारा रोका गया]",
@@ -597,6 +600,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "इस ब्राउज़र प्रोफ़ाइल के लिए बिलिंग, कार्ड विवरण, ईमेल और रद्दीकरण Stripe द्वारा प्रबंधित किया जाता है।",
   'st.account.billing_preparing': "इस ब्राउज़र प्रोफ़ाइल के लिए Stripe बिलिंग लिंक तैयार किया जा रहा है।",
+  "st.account.payment_failed": "आपकी सदस्यता का भुगतान पूरा नहीं हो सका। अपना सशुल्क प्लान बहाल करने के लिए भुगतान विधि अपडेट करें।",
+  "st.account.update_payment": "भुगतान विधि अपडेट करें",
   'st.account.manage_billing': "बिलिंग प्रबंधित करें",
 
   'st.display.language.label': "भाषा",
@@ -833,6 +838,7 @@ export default {
   'st.provider.field.context_window': "संदर्भ विंडो (टोकन)",
   'st.provider.field.max_output_tokens': "अधिकतम आउटपुट (टोकन)",
   'st.provider.field.supports_vision': "मॉडल दृष्टि का समर्थन करता है (मल्टीमॉडल)",
+  'st.provider.field.tools_mode': 'नेटिव टूल का उपयोग',
   'st.provider.field.vision_auto': 'स्वचालित',
   'st.provider.field.vision_force_on': 'बलपूर्वक चालू',
   'st.provider.field.vision_detected_vision': 'स्वतः पहचाना गया: विज़न',
@@ -1088,6 +1094,8 @@ export default {
   'tr.event.args': "तर्क",
   'tr.event.result': "परिणाम",
   'tr.event.step': "चरण {step}",
+  "sp.slash.export_traces_full": "स्क्रीनशॉट सहित पूरा सहेजा गया ट्रेस सत्र JSON के रूप में निर्यात करें",
+  "sp.export_traces.recording_truncated": "सभी सहेजे गए रिकॉर्ड JSON में निर्यात हो गए। रिकॉर्डिंग के दौरान छोड़ी गई सामग्री निर्यात से वापस नहीं मिल सकती।",
   "sp.slash.export_traces": "उपकरण श्रृंखला (निशान) निर्यात करें",
   "sp.export_traces.none": "इस बातचीत का कोई निशान नहीं. सेटिंग्स में रिकॉर्ड ट्रेस सक्षम करें, फिर से चलाएँ।",
   "sp.export_traces.error": "निशान निर्यात नहीं किए जा सके.",

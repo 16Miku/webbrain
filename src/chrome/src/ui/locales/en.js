@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // English — canonical locale. Other locales inherit key names from this file.
 import apocalypseModeCopy from './apocalypse-copy.mjs';
 import emergencyCopy from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Extension UI zoom',
   'sp.ui_scale.decrease': 'Zoom extension UI out',
   'sp.ui_scale.increase': 'Zoom extension UI in',
@@ -322,6 +324,7 @@ export default {
   'sp.subscribe.allowance_used': 'Daily free WebBrain Compass allowance used.',
   'sp.subscribe.btn': 'Subscribe',
   'sp.subscribe.upgrade': 'Upgrade to Plus',
+  'sp.subscribe.resume_payment': 'Payment method updated — retry',
   'sp.subscribe.resume_upgrade': 'Plan updated — retry',
   'sp.subscribe.resume': 'I’ve subscribed — retry',
   'sp.stopped_by_user': '[Stopped by user]',
@@ -600,6 +603,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Billing, card details, email, and cancellation are managed by Stripe for this browser profile.',
   'st.account.billing_preparing': 'Preparing the Stripe billing link for this browser profile.',
+  'st.account.payment_failed': 'Your subscription payment could not be completed. Update your payment method to restore your paid plan.',
+  'st.account.update_payment': 'Update payment method',
   'st.account.manage_billing': 'Manage billing',
 
   'st.display.language.label': 'Language',
@@ -776,8 +781,8 @@ export default {
   'st.providers.compat.value.developer': 'Developer',
   'st.providers.webbrain_data_use.body': 'Free daily WebBrain Compass usage is included. While Help Improve WebBrain is on by default, selected Compass conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General → Advanced to exclude future Compass interactions from those uses. <u>Local-model and bring-your-own API requests are only collected by WebBrain when you turn on the per-provider “Share queries for research” option.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.share_research.label': 'Share queries for research',
-  'st.providers.share_research.hint': 'Send prompts and responses from this provider to WebBrain for evaluation and improvement, including the provider and model used. Images and binary attachments are stripped and text is truncated before sharing; remaining text is sent as-is.',
-  'st.providers.share_research.confirm': 'Share queries from this provider with WebBrain for research?\n\nWhen on, your prompts, responses, and tool interactions with this provider will be sent to WebBrain for evaluation and improvement, together with the provider and model name. Text is sent as-is after stripping images and truncating long content, so avoid sharing sensitive personal data. You can turn this off at any time to stop future sharing.',
+  'st.providers.share_research.hint': 'Send bounded prompts, responses, tool interactions, and diagnostic trace metadata (steps, tool names, statuses, errors, and timings) from this provider to WebBrain for evaluation and improvement. Images and binary attachments are stripped; text is truncated before sharing.',
+  'st.providers.share_research.confirm': 'Share queries and diagnostic traces from this provider with WebBrain for research?\n\nWhen on, your prompts, responses, tool interactions, and bounded diagnostic trace metadata—including failed runs, tool names, statuses, errors, and timings—will be sent to WebBrain with the provider and model name. Screenshots and binary attachments are not uploaded. Other text is sent as-is after truncation, so avoid sharing sensitive personal data. You can turn this off at any time to stop future sharing.',
   'st.providers.webbrain_note.body': 'Free daily WebBrain Compass usage is included. Requests go through api.webbrain.one; by default we log metadata for quota and debugging, not prompt text, page content, screenshots, or model responses. {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Privacy policy',
 
@@ -848,6 +853,7 @@ export default {
   'st.provider.field.context_window': 'Context window (tokens)',
   'st.provider.field.max_output_tokens': 'Max output (tokens)',
   'st.provider.field.supports_vision': 'Model supports vision (multimodal)',
+  'st.provider.field.tools_mode': 'Native tool use',
   'st.provider.field.vision_auto': 'Auto',
   'st.provider.field.vision_force_on': 'Force on',
   'st.provider.field.vision_detected_vision': 'Auto-detected: Vision',
@@ -1115,6 +1121,8 @@ export default {
   'tr.event.args': 'args',
   'tr.event.result': 'result',
   'tr.event.step': 'step {step}',
+  "sp.slash.export_traces_full": "Export the complete stored trace session as JSON, including screenshots",
+  "sp.export_traces.recording_truncated": "JSON exported with all stored records. Some content was omitted during recording and cannot be recovered by export.",
   "sp.slash.export_traces": "Export the tool chain (traces)",
   "sp.export_traces.none": "No traces for this conversation. Enable Record traces in Settings, then run again.",
   "sp.export_traces.error": "Couldn't export traces.",

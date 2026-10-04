@@ -35,6 +35,132 @@ function setup(Agent, provider = {}) {
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
 for (const [browser, Agent] of variants) {
+  for (const failure of ['out-of-bounds', 'stale capture', 'missing capture', 'invalid schema', 'malformed JSON']) {
+    test(`${browser}: repeated ${failure} calls enter loop recovery before dispatch`, async () => {
+      const agent = setup(Agent);
+      const tabId = 71;
+      agent.maxSteps = Infinity;
+      agent._resolvePromptTier = () => 'full';
+      agent._resolveVisionRoute = async () => ({ provider: null });
+      agent.executeTool = async () => assert.fail('Rejected action or queued fallback was dispatched');
+      agent._captchaMutationPreflight = async () => assert.fail('Rejected action reached page preflight');
+      const messages = [];
+      const updates = [];
+      const results = [];
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const capture = agent._registerScreenshotCapture(tabId, {
+          imageWidth: 1102, imageHeight: 746, cssWidth: 1102, cssHeight: 746,
+        });
+        // Capture churn and JSON property order must not disguise one failure.
+        // Coordinate failures carry a constant failureScope, so only the
+        // invalid-schema case can be hidden by reordering — it has to build
+        // its own key-ordered args to exercise the default scope.
+        const entries = [
+          ['x', 800], ['y', failure === 'out-of-bounds' ? 780 : 400],
+          ['coordinate_space', 'screenshot'],
+          ...(failure === 'missing capture' ? [] : [['capture_id', failure === 'stale capture' ? `old-${attempt}` : capture.captureId]]),
+        ];
+        const schemaEntries = [['text', '02'], ['selector', '#jj']];
+        if (attempt % 2 === 0) {
+          entries.reverse();
+          schemaEntries.reverse();
+        }
+        const args = failure === 'malformed JSON' ? '{"x":'
+          : failure === 'invalid schema' ? JSON.stringify(Object.fromEntries(schemaEntries))
+          : JSON.stringify(Object.fromEntries(entries));
+        const name = failure === 'invalid schema' ? 'set_field' : 'click';
+        results.push(await agent._executeToolBatch(
+          tabId,
+          [
+            { id: `rejected-${attempt}`, function: { name, arguments: args } },
+            { id: `fallback-${attempt}`, function: { name: 'click', arguments: '{"text":"Save"}' } },
+          ],
+          messages, (type, data) => updates.push({ type, data }),
+          { supportsVision: false }, null, new Set(['click', 'set_field']), attempt,
+        ));
+      }
+      assert.deepEqual(results.map(result => result.action), ['continue', 'continue', 'recover']);
+      assert.equal(results[2].status, 'loop_stopped');
+      assert.match(results[2].value, /three times/i);
+      assert.equal(messages.length, 6, 'Every rejected and skipped call needs a result');
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const rejected = messages.find(message => message.tool_call_id === `rejected-${attempt}`);
+        const result = JSON.parse(rejected.content.split('\n')[0]);
+        assert.equal(result.success, false);
+        assert.equal(result.dispatched, false);
+        assert.equal(result.noDispatch, true);
+        const fallback = messages.find(message => message.tool_call_id === `fallback-${attempt}`);
+        assert.equal(JSON.parse(fallback.content).skipped, true);
+      }
+      assert.match(messages.find(message => message.tool_call_id === 'rejected-2').content, /FAILED ACTION LOOP/);
+      assert.ok(updates.some(update => update.type === 'warning' && /Loop detected/.test(update.data.message)));
+    });
+  }
+
+  test(`${browser}: verified screenshot corrections reset failures before later mistakes`, async () => {
+    const agent = setup(Agent);
+    allowBatchPreparation(agent);
+    agent._resolveVisionRoute = async () => ({ provider: null });
+    const tabId = 73;
+    const dispatched = [];
+    agent.executeTool = async (_tabId, name, args) => {
+      dispatched.push({ name, args });
+      return { success: true, verified: true, dispatched: true };
+    };
+    const capture = agent._registerScreenshotCapture(tabId, {
+      imageWidth: 1102, imageHeight: 746, cssWidth: 1102, cssHeight: 746,
+    });
+    const messages = [];
+    const expectedCounts = [1, 2, 0, 1, 2, 0, 1];
+    for (const [index, y] of [780, 780, 400, 790, 790, 410, 800].entries()) {
+      const result = await agent._executeToolBatch(
+        tabId,
+        [{ id: `correction-${index}`, function: {
+          name: 'click',
+          arguments: JSON.stringify({ x: 800, y, coordinate_space: 'screenshot', capture_id: capture.captureId }),
+        } }],
+        messages, () => {}, { supportsVision: false }, null, new Set(['click']), index + 1,
+      );
+      assert.equal(result.action, 'continue');
+      assert.equal(agent.failedActionLoops.get(tabId)?.get('screenshot-coordinate-capture') || 0, expectedCounts[index]);
+    }
+    assert.match(messages[1].content, /FAILED ACTION LOOP/);
+    assert.equal(dispatched.length, 2);
+    assert.equal(dispatched[0].args.y, 400);
+    assert.equal(dispatched[0].args.coordinate_space, 'css');
+  });
+
+  test(`${browser}: only verified click progress clears coordinate preparation failures`, () => {
+    const tabId = 74;
+    const scope = 'screenshot-coordinate-capture';
+    const failure = { success: false, noDispatch: true, dispatched: false, failureScope: scope, error: 'Stale capture' };
+    for (const [name, result] of [
+      ['get_accessibility_tree', { success: true, verified: true }],
+      ['inspect_viewport', { success: true }],
+      ['set_field', { success: true, verified: true }],
+      ['click', { success: true }],
+      ['click', { success: true, verified: false }],
+      ['click', { success: true, verified: true, noDispatch: true }],
+      ['click', { success: true, verified: true, dispatched: false }],
+      ['click', { success: true, verified: true, outcomeUnknown: true }],
+      ['click', { success: true, verified: true, inconclusive: true }],
+      ['click', { success: true, verified: true, noProgress: true }],
+    ]) {
+      const agent = setup(Agent);
+      agent._checkLoop(tabId, 'click', { x: 800, y: 780 }, failure);
+      agent._checkLoop(tabId, name, { ref_id: 'ref_recovery' }, result);
+      assert.equal(agent.failedActionLoops.get(tabId)?.get(scope), 1, `${name}: ${JSON.stringify(result)}`);
+      assert.equal(agent._checkLoop(tabId, 'click', { x: 800, y: 780 }, failure).kind, 'nudge');
+      assert.equal(agent._checkLoop(tabId, 'click', { x: 800, y: 780 }, failure).kind, 'stop');
+    }
+    for (const name of ['click', 'click_ax', 'iframe_click']) {
+      const agent = setup(Agent);
+      agent.failedActionLoops.set(tabId, new Map([[scope, 2], ['coordinate-provenance', 2], ['unrelated-target', 1]]));
+      agent._checkLoop(tabId, name, { ref_id: 'ref_recovery' }, { success: true, verified: true, dispatched: true });
+      assert.deepEqual([...agent.failedActionLoops.get(tabId)], [['unrelated-target', 1]], `${name}: keep unrelated failure counts`);
+    }
+  });
+
   test(`${browser}: cancellation survives nested readers and resets only on a fresh run`, async () => {
     const agent = setup(Agent);
     await agent._claimRunEntry(1, 'interactive');
@@ -287,6 +413,61 @@ function assertCompleteToolHistory(messages) {
 
 for (const [browser, Agent] of variants) {
   for (const streaming of [false, true]) {
+    test(`${browser}: unlimited ${streaming ? 'stream' : 'chat'} run recovers from repeated rejected clicks`, async () => {
+      const tabId = 72;
+      let agent;
+      let attempts = 0;
+      let recoveries = 0;
+      const nextCall = () => {
+        attempts++;
+        const capture = agent._registerScreenshotCapture(tabId, {
+          imageWidth: 1102, imageHeight: 746, cssWidth: 1102, cssHeight: 746,
+        });
+        return {
+          id: `outside-${attempts}`, type: 'function',
+          function: {
+            name: 'click',
+            arguments: JSON.stringify({ x: 800, y: 780, coordinate_space: 'screenshot', capture_id: capture.captureId }),
+          },
+        };
+      };
+      const provider = {
+        supportsTools: true,
+        chat: async (messages, options) => {
+          assertCompleteToolHistory(messages);
+          if (!options.tools?.length) {
+            recoveries++;
+            return { content: 'The month could not be selected. The second post is incomplete.' };
+          }
+          // Bound the test even if a regression lets the production loop run on.
+          if (attempts >= 3) return { content: 'Unexpected extra browser step.' };
+          return { toolCalls: [nextCall()] };
+        },
+        async *chatStream(messages) {
+          assertCompleteToolHistory(messages);
+          if (attempts >= 3) yield { type: 'text', content: 'Unexpected extra browser step.' };
+          else yield { type: 'tool_call', content: [{ ...nextCall(), index: 0 }] };
+          yield { type: 'done' };
+        },
+      };
+      agent = setup(Agent, provider);
+      agent.maxSteps = Infinity;
+      agent._resolveVisionRoute = async () => ({ provider: null });
+      agent._beginReadCompleteness = async () => null;
+      agent._maybeRunPlannerGate = async () => ({ proceed: true, requiresStateChange: true });
+      agent.executeTool = async () => assert.fail('Out-of-bounds click was dispatched');
+      const update = () => {};
+      const result = streaming
+        ? await agent.processMessageStream(tabId, 'Set the month to October.', update, 'act', { askStreamingEnabled: false })
+        : await agent.processMessage(tabId, 'Set the month to October.', update, 'act', [], { askStreamingEnabled: false });
+      assert.equal(attempts, 3);
+      assert.equal(recoveries, 1, 'Run must enter one tool-free partial-result recovery');
+      assert.equal(agent.testStatus, 'loop_stopped');
+      assert.match(result, /second post is incomplete/);
+      assert.equal(agent.isRunning(tabId), false);
+      assertCompleteToolHistory(agent.getConversation(tabId, 'act'));
+    });
+
     for (const phase of ['checkpoint', 'preflight', 'execution', 'after-result']) {
       test(`${browser}: ${streaming ? 'stream' : 'chat'} Stop during ${phase} persists paired tools for the next request`, async () => {
         const tabId = 41;

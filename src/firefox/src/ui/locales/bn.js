@@ -1,10 +1,12 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Bengali — translated from the canonical English locale.
 import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'এক্সটেনশনের UI জুম',
   'sp.ui_scale.decrease': 'এক্সটেনশনের UI ছোট করুন',
   'sp.ui_scale.increase': 'এক্সটেনশনের UI বড় করুন',
@@ -321,6 +323,7 @@ export default {
   'sp.subscribe.allowance_used': "দৈনিক বিনামূল্যের WebBrain Compass ভাতা ব্যবহার করা হয়েছে।",
   'sp.subscribe.btn': "সদস্যতা",
   'sp.subscribe.upgrade': 'Plus-এ আপগ্রেড করুন',
+  "sp.subscribe.resume_payment": "পেমেন্ট পদ্ধতি আপডেট হয়েছে — আবার চেষ্টা করুন",
   'sp.subscribe.resume_upgrade': 'প্ল্যান আপডেট হয়েছে — আবার চেষ্টা করুন',
   'sp.subscribe.resume': "আমি সাবস্ক্রাইব করেছি — আবার চেষ্টা করুন",
   'sp.stopped_by_user': "[ব্যবহারকারীর দ্বারা থামানো]",
@@ -597,6 +600,8 @@ export default {
   'st.account.provider_name': "WebBrain Compass",
   'st.account.billing_managed': "এই ব্রাউজার প্রোফাইলের জন্য বিলিং, কার্ডের বিবরণ, ইমেল এবং বাতিলকরণ Stripe দ্বারা পরিচালিত হয়।",
   'st.account.billing_preparing': "এই ব্রাউজার প্রোফাইলের জন্য Stripe বিলিং লিঙ্ক প্রস্তুত করা হচ্ছে।",
+  "st.account.payment_failed": "আপনার সদস্যতার পেমেন্ট সম্পন্ন হয়নি। পেইড প্ল্যান ফিরে পেতে পেমেন্ট পদ্ধতি আপডেট করুন।",
+  "st.account.update_payment": "পেমেন্ট পদ্ধতি আপডেট করুন",
   'st.account.manage_billing': "বিলিং পরিচালনা করুন",
 
   'st.display.language.label': "ভাষা",
@@ -833,6 +838,7 @@ export default {
   'st.provider.field.context_window': "প্রসঙ্গ উইন্ডো (টোকেন)",
   'st.provider.field.max_output_tokens': "সর্বোচ্চ আউটপুট (টোকেন)",
   'st.provider.field.supports_vision': "মডেল দৃষ্টি সমর্থন করে (মাল্টিমোডাল)",
+  'st.provider.field.tools_mode': 'নেটিভ টুল ব্যবহার',
   'st.provider.field.vision_auto': 'স্বয়ংক্রিয়',
   'st.provider.field.vision_force_on': 'জোর করে চালু',
   'st.provider.field.vision_detected_vision': 'স্বয়ংক্রিয়ভাবে শনাক্ত: ভিশন',
@@ -1088,6 +1094,8 @@ export default {
   'tr.event.args': "args",
   'tr.event.result': "ফলাফল",
   'tr.event.step': "ধাপ {step}",
+  "sp.slash.export_traces_full": "স্ক্রিনশটসহ সম্পূর্ণ সংরক্ষিত ট্রেস সেশন JSON হিসেবে রপ্তানি করুন",
+  "sp.export_traces.recording_truncated": "সব সংরক্ষিত রেকর্ড JSON হিসেবে রপ্তানি করা হয়েছে। রেকর্ডিংয়ের সময় বাদ পড়া কিছু তথ্য রপ্তানির মাধ্যমে ফেরত পাওয়া যাবে না।",
   "sp.slash.export_traces": "টুল চেইন (ট্রেস) রপ্তানি করুন",
   "sp.export_traces.none": "এই কথোপকথনের জন্য কোন চিহ্ন নেই. সেটিংসে রেকর্ড ট্রেস সক্ষম করুন, তারপর আবার চালান।",
   "sp.export_traces.error": "ট্রেস এক্সপোর্ট করা যায়নি।",

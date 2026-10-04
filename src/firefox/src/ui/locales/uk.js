@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Ukrainian (uk).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Масштаб інтерфейсу розширення',
   'sp.ui_scale.decrease': 'Зменшити інтерфейс розширення',
   'sp.ui_scale.increase': 'Збільшити інтерфейс розширення',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Безкоштовний денний ліміт WebBrain Compass вичерпано.',
   'sp.subscribe.btn': 'Оформити підписку',
   'sp.subscribe.upgrade': 'Перейти на Plus',
+  "sp.subscribe.resume_payment": "Спосіб оплати оновлено — повторити",
   'sp.subscribe.resume_upgrade': 'План оновлено — повторити',
   'sp.subscribe.resume': 'Підписку оформлено — повторити',
   'sp.stopped_by_user': '[Зупинено користувачем]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Оплата, дані картки, електронна пошта та скасування керуються Stripe для цього профілю браузера.',
   'st.account.billing_preparing': 'Підготовка посилання на оплату Stripe для цього профілю браузера.',
+  "st.account.payment_failed": "Не вдалося здійснити оплату підписки. Оновіть спосіб оплати, щоб відновити платний тариф.",
+  "st.account.update_payment": "Оновити спосіб оплати",
   'st.account.manage_billing': 'Керування оплатою',
 
   'st.display.language.label': 'Мова',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': 'Модель',
   'st.provider.field.model_optional': 'Модель (необов\'язково)',
   'st.provider.field.supports_vision': 'Модель підтримує зір (мультимодальна)',
+  'st.provider.field.tools_mode': 'Нативне використання інструментів',
   'st.provider.field.vision_auto': 'Автоматично',
   'st.provider.field.vision_force_on': 'Примусово ввімкнути',
   'st.provider.field.vision_detected_vision': 'Визначено автоматично: Підтримка зображень',
@@ -1028,6 +1034,8 @@ export default {
   "sp.upload_picker.cancelled": "Завантаження скасовано",
   "sp.upload_picker.too_large": "Вибраний файл перевищує ліміт 25 МБ (макс. 25 МБ)",
   "sp.upload_picker.read_failed": "Не вдалося прочитати вибраний файл",
+  "sp.slash.export_traces_full": "Експортувати весь збережений сеанс трасування у JSON, включно зі знімками екрана",
+  "sp.export_traces.recording_truncated": "Усі збережені записи експортовано у JSON. Вміст, пропущений під час запису, неможливо відновити експортом.",
   "sp.slash.export_traces": "Експортувати ланцюг інструментів (трасування)",
   "sp.export_traces.none": "Немає трасувань для цієї розмови. Увімкніть «Записувати трасування» в налаштуваннях і запустіть знову.",
   "sp.export_traces.error": "Не вдалося експортувати трасування.",

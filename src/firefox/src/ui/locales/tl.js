@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Filipino / Tagalog (tl).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Pag-zoom ng UI ng extension',
   'sp.ui_scale.decrease': 'Bawasan ang zoom ng UI ng extension',
   'sp.ui_scale.increase': 'Dagdagan ang zoom ng UI ng extension',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Naubos na ang libreng pang-araw-araw na alokasyon ng WebBrain Compass.',
   'sp.subscribe.btn': 'Mag-subscribe',
   'sp.subscribe.upgrade': 'Mag-upgrade sa Plus',
+  "sp.subscribe.resume_payment": "Na-update ang paraan ng pagbabayad — subukan muli",
   'sp.subscribe.resume_upgrade': 'Na-update ang plan — subukan muli',
   'sp.subscribe.resume': 'Naka-subscribe na — subukan muli',
   'sp.stopped_by_user': '[Itinigil ng user]',
@@ -318,6 +321,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Ang pagsingil, mga detalye ng card, email, at pagkansela ay pinamamahalaan ng Stripe para sa profile ng browser na ito.',
   'st.account.billing_preparing': 'Inihahanda ang link ng pagsingil ng Stripe para sa profile ng browser na ito.',
+  "st.account.payment_failed": "Hindi nakumpleto ang bayad sa iyong subscription. I-update ang paraan ng pagbabayad para maibalik ang iyong bayad na plan.",
+  "st.account.update_payment": "I-update ang paraan ng pagbabayad",
   'st.account.manage_billing': 'Pamahalaan ang pagsingil',
 
   'st.display.language.label': 'Wika',
@@ -386,6 +391,7 @@ export default {
   'st.provider.field.model': 'Modelo',
   'st.provider.field.model_optional': 'Modelo (opsyonal)',
   'st.provider.field.supports_vision': 'Sumusuporta ang modelo sa bisyon (multimodal)',
+  'st.provider.field.tools_mode': 'Paggamit ng native na mga tool',
   'st.provider.field.vision_auto': 'Awtomatiko',
   'st.provider.field.vision_force_on': 'Sapilitang i-on',
   'st.provider.field.vision_detected_vision': 'Awtomatikong natukoy: Vision',
@@ -1028,6 +1034,8 @@ export default {
   "sp.upload_picker.cancelled": "Kinansela ang upload",
   "sp.upload_picker.too_large": "Ang napiling file ay lampas sa 25MB limit (max 25MB)",
   "sp.upload_picker.read_failed": "Hindi mabasa ang napiling file",
+  "sp.slash.export_traces_full": "I-export ang buong naka-save na trace session bilang JSON, kasama ang mga screenshot",
+  "sp.export_traces.recording_truncated": "Na-export bilang JSON ang lahat ng naka-save na tala. Hindi maibabalik sa pag-export ang nilalamang hindi naisama habang nagre-record.",
   "sp.slash.export_traces": "I-export ang tool chain (mga trace)",
   "sp.export_traces.none": "Walang trace para sa usapang ito. I-on ang Record traces sa Settings, pagkatapos ay patakbuhin muli.",
   "sp.export_traces.error": "Hindi ma-export ang mga trace.",

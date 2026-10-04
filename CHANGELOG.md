@@ -4,6 +4,133 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [38.0.13] - 2026-10-01
+
+### Changed
+- version up
+- fix(captcha): align provider contracts and recover interrupted signup
+- Share opt-in provider diagnostic traces
+- fix(captcha): ignore empty callback placeholders when applying solutions
+- up
+- fix(traces): assemble full exports outside runtime messaging
+- fix(captcha): recover successive challenges and export full traces
+- Canonicalize tool-arg loop keys so key order cannot dodge the limit
+- up
+- bugfix
+- up
+- bugfixes
+- version up
+- fix(captcha): deliver callbacks and recover solve state
+- Document CMS API-first coverage in the French and Chinese skills guides
+- Stop rejected actions from looping forever before dispatch
+
+## [38.0.1] - 2026-09-30
+
+### Changed
+- chore: bump version 37.0.1 → 38.0.0
+- Use Sanity HTTP publish identity and preserve document revision guards
+- Narrow CMS adapter injection to supported editor routes
+- Tighten CMS prompt budgets and verify per-run skill reset
+- Add conditional API-first content skills for nine CMS platforms
+- Fix Compact WordPress API guidance and REST route loop detection
+- Add API-first WordPress content skill and editor fallback guidance
+- Retire stale CAPTCHA documents consistently across recovery paths
+- Handle expired CAPTCHA answers without trapping completion
+- docs: minor wording tweak in trace-format-compatibility
+- Fix CAPTCHA answer recovery and provider fallback validation
+- build(deps): bump fast-uri
+- build(deps): bump the uv group across 1 directory with 4 updates
+- Recover paid native CAPTCHA answers after chat clear
+- Preserve DataDome and FunCaptcha sessions and GeeTest modes
+- Match Lemin API hosts before native fallback
+- Bind hCaptcha User-Agent to target frame and Tencent script
+- Preserve Yidun and reCAPTCHA endpoints in fallback
+- Match Alibaba verification metadata before fallback
+- Keep native CAPTCHA dispatch across chat clears and validate array payloads
+- Preserve hCaptcha cookies and GeeTest service identity in fallback
+- Compare reCAPTCHA session cookies before fallback
+- Guard NoneCap token injection by browser User-Agent
+- Persist native CAPTCHA dispatch locks before provider calls
+- Match recognition constraints across CAPTCHA fallbacks
+- Preserve paid CAPTCHA answers across worker restarts
+- Retire stale CAPTCHA gates and validate Cloudflare fallbacks
+- Match FunCaptcha fallback service hosts
+- Infer hCaptcha Enterprise from explicit rqdata
+- Validate CAPTCHA instruction aliases and child frame freshness
+- Reject undocumented nested CAPTCHA parameters
+- Match TSPD snapshots and reCAPTCHA v3 fallback scores
+- Match CAPTCHA fallback instructions and visibility
+- Gate CAPTCHA application and match fallback proxy identity
+- Retire stale CAPTCHA documents and validate fallback User-Agent
+- Fix CAPTCHA answer retention and v2 fallback identity
+- Retire stale CAPTCHA answers and correct Enterprise rqdata guidance
+- Require complete CAPTCHA fallback identifiers and preserve falsy answers
+- Match text challenge questions before paid CAPTCHA fallback
+- Bind native CAPTCHA fallbacks to observed media and frame URLs
+- Keep native CAPTCHA answers available until first mutation
+- Align CAPTCHA tool documentation with mode availability
+- Keep recoverable CAPTCHA application failures pending
+- fix: observe field-only Discord embeds
+- Retain native CAPTCHA dispatch history across document restores
+- fix: support transcript-bound Discord threads
+- Bind native CAPTCHA fallback and replay to observed challenges
+- fix: verify Discord sends against authored text
+- Fix CAPTCHA routing, answer application, and provider validation
+- fix: validate Discord guild transcript route
+- fix: bind Discord DM and send evidence
+- Integrate documented CAPTCHA provider catalogs and weighted solving
+- fix: capture Discord polls and bound send reconciliation
+- fix: allow new Discord DMs to bind safely
+- fix: reconcile delayed Discord observations safely
+- fix: allow Discord management on message links
+- fix: handle Discord permalinks and global avatars
+- fix: recognize Discord direct-message conversations
+- fix: restore Discord navigation and durable delivery evidence
+- fix: preserve unknown Discord identity on DM routes
+- fix: support Discord guild avatars and account settings
+- fix: recognize localized Discord settings and rail
+- fix: classify Discord avatars and dialogs structurally
+- fix: verify Discord sends without name identity
+- Address Discord observation review feedback
+- Fix Discord management guard and chat observation
+
+## [38.0.0] - 2026-09-30
+
+### Added
+
+- Added API-first content skills for nine CMS platforms: Contentful, Drupal, Ghost, Joomla, Sanity, Shopify, Strapi, Webflow, and Wix. On Mid and Full they load through the skill catalog only when the task needs them, then prefer the platform's own API for existing content and fall back to the editor when authentication, permissions, or Secret Handling rule the API out. All nine files and the adapter module are byte-identical across Chrome and Firefox.
+- Added a WordPress REST API skill covering posts, pages, REST-enabled custom types, and taxonomy. It reuses existing record IDs, creates content as a draft, and publishes that same record only when asked; a missing `/allow-api` grant is requested once, and Ask mode cannot write.
+- Added NopeCHA and NoneCap as CAPTCHA fallback providers, bringing the catalog to seven. Each has its own key, enable toggle, weight, balance check, and localized Settings controls, and both serve the hCaptcha families.
+- Added a documented native CAPTCHA method catalog audited against each provider's official API reference, with per-provider coverage and documentation links in Settings.
+- Added a Discord management guard so Discord sends verify the active recipient the way other messaging sites already do.
+- Added the `cookies` permission to the Chrome and Firefox manifests, used to match a native CAPTCHA challenge against the session that created it.
+
+### Changed
+
+- Narrowed CMS adapter injection to supported editor routes. Site adapters now supply short conditional notes instead of loading a skill, and a generic admin or Studio path needs observed CMS evidence before a recipe is offered.
+- Tightened the CMS prompt budgets and verified that each run resets its skill state, so a CMS recipe cannot leak into a later task.
+- Sanity publishing now uses the HTTP publish identity and keeps document revision guards, so a stale draft is not silently overwritten.
+- Corrected the Compact WordPress API guidance and added REST route loop detection, so a repeating request is reported instead of retried.
+- Refreshed the CAPTCHA tool documentation to match what each tier actually has: `get_captcha_capabilities`, `solve_captcha`, and `apply_captcha_solution` are Act/Dev Mid and Full tools, while Ask and Compact request manual completion.
+- Documented the CAPTCHA data flow in the privacy guide, including all seven providers, what a fallback sends, and that the browser cookie jar is not exported automatically.
+- Corrected the trace-format compatibility wording and updated the skills documentation, including the French and Simplified Chinese translations.
+
+### Fixed
+
+- Paid CAPTCHA answers now survive chat clears, document restores, and worker restarts. Dispatch locks persist before the provider call, dispatch history is retained, and an answer stays available until the first mutation.
+- Stale CAPTCHA documents and gates are retired consistently across every recovery path, and an expired answer no longer traps completion: the gate flips to manual-required instead of hanging the run.
+- A recoverable CAPTCHA application failure stays pending for a retry rather than ending the run, and falsy answers are no longer dropped.
+- Hardened native CAPTCHA fallback matching. A fallback now requires complete identifiers, binds to the observed frame, media, and proxy identity, checks instruction aliases, challenge visibility, child-frame freshness, reCAPTCHA session cookies, and the browser User-Agent, and rejects undocumented nested parameters. DataDome, FunCaptcha, GeeTest, Yidun, Alibaba, Lemin, TSPD snapshots, reCAPTCHA v3 scores, and text challenges are recognized before a paid solve, and hCaptcha Enterprise is inferred from an explicit `rqdata`.
+- Fixed a full pass of Discord observation and delivery evidence: direct messages, permalinks, message links, new DM binds, polls, field-only embeds, transcript-bound threads, guild avatars, localized settings and rail, and structurally classified avatars and dialogs are all recognized. Sends are verified against the authored text rather than a display name, the guild transcript route is validated, unknown identities are preserved instead of overwritten, and delayed observations reconcile safely.
+- Restored Discord navigation and durable delivery evidence.
+
+### Tests
+
+- Added CAPTCHA coverage for the hCaptcha providers, native providers, application UI, runtime policy, and weighted fallback, and registered the new files in `npm test`.
+- Added a Discord guard suite covering the observation and delivery paths, registered in the main test run.
+- Added CMS API-first coverage with browser smoke fixtures and nine CMS LLM scenarios.
+- Kept every mirrored Chrome and Firefox change paired on both sides.
+
 ## [37.0.1] - 2026-09-29
 
 ### Changed

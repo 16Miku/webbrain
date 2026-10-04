@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Polski — translated from en.js. Keys mirror the English canonical file.
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Powiększenie interfejsu rozszerzenia',
   'sp.ui_scale.decrease': 'Pomniejsz interfejs rozszerzenia',
   'sp.ui_scale.increase': 'Powiększ interfejs rozszerzenia',
@@ -258,6 +260,7 @@ export default {
   'sp.subscribe.allowance_used': 'Wykorzystano dzienny darmowy limit WebBrain Compass.',
   'sp.subscribe.btn': 'Subskrybuj',
   'sp.subscribe.upgrade': 'Przejdź na Plus',
+  "sp.subscribe.resume_payment": "Metoda płatności zaktualizowana — spróbuj ponownie",
   'sp.subscribe.resume_upgrade': 'Plan zaktualizowany — spróbuj ponownie',
   'sp.subscribe.resume': 'Subskrypcja gotowa — spróbuj ponownie',
   'sp.stopped_by_user': '[Zatrzymane przez użytkownika]',
@@ -458,6 +461,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Rozliczenia, dane karty, e-mail i anulowanie są zarządzane przez Stripe dla tego profilu przeglądarki.',
   'st.account.billing_preparing': 'Przygotowywanie linku rozliczeniowego Stripe dla tego profilu przeglądarki.',
+  "st.account.payment_failed": "Nie udało się zrealizować płatności za subskrypcję. Zaktualizuj metodę płatności, aby przywrócić płatny plan.",
+  "st.account.update_payment": "Zaktualizuj metodę płatności",
   'st.account.manage_billing': 'Zarządzaj rozliczeniami',
   'st.display.language.label': 'Język',
   'st.display.language.desc': 'Język interfejsu wtyczki WebBrain.',
@@ -593,6 +598,7 @@ export default {
   'st.provider.field.context_window': 'Okno kontekstu (tokeny)',
   'st.provider.field.max_output_tokens': 'Maksymalne wyjście (tokeny)',
   'st.provider.field.supports_vision': 'Model obsługuje wizję (multimodalność)',
+  'st.provider.field.tools_mode': 'Natywne użycie narzędzi',
   'st.provider.field.vision_auto': 'Automatycznie',
   'st.provider.field.vision_force_on': 'Wymuś włączenie',
   'st.provider.field.vision_detected_vision': 'Wykryto automatycznie: Obsługa obrazu',
@@ -1036,6 +1042,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Maks. wymiar obrazu",
   "st.imageBudget.maxDimension.desc": "Najdłuższy bok (szerokość lub wysokość) w pikselach dla każdego zrzutu wysyłanego do vision. Niższy limit zmniejsza obrazy przed wysłaniem, tnąc tokeny i koszt. Wyższy limit zachowuje wierność.",
   "st.imageBudget.warning": "⚠️ Te ustawienia dotyczą zrzutów na vision (auto-zrzut, /screenshot, cała strona, verify_form). Ręcznie zapisane obrazy w pełnej rozdzielczości nie są objęte. «Image detail» honorują endpointy w stylu OpenAI; inni dostawcy mogą to ignorować.",
+  "sp.slash.export_traces_full": "Eksportuj całą zapisaną sesję śledzenia jako JSON, wraz ze zrzutami ekranu",
+  "sp.export_traces.recording_truncated": "Wyeksportowano wszystkie zapisane rekordy jako JSON. Treści pominiętych podczas rejestrowania nie można odzyskać przez eksport.",
   "sp.slash.export_traces": "Eksportuj łańcuch narzędzi (ślady)",
   "sp.export_traces.none": "Brak śladów dla tej rozmowy. Włącz „Rejestruj ślady\" w Ustawieniach i uruchom ponownie.",
   "sp.export_traces.error": "Nie udało się wyeksportować śladów.",

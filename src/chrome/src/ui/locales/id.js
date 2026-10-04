@@ -1,4 +1,5 @@
 import bidiCopy from './bidi-copy.mjs';
+import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Indonesian (id).
 import chromeWebStoreLocale from './chrome-web-store.mjs';
 
@@ -7,6 +8,7 @@ import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
   ...bidiCopy,
+  ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom UI ekstensi',
   'sp.ui_scale.decrease': 'Perkecil UI ekstensi',
   'sp.ui_scale.increase': 'Perbesar UI ekstensi',
@@ -226,6 +228,7 @@ export default {
   'sp.subscribe.allowance_used': 'Kuota harian gratis WebBrain Compass telah habis.',
   'sp.subscribe.btn': 'Berlangganan',
   'sp.subscribe.upgrade': 'Upgrade ke Plus',
+  "sp.subscribe.resume_payment": "Metode pembayaran diperbarui — coba lagi",
   'sp.subscribe.resume_upgrade': 'Paket diperbarui — coba lagi',
   'sp.subscribe.resume': 'Sudah berlangganan — coba lagi',
   'sp.stopped_by_user': '[Dihentikan oleh pengguna]',
@@ -326,6 +329,8 @@ export default {
   'st.account.provider_name': 'WebBrain Compass',
   'st.account.billing_managed': 'Penagihan, detail kartu, email, dan pembatalan dikelola oleh Stripe untuk profil browser ini.',
   'st.account.billing_preparing': 'Menyiapkan tautan penagihan Stripe untuk profil browser ini.',
+  "st.account.payment_failed": "Pembayaran langganan Anda belum berhasil. Perbarui metode pembayaran untuk memulihkan paket berbayar Anda.",
+  "st.account.update_payment": "Perbarui metode pembayaran",
   'st.account.manage_billing': 'Kelola penagihan',
 
   'st.display.language.label': 'Bahasa',
@@ -394,6 +399,7 @@ export default {
   'st.provider.field.model': 'Model',
   'st.provider.field.model_optional': 'Model (opsional)',
   'st.provider.field.supports_vision': 'Model mendukung visi (multimodal)',
+  'st.provider.field.tools_mode': 'Penggunaan alat bawaan',
   'st.provider.field.vision_auto': 'Otomatis',
   'st.provider.field.vision_force_on': 'Paksa aktif',
   'st.provider.field.vision_detected_vision': 'Terdeteksi otomatis: Vision',
@@ -1047,6 +1053,8 @@ export default {
   "st.imageBudget.maxDimension.label": "Dimensi gambar maksimum",
   "st.imageBudget.maxDimension.desc": "Sisi terpanjang (lebar atau tinggi) dalam piksel untuk setiap tangkapan yang dikirim ke visi. Batas lebih kecil mengecilkan gambar sebelum dikirim, mengurangi token dan biaya. Batas lebih besar menjaga fidelitas.",
   "st.imageBudget.warning": "⚠️ Pengaturan ini berlaku untuk tangkapan untuk visi (tangkapan otomatis, /screenshot, halaman penuh, verify_form). Gambar resolusi penuh yang disimpan manual tidak terpengaruh. «Image detail» dihormati endpoint bergaya OpenAI; penyedia lain mungkin mengabaikannya.",
+  "sp.slash.export_traces_full": "Ekspor seluruh sesi jejak tersimpan sebagai JSON, termasuk tangkapan layar",
+  "sp.export_traces.recording_truncated": "Semua catatan tersimpan telah diekspor sebagai JSON. Konten yang dihilangkan saat perekaman tidak dapat dipulihkan melalui ekspor.",
   "sp.slash.export_traces": "Ekspor rantai alat (jejak)",
   "sp.export_traces.none": "Tidak ada jejak untuk percakapan ini. Aktifkan Rekam jejak di Pengaturan, lalu jalankan lagi.",
   "sp.export_traces.error": "Tidak dapat mengekspor jejak.",
