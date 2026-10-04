@@ -87,7 +87,7 @@ import { isTextAttachment } from './attachment-file.js';
 const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
 const _btwParams = new URLSearchParams(window.location.search);
 const isBtwWindow = _btwParams.get('btw') === '1';
-const btwPinnedTabId = isBtwWindow ? (Number(_btwParams.get('tabId')) || null) : null;
+const btwSourceTabId = isBtwWindow ? (Number(_btwParams.get('forkFromTabId')) || null) : null;
 const btwInitialPrompt = isBtwWindow ? (_btwParams.get('prompt') || '') : '';
 
 // Hydrate the theme from chrome.storage.local (the inline <head> bootstrap
@@ -4657,8 +4657,11 @@ async function init() {
     : { active: true, currentWindow: true });
   let initialTabId = tab?.id;
 
-  if (isBtwWindow && btwPinnedTabId != null) {
-    initialTabId = btwPinnedTabId;
+  if (isBtwWindow && btwSourceTabId != null && initialTabId != null) {
+    await sendToBackground('fork_standalone_conversation', {
+      sourceTabId: btwSourceTabId,
+      forkTabId: initialTabId,
+    });
   } else {
     try {
       const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
@@ -4793,14 +4796,6 @@ async function init() {
       await sendBtwPrompt(btwInitialPrompt);
     }
     await consumePendingBtwPrompt();
-  } else {
-    // Keep the stale record until the next open verifies its window ID. Every
-    // panel must be able to observe this event before that record disappears.
-    chrome.windows.onRemoved.addListener(async (removedWindowId) => {
-      const states = await getBtwWindowStates();
-      const state = Object.values(states).find(candidate => candidate?.windowId === removedWindowId);
-      if (state && sameTabId(state.tabId, currentTabId)) requestVisibleSidePanelStateRefresh();
-    });
   }
 }
 
@@ -14713,7 +14708,7 @@ async function openBtwWindow(tabId, prompt = '') {
   }
 
   const promptParam = prompt ? `&prompt=${encodeURIComponent(prompt)}` : '';
-  const url = chrome.runtime.getURL(`src/ui/sidepanel.html?mode=ask&standalone=true&btw=1&tabId=${tabId}${promptParam}`);
+  const url = chrome.runtime.getURL(`src/ui/sidepanel.html?mode=ask&standalone=true&btw=1&forkFromTabId=${tabId}${promptParam}`);
   const win = await chrome.windows.create({
     url,
     type: 'popup',
@@ -14731,11 +14726,11 @@ async function sendBtwPrompt(prompt) {
 }
 
 async function consumePendingBtwPrompt() {
-  if (!isBtwWindow || btwPinnedTabId == null) return;
-  const state = await getBtwWindowState(btwPinnedTabId);
+  if (!isBtwWindow || btwSourceTabId == null) return;
+  const state = await getBtwWindowState(btwSourceTabId);
   const prompt = String(state?.pendingPrompt || '');
   if (!prompt) return;
-  await setBtwWindowState(btwPinnedTabId, { ...state, pendingPrompt: '' });
+  await setBtwWindowState(btwSourceTabId, { ...state, pendingPrompt: '' });
   await sendBtwPrompt(prompt);
 }
 

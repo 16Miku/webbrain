@@ -6241,6 +6241,43 @@ export class Agent extends LoopDetector {
     return (await this.getConversationState(tabId, mode)).conversationId;
   }
 
+  async forkConversation(sourceTabId, forkTabId) {
+    const sourceId = Number(sourceTabId);
+    const forkId = Number(forkTabId);
+    if (!Number.isFinite(sourceId) || !Number.isFinite(forkId) || sourceId === forkId) {
+      throw new Error('Invalid conversation fork');
+    }
+    if (this._runningTabs.has(forkId)) throw new Error('Fork conversation is already running');
+
+    await this._hydrate(sourceId);
+    const sourceMessages = this.conversations.get(sourceId) || [];
+    const messages = sourceMessages.length
+      ? JSON.parse(JSON.stringify(sourceMessages))
+      : [{ role: 'system', content: this._buildSystemPrompt('ask', forkId) }];
+    if (messages[0]?.role === 'system') {
+      messages[0].content = this._buildSystemPrompt('ask', forkId);
+    } else {
+      messages.unshift({ role: 'system', content: this._buildSystemPrompt('ask', forkId) });
+    }
+
+    // A fork inherits only durable conversation history. Page state, pending
+    // plans, workflow drafts, and task progress belong exclusively to its source.
+    this.conversations.set(forkId, messages);
+    this.conversationModes.set(forkId, 'ask');
+    this.conversationIds.set(forkId, `conv_${forkId}_${Date.now()}_${secureRandomBase36Token(12)}`);
+    this._latestWorkflowDrafts.delete(forkId);
+    this.selectionGroundingScopes.delete(forkId);
+    this.selectionGroundingRestorationPendingTabs.delete(forkId);
+    this.progressLedgers.delete(forkId);
+    this.progressSessions.delete(forkId);
+    this.submittedRunRequestIds.delete(forkId);
+    this._continuationResponseLanguagePolicies.delete(forkId);
+    this._clarificationAuthorizationGuards.delete(forkId);
+    this.hydratedTabs.add(forkId);
+    await this._persistNow(forkId);
+    return { conversationId: this.conversationIds.get(forkId) };
+  }
+
   /**
    * Snapshot the effective runtime settings for a run. Anything we cannot
    * observe is omitted rather than guessed: an absent field reads as "unknown"
