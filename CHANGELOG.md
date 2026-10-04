@@ -4,6 +4,17 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [38.0.14] - 2026-10-04
+
+### Changed
+- Fix /btw fork orphaned tools, reload reset, and prompt loss
+- docs: add 38.1.0 changelog
+- Fork /btw conversations
+- Fix /btw window coordination
+- Fix /btw prompt forwarding and handoff recovery
+- Add /btw side conversation command
+- feat(memory): add opt-in MemCode OAuth recall
+
 ## [38.1.0] - 2026-10-04
 
 ### Added
