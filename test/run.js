@@ -29107,7 +29107,9 @@ test('getToolsForMode: mode/tier redesign exposes the intended normal and Dev to
     const researchOptions = { researchEscalationEnabled: true };
     assert.equal(getTools('act', { tier: 'compact', ...researchOptions }).length, 25, `[${label}] Compact should expose 25 tools after tab-tool removal`);
     assert.equal(getTools('act', { tier: 'mid', ...researchOptions }).length, 48, `[${label}] Mid should expose 48 tools including CAPTCHA discovery and answer application`);
-    assert.equal(getTools('act', researchOptions).length, label === 'chrome' ? 54 : 53, `[${label}] Full tool count should include the chat workflow tools`);
+    assert.equal(getTools('act', researchOptions).length, label === 'chrome' ? 55 : 54, `[${label}] Full tool count should include opt-in MemCode recall and chat workflow tools`);
+    assert.equal(ask.includes('recall_memcode'), true, `[${label}] Ask can read connected MemCode memories`);
+    assert.equal(compact.includes('recall_memcode'), false, `[${label}] Compact does not expose remote recall`);
     assert.equal(compact.includes('research_url'), false, `[${label}] Compact must not gain research_url as a tab-tool replacement`);
 
     assert.equal(ask.includes('download_resource_from_page'), false, `[${label}] ask must not expose download_resource_from_page`);

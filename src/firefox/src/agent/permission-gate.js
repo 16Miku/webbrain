@@ -56,6 +56,7 @@ export const CAPABILITY_LABEL = {
  * tool is classified as gated, untrusted-read, or explicitly known-safe.
  */
 export const UNTRUSTED_CONTENT_TOOLS = new Set([
+  'recall_memcode',
   // Discovery can recover a paid answer; solver output and callback failures
   // also contain external data, even when the tool otherwise reads a catalog.
   'get_captcha_capabilities',
@@ -385,6 +386,7 @@ export function isNetworkMutation(name, args) {
 // gated — adding a new state-changing tool without listing it would silently
 // bypass the gate, so keep this exhaustive.
 const TOOL_CAPABILITY = {
+  recall_memcode: Capability.NETWORK,
   navigate: Capability.NAVIGATE,
   // This read helper temporarily walks Gmail /pN routes before restoring the
   // exact starting URL, so it needs the same site-scoped navigation grant.
@@ -558,6 +560,7 @@ function resolveHostAgainst(url, base) {
  */
 export function hostForCapability(capability, args, currentUrlOrHost, toolName) {
   args = args || {};
+  if (toolName === 'recall_memcode') return 'memory.memcode.in';
   if (toolName === 'apply_captcha_solution') {
     return normalizeHost(args.frameUrl);
   }
