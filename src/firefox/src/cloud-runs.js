@@ -583,6 +583,7 @@ function compactCloudRunForPersistence(run) {
     workflowId: run?.workflowId || null,
     traceRunId: run?.traceRunId || null,
     parentRunId: run?.parentRunId || null,
+    conversationKey: run?.conversationKey || null,
     mode: run?.mode || 'act',
     captchaDiagnostics: run?.captchaDiagnostics || null,
     tabId: run?.tabId,
@@ -699,6 +700,7 @@ export function createCloudRunController({
   const api = chromeApi;
   const runs = new Map();
   const startingTabs = new Set();
+  const startingConversations = new Set();
   let hydratePromise = null;
   let persistQueue = Promise.resolve();
   let persistTimer = null;
@@ -1010,12 +1012,36 @@ export function createCloudRunController({
   }
 
   async function startRun(msg = {}) {
+    const key = msg.conversationKey ?? msg.conversation_key;
+    if (key != null && startingConversations.has(key)) throw cloudRunError('Conversation is already starting.', 409);
+    if (key != null) startingConversations.add(key);
+    try { return await startRunReserved(msg); }
+    finally { if (key != null) startingConversations.delete(key); }
+  }
+
+  async function startRunReserved(msg = {}) {
     await hydrate();
     const suppliedRunId = msg.runId ?? msg.run_id;
     const requestedRunId = suppliedRunId == null ? '' : String(suppliedRunId).trim();
     const parentRunId = String(msg.parentRunId || msg.parent_run_id || '').trim() || null;
     let parentRun = null;
     let requestedTabId = msg.tabId ?? msg.tab_id;
+    const conversationKey = msg.conversationKey ?? msg.conversation_key ?? null;
+    if (conversationKey != null && (
+      typeof conversationKey !== 'string'
+      || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(conversationKey)
+      || parentRunId || requestedTabId != null || msg._workflow
+    )) throw cloudRunError('conversation_key requires a UUID and an independent run without an explicit tab.', 400);
+    if (conversationKey) {
+      // Each caller-owned task/chat gets its own tab in the same browser profile.
+      // A fresh root resets only its own conversation; child messages retain it.
+      const previous = [...runs.values()].filter(run => run.conversationKey === conversationKey)
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+      let tab = previous ? await api.tabs.get(previous.tabId).catch(() => null) : null;
+      if (!isUsableCloudTab(tab)) tab = await api.tabs.create({ url: 'about:blank', active: true });
+      if (tab?.id == null) throw cloudRunError('Could not create a conversation tab.', 500);
+      requestedTabId = tab.id;
+    }
     if (parentRunId) {
       parentRun = runs.get(parentRunId) || null;
       if (parentRun) {
@@ -1066,6 +1092,7 @@ export function createCloudRunController({
     startingTabs.add(tabId);
     try {
       await agent.assertRunStartAllowed?.(tabId, 'cloud', { cloudRun: true });
+      if (conversationKey) await agent.clearConversation(tabId);
       const targetTab = await api.tabs.get(tabId);
       await activateTab(targetTab);
     } catch (error) {
@@ -1075,6 +1102,7 @@ export function createCloudRunController({
     const createdAt = isoNow();
     const run = {
       runId,
+      conversationKey: conversationKey || parentRun?.conversationKey || null,
       status: 'running',
       workflowId: workflow?.id || null,
       traceRunId: null,
