@@ -4667,7 +4667,7 @@ async function init() {
         const tabId = state?.tabId;
         if (tabId != null && tabId === currentTabId) {
           try {
-            const html = await loadTabChat(tabId);
+            const html = await loadTabChat(tabId, { waitForHandoff: true });
             if (html && html !== TAB_CHAT_LOAD_FAILED) {
               messagesEl.innerHTML = html;
               rebindRestoredMessageControls();
@@ -14194,6 +14194,12 @@ async function openBtwWindow(tabId, prompt = '') {
       const win = await browser.windows.get(existing.windowId);
       if (win) {
         await browser.windows.update(win.id, { focused: true });
+        if (prompt && Number(existing.tabId) === Number(tabId)) {
+          const target = win.tabs?.[0];
+          if (target?.id != null) {
+            await browser.tabs.sendMessage(target.id, { action: 'btw_prompt', prompt }).catch(() => {});
+          }
+        }
         return;
       }
     } catch {}
@@ -14208,6 +14214,15 @@ async function openBtwWindow(tabId, prompt = '') {
   });
   await browser.storage.session.set({ [BTW_WINDOW_KEY]: { windowId: win.id, tabId } });
 }
+
+browser.runtime.onMessage.addListener((msg) => {
+  if (!isBtwWindow || msg?.action !== 'btw_prompt') return;
+  const prompt = String(msg?.prompt || '');
+  if (!prompt || !inputEl) return;
+  inputEl.value = prompt;
+  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  void sendMessage().catch(() => {});
+});
 
 if (expandBtn) {
   if (isStandaloneWindow) {
