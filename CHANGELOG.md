@@ -4,6 +4,20 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [38.1.0] - 2026-10-04
+
+### Added
+- Added `/btw` side conversations, including prompt forwarding, handoff recovery, independent window coordination, and the ability to fork a conversation.
+- Added opt-in Cloud Bridge browser registration and approval, with documented security controls and Firefox bridge support.
+- Added OpenRouter capability overrides for native tool use and vision, including support for the auto-only Muse Spark tool-choice mode.
+- Added opt-in MemCode OAuth recall.
+
+### Changed
+- Isolated keyed Cloud conversations and reset task roots independently to prevent cross-conversation state leakage.
+- Kept Muse Spark classifier reasoning within output budgets.
+- Updated browser billing recovery notices and their regression coverage.
+- Added full-page Firefox screenshots through BiDi and refreshed the Chrome and Firefox store listing drafts.
+
 ## [38.0.13] - 2026-10-01
 
 ### Changed
