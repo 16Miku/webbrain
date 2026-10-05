@@ -151,7 +151,7 @@ export default {
   'ob.btn.done': 'Почати',
   'ob.btn.skip': 'Пропустити зараз',
   'ob.btn.start': 'Почати',
-  'ob.cloud.body': 'WebBrain Compass готовий з безкоштовним денним лімітом. Вибрані розмови Compass можуть бути збережені та використані для покращення WebBrain, поки Допомога в покращенні WebBrain увімкнена за замовчуванням. Ви можете вимкнути це в Налаштування → Загальне.',
+  'ob.cloud.body': 'WebBrain Compass готовий з безкоштовним тижневим лімітом. Вибрані розмови Compass можуть бути збережені та використані для покращення WebBrain, поки Допомога в покращенні WebBrain увімкнена за замовчуванням. Ви можете вимкнути це в Налаштування → Загальне.',
   'ob.cloud.change': 'Змінити',
   'ob.cloud.using': 'Використовується WebBrain Compass.',
 
@@ -225,7 +225,7 @@ export default {
   'sp.persistence.unavailable': 'Не вдалося зберегти дані відновлення. Поточне завдання може продовжитися, але після розриву з’єднання дії не повторюватимуться. Спробуйте знову вручну.',
 
   'sp.error_prefix': 'Помилка: {msg}',
-  'sp.subscribe.allowance_used': 'Безкоштовний денний ліміт WebBrain Compass вичерпано.',
+  'sp.subscribe.allowance_used': 'Безкоштовний тижневий ліміт WebBrain Compass вичерпано.',
   'sp.subscribe.btn': 'Оформити підписку',
   'sp.subscribe.upgrade': 'Перейти на Plus',
   "sp.subscribe.resume_payment": "Спосіб оплати оновлено — повторити",
@@ -363,7 +363,7 @@ export default {
 
   'st.providers.info.html': '<strong>Швидкий старт із llama.cpp:</strong><br>Запустіть <code>llama-server -m your-model.gguf --port 8080</code>, щоб підняти локальний сервер.<br>API-ключ не потрібен — усе працює на вашій машині.',
   'st.providers.save': 'Зберегти',
-  'st.providers.webbrain_note.body': 'Безкоштовне щоденне використання WebBrain Compass включено. Запити проходять через api.webbrain.one; за замовчуванням ми записуємо метадані для квоти та налагодження, а не текст запитів, вміст сторінок, знімки екрана чи відповіді моделі. {privacyLink}. Для більшого обсягу оформіть підписку на {subscribeLink}. Керуйте оплатою на {accountLink}.',
+  'st.providers.webbrain_note.body': 'Безкоштовне щотижневе використання WebBrain Compass включено. Запити проходять через api.webbrain.one; за замовчуванням ми записуємо метадані для квоти та налагодження, а не текст запитів, вміст сторінок, знімки екрана чи відповіді моделі. {privacyLink}. Для більшого обсягу оформіть підписку на {subscribeLink}. Керуйте оплатою на {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Політика конфіденційності',
   'st.providers.test': 'Перевірити з\'єднання',
   'st.providers.duplicate': 'Дублювати',

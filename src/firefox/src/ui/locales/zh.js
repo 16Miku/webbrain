@@ -151,7 +151,7 @@ export default {
   'ob.btn.done': '开始使用',
   'ob.btn.skip': '暂时跳过',
   'ob.btn.start': '开始',
-  'ob.cloud.body': 'WebBrain Compass 已准备好每日免费配额。选定的 Compass 对话可能会被保留并用于改进 WebBrain，而帮助改进 WebBrain 默认情况下处于开启状态。您可以在设置 → 常规中将其关闭。',
+  'ob.cloud.body': 'WebBrain Compass 已准备好每周免费配额。选定的 Compass 对话可能会被保留并用于改进 WebBrain，而帮助改进 WebBrain 默认情况下处于开启状态。您可以在设置 → 常规中将其关闭。',
   'ob.cloud.change': '更改',
   'ob.cloud.using': '正在使用 WebBrain Compass。',
 
@@ -225,7 +225,7 @@ export default {
   'sp.persistence.unavailable': '无法保存恢复数据。当前任务可以继续，但连接中断后不会重放任何操作；请手动重试。',
 
   'sp.error_prefix': '错误：{msg}',
-  'sp.subscribe.allowance_used': '今日免费的 WebBrain Compass 额度已用完。',
+  'sp.subscribe.allowance_used': '本周免费的 WebBrain Compass 额度已用完。',
   'sp.subscribe.btn': '订阅',
   'sp.subscribe.upgrade': '升级到 Plus',
   "sp.subscribe.resume_payment": "付款方式已更新 — 重试",
@@ -363,7 +363,7 @@ export default {
 
   'st.providers.info.html': '<strong>llama.cpp 快速上手：</strong><br>运行 <code>llama-server -m 你的模型.gguf --port 8080</code> 启动本地服务器。<br>无需 API 密钥 — 完全在你的机器上运行。',
   'st.providers.save': '保存',
-  'st.providers.webbrain_note.body': '免费的每日 WebBrain Compass 用量已包含在内。请求通过 api.webbrain.one 处理；默认情况下，我们仅记录用于配额和调试的元数据，不记录提示文本、页面内容、屏幕截图或模型响应。{privacyLink}。如需更多用量，请在 {subscribeLink} 订阅。在 {accountLink} 管理账单。',
+  'st.providers.webbrain_note.body': '免费的每周 WebBrain Compass 用量已包含在内。请求通过 api.webbrain.one 处理；默认情况下，我们仅记录用于配额和调试的元数据，不记录提示文本、页面内容、屏幕截图或模型响应。{privacyLink}。如需更多用量，请在 {subscribeLink} 订阅。在 {accountLink} 管理账单。',
   'st.providers.webbrain_note.privacy_link': '隐私政策',
   'st.providers.test': '测试连接',
   'st.providers.duplicate': '复制',

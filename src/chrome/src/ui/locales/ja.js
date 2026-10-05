@@ -151,7 +151,7 @@ export default {
   'ob.btn.done': '開始',
   'ob.btn.skip': '今はスキップ',
   'ob.btn.start': '開始',
-  'ob.cloud.body': 'WebBrain Compass は1日あたりの無料割り当てで準備できています。選択した Compass 会話は、WebBrain の改善を支援がデフォルトでオンになっている間、WebBrain の改善のために保存および使用される可能性があります。設定 → 一般でオフにできます。',
+  'ob.cloud.body': 'WebBrain Compass は1週間あたりの無料割り当てで準備できています。選択した Compass 会話は、WebBrain の改善を支援がデフォルトでオンになっている間、WebBrain の改善のために保存および使用される可能性があります。設定 → 一般でオフにできます。',
   'ob.cloud.change': '変更',
   'ob.cloud.using': 'WebBrain Compass を使用しています。',
 
@@ -225,7 +225,7 @@ export default {
   'sp.persistence.unavailable': '復旧データを保存できません。実行中のタスクは続行できますが、接続が切れた後に操作を再実行することはありません。手動で再試行してください。',
 
   'sp.error_prefix': 'エラー: {msg}',
-  'sp.subscribe.allowance_used': 'WebBrain Compass の無料の1日あたりの利用枠を使い切りました。',
+  'sp.subscribe.allowance_used': 'WebBrain Compass の無料の1週間あたりの利用枠を使い切りました。',
   'sp.subscribe.btn': '購読する',
   'sp.subscribe.upgrade': 'Plus にアップグレード',
   "sp.subscribe.resume_payment": "支払い方法を更新しました — 再試行",
@@ -371,7 +371,7 @@ export default {
 
   'st.providers.info.html': '<strong>llama.cpp を始める：</strong><br><code>llama-server -m your-model.gguf --port 8080</code> を実行してローカルサーバーを起動します。<br>API キーは不要 — 完全にあなたのマシン上で動きます。',
   'st.providers.save': '保存',
-  'st.providers.webbrain_note.body': '無料の毎日の WebBrain Compass 利用が含まれています。リクエストは api.webbrain.one を経由します。デフォルトでは、割り当てとデバッグのためにメタデータを記録し、プロンプトテキスト、ページの内容、スクリーンショット、モデルの応答は記録しません。{privacyLink}。さらに利用するには {subscribeLink} で登録してください。請求は {accountLink} で管理できます。',
+  'st.providers.webbrain_note.body': '無料の毎週の WebBrain Compass 利用が含まれています。リクエストは api.webbrain.one を経由します。デフォルトでは、割り当てとデバッグのためにメタデータを記録し、プロンプトテキスト、ページの内容、スクリーンショット、モデルの応答は記録しません。{privacyLink}。さらに利用するには {subscribeLink} で登録してください。請求は {accountLink} で管理できます。',
   'st.providers.webbrain_note.privacy_link': 'プライバシーポリシー',
   'st.providers.test': '接続テスト',
   'st.providers.duplicate': '複製',

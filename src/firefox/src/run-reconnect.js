@@ -33,7 +33,8 @@ function runResponseFromSnapshot(snapshot, {
   // a second generic error card for the same failed snapshot.
   if (snapshot?.status === 'failed'
       && !updates.some(update => update.type === 'error')
-      && !hasPlannerRequestFailure(updates)) {
+      && !hasPlannerRequestFailure(updates)
+      && !snapshot?.quota) {
     updates.push({
       type: 'error',
       data: {
@@ -45,6 +46,7 @@ function runResponseFromSnapshot(snapshot, {
   }
   return {
     content: String(snapshot?.finalContent || ''),
+    quota: snapshot?.quota || null,
     updates,
     requestId: snapshot?.requestId || null,
     runId: snapshot?.runId || null,

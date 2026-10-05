@@ -2142,7 +2142,7 @@ function isPersistenceDegradedRunUpdate(update) {
 
 function runUpdatesSucceeded(updates = []) {
   return !updates.some(update => (
-    update?.type === 'error'
+    update?.type === 'error' || update?.type === 'quota'
     || isClarificationRequiredRunUpdate(update)
     || isPersistenceDegradedRunUpdate(update)
     || isPlannerRequestFailureUpdate(update)
@@ -2155,7 +2155,8 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   if (/stopped by user|aborted by user/i.test(text)) return 'stopped';
   if (/before executing requested tool calls/i.test(text)) return 'cancelled';
   if (updates.some(update => update?.type === 'error'
-    || isPlannerRequestFailureUpdate(update) || isPersistenceDegradedRunUpdate(update))) return 'failed';
+    || isPlannerRequestFailureUpdate(update) || isPersistenceDegradedRunUpdate(update)
+    || update?.type === 'quota')) return 'failed';
   if (updates.some(isClarificationRequiredRunUpdate)) return 'clarification_required';
   return 'completed';
 }
@@ -2179,7 +2180,7 @@ const BADGE_COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this ses
 function askCompletionSucceededForBadge(result, updates = [], error = null) {
   if (error) return false;
   if (updates.some(update => (
-    update?.type === 'error'
+    update?.type === 'error' || update?.type === 'quota'
     || update?.type === 'attachment_rejected'
     || update?.type === 'max_steps_reached'
     || update?.error
@@ -2431,6 +2432,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
     data: {
       status: snapshot.status || 'completed',
       finalContent: snapshot.finalContent || '',
+      quota: snapshot.quota || null,
       endedAt: snapshot.endedAt || Date.now(),
       submittedTurnDurable,
       attachmentDeliveryState,
@@ -2459,7 +2461,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 browser.runtime.onMessage.addListener((msg, sender) => {
   if (msg.target !== 'background') return;
 
-  return handleMessage(msg, sender).catch(e => ({ error: e.message }));
+  return handleMessage(msg, sender).catch(e => ({ error: e.message, quota: e.quota }));
 });
 
 async function handleMessage(msg, sender) {

@@ -568,7 +568,7 @@ export default {
   'ob.btn.done': "শুরু করুন",
   'ob.btn.skip': "আপাতত এড়িয়ে যান",
   'ob.btn.start': 'শুরু',
-  'ob.cloud.body': 'WebBrain Compass একটি বিনামূল্যের দৈনিক ভাতা সহ প্রস্তুত৷ নির্বাচিত Compass কথোপকথনগুলি ধরে রাখা যেতে পারে এবং WebBrain উন্নত করতে ব্যবহার করা যেতে পারে যখন Help Improve WebBrain ডিফল্টরূপে চালু থাকে৷ আপনি এটি Settings → General এ বন্ধ করতে পারেন৷',
+  'ob.cloud.body': 'WebBrain Compass একটি বিনামূল্যের সাপ্তাহিক ভাতা সহ প্রস্তুত৷ নির্বাচিত Compass কথোপকথনগুলি ধরে রাখা যেতে পারে এবং WebBrain উন্নত করতে ব্যবহার করা যেতে পারে যখন Help Improve WebBrain ডিফল্টরূপে চালু থাকে৷ আপনি এটি Settings → General এ বন্ধ করতে পারেন৷',
   'ob.cloud.change': 'পরিবর্তন',
   'ob.cloud.using': 'WebBrain Compass ব্যবহার করছে৷',
 

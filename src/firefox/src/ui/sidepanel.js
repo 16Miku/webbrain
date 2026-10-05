@@ -5,6 +5,7 @@ import { saveScreenshot } from './screenshot-download.js';
  * Verbose mode: always-open tool calls with arguments and results.
  */
 
+import { createQuotaController } from './compass-quota.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
@@ -1641,7 +1642,7 @@ function updatesContainSuccessfulDone(updates) {
 
 function updatesContainStoreReviewFailure(updates) {
   return Array.isArray(updates) && updates.some((u) => (
-    u?.type === 'error' ||
+    u?.type === 'error' || u?.type === 'quota' ||
     u?.type === 'attachment_rejected' ||
     u?.type === 'max_steps_reached' ||
     u?.error ||
@@ -1651,7 +1652,7 @@ function updatesContainStoreReviewFailure(updates) {
 
 function isSuccessfulAskCompletion(mode, response) {
   if (mode !== 'ask') return false;
-  if (!response || response.success === false || response.ok === false) return false;
+  if (!response || response.quota || response.success === false || response.ok === false) return false;
   if (updatesContainStoreReviewFailure(response.updates)) return false;
   const content = typeof response.content === 'string' ? response.content.trim() : '';
   return !!content && !parseSubscribeError(content) && !parseCostAllowanceError(content);
@@ -3263,7 +3264,7 @@ async function scheduledJobAction(action, jobId) {
     await refreshScheduledJobs({ tabId });
   } catch (e) {
     if (currentTabId === tabId) {
-      addMessage('error', t('sp.error_prefix', { msg: e.message }));
+      addMessage('error', t('sp.error_prefix', { msg: e.message }), { quota: e.quota });
     }
   }
 }
@@ -5088,6 +5089,7 @@ async function adoptRestoredRunState(tabId, state) {
       probeFirst: true,
       requireDurableSubmittedTurn: runUi.kind !== 'continue',
     });
+    if (sameTabId(currentTabId, tabId)) renderReturnedQuota(assistantEl, res);
     const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
     if (returnedPlannerFailure
         && sameTabId(currentTabId, tabId)
@@ -5117,7 +5119,7 @@ async function adoptRestoredRunState(tabId, state) {
         && !isTabAbortRequested(tabId)
         && !clearedConversationRunRequestIds.has(requestId)
         && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
-      renderAgentErrorUpdate({ message: error.message }, tabId, requestId);
+      renderAgentErrorUpdate({ message: error.message, quota: error.quota }, tabId, requestId);
     }
   } finally {
     adoptedRunRecoveryRequestIds.delete(requestId);
@@ -5292,8 +5294,9 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
     setPlanReviewAwaiting(numericTabId, false);
     setTabProcessing(numericTabId, false);
     setTabAbortRequested(numericTabId, false);
-    const restoredAllowanceCardMissing = !!parseCostAllowanceError(runUi?.finalContent)
-      && !currentAssistantEl?.querySelector('.cost-allowance-error');
+    const restoredAllowanceCardMissing = (!!parseCostAllowanceError(runUi?.finalContent)
+      && !currentAssistantEl?.querySelector('.cost-allowance-error'))
+      || (runUi?.quota?.code === 'webbrain_cloud_free_tier_exceeded' && !currentAssistantEl?.querySelector('.compass-quota'));
     if (runUi && ['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(runUi.status)
         && (Number(currentAssistantEl?.dataset.lastRenderedSeq || 0) < Number(runUi.seq || 0)
           || restoredAllowanceCardMissing)) {
@@ -5303,6 +5306,7 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
         data: {
           status: runUi.status,
           finalContent: runUi.finalContent,
+          quota: runUi.quota || null,
           submittedTurnDurable: state?.submittedTurnDurable === true,
           attachmentDeliveryState: runUi.attachmentDeliveryState || '',
           endedAt: runUi.endedAt,
@@ -6592,7 +6596,57 @@ function resumeAfterSubscription(btn) {
   });
 }
 
+const quotaController = createQuotaController({
+  t, locale: getLocale,
+  async request(path, body) {
+    const result = await sendToBackground('get_providers');
+    const device = result?.providers?.webbrain_cloud?.deviceGuid;
+    if (!device) throw new Error(t('quota.unavailable'));
+    const response = await fetch('https://api.webbrain.one' + path, {
+      method: body ? 'POST' : 'GET', credentials: 'omit', cache: 'no-store',
+      headers: { 'X-WebBrain-Device-Id': device, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error?.message || t('quota.unavailable'));
+    return data;
+  },
+  openUrl: openSubscribeUrl,
+  providers: async () => Array.from(providerSelect.options).filter(option => option.value && option.value !== MORE_PROVIDERS_OPTION_VALUE)
+    .map(option => ({ id: option.value, label: option.textContent })),
+  async switchProvider(id) {
+    if (isProcessing) throw new Error(t('sp.retry.busy'));
+    await setActiveChatProvider(id);
+    selectedProviderId = id; providerSelect.value = id; syncProviderPickerButton();
+    const result = await testConnection({ providerId: id });
+    if (!result?.ok) throw new Error(result?.error || t('sp.status.failed'));
+  },
+  openSettings: openProvidersSettingsPage,
+  continueTask(btn, context) {
+    if (context.retry) {
+      const assistant = btn.closest('.message');
+      const payload = retryPayloadForRunAssistant(assistant) || activeRetryPayloadForRequest(currentTabId, assistant?.dataset.runRequestId);
+      if (!payload) { showComposerToast(t('sp.retry.attachments_unavailable')); return; }
+      const proxy = document.createElement('button');
+      if (configureRetryButton(proxy, payload)) proxy.click();
+    } else resumeAfterSubscription(btn);
+  },
+  persist: schedulePersist,
+});
+window.addEventListener('focus', () => { void quotaController.refreshAll(); });
+document.addEventListener('wb-locale-changed', () => quotaController.restore(messagesEl, true));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void quotaController.refreshAll(); });
+
+function renderReturnedQuota(assistant, response) {
+  const text = assistant?.querySelector('.message-text');
+  const quota = response?.quota || [...(response?.updates || [])].reverse().find(update => update?.data?.quota)?.data.quota;
+  if (!text || !quota) return false;
+  return renderSubscribeError(text, response.content || '', assistant.dataset.runMode, quota,
+    Object.hasOwn(response, 'submittedTurnDurable') ? { submittedTurnDurable: response.submittedTurnDurable } : {});
+}
+
 function rebindSubscribeButtons() {
+  quotaController.restore(messagesEl);
   document.querySelectorAll('.subscribe-btn').forEach(btn => {
     if (btn.dataset.bound) return;
     btn.dataset.bound = 'true';
@@ -6888,6 +6942,7 @@ function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', opti
   const msgEl = addMessage('error', t('sp.error_prefix', { msg: message }), {
     retryPayload: isTabAbortRequested(tabId) ? null : active.retryPayload,
     subscribeResumeMode: active.retryPayload?.mode,
+    quota: data?.quota,
     costAllowanceResume: {
       submittedTurnDurable: options.submittedTurnDurable,
       retryPayload: active.retryPayload,
@@ -7359,10 +7414,12 @@ async function testConnection(options = {}) {
     statusDot.title = res.ok
       ? t('sp.status.connected', { model: res.model || providerId })
       : t('sp.status.error', { msg: res.error });
-  } catch {
+    return res;
+  } catch (error) {
     if (requestId !== providerTestRequestId || providerSelect.value !== providerId) return;
     statusDot.className = 'status-dot offline';
     statusDot.title = t('sp.status.failed');
+    return { ok: false, error: error?.message || t('sp.status.failed') };
   }
 }
 
@@ -8917,6 +8974,7 @@ async function sendMessage(extraChatParams = {}) {
     accepted = true;
     completedSuccessfully = res?.successfulDone === true || updatesContainSuccessfulDone(res?.updates);
     promptEligibleCompletion = completedSuccessfully || isSuccessfulAskCompletion(modeForSend, res);
+    if (sameTabId(currentTabId, tabId)) renderReturnedQuota(assistantEl, res);
     const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
     if (returnedPlannerFailure
         && renderToCurrentTab
@@ -9059,7 +9117,7 @@ async function sendMessage(extraChatParams = {}) {
           && currentTabId === tabId
           && !isTabAbortRequested(tabId)
           && !clearedConversationRunRequestIds.has(requestId)) {
-        renderAgentErrorUpdate({ message: e.message }, tabId, requestId);
+        renderAgentErrorUpdate({ message: e.message, quota: e.quota }, tabId, requestId);
       }
     }
   } finally {
@@ -9501,6 +9559,13 @@ function handleAgentUpdateMessage(msg) {
       }
       break;
 
+    case 'quota': {
+      const target = eventAssistantEl || currentAssistantEl;
+      const text = target?.querySelector('.message-text');
+      if (text) renderSubscribeError(text, '', '', data.quota);
+      break;
+    }
+
     case 'error':
       hideActivity();
       if (currentAssistantEl) markLastStepFailed();
@@ -9558,6 +9623,11 @@ function handleAgentUpdateMessage(msg) {
       break;
 
     case 'run_complete':
+      if (data?.quota) {
+        const target = eventAssistantEl || currentAssistantEl;
+        const text = target?.querySelector('.message-text');
+        if (text) renderSubscribeError(text, data.finalContent, '', data.quota, { submittedTurnDurable: data.submittedTurnDurable });
+      }
       showActivity(t('tool.done'));
       setMessageCreatedAt(eventAssistantEl || currentAssistantEl, data?.endedAt, { replace: true });
       if (currentAssistantEl) finalizeSteps(currentAssistantEl);
@@ -11153,8 +11223,23 @@ function openSubscribeUrl(url) {
 // caller can skip its normal markdown rendering. The URL is stashed on the
 // button's dataset so it survives chat-history restore (messagesEl.innerHTML),
 // where the click closure is lost and rebindSubscribeButtons re-attaches it.
-function renderSubscribeError(textEl, content, resumeMode = '') {
+function renderSubscribeError(textEl, content, resumeMode = '', quota = null, continuation = {}) {
   const parsed = parseSubscribeError(content);
+  let metadata = quota;
+  if (!metadata && textEl.dataset?.quota) {
+    try { metadata = JSON.parse(textEl.dataset.quota); } catch { /* old history */ }
+  }
+  if (!metadata && parsed?.action === 'subscribe') metadata = { code: 'webbrain_cloud_free_tier_exceeded', subscribe_url: parsed.url, usage: {} };
+  if (metadata?.code === 'webbrain_cloud_free_tier_exceeded' && typeof quotaController !== 'undefined') {
+    let storedContext = {};
+    try { storedContext = JSON.parse(textEl.dataset.quotaContext || '{}'); } catch {}
+    return quotaController.mount(textEl, metadata, {
+      mode: resumeMode || storedContext.mode || textEl.closest('.message')?.dataset.runMode || agentMode,
+      foreground: textEl.closest('.message')?.dataset.retryForeground === 'true',
+      retry: typeof continuation.submittedTurnDurable === 'boolean' ? continuation.submittedTurnDurable === false : storedContext.retry === true,
+    });
+  }
+  if (metadata?.code && metadata.code !== 'webbrain_cloud_free_tier_exceeded' && typeof quotaController !== 'undefined') quotaController.forget(textEl);
   if (!parsed) return false;
 
   textEl.replaceChildren();
@@ -11840,7 +11925,7 @@ function addMessage(role, content, options = {}) {
     options.subscribeResumeMode,
     options.costAllowanceResume,
   )
-      && !renderSubscribeError(textEl, content, options.subscribeResumeMode)) {
+      && !renderSubscribeError(textEl, content, options.subscribeResumeMode, options.quota, options.costAllowanceResume)) {
     textEl.innerHTML = content ? formatMarkdown(content, { recoverNestedMarkdown: role === 'assistant' }) : '';
   }
 
@@ -12043,6 +12128,7 @@ async function continueAgent(options = {}) {
       mode: modeForSend,
       foreground: foregroundForSend,
     });
+    if (sameTabId(currentTabId, tabId)) renderReturnedQuota(assistantEl, res);
     applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
       chatHistoryConversationIdsByTab.set(tabId, res.conversationId);
