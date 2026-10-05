@@ -1,4 +1,6 @@
 import { createRequestDeadline, readResponseText, responseAbortError } from './response-body.js';
+import { isMastodonPublicMediaUrl } from '../agent/public-media-url.js';
+import { isKnownMastodonHost } from '../agent/adapters.js';
 import { firefoxRestrictedDomainFailure } from '../firefox-restricted-domains.js';
 import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
 
@@ -370,20 +372,68 @@ function providerError(status, data, rawText) {
   return typeof detail === 'string' ? detail.slice(0, 1000) : JSON.stringify(detail).slice(0, 1000);
 }
 
-function inputUrlAllowed(rawUrl, rules = []) {
-  if (!rules.length) return true;
+// Unknown instances must identify their software independently of the status
+// path. Probe only public metadata on that origin, never the supplied post URL.
+async function verifyMastodonInstance(origin) {
+  const deadline = createRequestDeadline({ timeoutMs: 10000 });
+  const readJson = async (url) => {
+    const response = await fetch(url, {
+      method: 'GET', headers: { Accept: 'application/json' },
+      credentials: 'omit', redirect: 'manual', signal: deadline.signal,
+    });
+    if (!response.ok || response.type === 'opaqueredirect'
+      || (response.url && response.url !== url)) return null;
+    const body = await readResponseText(response, {
+      signal: deadline.signal, maxBytes: 65536, idleTimeoutMs: 10000,
+    });
+    return body.exceeded ? null : JSON.parse(body.text);
+  };
+  try {
+    const discovery = await readJson(`${origin}/.well-known/nodeinfo`);
+    const links = Array.isArray(discovery?.links) ? discovery.links : [];
+    const link = ['2.1', '2.0'].map(version => links.find(item =>
+      item?.rel === `http://nodeinfo.diaspora.software/ns/schema/${version}`)).find(Boolean);
+    if (!link || typeof link.href !== 'string') return false;
+    const metadataUrl = new URL(link.href);
+    if (metadataUrl.origin !== origin || metadataUrl.username || metadataUrl.password) return false;
+    const metadata = await readJson(metadataUrl.href);
+    return metadata?.software?.name === 'mastodon';
+  } catch (_) {
+    return false;
+  } finally {
+    deadline.dispose();
+  }
+}
+
+async function allowedSkillInputUrl(rawUrl, rules = []) {
+  if (!rules.length) return rawUrl;
   let u;
-  try { u = new URL(rawUrl); } catch (_) { return false; }
+  try { u = new URL(rawUrl); } catch (_) { return null; }
   const host = u.hostname.toLowerCase();
   const path = u.pathname || '/';
-  return rules.some((rule) => {
+  for (const rule of rules) {
+    if (rule.siteAdapter === 'mastodon') {
+      // URL already normalizes Unicode domains to IDNA. Check DNS labels rather
+      // than requiring an alphabetic TLD, which would reject punycoded TLDs.
+      const labels = host.split('.');
+      const publicDomain = host.length <= 253 && labels.length > 1
+        && labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))
+        && !/^\d+$/.test(labels.at(-1))
+        && !/\.(?:local|internal|localhost|lan|home|corp)$/i.test(host);
+      if (u.protocol !== 'https:' || u.username || u.password || u.port
+        || !publicDomain || !validateFetchUrl(rawUrl).ok || !isMastodonPublicMediaUrl(rawUrl)) continue;
+      if (isKnownMastodonHost(host) || await verifyMastodonInstance(u.origin)) {
+        // A public status needs only its path; never forward query tokens.
+        return `${u.origin}${path}`;
+      }
+      continue;
+    }
     const ruleHost = String(rule.host || '').toLowerCase();
-    if (!ruleHost) return false;
-    const hostMatches = host === ruleHost || host.endsWith(`.${ruleHost}`);
-    if (!hostMatches) return false;
+    if (!ruleHost || !(host === ruleHost || host.endsWith(`.${ruleHost}`))) continue;
     const paths = Array.isArray(rule.paths) && rule.paths.length ? rule.paths : ['/'];
-    return paths.some((prefix) => path.startsWith(String(prefix || '/')));
-  });
+    if (paths.some(prefix => path.startsWith(String(prefix || '/')))) return rawUrl;
+  }
+  return null;
 }
 
 function applySkillResponseLimits(value, limits = {}) {
@@ -1220,8 +1270,12 @@ export async function executeHttpSkillTool(tool, args = {}, ctx = {}) {
   if (tool.activeTabUrlArg && !payload[tool.activeTabUrlArg]) {
     payload[tool.activeTabUrlArg] = await currentTabUrl(ctx.tabId);
   }
-  if (tool.inputUrlArg && payload[tool.inputUrlArg] && !inputUrlAllowed(payload[tool.inputUrlArg], tool.allowedInputUrls || [])) {
-    return { success: false, error: `Skill tool input URL is outside its declared allowlist: ${tool.inputUrlArg}`, provider: endpoint.hostname };
+  if (tool.inputUrlArg && payload[tool.inputUrlArg]) {
+    const allowedUrl = await allowedSkillInputUrl(payload[tool.inputUrlArg], tool.allowedInputUrls || []);
+    if (!allowedUrl) {
+      return { success: false, error: `Skill tool input URL is outside its declared allowlist: ${tool.inputUrlArg}`, provider: endpoint.hostname };
+    }
+    payload[tool.inputUrlArg] = allowedUrl;
   }
 
   if (tool.kind === 'httpDownloadJob') {
