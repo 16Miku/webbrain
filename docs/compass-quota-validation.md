@@ -7,7 +7,7 @@ Both repositories were clean before implementation. No applicable `AGENTS.md` wa
 | Check | Result |
 | --- | --- |
 | Cloud `composer run test:promotions` | Passed accounting/concurrency, write durability, and real HTTP/CLI integration |
-| Cloud weekly usage | Passed, including `$0.375` and legacy usage aliases |
+| Cloud weekly usage | Passed, including the `$0.50` default, configured `$0.375` precision, and legacy usage aliases |
 | Cloud Plus, portal subscription recovery, renewal notices | Passed |
 | Cloud PHP syntax | Passed for service, promotion trait, routes, and both new CLI scripts |
 | Extension `npm run test:compass-quota` | 19 tests passed across Chrome and Firefox |
@@ -55,4 +55,4 @@ Fresh Codex reviews and GitHub checks are recorded on each PR.
 
 Browser screenshots are generated in `%TEMP%/webbrain-compass-review` (override with `QUOTA_UI_OUTPUT`). The latest complete extension log is `%TEMP%/webbrain-compass-review-npm-test.log`; the cloud aggregate log is `%TEMP%/webbrain-cloud-compass-review-check.log`. Unpacked artifacts are `build/chrome` and `build/firefox`.
 
-Local cloud configuration has no `WEEKLY_FREE_USD` process or `.env` override, so the inspected effective value is `0.375`. Production was not inspected or activated. Follow [the rollout checklist](compass-quota-rollout.md): backend compatibility pinned at `0.75`, both extensions, then live-worker override verification and activation at `0.375`. Reassess the actual consumption report after two complete UTC weeks.
+The approved transition changes the default to $0.50 and verifies that a configured $0.375 allowance remains exact. The consumption report compares to the active amount and preserves the $0.375 comparison field. Production deployment uses an explicit `WEEKLY_FREE_USD=0.50` override and verifies it through the live web worker; a later reduction needs a separate decision after client adoption. Follow [the rollout checklist](compass-quota-rollout.md), including writer draining and ledger backup. Reassess actual consumption and adoption after two complete UTC weeks at $0.50.
