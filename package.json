@@ -16,7 +16,7 @@
     "test:attachment-drop": "node test/attachment-drop.mjs",
     "test:workflow-editor": "node --test test/workflow-editor.mjs",
     "test:security": "node test/security/injection-corpus.mjs",
-    "test:cloud-bridge-approval": "node --test test/cloud-bridge-approval.mjs test/cloud-conversation-isolation.mjs",
+    "test:cloud-bridge-approval": "node --test test/cloud-bridge-approval.mjs test/cloud-conversation-isolation.mjs test/cloud-run-outcomes.mjs",
     "test:discord": "node --test test/discord-guard.mjs",
     "test:toolbar-guard": "node test/rich-text-toolbar-guard.mjs",
     "test:pdf-read": "node test/pdf-read.mjs",
