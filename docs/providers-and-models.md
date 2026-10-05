@@ -119,17 +119,17 @@ class BaseLLMProvider {
 
 ### Extended provider catalog
 
-WebBrain also ships 80 disabled-by-default provider cards. Most are sourced
+WebBrain also ships 81 disabled-by-default provider cards. Most are sourced
 from the OpenCode provider catalog snapshot at commit
 `62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
 their official API documentation. Together with the original cards, Settings
-contains **113 built-in providers on Chromium** and **112 on Firefox**; the
+contains **114 built-in providers on Chromium** and **113 on Firefox**; the
 difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs |
 |---|
 | `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `demonroute`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
-| `google-vertex`, `google-vertex-anthropic`, `helicone`, `iflowcn`, `inception`, `inference`, `io-net`, `jiekou`, `kilo`, `kimi-for-coding`, `kuae-cloud-coding-plan`, `llama`, `lucidquery`, `meganova`, `minimax-cn-coding-plan`, `minimax-coding-plan`, `moark`, `modelscope`, `morph` |
+| `freebuff2api`, `google-vertex`, `google-vertex-anthropic`, `helicone`, `iflowcn`, `inception`, `inference`, `io-net`, `jiekou`, `kilo`, `kimi-for-coding`, `kuae-cloud-coding-plan`, `llama`, `lucidquery`, `meganova`, `minimax-cn-coding-plan`, `minimax-coding-plan`, `moark`, `modelscope`, `morph` |
 | `nano-gpt`, `nearai`, `nebius`, `nova`, `novita-ai`, `ollama-cloud`, `opencode`, `opencode-go`, `orcarouter`, `ovhcloud`, `perplexity`, `perplexity-agent`, `poe`, `pollinations`, `privatemode-ai`, `qihang-ai`, `qiniu-ai`, `requesty`, `scaleway`, `siliconflow`, `siliconflow-cn`, `stackit` |
 | `stepfun`, `submodel`, `synthetic`, `tencent-coding-plan`, `upstage`, `v0`, `venice`, `vercel`, `vivgrid`, `vultr`, `wandb`, `xiaomi`, `zai-coding-plan`, `zenmux`, `zhipuai`, `zhipuai-coding-plan` |
 
@@ -147,6 +147,22 @@ The exceptions are:
 Morph and standard Perplexity Sonar are text-only integrations in the agent
 and advertise `supportsTools: false`. New provider cards remain inactive until
 the user saves their credentials and selects the provider.
+
+#### Freebuff2API
+
+[Freebuff2API](https://github.com/Quorinex/Freebuff2API) is a self-hosted,
+OpenAI-compatible proxy. Start the server, then configure the **Freebuff2API
+(Local)** card with its URL (the default is `http://127.0.0.1:8080/v1`) and
+select a model with **Load Models**. Enter a proxy API key only when its
+`API_KEYS` access control is enabled; Freebuff authentication tokens remain on
+the proxy server and are never entered into WebBrain.
+
+#### IO.NET and Synthetic
+
+[IO.NET](https://io.net/docs/guides/intelligence/io-intelligence) and
+[Synthetic](https://synthetic.new/) are built-in OpenAI-compatible cloud
+providers. Add each service's bearer API key in its Settings card, choose a
+model, save, and select the provider.
 
 #### NEAR AI Cloud
 

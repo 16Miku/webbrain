@@ -79,7 +79,7 @@ import {
 const WEBBRAIN_CLOUD_PROVIDER_ID = 'webbrain_cloud';
 const WEBBRAIN_CLOUD_PROVIDER_LABEL = 'WebBrain Compass';
 const DUPLICATE_PROVIDER_SUFFIX = '__duplicate';
-const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth', 'freebuff2api'];
 const WEBBRAIN_CLOUD_CONTEXT_WINDOW = 1000000;
 const WEBBRAIN_CLOUD_LEGACY_CONTEXT_WINDOW = 256000;
 const WEBBRAIN_DEVICE_GUID_KEY = 'webbrainDeviceGuid';
