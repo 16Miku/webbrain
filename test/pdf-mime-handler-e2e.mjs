@@ -157,15 +157,13 @@ async function inspectPdfRouting(context, url, extensionId, waitMs = 2000) {
 // page itself is the signal, and no probe should be issued.
 async function assertHandlerTabSkipsContentTypeProbe(context, settings, extensionId, fixture) {
   const sourceUrl = fixture.opaqueUrl;
-  const page = await context.newPage();
+  // Capture Chrome's tab ID when creating it. A PDF target may be replaced by
+  // the native viewer before Playwright's Page and chrome.tabs snapshots agree.
+  const tabId = await settings.evaluate(async url => (await chrome.tabs.create({ url, active: false })).id, sourceUrl);
+  assert.ok(Number.isInteger(tabId) && tabId > 0, 'Could not create the tab showing the opaque PDF.');
   try {
-    await page.goto(sourceUrl, { waitUntil: 'commit', timeout: 30_000 });
-
-    const tabId = await settings.waitForFunction(async url => {
-      const tabs = await chrome.tabs.query({});
-      return tabs.find(tab => tab.url === url)?.id ?? null;
-    }, sourceUrl, { timeout: 15_000 }).then(handle => handle.jsonValue());
-    assert.ok(Number.isInteger(tabId) && tabId > 0, 'Could not find the tab showing the opaque PDF.');
+    await settings.waitForFunction(async ({ id, url }) => (await chrome.tabs.get(id)).url === url,
+      { id: tabId, url: sourceUrl }, { timeout: 15_000 });
 
     // Exactly what the "Open PDF with WebBrain" context menu does. That entry
     // is the only route to a wrapped handler URL, and it appears because the
@@ -226,7 +224,7 @@ async function assertHandlerTabSkipsContentTypeProbe(context, settings, extensio
       `The handler tab triggered a Content-Type probe: ${fixture.requests.join(', ')}`,
     );
   } finally {
-    await page.close();
+    await settings.evaluate(id => chrome.tabs.remove(id), tabId);
   }
 }
 

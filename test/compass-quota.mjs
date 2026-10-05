@@ -100,6 +100,48 @@ for (const browser of ['chrome', 'firefox']) {
     render(host, 'Restored localized text');
     assert.equal(mounted[2].retry, true, 'restored durable-turn decision must survive rerendering');
   });
+  test(`${browser}: response-only quota emits one recovery signal and preserves the stopped turn`, async () => {
+    const agent = new Agent({});
+    agent._consumeContextOnlyAbort = () => null;
+    agent._persist = () => {};
+    const events = [];
+    const messages = [{ role: 'user', content: 'Keep this question' }];
+    const error = provider._httpError(402, JSON.stringify(payload), 'Compass');
+    agent._generateContextOnlyResponse = async () => { throw error; };
+    const result = await agent._completeResponseOnlyTurn(41, messages, (type, data) => events.push({ type, data }));
+    assert.equal(result.status, 'cost_limit');
+    assert.equal(events.filter(e => e.type === 'quota').length, 1);
+    assert.equal(events.filter(e => e.type === 'error').length, 0);
+    assert.equal(messages[0].content, 'Keep this question');
+    assert.equal(messages.at(-1).content, result.content);
+    agent._generateContextOnlyResponse = async () => { throw new Error('Other failure'); };
+    events.length = 0;
+    await agent._completeResponseOnlyTurn(41, messages, (type, data) => events.push({ type, data }));
+    assert.equal(events.filter(e => e.type === 'error').length, 1, 'ordinary errors must still be rendered');
+  });
+  test(`${browser}: quota provider switch checks real connection results, exceptions and stale tests`, async () => {
+    const panel = fs.readFileSync(new URL('ui/sidepanel.js', base), 'utf8');
+    const start = panel.indexOf('async function testConnection(');
+    const connection = panel.slice(start, panel.indexOf('function getSlashAutocompleteContext(', start));
+    const switchStart = panel.indexOf('  async switchProvider(id) {');
+    const switchMethod = panel.slice(switchStart, panel.indexOf('  openSettings:', switchStart));
+    let response = { ok: false, error: 'Invalid credentials' };
+    let failure;
+    const sandbox = { providerSelect: { value: 'own-key' }, providerTestRequestId: 0, isProcessing: false,
+      statusDot: {}, t: key => key, setActiveChatProvider: async () => {}, syncProviderPickerButton: () => {},
+      sendToBackground: async () => { if (failure) throw failure; return response; } };
+    const context = vm.createContext(sandbox);
+    const switchProvider = vm.runInContext(`${connection}; ({${switchMethod}}).switchProvider`, context);
+    await assert.rejects(switchProvider('own-key'), /Invalid credentials/);
+    assert.equal(sandbox.statusDot.className, 'status-dot offline');
+    failure = new Error('Network unavailable');
+    await assert.rejects(switchProvider('own-key'), /Network unavailable/);
+    failure = null; response = { ok: true, model: 'local model' };
+    await switchProvider('local');
+    assert.equal(sandbox.statusDot.className, 'status-dot online');
+    sandbox.sendToBackground = async () => { sandbox.providerTestRequestId++; return response; };
+    await assert.rejects(switchProvider('local'), /sp.status.failed/);
+  });
   test(`${browser}: all supported locales and exact decimal displays`, () => {
     const codes = ['en', 'es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
     for (const code of codes) {

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
 
 const root = resolve('.');
+const locales = ['en', 'es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de'];
 const output = resolve(process.env.QUOTA_UI_OUTPUT || resolve(tmpdir(), 'webbrain-compass-review'));
 await mkdir(output, { recursive: true });
 const fixture = (build, locale) => `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/src/${build}/styles/sidepanel.css">
@@ -20,7 +21,7 @@ const code=${JSON.stringify(locale)};
 document.documentElement.lang=code; document.documentElement.dir=['ar','he','fa'].includes(code)?'rtl':'ltr';
 const t=(key,params={})=>(quotaTranslations[code][key] || dict[key] || en[key] || key).replace(/[{]([a-z]+)[}]/g,(_,k)=>params[k] ?? '{'+k+'}');
 window.requests=[];window.opened=[];window.switched=[];window.continuations=[];window.settingsOpened=0;window.deferredRefresh=[];
-window.claim={eligible:true,status:'draft',claim_id:'opaque-random-claim',share_url:'https://webbrain.one/?share=opaque-random-claim',remaining_credit_usd:0};
+window.claim={eligible:true,status:'draft',claim_id:null,share_url:null,remaining_credit_usd:0};
 window.usage={tier:'free',base_weekly_allowance_usd:0.375,weekly_limit_usd:0.375,promotional_balance_usd:0,next_reset_at:'2026-10-12T00:00:00Z'};
 window.makeController=()=>createQuotaController({t,locale:()=>code,request:async(path,body)=>{
  requests.push({path,body});if(window.offline)throw Error('offline');
@@ -30,10 +31,11 @@ window.makeController=()=>createQuotaController({t,locale:()=>code,request:async
   if(window.rejectSubmission)throw Error('Submission not received.');
   claim={...claim,status:'pending',platform:body.platform,post_url:body.post_url};return {...claim};
  }
+ if(path==='/promotions/social')claim={...claim,claim_id:'opaque-random-claim',share_url:'https://webbrain.one/?share=opaque-random-claim'};
  const snapshot=path==='/usage'?{...usage,social_claim:{...claim}}:{...claim};
  if(window.delayRefresh)return new Promise((resolve,reject)=>deferredRefresh.push(()=>window.failDelayedRefresh?reject(Error('offline')):resolve(snapshot)));
  return snapshot;
-},openUrl:url=>opened.push(url),providers:async()=>[{id:'webbrain_cloud',label:'WebBrain Compass'},{id:'own-key',label:'My API key'},{id:'local',label:'Local model'}],switchProvider:async id=>switched.push(id),openSettings:()=>settingsOpened++,continueTask:(_button,context)=>continuations.push(context),persist:()=>{}});
+},openUrl:url=>opened.push(url),providers:async()=>[{id:'webbrain_cloud',label:'WebBrain Compass'},{id:'own-key',label:'My API key'},{id:'local',label:'Local model'}],switchProvider:async id=>{if(window.providerError)throw Error(window.providerError);switched.push(id);},openSettings:()=>settingsOpened++,continueTask:(_button,context)=>continuations.push(context),persist:()=>{}});
 window.controller=makeController();controller.mount(document.querySelector('#card'),{code:'webbrain_cloud_free_tier_exceeded',usage:{...usage,social_claim:claim},subscribe_url:'https://buy.stripe.com/test?client_reference_id=device-guid'},{mode:'act',foreground:true});
 window.ready=true;
 </script>`;
@@ -44,7 +46,9 @@ const server = createServer(async (req, res) => {
       const build = url.searchParams.get('build');
       if (!['chrome', 'firefox'].includes(build)) throw Error('unknown build');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.end(fixture(build, url.searchParams.get('locale') || 'en')); return;
+      const requestedLocale = url.searchParams.get('locale');
+      const locale = locales.find(code => code === requestedLocale) || 'en';
+      res.end(fixture(build, locale)); return;
     }
     const path = resolve(root, '.' + url.pathname);
     if (!path.startsWith(root + sep)) throw Error('outside root');
@@ -60,7 +64,7 @@ try {
     if (process.env.QUOTA_UI_BROWSER && process.env.QUOTA_UI_BROWSER !== build) continue;
     const browser = await engine.launch();
     try {
-      for (const lang of ['en', 'es', 'fr', 'tr', 'zh', 'ru', 'uk', 'ar', 'ja', 'ko', 'id', 'th', 'ms', 'tl', 'pl', 'he', 'hi', 'pt', 'vi', 'bn', 'fa', 'nl', 'de']) {
+      for (const lang of locales) {
         const page = await browser.newPage({ viewport: { width: 280, height: 1000 }, timezoneId: 'Europe/Istanbul' });
         const errors = []; page.on('pageerror', e => errors.push(e.message));
         await page.goto(`${origin}/quota?build=${build}&locale=${lang}`);
@@ -69,6 +73,7 @@ try {
         assert.equal(await page.locator('#card').evaluate(el => /quota\.|\{(?:base|credit|time)\}/.test(el.textContent)), false); checks++;
         assert.equal(await page.evaluate(() => continuations.length), 0); checks++;
         if (lang === 'en') {
+          assert.equal(await page.evaluate(() => requests.filter(r => r.path === '/promotions/social').length), 0); checks++;
           assert.match(await page.locator('.quota-balance').textContent(), /\$0\.375/);
           assert.match(await page.locator('.quota-reset').textContent(), /3:00:00 AM/);
           await page.locator('.quota-share').focus();
@@ -105,7 +110,7 @@ try {
           assert.match(await page.locator('.quota-claim input').inputValue(), /bsky\.app/); checks += 3;
           // A focus refresh may already have read draft state when submission completes.
           await page.evaluate(() => { window.delayRefresh = true; window.staleRefresh = controller.refreshAll(); });
-          assert.equal(await page.evaluate(() => deferredRefresh.length), 2); checks++;
+          assert.equal(await page.evaluate(() => deferredRefresh.length), 1); checks++;
           await page.locator('.quota-claim form button[type=submit]').click();
           await page.waitForFunction(() => claim.status === 'pending');
           await page.evaluate(async () => { window.delayRefresh = false; deferredRefresh.splice(0).forEach(resolve => resolve()); await staleRefresh; });
@@ -150,6 +155,12 @@ try {
           assert.equal(await page.evaluate(() => continuations.length), 0); checks += 3;
           await page.locator('.quota-other').click();
           await page.locator('.quota-providers select').selectOption('local');
+          await page.evaluate(() => { window.providerError = 'Invalid credentials'; });
+          await page.locator('.quota-providers button').first().click();
+          assert.match(await page.locator('.quota-status').textContent(), /Invalid credentials/);
+          assert.deepEqual(await page.evaluate(() => switched), []);
+          assert.equal(await page.evaluate(() => requests.filter(r => r.body?.event === 'provider_switch').length), 0); checks += 3;
+          await page.evaluate(() => { window.providerError = null; });
           await page.locator('.quota-providers button').first().click();
           assert.deepEqual(await page.evaluate(() => switched), ['local']);
           assert.equal(await page.evaluate(() => continuations.length), 0); checks += 2;

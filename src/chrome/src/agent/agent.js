@@ -22466,13 +22466,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     onUpdate('thinking', { step: 1, note: 'Preparing response…' });
     let finalResponse = '';
     let status = 'done';
+    let quotaFailure = false;
     try {
       finalResponse = await this._generateContextOnlyResponse(
         tabId, messages, provider, costState, runId,
         { phase: 'response_only', step: 1, runOptions, currentUserMessage, priorMessageSet, shareCapture },
       );
     } catch (error) {
-      if (error.quota) onUpdate('quota', { quota: error.quota });
+      if (error.quota) {
+        quotaFailure = true;
+        onUpdate('quota', { quota: error.quota });
+      }
       status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
       finalResponse = this._isCostAllowanceError(error)
         ? error.message
@@ -22486,7 +22490,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     messages.push({ role: 'assistant', content: finalResponse });
     onUpdate('text', { content: finalResponse, replace: true });
-    if (status !== 'done') onUpdate('error', { message: finalResponse });
+    if (status !== 'done' && !quotaFailure) onUpdate('error', { message: finalResponse });
     this._persist(tabId);
     return { content: finalResponse, status };
   }

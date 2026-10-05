@@ -41,7 +41,15 @@ export function createQuotaController({ t, locale, request, openUrl, providers, 
     const providerArea = el('div', '', 'quota-providers');
     const status = el('div', '', 'quota-status');
     status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
-    const share = button(t('quota.get'), () => { host.dataset.claimOpen = 'true'; showClaim(); }, 'quota-share');
+    const share = button(t('quota.get'), async () => {
+      host.dataset.claimOpen = 'true';
+      operations.version++;
+      try {
+        if (!social?.share_url) social = await request('/promotions/social');
+        if (cards.get(host)?.refresh !== refresh) return;
+        renderState(); showClaim();
+      } catch (error) { status.textContent = error.message; }
+    }, 'quota-share');
     const subscribe = button(t('quota.subscribe'), () => { event('checkout_open'); openUrl(quota.subscribe_url); }, 'subscribe-btn');
     const other = button(t('quota.other'), async () => {
       providerArea.replaceChildren();
@@ -88,7 +96,7 @@ export function createQuotaController({ t, locale, request, openUrl, providers, 
     }
 
     function showClaim(focus = true) {
-      if (!social) { void refresh().then(() => { if (social) showClaim(); }); return; }
+      if (!social?.share_url) { return; }
       if (!social.eligible || social.status === 'pending') { claimArea.replaceChildren(); return; }
       // A balance/status refresh must not replace the user's focused editor or draft.
       const existingForm = claimArea.querySelector('form');
@@ -150,9 +158,9 @@ export function createQuotaController({ t, locale, request, openUrl, providers, 
       const version = operations.version;
       inflight = (async () => {
         try {
-          const [nextSocial, nextUsage] = await Promise.all([request('/promotions/social'), request('/usage')]);
+          const nextUsage = await request('/usage');
           if (cards.get(host)?.refresh !== refresh || operations.version !== version || operations.submitting) return;
-          social = nextSocial;
+          social = nextUsage.social_claim;
           Object.assign(state, nextUsage);
           status.textContent = nextUsage.tier !== 'free' ? t('quota.ready') : '';
           renderState();

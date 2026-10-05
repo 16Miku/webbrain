@@ -6618,7 +6618,8 @@ const quotaController = createQuotaController({
     if (isProcessing) throw new Error(t('sp.retry.busy'));
     await setActiveChatProvider(id);
     selectedProviderId = id; providerSelect.value = id; syncProviderPickerButton();
-    await testConnection({ providerId: id });
+    const result = await testConnection({ providerId: id });
+    if (!result?.ok) throw new Error(result?.error || t('sp.status.failed'));
   },
   openSettings: openProvidersSettingsPage,
   continueTask(btn, context) {
@@ -7413,10 +7414,12 @@ async function testConnection(options = {}) {
     statusDot.title = res.ok
       ? t('sp.status.connected', { model: res.model || providerId })
       : t('sp.status.error', { msg: res.error });
-  } catch {
+    return res;
+  } catch (error) {
     if (requestId !== providerTestRequestId || providerSelect.value !== providerId) return;
     statusDot.className = 'status-dot offline';
     statusDot.title = t('sp.status.failed');
+    return { ok: false, error: error?.message || t('sp.status.failed') };
   }
 }
 

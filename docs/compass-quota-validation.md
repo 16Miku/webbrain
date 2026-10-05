@@ -10,8 +10,8 @@ Both repositories were clean before implementation. No applicable `AGENTS.md` wa
 | Cloud weekly usage | Passed, including `$0.375` and legacy usage aliases |
 | Cloud Plus, portal subscription recovery, renewal notices | Passed |
 | Cloud PHP syntax | Passed for service, promotion trait, routes, and both new CLI scripts |
-| Extension `npm run test:compass-quota` | 15 tests passed across Chrome and Firefox |
-| Extension `npm run test:compass-quota:ui` | 392 assertions passed in Chromium and Firefox, all 23 supported locales |
+| Extension `npm run test:compass-quota` | 19 tests passed across Chrome and Firefox |
+| Extension `npm run test:compass-quota:ui` | 400 assertions passed in Chromium and Firefox, all 23 supported locales |
 | Extension billing/payment notice | Passed in both builds |
 | Extension runtime lifecycle suite | 218 tests and 14 UI/content lifecycle checks passed |
 | Extension provider limits | Passed |
@@ -36,6 +36,10 @@ Metered usage now requires the billing tier resolved at admission, including str
 After these fixes, the promotion suites, PHP syntax, weekly usage, Plus, portal recovery, renewal notices, stats endpoint, 15 extension quota tests, 392 rendered UI assertions, billing notice checks, and both extension builds were rerun and passed. `git diff --check` passed in both repos. The standard tool-request-shape check still fails at its existing local-model assertion before reaching the changed accounting calls; the complete check passes when its service instances use an isolated root without the local `.env` (the actual `.env` was untouched). The earlier full-suite failures below remain recorded; the aggregate suites were not rerun after these focused fixes.
 
 ## Existing failures
+
+The first GitHub review findings were addressed in both PRs. Ordinary quota reads now use a shared read lock without creating lifetime claims or rewriting the store; metering and expiring client telemetry also avoid allocating claims. Sharing explicitly creates the opaque identifier. Regressions rotate device headers across 50 direct usage reads and 20 real HTTP usage/malformed-chat requests, check unchanged store bytes, and retain conversion counting without a claim. Both browsers now emit one recovery signal on response-only quota failure, and provider switching checks connection results, exceptions, and stale tests before reporting readiness. The rendered test server selects locale identifiers from a fixed allowlist. The PDF browser test captures its Chrome tab ID at creation instead of rediscovering it by URL.
+
+After these changes, the cloud promotion suite, syntax, weekly usage, Plus, payment recovery, renewal notices, 19 quota tests, 400 browser assertions, payment notice checks, both builds, and real Chrome PDF/WebMCP tests passed. Screenshots were regenerated at 280 and 420 px. GitHub checks and fresh Codex reviews are tracked on the PRs.
 
 - **Extension `npm test`:** the final run reached the legacy `test/run.js` suite: **2,425 passed, 1 failed** out of 2,426. The failing test is `extended provider catalog is complete, mirrored, safe, and excluded-provider clean`; its expected catalog omits existing `freebuff2api`. The unchanged HEAD test reproduces that failure. Earlier chained suites passed; checks chained after this failing legacy suite were not executed by `npm test`. Two source-extraction assertions affected by the expanded quota renderer were updated and now pass.
 - **Cloud `composer check`:** the native Windows checkout gives `tests/apache-health-guard.sh` CRLF line endings, and Bash rejects its `set -u` / function syntax. The aggregate check stops there with exit 2. This shell script was not changed.
