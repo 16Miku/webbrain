@@ -60,6 +60,12 @@ await new Promise(r => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
 let checks = 0;
 try {
+  const injectedLocale = '</script><script>window.localeInjection=true</script>';
+  for (const build of ['chrome', 'firefox']) {
+    const html = await (await fetch(`${origin}/quota?build=${build}&locale=${encodeURIComponent(injectedLocale)}`)).text();
+    assert.doesNotMatch(html, /localeInjection/);
+    assert.match(html, /const code="en"/); checks += 2;
+  }
   for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     if (process.env.QUOTA_UI_BROWSER && process.env.QUOTA_UI_BROWSER !== build) continue;
     const browser = await engine.launch();

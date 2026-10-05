@@ -70379,7 +70379,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     302ai abacus aihubmix alibaba-coding-plan alibaba-coding-plan-cn
     azure-cognitive-services bailing baseten berget cerebras chutes clarifai
     cloudferro-sherlock cohere cortecs deepinfra demonroute digitalocean dinference drun
-    evroc fastrouter friendli google-vertex google-vertex-anthropic helicone
+    evroc fastrouter freebuff2api friendli google-vertex google-vertex-anthropic helicone
     iflowcn inception inference io-net jiekou kilo kimi-for-coding
     kuae-cloud-coding-plan llama lucidquery meganova minimax-cn-coding-plan
     minimax-coding-plan moark modelscope morph nano-gpt nearai nebius nova novita-ai
@@ -70391,7 +70391,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 80);
+  assert.equal(expectedIds.length, 81);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -70405,7 +70405,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 113 : 112;
+    const expectedDefaultCount = label === 'chrome' ? 114 : 113;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -70422,7 +70422,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
         expectedAskStreaming,
         `${label}: ${id} Ask streaming capability mismatch`,
       );
-      assert.ok(config.model || id === 'azure-cognitive-services', `${label}: ${id} missing model`);
+      assert.ok(config.model || config.requiresModel, `${label}: ${id} missing model`);
 
       const icon = path.join(ROOT, prefix, 'icons/providers', `${id}.svg`);
       assert.equal(fs.existsSync(icon), true, `${label}: missing icon for ${id}`);
@@ -117638,7 +117638,7 @@ test('sidepanel routes every run-error path through request-scoped deduplication
     assert.match(panel, /import \{ claimRunError \} from '\.\/run-error-dedupe\.js';/, `${label}: sidepanel should use the shared deduper`);
     assert.match(panel, /createActiveChatPayloadState\(retryPayload, requestId\)/, `${label}: active error state should retain request identity`);
     assert.match(panel, /renderAgentErrorUpdate\(returnedErrorUpdate\.data, tabId, requestId(?:, \{[\s\S]*?submittedTurnDurable: res\.submittedTurnDurable,[\s\S]*?\})?\)/, `${label}: returned errors should use request-scoped rendering`);
-    assert.match(panel, /renderAgentErrorUpdate\(\{ message: e\.message \}, tabId, requestId\)/, `${label}: caught errors should use request-scoped rendering`);
+    assert.match(panel, /renderAgentErrorUpdate\(\{ message: e\.message, quota: e\.quota \}, tabId, requestId\)/, `${label}: caught errors should preserve quota metadata and use request-scoped rendering`);
     assert.match(panel, /renderAgentErrorUpdate\(data, currentTabId, msg\.requestId\)/, `${label}: streamed errors should use message request identity`);
     assert.match(panel, /msgEl\.dataset\.tabId = active\.tabId;[\s\S]*?msgEl\.dataset\.runRequestId = active\.requestId;[\s\S]*?msgEl\.dataset\.errorMessageKey = active\.key;/, `${label}: persisted error cards should retain their dedupe identity`);
     assert.match(panel, /if \(active\.duplicate\) return;[\s\S]*?retryPayload: isTabAbortRequested\(tabId\) \? null : active\.retryPayload/, `${label}: only the first copy should retain the Retry action`);
