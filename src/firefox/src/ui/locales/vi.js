@@ -568,7 +568,7 @@ export default {
   'ob.btn.done': "Bắt đầu",
   'ob.btn.skip': "Bỏ qua bây giờ",
   'ob.btn.start': 'Bắt đầu',
-  'ob.cloud.body': 'WebBrain Compass đã sẵn sàng với hạn ngạch hàng ngày miễn phí. Các cuộc trò chuyện Compass được chọn có thể được giữ lại và sử dụng để cải thiện WebBrain trong khi Trợ giúp Cải thiện WebBrain được bật theo mặc định. Bạn có thể tắt nó trong Cài đặt → Chung.',
+  'ob.cloud.body': 'WebBrain Compass đã sẵn sàng với hạn ngạch hằng tuần miễn phí. Các cuộc trò chuyện Compass được chọn có thể được giữ lại và sử dụng để cải thiện WebBrain trong khi Trợ giúp Cải thiện WebBrain được bật theo mặc định. Bạn có thể tắt nó trong Cài đặt → Chung.',
   'ob.cloud.change': 'Thay đổi',
   'ob.cloud.using': 'Đang sử dụng WebBrain Compass.',
 

@@ -529,7 +529,7 @@ export default {
   "ob.btn.done": "התחל",
   "ob.btn.skip": "דלג לעת עתה",
   'ob.btn.start': 'התחל',
-  'ob.cloud.body': 'WebBrain Compass מוכן עם הקצבה יומית חינםית. שיחות Compass נבחרות עשויות להישמר ולשמש לשיפור WebBrain בזמן ש- Help Improve WebBrain מופעל כברירת מחדל. אתה יכול לכבות את זה בהגדרות → כללי.',
+  'ob.cloud.body': 'WebBrain Compass מוכן עם הקצבה שבועית חינםית. שיחות Compass נבחרות עשויות להישמר ולשמש לשיפור WebBrain בזמן ש- Help Improve WebBrain מופעל כברירת מחדל. אתה יכול לכבות את זה בהגדרות → כללי.',
   'ob.cloud.change': 'שינוי',
   'ob.cloud.using': 'שימוש ב-WebBrain Compass.',
   "st.title": "הגדרות WebBrain",

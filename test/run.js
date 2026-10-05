@@ -46039,9 +46039,9 @@ test('sidepanel subscribe error card clears DOM without HTML reinterpretation', 
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     const styles = fs.readFileSync(path.join(ROOT, styleRel), 'utf8');
-    const start = panel.indexOf("function renderSubscribeError(textEl, content, resumeMode = '') {");
+    const start = panel.indexOf('function renderSubscribeError(');
     assert.notEqual(start, -1, `${label}: renderSubscribeError missing`);
-    const end = panel.indexOf('\n}\n\nfunction addMessage', start);
+    const end = panel.indexOf('\n}\n\nfunction renderCostAllowanceError', start);
     assert.notEqual(end, -1, `${label}: renderSubscribeError boundary missing`);
     const body = panel.slice(start, end + 2);
     const subscribeDeclaration = panel.match(/const SUBSCRIBE_ERROR_RE = [^\n]+;/)?.[0] || '';
@@ -46077,7 +46077,7 @@ test('sidepanel subscribe error card clears DOM without HTML reinterpretation', 
     assert.notEqual(errorUpdateEnd, -1, `${label}: renderAgentErrorUpdate boundary missing`);
     const errorUpdateBody = panel.slice(errorUpdateStart, errorUpdateEnd);
     assert.match(errorUpdateBody, /subscribeResumeMode: active\.retryPayload\?\.mode,/, `${label}: structured error cards should receive the request-scoped run mode`);
-    assert.match(panel, /renderSubscribeError\(textEl, content, options\.subscribeResumeMode\)/, `${label}: error messages should forward their captured run mode to the subscribe card`);
+    assert.match(panel, /renderSubscribeError\(textEl, content, options\.subscribeResumeMode, options\.quota, options\.costAllowanceResume\)/, `${label}: error messages should forward their captured run mode to the subscribe card`);
     assert.match(panel, /async function continueAgent\(options = \{\}\) \{[\s\S]*?includes\(options\?\.mode\) \? options\.mode : agentMode;/, `${label}: continuation should accept a preserved mode`);
     const runCompleteStart = panel.indexOf("case 'run_complete':");
     const runCompleteEnd = panel.indexOf("case 'context_compacted':", runCompleteStart);
@@ -46157,7 +46157,7 @@ test('sidepanel cloud cost allowance stop offers a persisted one-click $10 bump'
     assert.match(panel, /if \(textEl && parseCostAllowanceError\(res\.content\)\) \{[\s\S]*?renderCostAllowanceError\(textEl, res\.content, modeForSend,[\s\S]*?\} else if \(textEl && getStreamedAssistantText\(textEl\) === String\(res\.content\)\)/, `${label}: terminal allowance content should render its card before duplicate-stream formatting`);
     assert.match(panel, /renderCostAllowanceError\(textEl, res\.content, modeForSend, \{[\s\S]*?submittedTurnDurable: res\.submittedTurnDurable,[\s\S]*?\}\)[\s\S]*?&& !renderSubscribeError/, `${label}: returned continuation stops should render with terminal durability proof`);
     assert.match(panel, /data: event\.type === 'run_complete'[\s\S]*?submittedTurnDurable: state\?\.submittedTurnDurable === true,[\s\S]*?: event\.data,/, `${label}: replayed terminal events should be enriched with current durability proof before rendering`);
-    assert.match(panel, /const restoredAllowanceCardMissing = !!parseCostAllowanceError\(runUi\?\.finalContent\)[\s\S]*?\|\| restoredAllowanceCardMissing[\s\S]*?restoredAllowanceCardMissing \? \{\} : \{ seq: runUi\.seq \}/, `${label}: terminal restoration should rebuild a deferred allowance card even after replaying its final text sequence`);
+    assert.match(panel, /const restoredAllowanceCardMissing = \(!!parseCostAllowanceError\(runUi\?\.finalContent\)[\s\S]*?\|\| restoredAllowanceCardMissing[\s\S]*?restoredAllowanceCardMissing \? \{\} : \{ seq: runUi\.seq \}/, `${label}: terminal restoration should rebuild a deferred allowance card even after replaying its final text sequence`);
     assert.match(panel, /type: 'run_complete',[\s\S]*?submittedTurnDurable: state\?\.submittedTurnDurable === true,/, `${label}: restored terminal cards should retain durable-turn proof`);
     assert.match(panel, /case 'run_complete':[\s\S]*?if \(textEl && parseCostAllowanceError\(data\.finalContent\)\)[\s\S]*?renderCostAllowanceError\(textEl, data\.finalContent,[\s\S]*?\} else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored terminal allowance cards should render before the empty-text fallback guard`);
     assert.match(panel, /function retryPayloadForRunAssistant\(assistantEl\)[\s\S]*?getComposerHistoryTextFromMessage\(userEl\)[\s\S]*?dataset\.retryAgentPrompt[\s\S]*?displayText,[\s\S]*?attachmentCount:/, `${label}: restored non-durable stops should reconstruct hidden-prompt retry routing from persisted chat metadata`);
@@ -117898,7 +117898,7 @@ test('sidepanel routes every run-error path through request-scoped deduplication
     assert.match(panel, /import \{ claimRunError \} from '\.\/run-error-dedupe\.js';/, `${label}: sidepanel should use the shared deduper`);
     assert.match(panel, /createActiveChatPayloadState\(retryPayload, requestId\)/, `${label}: active error state should retain request identity`);
     assert.match(panel, /renderAgentErrorUpdate\(returnedErrorUpdate\.data, tabId, requestId(?:, \{[\s\S]*?submittedTurnDurable: res\.submittedTurnDurable,[\s\S]*?\})?\)/, `${label}: returned errors should use request-scoped rendering`);
-    assert.match(panel, /renderAgentErrorUpdate\(\{ message: e\.message \}, tabId, requestId\)/, `${label}: caught errors should use request-scoped rendering`);
+    assert.match(panel, /renderAgentErrorUpdate\(\{ message: e\.message, quota: e\.quota \}, tabId, requestId\)/, `${label}: caught errors should preserve quota metadata and use request-scoped rendering`);
     assert.match(panel, /renderAgentErrorUpdate\(data, currentTabId, msg\.requestId\)/, `${label}: streamed errors should use message request identity`);
     assert.match(panel, /msgEl\.dataset\.tabId = active\.tabId;[\s\S]*?msgEl\.dataset\.runRequestId = active\.requestId;[\s\S]*?msgEl\.dataset\.errorMessageKey = active\.key;/, `${label}: persisted error cards should retain their dedupe identity`);
     assert.match(panel, /if \(active\.duplicate\) return;[\s\S]*?retryPayload: isTabAbortRequested\(tabId\) \? null : active\.retryPayload/, `${label}: only the first copy should retain the Retry action`);

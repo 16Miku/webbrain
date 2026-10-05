@@ -187,7 +187,7 @@ export default {
   'ob.btn.done': 'Başlayın',
   'ob.btn.skip': 'Şimdilik atla',
   'ob.btn.start': 'Başla',
-  'ob.cloud.body': 'WebBrain Compass günlük ücretsiz payla hazır. Seçilen Compass konuşmaları, WebBrain\'i Geliştir Yardımı varsayılan olarak açıkken WebBrain\'i geliştirmek için saklanabilir ve kullanılabilir. Bunu Ayarlar → Genel olarak kapatabilirsiniz.',
+  'ob.cloud.body': 'WebBrain Compass haftalık ücretsiz payla hazır. Seçilen Compass konuşmaları, WebBrain\'i Geliştir Yardımı varsayılan olarak açıkken WebBrain\'i geliştirmek için saklanabilir ve kullanılabilir. Bunu Ayarlar → Genel olarak kapatabilirsiniz.',
   'ob.cloud.change': 'Değiştir',
   'ob.cloud.using': 'WebBrain Compass kullanılıyor.',
 
@@ -262,7 +262,7 @@ export default {
   'sp.persistence.unavailable': 'Kurtarma verileri kaydedilemiyor. Canlı görev devam edebilir ancak bağlantı koparsa işlemler yeniden oynatılmaz; elle yeniden deneyin.',
 
   'sp.error_prefix': 'Hata: {msg}',
-  'sp.subscribe.allowance_used': 'Ücretsiz günlük WebBrain Compass kullanım hakkınız doldu.',
+  'sp.subscribe.allowance_used': 'Ücretsiz haftalık WebBrain Compass kullanım hakkınız doldu.',
   'sp.subscribe.btn': 'Abone ol',
   'sp.subscribe.upgrade': 'Plus\'a yükselt',
   'sp.subscribe.resume_payment': 'Ödeme yöntemi güncellendi — yeniden dene',
@@ -403,7 +403,7 @@ export default {
 
   'st.providers.info.html': '<strong>llama.cpp ile başlangıç:</strong><br>Yerel bir sunucu başlatmak için <code>llama-server -m modeliniz.gguf --port 8080</code> komutunu çalıştır.<br>API anahtarı gerekmez — tamamen makinende çalışır.',
   'st.providers.save': 'Kaydet',
-  'st.providers.webbrain_note.body': 'Ücretsiz günlük WebBrain Compass kullanımı dahildir. İstekler api.webbrain.one üzerinden geçer; varsayılan olarak kota ve hata ayıklama için meta verileri kaydederiz; istem metnini, sayfa içeriğini, ekran görüntülerini veya model yanıtlarını kaydetmeyiz. {privacyLink}. Daha fazla kullanım için {subscribeLink} adresinden abone olun. Faturalandırmayı {accountLink} adresinden yönetin.',
+  'st.providers.webbrain_note.body': 'Ücretsiz haftalık WebBrain Compass kullanımı dahildir. İstekler api.webbrain.one üzerinden geçer; varsayılan olarak kota ve hata ayıklama için meta verileri kaydederiz; istem metnini, sayfa içeriğini, ekran görüntülerini veya model yanıtlarını kaydetmeyiz. {privacyLink}. Daha fazla kullanım için {subscribeLink} adresinden abone olun. Faturalandırmayı {accountLink} adresinden yönetin.',
   'st.providers.webbrain_note.privacy_link': 'Gizlilik politikası',
   'st.providers.test': 'Bağlantıyı sına',
   'st.providers.duplicate': 'Çoğalt',

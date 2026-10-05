@@ -151,7 +151,7 @@ export default {
   'ob.btn.done': '시작하기',
   'ob.btn.skip': '지금은 건너뛰기',
   'ob.btn.start': '시작',
-  'ob.cloud.body': 'WebBrain Compass가 무료 일일 할당량으로 준비되었습니다. 선택한 Compass 대화는 WebBrain 개선 도움이 기본적으로 켜져 있는 동안 WebBrain 개선을 위해 저장되고 사용될 수 있습니다. 설정 → 일반에서 끌 수 있습니다.',
+  'ob.cloud.body': 'WebBrain Compass가 무료 주간 할당량으로 준비되었습니다. 선택한 Compass 대화는 WebBrain 개선 도움이 기본적으로 켜져 있는 동안 WebBrain 개선을 위해 저장되고 사용될 수 있습니다. 설정 → 일반에서 끌 수 있습니다.',
   'ob.cloud.change': '변경',
   'ob.cloud.using': 'WebBrain Compass를 사용 중입니다.',
 
@@ -225,7 +225,7 @@ export default {
   'sp.persistence.unavailable': '복구 데이터를 저장할 수 없습니다. 진행 중인 작업은 계속할 수 있지만 연결이 끊긴 뒤 작업을 다시 실행하지 않습니다. 수동으로 다시 시도하세요.',
 
   'sp.error_prefix': '오류: {msg}',
-  'sp.subscribe.allowance_used': 'WebBrain Compass의 무료 일일 사용량을 모두 사용했습니다.',
+  'sp.subscribe.allowance_used': 'WebBrain Compass의 무료 주간 사용량을 모두 사용했습니다.',
   'sp.subscribe.btn': '구독하기',
   'sp.subscribe.upgrade': 'Plus로 업그레이드',
   "sp.subscribe.resume_payment": "결제 수단 업데이트 완료 — 다시 시도",
@@ -371,7 +371,7 @@ export default {
 
   'st.providers.info.html': '<strong>llama.cpp 시작하기:</strong><br><code>llama-server -m your-model.gguf --port 8080</code>을 실행해 로컬 서버를 띄우세요.<br>API 키가 필요 없습니다 — 전부 사용자 머신에서 실행됩니다.',
   'st.providers.save': '저장',
-  'st.providers.webbrain_note.body': '무료 일일 WebBrain Compass 사용량이 포함되어 있습니다. 요청은 api.webbrain.one을 통해 처리됩니다. 기본적으로 할당량과 디버깅을 위한 메타데이터만 기록하며, 프롬프트 텍스트, 페이지 콘텐츠, 스크린샷, 모델 응답은 기록하지 않습니다. {privacyLink}. 더 많은 사용량이 필요하면 {subscribeLink}에서 구독하세요. 청구는 {accountLink}에서 관리하세요.',
+  'st.providers.webbrain_note.body': '무료 주간 WebBrain Compass 사용량이 포함되어 있습니다. 요청은 api.webbrain.one을 통해 처리됩니다. 기본적으로 할당량과 디버깅을 위한 메타데이터만 기록하며, 프롬프트 텍스트, 페이지 콘텐츠, 스크린샷, 모델 응답은 기록하지 않습니다. {privacyLink}. 더 많은 사용량이 필요하면 {subscribeLink}에서 구독하세요. 청구는 {accountLink}에서 관리하세요.',
   'st.providers.webbrain_note.privacy_link': '개인정보 처리방침',
   'st.providers.test': '연결 테스트',
   'st.providers.duplicate': '복제',

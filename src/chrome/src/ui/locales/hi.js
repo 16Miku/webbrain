@@ -571,7 +571,7 @@ export default {
   'ob.btn.done': "आरंभ करें",
   'ob.btn.skip': "अभी के लिए छोड़ें",
   'ob.btn.start': 'प्रारंभ',
-  'ob.cloud.body': 'WebBrain Compass एक निःशुल्क दैनिक भत्ते के साथ तैयार है। चयनित Compass बातचीत बनाए रखी जा सकती है और WebBrain में सुधार के लिए उपयोग की जा सकती है जबकि Help Improve WebBrain डिफ़ॉल्ट रूप से चालू है। आप इसे Settings → General में बंद कर सकते हैं।',
+  'ob.cloud.body': 'WebBrain Compass एक निःशुल्क साप्ताहिक भत्ते के साथ तैयार है। चयनित Compass बातचीत बनाए रखी जा सकती है और WebBrain में सुधार के लिए उपयोग की जा सकती है जबकि Help Improve WebBrain डिफ़ॉल्ट रूप से चालू है। आप इसे Settings → General में बंद कर सकते हैं।',
   'ob.cloud.change': 'बदलें',
   'ob.cloud.using': 'WebBrain Compass का उपयोग कर रहा है।',
 

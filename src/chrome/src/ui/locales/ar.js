@@ -151,7 +151,7 @@ export default {
   'ob.btn.done': 'ابدأ',
   'ob.btn.skip': 'تخطي الآن',
   'ob.btn.start': 'بدء',
-  'ob.cloud.body': 'WebBrain Compass جاهز مع بدل يومي مجاني. قد يتم الاحتفاظ بمحادثات Compass المحددة واستخدامها لتحسين WebBrain بينما يكون Help Improve WebBrain قيد التشغيل افتراضيًا. يمكنك إيقاف تشغيله في الإعدادات → عام.',
+  'ob.cloud.body': 'WebBrain Compass جاهز مع بدل أسبوعي مجاني. قد يتم الاحتفاظ بمحادثات Compass المحددة واستخدامها لتحسين WebBrain بينما يكون Help Improve WebBrain قيد التشغيل افتراضيًا. يمكنك إيقاف تشغيله في الإعدادات → عام.',
   'ob.cloud.change': 'تغيير',
   'ob.cloud.using': 'استخدام WebBrain Compass.',
 
@@ -225,7 +225,7 @@ export default {
   'sp.persistence.unavailable': 'تعذّر حفظ بيانات الاسترداد. يمكن متابعة المهمة الحالية، لكن لن تُعاد الإجراءات بعد انقطاع الاتصال. أعد المحاولة يدويًا.',
 
   'sp.error_prefix': 'خطأ: {msg}',
-  'sp.subscribe.allowance_used': 'تم استخدام الحصة اليومية المجانية من WebBrain Compass.',
+  'sp.subscribe.allowance_used': 'تم استخدام الحصة الأسبوعية المجانية من WebBrain Compass.',
   'sp.subscribe.btn': 'اشترك',
   'sp.subscribe.upgrade': 'الترقية إلى Plus',
   "sp.subscribe.resume_payment": "تم تحديث طريقة الدفع — أعد المحاولة",
@@ -371,7 +371,7 @@ export default {
 
   'st.providers.info.html': '<strong>بدء التشغيل مع llama.cpp:</strong><br>شغّل <code>llama-server -m your-model.gguf --port 8080</code> لتشغيل خادم محلي.<br>لا حاجة لمفتاح API — يعمل كاملًا على جهازك.',
   'st.providers.save': 'حفظ',
-  'st.providers.webbrain_note.body': 'يتضمّن الاستخدام اليومي المجاني لـ WebBrain Compass. تمر الطلبات عبر api.webbrain.one؛ افتراضيًا نسجّل البيانات الوصفية للحصة وتصحيح الأخطاء، وليس نص المطالبات أو محتوى الصفحة أو لقطات الشاشة أو ردود النموذج. {privacyLink}. لمزيد من الاستخدام، اشترك عبر {subscribeLink}. أدِر الفوترة عبر {accountLink}.',
+  'st.providers.webbrain_note.body': 'يتضمّن الاستخدام الأسبوعي المجاني لـ WebBrain Compass. تمر الطلبات عبر api.webbrain.one؛ افتراضيًا نسجّل البيانات الوصفية للحصة وتصحيح الأخطاء، وليس نص المطالبات أو محتوى الصفحة أو لقطات الشاشة أو ردود النموذج. {privacyLink}. لمزيد من الاستخدام، اشترك عبر {subscribeLink}. أدِر الفوترة عبر {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'سياسة الخصوصية',
   'st.providers.test': 'اختبار الاتصال',
   'st.providers.duplicate': 'نسخ',

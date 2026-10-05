@@ -151,7 +151,7 @@ export default {
   'ob.btn.done': 'Empezar',
   'ob.btn.skip': 'Omitir por ahora',
   'ob.btn.start': 'Iniciar',
-  'ob.cloud.body': 'WebBrain Compass está listo con una asignación diaria gratuita. Las conversaciones de Compass seleccionadas pueden conservarse y utilizarse para mejorar WebBrain mientras Ayuda a mejorar WebBrain está activado de forma predeterminada. Puedes desactivarlo en Configuración → General.',
+  'ob.cloud.body': 'WebBrain Compass está listo con una asignación semanal gratuita. Las conversaciones de Compass seleccionadas pueden conservarse y utilizarse para mejorar WebBrain mientras Ayuda a mejorar WebBrain está activado de forma predeterminada. Puedes desactivarlo en Configuración → General.',
   'ob.cloud.change': 'Cambiar',
   'ob.cloud.using': 'Usando WebBrain Compass.',
 
@@ -225,7 +225,7 @@ export default {
   'sp.persistence.unavailable': 'No se pueden guardar los datos de recuperación. La tarea activa puede continuar, pero las acciones no se repetirán tras una desconexión. Vuelve a intentarlo manualmente.',
 
   'sp.error_prefix': 'Error: {msg}',
-  'sp.subscribe.allowance_used': 'Se agotó la asignación diaria gratuita de WebBrain Compass.',
+  'sp.subscribe.allowance_used': 'Se agotó la asignación semanal gratuita de WebBrain Compass.',
   'sp.subscribe.btn': 'Suscribirse',
   'sp.subscribe.upgrade': 'Cambiar a Plus',
   "sp.subscribe.resume_payment": "Método de pago actualizado — reintentar",
@@ -363,7 +363,7 @@ export default {
 
   'st.providers.info.html': '<strong>Primeros pasos con llama.cpp:</strong><br>Ejecuta <code>llama-server -m tu-modelo.gguf --port 8080</code> para iniciar un servidor local.<br>No se necesita clave de API — se ejecuta enteramente en tu máquina.',
   'st.providers.save': 'Guardar',
-  'st.providers.webbrain_note.body': 'El uso diario gratuito de WebBrain Compass está incluido. Las solicitudes pasan por api.webbrain.one; de forma predeterminada registramos metadatos para la cuota y la depuración, no el texto de las indicaciones, el contenido de la página, las capturas de pantalla ni las respuestas del modelo. {privacyLink}. Para más uso, suscríbete en {subscribeLink}. Gestiona la facturación en {accountLink}.',
+  'st.providers.webbrain_note.body': 'El uso semanal gratuito de WebBrain Compass está incluido. Las solicitudes pasan por api.webbrain.one; de forma predeterminada registramos metadatos para la cuota y la depuración, no el texto de las indicaciones, el contenido de la página, las capturas de pantalla ni las respuestas del modelo. {privacyLink}. Para más uso, suscríbete en {subscribeLink}. Gestiona la facturación en {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Política de privacidad',
   'st.providers.test': 'Probar conexión',
   'st.providers.duplicate': 'Duplicar',
