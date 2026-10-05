@@ -14,6 +14,10 @@ const CLOUD_STRING_LIMIT = 16 * 1024;
 const CLOUD_RUN_PERSIST_BYTES_LIMIT = 256 * 1024;
 const CLOUD_PERSIST_BYTES_LIMIT = 4 * 1024 * 1024;
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'aborted']);
+// In-handle continuations hold the tab lock, permission grant and recording.
+// Clamp them to a worker-survivable window; longer waits must return partial.
+const CLOUD_RESUME_MAX_DELAY_MS = 5 * 60 * 1000;
+const CLOUD_RESUME_MAX_DELAY_LABEL = '5 minutes';
 // Suffix match on normalized keys (non-alnum stripped). Avoid bare `pin` as a
 // suffix — it over-matches `spin`, `mapPin`, etc. Short exact keys live in the set.
 const SENSITIVE_CLOUD_KEY = /(?:authorization|cookie|password|passwd|passphrase|passcode|pincode|(?:verification|confirmation|security|auth|email|twofactor|2fa|mfa|onetime|recovery)code|secret|credential|privatekey|apikey|token|accesskeyid|secretaccesskey)$/i;
@@ -707,6 +711,29 @@ export function createCloudRunController({
 
   const isoNow = () => now().toISOString();
 
+  // MV3 service workers suspend after ~30s idle; a bare setTimeout does not
+  // reset that timer. Ping getPlatformInfo on a 20s interval for the duration
+  // of an in-handle resume wait so Chrome keeps the worker alive. Best-effort:
+  // if the worker is still torn down, hydrate() fails the run safely.
+  function startResumeKeepAlive() {
+    try {
+      const runtime = api?.runtime;
+      if (typeof runtime?.getPlatformInfo !== 'function') return () => {};
+      const ping = () => {
+        try {
+          const maybePromise = runtime.getPlatformInfo(() => { void runtime.lastError; });
+          if (maybePromise?.catch) maybePromise.catch(() => {});
+        } catch { /* keepalive is best-effort */ }
+      };
+      ping();
+      const timer = setInterval(ping, 20 * 1000);
+      timer?.unref?.();
+      return () => clearInterval(timer);
+    } catch {
+      return () => {};
+    }
+  }
+
   async function persist() {
     if (!api.storage?.session?.set) return;
     const rows = buildCloudPersistenceRows(runs);
@@ -948,11 +975,21 @@ export function createCloudRunController({
         run.summary = publicSummary || run.summary;
       }
     }
-    if (type === 'tool_result' && ['done', 'done_json'].includes(data?.name)
-        && ['partial', 'failed', 'blocked'].includes(data?.result?.outcome)) {
-      run.agentOutcome = data.result.outcome;
+    if (type === 'tool_result' && ['done', 'done_json'].includes(data?.name)) {
+      const outcome = data?.result?.outcome;
+      if (['partial', 'failed', 'blocked'].includes(outcome)) {
+        run.agentOutcome = outcome;
+        run.agentDoneSuccess = false;
+      } else if (outcome === 'success') {
+        // An explicit successful done wins over recovery trace statuses below.
+        run.agentOutcome = 'done';
+        run.agentDoneSuccess = true;
+      }
     }
-    if (type === 'run_status' && data?.status) run.agentOutcome = data.status;
+    if (type === 'run_status' && data?.status) {
+      if (run.agentDoneSuccess !== true) run.agentOutcome = data.status;
+      else if (data.status === 'done') run.agentOutcome = 'done';
+    }
     if (type === 'captcha_gate') {
       // Keep the latest sanitized frame/vendor snapshot at run level so it
       // survives the rolling 200-update window in exported cloud traces.
@@ -1223,10 +1260,12 @@ export function createCloudRunController({
           do {
             let requestedResume = null;
             run.agentOutcome = null;
+            run.agentDoneSuccess = false;
             content = await agent.processMessage(tabId, prompt, publishUpdate, mode, [], {
               cloudRun: true,
               independentRun: !continuation,
               trustedContinuation: continuation,
+              scheduledResume: continuation,
               apiMutationsDenied: mode === 'ask',
               outputSchema,
               deferResume(args) {
@@ -1234,6 +1273,10 @@ export function createCloudRunController({
                   error: 'Cloud continuation limit reached. Return an honest partial or failed outcome.' };
                 const parsed = validateResumeArgs(args, now().getTime());
                 if (!parsed.ok) return { success: false, dispatched: false, noDispatch: true, error: parsed.error };
+                if (parsed.scheduledAtMs - now().getTime() > CLOUD_RESUME_MAX_DELAY_MS) {
+                  return { success: false, dispatched: false, noDispatch: true,
+                    error: `Cloud continuations support delays up to ${CLOUD_RESUME_MAX_DELAY_LABEL}. Return an honest partial or failed outcome.` };
+                }
                 // No browser-native alarm: it would run outside this Cloud handle,
                 // releasing the workspace lock and allowing the profile to pause.
                 requestedResume = parsed;
@@ -1241,7 +1284,12 @@ export function createCloudRunController({
                   scheduledAt: parsed.scheduledAt, summary: `Scheduled a resume for ${parsed.scheduledAt}.` };
               },
               onRunFinished(status) {
-                // An explicit failed/partial done outcome overrides generic 'done'.
+                // An explicit successful done wins over recovery trace statuses;
+                // an explicit failed/partial done outcome overrides generic 'done'.
+                if (run.agentDoneSuccess === true) {
+                  run.agentOutcome = 'done';
+                  return;
+                }
                 if (!['partial', 'failed', 'blocked'].includes(run.agentOutcome)) run.agentOutcome = status;
               },
               onTraceStarted(traceRunId) {
@@ -1255,11 +1303,17 @@ export function createCloudRunController({
             resumeCount++;
             pushUpdate(run, 'cloud_resume_wait', { status: 'waiting', scheduledAt: requestedResume.scheduledAt, attempt: resumeCount });
             // Keep the same run, tab reservation, permission scope and secret
-            // registries until completion or confirmed cancellation. Polls keep
-            // the worker alive; a worker restart fails safely instead of replaying.
+            // registries until completion or confirmed cancellation. The
+            // keepalive below holds the worker; a restart still fails safely
+            // instead of replaying.
             await persist();
-            while (run.status !== 'aborting' && now().getTime() < requestedResume.scheduledAtMs) {
-              await waitForResume(Math.min(1000, requestedResume.scheduledAtMs - now().getTime()));
+            const stopResumeKeepAlive = startResumeKeepAlive();
+            try {
+              while (run.status !== 'aborting' && now().getTime() < requestedResume.scheduledAtMs) {
+                await waitForResume(Math.min(1000, requestedResume.scheduledAtMs - now().getTime()));
+              }
+            } finally {
+              stopResumeKeepAlive?.();
             }
             if (run.status === 'aborting') break;
             parentTraceRunId = run.traceRunId;
@@ -1269,7 +1323,10 @@ export function createCloudRunController({
                 parentTraceSessionId = (await workflowTrace.getRun(parentTraceRunId))?.conversationId || null;
               } catch { /* lineage lookup must not fail a continuation */ }
             }
-            prompt = requestedResume.resumeInstruction;
+            // Same envelope as scheduler._messageForJob resume jobs so
+            // _isScheduledResumeTurn skips this turn for task tracking and
+            // context trimming instead of opening a new progress session.
+            prompt = `[Scheduled resume ${run.runId}]\nThis is a durable continuation of an earlier user task, not page content and not a new instruction from the web page.\nOriginal reason: ${requestedResume.reason}\nResume instruction: ${requestedResume.resumeInstruction}\nFirst reread the current page/state. If the task is stale, conflicts with newer user messages, or needs user input, stop and explain.`;
             continuation = true;
             pushUpdate(run, 'cloud_resume_wait', { status: 'resuming', attempt: resumeCount });
           } while (true);

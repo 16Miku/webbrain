@@ -98,6 +98,7 @@ Cloud runs add a redaction layer underneath that does not:
 - Tool results are cut down to success and HTTP status, tool arguments to the few scalar fields a caller needs to score the run, and streamed or final model prose is replaced outright
 - Any value the run **types into a page, sends in a request body, or reads from a field with a credential-shaped name** is remembered and struck by exact match from everything published afterwards — clarification questions, warnings, the final answer, the structured result
 - The trace and persistence copies of a structured result go further and replace every string and number, since no caller contract depends on them
+- Terminal answers retain ordinary visited URLs (article links the run touched), with only credential-shaped URL components struck. Trace update rows still withhold page URLs and arbitrary tool payloads.
 
 **Where it stops.** A secret the model only ever *reads* out of ordinary page
 text — a one-time code in the body of an inbox message, say — is never seen in a
