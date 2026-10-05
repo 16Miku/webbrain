@@ -4,6 +4,33 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [38.0.15] - 2026-10-05
+
+### Changed
+- Include separately approved reductions in quota reassessment
+- Document the approved fifty-cent Compass transition rollout
+- Clarify completed UTC weeks in quota rollout validation
+- Keep response-only quota stops unsuccessful through replay
+- Refresh pending social claims from the check status action
+- Verify Mastodon instances before forwarding public media URLs
+- Complete quota validation and harden fixture locale coverage
+- Fix reviewed quota recovery and browser test failures
+- Support Bluesky and Mastodon public media downloads via FreeSkillz
+- Add mirrored Compass quota recovery and social claim flows
+- docs: translate workflow editor FAQ
+- docs: link workflow editor from FAQ
+- Fix text click guard target parity
+- fix(cloud-runs): address PR 3138 review - keepalive, resume envelope, delay clamp, success wins, strict URL docs
+- Announce SafeSocial on Google Play
+- Run release fixtures and finish portable browser test support
+- feat(providers): add Freebuff2API integration
+- fix(providers): correct DemonRoute card, ordering, tests and docs
+- Keep Cloud continuations tracked and report actual completion outcomes
+- Add DemonRoute as a built-in provider card
+- Address review regressions in text targeting and LinkedIn guards
+- Preserve guarded key dispatch and portable browser regression checks
+- Fix composer detection and eligible text click preference
+
 ## [38.0.14] - 2026-10-04
 
 ### Changed
