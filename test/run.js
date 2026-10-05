@@ -26044,11 +26044,11 @@ test('trace lineage: _startTraceRun and replay plumb parent ids in both builds',
     assert.match(agentSource, /parentRunId: replayParentRunId,[\s\S]*?parentSessionId: replayParentSessionId,/, `${browser}: replay does not pass captured lineage to tracing`);
   }
   const chromeCloudRuns = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
-  assert.match(chromeCloudRuns, /const parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'cloud-runs does not use the completed parent trace');
+  assert.match(chromeCloudRuns, /(?:const|let) parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'cloud-runs does not use the completed parent trace');
   assert.match(chromeCloudRuns, /workflowTrace\.getRun\(parentTraceRunId\)/, 'cloud-runs does not resolve the parent trace session');
   assert.match(chromeCloudRuns, /parentRunId: parentTraceRunId,[\s\S]*?parentSessionId: parentTraceSessionId,/, 'cloud-runs does not thread resolved parent lineage');
   const firefoxCloudRuns = fs.readFileSync(path.join(ROOT, 'src/firefox/src/cloud-runs.js'), 'utf8');
-  assert.match(firefoxCloudRuns, /const parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'Firefox cloud-runs does not use the completed parent trace');
+  assert.match(firefoxCloudRuns, /(?:const|let) parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'Firefox cloud-runs does not use the completed parent trace');
   assert.match(firefoxCloudRuns, /parentRunId: parentTraceRunId,[\s\S]*?parentSessionId: parentTraceSessionId,/, 'Firefox cloud-runs does not thread resolved parent lineage');
 });
 

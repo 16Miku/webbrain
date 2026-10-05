@@ -31090,7 +31090,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
   }
 
   async _scheduleAutoProgressResume(tabId, onUpdate = () => {}) {
-    if (!this.scheduler) return null;
+    const cloudResume = this.cloudRunContexts.get(tabId)?.deferResume;
+    if (!this.scheduler && !cloudResume) return null;
     const mode = this._effectiveRunMode(tabId);
     if (!this._isActionMode(mode)) return null;
     if (!this._shouldBlockDoneForProgress(tabId)) return null;
@@ -31098,16 +31099,17 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     const { tabUrl, tabTitle } = await this._getTabUrlTitle(tabId);
     let result;
     try {
-      result = await this.scheduler.createResumeJob({
+      const args = {
+        after_seconds: 90,
+        reason: 'The active progress-ledger task hit consecutive stalled model outputs before finishing.',
+        resume_instruction: this._buildAutoProgressResumeInstruction(tabId),
+      };
+      result = cloudResume ? await cloudResume(args) : await this.scheduler.createResumeJob({
         tabId,
         conversationId: this.conversationIds.get(tabId) || null,
         resumeTaskId: this._resumeTaskId(tabId, { create: true }),
         mode,
-        args: {
-          after_seconds: 90,
-          reason: 'The active progress-ledger task hit consecutive stalled model outputs before finishing.',
-          resume_instruction: this._buildAutoProgressResumeInstruction(tabId),
-        },
+        args,
         currentUrl: tabUrl,
         currentTitle: tabTitle,
       });
@@ -34360,6 +34362,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       return await this._inspectDevEventListeners(tabId, args || {});
     }
     if (name === 'schedule_resume') {
+      const cloudResume = this.cloudRunContexts.get(tabId)?.deferResume;
+      if (cloudResume) return cloudResume(this._resumeArgsWithProgressGuard(tabId, args || {}));
       if (!this.scheduler) {
         return {
           success: false,
@@ -42308,7 +42312,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     else this._runProviderOverrides.delete(tabId);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
-      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
+      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false, deferResume: runOptions.deferResume });
     }
     try {
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) {
@@ -43868,6 +43872,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           shareRequest = messages;
         }
       } catch {}
+      runOptions.onRunFinished?.(_traceStatus);
       await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, shareResponse: shareRawResponse, hadProviderCompletion: shareHadProviderCompletion });
     }
   }
@@ -43922,7 +43927,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     else this._runProviderOverrides.delete(tabId);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
-      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
+      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false, deferResume: runOptions.deferResume });
     }
     try {
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) {
@@ -44961,6 +44966,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           shareRequest = this._pruneOldImages(modelMessagesForRun(), provider);
         }
       } catch {}
+      runOptions.onRunFinished?.(_traceStatus);
       await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, shareResponse: shareRawResponse, hadProviderCompletion: shareHadProviderCompletion });
     }
   }
